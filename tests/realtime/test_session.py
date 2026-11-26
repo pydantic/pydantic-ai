@@ -111,6 +111,7 @@ from pydantic_ai.realtime._utils import (
     session_instructions,
 )
 from pydantic_ai.realtime.codec import (
+    AppendVoiceInstructions,
     AudioDelta,
     CancelResponse,
     ClearAudio,
@@ -173,10 +174,10 @@ def test_resolve_advertised_tools_rejects_a_tool_choice_it_cannot_honor() -> Non
         resolve_advertised_tools(None, 'required')
 
 
-def _wav_content(pcm: bytes, sample_rate: int = 24000) -> BinaryContent:
+def _wav_content(pcm: bytes, sample_rate: int = 24000, channels: int = 1) -> BinaryContent:
     buffer = io.BytesIO()
     with wave.open(buffer, 'wb') as wav:
-        wav.setnchannels(1)
+        wav.setnchannels(channels)
         wav.setsampwidth(2)
         wav.setframerate(sample_rate)
         wav.writeframes(pcm)
@@ -5375,6 +5376,28 @@ async def test_send_respond_rejects_audio_and_unsupported_image_response() -> No
     assert conn.sent == []
 
 
+async def test_append_voice_instructions_needs_a_voice_model_with_instructions_of_its_own() -> None:
+    """Voice instructions go only to a model whose voice model takes instructions apart from the agent's; elsewhere the
+    agent's instructions are the voice model's, and the method raises before sending anything.
+
+    A unit test for the flag-off side, which no provider takes to the wire. History never records the instructions.
+    """
+    conn = FakeRealtimeConnection([])
+    unsupported = RealtimeSession(conn, _noop_runner, profile=_profile())
+    with pytest.raises(
+        UserError,
+        match=r'does not support voice instructions of its own, so `session\.append_voice_instructions\(\)` is unavailable',
+    ):
+        await unsupported.append_voice_instructions('Speak slowly.')
+    assert conn.sent == []
+
+    profile: RealtimeModelProfile = {**_profile(), 'supports_appending_voice_instructions': True}
+    supported = RealtimeSession(conn, _noop_runner, profile=profile)
+    await supported.append_voice_instructions('Speak slowly.')
+    assert conn.sent == [AppendVoiceInstructions('Speak slowly.')]
+    assert supported.all_messages() == []
+
+
 async def test_send_respond_sequence_can_lead_with_audio() -> None:
     """Non-last items are sent as context, so audio ahead of the text turn is fine with an explicit `respond`."""
     conn = FakeRealtimeConnection([])
@@ -5994,6 +6017,24 @@ async def test_send_rejects_unsupported_binary_content() -> None:
     # A non-WAV audio container can't be unwrapped, so it's rejected rather than streamed as noise.
     with pytest.raises(UserError, match=r"Unsupported binary media type 'audio/mpeg'.*WAV audio, or raw PCM"):
         await session.send(BinaryContent(data=b'\x00mp3', media_type='audio/mpeg'))
+
+    # WAV is unwrapped to raw PCM, so it has to be valid mono 16-bit PCM at the session's input rate.
+    messages: list[str] = []
+    for audio in (
+        _wav_content(b'\x01\x02', 16000),
+        _wav_content(b'\x01\x02\x03\x04', channels=2),
+        BinaryContent(data=b'not a wav', media_type='audio/wav'),
+    ):
+        with pytest.raises(UserError) as exc_info:
+            await session.send(audio)
+        messages.append(str(exc_info.value))
+    assert messages == snapshot(
+        [
+            'Cannot send WAV audio through `session.send()`: it was recorded at 16000 Hz, but the session expects 24000 Hz. Resample it first.',
+            "Cannot send WAV audio through `session.send()`: expected mono 16-bit PCM WAV, got 2 channel(s), 16-bit samples, compression 'NONE'.",
+            'Cannot send WAV audio through `session.send()`: it is not valid WAV audio.',
+        ]
+    )
 
     assert conn.sent == []
 
@@ -9222,10 +9263,14 @@ async def test_tool_completion_drains_messages_deferred_until_usage_arrives(monk
         response_continues: bool,
         run_step: int,
         reserved_budget: bool,
-    ) -> tuple[ToolReturnPart, None]:
+    ) -> tuple[ToolReturnPart, None, list[str]]:
         del validation_done, execution_prerequisites, response_usage_follows, response_continues
         del run_step, reserved_budget
-        return ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id), None
+        return (
+            ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id),
+            None,
+            [],
+        )
 
     monkeypatch.setattr(session, '_execute_tool', complete_after_usage)
     completion = asyncio.Event()
@@ -9280,10 +9325,14 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(
         response_continues: bool,
         run_step: int,
         reserved_budget: bool,
-    ) -> tuple[ToolReturnPart, None]:
+    ) -> tuple[ToolReturnPart, None, list[str]]:
         del validation_done, execution_prerequisites, response_usage_follows, response_continues
         del run_step, reserved_budget
-        return ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id), None
+        return (
+            ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id),
+            None,
+            [],
+        )
 
     monkeypatch.setattr(session, '_execute_tool', complete_after_usage)
 
@@ -9577,7 +9626,9 @@ async def test_agent_realtime_session_denied_tool_returns_denial_message() -> No
     lifecycle = [event for event in events if isinstance(event, (DeferredToolRequestsEvent, DeferredToolResultsEvent))]
     assert lifecycle == [
         DeferredToolRequestsEvent(
-            DeferredToolRequests(approvals=[ToolCallPart(tool_name='danger', args='{}', tool_call_id='tc')])
+            DeferredToolRequests(
+                approvals=[ToolCallPart(tool_name='danger', args='{}', tool_call_id='tc')], validated_args={'tc': {}}
+            )
         ),
         DeferredToolResultsEvent(DeferredToolResults(approvals={'tc': False})),
     ]
@@ -9674,7 +9725,10 @@ async def test_realtime_session_does_not_execute_an_approval_gated_tool_without_
     lifecycle = [event for event in events if isinstance(event, (DeferredToolRequestsEvent, DeferredToolResultsEvent))]
     assert lifecycle == [
         DeferredToolRequestsEvent(
-            DeferredToolRequests(approvals=[ToolCallPart(tool_name='transfer_funds', args='{}', tool_call_id='tc')])
+            DeferredToolRequests(
+                approvals=[ToolCallPart(tool_name='transfer_funds', args='{}', tool_call_id='tc')],
+                validated_args={'tc': {}},
+            )
         )
     ]
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
@@ -9703,7 +9757,10 @@ async def test_realtime_session_denies_an_approval_gated_tool_through_a_handler(
     lifecycle = [event for event in events if isinstance(event, DeferredToolRequestsEvent)]
     assert lifecycle == [
         DeferredToolRequestsEvent(
-            DeferredToolRequests(approvals=[ToolCallPart(tool_name='transfer_funds', args='{}', tool_call_id='tc')])
+            DeferredToolRequests(
+                approvals=[ToolCallPart(tool_name='transfer_funds', args='{}', tool_call_id='tc')],
+                validated_args={'tc': {}},
+            )
         )
     ]
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
@@ -9861,13 +9918,17 @@ async def test_tools_from_one_response_share_a_run_step() -> None:
     assert seen_steps[0] == seen_steps[1]
 
 
-def _ordered_events_agent() -> Agent[None, str]:
-    """Two tools where the *second* call finishes first, so completion order != call order."""
+def _ordered_events_agent(quick_landed: asyncio.Event) -> Agent[None, str]:
+    """Two tools where the *second* call finishes first, so completion order != call order.
+
+    `slow` returns only once `quick_landed` is set.
+    """
     agent: Agent[None, str] = Agent()
 
     @agent.tool_plain
     async def slow() -> str:
-        await asyncio.sleep(0.05)
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            await quick_landed.wait()
         return 'slow'
 
     @agent.tool_plain
@@ -9881,8 +9942,16 @@ async def test_parallel_ordered_events_emits_results_in_call_order() -> None:
     # `parallel_ordered_events` promises parallel execution with events in call order. The session used
     # to read the mode only to spot `'sequential'`, so this fell through to plain parallel and results
     # streamed in completion order — the setting silently did nothing.
-    agent = _ordered_events_agent()
-    conn = FakeRealtimeConnection(
+    quick_result_sent = asyncio.Event()
+
+    class _QuickResultConnection(FakeRealtimeConnection):
+        async def send_input(self, content: RealtimeInput) -> None:
+            await super().send_input(content)
+            if isinstance(content, ToolResult) and content.tool_call_id == 'tc2':
+                quick_result_sent.set()
+
+    agent = _ordered_events_agent(quick_result_sent)
+    conn = _QuickResultConnection(
         [
             ToolCall(tool_call_id='tc1', tool_name='slow', args='{}'),
             ToolCall(tool_call_id='tc2', tool_name='quick', args='{}'),
@@ -9905,7 +9974,8 @@ async def test_parallel_ordered_events_emits_results_in_call_order() -> None:
 async def test_parallel_default_still_emits_results_in_completion_order() -> None:
     # The other side of the branch: the default mode is unchanged, so the ordering buffer only engages
     # where it was asked for.
-    agent = _ordered_events_agent()
+    quick_result_seen = asyncio.Event()
+    agent = _ordered_events_agent(quick_result_seen)
     conn = FakeRealtimeConnection(
         [
             ToolCall(tool_call_id='tc1', tool_name='slow', args='{}'),
@@ -9914,10 +9984,14 @@ async def test_parallel_default_still_emits_results_in_completion_order() -> Non
         ]
     )
     model = FakeRealtimeModel(conn)
+    results: list[str] = []
     async with agent.realtime(model).session() as session:
-        events = [e async for e in session]
+        async for e in session:
+            if isinstance(e, FunctionToolResultEvent):
+                results.append(e.part.tool_name)
+                if e.part.tool_name == 'quick':
+                    quick_result_seen.set()
 
-    results = [e.part.tool_name for e in events if isinstance(e, FunctionToolResultEvent)]
     assert results == ['quick', 'slow']
 
 

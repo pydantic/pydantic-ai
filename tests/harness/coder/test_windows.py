@@ -2,22 +2,47 @@
 
 from __future__ import annotations
 
+import ctypes
 import json
 import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import anyio
 import pytest
 
+from pydantic_ai import RunContext
 from pydantic_ai.capabilities import WindowsWorkspace
+from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
+from pydantic_ai.workspaces import Workspace
+from pydantic_ai.workspaces.windows import WindowsWorkspaceBackend
 from pydantic_ai_harness import Coder
 from pydantic_ai_harness.file_system import FileSystem
-from pydantic_ai_harness.shell import Shell
+from pydantic_ai_harness.shell import Shell, ShellToolset
 
 from .._tool_calls import call_tool, call_tools
 
 windows_only = pytest.mark.skipif(sys.platform != 'win32', reason='runs PowerShell')
+
+
+class _CountsRefusals(WindowsWorkspaceBackend):
+    """Counts the reads Windows refuses, and calls `on_refusal` after each, so a test can release what refused it."""
+
+    def __init__(self, working_dir: Path, on_refusal: Callable[[], None]) -> None:
+        super().__init__(working_dir)
+        self.on_refusal = on_refusal
+        self.refusals = 0
+
+    async def read_bytes(self, path: str) -> bytes:
+        try:
+            return await super().read_bytes(path)
+        except PermissionError:
+            self.refusals += 1
+            self.on_refusal()
+            raise
 
 
 @windows_only
@@ -62,6 +87,52 @@ class TestShellOnWindows:
         )
         result = await call_tool([Shell[None](tools=['shell']), workspace], 'shell', {'command': script})
         assert 'True 1' in result
+
+    async def test_a_retried_launch_without_a_handle_is_pending(self, project: Path) -> None:
+        """A claimed job directory is reported as a pending launch, and the command is not started again."""
+        toolset = ShellToolset[None](
+            allowed_commands=[],
+            denied_commands=[],
+            denied_operators=[],
+            default_timeout=10,
+            max_output_chars=50_000,
+            persist_cwd=False,
+            allow_interactive=False,
+        )
+        ctx = RunContext[None](
+            deps=None,
+            model=TestModel(),
+            usage=RunUsage(),
+            prompt=None,
+            messages=[],
+            run_step=0,
+            workspace=Workspace(WindowsWorkspaceBackend(project)),
+            run_id='durable-run',
+            tool_call_id='launch-1',
+        )
+        started = await toolset.start_command(ctx, 'Write-Output hi')
+        directory = project / '.pydantic-ai-harness' / 'shell' / started.rsplit('ID: ', 1)[1].strip()
+        # Without a handle, the claimed directory is a launch still in flight, or one whose reply was lost.
+        (directory / 'handle').unlink()
+        with pytest.raises(
+            ModelRetry, match=r'^Background command launch is pending; retry with the same tool call ID\.$'
+        ):
+            await toolset.start_command(ctx, 'Write-Output hi')
+
+    async def test_the_wrapper_reads_its_script_from_the_job_directory(self, project: Path) -> None:
+        """Antivirus software flags an `-EncodedCommand` launch, so no script goes on the wrapper's command line."""
+        shell = Shell[None](tools=['start_command', 'stop_command'])
+        workspace = WindowsWorkspace[None](project)
+        started = await call_tool([shell, workspace], 'start_command', {'command': 'Start-Sleep 600'})
+        assert 'ID: ' in started, started
+        command_id = started.rsplit('ID: ', 1)[1].strip()
+        pid = (project / '.pydantic-ai-harness' / 'shell' / command_id / 'handle').read_text().split()[0]
+        script = f"[Console]::Out.Write((Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}').CommandLine)"
+        try:
+            line = await call_tool([Shell[None](tools=['shell']), workspace], 'shell', {'command': script})
+        finally:
+            await call_tool([shell, workspace], 'stop_command', {'command_id': command_id})
+        assert 'supervisor.ps1' in line and 'EncodedCommand' not in line, line
 
     @pytest.mark.parametrize(
         ('path', 'protected', 'error'),
@@ -127,6 +198,57 @@ class TestShellOnWindows:
             assert '"exit_code": 0}' in alive
         finally:
             await anyio.run_process(['taskkill', '/T', '/F', '/PID', str(pid)], check=False)
+
+    @pytest.mark.parametrize(('released', 'refusals'), [(True, 1), (False, 3)], ids=['released', 'held'])
+    async def test_a_status_held_open_for_delete_is_read_again(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch, released: bool, refusals: int
+    ) -> None:
+        """`Move-Item -Force` holds `status.json` open for `DELETE` while it replaces it, and Windows refuses an open
+        that does not share delete meanwhile: the read is tried again, and the refusal raised once it outlasts them."""
+        monkeypatch.setattr('pydantic_ai_harness.shell._jobs._STATUS_READ_ATTEMPTS', 3)
+        monkeypatch.setattr('pydantic_ai_harness.shell._jobs._STATUS_READ_DELAY', 0)
+        shell = Shell[None](tools=['start_command', 'check_command', 'stop_command'])
+        started = await call_tool(
+            [shell, WindowsWorkspace[None](project)], 'start_command', {'command': 'Start-Sleep 600'}
+        )
+        assert 'ID: ' in started, started
+        command_id = started.rsplit('ID: ', 1)[1].strip()
+        check: dict[str, object] = {'command_id': command_id}
+        status = project / '.pydantic-ai-harness' / 'shell' / command_id / 'status.json'
+        # Read with `getattr` because `WinDLL` exists only on Windows; it is a `CDLL` subclass.
+        win_dll: type[ctypes.CDLL] = getattr(ctypes, 'WinDLL')
+        kernel32 = win_dll('kernel32')
+        kernel32.CreateFileW.restype = ctypes.c_void_p
+        kernel32.CreateFileW.argtypes = (
+            ctypes.c_wchar_p,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_void_p,
+        )
+        kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+        # `DELETE`, `FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE`, `OPEN_EXISTING`, `INVALID_HANDLE_VALUE`.
+        delete, share_all, open_existing, invalid_handle = 0x10000, 0x7, 3, ctypes.c_void_p(-1).value
+        handle = kernel32.CreateFileW(str(status), delete, share_all, None, open_existing, 0, None)
+        held = [handle]
+
+        def release() -> None:
+            if released:
+                kernel32.CloseHandle(held.pop())
+
+        backend = _CountsRefusals(project, release)
+        try:
+            assert handle not in (None, invalid_handle)
+            checked = await call_tool([shell], 'check_command', check, workspace=backend)
+        finally:
+            for open_handle in held:
+                kernel32.CloseHandle(open_handle)
+            stopped = await call_tool([shell], 'stop_command', check, workspace=backend)
+        assert backend.refusals == refusals
+        assert ('[status: running]' if released else '[Errno 13] Permission denied') in checked, checked
+        assert '[stopped]' in stopped
 
     async def test_stopping_a_background_command_ends_its_tree(self, project: Path) -> None:
         shell = Shell[None](tools=['start_command', 'check_command', 'stop_command'])

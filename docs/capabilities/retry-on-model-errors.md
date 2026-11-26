@@ -61,7 +61,7 @@ By default, a request is retried when it fails with one of these [error categori
 - [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError]
 - [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError], including [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError]
 - [`ModelServerError`][pydantic_ai.exceptions.ModelServerError]
-- [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError], including the transport's [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError]
+- [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError], including [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError] for a transport timeout or a timeout the provider reports, like an HTTP 408
 
 Errors that fail the same way when the request is sent again aren't retried by default: a [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] (a bad request, bad credentials, an unknown model or an overflowing context window), a [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError], a [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] for a request that ran out its whole [`request_timeout`](../timeouts.md#model-request-deadlines), or a plain `ModelAPIError` that falls in no category.
 

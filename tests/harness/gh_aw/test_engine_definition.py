@@ -22,6 +22,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from types import ModuleType
@@ -36,10 +37,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic_ai import Agent, ModelMessage, NativeToolCallPart, NativeToolReturnPart, RunContext, ToolReturnPart
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    FunctionToolResultEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
     TextPart,
+    ThinkingPart,
     ToolCallPartDelta,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -50,11 +53,11 @@ if shutil.which('node') is None:  # pragma: no cover
     pytest.skip('the gh-aw harness script is JavaScript and needs node', allow_module_level=True)
 
 DEFINITION = Path(__file__).parents[3] / 'src' / 'pydantic_ai_harness' / 'gh-aw' / 'pydantic.md'
-CLAI2_SOURCE = Path(__file__).parents[3] / 'src' / 'pydantic_clai2'
+CLAI2_SOURCE = Path(__file__).parents[3] / 'src' / 'pydantic_ai_pax'
 
 requires_clai2 = pytest.mark.skipif(
-    importlib.util.find_spec('pydantic_clai2') is None,
-    reason='running the launcher requires pydantic-clai2',
+    importlib.util.find_spec('pydantic_ai_pax') is None,
+    reason='running the launcher requires pydantic-ai-pax',
 )
 
 # The first `node` start on a runner is slow; `started_node` pays it outside every test's budget.
@@ -1078,6 +1081,27 @@ def test_pai_base_url_keeps_every_provider_on_chat_completions(tmp_path: Path, m
     assert 'GITHUB_COPILOT_INTEGRATION_ID' not in invocation.env
 
 
+@pytest.mark.parametrize(
+    ('endpoint', 'logged'),
+    [
+        ('https://canary-user:canary-token@endpoint.example/v1', 'https://endpoint.example'),
+        ('https://endpoint.example/v1?key=canary-query', 'https://endpoint.example'),
+        ('endpoint.example/v1?key=canary-query', '(unparsable)'),
+    ],
+    ids=['userinfo', 'query', 'unparsable'],
+)
+def test_the_startup_log_names_only_endpoint_origins(tmp_path: Path, endpoint: str, logged: str) -> None:
+    """Workflow run logs are public, and an endpoint's userinfo or query string can carry a credential."""
+    invocation = launch(
+        tmp_path,
+        {**proxy_env('openai', 'openai/gpt-5'), 'PAI_BASE_URL': endpoint, 'OTEL_EXPORTER_OTLP_ENDPOINT': endpoint},
+    )
+
+    assert f'provider=(PAI_BASE_URL) model=gpt-5 baseUrl={logged} otlp={logged}\n' in invocation.stdout
+    assert 'canary' not in invocation.stdout + invocation.capture
+    assert invocation.env['OPENAI_BASE_URL'] == endpoint
+
+
 async def test_the_default_agent_runs_commands_in_the_checkout_with_the_step_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, event_output: _RecorderCapture
 ) -> None:
@@ -1205,6 +1229,76 @@ def test_cached_usage_marks_input_tokens_as_including_cache(
 
     parsed = parse_log(tmp_path, session_log_path.read_text(encoding='utf-8'))
     assert parsed.log_entries[-1].data['usage'] == events[-1].data['usage']
+
+
+def test_frames_larger_than_a_full_non_blocking_capture_pipe_are_written_whole(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reasoning frame and a tool-result frame larger than the pipe reach a non-blocking capture whose reader lags.
+
+    The CI capture pipe has been non-blocking: a single frame larger than it failed the run with
+    `[Errno 11] write could not complete without blocking` and left a truncated frame (#13878). The pipe is filled
+    before the frames are written, and the reader starts once writing begins.
+    """
+    invocation = launch(tmp_path, proxy_env('openai', 'openai/gpt-5'))
+    read_fd, write_fd = os.pipe()
+    os.set_blocking(write_fd, False)
+    monkeypatch.setenv('GH_AW_SESSION_CAPTURE_FD', str(write_fd))
+    module = import_generated_agent(invocation, monkeypatch)
+    context = RunContext[None](
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        prompt='read the candidates',
+        run_id='large-frame-run',
+        conversation_id='large-frame-session',
+    )
+    module._recorder.observe(context, PartStartEvent(index=0, part=ThinkingPart(content='')))
+    while True:
+        try:
+            os.write(write_fd, b'\n' * 4096)
+        except BlockingIOError:
+            break
+
+    received = bytearray()
+    reader_may_start = threading.Event()
+
+    def drain() -> None:
+        reader_may_start.wait()
+        while chunk := os.read(read_fd, 65536):
+            received.extend(chunk)
+
+    reader = threading.Thread(target=drain)
+    reader.start()
+    reasoning = 'r' * 100_000
+    # `json.dumps` escapes each of these characters to six bytes.
+    tool_output = 'é' * 20_000
+    try:
+        reader_may_start.set()
+        module._recorder.observe(context, PartEndEvent(index=0, part=ThinkingPart(content=reasoning)))
+        module._recorder.observe(
+            context,
+            FunctionToolResultEvent(
+                part=ToolReturnPart(tool_name='read_file', content=tool_output, tool_call_id='read-call')
+            ),
+        )
+        module._recorder.finish(exit_code=0)
+    finally:
+        reader_may_start.set()
+        os.close(write_fd)
+        reader.join()
+        os.close(read_fd)
+
+    parsed = parse_log(tmp_path, received.decode())
+    assert [event.type for event in parsed.log_entries] == [
+        'session.init',
+        'user.message',
+        'assistant.reasoning',
+        'tool.execution_complete',
+        'session.result',
+    ]
+    assert parsed.log_entries[2].data == {'content': reasoning}
+    assert parsed.log_entries[3].data['output'] == tool_output
 
 
 async def test_a_failed_stream_emits_one_partial_message_and_failure_result(
@@ -1715,11 +1809,11 @@ async def test_interrupted_stream_has_a_failure_terminal_result(
 
 
 def code_mode_off_args(tmp_path: Path) -> tuple[str, str]:
-    """CLI arguments that point CLAI at a settings database with code mode off.
+    """CLI arguments that point Pax at a settings database with code mode off.
 
-    CLAI folds tools into `run_code` by default, and `TestModel` cannot write code that runs.
+    Pax folds tools into `run_code` by default, and `TestModel` cannot write code that runs.
     """
-    from pydantic_clai2.config.settings_store import SettingsStore
+    from pydantic_ai_pax.config.settings_store import SettingsStore
 
     database = tmp_path / 'clai2.db'
     SettingsStore(database).set('run.code_mode', False)
@@ -1847,7 +1941,8 @@ class _FailTerminalWrites:
         self.stream = stream
 
     def write(self, value):
-        if 'session.result' in value and (_fail_every_terminal or '"usage"' in value):
+        line = bytes(value)
+        if b'session.result' in line and (_fail_every_terminal or b'"usage"' in line):
             raise OSError('injected terminal recorder write failure')
         return self.stream.write(value)
 

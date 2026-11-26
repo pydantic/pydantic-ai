@@ -110,6 +110,7 @@ from pydantic_ai.realtime.codec import (
     ToolCall,
     ToolResult,
     TruncateOutput,
+    UpdateTools,
 )
 from pydantic_ai.realtime.profiles import merge_realtime_profile
 from pydantic_ai.realtime.xai import map_conversation_event as _map_conversation_wire_event
@@ -2310,7 +2311,7 @@ async def test_connect_seeds_retained_user_audio(monkeypatch: pytest.MonkeyPatch
         (
             BinaryContent(data=_wav_bytes(b'pcm-audio!', 16000), media_type='audio/wav'),
             snapshot(
-                'Cannot seed retained audio recorded at 16000 Hz into a openai realtime session expecting 24000 Hz. Resample it before passing `message_history`.'
+                'Cannot seed retained audio into openai realtime history: it was recorded at 16000 Hz, but the session expects 24000 Hz. Resample it first.'
             ),
         ),
         (
@@ -2321,9 +2322,7 @@ async def test_connect_seeds_retained_user_audio(monkeypatch: pytest.MonkeyPatch
         ),
         (
             BinaryContent(data=b'not a wav', media_type='audio/wav'),
-            snapshot(
-                '`SpeechPart.audio` cannot be seeded into openai realtime history because it is not valid WAV audio.'
-            ),
+            snapshot('Cannot seed retained audio into openai realtime history: it is not valid WAV audio.'),
         ),
     ],
 )
@@ -2433,7 +2432,7 @@ async def test_connect_rejects_image_url_returning_non_image(monkeypatch: pytest
         async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x', messages=history):
             pass  # pragma: no cover
     assert str(exc_info.value) == snapshot(
-        "`ImageUrl` resolved to unsupported media type 'application/pdf' in a openai realtime session. Use a URL that returns an image, or remove it."
+        "`ImageUrl` resolved to media type 'application/pdf', which cannot be sent to openai in a realtime session. Use a URL that returns an image, or remove it."
     )
 
 
@@ -3499,6 +3498,50 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
         OutputTranscript(text='hi', is_final=True, response_id='response'),
     ]
     assert connect.closed == [dropped, good]
+
+
+async def test_tool_update_is_kept_for_a_reconnect(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`UpdateTools` replaces the session's tools, and the configuration a re-dial sends, so a reconnect keeps them."""
+    dropped = _DroppableAfterHandshake()
+    redialed = FakeWebSocket([_created(), _updated()])
+    connect = _RecordingConnect([dropped, redialed])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+    loader = ToolDefinition(name='load_capability', description='Load a capability.')
+    forecast = ToolDefinition(name='get_forecast', description='Look up the forecast.')
+
+    model = OpenAIRealtimeModel('gpt-realtime', settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1}})
+    async with _connect(model, 'x', tools=[loader]) as conn:
+        await conn.send(UpdateTools(tools=[loader, forecast]))
+        dropped.dropped.set()
+        events = await collect_codec_events(conn)
+
+    assert events == [RealtimeSessionReconnectEvent(state_restored=False)]
+    # Only the tools, with the `type` the GA configuration needs: the rest of it stands.
+    assert json.loads(dropped.sent[-1]) == snapshot(
+        {
+            'type': 'session.update',
+            'session': {
+                'tools': [
+                    {
+                        'type': 'function',
+                        'name': 'load_capability',
+                        'description': 'Load a capability.',
+                        'parameters': {'type': 'object', 'properties': {}},
+                    },
+                    {
+                        'type': 'function',
+                        'name': 'get_forecast',
+                        'description': 'Look up the forecast.',
+                        'parameters': {'type': 'object', 'properties': {}},
+                    },
+                ],
+                'type': 'realtime',
+            },
+        }
+    )
+    (handshake,) = [json.loads(frame) for frame in redialed.sent if json.loads(frame)['type'] == 'session.update']
+    assert [tool['name'] for tool in handshake['session']['tools']] == ['load_capability', 'get_forecast']
+    assert handshake['session']['instructions'] == 'x'
 
 
 async def test_connect_webrtc_reconnect_closes_previous_connection(monkeypatch: pytest.MonkeyPatch) -> None:

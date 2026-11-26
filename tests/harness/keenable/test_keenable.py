@@ -34,8 +34,7 @@ from pydantic_ai_harness.keenable import (
     KeenableSearchToolset,
     KeenableSource,
 )
-
-READINESS_WAIT_TIMEOUT = 10
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 
 @pytest.fixture(autouse=True)

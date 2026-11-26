@@ -8,11 +8,19 @@ description: "Take a Pydantic AI agent to production: crash recovery, human appr
 
 Pydantic AI is open source, with [commercial enterprise support from Pydantic](enterprise-support.md), and runs on [Azure OpenAI](models/azure.md), [Amazon Bedrock](models/bedrock.md) and [Google Vertex AI](models/google-cloud.md) as well as on OpenAI, Anthropic, Gemini and [models you host yourself](models/ollama.md). [Pydantic AI for Enterprise](enterprise.md) answers the questions security, platform and procurement teams ask: what leaves your infrastructure, which models you can use, approvals and audit trails, central model access and spending caps through the Gateway, Logfire's compliance and self-hosting, and support.
 
-The rest of the page answers the questions teams ask before shipping an agent, each with the short answer and a link to the page that covers it in full, after [one runnable service](#end-to-end) that puts the answers together.
+Start from how a run begins and who is waiting for it:
+
+- **A person is waiting in your web app.** Run the agent inside a route of your application, [stream it to the frontend](#frontend) with a UI adapter, and store each run's [`Conversation`][pydantic_ai.conversation.Conversation] [in your database](#state); the [chat app example](examples/chat-app.md) keeps a chat's messages in SQLite. Install `pydantic-ai`; there is nothing else to run.
+- **Nobody is waiting.** A queue, an event or a schedule starts the run, as a job in your task queue or a step in your pipeline, and it usually returns [structured output](output.md) for your code to store. See [how to deploy it](#deploy).
+- **A person is waiting in a terminal.** The run lives as long as the session, so there is nothing to host. Start from [Pax](harness/pax.md), which runs any agent with `pax --agent mymodule:agent` and has a headless mode (`pax -p "..."`), or from [`Agent.to_cli()`][pydantic_ai.agent.AbstractAgent.to_cli] (see the [legacy CLI](cli.md)) to open a chat from inside your own code, or from [`Coder`](harness/coder.md) (Harness) if you are building a coding agent rather than using one; to keep a conversation after the session ends, run your own loop around [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] and store its [`Conversation`][pydantic_ai.conversation.Conversation] (see [conversation state](#state)).
+
+Then decide what a crash costs. A run in flight [dies with the process](#crash), and for most agents starting it again is fine. When starting a run over would repeat a lot of paid-for work and side effects, or the run is a workflow that itself waits days for an [approval](#approval), put it on a [durable execution](durable_execution/overview.md) engine, as the [end-to-end service](#end-to-end) below does with DBOS (`pydantic-ai[dbos]`). [`StepPersistence`](#checkpointer) (Harness) sits between the two: it lets you continue from the last tool-call snapshot without running an engine.
+
+The rest of the page answers the questions teams ask before shipping an agent, each with the short answer and a link to the page that covers it in full.
 
 | Before you ship, you want to know... | Short answer | Install |
 |---|---|---|
-| [What happens when the process crashes mid-run?](#crash) | Run the agent on a [durable execution](durable_execution/overview.md) engine | `pydantic-ai-slim` with one engine's extra, such as `[dbos]` or `[temporal]` |
+| [What happens when the process crashes mid-run?](#crash) | The run is lost: you start it again, or continue from a [`StepPersistence`](#checkpointer) snapshot (Harness); if a run must survive a crash partway through a step, put it on a [durable execution](durable_execution/overview.md) engine | `pydantic-ai`, `pydantic-ai-harness` for `StepPersistence`, or `pydantic-ai-slim` with one engine's extra, such as `[dbos]` or `[temporal]` |
 | [How does a human approve a risky action, and the run resume days later?](#approval) | [Deferred tools](deferred-tools.md) end the run; a later run resumes it | `pydantic-ai` |
 | [How do I keep conversation state?](#state) | Store the run's `Conversation` in your database | `pydantic-ai` |
 | [How do I bound cost and runaway loops?](#cost) | `UsageLimits` per run, `SpendLimits` per day, tenant or month | `pydantic-ai`, and `pydantic-ai-harness` for `SpendLimits` |
@@ -22,7 +30,7 @@ The rest of the page answers the questions teams ask before shipping an agent, e
 | [How do I test and evaluate changes?](#quality) | Unit tests with `TestModel`, then evals on datasets and live traffic | `pydantic-ai` (includes `pydantic-evals`) |
 | [How do I limit what the agent can touch?](#safety) | Per-caller tools, approval, and a sandbox for model-written code | `pydantic-ai`, and `pydantic-ai-harness` for sandboxes |
 | [How do I serve it to a frontend?](#frontend) | [AG-UI](ui/ag-ui.md) or [Vercel AI](ui/vercel-ai.md) streams from any ASGI app | `pydantic-ai` |
-| [How do I deploy it?](#deploy) | As your own Python process: a web app, a worker or a function | Your infrastructure |
+| [How do I deploy it?](#deploy) | As your own Python process: a web app, a worker, a pipeline step or a function | Your infrastructure |
 
 For systems already running Pydantic AI in production, with their code or case studies, see [Built with Pydantic AI](built-with.md).
 
@@ -286,7 +294,7 @@ def test_support_agent():
 
 - **Authorize tools and conversation access**: give the agent only the tools the current caller may use, by [building the toolset per run](toolsets.md#dynamically-building-a-toolset) or [filtering it](toolsets.md#filtering-tools) against the user in your [dependencies](dependencies.md); check that the caller may access the [conversation](#state) it continues; and treat a history sent by a client as [untrusted input](message-history.md#loading-untrusted-history).
 - **Require approval for sensitive actions**: [deferred tools](#approval) put a person, or a second model with [`ToolCallJudge`](harness/tool-call-judge.md), in front of the call.
-- **Isolate model-written code**: run untrusted shell commands and generated code in a VM or microVM-backed [sandbox](harness/index.md#execution-environments), such as [BoxLite](harness/boxlite-sandbox.md) or [Smol](harness/smol-sandbox.md) locally or [E2B](harness/e2b-sandbox.md) or [Modal](harness/modal-sandbox.md) remotely. On Linux, [Bubblewrapped Workspace](harness/bubblewrap-sandbox.md) keeps a trusted agent from accidentally writing outside its working directory, though it is not a security boundary. [`FileSystem`](harness/filesystem.md) path patterns guard what the model's file tools write, but they are checks, not isolation, and don't bound shell commands.
+- **Isolate model-written code**: run untrusted shell commands and generated code in a VM or microVM-backed [sandbox](workspace.md#supported-workspaces), such as [BoxLite](harness/boxlite-sandbox.md) or [Smol](harness/smol-sandbox.md) locally or [E2B](harness/e2b-sandbox.md) or [Modal](harness/modal-sandbox.md) remotely. On Linux, [Bubblewrapped Workspace](harness/bubblewrap-sandbox.md) keeps a trusted agent from accidentally writing outside its working directory, though it is not a security boundary. [`FileSystem`](harness/filesystem.md) path patterns guard what the model's file tools write, but they are checks, not isolation, and don't bound shell commands.
 
 [Pydantic AI Harness](harness/index.md#capabilities) adds more, such as [guardrails](harness/guardrails.md) with secret and PII detectors and a [prompt injection defender](harness/prompt-injection-defender.md) for tool results.
 
@@ -315,10 +323,11 @@ Approvals for [deferred tools](#approval) travel over the same stream. The adapt
 
 ## How do I deploy it? {#deploy}
 
-An agent is a Python object in your process, so you deploy it the way you deploy the rest of your Python: there is nothing Pydantic-specific to host. Typical shapes:
+An agent is a Python object in your process, so you deploy it the way you deploy the rest of your Python: there is nothing Pydantic-specific to host. Where it runs:
 
 - **A web service**: run the agent inside your FastAPI, Starlette, Django or Flask handler, as [above](#frontend), and scale it like any other web app. A conversation's state lives in what you [store](#state) or in the durable engine, not in the process, so any instance can continue any conversation.
-- **A worker**: start runs from a queue or schedule, on a durable engine's workers such as [Temporal](durable_execution/temporal.md), [DBOS queues](durable_execution/dbos.md#durable-execution) or [Prefect deployments](durable_execution/prefect.md#deployments-and-scheduling), or on [Render Workflows](harness/render-workflows.md) (Harness), which run model requests and supported tool calls as separate tasks.
+- **A worker**: start runs from a queue, event or schedule, as a job on the Celery, Dramatiq or arq workers you already run. A retry starts the run over, repeating its model requests and any tool side effects, so make tools with side effects safe to repeat; a durable engine's workers such as [Temporal](durable_execution/temporal.md), [DBOS queues](durable_execution/dbos.md#durable-execution) or [Prefect deployments](durable_execution/prefect.md#deployments-and-scheduling), or [Render Workflows](harness/render-workflows.md) (Harness), resume from the last completed step instead.
+- **A step in a pipeline**: call the agent from your data pipeline or CI job and store its structured output. The step's own retries start the run over; a durable [Apache Airflow](durable_execution/airflow.md) task can resume from its step cache instead. [Batch Processing](batch.md) sends many runs through a provider's batch API.
 - **A serverless function**: run on [AWS Lambda durable functions](harness/aws-lambda.md) so a timed-out or retried invocation resumes instead of starting over.
 - **A voice agent**: a [realtime session](realtime/overview.md) holds a provider connection open for the whole call, so it needs long-lived compute rather than request-scoped functions; see [hosting a realtime backend](realtime/deployment.md#hosting).
 - **An agent on a repository**: [GitHub Agentic Workflows](harness/gh-aw.md) run an agent on issues, pull requests or a schedule.

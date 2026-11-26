@@ -19,11 +19,7 @@ import os
 
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import LocalWorkspace
-
-try:
-    from pydantic_ai_harness.file_system import FileSystemToolset
-except ImportError:  # pragma: no cover - the gh-aw engine pins a harness release from before the `file_system` rename
-    from pydantic_ai_harness.filesystem import FileSystemToolset
+from pydantic_ai_harness.file_system import FileSystemToolset
 from pydantic_ai_harness.shell import ShellToolset
 
 from .shared import MAX_TOOL_OUTPUT, clip_tail, workspace

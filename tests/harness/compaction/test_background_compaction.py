@@ -33,8 +33,7 @@ from pydantic_ai_harness.compaction import (
     TieredCompaction,
 )
 from pydantic_ai_harness.compaction._fallback_compaction import MAX_BACKGROUND_COMPACTIONS
-
-READINESS_WAIT_TIMEOUT = 10
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 TRIGGER = 2_000
 """`max_tokens` of every chain here; `background_start=0.5` starts the summary above 1,000."""

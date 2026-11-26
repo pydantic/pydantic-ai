@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 from dataclasses import dataclass, field
+from itertools import takewhile
 from pathlib import Path
 
 import pytest
-from pydantic import BaseModel
+import yaml
+from pydantic import BaseModel, TypeAdapter
+from typing_extensions import TypedDict
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -26,6 +31,7 @@ from publish_pr_review_checks import (
     ReviewFinding,
     gate,
     publish,
+    is_trusted,
     review_payload,
     verdict,
 )
@@ -151,6 +157,25 @@ def test_run_label_changes_nothing_for_a_trusted_author() -> None:
     """The label does not buy a second review of a head that was already reviewed."""
     github = FakeGitHub(labels=[RUN_LABEL], labeled_by=MAINTAINER)
     assert not gate(github, {**ENV, 'EVENT_ACTION': 'labeled', 'EVENT_LABEL': RUN_LABEL})
+    assert github.statuses == []
+
+
+@pytest.mark.parametrize(
+    ('author', 'labeled_by', 'expected'),
+    [
+        (MAINTAINER, None, True),
+        (CONTRIBUTOR, None, False),
+        (Actor(login='maintainer', type='Bot'), None, False),
+        (CONTRIBUTOR, CONTRIBUTOR, False),
+        (CONTRIBUTOR, Actor(login='maintainer', type='Bot'), False),
+        (Actor(login='maintainer', type='Bot'), MAINTAINER, True),
+    ],
+    ids=['write-author', 'read-author', 'app-author', 'read-access-labeler', 'bot-labeler', 'write-labeler'],
+)
+def test_trusted_matches_the_review_gate(author: Actor, labeled_by: Actor | None, expected: bool) -> None:
+    """The other workflows the run label activates trust exactly whom the review gate trusts, and write nothing."""
+    github = FakeGitHub(author=author, labels=[RUN_LABEL] if labeled_by else [], labeled_by=labeled_by)
+    assert is_trusted(github) is expected
     assert github.statuses == []
 
 
@@ -299,6 +324,60 @@ def test_failed_selection_fails_the_status(tmp_path: Path) -> None:
     github = FakeGitHub()
     publish(github, {**_publish_env(tmp_path), 'DETECT_RESULT': 'failure', 'REVIEW_CHECKS': ''})
     assert _states(github) == [(HEAD, 'failure')]
+
+
+Step = TypedDict(
+    'Step', {'name': str, 'id': str, 'if': str, 'uses': str, 'run': str, 'env': dict[str, str]}, total=False
+)
+PUBLISH_STEPS = TypeAdapter(list[Step]).validate_python(
+    yaml.load(
+        (Path(__file__).parents[1] / 'workflows' / 'pr-review-checks.yml').read_text(encoding='utf-8'),
+        Loader=yaml.BaseLoader,
+    )['jobs']['publish']['steps']
+)
+
+
+@pytest.mark.parametrize(
+    ('review_result', 'listings', 'expected'),
+    [
+        ('success', ((), ('general',)), 'success'),
+        ('success', ((), ()), 'failure'),
+        ('failure', ((),), 'failure'),
+    ],
+    ids=['listed-late', 'never-listed', 'review-failed'],
+)
+def test_publish_job_downloads_again_before_a_result_counts_as_missing(
+    tmp_path: Path, review_result: str, listings: tuple[tuple[str, ...], ...], expected: CommitStatus
+) -> None:
+    """The artifact service can list a finalized upload late, so a result every review job uploaded is fetched again.
+
+    Each download step reads the next of `listings`: the checks the run's artifact list shows at that moment.
+    """
+    results = tmp_path / 'results'
+    env = {**_publish_env(results), 'REVIEW_CHECKS': '["general"]'}
+    output = tmp_path / 'output'
+    output.touch()
+    listed = iter(listings)
+    for step in takewhile(lambda step: step.get('name') != 'Publish findings and the final status', PUBLISH_STEPS):
+        runs = {
+            '': True,
+            "needs.review.result == 'success'": review_result == 'success',
+            "steps.unlisted.outputs.missing == 'true'": 'missing=true' in output.read_text(),
+        }[step.get('if', '')]
+        if runs and step.get('uses', '').startswith('actions/download-artifact@'):
+            results.mkdir(exist_ok=True)
+            for check in next(listed):
+                (results / f'{check}.json').write_text(_result(check).model_dump_json())
+        elif runs and step.get('id') == 'unlisted':
+            step_env = {name: env[name] for name in step.get('env', {})}
+            script = 'sleep() { :; }\n' + step.get('run', '')
+            run_env = {**step_env, 'GITHUB_OUTPUT': str(output), 'PATH': os.environ['PATH']}
+            subprocess.run(['bash', '-c', script], env=run_env, check=True)
+    github = FakeGitHub()
+    publish(github, env)
+    assert _states(github) == [(HEAD, expected)]
+    # A download step past the last listing would have raised, and one short of it leaves a listing unread.
+    assert next(listed, None) is None
 
 
 def test_moved_head_publishes_nothing(tmp_path: Path) -> None:

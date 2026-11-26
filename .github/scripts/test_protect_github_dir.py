@@ -1,10 +1,8 @@
 """Regression tests for the `.github/` protection guard.
 
 `.github/workflows/protect-github-dir.yml` decides whether a pull request may change
-`.github/`. It triggers on `pull_request_target`, and GitHub runs such a workflow from the
-**default branch of the base repository**, so the guard can never be exercised by the PR
-that edits it — these tests are the only place its logic is checked before `main`. That
-matters more than for an ordinary workflow: a bug in one direction blocks every
+`.github/`. It triggers on `pull_request`, so a PR runs its own copy of the guard; these tests
+check its logic before any PR depends on it. That matters more than for an ordinary workflow: a bug in one direction blocks every
 contributor, and in the other it lets fork-authored changes into a directory that
 executes with repository credentials.
 
@@ -35,7 +33,9 @@ WORKFLOW = Path(__file__).parent.parent / 'workflows' / 'protect-github-dir.yml'
 # pipes the canned payload through the real `jq` so the guard's own `--jq` expressions are
 # under test, not just the shell around them. It ignores `--paginate` and serves every
 # payload as one page: the guard's page-boundary behaviour is GitHub's to get right, while
-# the truncation case that IS the guard's problem is driven through FAKE_TOTAL_FILES.
+# the truncation case that IS the guard's problem is driven through FAKE_TOTAL_FILES. Real
+# `gh` filters with its built-in jq, so the stub calls jq by absolute path, REAL_JQ: a
+# stand-in `jq` on PATH then breaks only the guard's own pipeline.
 FAKE_GH = """#!/usr/bin/env python3
 import os
 import subprocess
@@ -46,7 +46,7 @@ args = sys.argv[1:]
 
 def jq(payload):
     expr = args[args.index('--jq') + 1]
-    result = subprocess.run(['jq', '-r', expr], input=payload, capture_output=True, text=True)
+    result = subprocess.run([os.environ['REAL_JQ'], '-r', expr], input=payload, capture_output=True, text=True)
     sys.stdout.write(result.stdout)
     sys.stderr.write(result.stderr)
     sys.exit(result.returncode)
@@ -95,7 +95,7 @@ class Case:
     author: str = 'outside-contributor'
     permission: str = 'read'
     state: str = 'open'
-    event: str = 'pull_request_target'
+    event: str = 'pull_request'
     existing_comments: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
     # Defaults to len(files); set higher to model the PR-files API truncating.
     total_files: int | None = None
@@ -172,8 +172,11 @@ CASES: list[Case] = [
 ]
 
 
-def _run_guard(case: Case, tmp_path: Path) -> tuple[subprocess.CompletedProcess[str], Path]:
-    """Execute the guard's `run:` block for one case; return the result and the comment path."""
+def _run_guard(case: Case, tmp_path: Path, jq: str | None = None) -> tuple[subprocess.CompletedProcess[str], Path]:
+    """Execute the guard's `run:` block for one case; return the result and the comment path.
+
+    `jq`, when given, is the shell body of a stand-in for the `jq` the guard's own pipeline runs.
+    """
     script = tmp_path / 'guard.sh'
     script.write_text(_workflow()['jobs']['guard']['steps'][0]['run'], encoding='utf-8')
 
@@ -182,7 +185,13 @@ def _run_guard(case: Case, tmp_path: Path) -> tuple[subprocess.CompletedProcess[
     gh = bin_dir / 'gh'
     gh.write_text(FAKE_GH, encoding='utf-8')
     gh.chmod(0o755)
+    if jq is not None:
+        stand_in = bin_dir / 'jq'
+        stand_in.write_text(f'#!/bin/sh\n{jq}\n', encoding='utf-8')
+        stand_in.chmod(0o755)
 
+    real_jq = shutil.which('jq')
+    assert real_jq is not None
     comment = tmp_path / 'comment.md'
     total_files = len(case.files) if case.total_files is None else case.total_files
     result = subprocess.run(
@@ -203,6 +212,7 @@ def _run_guard(case: Case, tmp_path: Path) -> tuple[subprocess.CompletedProcess[
             'FAKE_PERMISSION': case.permission,
             'FAKE_TOTAL_FILES': str(total_files),
             'FAKE_COMMENT_OUT': str(comment),
+            'REAL_JQ': real_jq,
         },
     )
     return result, comment
@@ -246,10 +256,29 @@ def test_a_hostile_filename_cannot_reach_the_shell(tmp_path: Path):
     assert hostile in comment.read_text(encoding='utf-8')
 
 
-def test_the_guard_never_checks_out_pull_request_code():
-    """`pull_request_target` hands the job a write token in base-repository context.
+@pytest.mark.skipif(shutil.which('jq') is None, reason='the gh stub filters payloads with jq')
+@pytest.mark.parametrize(
+    'jq',
+    [
+        pytest.param('exit 127', id='jq-missing'),
+        # Stops after the unrelated file, before the `.github/` one.
+        pytest.param("echo docs/agents.md; echo 'jq: error' >&2; exit 5", id='jq-failing-part-way'),
+    ],
+)
+def test_a_jq_failure_fails_the_guard(jq: str, tmp_path: Path):
+    """An empty or partial path list must never read as "nothing under `.github/` changed"."""
+    case = Case(id='jq-failure', files=PROTECTED, blocked=True, comments=False)
+    result, comment = _run_guard(case, tmp_path, jq=jq)
 
-    Checking out or running the PR's own code under that trigger is precisely the
+    assert result.returncode != 0, f'stdout:\n{result.stdout}\nstderr:\n{result.stderr}'
+    assert 'No files under .github/ changed.' not in result.stdout
+    assert not comment.exists()
+
+
+def test_the_guard_never_checks_out_pull_request_code():
+    """A same-repository PR's run holds a write token.
+
+    Checking out or running the PR's own code with that token is precisely the
     supply-chain hole this workflow exists to close, so the guard reads PR metadata over
     the API and runs no action at all.
     """
@@ -285,12 +314,12 @@ def test_the_guard_does_not_trust_a_base_repo_head_branch():
 def test_the_trigger_has_no_paths_filter():
     """A `paths:` filter here would deadlock the repository.
 
-    A `pull_request_target` filtered to `.github/**` does not run at all on the PRs that
+    A `pull_request` filtered to `.github/**` does not run at all on the PRs that
     don't match it, and a *required* check that never runs stays pending forever. The job
     runs on every PR and exits 0 when nothing protected changed.
     """
     # YAML 1.1 resolves the bare `on:` key to the boolean True.
-    trigger = _workflow()[True]['pull_request_target']
+    trigger = _workflow()[True]['pull_request']
     assert 'paths' not in trigger
     assert 'paths-ignore' not in trigger
     # `edited` is the only event fired when a PR's base branch changes, and the verdict is a
