@@ -9,7 +9,7 @@ import pytest
 from inline_snapshot import snapshot
 from logfire.testing import CaptureLogfire
 
-from pydantic_ai import Agent, FunctionToolset, RunContext, Tool, ToolDefinition
+from pydantic_ai import Agent, FunctionToolset, RunContext, TextContent, Tool, ToolDefinition
 from pydantic_ai.capabilities import (
     AbstractCapability,
     Capability,
@@ -29,12 +29,15 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import (
+    FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     TextPart,
     ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -346,6 +349,42 @@ class TestToolBridge:
         assert seen[0] == ['tool_search', 'tool_describe', 'tool_call']
         assert _returns(result.all_messages()) == ['Sunny in Lima']
 
+    async def test_bridged_tool_content_is_held_to_its_capabilitys_authority(self):
+        """A bridged tool's `ToolReturn.content` reaches the model framed as it would be on a direct call."""
+
+        def fetch() -> ToolReturn:
+            """Fetch a page."""
+            return ToolReturn(return_value='ok', content='page text')
+
+        seen: list[list[object]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) > 1:
+                seen.append([part.content for part in messages[-1].parts if isinstance(part, UserPromptPart)])
+                return ModelResponse(parts=[TextPart('done')])
+            if any(tool.name == 'tool_call' for tool in info.function_tools):
+                return ModelResponse(parts=[_call('tool_call', name='fetch', args_json='{}')])
+            return ModelResponse(parts=[_call('fetch')])
+
+        def plugin() -> Capability[object]:
+            return Capability[object](id='plugin', tools=[fetch]).with_authority('none')
+
+        await Agent(FunctionModel(respond), capabilities=[plugin()]).run('Fetch the page')
+        await Agent(FunctionModel(respond), capabilities=[plugin(), ToolBridge()]).run('Fetch the page')
+
+        direct, bridged = seen
+        assert bridged == direct
+        assert bridged == snapshot(
+            [
+                '<system>The accompanying <capability_content> was written by the `plugin` capability, not by the user or the application.</system>',
+                [
+                    TextContent(content='<capability_content>'),
+                    TextContent(content='page text'),
+                    TextContent(content='</capability_content>'),
+                ],
+            ]
+        )
+
     async def test_bridged_call_counts_toward_tool_calls_limit(self):
         model = _scripted([_call('tool_call', name='_get_weather', args_json='{"city": "Oslo"}')])
         agent = Agent(model, tools=[_get_weather], capabilities=[ToolBridge()])
@@ -565,6 +604,216 @@ class TestToolBridge:
         await agent.run('hi')
 
         assert seen == [['run_code']]
+
+    @pytest.mark.parametrize('owned', [False, True], ids=['no-capability', 'operator-capability'])
+    async def test_a_bridged_tool_keeps_its_content_when_no_capability_lowers_it(self, owned: bool):
+        """A bridged tool no capability below `'operator'` contributes returns its `ToolReturn.content` as returned.
+
+        An `after_tool_execute` hook on `tool_call` and the tool result event both see the `str`, whether no capability
+        contributes the tool or one at the default `'operator'` authority does.
+        """
+
+        def note(text: str) -> ToolReturn:
+            """Take a note."""
+            return ToolReturn(return_value='ok', content=text)
+
+        hook_seen: list[object] = []
+
+        class Record(AbstractCapability[object]):
+            async def after_tool_execute(
+                self,
+                ctx: RunContext[object],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: ValidatedToolArgs,
+                result: object,
+            ) -> object:
+                if call.tool_name == 'tool_call':
+                    # Narrowed under its own name, so the returned `result` stays an `object`.
+                    tool_return = result
+                    assert isinstance(tool_return, ToolReturn)
+                    hook_seen.append(tool_return.content)
+                return result
+
+        model = _scripted([_call('tool_call', name='note', args_json='{"text": "page text"}')])
+        owner: list[AbstractCapability[object]] = [Capability[object](id='notes', tools=[note])] if owned else []
+        agent = Agent(model, tools=[] if owned else [note], capabilities=[*owner, ToolBridge(), Record()])
+        event_seen: list[object] = []
+        async with agent.iter('Take a note') as agent_run:
+            async for node in agent_run:
+                if Agent.is_call_tools_node(node):
+                    async with node.stream(agent_run.ctx) as stream:
+                        async for event in stream:
+                            if isinstance(event, FunctionToolResultEvent):
+                                event_seen.append(event.content)
+
+        assert hook_seen == ['page text']
+        assert event_seen == ['page text']
+
+    @pytest.mark.filterwarnings('ignore::pydantic_ai_harness.code_mode.CodeModeReturnSchemaWarning')
+    @pytest.mark.parametrize('from_code', [False, True], ids=['tool-call', 'run-code'])
+    async def test_a_hooks_in_place_edit_of_bridged_content_reaches_the_model(self, from_code: bool):
+        """An `after_tool_execute` hook that edits `tool_call`'s `ToolReturn.content` in place sends the edited content.
+
+        The edit is held to the capability that contributed the content, as the content was, also when `run_code` makes
+        the call.
+        """
+
+        def fetch() -> ToolReturn:
+            """Fetch a page."""
+            return ToolReturn(return_value='ok', content='page text')
+
+        class Edit(AbstractCapability[object]):
+            async def after_tool_execute(
+                self,
+                ctx: RunContext[object],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: ValidatedToolArgs,
+                result: object,
+            ) -> object:
+                if call.tool_name == 'tool_call':
+                    # Narrowed under its own name, so the returned `result` stays an `object`.
+                    tool_return = result
+                    assert isinstance(tool_return, ToolReturn) and isinstance(tool_return.content, list)
+                    tool_return.content[:] = ['edited']
+                return result
+
+        seen: list[list[object]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) > 1:
+                seen.append([part.content for part in messages[-1].parts if isinstance(part, UserPromptPart)])
+                return ModelResponse(parts=[TextPart('done')])
+            if from_code:
+                return ModelResponse(parts=[_call('run_code', code="await tool_call(name='fetch', args_json='{}')")])
+            return ModelResponse(parts=[_call('tool_call', name='fetch', args_json='{}')])
+
+        plugin = Capability[object](id='plugin', tools=[fetch]).with_authority('none')
+        code_mode: list[AbstractCapability[object]] = [CodeMode()] if from_code else []
+        await Agent(FunctionModel(respond), capabilities=[plugin, ToolBridge(), *code_mode, Edit()]).run(
+            'Fetch the page'
+        )
+
+        assert seen == snapshot(
+            [
+                [
+                    '<system>The accompanying <capability_content> was written by the `plugin` capability, not by the user or the application.</system>',
+                    [
+                        TextContent(content='<capability_content>'),
+                        TextContent(content='edited'),
+                        TextContent(content='</capability_content>'),
+                    ],
+                ]
+            ]
+        )
+
+    @pytest.mark.filterwarnings('ignore::pydantic_ai_harness.code_mode.CodeModeReturnSchemaWarning')
+    async def test_content_is_held_to_each_lowered_capability_in_a_chain(self):
+        """Nested content is held to each capability it passed through, innermost first.
+
+        With `CodeMode` at `'none'` too, the note on `fetch`'s content names `plugin`, its innermost capability, and
+        the note on `note`'s content, which no capability contributes, names `code_mode`.
+        """
+
+        def fetch() -> ToolReturn:
+            """Fetch a page."""
+            return ToolReturn(return_value='ok', content='page text')
+
+        def note(text: str) -> ToolReturn:
+            """Take a note."""
+            return ToolReturn(return_value='ok', content=text)
+
+        seen: list[list[object]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) > 1:
+                seen.append([part.content for part in messages[-1].parts if isinstance(part, UserPromptPart)])
+                return ModelResponse(parts=[TextPart('done')])
+            code = (
+                'await tool_call(name=\'note\', args_json=\'{"text": "first"}\')\n'
+                "await tool_call(name='fetch', args_json='{}')"
+            )
+            return ModelResponse(parts=[_call('run_code', code=code)])
+
+        capabilities: list[AbstractCapability[object]] = [
+            Capability[object](id='plugin', tools=[fetch]).with_authority('none'),
+            ToolBridge(),
+            CodeMode().with_authority('none'),
+        ]
+        await Agent(FunctionModel(respond), tools=[note], capabilities=capabilities).run('Fetch the page')
+
+        assert seen == snapshot(
+            [
+                [
+                    '<system>The accompanying <capability_content> was written by the `code_mode` capability, not by the user or the application.</system>',
+                    [
+                        TextContent(content='<capability_content>'),
+                        TextContent(content='first'),
+                        TextContent(content='</capability_content>'),
+                    ],
+                    '<system>The accompanying <capability_content> was written by the `plugin` capability, not by the user or the application.</system>',
+                    [
+                        TextContent(content='<capability_content>'),
+                        TextContent(content='page text'),
+                        TextContent(content='</capability_content>'),
+                    ],
+                ]
+            ]
+        )
+
+    @pytest.mark.filterwarnings('ignore::pydantic_ai_harness.code_mode.CodeModeReturnSchemaWarning')
+    async def test_code_mode_keeps_a_bridged_tools_capability(self):
+        """Content from a bridged tool that `run_code` calls reaches the model framed as it would be on a direct call.
+
+        Content from a bridged tool no capability contributes stays user text before it.
+        """
+
+        def fetch() -> ToolReturn:
+            """Fetch a page."""
+            return ToolReturn(return_value='ok', content='page text')
+
+        def note(text: str) -> ToolReturn:
+            """Take a note."""
+            return ToolReturn(return_value='ok', content=text)
+
+        seen: list[list[object]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) > 1:
+                seen.append([part.content for part in messages[-1].parts if isinstance(part, UserPromptPart)])
+                return ModelResponse(parts=[TextPart('done')])
+            if any(tool.name == 'run_code' for tool in info.function_tools):
+                code = (
+                    'await tool_call(name=\'note\', args_json=\'{"text": "first"}\')\n'
+                    "await tool_call(name='fetch', args_json='{}')"
+                )
+                return ModelResponse(parts=[_call('run_code', code=code)])
+            return ModelResponse(parts=[_call('fetch')])
+
+        def plugin() -> Capability[object]:
+            return Capability[object](id='plugin', tools=[fetch]).with_authority('none')
+
+        await Agent(FunctionModel(respond), capabilities=[plugin()]).run('Fetch the page')
+        await Agent(FunctionModel(respond), tools=[note], capabilities=[plugin(), ToolBridge(), CodeMode()]).run(
+            'Fetch the page'
+        )
+
+        direct, nested = seen
+        assert nested[1:] == direct
+        assert nested == snapshot(
+            [
+                ['first'],
+                '<system>The accompanying <capability_content> was written by the `plugin` capability, not by the user or the application.</system>',
+                [
+                    TextContent(content='<capability_content>'),
+                    TextContent(content='page text'),
+                    TextContent(content='</capability_content>'),
+                ],
+            ]
+        )
 
     async def test_bridged_retries_spend_tool_call_retries(self):
         def flaky() -> str:

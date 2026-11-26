@@ -17,6 +17,7 @@ from collections.abc import (
 )
 from contextlib import aclosing
 from copy import deepcopy
+from itertools import chain
 from typing import TYPE_CHECKING, Any, Generic, Literal, assert_never, cast
 
 from typing_extensions import TypeVar
@@ -134,6 +135,61 @@ def cancelled_sub_agent_return(
         tool_kind=call.tool_kind,
         outcome='failed',
     )
+
+
+def _user_content_items(content: str | Sequence[_messages.UserContent]) -> list[_messages.UserContent]:
+    return [content] if isinstance(content, str) else list(content)
+
+
+class NestedCallContent(list[_messages.UserContent]):
+    """The `ToolReturn.content` of the tools a tool called, keeping the capability each of those tools came from.
+
+    A tool that runs other tools, such as a sandbox's `run_code`, returns this as its own `ToolReturn.content`. Each
+    tool's content then reaches the model held to its own capability's authority, as it would if the model had called
+    that tool, and then to the calling tool's.
+
+    The capabilities travel on this object only. Content that replaces it, such as `list(content)` or a hook's
+    `replace(result, content=[...])`, is held to the calling tool's capability alone. Content edited in place is held to
+    every capability that contributed to it. Equality compares the items, not their capabilities.
+    """
+
+    segments: tuple[tuple[str | None, str | Sequence[_messages.UserContent]], ...]
+    """Each called tool's `ToolReturn.content`, after the run id of the capability that contributed the tool, if any.
+
+    A called tool that runs other tools in turn returns its own `NestedCallContent` here.
+    """
+
+    def __init__(self, segments: Sequence[tuple[str | None, str | Sequence[_messages.UserContent]]]) -> None:
+        self.segments = tuple(segments)
+        super().__init__(chain.from_iterable(_user_content_items(content) for _, content in self.segments))
+
+    def matches_segments(self) -> bool:
+        """Whether the items are still the segments' content, rather than edited in place, such as by a hook."""
+        return self == NestedCallContent(self.segments)
+
+    def owned_segments(self) -> Iterator[tuple[tuple[str | None, ...], str | Sequence[_messages.UserContent]]]:
+        """Each called tool's content, after the run ids of the capabilities it passed through, innermost first.
+
+        Content edited in place is one segment, after the run id of every capability that contributed to it, in the
+        order the content came, so the edit is held to each of them. Only a capability at `'none'` frames the content
+        as data, so the note on the result names the first of them at `'none'`.
+        """
+        if not self.matches_segments():
+            unedited = NestedCallContent(self.segments).owned_segments()
+            contributors = dict.fromkeys(
+                capability_id
+                for capability_ids, _ in unedited
+                for capability_id in capability_ids
+                if capability_id is not None
+            )
+            yield tuple(contributors), list(self)
+            return
+        for capability_id, content in self.segments:
+            if isinstance(content, NestedCallContent):
+                for capability_ids, nested_content in content.owned_segments():
+                    yield (*capability_ids, capability_id), nested_content
+            else:
+                yield (capability_id,), content
 
 
 def build_tool_return_part(
@@ -963,17 +1019,52 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             )
         return parts, tool_user_content
 
-    def _tool_user_part(
+    def _tool_user_parts(
         self, call: _messages.ToolCallPart, content: str | Sequence[_messages.UserContent]
-    ) -> _messages.ModelRequestPart:
-        """The user-channel part for a tool's `ToolReturn.content`, held to its owning capability's authority.
+    ) -> list[_messages.ModelRequestPart]:
+        """The user-channel parts for a tool's `ToolReturn.content`, held to its owning capability's authority.
 
         A tool a capability contributes speaks with no more authority than the capability, as what it enqueues does: at
-        `'none'`, its content is data naming the capability.
+        `'none'`, its content is data naming the capability. Content a tool gathered from the tools it called keeps
+        each one's capability, so it's held to that capability's authority first, and then to this tool's.
         """
-        part = _messages.UserPromptPart(content=content)
         tool_def = self.tool_manager.get_tool_def(call.tool_name)
         capability_id = None if tool_def is None else tool_def.capability_id
+        if not isinstance(content, NestedCallContent):
+            return [self._within_capability_ceiling(_messages.UserPromptPart(content=content), capability_id)]
+        parts: list[_messages.ModelRequestPart] = []
+        for run in self._nested_content_runs(content):
+            if isinstance(run, list):
+                # A lone segment keeps the shape its tool returned, such as a bridged tool's `str`; several join a list.
+                joined = (
+                    run[0] if len(run) == 1 else list(chain.from_iterable(_user_content_items(each) for each in run))
+                )
+                run = _messages.UserPromptPart(content=joined)
+            parts.append(self._within_capability_ceiling(run, capability_id))
+        return parts
+
+    def _nested_content_runs(
+        self, content: NestedCallContent
+    ) -> list[_messages.ModelRequestPart | list[str | Sequence[_messages.UserContent]]]:
+        """Each called tool's content held to the capabilities it passed through, with neighbouring user text grouped."""
+        runs: list[_messages.ModelRequestPart | list[str | Sequence[_messages.UserContent]]] = []
+        for capability_ids, nested_content in content.owned_segments():
+            part = _messages.UserPromptPart(content=nested_content)
+            lowered: _messages.ModelRequestPart = part
+            for nested_capability_id in capability_ids:
+                lowered = self._within_capability_ceiling(lowered, nested_capability_id)
+            if lowered is not part:
+                runs.append(lowered)
+            elif runs and isinstance(unchanged := runs[-1], list):
+                unchanged.append(nested_content)
+            else:
+                runs.append([nested_content])
+        return runs
+
+    def _within_capability_ceiling(
+        self, part: _messages.ModelRequestPart, capability_id: str | None
+    ) -> _messages.ModelRequestPart:
+        """`part` as the run's capability `capability_id` may send it, or as it is when no capability owns it."""
         run_ctx = self.tool_manager.ctx
         owner = None if capability_id is None or run_ctx is None else run_ctx.capabilities.get(capability_id)
         if owner is None or capability_id is None:
@@ -991,7 +1082,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         deferred_validated_args: dict[str, dict[str, Any]],
     ) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         tool_parts_by_index: dict[int, _FunctionCallParts] = {}
-        user_parts_by_index: dict[int, _messages.ModelRequestPart] = {}
+        user_parts_by_index: dict[int, list[_messages.ModelRequestPart]] = {}
         deferred_calls_by_index: dict[int, _DeferredBucket] = {}
         deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
 
@@ -1001,7 +1092,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             tool_parts, tool_user_content = result
             tool_parts_by_index[index] = tool_parts
             if tool_user_content:
-                user_parts_by_index[index] = self._tool_user_part(tool_calls[index], tool_user_content)
+                user_parts_by_index[index] = self._tool_user_parts(tool_calls[index], tool_user_content)
 
             tool_part = tool_parts[0]
             assert isinstance(tool_part, _messages.ToolReturnPart)
@@ -1121,7 +1212,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             _prune_duplicate_tool_reveals(tool_parts_by_index, self.ctx.deps.discovered_tool_names)
             for index in sorted(tool_parts_by_index):
                 self.output_parts.extend(tool_parts_by_index[index])
-            self.output_parts.extend([user_parts_by_index[k] for k in sorted(user_parts_by_index)])
+            self.output_parts.extend(chain.from_iterable(user_parts_by_index[k] for k in sorted(user_parts_by_index)))
 
         for index in sorted(tool_parts_by_index):
             self._take_submission(tool_calls[index], tool_parts_by_index[index][0])
@@ -1511,7 +1602,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
         )
 
         function_parts: dict[int, _FunctionCallParts] = {}
-        function_user_parts: dict[int, _messages.ModelRequestPart] = {}
+        function_user_parts: dict[int, list[_messages.ModelRequestPart]] = {}
         # Under `parallel_ordered_events`, function-tool result events are buffered and yielded in
         # emission order at the end (alongside output events) instead of streaming as tasks complete.
         function_events: dict[int, _messages.FunctionToolResultEvent] = {}
@@ -1560,7 +1651,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                                 tool_parts, tool_user_content = payload
                                 function_parts[index] = tool_parts
                                 if tool_user_content:
-                                    function_user_parts[index] = self._tool_user_part(
+                                    function_user_parts[index] = self._tool_user_parts(
                                         self.tool_calls[index], tool_user_content
                                     )
                                 tool_part = tool_parts[0]
@@ -1623,7 +1714,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                             yield _messages.ToolAvailabilityDeltaEvent(part=part)
             for i in executable_indices:
                 if i in function_user_parts:
-                    self.output_parts.append(function_user_parts[i])
+                    self.output_parts.extend(function_user_parts[i])
                     appended_user_indices.add(i)
         finally:
             # Partial capture on exception or mid-stream close: surface completed function-tool
@@ -1642,7 +1733,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                     self.output_parts.extend(function_parts[i])
             for i in executable_indices:  # pragma: no branch
                 if i in function_user_parts and i not in appended_user_indices:
-                    self.output_parts.append(function_user_parts[i])
+                    self.output_parts.extend(function_user_parts[i])
 
         self._populate_deferred_calls(
             self.tool_calls,

@@ -44,15 +44,18 @@ from pydantic_ai import (
     Agent,
     ExternalToolset,
     RunContext,
+    TextContent,
     Tool,
     ToolDefinition,
     capture_run_messages,
 )
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability, Capability, Instrumentation, ToolSearch, Toolset
+from pydantic_ai.capabilities.abstract import ValidatedToolArgs
 from pydantic_ai.computer_use import COMPUTER_KIND
 from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
+    Authority,
     BinaryContent,
     CompactionPart,
     InstructionDeltaPart,
@@ -3375,6 +3378,161 @@ class TestCodeMode:
         run_code_return = result.all_messages()[2].parts[0]
         assert isinstance(run_code_return, ToolReturnPart)
         assert run_code_return.content == [{'success': True}, 'ok', None]
+
+    async def test_tool_return_content_is_held_to_its_capabilitys_authority(self) -> None:
+        """A nested call's `ToolReturn.content` reaches the model framed as it would be on a direct call.
+
+        Content from a tool of a capability at `'none'` is data naming the capability, and content from other tools
+        stays user text around it, in call order.
+        """
+
+        def fetch() -> ToolReturnMsg:
+            """Fetch a page."""
+            return ToolReturnMsg(return_value='ok', content='page text')
+
+        def note(text: str) -> ToolReturnMsg:
+            """Take a note."""
+            return ToolReturnMsg(return_value='ok', content=text)
+
+        seen: list[list[object]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) > 1:
+                seen.append([part.content for part in messages[-1].parts if isinstance(part, UserPromptPart)])
+                return ModelResponse(parts=[TextPart('done')])
+            if any(tool.name == 'run_code' for tool in info.function_tools):
+                code = "await note(text='first')\nawait fetch()\nawait note(text='second')"
+                return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code})])
+            return ModelResponse(parts=[ToolCallPart(tool_name='fetch', args={})])
+
+        def plugin() -> Capability[object]:
+            return Capability[object](id='plugin', tools=[fetch]).with_authority('none')
+
+        await Agent(FunctionModel(model_fn), capabilities=[plugin()]).run('Fetch the page')
+        await Agent(FunctionModel(model_fn), capabilities=[plugin(), CodeMode()], tools=[note]).run('Fetch the page')
+
+        direct, nested = seen
+        assert nested == snapshot(
+            [
+                ['first'],
+                '<system>The accompanying <capability_content> was written by the `plugin` capability, not by the user or the application.</system>',
+                [
+                    TextContent(content='<capability_content>'),
+                    TextContent(content='page text'),
+                    TextContent(content='</capability_content>'),
+                ],
+                ['second'],
+            ]
+        )
+        assert nested[1:3] == direct
+
+    @pytest.mark.parametrize(
+        ('owners', 'expected'),
+        [
+            pytest.param((), snapshot([[['edited']]]), id='no-capability'),
+            pytest.param(
+                (('plugin', 'none'),),
+                snapshot(
+                    [
+                        [
+                            '<system>The accompanying <capability_content> was written by the `plugin` capability, not by the user or the application.</system>',
+                            [
+                                TextContent(content='<capability_content>'),
+                                TextContent(content='edited'),
+                                TextContent(content='</capability_content>'),
+                            ],
+                        ]
+                    ]
+                ),
+                id='one-capability',
+            ),
+            pytest.param(
+                (('plugin', 'none'), ('other', 'none')),
+                snapshot(
+                    [
+                        [
+                            '<system>The accompanying <capability_content> was written by the `plugin` capability, not by the user or the application.</system>',
+                            [
+                                TextContent(content='<capability_content>'),
+                                TextContent(content='edited'),
+                                TextContent(content='</capability_content>'),
+                            ],
+                        ]
+                    ]
+                ),
+                id='two-capabilities',
+            ),
+            pytest.param(
+                (('plugin', 'user'), ('other', 'none')),
+                snapshot(
+                    [
+                        [
+                            '<system>The accompanying <capability_content> was written by the `other` capability, not by the user or the application.</system>',
+                            [
+                                TextContent(content='<capability_content>'),
+                                TextContent(content='edited'),
+                                TextContent(content='</capability_content>'),
+                            ],
+                        ]
+                    ]
+                ),
+                id='user-then-none',
+            ),
+        ],
+    )
+    async def test_a_hooks_in_place_edit_of_the_content_reaches_the_model(
+        self, owners: tuple[tuple[str, Authority], ...], expected: list[list[object]]
+    ) -> None:
+        """An `after_tool_execute` hook that edits `run_code`'s `ToolReturn.content` in place sends the edited content.
+
+        The edit is held to every capability that contributed to the content: it stays user text when `fetch` and
+        `lookup` come from no capability, and the note names the first contributing capability at `'none'`.
+        """
+
+        def fetch() -> ToolReturnMsg:
+            """Fetch a page."""
+            return ToolReturnMsg(return_value='ok', content='page text')
+
+        def lookup() -> ToolReturnMsg:
+            """Look up a term."""
+            return ToolReturnMsg(return_value='ok', content='term text')
+
+        class Edit(AbstractCapability[object]):
+            async def after_tool_execute(
+                self,
+                ctx: RunContext[object],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: ValidatedToolArgs,
+                result: object,
+            ) -> object:
+                if call.tool_name == 'run_code':
+                    # Narrowed under its own name, so the returned `result` stays an `object`.
+                    tool_return = result
+                    assert isinstance(tool_return, ToolReturnMsg) and isinstance(tool_return.content, list)
+                    tool_return.content[:] = ['edited']
+                return result
+
+        seen: list[list[object]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) > 1:
+                seen.append([part.content for part in messages[-1].parts if isinstance(part, UserPromptPart)])
+                return ModelResponse(parts=[TextPart('done')])
+            code = 'await fetch()\nawait lookup()'
+            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code})])
+
+        tools = [fetch, lookup]
+        owned: list[AbstractCapability[object]] = [
+            Capability[object](id=owner, tools=[tool]).with_authority(authority)
+            for (owner, authority), tool in zip(owners, tools)
+        ]
+        await Agent(FunctionModel(model_fn), tools=tools[len(owners) :], capabilities=[*owned, CodeMode(), Edit()]).run(
+            'Fetch the page'
+        )
+
+        assert seen == expected
 
     # ---------------------------------------------------------------------------
     # OTel / Logfire instrumentation

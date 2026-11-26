@@ -12,6 +12,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from pydantic_ai import ToolDefinition
+from pydantic_ai._tool_execution import NestedCallContent
 from pydantic_ai.computer_use import COMPUTER_KIND
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, UsageLimitExceeded, UserError
 from pydantic_ai.function_signature import FunctionSignature, _to_python_identifier  # pyright: ignore[reportPrivateUsage]
@@ -151,6 +152,9 @@ class NestedCallOutcome:
     user_content: str | Sequence[UserContent] | None = None
     """`ToolReturn.content` when the tool returned a `ToolReturn`: model-facing content outside the sandbox."""
 
+    capability_id: str | None = None
+    """The run id of the capability that contributed the called tool, whose authority `user_content` is held to."""
+
     error: Exception | None = None
     """The exception the sandbox sees at the call site."""
 
@@ -231,9 +235,23 @@ async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: Tool
 
     if isinstance(result, ToolReturn):
         return NestedCallOutcome(
-            content=result.return_value, metadata=result.metadata, user_content=result.content, tool_kind=tool_kind
+            content=result.return_value,
+            metadata=result.metadata,
+            user_content=result.content,
+            capability_id=tool_def.capability_id if tool_def is not None else None,
+            tool_kind=tool_kind,
         )
     return NestedCallOutcome(content=result, tool_kind=tool_kind)
+
+
+def content_list(content: str | Sequence[UserContent]) -> list[UserContent]:
+    """`ToolReturn.content` as a list, keeping the capability each tool behind a `ToolBridge` call came from."""
+    if not isinstance(content, NestedCallContent):
+        return [content] if isinstance(content, str) else list(content)
+    if not content.matches_segments():
+        # Edited in place, as by a hook: `owned_segments()` holds the edit to every capability that contributed to it.
+        return content
+    return NestedCallContent([(capability_id, content_list(each)) for capability_id, each in content.segments])
 
 
 def record_nested_call(
@@ -242,12 +260,13 @@ def record_nested_call(
     *,
     calls: dict[str, ToolCallPart],
     returns: dict[str, ToolReturnPart],
-    user_content: dict[str, list[UserContent]],
+    user_content: dict[str, tuple[str | None, list[UserContent]]],
 ) -> None:
     """Record a nested call and how it settled with the typed parts a direct call would leave in history.
 
     A call that failed gets no return part unless a handler denied it. `user_content` gets the call's
-    `ToolReturn.content`, which reaches the model on the enclosing `run_code` return, not inside the code.
+    `ToolReturn.content` with its tool's capability, which reaches the model on the enclosing `run_code` return,
+    not inside the code.
     """
     tool_call_id = call_part.tool_call_id
     tool_kind = outcome.tool_kind
@@ -273,8 +292,7 @@ def record_nested_call(
     )
     # Like core, empty content sends the model nothing.
     if outcome.user_content:
-        content = outcome.user_content
-        user_content[tool_call_id] = [content] if isinstance(content, str) else list(content)
+        user_content[tool_call_id] = (outcome.capability_id, content_list(outcome.user_content))
 
 
 def schema_arg_names(tool_def: ToolDefinition, kwargs: dict[str, Any]) -> dict[str, Any]:

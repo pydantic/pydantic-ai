@@ -10,6 +10,7 @@ from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_ai import ToolDefinition
+from pydantic_ai._tool_execution import NestedCallContent
 from pydantic_ai.capabilities import ToolSearchFunc, keywords_search
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -20,7 +21,7 @@ from pydantic_ai.exceptions import (
     ToolRetryError,
     UserError,
 )
-from pydantic_ai.messages import ToolCallPart, ToolKind, ToolReturnPart
+from pydantic_ai.messages import ToolCallPart, ToolKind, ToolReturn, ToolReturnPart
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets import WrapperToolset
@@ -244,7 +245,7 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
         ctx.usage.tool_calls += reserved
         reserved *= 2
         try:
-            return await manager.handle_call(call)
+            result = await manager.handle_call(call)
         except (ApprovalRequired, CallDeferred) as exc:
             raise UserError(
                 f'Tool {name!r} raised `{type(exc).__name__}` behind `ToolBridge`, and no `HandleDeferredToolCalls` '
@@ -261,3 +262,14 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
             raise ToolFailed(exc.tool_failed.model_response_str(wrap_if_error=False)) from exc
         finally:
             ctx.usage.tool_calls -= reserved
+        # Pyright strict reads `isinstance` on the `Any` that `handle_call` can return as `ToolReturn[Unknown]`, so
+        # both returns below, the `ToolReturn` with no content included, carry an unknown-type ignore.
+        capability_id = target.tool_def.capability_id
+        owner = None if capability_id is None else ctx.capabilities.get(capability_id)
+        lowers = owner is not None and owner._effective_authority != 'operator'  # pyright: ignore[reportPrivateUsage]
+        if isinstance(result, ToolReturn) and result.content and lowers:
+            # Held to the bridged tool's capability's authority, as if the model had called the tool itself. Content
+            # from a tool no capability below `'operator'` contributes stays as the tool returned it.
+            content = NestedCallContent([(capability_id, result.content)])
+            return replace(result, content=content)  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
+        return result  # pyright: ignore[reportUnknownVariableType]
