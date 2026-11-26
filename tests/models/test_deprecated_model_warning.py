@@ -34,15 +34,24 @@ with try_import() as imports_successful:
         AsyncAnthropicFoundry,
         AsyncAnthropicVertex,
     )
+    from google.genai import Client as GoogleGenAIClient
     from openai import AsyncAzureOpenAI, AsyncOpenAI
 
     from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers import Provider
-    from pydantic_ai.providers._model_deprecations import ANTHROPIC_MODEL_DEPRECATIONS, OPENAI_MODEL_DEPRECATIONS
+    from pydantic_ai.providers._model_deprecations import (
+        ANTHROPIC_MODEL_DEPRECATIONS,
+        GEMINI_API_MODEL_DEPRECATIONS,
+        OPENAI_MODEL_DEPRECATIONS,
+        VERTEX_MODEL_DEPRECATIONS,
+    )
     from pydantic_ai.providers.anthropic import AnthropicProvider, AsyncAnthropicClient
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.gateway import gateway_provider
+    from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openai_chatgpt import OpenAIChatGPTProvider
     from pydantic_ai.providers.openai_codex import OpenAICodexProvider
@@ -52,10 +61,17 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='anthropic or o
 
 CLAUDE = 'claude-retiring'
 GPT = 'gpt-retiring'
+GEMINI = 'gemini-retiring'
+VERTEX_CLAUDE = 'claude-vertex-retiring'
 DEPRECATION = ModelDeprecation(
     source_url='https://example.com/deprecations',
     retirement_date=date(2026, 11, 30),
     replacement='current-model',
+)
+VERTEX_DEPRECATION = ModelDeprecation(
+    source_url='https://example.com/vertex-deprecations',
+    retirement_date=date(2026, 10, 20),
+    replacement='current-vertex-model',
 )
 
 
@@ -63,6 +79,9 @@ DEPRECATION = ModelDeprecation(
 def deprecated_models(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(ANTHROPIC_MODEL_DEPRECATIONS, CLAUDE, DEPRECATION)
     monkeypatch.setitem(OPENAI_MODEL_DEPRECATIONS, GPT, DEPRECATION)
+    monkeypatch.setitem(GEMINI_API_MODEL_DEPRECATIONS, GEMINI, DEPRECATION)
+    monkeypatch.setitem(VERTEX_MODEL_DEPRECATIONS, GEMINI, VERTEX_DEPRECATION)
+    monkeypatch.setitem(VERTEX_MODEL_DEPRECATIONS, VERTEX_CLAUDE, VERTEX_DEPRECATION)
 
 
 def not_found_client() -> httpx2.AsyncClient:
@@ -294,3 +313,72 @@ def test_recording_a_deprecated_model_fails(monkeypatch: pytest.MonkeyPatch):
         ignore_deprecated_models_in_recordings('rewrite')
         with pytest.raises(DeprecatedModelWarning, match="Model 'openai:gpt-retiring' is deprecated"):
             model.prepare_request(None, ModelRequestParameters())
+
+
+def test_google_transport_gates_deprecation_schedule():
+    """`GoogleModel` picks Gemini API vs Vertex AI dates from `client.vertexai`, not the provider name."""
+    gemini_api = GoogleModel(GEMINI, provider=GoogleProvider(api_key='mock-api-key', http_client=not_found_client()))
+    assert gemini_api.profile.get('deprecation') == DEPRECATION
+
+    vertex_ai = GoogleModel(
+        GEMINI, provider=GoogleCloudProvider(api_key='mock-api-key', http_client=not_found_client())
+    )
+    assert vertex_ai.profile.get('deprecation') == VERTEX_DEPRECATION
+
+    # Gateway `google` and `google-cloud` both route to Vertex AI.
+    gw_google = GoogleModel(
+        GEMINI, provider=gateway_provider('google', api_key='pylf_v1_us_mock', http_client=not_found_client())
+    )
+    gw_google_cloud = GoogleModel(
+        GEMINI, provider=gateway_provider('google-cloud', api_key='pylf_v1_us_mock', http_client=not_found_client())
+    )
+    assert gw_google.profile.get('deprecation') == VERTEX_DEPRECATION
+    assert gw_google_cloud.profile.get('deprecation') == VERTEX_DEPRECATION
+
+    # Pre-built client overrides provider name.
+    vertex_on_google_provider = GoogleModel(
+        GEMINI,
+        provider=GoogleProvider(client=GoogleGenAIClient(vertexai=True, api_key='mock-api-key')),
+    )
+    gemini_on_cloud_provider = GoogleModel(
+        GEMINI,
+        provider=GoogleCloudProvider(client=GoogleGenAIClient(vertexai=False, api_key='mock-api-key')),
+    )
+    assert vertex_on_google_provider.profile.get('deprecation') == VERTEX_DEPRECATION
+    assert gemini_on_cloud_provider.profile.get('deprecation') == DEPRECATION
+
+
+def test_anthropic_vertex_uses_vertex_deprecation_schedule():
+    """`AnthropicModel` on `AsyncAnthropicVertex` reads `VERTEX_MODEL_DEPRECATIONS`."""
+    model = AnthropicModel(
+        VERTEX_CLAUDE,
+        provider=AnthropicProvider(
+            anthropic_client=AsyncAnthropicVertex(region='us-east5', project_id='project', access_token='token')
+        ),
+    )
+    assert model.profile.get('deprecation') == VERTEX_DEPRECATION
+    with pytest.warns(DeprecatedModelWarning, match='2026-10-20'):
+        model.prepare_request(None, ModelRequestParameters())
+
+
+def test_google_table_entries_from_issue():
+    """Spot-check real model schedules across Gemini API, Vertex AI, and Vertex Claude."""
+    gemini_25_pro = GoogleModel(
+        'gemini-2.5-pro', provider=GoogleProvider(api_key='mock-api-key', http_client=not_found_client())
+    )
+    vertex_25_pro = GoogleModel(
+        'gemini-2.5-pro', provider=GoogleCloudProvider(api_key='mock-api-key', http_client=not_found_client())
+    )
+    vertex_claude = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(
+            anthropic_client=AsyncAnthropicVertex(region='us-east5', project_id='project', access_token='token')
+        ),
+    )
+
+    with pytest.warns(DeprecatedModelWarning, match='2026-12-01'):
+        gemini_25_pro.prepare_request(None, ModelRequestParameters())
+    with pytest.warns(DeprecatedModelWarning, match='2026-10-20'):
+        vertex_25_pro.prepare_request(None, ModelRequestParameters())
+    with pytest.warns(DeprecatedModelWarning, match='2026-11-30'):
+        vertex_claude.prepare_request(None, ModelRequestParameters())

@@ -1,4 +1,4 @@
-"""The models Anthropic and OpenAI have deprecated on their own APIs, for `ModelProfile.deprecation`.
+"""The models Anthropic, OpenAI and Google have deprecated on their own APIs, for `ModelProfile.deprecation`.
 
 Compiled from the providers' deprecation pages as fetched on 2026-11-19, and Anthropic's again on 2026-11-24. This file
 is the source of truth: edit it by hand when a provider announces a deprecation, following
@@ -7,8 +7,8 @@ is the source of truth: edit it by hand when a provider announces a deprecation,
 - Add a model only when the provider's notice gives it a deprecation or retirement date. A model the notice doesn't
   date gets no entry, such as the bare `gpt-4o` alias, whose dated snapshots are listed instead.
 - Cover only the schedule the provider sets for its own API: the Claude API for Anthropic, Chat Completions and
-  Responses for OpenAI. A platform that serves the same models on a schedule of its own, such as Amazon Bedrock or
-  Azure, is not covered.
+  Responses for OpenAI, and the Gemini API and Vertex AI for Google. A third-party platform that serves the same
+  models on a schedule of its own, such as Amazon Bedrock or Azure, is not covered.
 - Key the entry by every id the API accepts for the model, aliases included.
 - Set `source_url` to the section of the provider's page that lists the model.
 - Set `replacement` to the first model id the notice recommends, or leave it `None` when the notice names none. A
@@ -958,3 +958,274 @@ OPENAI_MODEL_DEPRECATIONS: dict[str, ModelDeprecation] = {
     for model_id in model_ids
 }
 """Models deprecated on the OpenAI API: https://developers.openai.com/api/docs/deprecations."""
+
+_GEMINI_API_DEPRECATIONS_URL = 'https://aistudio.google.com/docs/deprecations'
+_VERTEX_DEPRECATIONS_URL = 'https://docs.cloud.google.com/vertex-ai/generative-ai/docs/learn/model-versions'
+
+GEMINI_API_MODEL_DEPRECATIONS: dict[str, ModelDeprecation] = {
+    model_id: deprecation
+    for model_ids, deprecation in (
+        (
+            ('gemini-pro',),
+            ModelDeprecation(
+                source_url=_GEMINI_API_DEPRECATIONS_URL,
+                retirement_date=date(2025, 2, 18),
+            ),
+        ),
+        (
+            ('gemini-1.5-flash',),
+            ModelDeprecation(
+                source_url=_GEMINI_API_DEPRECATIONS_URL,
+                retirement_date=date(2025, 9, 29),
+            ),
+        ),
+        (
+            ('gemini-1.5-pro',),
+            ModelDeprecation(
+                source_url=_GEMINI_API_DEPRECATIONS_URL,
+                retirement_date=date(2025, 9, 29),
+            ),
+        ),
+        (
+            ('imagen-3.0-generate-002',),
+            ModelDeprecation(
+                source_url=_GEMINI_API_DEPRECATIONS_URL,
+                retirement_date=date(2025, 11, 10),
+                replacement='gemini-nano-banana-2.1',
+            ),
+        ),
+        (
+            ('gemini-2.5-pro-preview-03-25',),
+            ModelDeprecation(
+                source_url=_GEMINI_API_DEPRECATIONS_URL,
+                retirement_date=date(2025, 12, 2),
+                replacement='gemini-3.8-flash',
+            ),
+        ),
+        (
+            ('gemini-2.5-pro-preview-05-06',),
+            ModelDeprecation(
+                source_url=_GEMINI_API_DEPRECATIONS_URL,
+                retirement_date=date(2025, 12, 2),
+                replacement='gemini-3.8-flash',
+            ),
+        ),
+        (
+            (
+                'gemini-2.5-pro-preview-06-05',
+                'google/gemini-2.5-pro-preview',
+            ),
+            ModelDeprecation(
+                source_url=_GEMINI_API_DEPRECATIONS_URL,
+                retirement_date=date(2025, 12, 2),
+                replacement='gemini-3.8-flash',
+            ),
+        ),
+        (
+            ('gemini-2.0-flash-exp',),
+            ModelDeprecation(
+                source_url=_GEMINI_API_DEPRECATIONS_URL,
+                retirement_date=date(2025, 12, 9),
+            ),
+        ),
+        (
+            ('gemini-live-2.5-flash-preview',),
+            ModelDeprecation(
+                source_url=_GEMINI_API_DEPRECATIONS_URL,
+                retirement_date=date(2025, 12, 9),
+                replacement='gemini-3.8-live',
+            ),
+        ),
+        (
+            ('gemini-3-pro-preview',),
+            ModelDeprecation(
+                source_url=_GEMINI_API_DEPRECATIONS_URL,
+                retirement_date=date(2026, 3, 9),
+                replacement='gemini-3.1-pro-preview',
+            ),
+        ),
+        (
+            ('gemini-2.0-flash',),
+            ModelDeprecation(
+                source_url=_GEMINI_API_DEPRECATIONS_URL,
+                retirement_date=date(2026, 6, 1),
+                replacement='gemini-3.6-flash',
+            ),
+        ),
+        (
+            ('gemini-2.0-flash-lite',),
+            ModelDeprecation(
+                source_url=_GEMINI_API_DEPRECATIONS_URL,
+                retirement_date=date(2026, 6, 1),
+                replacement='gemini-3.1-flash-lite',
+            ),
+        ),
+        (
+            ('gemini-3-pro-image-preview',),
+            ModelDeprecation(
+                source_url=_GEMINI_API_DEPRECATIONS_URL,
+                retirement_date=date(2026, 6, 25),
+                replacement='gemini-3-pro-image',
+            ),
+        ),
+        (
+            ('gemini-embedding-2-preview',),
+            ModelDeprecation(
+                source_url=_GEMINI_API_DEPRECATIONS_URL,
+                retirement_date=date(2026, 11, 6),
+                replacement='gemini-embedding-2',
+            ),
+        ),
+        (
+            ('gemini-2.5-flash',),
+            ModelDeprecation(
+                source_url=_GEMINI_API_DEPRECATIONS_URL,
+                retirement_date=date(2026, 12, 1),
+                replacement='gemini-3.5-flash-lite',
+            ),
+        ),
+        (
+            ('gemini-2.5-pro',),
+            ModelDeprecation(
+                source_url=_GEMINI_API_DEPRECATIONS_URL,
+                retirement_date=date(2026, 12, 1),
+                replacement='gemini-3.8-flash',
+            ),
+        ),
+    )
+    for model_id in model_ids
+}
+"""Models deprecated on the Gemini API: https://aistudio.google.com/docs/deprecations."""
+
+VERTEX_MODEL_DEPRECATIONS: dict[str, ModelDeprecation] = {
+    model_id: deprecation
+    for model_ids, deprecation in (
+        (
+            ('claude-3-5-sonnet',),
+            ModelDeprecation(
+                source_url=_VERTEX_DEPRECATIONS_URL,
+                retirement_date=date(2026, 2, 19),
+            ),
+        ),
+        (
+            ('claude-3-7-sonnet',),
+            ModelDeprecation(
+                source_url=_VERTEX_DEPRECATIONS_URL,
+                retirement_date=date(2026, 5, 11),
+            ),
+        ),
+        (
+            ('gemini-2.0-flash',),
+            ModelDeprecation(
+                source_url=_VERTEX_DEPRECATIONS_URL,
+                retirement_date=date(2026, 6, 1),
+                replacement='gemini-3.5-flash-lite',
+            ),
+        ),
+        (
+            ('gemini-2.0-flash-lite',),
+            ModelDeprecation(
+                source_url=_VERTEX_DEPRECATIONS_URL,
+                retirement_date=date(2026, 6, 1),
+                replacement='gemini-3.5-flash-lite',
+            ),
+        ),
+        (
+            ('imagen-3.0-generate-002',),
+            ModelDeprecation(
+                source_url=_VERTEX_DEPRECATIONS_URL,
+                retirement_date=date(2026, 6, 30),
+                replacement='gemini-2.5-flash-image',
+            ),
+        ),
+        (
+            ('claude-3-haiku',),
+            ModelDeprecation(
+                source_url=_VERTEX_DEPRECATIONS_URL,
+                retirement_date=date(2026, 8, 23),
+            ),
+        ),
+        (
+            ('gemini-2.5-flash',),
+            ModelDeprecation(
+                source_url=_VERTEX_DEPRECATIONS_URL,
+                retirement_date=date(2026, 10, 20),
+                replacement='gemini-3.8-flash',
+            ),
+        ),
+        (
+            ('gemini-2.5-flash-lite',),
+            ModelDeprecation(
+                source_url=_VERTEX_DEPRECATIONS_URL,
+                retirement_date=date(2026, 10, 20),
+                replacement='gemini-3.8-flash',
+            ),
+        ),
+        (
+            ('gemini-2.5-pro',),
+            ModelDeprecation(
+                source_url=_VERTEX_DEPRECATIONS_URL,
+                retirement_date=date(2026, 10, 20),
+                replacement='gemini-3.8-flash',
+            ),
+        ),
+        (
+            ('gemini-3.6-flash',),
+            ModelDeprecation(
+                source_url=_VERTEX_DEPRECATIONS_URL,
+                retirement_date=date(2026, 11, 19),
+                replacement='gemini-3.8-flash',
+            ),
+        ),
+        (
+            (
+                'claude-sonnet-4-5',
+                'claude-sonnet-4-5@20250929',
+            ),
+            ModelDeprecation(
+                source_url=_VERTEX_DEPRECATIONS_URL,
+                retirement_date=date(2026, 11, 30),
+            ),
+        ),
+        (
+            ('gemini-live-2.5-flash-native-audio',),
+            ModelDeprecation(
+                source_url=_VERTEX_DEPRECATIONS_URL,
+                retirement_date=date(2026, 12, 13),
+                replacement='gemini-3.8-live',
+            ),
+        ),
+        (
+            ('gemini-3.7-flash',),
+            ModelDeprecation(
+                source_url=_VERTEX_DEPRECATIONS_URL,
+                retirement_date=date(2027, 1, 28),
+                replacement='gemini-3.8-flash',
+            ),
+        ),
+        (
+            ('gemini-2.5-flash-image',),
+            ModelDeprecation(
+                source_url=_VERTEX_DEPRECATIONS_URL,
+                retirement_date=date(2027, 3, 15),
+                replacement='gemini-3.1-flash-lite-image',
+            ),
+        ),
+        (
+            ('text-embedding-005',),
+            ModelDeprecation(
+                source_url=_VERTEX_DEPRECATIONS_URL,
+                retirement_date=date(2027, 4, 1),
+            ),
+        ),
+        (
+            ('text-multilingual-embedding-002',),
+            ModelDeprecation(
+                source_url=_VERTEX_DEPRECATIONS_URL,
+                retirement_date=date(2027, 4, 1),
+            ),
+        ),
+    )
+    for model_id in model_ids
+}
+"""Models deprecated on Vertex AI: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/learn/model-versions."""

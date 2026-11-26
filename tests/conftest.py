@@ -1104,6 +1104,14 @@ DEPRECATED_MODELS_IN_RECORDINGS: tuple[str, ...] = (
     'gpt-audio-mini',
     # OpenAI, retires 2027-04-01: https://github.com/pydantic/pydantic-ai/issues/14037
     'gpt-5.4-nano',
+    # Google, retired 2025-09-29 / 2025-12-02 / 2025-12-09 / 2026-03-09 / 2026-06-01 / 2026-10-20 / 2026-12-01: https://github.com/pydantic/pydantic-ai/issues/14676
+    'gemini-1.5-flash',
+    'gemini-2.5-pro-preview-03-25',
+    'gemini-2.0-flash-exp',
+    'gemini-3-pro-preview',
+    'gemini-2.0-flash',
+    'gemini-2.5-flash',
+    'gemini-2.5-pro',
 )
 """Models the suite's recordings and mocks use, which their providers have since deprecated.
 

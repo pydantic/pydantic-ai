@@ -85,6 +85,7 @@ from ...providers._bedrock_model_names import (
     bedrock_claude_supports_mid_conversation_effort,
     bedrock_lacks_claude_structured_output,
 )
+from ...providers._model_deprecations import VERTEX_MODEL_DEPRECATIONS
 from ...providers.anthropic import AsyncAnthropicClient
 from ...providers.gateway import is_gateway_provider
 from ...settings import CacheConfig, CacheRetention, CacheSetting, ModelSettings, merge_model_settings
@@ -1115,7 +1116,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         models on their own schedules.
         """
         client = self._provider.client
-        if 'deprecation' in profile and isinstance(client, _OWN_DEPRECATION_SCHEDULE_CLIENTS):
+        if isinstance(client, AsyncAnthropicVertex):
+            profile = merge_profile(
+                profile,
+                AnthropicModelProfile(deprecation=VERTEX_MODEL_DEPRECATIONS.get(self._model_name)),
+            )
+        elif 'deprecation' in profile and isinstance(client, _OWN_DEPRECATION_SCHEDULE_CLIENTS):
             profile = merge_profile(profile, AnthropicModelProfile(deprecation=None))
         profile = merge_profile(
             profile,
