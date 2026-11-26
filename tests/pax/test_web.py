@@ -2255,7 +2255,9 @@ def test_sessions_continue_in_their_own_directories(
         assert (shell.context.settings.instructions, shell.session.model) == ('', resolve_settings({}).model), (
             "the other project's settings are gone"
         )
-        assert receive_until(socket, Notice)[1].text == f'New session in {launch.resolve()}.'
+        assert receive_until(socket, Notice)[1].text == (
+            f'New session in {launch.resolve()}. This folder is untrusted: /trust shows why.'
+        )
 
         (tmp_path / 'file').touch()
         for workspace, problem in (
