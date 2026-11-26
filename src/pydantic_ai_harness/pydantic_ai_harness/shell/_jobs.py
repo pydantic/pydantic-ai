@@ -193,11 +193,17 @@ _REQUIRED_TOOLS = ('mv', 'base64')
 _MISSING_TOOLS = 122
 """The launcher's exit status when a tool in `_REQUIRED_TOOLS` is not on the workspace's `PATH`."""
 
+_CLAIMED = 'claimed'
+"""What the launcher prints when an exclusive job directory exists already: a launch in flight, or one whose reply
+was lost. A word rather than an exit status, as a shell that cannot start the launcher exits 126 itself, such as
+for a command longer than the operating system takes as one argument.
+"""
+
 _LAUNCHER = f"""missing=
 for tool in {' '.join(_REQUIRED_TOOLS)}; do command -v "$tool" > /dev/null 2>&1 || missing="$missing $tool"; done
 if [ -n "$missing" ]; then echo $missing; exit {_MISSING_TOOLS}; fi
 if [ "$exclusive" = 1 ]; then
-  (umask 077 && mkdir -p "${{dir%/*}}" && mkdir "$dir") || {{ [ -e "$dir" ] && exit 126; exit 125; }}
+  (umask 077 && mkdir -p "${{dir%/*}}" && mkdir "$dir") || {{ [ -e "$dir" ] && echo {_CLAIMED}; exit 125; }}
 else
   (umask 077 && mkdir -p "$dir") || exit 125
 fi
@@ -223,6 +229,9 @@ operating system's limit on the size of one argument (128 KiB on Linux).
 
 It first checks for `_REQUIRED_TOOLS` with the shell's `command -v` builtin, which costs no extra
 process, and prints the missing ones and exits `_MISSING_TOOLS` instead of launching.
+
+An exclusive launch exits 125 when it cannot create the job directory, after printing `_CLAIMED` when the
+directory exists already.
 
 Before returning, the launcher waits for the wrapper to publish its status after `setsid`
 has detached it: some workspaces kill the launching process group as soon as it exits.
@@ -281,7 +290,7 @@ class Job:
             needed = ' and '.join(f'`{tool}`' for tool in _REQUIRED_TOOLS)
             lacking = ' and '.join(f'`{tool}`' for tool in result.stdout.split())
             raise WorkspaceError(f'Shell needs {needed} on PATH in the workspace; this image lacks {lacking}.')
-        if job_id is not None and result.exit_code == 126:
+        if job_id is not None and result.stdout.split() == [_CLAIMED]:
             # An existing claim can be an in-flight launch or a lost reply. Never
             # spawn a second process in either case; a later retry can attach.
             if existing := await cls.attach(workspace, directory, combined=combined):
