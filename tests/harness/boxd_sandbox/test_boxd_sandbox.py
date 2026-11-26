@@ -249,6 +249,7 @@ def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
         'auto_suspend_timeout',
         'defer_loading',
         'description',
+        'desktop',
         'env',
         'id',
         'org',
@@ -270,6 +271,7 @@ def test_from_spec_forwards_the_spec_fields(size: dict[str, Any]) -> None:
         'working_dir': '/work',
         'env': {'FOO': 'bar'},
         'secrets': ['GH_TOKEN'],
+        'desktop': (1280, 800),
         **size,
     }
     assert BoxdSandbox[None].from_spec(**spec_fields) == BoxdSandbox[None](**spec_fields)

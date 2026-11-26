@@ -788,7 +788,8 @@ def test_temporal_name_parity_with_live_registered_activities_and_table() -> Non
     ]
     namer = TemporalOperationNamer('compat')
     actual = {namer.invocation_name(operation_id, label=_label(operation_id)).operation_name for operation_id in ids}
-    assert actual == live
+    # The local activity that calls an external-event wait's `ask` is registered alongside the operations.
+    assert actual | {'agent__compat__external_event_ask'} == live
     assert actual == TEMPORAL_ACTIVITY_NAMES
 
 
@@ -832,8 +833,9 @@ def test_temporal_backend_preserves_sdk_visible_activity_definitions() -> None:
         legacy_registrations.extend(toolset_temporal_activities(wrapped))
 
     # Child workflow definitions now share the backend registration stream, while this
-    # compatibility assertion remains specifically about SDK-visible activities.
-    registrations = durability.temporal_activities
+    # compatibility assertion remains specifically about SDK-visible activities. The last one, the
+    # local activity that calls an external-event wait's `ask`, came later and no operation owns it.
+    registrations = durability.temporal_activities[:-1]
     assert registrations == legacy_registrations
 
     def sdk_definition(item: Callable[..., object]) -> tuple[str | None, inspect.Signature]:
@@ -1855,6 +1857,7 @@ async def test_legacy_dynamic_execution_unit_preserves_argument_validation_retry
         call_tool_operation=call_tool,
         resolve_tool_config=lambda tool, name: {},
         lifecycle='enter-never',
+        units_share_run_context=True,
     )
 
     def model(messages: list[Any], info: AgentInfo) -> ModelResponse:
@@ -1909,6 +1912,7 @@ async def test_dynamic_validator_without_durable_unit_is_a_hard_error() -> None:
         call_tool_operation=never_called,
         resolve_tool_config=lambda tool, name: {},
         lifecycle='enter-never',
+        units_share_run_context=True,
     )
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
     with pytest.raises(UserError, match=r"Tool 'guarded'.*has an `args_validator`"):
@@ -1988,6 +1992,7 @@ async def test_legacy_validation_fallbacks_remain_inline() -> None:
         call_tool_operation=unused_operation,
         resolve_tool_config=lambda tool, name: False,
         lifecycle='enter-never',
+        units_share_run_context=True,
     )
     dynamic_tools = await dynamic.get_tools(ctx)
     dynamic_validator = dynamic_tools['tool'].args_validator_func
