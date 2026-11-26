@@ -267,25 +267,25 @@ byte-identical copy of its `SKILL.md`, counts once.
 
 Coding agents read skills from conventional locations that a project may not
 have, and let a project's skill take precedence over a personal one with the
-same name. Two options give `Skills` the same behavior:
+same name. `Skills` skips a missing location by default, and one more option
+gives it the same precedence:
 
 ```python {test="skip"}
 from pydantic_ai_harness import Skills
 
 skills = Skills(
     ['.agents/skills', '.claude/skills', '/home/me/.agents/skills', '/home/me/.claude/skills'],
-    missing_directories='skip',
     duplicate_names='keep_first',
 )
 ```
 
-- `missing_directories='skip'` leaves out a library directory that does not
-  exist, instead of failing the run. A path that is a file, or that holds a
-  `SKILL.md` itself (a skill package rather than a library of them), is left
-  out with a `UserWarning`, so one a model creates mid-session doesn't fail
-  every later run. So is a library directory the workspace raises
+- `missing_directories='skip'`, the default, leaves out a library directory
+  that does not exist, instead of failing the run. A path that is a file, or
+  that holds a `SKILL.md` itself (a skill package rather than a library of
+  them), is left out with a `UserWarning`, so one a model creates mid-session
+  doesn't fail every later run. So is a library directory the workspace raises
   `PermissionError` for, such as a local one whose permissions changed
-  mid-session.
+  mid-session. Pass `missing_directories='error'` to fail the run instead.
 - `duplicate_names='keep_first'` keeps the skill from the earlier directory when
   two valid skills with different `SKILL.md` files share a name, and skips the
   other with a `UserWarning`. An invalid `SKILL.md` is skipped first, so it does
@@ -406,7 +406,7 @@ the same catalog with `load` and renders the skill as a prompt:
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import Skills
 
-skills = Skills('.agents/skills', missing_directories='skip')
+skills = Skills('.agents/skills')
 catalog = await skills.load(LocalWorkspaceBackend('.'))
 review = next(skill for skill in catalog.skills if skill.name == 'code-review')
 result = await agent.run(review.render('src/app.py'))
@@ -420,9 +420,9 @@ a `reason`, and the `message` a run would warn with, for the host to show:
 |---|---|
 | `'invalid'` | A `SKILL.md` with malformed frontmatter, invalid UTF-8, or an invalid or mismatched name |
 | `'duplicate_name'` | A `SKILL.md` named like a skill found earlier, with `duplicate_names='keep_first'` |
-| `'not_a_directory'` | A library path that is a file, with `missing_directories='skip'` |
-| `'skill_package'` | A library path that holds a `SKILL.md` itself, with `missing_directories='skip'` |
-| `'unreadable'` | A library directory the workspace raises `PermissionError` for, such as a local one without permission, with `missing_directories='skip'` |
+| `'not_a_directory'` | A library path that is a file, unless `missing_directories='error'` |
+| `'skill_package'` | A library path that holds a `SKILL.md` itself, unless `missing_directories='error'` |
+| `'unreadable'` | A skill directory or `SKILL.md` the workspace raises `PermissionError` for, or such a library directory, such as a local one without permission (the library unless `missing_directories='error'`) |
 | `'flagged'` | A skill whose description, `when_to_use` or body the `scanner` flagged; see [Scan skills before loading them](#scan-skills-before-loading-them) |
 
 A skipped library path leaves out every skill it holds, so `SkippedSkill`
@@ -502,7 +502,7 @@ Skills(
     *,
     include: Collection[str] | None = None,
     exclude: Collection[str] | None = None,
-    missing_directories: Literal['error', 'skip'] = 'error',
+    missing_directories: Literal['error', 'skip'] = 'skip',
     duplicate_names: Literal['error', 'keep_first'] = 'error',
     unknown_names: Literal['error', 'skip'] = 'error',
     workspace: WorkspaceBackend | None = None,
@@ -512,7 +512,7 @@ Skills(
 ```
 
 Pass at least one library directory, not the path of an individual skill
-package. Malformed frontmatter, invalid UTF-8, and invalid or mismatched names warn and skip that skill. Unknown selections fail at run start, and so do duplicate selected names, missing libraries, library paths that are files or skill packages, and unreadable libraries, unless `duplicate_names`, `missing_directories`, or `unknown_names` say otherwise.
+package. Malformed frontmatter, invalid UTF-8, invalid or mismatched names, and an unreadable skill directory or `SKILL.md` warn and skip that skill. Missing libraries are skipped, and library paths that are files or skill packages and unreadable libraries are skipped with a warning, unless `missing_directories='error'`. Unknown selections and duplicate selected names fail at run start unless `unknown_names` or `duplicate_names` say otherwise.
 
 Two `Skills` on one agent combine into one catalog.
 

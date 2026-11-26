@@ -1,0 +1,5 @@
+{
+  "against": "v2.75.0",
+  "reason": "Harness 0.x: `Skills(missing_directories=...)` now defaults to `'skip'`, so a missing library directory is left out quietly, and a file, a skill package or an unreadable directory in its place is left out with a `UserWarning`, instead of failing the run. Pass `missing_directories='error'` for the previous behavior.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10524"
+}

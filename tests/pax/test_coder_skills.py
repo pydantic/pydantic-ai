@@ -550,13 +550,31 @@ class TestSkillCatalog:
         os.name == 'nt' or getattr(os, 'geteuid', lambda: 1)() == 0,
         reason='POSIX mode bits must apply to this process.',
     )
-    async def test_an_unreadable_skill_directory_turns_skills_off_but_keeps_coder(self, project: Path) -> None:
+    async def test_an_unreadable_skill_directory_is_skipped_with_a_notice(self, project: Path) -> None:
         skill = write_skill(project / '.agents' / 'skills', 'review')
+        write_skill(project / '.agents' / 'skills', 'deploy')
         skill.chmod(0)
         try:
             loaded, output = await load_coder()
         finally:
             skill.chmod(0o755)
+
+        assert Skills in bound_types(loaded)
+        assert [command.name for command in loaded.commands] == ['deploy']
+        assert output.getvalue() == f'Skipping {skill.resolve()}: it is not readable.\n'
+
+    async def test_a_skill_folder_that_fails_to_load_turns_skills_off_but_keeps_coder(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Not a VCR test: no model request. `Skills` skips what it can't read, so an OS error it doesn't
+        # expect is simulated to reach the guard that keeps the file and shell tools loading.
+        write_skill(project / '.agents' / 'skills', 'review')
+
+        async def fail(self: Skills[None], workspace: object) -> None:
+            raise PermissionError(13, 'Permission denied')
+
+        monkeypatch.setattr(Skills, 'load', fail)
+        loaded, output = await load_coder()
 
         assert bound_types(loaded) == [Coder]
         assert output.getvalue().startswith('Skills are off: [Errno 13] Permission denied')

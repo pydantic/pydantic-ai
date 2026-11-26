@@ -137,7 +137,7 @@ class TestSkills:
     def test_repr_only_exposes_skill_library_configuration(self) -> None:
         assert repr(Skills('skills')) == (
             "Skills(directories=('skills',), include=None, exclude=frozenset(), "
-            "missing_directories='error', duplicate_names='error', unknown_names='error')"
+            "missing_directories='skip', duplicate_names='error', unknown_names='error')"
         )
 
     def test_construction_reads_nothing(self, tmp_path: Path) -> None:
@@ -917,17 +917,17 @@ class TestSkillValidation:
         _write_skill(tmp_path / 'skills', 'alpha')
 
         with pytest.raises(ValueError, match=r'points to a skill package.*Pass its parent directory'):
-            await _run(Skills('skills/alpha'), tmp_path)
+            await _run(Skills('skills/alpha', missing_directories='error'), tmp_path)
 
     async def test_missing_root_is_rejected(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match='does not exist in the workspace: missing'):
-            await _run(Skills('missing'), tmp_path)
+            await _run(Skills('missing', missing_directories='error'), tmp_path)
 
     async def test_file_root_is_rejected(self, tmp_path: Path) -> None:
         (tmp_path / 'skills').write_text('not a directory', encoding='utf-8')
 
         with pytest.raises(ValueError, match='is not a directory'):
-            await _run(Skills('skills'), tmp_path)
+            await _run(Skills('skills', missing_directories='error'), tmp_path)
 
     async def test_non_skill_children_are_ignored(self, tmp_path: Path) -> None:
         library = tmp_path / 'skills'
@@ -1216,7 +1216,7 @@ class TestSkillLibraryLayering:
                 names = await _names(skills, tmp_path)
             catalog = await skills.load(LocalWorkspaceBackend(tmp_path))
             with pytest.raises(PermissionError):
-                await _run(Skills('.agents/skills'), tmp_path)
+                await _run(Skills('.agents/skills', missing_directories='error'), tmp_path)
         finally:
             unreadable.chmod(0o755)
 
@@ -1225,6 +1225,37 @@ class TestSkillLibraryLayering:
         message = f'Skipping {library}: it is not readable.'
         assert [str(warning.message) for warning in caught] == [message]
         assert catalog.skipped == (SkippedSkill(path=library, reason='unreadable', message=message),)
+
+    async def test_a_missing_library_is_skipped_by_default(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / '.claude' / 'skills', 'review')
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            names = await _names(Skills(['.agents/skills', '.claude/skills']), tmp_path)
+
+        assert names == ['review']
+
+    @pytest.mark.skipif(os.name != 'posix' or os.geteuid() == 0, reason='needs file permissions that apply')
+    @pytest.mark.parametrize('locked', ['deploy', 'deploy/SKILL.md'], ids=['skill-directory', 'skill-file'])
+    async def test_an_unreadable_skill_is_skipped_and_the_others_still_load(self, tmp_path: Path, locked: str) -> None:
+        # Like an invalid `SKILL.md`, a skill the workspace denies reading must not make the other skills unusable.
+        _write_skill(tmp_path / 'skills', 'deploy')
+        _write_skill(tmp_path / 'skills', 'review')
+        target = tmp_path / 'skills' / locked
+        skills: Skills[None] = Skills('skills', missing_directories='error')
+        target.chmod(0)
+        try:
+            with pytest.warns(UserWarning) as caught:
+                names = await _names(skills, tmp_path)
+            catalog = await skills.load(LocalWorkspaceBackend(tmp_path))
+        finally:
+            target.chmod(0o755)
+
+        assert names == ['review']
+        path = f'{tmp_path.resolve()}/skills/{locked}'
+        message = f'Skipping {path}: it is not readable.'
+        assert [str(warning.message) for warning in caught] == [message]
+        assert catalog.skipped == (SkippedSkill(path=path, reason='unreadable', message=message),)
 
     async def test_an_invalid_earlier_skill_does_not_hide_a_valid_one(self, tmp_path: Path) -> None:
         broken = tmp_path / 'project' / 'review'
@@ -1268,10 +1299,10 @@ class TestSkillsLoad:
         assert [skill.name for skill in catalog.skills] == ['review', 'tooled', 'wordy']
         assert catalog.skills[1].ignored_behavioral_fields == ('allowed-tools',)
         # The same advice a run emits as warnings, for a host that hides them.
-        assert catalog.advice == (
+        assert catalog.advice == [
             'Agent Skill descriptions exceed the 1,024-character limit: wordy (1,025 characters)',
             'Ignoring unsupported Agent Skill behavioral frontmatter fields: tooled: allowed-tools',
-        )
+        ]
         with pytest.warns(UserWarning) as caught:
             await _run(skills, tmp_path)
         assert [str(warning.message) for warning in caught][-2:] == list(catalog.advice)
@@ -1469,7 +1500,7 @@ class TestSkillScanning:
     def test_repr_shows_a_configured_scanner(self) -> None:
         assert repr(Skills('skills', scanner=ArtifactScanner(threats=['html_comment']))) == (
             "Skills(directories=('skills',), include=None, exclude=frozenset(), "
-            "missing_directories='error', duplicate_names='error', unknown_names='error', "
+            "missing_directories='skip', duplicate_names='error', unknown_names='error', "
             "scanner=ArtifactScanner(threats=frozenset({'html_comment'}), extra_patterns=mappingproxy({})))"
         )
 
@@ -1767,7 +1798,7 @@ class TestSkillFiles:
         results: list[str] = []
         agent: Agent[None, str] = Agent(
             _reader(results, 'guide', [('guide', 'references/guide.md')], lambda: shutil.rmtree(tmp_path / 'other')),
-            capabilities=[Skills(['skills', 'other'], read_files=True)],
+            capabilities=[Skills(['skills', 'other'], missing_directories='error', read_files=True)],
         )
 
         await agent.run('go', workspace=LocalWorkspaceBackend(tmp_path))

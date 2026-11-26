@@ -188,10 +188,11 @@ SkipReason: TypeAlias = Literal[
 
 - `'invalid'`: a `SKILL.md` with malformed frontmatter, invalid UTF-8, or an invalid or mismatched name.
 - `'duplicate_name'`: a `SKILL.md` named like a valid skill found earlier, with `duplicate_names='keep_first'`.
-- `'not_a_directory'`: a library path that is a file, with `missing_directories='skip'`.
-- `'skill_package'`: a library path that holds a `SKILL.md` itself, with `missing_directories='skip'`.
-- `'unreadable'`: a library directory the workspace raises `PermissionError` for, such as a local one without
-  permission, with `missing_directories='skip'`.
+- `'not_a_directory'`: a library path that is a file, unless `missing_directories='error'`.
+- `'skill_package'`: a library path that holds a `SKILL.md` itself, unless `missing_directories='error'`.
+- `'unreadable'`: a skill directory or `SKILL.md` the workspace raises `PermissionError` for, skipped like an invalid
+  `SKILL.md`, or such a library directory, such as a local one without permission, unless
+  `missing_directories='error'`.
 - `'flagged'`: a skill whose description, `when_to_use` or body the `Skills(scanner=...)` artifact scan flagged.
 """
 
@@ -233,7 +234,7 @@ class SkillCatalog:
     A run emits each `message` as a `UserWarning`; a host showing skills to a person can show them instead.
     """
 
-    advice: tuple[str, ...] = ()
+    advice: Sequence[str] = ()
     """Advice about the skills read, such as descriptions over the Agent Skills length limit or frontmatter
     fields whose behavior is not implemented.
 
@@ -310,17 +311,27 @@ async def _is_file(workspace: Workspace, path: str) -> bool:
 
 async def _discover_skills(
     workspace: Workspace, libraries: Sequence[tuple[str, Sequence[FileEntry]]]
-) -> list[tuple[str, str]]:
+) -> tuple[list[tuple[str, str]], list[SkippedSkill]]:
+    """Each skill package's name and `SKILL.md`, and each skill directory left out because it cannot be read."""
     discovered: list[tuple[str, str]] = []
+    skipped: list[SkippedSkill] = []
     for library, children in libraries:
         # Sorted by name so the catalog, and so the instructions, are the same for every run over the same files.
         for child in sorted(children, key=lambda entry: entry.name):
             if not child.is_dir:
                 continue
-            skill_file = posixpath.join(library, child.name, 'SKILL.md')
-            if await _is_file(workspace, skill_file):
+            directory = posixpath.join(library, child.name)
+            skill_file = posixpath.join(directory, 'SKILL.md')
+            try:
+                is_skill = await _is_file(workspace, skill_file)
+            except PermissionError:
+                # Like an invalid `SKILL.md`, a skill the workspace denies reading must not make the others unusable.
+                message = f'Skipping {directory}: it is not readable.'
+                skipped.append(SkippedSkill(path=directory, reason='unreadable', message=message))
+                continue
+            if is_skill:
                 discovered.append((_normalize_name(child.name), skill_file))
-    return discovered
+    return discovered, skipped
 
 
 async def _libraries(
@@ -479,7 +490,8 @@ async def load_skill_libraries(
     after parsing, so an invalid `SKILL.md` does not hide a valid one with the same name.
     """
     libraries, skipped = await _libraries(workspace, directories, missing_directories)
-    discovered = await _discover_skills(workspace, libraries)
+    discovered, unreadable = await _discover_skills(workspace, libraries)
+    skipped.extend(unreadable)
     available_names = frozenset(name for name, _ in discovered)
     normalized_include = None if include is None else frozenset(_normalize_name(name) for name in include)
     normalized_exclude = frozenset(_normalize_name(name) for name in exclude)
@@ -494,17 +506,28 @@ async def load_skill_libraries(
     for name, skill_file in discovered:
         if name not in selected_names:
             continue
-        try:
-            skill = await _read_skill(workspace, skill_file)
-        except ValueError as error:
-            # A model-editable skill should not make unrelated valid skills unusable.
-            skipped.append(SkippedSkill(path=skill_file, reason='invalid', message=f'Skipping {skill_file}: {error}'))
+        skill = await _read_or_skip(workspace, skill_file)
+        if isinstance(skill, SkippedSkill):
+            skipped.append(skill)
             continue
         if (previous := by_name.get(skill.name)) is None:
             by_name[skill.name] = skill
         elif not await same_skill((workspace, previous.path), (workspace, skill_file)):
             skipped.append(skip_duplicate_name(skill.name, previous.path, skill_file, duplicate_names))
     return list(by_name.values()), skipped
+
+
+async def _read_or_skip(workspace: Workspace, skill_file: str) -> SkillDefinition | SkippedSkill:
+    """The skill at `skill_file`, or the entry that leaves it out because it is invalid or cannot be read.
+
+    A model-editable skill should not make unrelated valid skills unusable.
+    """
+    try:
+        return await _read_skill(workspace, skill_file)
+    except ValueError as error:
+        return SkippedSkill(path=skill_file, reason='invalid', message=f'Skipping {skill_file}: {error}')
+    except PermissionError:
+        return SkippedSkill(path=skill_file, reason='unreadable', message=f'Skipping {skill_file}: it is not readable.')
 
 
 async def _read_skill(workspace: Workspace, skill_file: str) -> SkillDefinition:

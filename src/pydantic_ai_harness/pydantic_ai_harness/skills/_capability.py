@@ -188,7 +188,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         *,
         include: Collection[str],
         exclude: None = None,
-        missing_directories: MissingDirectories = 'error',
+        missing_directories: MissingDirectories = 'skip',
         duplicate_names: DuplicateNames = 'error',
         unknown_names: UnknownNames = 'error',
         workspace: WorkspaceBackend | None = None,
@@ -203,7 +203,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         *,
         include: None = None,
         exclude: Collection[str] | None = None,
-        missing_directories: MissingDirectories = 'error',
+        missing_directories: MissingDirectories = 'skip',
         duplicate_names: DuplicateNames = 'error',
         unknown_names: UnknownNames = 'error',
         workspace: WorkspaceBackend | None = None,
@@ -217,7 +217,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         *,
         include: Collection[str] | None = None,
         exclude: Collection[str] | None = None,
-        missing_directories: MissingDirectories = 'error',
+        missing_directories: MissingDirectories = 'skip',
         duplicate_names: DuplicateNames = 'error',
         unknown_names: UnknownNames = 'error',
         workspace: WorkspaceBackend | None = None,
@@ -231,11 +231,11 @@ class Skills(AbstractCapability[AgentDepsT]):
                 order. `~` is not expanded: the workspace may be a sandbox with a home of its own.
             include: Exact names to expose. Omit to expose all discovered skills.
             exclude: Exact names to omit. Cannot be combined with `include`.
-            missing_directories: `'error'` (the default) fails the run when a library path does not
-                exist, is not a directory, is itself a skill package, or the workspace raises
-                `PermissionError` for it. `'skip'` leaves such a path out, for conventional locations
-                such as `.agents/skills` that a project may not have: one that does not exist quietly,
-                any other with a warning.
+            missing_directories: `'skip'` (the default) leaves out a library path that does not exist,
+                is not a directory, is itself a skill package, or the workspace raises `PermissionError`
+                for, so conventional locations such as `.agents/skills` that a project may not have work:
+                one that does not exist quietly, any other with a warning. `'error'` fails the run
+                instead, for a host that wants a misconfigured path to stop it.
             duplicate_names: `'error'` (the default) fails the run when two different `SKILL.md` files
                 share a name. `'keep_first'` keeps the one from the earlier directory and skips the
                 other with a warning, the way coding agents layer project skills over personal ones.
@@ -300,7 +300,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         *,
         include: Sequence[str] | None = None,
         exclude: Sequence[str] | None = None,
-        missing_directories: MissingDirectories = 'error',
+        missing_directories: MissingDirectories = 'skip',
         duplicate_names: DuplicateNames = 'error',
         unknown_names: UnknownNames = 'error',
         read_files: bool = False,
@@ -597,7 +597,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         return by_name, tuple(messages)
 
     @staticmethod
-    def _advice(definitions: tuple[SkillDefinition, ...]) -> tuple[str, ...]:
+    def _advice(definitions: Sequence[SkillDefinition]) -> list[str]:
         advice: list[str] = []
         overlong_descriptions = [
             f'{skill.name} ({len(skill.description):,} characters)'
@@ -616,7 +616,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         ]
         if ignored:
             advice.append('Ignoring unsupported Agent Skill behavioral frontmatter fields: ' + '; '.join(ignored))
-        return tuple(advice)
+        return advice
 
 
 async def _read_text(entry: _Entry, path: str) -> str:
