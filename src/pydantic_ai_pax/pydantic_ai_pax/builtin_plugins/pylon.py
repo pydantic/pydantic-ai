@@ -12,7 +12,7 @@ named key from `/keys`, chosen through the shared key picker; only the key's nam
 on every run, so replacing it in `/keys` takes effect on the next run, and a deleted key fails the run instead
 of connecting without it.
 
-With browser sign-in, CLAI signs in the way `/mcp` OAuth servers do, keeping the tokens in the keyring under
+With browser sign-in, Pax signs in the way `/mcp` OAuth servers do, keeping the tokens in the keyring under
 `mcp-plugin_pylon`. The sign-in runs only from the settings menu or `/pylon login`, never while loading or in a
 prompt; see `pydantic_ai_pax.plugins.sign_in`. Until then, runs get no Pylon tools.
 """
@@ -225,8 +225,6 @@ class PylonPlugin(Plugin[PylonSettings, DepsT]):
             await warn_if_signed_out(SIGN_IN, self.host.console)
 
     async def _for_run(self, _: RunContext[DepsT]) -> Pylon[DepsT] | None:
-        # The token is resolved here, not passed as a callable `auth`: Pylon would answer with a
-        # `DynamicToolset`, and pydantic-ai 2.49 drops a dynamic toolset returned from a `CapabilityFunc`.
         settings = self.config.settings
         if settings.auth == 'browser':
             # Checked per run, so signing in from the menu or `/pylon login` applies to the next prompt.

@@ -5,6 +5,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import threading
 from collections.abc import Coroutine
 from contextlib import closing
 from pathlib import Path
@@ -12,9 +13,13 @@ from pathlib import Path
 import pytest
 
 import pydantic_ai_pax.ui.rendering.splash
+from pydantic_ai.models import infer_model_profile
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai_pax.__main__ import main
-from pydantic_ai_pax.cli import cli
+from pydantic_ai_pax.cli import cli, self_update
+from pydantic_ai_pax.cli.self_update import Installed
 from pydantic_ai_pax.config.settings_store import SettingsStore
+from pydantic_ai_pax.runtime import session_runtime
 from pydantic_ai_pax.ui.rendering.splash import Splash
 from tests.pax.cli_runner import CliRunner
 
@@ -48,6 +53,54 @@ def test_installed_entry_point_starts_and_exits(tmp_path: Path, monkeypatch: pyt
 def test_cli_startup(tmp_path: Path, run_cli: CliRunner, args: list[str], returncode: int) -> None:
     result = run_cli('--database', str(tmp_path / 'config.db'), *args, cwd=tmp_path)
     assert result.returncode == returncode, result.stderr
+
+
+@pytest.mark.parametrize(
+    ('running', 'printed'),
+    [
+        (Installed(version='0.73.0'), 'pax 0.73.0'),
+        (Installed(version='0.74.0.dev3', commit='0123456789abcdef'), 'pax 0.74.0.dev3 (012345678)'),
+    ],
+    ids=['release', 'main'],
+)
+def test_version_prints_and_exits(
+    tmp_path: Path, run_cli: CliRunner, monkeypatch: pytest.MonkeyPatch, running: Installed, printed: str
+) -> None:
+    monkeypatch.setattr(self_update, 'installed', lambda: running)
+    # Other arguments are ignored, as with argparse's own `version` action: no prompt runs, no database is made.
+    result = run_cli('--version', '--database', str(tmp_path / 'config.db'), '-p', 'hello', cwd=tmp_path)
+    assert (result.returncode, result.stdout, result.stderr) == (0, f'{printed}\n', '')
+    assert not (tmp_path / 'config.db').exists()
+
+
+def test_version_names_the_legacy_clai2_command(
+    tmp_path: Path, run_cli: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `uv tool install pydantic-clai2` environment runs Pax as `clai2`, so `--version` says so."""
+    monkeypatch.setattr(sys, 'prefix', str(tmp_path / 'tools' / 'pydantic-clai2'))
+    monkeypatch.setattr(self_update, 'installed', lambda: Installed(version='0.73.0'))
+    assert run_cli('--version').stdout == 'clai2 0.73.0\n'
+
+
+def test_version_reads_the_installed_distribution(run_cli: CliRunner) -> None:
+    # A `git+` or `main` install appends its short commit, so only the start is fixed.
+    assert run_cli('--version').stdout.startswith(f'pax {self_update.installed().version}')
+
+
+def test_first_model_window_lookup_runs_off_the_event_loop(
+    tmp_path: Path, run_cli: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first lookup imports the model's provider SDK: on the event loop, keys typed at the new prompt would wait."""
+    on_event_loop: list[bool] = []
+
+    def recorded(model: str) -> ModelProfile:
+        on_event_loop.append(threading.current_thread() is threading.main_thread())
+        return infer_model_profile(model)
+
+    monkeypatch.setattr(session_runtime, 'infer_model_profile', recorded)
+    result = run_cli('--database', str(tmp_path / 'config.db'), '--model', 'openai:gpt-5', cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert on_event_loop[0] is False
 
 
 @pytest.mark.parametrize('args', [[], ['config', 'show']])
@@ -117,7 +170,7 @@ def test_startup_saved_splash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, s
     monkeypatch.setenv('PYDANTIC_AI_NO_BANNER', '1')  # `main` sets it; this restores it after the test.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, 'argv', ['clai2'])
-    path = tmp_path / 'pydantic-clai2' / 'config.db'
+    path = tmp_path / 'pydantic-ai-pax' / 'config.db'
     store = SettingsStore(path)
     if state == 'corrupt':
         path.write_text('not sqlite')

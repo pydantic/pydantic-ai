@@ -1,4 +1,4 @@
-"""The web UI over several live sessions in one CLAI: each browser watches some, by conversation ID."""
+"""The web UI over several live sessions in one Pax: each browser watches some, by conversation ID."""
 
 import io
 import json
@@ -604,14 +604,14 @@ def test_command_menus_act_on_the_session_they_name(make_fleet: MakeFleet) -> No
 def test_about_in_a_session_the_browser_opened_installs_in_the_launch_session(
     make_fleet: MakeFleet, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Settings > About's Update, in a session the browser opened, asks in its page and installs where CLAI restarts."""
+    """Settings > About's Update, in a session the browser opened, asks in its page and installs where Pax restarts."""
     fleet = make_fleet()
     b = fleet.new('b')
     assert set(menu_rows(fleet, f'/api/sessions/{b}/commands/update/fields')) == {'version', 'updates.channel'}
     descriptions = {command.name: command.description for command in fleet.runtimes['b'].commands}
     assert (descriptions['update'], descriptions['reload']) == (
-        'Show whether a newer CLAI is out on updates.channel (stable or main); /update now installs it',
-        'Reload CLAI2 code without restarting',
+        'Show whether a newer Pax is out on updates.channel (stable or main); /update now installs it',
+        'Reload Pax code without restarting',
     )
     installed: list[list[str]] = []
     done = fleet.portal.call(anyio.Event)
@@ -628,7 +628,7 @@ def test_about_in_a_session_the_browser_opened_installs_in_the_launch_session(
         action = pool.submit(fleet.post, f'/api/sessions/{b}/commands/update/fields/version/action')
         [*_, opened] = messages(socket, until=kind('dialog'))
         dialog = at(opened, 'dialog')
-        assert at(dialog, 'title') == 'Update CLAI?'
+        assert at(dialog, 'title') == 'Update Pax?'
         assert fleet.post(f'/api/sessions/{b}/dialogs/{at(dialog, "id")}', {'value': 'yes'}).status_code == 204
         response = action.result(timeout=10)
     assert response.status_code == 200, response.text
@@ -704,7 +704,7 @@ def test_about_gives_the_launch_sessions_refusal(make_fleet: MakeFleet) -> None:
 
 
 def test_about_refuses_an_install_while_no_session_restarts_clai(make_fleet: MakeFleet) -> None:
-    """While the terminal shows a session not live here, no session restarts CLAI, so About's Update says where."""
+    """While the terminal shows a session not live here, no session restarts Pax, so About's Update says where."""
     fleet = make_fleet()
     b = fleet.new('b')
     fleet.launch.process.live.focused = 'shown-elsewhere'
@@ -712,8 +712,8 @@ def test_about_refuses_an_install_while_no_session_restarts_clai(make_fleet: Mak
     response = fleet.post(f'/api/sessions/{b}/commands/update/fields/version/action')
     assert response.status_code == 400, response.text
     assert response.json()['detail'] == (
-        '/reload and /update restart CLAI. Enter them in the session the terminal shows, '
-        'or with no terminal, in the session CLAI started with.'
+        '/reload and /update restart Pax. Enter them in the session the terminal shows, '
+        'or with no terminal, in the session Pax started with.'
     )
 
 
@@ -824,7 +824,7 @@ async def test_a_bare_host_asks_as_its_session_and_has_no_default_once_empty(mon
 
 
 def test_a_browser_connecting_while_no_session_is_live(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """As while CLAI exits: no snapshot, only an empty `live` and the orchestrator."""
+    """As while Pax exits: no snapshot, only an empty `live` and the orchestrator."""
     host = PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={}, conversation=Transcript())
     service = WebService(host=host)
     monkeypatch.setattr(service.live, 'listing', list)

@@ -1,7 +1,7 @@
 """`Workspaces`: make, list, and destroy workspaces of the configured kinds, keeping the registry current.
 
 This is what the `/workspaces` command and the web UI's orchestrator both call. A workspace's sessions run
-in the CLAI that opens them, in its checkout, as any other session does.
+in the Pax that opens them, in its checkout, as any other session does.
 """
 
 import secrets
@@ -24,8 +24,12 @@ def new_id(repo: str) -> str:
 
 
 def works_in(directory: Path | str, folder: Path) -> bool:
-    """Whether a session working in `directory` works in `folder` or below it."""
-    return Path(directory).resolve().is_relative_to(folder)
+    """Whether a session working in `directory` works in `folder` or below it.
+
+    Both sides are resolved: a workspace recorded under the state folder's earlier name is reached through the link
+    left at that name, while a session there now reports the moved path.
+    """
+    return Path(directory).resolve().is_relative_to(folder.resolve())
 
 
 async def close_sessions_in(live: LiveSessions, folder: Path) -> None:
@@ -46,7 +50,7 @@ class Workspaces:
     """The workspaces in the registry, and the kinds new ones can be made of."""
 
     def __init__(self, *, kinds: Mapping[str, WorktreeKind], directory: Path | None = None) -> None:
-        """`directory` holds the registry and clones; by default `workspaces` in CLAI's state directory."""
+        """`directory` holds the registry and clones; by default `workspaces` in Pax's state directory."""
         directory = directory or workspaces_dir()
         self.kinds = dict(kinds)
         self.registry = Registry(directory / 'registry')

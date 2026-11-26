@@ -2,10 +2,10 @@
 
 The default-enabled `observability` plugin: Logfire instrumentation owned by the plugin, not the process.
 
-The same instance records failures CLAI reports and recovers from: startup plugin load failures, failed turns,
+The same instance records failures Pax reports and recovers from: startup plugin load failures, failed turns,
 failed slash commands other than usage errors, and failing plugin handlers; with `include_content` off, these
 keep only the exception's type. With `ui_events` on, it also records
-CLAI's UI interactions (see `pydantic_ai_pax.ui.telemetry`).
+Pax's UI interactions (see `pydantic_ai_pax.ui.telemetry`).
 With `token` naming a `/keys` entry, everything goes to that key's Logfire project, such as one a team shares.
 With `variables_key` naming one holding a Logfire API key, the same instance can read the project's managed variables.
 
@@ -21,11 +21,10 @@ from dataclasses import replace
 from functools import partial
 from pathlib import Path
 from threading import Thread
-from typing import Annotated, ClassVar, Literal, Self
+from typing import TYPE_CHECKING, Annotated, ClassVar, Literal, Self
 
 import logfire
 from anyio import CancelScope, to_thread
-from opentelemetry.instrumentation.httpx import HTTPX2ClientInstrumentor, HTTPXClientInstrumentor
 from opentelemetry.propagate import get_global_textmap, set_global_textmap
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
@@ -35,6 +34,7 @@ from pydantic_ai_pax.builtin_plugins.logfire_destination import logfire_dir, par
 from pydantic_ai_pax.builtin_plugins.logfire_live import live_view_url, project_url
 from pydantic_ai_pax.builtin_plugins.logfire_session import SessionTracing, git_email
 from pydantic_ai_pax.builtin_plugins.logfire_setup import Setup, run_setup
+from pydantic_ai_pax.cli.self_update import installed
 from pydantic_ai_pax.config.api_keys import KeyReference, load_keys
 from pydantic_ai_pax.plugins import (
     PanelView,
@@ -51,6 +51,9 @@ from pydantic_ai_pax.runtime import agent_instrumentation
 from pydantic_ai_pax.ui import telemetry
 from pydantic_ai_pax.ui.menus.field_menu import first_error
 from pydantic_ai_pax.ui.rendering import theme
+
+if TYPE_CHECKING:
+    from opentelemetry.instrumentation.httpx import HTTPX2ClientInstrumentor, HTTPXClientInstrumentor
 
 
 class LogfireAccount(BaseModel):
@@ -77,12 +80,12 @@ class LogfireSettings(BaseModel):
     user_tag: Literal['logfire-account', 'git-email', False] = Field(
         default='logfire-account',
         description='Tag session roots with the email of the Logfire account that signed in during project setup, '
-        'or with git config user.email. Only the root and its `CLAI session opened` log carry it.',
+        'or with git config user.email. Only the root and its `Pax session opened` log carry it.',
     )
     account: LogfireAccount | None = Field(
         default=None,
         description='Saved by project setup. Its email tags session roots only while `token` still names the '
-        '/keys entry that setup saved, so pointing `token` elsewhere from any CLAI build drops the tag.',
+        '/keys entry that setup saved, so pointing `token` elsewhere from any Pax build drops the tag.',
     )
     token: KeyReference | None = Field(
         default=None,
@@ -114,7 +117,7 @@ class LogfireSettings(BaseModel):
 class LogfirePlugin(Plugin[LogfireSettings]):
     """Core instrumentation for every agent, without changing the supplied agent or global OTel providers.
 
-    CLAI's own turns get the per-run `Instrumentation` capability. Agents built elsewhere, such as
+    Pax's own turns get the per-run `Instrumentation` capability. Agents built elsewhere, such as
     the compaction summarizer and sub-agents, follow `Agent.instrument_all`, which the plugin points
     at the same instance while it is loaded and restores when it unloads.
     """
@@ -143,15 +146,17 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 # Unset, the SDK reads `LOGFIRE_API_KEY`. It only uses the key once something reads a variable.
                 api_key=api_key,
                 service_name=settings.service_name,
+                # Unset, the SDK runs `git rev-parse HEAD` in the launch directory and reports that repo's commit.
+                service_version=installed().label,
                 console=False,
-                # CLAI passes attributes, never f-strings. Inspecting the caller's source fails once that file
+                # Pax passes attributes, never f-strings. Inspecting the caller's source fails once that file
                 # changes on disk mid-session, and the warning it prints to stderr tears through the live display.
                 inspect_arguments=False,
                 config_dir=private_dir,
                 data_dir=private_dir,
                 # UI events and handled errors name settings, keys, plugins, and events, such as `sessions.naming`,
                 # `OPENAI_API_KEY`, or `SessionEnd`, that look like secrets. The callback only keeps those names, and
-                # only on CLAI's own records, so everything else is scrubbed as usual.
+                # only on Pax's own records, so everything else is scrubbed as usual.
                 scrubbing=logfire.ScrubbingOptions(callback=telemetry.keep_names),
                 advanced=logfire.AdvancedOptions(base_url=settings.base_url) if settings.base_url else None,
             )
@@ -171,8 +176,8 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             _shutdown(self.instance)
             raise
         self._session_tracing = SessionTracing(instance=self.instance, session_id=lambda: self.host.session_id)
-        # UI records and plugin errors are CLAI's own, so they share the session root's scope.
-        self._clai2 = logfire.Logfire(config=self.instance.config, otel_scope=telemetry.SCOPE)
+        # UI records and plugin errors are Pax's own, so they share the session root's scope.
+        self._pax = logfire.Logfire(config=self.instance.config, otel_scope=telemetry.SCOPE)
 
     @classmethod
     def from_host(cls, host: PluginHost[None]) -> Self:
@@ -225,7 +230,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         # Subscribed even without `ui_events`, so handled errors are recorded and the root is bound as soon as
         # startup selects the conversation.
         self._unsubscribe = telemetry.subscribe(
-            self._clai2,
+            self._pax,
             root=self._session_tracing.root,
             include_content=self.settings.include_content,
             ui_events=self.settings.ui_events,
@@ -233,9 +238,12 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         if self.settings.ui_events:
             model = event.settings.model or 'agent default'
             with telemetry.parent_span(self._session_tracing.root()):
-                self._clai2.log('info', 'session started', attributes={'model': model})
+                self._pax.log('info', 'session started', attributes={'model': model})
 
     def _instrument_httpx(self) -> None:
+        # Imported here: HTTPX instrumentation is off by default, and the instrumentors are slow to import.
+        from opentelemetry.instrumentation.httpx import HTTPX2ClientInstrumentor, HTTPXClientInstrumentor
+
         instrumentors = (HTTPXClientInstrumentor(), HTTPX2ClientInstrumentor())
         available = [
             instrumentor for instrumentor in instrumentors if not instrumentor.is_instrumented_by_opentelemetry
@@ -248,7 +256,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
     async def on_plugin_load_failed(self, event: PluginLoadFailed) -> None:
         with telemetry.parent_span(self._session_tracing.root()):
             telemetry.log_error(
-                self._clai2,
+                self._pax,
                 'Plugin {plugin!r} failed to load',
                 event.error,
                 content=self.settings.include_content,
@@ -260,9 +268,9 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             # An error that left the agent run is already on the run's span; this records the rest, such as a
             # model that could not be resolved or a failing `on_turn_start`, which fail the turn before the run.
             if event.error is not None and not self._session_tracing.raised_in_run(event.error):
-                telemetry.log_error(self._clai2, 'Turn failed', event.error, content=self.settings.include_content)
+                telemetry.log_error(self._pax, 'Turn failed', event.error, content=self.settings.include_content)
             if self.settings.ui_events:
-                self._clai2.log('info', 'turn {outcome}', attributes={'outcome': event.outcome})
+                self._pax.log('info', 'turn {outcome}', attributes={'outcome': event.outcome})
 
     async def on_session_end(self, event: SessionEnd) -> None:
         # HTTPX instrumentors are global: if another plugin instance remains, point them at its live provider.
@@ -336,7 +344,7 @@ _PROJECT_ROW = FieldRow(
             '  Its write token is saved in /keys; only the',
             '  key name and your email are kept here.',
             'R: forget it, and use LOGFIRE_TOKEN or the',
-            '  credentials file in pydantic-clai2/logfire/',
+            '  credentials file in pydantic-ai-pax/logfire/',
             '  under ~/.config (or $XDG_CONFIG_HOME).',
         ]
     ),
@@ -356,7 +364,7 @@ _ROWS = (
     FieldRow(
         key='service_name',
         label='Service name',
-        description='The OpenTelemetry service.name that CLAI traces are filed under in Logfire.',
+        description='The OpenTelemetry service.name that Pax traces are filed under in Logfire.',
         default='pydantic-clai2',
     ),
     FieldRow(
@@ -566,7 +574,7 @@ def _shutdown(instance: logfire.Logfire) -> bool:
 
     # OTel can ignore its flush timeout: https://github.com/open-telemetry/opentelemetry-python/issues/4568
     # A daemon lets cleanup finish later without adding an interpreter-exit thread join.
-    worker = Thread(target=shutdown, name='clai2-logfire-shutdown', daemon=True)
+    worker = Thread(target=shutdown, name='pax-logfire-shutdown', daemon=True)
     worker.start()
     worker.join(timeout_seconds)
     if worker.is_alive():

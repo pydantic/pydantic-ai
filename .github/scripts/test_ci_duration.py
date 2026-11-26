@@ -50,6 +50,24 @@ import ci_duration
             ),
             id='durable-exec',
         ),
+        pytest.param(
+            {
+                'name': 'test harness-temporal on 3.12 (lowest)',
+                'completed_at': '2026-06-13T17:21:43Z',
+                'runner_name': 'GitHub Actions 1001364942',
+                'runner_group_name': 'GitHub Actions',
+                'labels': ['ubuntu-latest'],
+            },
+            (
+                'test-harness-temporal',
+                '3.12',
+                'lowest',
+                'github-hosted',
+                'job=test-harness-temporal / runner=github-hosted / py=3.12 / extra=lowest',
+                400,
+            ),
+            id='harness-temporal',
+        ),
     ],
 )
 def test_normalize_tracked_job(job: ci_duration.JsonObject, expected: tuple[str, str, str, str, str, float]):

@@ -108,7 +108,7 @@ async def page(chromium: Browser) -> AsyncIterator[Page]:
 
 
 async def send(page: Page, approvals: Approvals, text: str) -> None:
-    composer = page.get_by_role('combobox', name='Message CLAI')
+    composer = page.get_by_role('combobox', name='Message Pax')
     await expect(composer).to_be_enabled()
     await composer.fill(text)
     async with page.expect_response(f'**/api/sessions/{approvals.session}/input') as sent:

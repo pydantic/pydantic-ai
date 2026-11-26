@@ -1,4 +1,4 @@
-"""Isolate settings and provider access for every CLAI test."""
+"""Isolate settings and provider access for every Pax test."""
 
 import os
 import sys
@@ -24,7 +24,7 @@ collect_ignore: list[str] = ['browser'] if os.environ.get('CLAI2_BROWSER_TESTS')
 
 @pytest.fixture
 def anyio_backend() -> str:
-    """CLAI's terminal and cancellation primitives require asyncio."""
+    """Pax's terminal and cancellation primitives require asyncio."""
     return 'asyncio'
 
 
@@ -169,7 +169,7 @@ def isolated_environment(
 def native_tools() -> Iterator[None]:
     """Default code mode to off, so shells run native tools unless a test turns it on.
 
-    CLAI turns code mode on by default, folding tools into `run_code`, but most shell tests script
+    Pax turns code mode on by default, folding tools into `run_code`, but most shell tests script
     native tool calls with `TestModel`. Override this fixture to test the real default.
     """
     setting = Settings.model_fields['code_mode']

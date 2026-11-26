@@ -68,8 +68,8 @@ def require_terminal(*, instead: str | None = None) -> None:
         return
     instead = instead or refused.instead
     raise ValueError(
-        f'{refused.command} opens a terminal menu or prompt, and this CLAI has no terminal: '
-        f'enter it in CLAI in a terminal{f", or use {instead} in this page" if instead else ""}.'
+        f'{refused.command} opens a terminal menu or prompt, and this Pax has no terminal: '
+        f'enter it in Pax in a terminal{f", or use {instead} in this page" if instead else ""}.'
     )
 
 

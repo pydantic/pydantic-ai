@@ -110,7 +110,9 @@ async def test_shell_applies_saved_theme_and_resets_on_exit(
 
     class Output(io.StringIO):
         def write(self, text: str) -> int:
-            if 'Unknown command /theme-done' in Text.from_ansi(text).plain:
+            # The shell paints CRLF rows, and Rich 15.0.0's `from_ansi` blanks each one:
+            # https://github.com/Textualize/rich/issues/4090
+            if 'Unknown command /theme-done' in Text.from_ansi(text.replace('\r\n', '\n')).plain:
                 changed.set()
             return super().write(text)
 

@@ -1,4 +1,4 @@
-"""Several live sessions in one CLAI process: `LiveRuntimes` opens, runs, and closes them, each in its own folder."""
+"""Several live sessions in one Pax process: `LiveRuntimes` opens, runs, and closes them, each in its own folder."""
 
 import gc
 import io
@@ -41,6 +41,7 @@ from pydantic_ai_pax.runtime.live_registry import (
 from pydantic_ai_pax.runtime.live_runtimes import LiveRuntimes
 from pydantic_ai_pax.runtime.process import ClaiProcess
 from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
+from pydantic_ai_pax.runtime.workspace_trust import WorkspaceTrust
 
 
 class Recorder(Plugin):
@@ -75,7 +76,7 @@ class _Output(io.StringIO):
         self.ready = anyio.Event()
 
     def write(self, s: str) -> int:
-        if 'Press Ctrl-C to quit.' in s:
+        if 'Press Ctrl+C to quit.' in s:
             self.ready.set()
         return super().write(s)
 
@@ -254,7 +255,7 @@ def test_cli_unsafe_registry_error_is_visible(monkeypatch: pytest.MonkeyPatch) -
     directory.mkdir(parents=True, mode=0o755)
     directory.chmod(0o755)
     monkeypatch.setattr(sys, 'argv', ['pax', 'sessions'])
-    with pytest.raises(SystemExit, match='Unsafe CLAI directory'):
+    with pytest.raises(SystemExit, match='Unsafe Pax directory'):
         cli.run()
 
 
@@ -370,7 +371,7 @@ async def test_sessions_stream_at_once_and_an_interrupt_stops_only_its_own(tmp_p
             release['b'].set()
             second = fleet.runtimes[b.id]
             await until(fleet.live, lambda: calls['b'] == 2 and second.idle)
-    assert 'Turn cancelled' in fleet.outputs['a'].getvalue()
+    assert 'Interrupted. Type what to do instead.' in fleet.outputs['a'].getvalue()
     assert 'a answered' not in fleet.outputs['a'].getvalue()
     assert fleet.outputs['b'].getvalue().count('b answered') == 2
     assert not fleet.live.listing()
@@ -434,10 +435,10 @@ async def test_a_conversation_is_live_in_one_session(tmp_path: Path) -> None:
                     assert len(opened) == 2
                     await fleet.runtimes[other.id].session.resume(later.id)
             assert opened[2] is other and fleet.built == ['a', 'home']
-            # Commands that restart CLAI belong to the session CLAI started with.
+            # Commands that restart Pax belong to the session Pax started with.
             other.send_input('/reload')
             other.send_input('/update')
-            await until(fleet.live, lambda: fleet.outputs['home'].getvalue().count('restart CLAI.') == 2)
+            await until(fleet.live, lambda: fleet.outputs['home'].getvalue().count('restart Pax.') == 2)
             assert other in fleet.live.listing()
             # `/exit` closes only the session it is entered in.
             other.send_input('/exit')
@@ -564,7 +565,7 @@ async def test_a_session_that_fails_leaves_the_others_running(
 
 
 async def test_each_session_works_in_its_own_folder(tmp_path: Path) -> None:
-    """Each session's plugins read its own folder's `AGENTS.md`; CLAI's working directory never changes."""
+    """Each session's plugins read its own folder's `AGENTS.md`; Pax's working directory never changes."""
     fleet = Fleet(
         tmp_path, builtin=(PluginSettings(id='repo_context', factory='pydantic_ai_pax.builtin_plugins.repo_context'),)
     )
@@ -580,6 +581,8 @@ async def test_each_session_works_in_its_own_folder(tmp_path: Path) -> None:
     for name in ('alpha', 'beta'):
         (fleet.folder(name) / 'AGENTS.md').write_text(f'Rules of {name}.')
         fleet.agents[name] = reader(name)
+    # Only a folder you trust has its `AGENTS.md` in the instructions; an untrusted one's is named, for the file tools.
+    WorkspaceTrust.saved(fleet.process.store, fleet.folder('alpha')).decide(fleet.process.store, trusted=True)
     launched_in = Path.cwd()
     with anyio.fail_after(20):
         async with fleet.live.serving():
@@ -589,7 +592,8 @@ async def test_each_session_works_in_its_own_folder(tmp_path: Path) -> None:
             await until(fleet.live, lambda: len(seen) == 2 and all(fleet.runtimes[s.id].idle for s in sessions))
             assert Path.cwd() == launched_in
     assert 'Rules of alpha.' in seen['alpha'] and 'Rules of beta.' not in seen['alpha']
-    assert 'Rules of beta.' in seen['beta'] and 'Rules of alpha.' not in seen['beta']
+    assert 'Rules of beta.' not in seen['beta'] and 'Rules of alpha.' not in seen['beta']
+    assert 'The working directory has an instruction file that is not loaded here' in seen['beta']
     assert Path.cwd() == launched_in
 
 
@@ -692,7 +696,7 @@ async def test_a_conversation_another_process_runs_opens_one_copy(tmp_path: Path
 
 
 async def test_a_conversation_another_process_runs_has_one_copy_across_processes(tmp_path: Path) -> None:
-    """A CLAI started later, or another `--web`, continues the copy an earlier one made rather than another."""
+    """A Pax started later, or another `--web`, continues the copy an earlier one made rather than another."""
     store = Fleet(tmp_path, builtin=()).process.conversations
     busy = await store.save(
         summary=ConversationSummary(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 import time
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -1098,6 +1099,8 @@ _TEXT_BUDGET = '_MAX_HTML_TEXT_SCAN_COST'
 # Content after these 16 `<div>`s sits at depth 18 (the document itself is depth 1), two levels past the 16 where
 # deep scans start. The deepest `<div>` charges 8 conversion cost for its own scan.
 _DEEP = '<div>' * 16
+# One digit more than `int()` parses.
+_TOO_MANY_DIGITS = '1' * (sys.get_int_max_str_digits() + 1)
 
 # Each case is a document, the budget it pins, and the exact total charged against that budget.
 _BUDGET_TOTAL_CASES = [
@@ -1121,6 +1124,10 @@ _BUDGET_TOTAL_CASES = [
     # Ordered-list markers are as wide as the start number without leading zeros, or the item count, plus 3.
     pytest.param('<ol start="0012"><li>a\nb</li></ol>', _COST_BUDGET, 12, id='ordered-list-start'),
     pytest.param('<ol start="12²"><li>a\nb</li></ol>', _COST_BUDGET, 10, id='ordered-list-non-decimal-start'),
+    # A start `int()` rejects counts as absent, as the converter treats it.
+    pytest.param(
+        f'<ol start="{_TOO_MANY_DIGITS}"><li>a\nb</li></ol>', _COST_BUDGET, 10, id='ordered-list-start-too-long'
+    ),
     pytest.param('<ol><li>a\nb</li>' + '<li></li>' * 9 + '</ol>', _COST_BUDGET, 66, id='ordered-list-item-count'),
     # Past depth 16, each tag charges 8 per level, times its indent depth plus one.
     pytest.param(_DEEP + '<p><br></p>', _COST_BUDGET, 48, id='deep-tags'),
@@ -1130,6 +1137,9 @@ _BUDGET_TOTAL_CASES = [
     ),
     pytest.param('<table><tr><td colspan="2000">x</td></tr></table>', _COST_BUDGET, 8024, id='colspan-capped-at-1000'),
     pytest.param('<table><tr><td colspan="x">x</td></tr></table>', _COST_BUDGET, 32, id='colspan-not-a-number'),
+    pytest.param(
+        f'<table><tr><td colspan="{_TOO_MANY_DIGITS}">x</td></tr></table>', _COST_BUDGET, 32, id='colspan-too-long'
+    ),
     pytest.param(_DEEP + '<table><tr><td colspan="3">x</td></tr></table>', _COST_BUDGET, 224, id='deep-colspan'),
     # Each `<thead>` row that holds a data cell also charges the whole `<thead>`; the first `<tbody>` row, the whole
     # table.
@@ -1253,6 +1263,9 @@ _BUDGET_CHECK_CASES = [
 
 
 class TestMarkdownConverter:
+    # The largest number `int()` parses and `str()` writes.
+    _LARGEST_NUMBER = '9' * sys.get_int_max_str_digits()
+
     def test_large_well_formed_reference_list_passes_markup_budgets(self):
         """A page with more markup than a 2.9 MB Wikipedia article (~101k parser events) reaches parsing."""
 
@@ -1484,13 +1497,90 @@ class TestMarkdownConverter:
         _, content = _convert_html(html)
         assert content == markdownify(html, strip=['img', 'script', 'style'])
 
-    def test_non_decimal_list_start_is_ignored(self):
-        """A `start` made of digits `int()` rejects, like `²`, numbers the list from 1 instead of raising.
+    @pytest.mark.parametrize(
+        ('html', 'expected'),
+        [
+            pytest.param('<ol start="²"><li>one</li><li>two</li></ol>', '1. one\n2. two', id='list-start-non-decimal'),
+            pytest.param(
+                f'<ol start="{_TOO_MANY_DIGITS}"><li>one</li><li>two</li></ol>',
+                '1. one\n2. two',
+                id='list-start-too-long',
+            ),
+            # The second item's number has one digit too many for `str()`.
+            pytest.param(
+                f'<ol start="{_LARGEST_NUMBER}"><li>one</li><li>two</li></ol>',
+                f'{_LARGEST_NUMBER}. one\n2. two',
+                id='list-start-at-limit',
+            ),
+            # An empty item renders no number, so it converts as it does on `main`.
+            pytest.param(
+                f'<ol start="{_LARGEST_NUMBER}"><li>one</li><li></li></ol>',
+                f'{_LARGEST_NUMBER}. one',
+                id='list-start-at-limit-empty-item',
+            ),
+            pytest.param(
+                '<table><tr><td>x</td><td colspan="²">y</td></tr></table>',
+                '|  |  |\n| --- | --- |\n| x | y |',
+                id='colspan-non-decimal',
+            ),
+            pytest.param(
+                '<table><tr><th>x</th><th colspan="²">y</th></tr></table>',
+                '| x | y |\n| --- | --- |',
+                id='header-colspan-non-decimal',
+            ),
+            pytest.param(
+                f'<table><tr><td>x</td><td colspan="{_TOO_MANY_DIGITS}">y</td></tr></table>',
+                '|  |  |\n| --- | --- |\n| x | y |',
+                id='colspan-too-long',
+            ),
+            pytest.param(f'<h{_TOO_MANY_DIGITS}>x</h{_TOO_MANY_DIGITS}>', 'x', id='heading-level-too-long'),
+            # The conversion estimate looks up conversion functions for what a deep link contains.
+            pytest.param(
+                _DEEP + f'<a href="/x"><h{_TOO_MANY_DIGITS}>x</h{_TOO_MANY_DIGITS}></a>',
+                '[x](/x)',
+                id='heading-level-too-long-in-deep-link',
+            ),
+        ],
+    )
+    def test_numbers_int_rejects_are_ignored(self, html: str, expected: str):
+        """A number `int()` rejects counts as absent instead of raising: a list `start`, a cell `colspan`, an `<hN>` level.
 
-        `markdownify` checks `isnumeric()` and then calls `int()`, which raises on such digits.
+        `markdownify` checks `isnumeric()` or `isdigit()` and then calls `int()`, which raises on digits like `²` and
+        on more digits than `sys.get_int_max_str_digits()`. A list item whose number `str()` can't write for that
+        limit is numbered as if the list had no `start`.
         """
-        _, content = _convert_html('<ol start="²"><li>one</li><li>two</li></ol>')
-        assert content == '1. one\n2. two'
+        assert _convert_html(html)[1] == expected
+
+    @pytest.mark.parametrize(
+        ('html', 'expected'),
+        [
+            pytest.param(f'<p>&#{_TOO_MANY_DIGITS};</p>', '\N{REPLACEMENT CHARACTER}', id='text'),
+            pytest.param(
+                f'<a href="/x&#{_TOO_MANY_DIGITS};">x</a>', '[x](/x\N{REPLACEMENT CHARACTER})', id='attribute'
+            ),
+            pytest.param(f'<p>&#{"0" * len(_TOO_MANY_DIGITS)}65;</p>', 'A', id='leading-zeros'),
+            # Zero, like any value outside Unicode's characters, reads as U+FFFD.
+            pytest.param(f'<p>&#{"0" * len(_TOO_MANY_DIGITS)};</p>', '\N{REPLACEMENT CHARACTER}', id='all-zeros'),
+            pytest.param(
+                f'<p>&#65;&#{_TOO_MANY_DIGITS};</p>', 'A\N{REPLACEMENT CHARACTER}', id='with-parsable-reference'
+            ),
+            # A raw-text element shows its references as written, so it doesn't raise.
+            pytest.param(f'<xmp>&#{_TOO_MANY_DIGITS};</xmp>', f'&#{_TOO_MANY_DIGITS};', id='raw-text-unchanged'),
+            # On a page that raised, every such reference is shortened before parsing again, raw text included.
+            pytest.param(
+                f'<p>&#{_TOO_MANY_DIGITS};</p><xmp>&#{_TOO_MANY_DIGITS};</xmp>',
+                '\N{REPLACEMENT CHARACTER}\n\n&#11111111;',
+                id='raw-text-on-page-that-raised',
+            ),
+        ],
+    )
+    def test_too_long_decimal_character_references_convert(self, html: str, expected: str):
+        """A decimal character reference too long for `int()` converts as its value does instead of raising.
+
+        `bs4` and `html.unescape` call `int()` on it, which raises past `sys.get_int_max_str_digits()`. Leading zeros
+        don't change the value, and a value above U+10FFFF reads as U+FFFD.
+        """
+        assert _convert_html(html)[1] == expected
 
     @pytest.mark.parametrize('tag', ['blockquote', 'dd', 'li'])
     def test_deeply_nested_indentation_is_bounded(self, tag: str):

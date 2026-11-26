@@ -13,7 +13,7 @@ from termflow.live.buffer import REVERSE
 from termflow.themes import reset_palette
 
 from pydantic_ai_pax.ui.prompt import prompt_surface
-from pydantic_ai_pax.ui.prompt.prompt_selection import MouseReport, Selection, mouse_report
+from pydantic_ai_pax.ui.prompt.prompt_selection import REPEAT_INTERVAL, MouseReport, Selection, hyperlink, mouse_report
 from pydantic_ai_pax.ui.prompt.prompt_surface import (
     ENTER,
     FRAME_INTERVAL,
@@ -358,15 +358,18 @@ async def test_palette_reset_reaches_the_terminal_unsplit_on_a_slow_runner() -> 
 
 def test_scrolling_holds_the_view_while_output_arrives_and_returns_to_follow() -> None:
     screen = Screen(height=10)
-    screen.surface.paint(ROWS)
+    rule = '─' * 80
+    screen.surface.paint((rule, 'DRAFT', rule, 'FOOTER'))
     for index in range(20):
         screen.write(f'line {index}\n')
     assert screen.lines()[:6] == [f'line {index}' for index in range(15, 20)] + ['']
     assert screen.surface.page == 5
     screen.surface.scroll(screen.surface.page)
     view = screen.lines()[:6]
-    assert view[:5] == [f'line {index}' for index in range(10, 15)]
-    assert view[5].endswith(SCROLLED_HINT.rstrip())
+    assert view == [f'line {index}' for index in range(10, 16)], 'the hint covers no transcript row'
+    assert screen.lines()[6:9] == [rule, 'DRAFT', rule[len(SCROLLED_HINT) :] + SCROLLED_HINT.rstrip()], (
+        'it sits in the rule below the draft'
+    )
     screen.write('line 20\n')
     assert screen.lines()[:5] == view[:5]
     screen.surface.scroll(100)
@@ -374,6 +377,15 @@ def test_scrolling_holds_the_view_while_output_arrives_and_returns_to_follow() -
     screen.surface.scroll(-100)
     assert screen.surface.view.anchor is None
     assert screen.lines()[:6] == [f'line {index}' for index in range(16, 21)] + ['']
+
+
+def test_scrolled_hint_without_an_editor_rule_marks_the_last_transcript_row() -> None:
+    screen = Screen(height=10)
+    screen.surface.paint(('Sign-in code:', 'ANSWER'))
+    for index in range(20):
+        screen.write(f'line {index}\n')
+    screen.surface.scroll(screen.surface.page)
+    assert screen.lines()[7].endswith(SCROLLED_HINT.rstrip())
 
 
 def test_short_transcripts_do_not_scroll() -> None:
@@ -415,11 +427,12 @@ def test_markdown_renders_again_for_a_new_width_or_theme() -> None:
 
     screen = Screen(width=40)
     screen.surface.paint(ROWS)
-    block = screen.surface.markdown(render=render, width=40)
+    block = screen.surface.markdown(render=render, width=40, streaming=True)
     block.extend('**bold**')
     block.write('streamed bold\n')
     screen.surface.refresh()
     assert screen.lines()[0] == 'streamed bold'
+    block.end()
     assert calls == []
     screen.terminal.resize(width=60, height=24)
     screen.surface.paint(ROWS)
@@ -432,6 +445,33 @@ def test_markdown_renders_again_for_a_new_width_or_theme() -> None:
     block.freeze()
     screen.surface.paint(ROWS)
     assert screen.lines()[0] == 'streamed bold', 'an aborted part keeps what it showed'
+
+
+def test_a_part_streaming_across_a_resize_renders_again_only_when_it_ends() -> None:
+    """Rendering the whole part again on every frame made each frame cost the whole part."""
+    calls: list[int] = []
+
+    def render(*, source: str, width: int) -> str:
+        calls.append(width)
+        return f'rendered at {width}: {source}\n'
+
+    screen = Screen(width=40)
+    screen.surface.paint(ROWS)
+    block = screen.surface.markdown(render=render, width=40, streaming=True)
+    block.extend('one')
+    block.write('one ')
+    screen.terminal.resize(width=10, height=24)
+    for word in ('two', 'three', 'four'):
+        block.extend(f' {word}')
+        block.write(f'{word} ')
+        screen.surface.paint(ROWS)
+    assert screen.lines()[:2] == ['one two th', 'ree four'], 'the streamed rows wrap to the new width'
+    assert calls == []
+    block.end()
+    screen.surface.paint(ROWS)
+    assert screen.lines()[:3] == ['rendered a', 't 10: one', 'two three']
+    screen.surface.paint(ROWS)
+    assert calls == [10]
 
 
 def test_a_theme_change_repaints_earlier_tool_output_in_the_new_palette() -> None:
@@ -604,6 +644,223 @@ def test_dragging_highlights_cells_and_releasing_copies_them() -> None:
     assert screen.lines()[:3] == ['first line here', 'second line', 'third'], 'selection never changes text'
 
 
+def test_a_drag_across_a_soft_wrap_copies_one_line() -> None:
+    """A row the panel wrapped onto is the same line, so the copy has no newline there; real line breaks stay."""
+    screen = Screen(width=20, height=12)
+    screen.surface.paint(ROWS)
+    line = 'one two three four five six seven'
+    edge = 'aaaa bbbb cccc dddd eeee'  # Wraps right after a space, which the copy keeps.
+    screen.write(f'{line}\n{edge}\nnext\n')
+    assert screen.lines()[:5] == [line[:20], line[20:], edge[:19], edge[20:], 'next']
+    for report in (press(1, 1), drag(3, 5)):
+        screen.surface.transcript_key('mouse', report)
+    assert screen.surface.transcript_key('mouse', release(3, 5)) == f'{line}\n{edge}\nnex'
+
+
+def test_double_clicking_a_word_selects_and_copies_it() -> None:
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('alpha beta gamma\n')
+    for report in (press(9, 1), release(9, 1), press(9, 1)):
+        assert screen.surface.transcript_key('mouse', report) is None
+    assert highlighted(screen.surface) == ['beta']
+    assert screen.surface.transcript_key('mouse', release(9, 1)) == 'beta'
+
+
+def test_triple_clicking_selects_and_copies_the_whole_wrapped_line() -> None:
+    screen = Screen(width=20, height=12)
+    screen.surface.paint(ROWS)
+    line = 'one two three four five six seven'
+    screen.write(f'{line}\nnext\n')
+    assert screen.lines()[:3] == [line[:20], line[20:], 'next']
+    for report in (press(3, 2), release(3, 2), press(3, 2), release(3, 2), press(3, 2)):
+        screen.surface.transcript_key('mouse', report)
+    assert screen.surface.transcript_key('mouse', release(3, 2)) == line
+
+
+def clicks(screen: Screen, column: int, row: int, count: int) -> str | None:
+    """What `count` quick clicks at one cell copied."""
+    copied = None
+    for _ in range(count):
+        assert screen.surface.transcript_key('mouse', press(column, row)) is None
+        copied = screen.surface.transcript_key('mouse', release(column, row))
+    return copied
+
+
+def test_a_double_clicked_word_stops_at_blanks_and_ghostty_boundaries() -> None:
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('call(foo, "a.b/c") $HOME\n日本語 text\n')
+    assert clicks(screen, 7, 1, 2) == 'foo'
+    assert clicks(screen, 13, 1, 2) == 'a.b/c', 'dots and slashes stay in the word'
+    assert clicks(screen, 22, 1, 2) == 'HOME'
+    assert clicks(screen, 5, 1, 2) == '(', 'a boundary selects only itself'
+    assert clicks(screen, 4, 2, 2) == '日本語', 'the right half of a double-width character'
+    assert clicks(screen, 30, 1, 2) is None, 'a blank has nothing to copy'
+    assert highlighted(screen.surface) == [' ']
+
+
+def test_a_double_clicked_word_continues_across_a_soft_wrap() -> None:
+    screen = Screen(width=20, height=12)
+    screen.surface.paint(ROWS)
+    screen.write('one two three four five six seven\nfive\n')
+    assert clicks(screen, 20, 1, 2) == 'five'
+    assert clicks(screen, 2, 2, 2) == 'five'
+    assert clicks(screen, 4, 3, 2) == 'five', 'a line of its own'
+
+
+def test_repeat_clicks_count_only_on_one_cell_within_the_interval() -> None:
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('alpha beta gamma\n')
+    assert clicks(screen, 9, 1, 1) is None
+    screen.now += REPEAT_INTERVAL / 2
+    assert clicks(screen, 9, 1, 1) == 'beta', 'within the interval'
+    screen.now += 1
+    assert clicks(screen, 9, 1, 1) is None, 'too late: a single click again'
+    assert highlighted(screen.surface) == []
+    assert clicks(screen, 10, 1, 1) is None, 'another cell starts over'
+    assert clicks(screen, 10, 1, 2) == 'alpha beta gamma', 'the third click selects the line'
+    assert clicks(screen, 10, 1, 1) is None, 'a fourth click starts over'
+    assert highlighted(screen.surface) == []
+
+
+def test_a_press_after_a_drag_starts_a_new_selection() -> None:
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('alpha beta\n')
+    for report in (press(1, 1), drag(3, 1)):
+        screen.surface.transcript_key('mouse', report)
+    assert screen.surface.transcript_key('mouse', release(3, 1)) == 'alp'
+    assert clicks(screen, 1, 1, 1) is None
+    assert highlighted(screen.surface) == []
+    for report in (press(1, 1), drag(1, 1)):  # Motion that stays on the pressed cell is no drag.
+        screen.surface.transcript_key('mouse', report)
+    assert screen.surface.transcript_key('mouse', release(1, 1)) == 'alpha'
+
+
+def test_double_clicking_a_url_opens_it_once_then_selects_the_word() -> None:
+    """A click opens the URL as it does on its own; the second click selects instead of opening it again."""
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('See https://ai.pydantic.dev/docs, then\n')
+    assert clicks(screen, 15, 1, 2) == '//ai.pydantic.dev/docs', 'Ghostty ends a word at `:`'
+    assert screen.opened == ['https://ai.pydantic.dev/docs']
+
+
+def test_dragging_after_a_double_or_triple_click_extends_by_words_or_lines() -> None:
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('alpha beta gamma delta\nsecond line\nthird\n')
+    clicks(screen, 14, 1, 1)
+    for report in (press(14, 1), drag(9, 1)):
+        screen.surface.transcript_key('mouse', report)
+    assert highlighted(screen.surface) == ['beta gamma']
+    screen.surface.transcript_key('mouse', drag(20, 1))
+    assert screen.surface.transcript_key('mouse', release(20, 1)) == 'gamma delta'
+    clicks(screen, 3, 2, 2)
+    for report in (press(3, 2), drag(2, 3)):
+        screen.surface.transcript_key('mouse', report)
+    assert screen.surface.transcript_key('mouse', release(2, 3)) == 'second line\nthird'
+
+
+def test_a_triple_clicked_line_ends_at_the_hint_and_the_pinned_rows() -> None:
+    """Rows the hint covers, and rows pinned under the transcript, are never part of a transcript line."""
+    long = 'x' * 50
+    screen = Screen(width=20, height=10)
+    screen.surface.paint(ROWS)
+    screen.write(''.join(f'line {index}\n' for index in range(4)) + f'{long}\nend\n')
+    screen.surface.scroll(2)
+    assert screen.lines()[3:6] == [long[:20], long[20:40], SCROLLED_HINT[:20].rstrip()]
+    assert clicks(screen, 3, 4, 3) == long[:40]
+    screen = Screen(width=20, height=10)
+    screen.surface.paint(('TOP', '─' * 20, 'DRAFT'), select_pinned=True)
+    screen.write(''.join(f'line {index}\n' for index in range(5)) + f'{long}\nend\n')
+    screen.surface.scroll(3)
+    assert screen.lines()[5:8] == [long[:20], long[20:40], 'TOP'], 'the line goes on below the transcript'
+    assert clicks(screen, 2, 8, 3) == 'TOP'
+
+
+def test_multi_clicks_on_an_unselectable_row_select_nothing() -> None:
+    """A press on the editor or status rows ends at the last transcript cell, which must not grow to its word or line."""
+    screen = Screen(width=10, height=8)
+    screen.surface.paint(ROWS)
+    screen.write(''.join(f'row {index}\n' for index in range(9)) + 'last words')
+    assert screen.lines()[3:6] == ['last words', 'TOP', 'DRAFT']
+    start = len(screen.terminal.getvalue())
+    for count in (2, 3):
+        screen.now += 1
+        assert clicks(screen, 3, 6, count) is None, count
+        assert highlighted(screen.surface) == [], count
+    assert '\x1b]52;' not in screen.terminal.getvalue()[start:]
+    screen.now += 1
+    assert clicks(screen, 3, 4, 2) == 'last', 'the transcript row itself still selects'
+
+
+def test_a_soft_wrap_before_a_double_width_character_copies_no_padding() -> None:
+    """A double-width character that does not fit wraps to the next row, leaving the last cell blank."""
+    screen = Screen(width=5, height=8)
+    screen.surface.paint(('ED',))
+    screen.write('ab日本語\n')
+    frame = screen.surface._frame  # pyright: ignore[reportPrivateUsage]
+    assert frame is not None
+    assert frame.chars[:10] == ['a', 'b', '日', '', ' ', '本', '', '語', '', ' ']
+    for report in (press(1, 1), drag(4, 2)):
+        screen.surface.transcript_key('mouse', report)
+    assert screen.surface.transcript_key('mouse', release(4, 2)) == 'ab日本語'
+    assert clicks(screen, 3, 1, 2) == 'ab日本語', 'a double-click steps over the padding'
+    assert clicks(screen, 1, 2, 2) == 'ab日本語'
+
+
+def test_a_drag_from_the_right_half_of_a_double_width_character_keeps_it() -> None:
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('日本語 text\n')
+    for report in (press(4, 1), drag(6, 1)):
+        screen.surface.transcript_key('mouse', report)
+    assert highlighted(screen.surface) == ['本語']
+    assert screen.surface.transcript_key('mouse', release(6, 1)) == '本語'
+
+
+def test_a_wrapped_line_copies_without_its_trailing_blanks() -> None:
+    screen = Screen(width=5, height=8)
+    screen.surface.paint(('ED',))
+    screen.write('abc' + ' ' * 10 + '\nnext\n')
+    for report in (press(1, 1), drag(2, 4)):
+        screen.surface.transcript_key('mouse', report)
+    assert screen.surface.transcript_key('mouse', release(2, 4)) == 'abc\nne'
+
+
+def test_a_copy_joins_the_rows_its_frame_painted() -> None:
+    """Output that changes the rows before the next paint must not change where the copy breaks lines."""
+    screen = Screen(width=20, height=8)
+    screen.surface.paint(('ED',))
+    screen.write('y' * 50)  # Unfinished, so a carriage return rewrites it.
+    for report in (press(1, 1), drag(5, 2)):
+        screen.surface.transcript_key('mouse', report)
+    screen.surface.write('\rshort')  # Inside the frame interval: the frame still shows the wrapped rows.
+    assert screen.surface.transcript_key('mouse', release(5, 2)) == 'y' * 25
+
+
+def test_a_paint_reads_each_items_wrap_flags_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A selection needs the frame's wrap flags, so every paint reads them; an unfinished line wraps again per read."""
+    read: list[int] = []
+    continued = TranscriptBuffer.continued
+
+    def counting(transcript: TranscriptBuffer, item: int, *, width: int) -> tuple[bool, ...]:
+        read.append(item)
+        return continued(transcript, item, width=width)
+
+    monkeypatch.setattr(TranscriptBuffer, 'continued', counting)
+    screen = Screen(width=20, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('y' * 50)
+    assert screen.lines()[:3] == ['y' * 20, 'y' * 20, 'y' * 10]
+    read.clear()
+    screen.write('y')
+    assert read == [screen.surface.transcript.end]
+
+
 def test_question_selection_opt_in_does_not_leak_into_editor_rows() -> None:
     screen = Screen(width=40, height=10)
     screen.surface.paint(ROWS, select_pinned=True)
@@ -675,6 +932,32 @@ def test_clicking_a_url_opens_it() -> None:
     assert len(screen.opened) == 3, 'a drag over a URL selects it instead'
 
 
+def test_clicking_a_pinned_hyperlink_opens_its_target_and_a_transcript_one_does_not() -> None:
+    """Painted cells drop OSC 8 hyperlinks, so the frame keeps which cells the shell's own rows link.
+
+    A transcript label, as a model's `[label](url)`, hides where it goes, so it does not open on a click.
+    """
+    screen = Screen(width=60, height=10)
+    # `沙箱` takes four cells, so the link starts at column 13, not 11.
+    footer = f'fake 沙箱 | {hyperlink("watch live ↗", url="https://desktop.example/vnc.html")} | ' + hyperlink(
+        'notes', url='mailto:ada@example.com'
+    )
+    screen.surface.paint(('TOP', 'DRAFT', 'BOTTOM', footer))
+    row = Text('read ')
+    row.append('continue', style='link https://example.com/?q=secret')
+    Console(file=screen.surface, force_terminal=True, color_system='truecolor', width=60).print(row)
+    screen.now += FRAME_INTERVAL
+    screen.surface.refresh()
+    assert screen.lines()[0] == 'read continue'
+    assert screen.lines()[-1] == 'fake 沙箱 | watch live ↗ | notes'
+    assert click(screen, 6, 1) == [], 'a transcript label'
+    assert click(screen, 12, 10) == []
+    assert click(screen, 13, 10) == ['https://desktop.example/vnc.html'], 'the first cell'
+    assert click(screen, 24, 10) == ['https://desktop.example/vnc.html'], 'the arrow'
+    assert click(screen, 25, 10) == []
+    assert click(screen, 28, 10) == [], 'other schemes open only through the terminal'
+
+
 def test_clicking_a_url_wrapped_across_rows_opens_all_of_it() -> None:
     url = 'https://github.com/pydantic/pydantic-ai/pull/9936/files'
     screen = Screen(width=20, height=12)
@@ -714,7 +997,7 @@ def test_a_url_cut_off_by_the_viewport_is_not_opened() -> None:
     screen.surface.paint(ROWS)
     screen.write(''.join(f'line {index}\n' for index in range(4)) + f'{url}\n')
     screen.surface.scroll(2)
-    assert screen.lines()[2:4] == [url[:20], SCROLLED_HINT.rstrip()], 'the hint covers the rest of the URL'
+    assert screen.lines()[2:4] == [url[:20], SCROLLED_HINT.rstrip()], 'with no editor rule, the hint covers the URL'
     assert click(screen, 3, 3) == []
 
 
@@ -726,11 +1009,32 @@ def test_a_url_wrapped_inside_markdown_opens_whole() -> None:
 
     screen = Screen(width=20, height=12)
     screen.surface.paint(ROWS)
-    screen.surface.markdown(render=render, width=40).extend(url)
+    block = screen.surface.markdown(render=render, width=40)
+    block.extend(url)
     screen.surface.paint(ROWS)
     assert screen.lines()[:4] == [url[:20], url[20:40], url[40:], 'after']
     assert click(screen, 3, 2) == [url]
     assert click(screen, 2, 4) == []
+
+
+def test_a_click_before_the_next_paint_reads_rows_that_have_since_shrunk() -> None:
+    """A part that ends between a paint and a click may have fewer rows than the frame shows."""
+
+    def render(*, source: str, width: int) -> str:
+        return 'https://x.dev\n'
+
+    screen = Screen(width=20, height=12)
+    screen.surface.paint(ROWS)
+    block = screen.surface.markdown(render=render, width=40, streaming=True)
+    block.extend('one')
+    block.write('a\nb\nc\nhttps://x.dev\n')
+    screen.terminal.resize(width=30, height=12)
+    screen.surface.paint(ROWS)
+    assert screen.surface.transcript_key('mouse', press(3, 4)) is None
+    # It ends inside the frame interval, so it paints after the release.
+    block.end()
+    assert screen.surface.transcript_key('mouse', release(3, 4)) is None
+    assert screen.opened == ['https://x.dev'], 'the click opens the URL the frame still shows'
 
 
 def test_opening_a_url_does_not_wait_for_the_browser(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -743,7 +1047,7 @@ def test_opening_a_url_does_not_wait_for_the_browser(monkeypatch: pytest.MonkeyP
 
 class _Inline:
     def __init__(self, *, target: Callable[[str], object], args: tuple[str], daemon: bool) -> None:
-        assert daemon, 'a browser that never returns must not keep CLAI alive'
+        assert daemon, 'a browser that never returns must not keep Pax alive'
         self.target, self.args = target, args
 
     def start(self) -> None:
@@ -827,7 +1131,7 @@ def test_a_release_before_any_frame_copies_nothing() -> None:
 def test_cells_already_in_reverse_video_still_look_selected() -> None:
     frame = ScreenBuffer(4, 1)
     frame.attrs[1] = REVERSE  # The editor's painted cursor, for example.
-    Selection(anchor=(0, 0), head=(0, 2)).highlight(frame, rows=1, previous=None)
+    Selection(anchor=(0, 0), head=(0, 2)).highlight(frame, rows=1, joins=(), previous=None)
     assert [attrs & REVERSE for attrs in frame.attrs] == [REVERSE, REVERSE, REVERSE, 0]
 
 
@@ -850,10 +1154,11 @@ def test_malformed_mouse_reports_are_ignored() -> None:
 
 def test_selection_spans_clamp_to_the_frame() -> None:
     selection = Selection(anchor=(-1, -5), head=(99, 99))
-    assert selection.span(width=4, rows=3) == range(0, 12)
-    assert selection.span(width=4, rows=2) == range(0, 8), 'rows below the transcript are not selectable'
-    assert Selection(anchor=(0, 0)).span(width=4, rows=3) == range(0)
-    assert Selection(anchor=(0, 0)).text(ScreenBuffer(4, 3), rows=3) == '', 'a click selects nothing'
+    frame = ScreenBuffer(4, 3)
+    assert selection.span(frame, rows=3, joins=()) == range(0, 12)
+    assert selection.span(frame, rows=2, joins=()) == range(0, 8), 'rows below the transcript are not selectable'
+    assert Selection(anchor=(0, 0)).span(frame, rows=3, joins=()) == range(0)
+    assert Selection(anchor=(0, 0)).text(frame, rows=3, joins=()) == '', 'a click selects nothing'
 
 
 def test_a_drag_into_the_editor_copies_only_the_transcript() -> None:

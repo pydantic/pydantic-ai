@@ -6,7 +6,6 @@ most once per process; each account's secret is an encrypted file next to its lo
 """
 
 import logging
-import os
 import re
 import sqlite3
 from collections.abc import Generator
@@ -20,13 +19,14 @@ from keyring.errors import InitError, KeyringError, KeyringLocked, NoKeyringErro
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai_pax.config.private_files import write_private as _write_private
+from pydantic_ai_pax.paths import config_dir
 
 _SERVICE = 'pydantic-clai2'
 _ACCOUNT = 'openai-codex'
 _KEY_ACCOUNT = 'encryption-key'
 _PREFIX = 'clai-chunks-v1:'
 _SLASH = '%2F'
-"""How `/` is written in a credential file name; no account name CLAI stores otherwise contains `%`."""
+"""How `/` is written in a credential file name; no account name Pax stores otherwise contains `%`."""
 # A locked keyring is not "no keyring", except `kwallet.DBusKeyring`, which raises `KeyringLocked`
 # whenever `connected()` returns `False` (`handle < 0`, e.g. when KWallet is disabled, unconfigured, or
 # cannot open a wallet on KDE / Steam Deck) and cannot distinguish that from a user-cancelled unlock.
@@ -75,26 +75,24 @@ def _warn_plaintext_fallback() -> None:
 
 
 def credentials_path(*, account: str = _ACCOUNT) -> Path:
-    """The private fallback file for one account, in the user's CLAI config directory.
+    """The private fallback file for one account, in the user's Pax config directory.
 
     Credentials are per user, like keyring entries, so `--database` does not move them.
-    Mirrors `SettingsStore`'s default directory rule, which cannot be imported here
-    without constructing a database.
     """
-    root = Path(os.getenv('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'pydantic-clai2'
+    root = config_dir()
     # A gateway profile such as `gateway/openai@work` stays one file in this folder, not a subfolder.
     return root / f'credentials-{account.replace("/", _SLASH)}.json'
 
 
 _NO_OLDER_ENTRY: set[str] = set()
-"""Default accounts already found to have no older per-entry login; this CLAI never writes one."""
+"""Default accounts already found to have no older per-entry login; this Pax never writes one."""
 
 
 def has_credentials(*, account: str) -> bool:
     """Whether a login is saved for `account`.
 
     A file answers without decrypting anything or reading the keyring. A default account without one
-    may still have a login an older CLAI saved as its own keyring entry; that entry is moved into its
+    may still have a login an older Pax saved as its own keyring entry; that entry is moved into its
     file, as loading it would. Profiles came after per-entry logins, so they are never looked up, and a
     default account found without an entry is not looked up again this process, so turns read no entry.
     """
@@ -161,7 +159,7 @@ def _cipher() -> Fernet | None:
 def _create_cipher() -> Fernet:
     if (cipher := _cipher()) is not None:
         return cipher
-    with credential_lock(account=_KEY_ACCOUNT, busy='Cannot lock the credential key. Close other CLAI sessions.'):
+    with credential_lock(account=_KEY_ACCOUNT, busy='Cannot lock the credential key. Close other Pax sessions.'):
         _stored_key.cache_clear()  # Another process may have created it while this one waited.
         if (cipher := _cipher()) is not None:
             return cipher
@@ -192,7 +190,7 @@ def _decrypt(path: Path) -> str:
 
 
 def load_codex_credentials(*, account: str = _ACCOUNT, fallback: Path | None = None) -> str | None:
-    """Read the encrypted file, a login saved per keyring entry by an older CLAI, or the plaintext fallback."""
+    """Read the encrypted file, a login saved per keyring entry by an older Pax, or the plaintext fallback."""
     encrypted, plaintext = _files(account=account, fallback=fallback)
     try:
         if encrypted.is_file():
@@ -229,7 +227,7 @@ def replace_credentials(*, value: str, account: str) -> bool:
     after a sign-out cannot sign the account back in: it either saves first and is then deleted, or
     finds nothing to replace.
     """
-    with credential_lock(account=account, busy=f'Another CLAI is updating the {account} login. Try again.'):
+    with credential_lock(account=account, busy=f'Another Pax process is updating the {account} login. Try again.'):
         encrypted, plaintext = _files(account=account, fallback=None)
         if not (encrypted.is_file() or plaintext.is_file()):
             return False
@@ -280,7 +278,7 @@ def _chunk_services(*, value: str, account: str) -> list[str]:
 
 
 def _join_chunks(*, root: str, account: str) -> str:
-    """An older CLAI's login: the root entry itself, or a bundle chunked for Windows' per-entry size limit."""
+    """An older Pax's login: the root entry itself, or a bundle chunked for Windows' per-entry size limit."""
     services = _chunk_services(value=root, account=account)
     if not services:
         return root
@@ -301,7 +299,7 @@ def _delete_keyring(*, account: str) -> None:
 
 
 def _delete_entries(*, root: str, account: str) -> None:
-    """Drop an older CLAI's entry and its chunks, including a corrupt manifest's own entry."""
+    """Drop an older Pax's entry and its chunks, including a corrupt manifest's own entry."""
     try:
         services = _chunk_services(value=root, account=account)
     except UserError:

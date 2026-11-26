@@ -17,6 +17,7 @@ from urllib.parse import SplitResult, urlsplit
 
 from pydantic import BaseModel
 
+from pydantic_ai_pax.paths import pax_dir
 from pydantic_ai_pax.plugins.menus import Dialogs, Option
 
 _MCP_PATH = '/mcp'
@@ -62,7 +63,7 @@ def parse_destination(text: str) -> Destination:
     parts = urlsplit(text if '://' in text else f'https://{text}')
     if parts.username is not None or parts.password is not None:
         # The text would be saved in plaintext plugin settings; do not echo it back either.
-        raise ValueError('Leave credentials out of the address: CLAI signs in through the browser.')
+        raise ValueError('Leave credentials out of the address: Pax signs in through the browser.')
     if not _is_logfire_address(parts):
         raise ValueError(f'Type a host (logfire.example.com), an https URL, or an MCP URL ending in /mcp, not {text}.')
     netloc = parts.netloc.lower()
@@ -146,11 +147,14 @@ _EXAMPLES = ('  logfire.example.com', '  https://logfire.example.com', '  https:
 
 
 def logfire_dir() -> Path:
-    """CLAI's private Logfire directory: the SDK reads configuration and credentials only from here."""
+    """Pax's private Logfire directory: the SDK reads configuration and credentials only from here.
+
+    Unlike `config_dir()`, a relative `XDG_CONFIG_HOME` is ignored, so a checkout cannot supply them.
+    """
     config_home = Path(os.getenv('XDG_CONFIG_HOME', '')).expanduser()
     if not config_home.is_absolute():
         config_home = Path.home() / '.config'
-    return config_home / 'pydantic-clai2' / 'logfire'
+    return pax_dir(config_home) / 'logfire'
 
 
 class _Remembered(BaseModel):

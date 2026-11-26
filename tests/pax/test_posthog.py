@@ -562,7 +562,7 @@ async def test_browser_sign_in_status_and_logout(tmp_path: Path, monkeypatch: py
 
 
 async def test_no_browser_sign_in_loads_without_tools_and_says_how(tmp_path: Path) -> None:
-    """Loading waits for every plugin, so a browser left open at load would leave CLAI unable to run anything."""
+    """Loading waits for every plugin, so a browser left open at load would leave Pax unable to run anything."""
     SignIn.unfinished = True
     for terminal in (True, False):
         folder = tmp_path / f'terminal-{terminal}'

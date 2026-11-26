@@ -2355,6 +2355,121 @@ async def test_anthropic_sampling_settings_reach_the_wire(
     )
 
 
+async def test_anthropic_thinking_drops_the_sampling_settings_it_rejects(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """With thinking, Claude rejects `temperature` other than `1`, `top_p` below `0.95` and any `top_k` with a 400.
+
+    They're dropped silently instead, as tuning knobs are, so settings chosen for another model don't fail the request.
+    """
+    agent = Agent(anthropic_model('claude-haiku-4-5', capture=True))
+
+    result = await agent.run(
+        'What is 2+2? Answer with the number only.',
+        model_settings=ModelSettings(thinking=True, temperature=0.5, top_p=0.9, top_k=40),
+    )
+
+    assert result.output.strip() == snapshot('4')
+    body = request_capture.body('/v1/messages')
+    assert {key: value for key, value in body.items() if key in ('temperature', 'top_p', 'top_k', 'thinking')} == (
+        snapshot({'thinking': {'type': 'enabled', 'budget_tokens': 10000}})
+    )
+
+
+@pytest.mark.parametrize(
+    'model_settings', [pytest.param({'temperature': 1}, id='temperature'), pytest.param({'top_p': 0.97}, id='top_p')]
+)
+async def test_anthropic_thinking_keeps_the_sampling_settings_it_accepts(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    model_settings: ModelSettings,
+):
+    """With thinking, `temperature=1` and `top_p` from `0.95` are accepted, so they're still sent.
+
+    One at a time, since Claude Sonnet 4.6 takes only one of them either way.
+    """
+    agent = Agent(anthropic_model('claude-sonnet-4-6', capture=True))
+
+    await agent.run('What is 2+2? Answer with the number only.', model_settings={**model_settings, 'thinking': True})
+
+    body = request_capture.body('/v1/messages')
+    assert {key: value for key, value in body.items() if key in ('temperature', 'top_p', 'top_k')} == model_settings
+
+
+async def test_anthropic_thinking_keeps_top_p_when_it_drops_temperature(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """With thinking, a `temperature` other than `1` is dropped, so an accepted `top_p` no longer conflicts and is kept.
+
+    Claude Haiku 4.5 takes `temperature` or `top_p`, not both, but only `top_p` is left to send here.
+    """
+    agent = Agent(anthropic_model('claude-haiku-4-5', capture=True))
+
+    await agent.run(
+        'What is 2+2? Answer with the number only.',
+        model_settings=ModelSettings(thinking=True, temperature=0.5, top_p=0.97),
+    )
+
+    body = request_capture.body('/v1/messages')
+    assert {key: value for key, value in body.items() if key in ('temperature', 'top_p')} == snapshot({'top_p': 0.97})
+
+
+async def test_anthropic_drops_top_p_set_together_with_temperature(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """Claude Haiku 4.5 takes `temperature` or `top_p`, not both, so `top_p` is dropped silently."""
+    agent = Agent(anthropic_model('claude-haiku-4-5', capture=True))
+
+    await agent.run(
+        'What is 2+2? Answer with the number only.', model_settings=ModelSettings(temperature=0.5, top_p=0.9)
+    )
+
+    body = request_capture.body('/v1/messages')
+    assert {key: value for key, value in body.items() if key in ('temperature', 'top_p')} == snapshot(
+        {'temperature': 0.5}
+    )
+
+
+async def test_anthropic_thinking_keeps_sampling_settings_without_the_restriction(allow_model_requests: None):
+    """A model without `anthropic_restricts_sampling_with_thinking`, like a non-Claude model behind an
+    Anthropic-compatible endpoint, gets its sampling settings with thinking too.
+
+    A mock, since this only checks that the drop follows the profile flag, which the request shows.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    )
+    model = AnthropicModel(
+        'claude-opus-4-1',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        profile=AnthropicModelProfile(anthropic_restricts_sampling_with_thinking=False),
+    )
+
+    await Agent(model).run(
+        'What is 2+2?', model_settings=ModelSettings(thinking=True, temperature=0.5, top_p=0.9, top_k=40)
+    )
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['thinking'] == {'type': 'enabled', 'budget_tokens': 10000}
+    assert kwargs['extra_body'] == {'temperature': 0.5, 'top_p': 0.9, 'top_k': 40}
+
+
+async def test_anthropic_keeps_top_p_set_together_with_temperature_where_accepted(allow_model_requests: None):
+    """Models without `anthropic_disallows_temperature_with_top_p`, like Claude Opus 4.1, get both.
+
+    A mock, since this only checks that the drop is limited to the flagged models, which the request shows.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    )
+    agent = Agent(AnthropicModel('claude-opus-4-1', provider=AnthropicProvider(anthropic_client=mock_client)))
+
+    await agent.run('What is 2+2?', model_settings=ModelSettings(temperature=0.5, top_p=0.9))
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['extra_body'] == {'temperature': 0.5, 'top_p': 0.9}
+
+
 async def test_anthropic_betas_setting(allow_model_requests: None):
     """Verify anthropic_betas setting adds betas to the API request."""
     c = completion_message(
@@ -7160,6 +7275,95 @@ async def test_anthropic_opus_47_keeps_non_sampling_extra_body(allow_model_reque
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert kwargs['extra_body'] == {'metadata': {'keep': True}}
+
+
+@pytest.mark.parametrize('header_name', ['anthropic-version', 'Anthropic-Version'])
+@pytest.mark.parametrize('model_name', ['claude-sonnet-4-6', 'claude-haiku-4-5'])
+async def test_anthropic_api_version_2026_10_21_drops_sampling_settings(
+    allow_model_requests: None, model_name: str, header_name: str
+):
+    """`anthropic>=2` sends `2026-10-21`, which rejects sampling settings on every model, not just Opus 4.7+.
+
+    Kept as a unit test because the header under test can't be set through a recording: the locked SDK sends
+    `2023-06-01`, and the cassette hooks strip `anthropic-*` headers.
+    """
+    responses = [
+        completion_message([BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1))
+    ]
+    mock_client = cast(AsyncAnthropic, MockAnthropic(messages_=responses, default_headers={header_name: '2026-10-21'}))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings=AnthropicModelSettings(temperature=0, extra_body={'metadata': {'keep': True}}))
+
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        await agent.run('What is 2+2?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['extra_body'] == {'metadata': {'keep': True}}
+
+
+@pytest.mark.parametrize(
+    'default_headers,extra_headers',
+    [
+        pytest.param({'anthropic-version': '2023-06-01'}, None, id='client'),
+        pytest.param({'anthropic-version': '2026-10-21'}, {'Anthropic-Version': '2023-06-01'}, id='request'),
+    ],
+)
+async def test_anthropic_api_version_2023_06_01_keeps_sampling_settings(
+    allow_model_requests: None, default_headers: dict[str, str], extra_headers: dict[str, str] | None
+):
+    """`2023-06-01` accepts sampling settings, whether the client sets it or the request's `extra_headers` does.
+
+    Kept as a unit test because the header under test can't be set through a recording: the locked SDK sends
+    `2023-06-01`, and the cassette hooks strip `anthropic-*` headers.
+    """
+    responses = [
+        completion_message([BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1))
+    ]
+    mock_client = cast(AsyncAnthropic, MockAnthropic(messages_=responses, default_headers=default_headers))
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    settings = AnthropicModelSettings(temperature=0)
+    if extra_headers is not None:
+        settings['extra_headers'] = extra_headers
+    agent = Agent(m, model_settings=settings)
+
+    await agent.run('What is 2+2?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['extra_body'] == {'temperature': 0}
+
+
+async def test_anthropic_api_version_header_does_not_drop_sampling_settings_on_legacy_bedrock(
+    allow_model_requests: None,
+):
+    """The legacy Bedrock client sends its API version in the body, so its `anthropic-version` header doesn't count.
+
+    Kept as a unit test because it pins the outbound body under a client header that a recording can't set: the
+    cassette hooks strip `anthropic-*` headers.
+    """
+    bodies: list[dict[str, JsonValue]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(TypeAdapter(dict[str, JsonValue]).validate_json(request.content))
+        return httpx2.Response(400, json={'message': 'captured'})
+
+    from anthropic import AsyncAnthropicBedrock
+
+    # A bearer token skips SigV4 signing, which would need `botocore` from the `bedrock` extra.
+    async with AsyncAnthropicBedrock(
+        api_key='x',
+        aws_region='us-east-1',
+        base_url='http://localhost',
+        max_retries=0,
+        default_headers={'anthropic-version': '2026-10-21'},
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        agent = Agent(AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client)))
+        with pytest.raises(ModelHTTPError):
+            await agent.run('What is 2+2?', model_settings=AnthropicModelSettings(temperature=0))
+
+    [body] = bodies
+    assert body['temperature'] == 0
+    assert body['anthropic_version'] == 'bedrock-2023-05-31'
 
 
 async def test_anthropic_explicit_extra_body_overrides_the_sampling_setting(allow_model_requests: None):
