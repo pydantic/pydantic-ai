@@ -281,7 +281,9 @@ class MistralModel(Model[Mistral]):
     [API Documentation](https://docs.mistral.ai/)
     """
 
-    unsupported_settings = frozenset({'extra_body', 'extra_headers', 'logit_bias', 'service_tier', 'top_k'})
+    unsupported_settings = frozenset(
+        {'citations', 'extra_body', 'extra_headers', 'logit_bias', 'service_tier', 'top_k'}
+    )
 
     json_mode_schema_prompt: str
 

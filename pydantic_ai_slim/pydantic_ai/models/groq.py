@@ -230,7 +230,7 @@ class GroqModel(Model[AsyncGroq]):
     # Tool results are text-only here, so a tool's files go on the user channel, framed.
     _relocates_tool_files = True
 
-    unsupported_settings = frozenset({'top_k'})
+    unsupported_settings = frozenset({'citations', 'top_k'})
 
     _model_name: GroqModelName = field(repr=False)
     _provider: Provider[AsyncGroq] = field(repr=False)
