@@ -87,6 +87,7 @@ from .._adapter import (
     tool_availability_delta_payload,
     tool_retry_payload,
 )
+from .._event_stream import DEFAULT_KEEPALIVE_INTERVAL
 from .._utils import client_error_text, get_ui_message_id, set_ui_message_id, without_internal_text_metadata
 from ._event_stream import VercelAIEventStream
 from ._utils import (
@@ -259,6 +260,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         allow_uploaded_files: bool = False,
         preserve_file_data: bool | None = None,
         allowed_content_types: frozenset[str] | None = DEFAULT_ALLOWED_CONTENT_TYPES,
+        keepalive_interval: float | None = DEFAULT_KEEPALIVE_INTERVAL,
         **kwargs: Any,
     ) -> VercelAIAdapter[AgentDepsT, OutputDataT]:
         """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with Vercel AI-specific parameters.
@@ -279,6 +281,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
             allowed_content_types=allowed_content_types,
+            keepalive_interval=keepalive_interval,
             **kwargs,
         )
 
@@ -316,6 +319,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         allow_uploaded_files: bool = False,
         preserve_file_data: bool | None = None,
         allowed_content_types: frozenset[str] | None = DEFAULT_ALLOWED_CONTENT_TYPES,
+        keepalive_interval: float | None = DEFAULT_KEEPALIVE_INTERVAL,
         **kwargs: Any,
     ) -> Response:
         """Extends [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] with Vercel AI-specific parameters.
@@ -353,6 +357,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
             allowed_content_types=allowed_content_types,
+            keepalive_interval=keepalive_interval,
             **kwargs,
         )
 

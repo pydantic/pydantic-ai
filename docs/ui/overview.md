@@ -62,6 +62,7 @@ If you're using a web framework not based on Starlette (e.g. Django or Flask) or
     - A request the adapter rejects as malformed — an AG-UI [resume payload](ag-ui.md#tool-approval-interrupts) that doesn't match the schema it advertised, for instance — raises on the first iteration of the stream rather than when the run method is called, so that pairing it with `transform_stream()` turns it into a protocol error event. Consuming the native stream without that pairing means catching it around your `async for`.
 3. The [`UIAdapter.encode_stream()`][pydantic_ai.ui.UIAdapter.encode_stream] method encodes the stream of protocol-specific events as SSE (HTTP Server-Sent Events) strings, which you can then return as a streaming response.
     - You can also use [`UIAdapter.streaming_response()`][pydantic_ai.ui.UIAdapter.streaming_response] to generate a Starlette/FastAPI streaming response directly from the protocol-specific event stream returned by `run_stream()`.
+    - While the run is quiet, for example during a long tool call, the SSE stream sends a `: keepalive` comment every 15 seconds so proxies and load balancers don't close the connection. Clients that follow the SSE spec, including the Vercel AI SDK and `@ag-ui/client`, ignore comments. Set [`keepalive_interval`][pydantic_ai.ui.UIAdapter.keepalive_interval] on the adapter to change the interval, or to `None` to turn it off; `dispatch_request()` and `from_request()` accept it as a keyword argument. Keepalives need asyncio; on Trio the stream is sent without them.
 
 !!! note
     This example uses FastAPI, but can be modified to work with any web framework.
@@ -147,6 +148,8 @@ async def encode_events(events: AsyncIterator[NativeEvent]) -> AsyncIterator[str
     async for sse_event in event_stream.encode_stream(event_stream.transform_stream(events)):
         yield sse_event
 ```
+
+The strings `encode_stream()` yields include a `: keepalive\n\n` SSE comment whenever no event arrived for 15 seconds. Forward them as they are when you write an SSE response, or set the event stream's [`keepalive_interval`][pydantic_ai.ui.UIEventStream.keepalive_interval] to `None` if you only want the encoded events.
 
 An event stream instance carries the state of one run as it goes (the current message ID, the part it's streaming, the tool calls it's waiting on), so build a new one per run.
 

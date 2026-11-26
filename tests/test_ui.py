@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import warnings
-from collections.abc import AsyncIterator, Awaitable, MutableMapping, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, MutableMapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import cached_property
 from typing import Any, Literal
@@ -71,6 +71,7 @@ from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
 from pydantic_ai.workspaces import WorkspaceRef
 
 from ._inline_snapshot import snapshot
+from ._timeouts import READINESS_WAIT_TIMEOUT
 from .conftest import IsDatetime, conversation_view, message, message_part, try_import
 from .workspace_fakes import ConnectOnlyWorkspaceCapability
 
@@ -3522,3 +3523,151 @@ def test_messages_builder_copies_parts_it_did_not_make():
     assert own_parts == [TextPart('a')]
     assert message.parts == [TextPart('a'), TextPart('b'), TextPart('c')]
     assert builder.last_modified(checkpoint, of_type=ModelResponse) is message
+
+
+KEEPALIVE = ': keepalive\n\n'
+
+# The keepalive tests below aren't VCR tests: a cassette can't exercise idle timing, the pump's cancellation, or
+# validation that raises before any request is made.
+
+
+@pytest.mark.parametrize('anyio_backend', ['asyncio'])
+@pytest.mark.parametrize('stop_after', ['first', 'second'])
+async def test_encode_stream_sends_keepalive_while_source_is_quiet(anyio_backend: str, stop_after: str):
+    """A quiet source gets keepalive comments without its pending pull being cancelled.
+
+    A plain `async for ... break` with no `aclosing()` still closes the source: the event loop's async generator
+    finalizer closes the abandoned stream, which tears down the pump and closes the source.
+    """
+    released = anyio.Event()
+    source_closed = anyio.Event()
+
+    async def events() -> AsyncIterator[str]:
+        try:
+            yield 'first'
+            await released.wait()
+            yield 'second'
+        finally:
+            source_closed.set()
+
+    chunks: list[str] = []
+    async for chunk in DummyUIEventStream(keepalive_interval=0.01).encode_stream(events()):  # pragma: no branch
+        chunks.append(chunk)
+        if chunk == KEEPALIVE:
+            released.set()
+        elif chunk == stop_after:
+            break
+    pump = next(task for task in asyncio.all_tasks() if task.get_name() == 'pydantic-ai-ui-keepalive-pump')
+
+    expected = ['first', KEEPALIVE, 'second'] if stop_after == 'second' else ['first']
+    assert list(dict.fromkeys(chunks)) == expected
+    await asyncio.wait({pump}, timeout=READINESS_WAIT_TIMEOUT)
+    assert pump.done()
+    assert source_closed.is_set()
+
+
+@pytest.mark.parametrize('anyio_backend', ['asyncio'])
+async def test_encode_stream_keepalive_passes_anyio_cancellation_to_the_source(anyio_backend: str):
+    """A client disconnect cancels the run as an `anyio` scope would: shielded cleanup finishes, the rest is cut."""
+    shield_entered = anyio.Event()
+    release = anyio.Event()
+    shielded_work_done = False
+
+    async def events() -> AsyncIterator[str]:
+        nonlocal shielded_work_done
+        yield 'first'
+        with anyio.CancelScope(shield=True):
+            shield_entered.set()
+            await release.wait()
+            shielded_work_done = True
+        await anyio.sleep(READINESS_WAIT_TIMEOUT)  # cut by the cancellation
+        yield 'second'  # pragma: no cover
+
+    async def consume() -> None:
+        async for _ in DummyUIEventStream(keepalive_interval=READINESS_WAIT_TIMEOUT).encode_stream(events()):
+            pass
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(consume)
+        await shield_entered.wait()
+        tg.cancel_scope.cancel()
+        release.set()
+
+    assert shielded_work_done
+    assert not any(task.get_name() == 'pydantic-ai-ui-keepalive-pump' for task in asyncio.all_tasks())
+
+
+@pytest.mark.parametrize('anyio_backend', ['asyncio', 'trio'])
+async def test_encode_stream_keepalive_surfaces_source_error(anyio_backend: str):
+    """A source error surfaces on both backends; Trio, which the keepalive pump doesn't support, iterates the source plainly."""
+
+    keepalive_seen = anyio.Event()
+
+    async def events() -> AsyncIterator[str]:
+        yield 'first'
+        if anyio_backend == 'asyncio':
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                await keepalive_seen.wait()
+        raise ValueError('boom')
+
+    chunks: list[str] = []
+    with pytest.raises(ValueError, match='boom'):
+        async for chunk in DummyUIEventStream(keepalive_interval=0.01).encode_stream(events()):
+            chunks.append(chunk)
+            if chunk == KEEPALIVE:
+                keepalive_seen.set()
+    assert (KEEPALIVE in chunks) == (anyio_backend == 'asyncio')
+
+
+@pytest.mark.parametrize('anyio_backend', ['asyncio'])
+@pytest.mark.parametrize('method', ['encode_stream', 'streaming_response'])
+async def test_adapter_keepalive_interval_reaches_the_event_stream(anyio_backend: str, method: str):
+    keepalive_seen = anyio.Event()
+
+    async def events() -> AsyncIterator[str]:
+        yield 'first'
+        # Without the adapter's setting the stream's own 15 s default applies, so this fails instead of hanging.
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            await keepalive_seen.wait()
+        yield 'second'
+
+    enabled = DummyUIAdapter(Agent(TestModel()), DummyUIRunInput(), keepalive_interval=0.01)
+    stream: AsyncIterable[object] = (
+        enabled.encode_stream(events())
+        if method == 'encode_stream'
+        else enabled.streaming_response(events()).body_iterator
+    )
+    chunks: list[object] = []
+    async for chunk in stream:
+        chunks.append(chunk)
+        if chunk == KEEPALIVE:
+            keepalive_seen.set()
+    assert KEEPALIVE in chunks
+    disabled = DummyUIAdapter(Agent(TestModel()), DummyUIRunInput(), keepalive_interval=None)
+    assert [chunk async for chunk in disabled.encode_stream(events())] == ['first', 'second']
+
+
+@pytest.mark.parametrize('anyio_backend', ['asyncio'])
+async def test_encode_stream_sends_no_keepalive_for_non_sse_content(anyio_backend: str):
+    class ProtobufEventStream(DummyUIEventStream[None, str]):
+        @property
+        def content_type(self) -> str:
+            return 'application/vnd.ag-ui.event+proto'
+
+    async def events() -> AsyncIterator[str]:
+        yield 'first'
+        # With no pump there is nothing to send a keepalive.
+        assert not any(task.get_name() == 'pydantic-ai-ui-keepalive-pump' for task in asyncio.all_tasks())
+        yield 'second'
+
+    stream = ProtobufEventStream(keepalive_interval=0.01)
+    assert [chunk async for chunk in stream.encode_stream(events())] == ['first', 'second']
+
+
+@pytest.mark.parametrize('interval', [0, -1])
+def test_encode_stream_rejects_non_positive_keepalive_interval(interval: float):
+    async def events() -> AsyncIterator[str]:
+        yield 'never pulled'  # pragma: no cover
+
+    with pytest.raises(UserError, match='`keepalive_interval` must be positive or `None`'):
+        DummyUIEventStream(keepalive_interval=interval).encode_stream(events())
