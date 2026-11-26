@@ -251,8 +251,8 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         allow_internet_access: bool = True,
         network_policy: NetworkPolicy | None = None,
         credential_proxy: CredentialProxyConfig | None = None,
-        secure_access: bool = False,
         volumes: list[Volume] | None = None,
+        secure_access: bool = False,
         sandbox_timeout: int | None = None,
         desktop: bool | tuple[int, int] = False,
     ) -> None:

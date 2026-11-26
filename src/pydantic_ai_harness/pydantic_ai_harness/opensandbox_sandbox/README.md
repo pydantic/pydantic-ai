@@ -296,7 +296,7 @@ Before you rely on it:
 
 ## Mount volumes into the sandbox
 
-A deleted sandbox takes its files with it. To keep a workspace's files after you delete its sandbox, pass `volumes` to `OpenSandboxBackend`: the SDK's own `Volume` objects, for a host directory, a Kubernetes PVC or an OSSFS bucket, passed to `Sandbox.create` unchanged. Mount the volume at the working directory and a later sandbox created with the same volume starts with the files the last one left:
+A deleted sandbox takes its files with it. To keep a workspace's files after you delete its sandbox, pass `volumes` to `OpenSandboxBackend`: the SDK's own `Volume` objects, for a host directory, a named volume (a Kubernetes PVC or a Docker named volume) or an OSSFS bucket, passed to `Sandbox.create` unchanged. Mount the volume at the working directory and a later sandbox created with the same volume starts with the files the last one left:
 
 ```python {test="skip"}
 from opensandbox.models.sandboxes import PVC, Volume
@@ -330,7 +330,7 @@ The sandbox is as isolated as the server's runtime makes it. A Docker container 
 
 ## Configuration
 
-[Agent specs](https://pydantic.dev/docs/ai/core-concepts/agent/#agent-specs) can set every option except `connection`, `network_policy` and `volumes`. A spec reaches the server through `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`.
+[Agent specs](https://pydantic.dev/docs/ai/core-concepts/agent/#agent-specs) can set every option except `connection` and `network_policy`. A spec reaches the server through `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`.
 
 | Option | What it does |
 | --- | --- |
@@ -347,7 +347,7 @@ The sandbox is as isolated as the server's runtime makes it. A Docker container 
 | `authority` | Who wrote the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, or `'user'` for the user's own. Capabilities that put a file into the prompt give it no more [authority](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#workspace-authority) than this. Default: `'operator'`, files you wrote. |
 | `path_authority` | An `authority` level for specific directories and files, overriding `authority` under them. The longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
 
-`image`, `resource`, `allow_internet_access`, `network_policy`, `secure_access` and `volumes` only shape a new sandbox. `working_dir`, `env`, `sandbox_timeout`, `desktop`, `authority` and `path_authority` also apply when you reattach.
+`image`, `resource`, `allow_internet_access`, `network_policy` and `secure_access` only shape a new sandbox. `working_dir`, `env`, `sandbox_timeout`, `desktop`, `authority` and `path_authority` also apply when you reattach.
 
 ## Limits
 
