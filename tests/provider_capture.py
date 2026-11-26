@@ -99,13 +99,19 @@ class _Captured(Exception):
 @dataclass
 class _Capture:
     bodies: list[bytes] = field(default_factory=list[bytes])
+    clients: list[httpx.AsyncClient | httpx2.AsyncClient] = field(
+        default_factory=list[httpx.AsyncClient | httpx2.AsyncClient]
+    )
+    """The HTTP clients built for this capture, closed once it's done."""
 
     def handle(self, request: httpx2.Request) -> httpx2.Response:
         self.bodies.append(request.content)
         return httpx2.Response(400, json={'error': {'message': 'captured', 'type': 'captured'}}, request=request)
 
     def client(self) -> httpx2.AsyncClient:
-        return httpx2.AsyncClient(transport=httpx2.MockTransport(self.handle))
+        client = httpx2.AsyncClient(transport=httpx2.MockTransport(self.handle))
+        self.clients.append(client)
+        return client
 
     def handle_legacy(self, request: httpx.Request) -> httpx.Response:
         self.bodies.append(request.content)
@@ -113,7 +119,13 @@ class _Capture:
 
     def legacy_client(self) -> httpx.AsyncClient:
         """A client on the legacy `httpx`, for a provider whose SDK still takes one."""
-        return httpx.AsyncClient(transport=httpx.MockTransport(self.handle_legacy))
+        client = httpx.AsyncClient(transport=httpx.MockTransport(self.handle_legacy))
+        self.clients.append(client)
+        return client
+
+    async def aclose(self) -> None:
+        for client in self.clients:
+            await client.aclose()
 
     def handle_bedrock(self, params: dict[str, Any], **_: Any) -> None:
         self.bodies.append(json.dumps(params, default=str).encode())
@@ -129,17 +141,20 @@ class _Capture:
 
 
 def _model(provider: CapturedProvider, capture: _Capture) -> Model:
-    client = capture.client()
     if provider == 'anthropic':
-        return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test', http_client=client))
+        return AnthropicModel(
+            'claude-sonnet-4-5', provider=AnthropicProvider(api_key='test', http_client=capture.client())
+        )
     if provider == 'openai-chat':
-        return OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='test', http_client=client))
+        return OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='test', http_client=capture.client()))
     if provider == 'openai-responses':
-        return OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='test', http_client=client))
+        return OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='test', http_client=capture.client()))
     if provider == 'google':
-        return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test', http_client=client))
+        return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test', http_client=capture.client()))
     if provider == 'mistral':
-        return MistralModel('mistral-large-latest', provider=MistralProvider(api_key='test', http_client=client))
+        return MistralModel(
+            'mistral-large-latest', provider=MistralProvider(api_key='test', http_client=capture.client())
+        )
     if provider == 'bedrock':
         return BedrockConverseModel(
             'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
@@ -147,7 +162,7 @@ def _model(provider: CapturedProvider, capture: _Capture) -> Model:
         )
     if provider == 'openrouter':
         return OpenRouterModel(
-            'anthropic/claude-sonnet-4.5', provider=OpenRouterProvider(api_key='test', http_client=client)
+            'anthropic/claude-sonnet-4.5', provider=OpenRouterProvider(api_key='test', http_client=capture.client())
         )
     return CohereModel('command-r', provider=CohereProvider(api_key='test', http_client=capture.legacy_client()))
 
@@ -225,12 +240,15 @@ async def capture(
     if not _INSTALLED[provider]():
         pytest.skip(f'the {provider} extra is not installed')
     recorder = _Capture()
-    model = _model(provider, recorder)
-    params = model.customize_request_parameters(params or ModelRequestParameters())
     try:
-        await model.request(model.prepare_messages(list(messages), params), None, params)
-    except (ModelHTTPError, _Captured):
-        pass
+        model = _model(provider, recorder)
+        params = model.customize_request_parameters(params or ModelRequestParameters())
+        try:
+            await model.request(model.prepare_messages(list(messages), params), None, params)
+        except (ModelHTTPError, _Captured):
+            pass
+    finally:
+        await recorder.aclose()
     assert len(recorder.bodies) == 1, f'{provider} sent {len(recorder.bodies)} requests'
     return CapturedRequest(provider, json.loads(recorder.bodies[0]))
 
@@ -310,8 +328,10 @@ def _chat_voices(body: dict[str, Any]) -> Iterator[tuple[Voice, str]]:
 
 
 def _responses_voices(body: dict[str, Any]) -> Iterator[tuple[Voice, str]]:
-    # `OpenAIResponsesModel` sends system text as `input` items, not `instructions`. If it ever moved there, the text
-    # would be found in no voice, which the voice check fails on rather than passing.
+    # `OpenAIResponsesModel` sends system text as `input` items today, but top-level `instructions` is read too: text
+    # duplicated there, not just moved, would otherwise be found only in its other voice.
+    for text in _texts(body.get('instructions')):
+        yield 'system', text
     for item in body['input']:
         if 'role' in item:
             for text in _texts(item.get('content')):

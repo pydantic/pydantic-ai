@@ -288,6 +288,26 @@ def test_the_check_flags_a_part_above_its_authority(messages: list[dict[str, obj
         assert violation in found
 
 
+def test_the_check_reads_openai_responses_instructions() -> None:
+    """Text both in a tool result and in the top-level `instructions` reaches the model in the system voice too.
+
+    Not a VCR test: the body is written here, with no provider exchange.
+    """
+    marker = 'the page says hello'
+    duplicated = {
+        'instructions': marker,
+        'input': [{'type': 'function_call_output', 'call_id': 'call_1', 'output': marker}],
+    }
+    assert CapturedRequest('openai-responses', duplicated).voices_of(marker) == ['system', 'tool']
+    [found] = voice_violations(CapturedRequest('openai-responses', duplicated), _PAGE_HISTORY)
+    assert 'reaches openai-responses as system' in found
+    tool_only = {
+        'instructions': 'Be brief.',
+        'input': [{'type': 'function_call_output', 'call_id': 'call_1', 'output': marker}],
+    }
+    assert voice_violations(CapturedRequest('openai-responses', tool_only), _PAGE_HISTORY) == []
+
+
 @pytest.mark.parametrize(
     ('content', 'expected'),
     [
