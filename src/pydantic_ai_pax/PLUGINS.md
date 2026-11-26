@@ -127,7 +127,7 @@ are rejected; configure the final endpoint URL.
 ### Where servers are stored
 
 `/mcp install` and `/mcp edit` write `mcp.json` in the Pax config folder
-(`~/.config/pydantic-clai2/`, or under `$XDG_CONFIG_HOME`). The file is created
+(`~/.config/pydantic-ai-pax/`, or under `$XDG_CONFIG_HOME`). The file is created
 readable only by you. Do not put secrets in it: write `$VAR` or `${VAR}` in an
 `env` or `headers` value and Pax fills it from its own environment when it
 connects, so the file holds only the reference; a server whose variable is
@@ -431,8 +431,8 @@ Other approval prompts are not tracked. The file is removed when
 Pax exits; AoE removes the directory when it stops the session.
 
 **Conversation.** The current conversation ID goes to `session_id` beside the status
-file, and to `$XDG_STATE_HOME/pydantic-clai2/aoe/<id>` (default
-`~/.local/state/pydantic-clai2/aoe/<id>`, mode 0600). When AoE restarts the session,
+file, and to `$XDG_STATE_HOME/pydantic-ai-pax/aoe/<id>` (default
+`~/.local/state/pydantic-ai-pax/aoe/<id>`, mode 0600). When AoE restarts the session,
 Pax starts empty, so the plugin resumes the conversation recorded there and shows its
 history, as `/resume ID` does; `--resume`,
 `--continue` when it finds a session, `--session-id`, and `--fork-session` take precedence
@@ -621,8 +621,8 @@ or a pasted secret, so with `include_content: false`, the default, these records
 failures, keep only the exception's type in their `exception` event, as agent spans do.
 
 Credentials are read from `LOGFIRE_TOKEN` or the SDK's `logfire_credentials.json`
-in `$XDG_CONFIG_HOME/pydantic-clai2/logfire/`, defaulting to
-`~/.config/pydantic-clai2/logfire/`. SDK configuration is read only from that user
+in `$XDG_CONFIG_HOME/pydantic-ai-pax/logfire/`, defaulting to
+`~/.config/pydantic-ai-pax/logfire/`. SDK configuration is read only from that user
 directory too. Repository-local configuration/credentials and the SDK's
 `LOGFIRE_CONFIG_DIR`/`LOGFIRE_CREDENTIALS_DIR` overrides are ignored. Relative
 `XDG_CONFIG_HOME` values fall back to `~/.config`. A checkout cannot select the
@@ -958,7 +958,7 @@ type. Enter uses the address; Esc goes back to the list, and Esc there cancels
 without changing anything.
 
 Whichever Logfire you last chose in either plugin is remembered, in
-`~/.config/pydantic-clai2/logfire/destination.json` (or under `$XDG_CONFIG_HOME`),
+`~/.config/pydantic-ai-pax/logfire/destination.json` (or under `$XDG_CONFIG_HOME`),
 so the other starts from it: the picker highlights it. Opening this plugin's menu
 in the terminal before any of its settings were saved also switches it to that
 Logfire, and says so, when it is Logfire US or EU; any other Logfire is only
@@ -1078,7 +1078,7 @@ startup files. Use a separate OS identity or sandbox for untrusted agent work.
 Three ways to install one:
 
 1. Drop a `.py` file (or a package folder) into
-   `$XDG_CONFIG_HOME/pydantic-clai2/plugins/` (default `~/.config/pydantic-clai2/plugins/`).
+   `$XDG_CONFIG_HOME/pydantic-ai-pax/plugins/` (default `~/.config/pydantic-ai-pax/plugins/`).
    Its name is the file name without `.py`. Pax creates the folder at startup, so it
    is there to copy into after the first run.
 2. Point Pax at anything importable, from inside Pax:
@@ -1462,8 +1462,9 @@ The plugin's `render` replaces the tool's argument dump with a header that lists
 the question headers. The picker uses `host.full_screen()` only to flush streaming output and suspend
 the editor's input reader. It keeps the live panel on screen. The draft
 is restored on exit, and the question and your picks are printed to the transcript afterwards.
-Drag over the question, its header, or an option to select text; releasing copies it
-to the clipboard without choosing an answer. Transcript text remains selectable too.
+Drag over the question, its header, or an option, or double- or triple-click one, to
+select text; releasing copies it to the clipboard without choosing an answer. Transcript
+text remains selectable too.
 `/plugins disable ask_user` takes the tool away, and a session without a terminal, such as
 `pax --web` or piped output, never gets it. While the [`web` plugin](#web-this-session-in-your-browser)
 is loaded, it asks the questions instead, in the browser and this picker at once.
@@ -1833,11 +1834,11 @@ A session in a workspace runs on the model any new session starts with. Settings
 Pax with a `model` option still load; the option is ignored.
 
 A local path is checked out from that repository. A URL is cloned once into
-`$XDG_STATE_HOME/pydantic-clai2/workspaces/clones/` and fetched again for each new workspace, with
+`$XDG_STATE_HOME/pydantic-ai-pax/workspaces/clones/` and fetched again for each new workspace, with
 your own Git credentials; a REF names `origin`'s branch first. The new branch tracks nothing, so the
 first push names its remote branch.
 
-**The registry.** Each workspace has a folder in `$XDG_STATE_HOME/pydantic-clai2/workspaces/registry/`
+**The registry.** Each workspace has a folder in `$XDG_STATE_HOME/pydantic-ai-pax/workspaces/registry/`
 (`~/.local/state/...` by default), readable by you alone, holding `workspace.json`: kind,
 repository, ref, branch, folder, creation time, teardown, and `conversation`, the saved session the
 orchestrator runs there, if any. Every Pax reads the same folders, so a workspace made in one
@@ -1917,7 +1918,7 @@ shows to the orchestrator.
 Problems (an unknown workspace, a session that cannot be followed) come back as `Error: ...` lines
 rather than failing the run.
 
-**Its conversation** is one file, `$XDG_STATE_HOME/pydantic-clai2/orchestrator.json`, readable by you
+**Its conversation** is one file, `$XDG_STATE_HOME/pydantic-ai-pax/orchestrator.json`, readable by you
 alone, in Pydantic AI's message-history JSON. It survives a reload and a restart and never shows
 among the saved sessions or in `/resume`. Every Pax with the web UI has the same chat: each turn
 starts from the file as it is then, which an open page catches up to, and saves it when it ends,
@@ -2643,7 +2644,7 @@ JSON can express works here; an option that takes a Python object, like
 `client`, needs the file form below. Ask the agent something that needs the web on the next prompt and it has
 the tools. `/plugins disable exa` takes them away again.
 
-The same thing as a plugin file, `~/.config/pydantic-clai2/plugins/search.py`,
+The same thing as a plugin file, `~/.config/pydantic-ai-pax/plugins/search.py`,
 which is the shape to start from when you want more than one capability, or a
 `/command`, or a hook alongside it:
 
@@ -3227,7 +3228,8 @@ background task, and is hidden while a full-screen interface owns the terminal.
 The editor and transcript share a Termflow live cell buffer on the alternate
 screen. Only changed cells paint. PageUp/PageDown and mouse-wheel input scroll
 output without changing the draft. New output does not move a scrolled view.
-A mouse drag selects painted cells, and releasing it copies them to the clipboard.
+A mouse drag selects painted cells, a double-click a word, and a triple-click a line, and
+releasing the button copies them to the clipboard, with no line break where the panel wrapped a line.
 On exit, the retained transcript prints into native terminal scrollback.
 Resize, theme changes, and returning from a menu repaint from the transcript.
 Assistant Markdown renders again at the new width and theme once its part
