@@ -258,7 +258,7 @@ Through the [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/
 
 Use a model instance instead of a string when the user needs provider-specific constructor arguments.
 
-A request to a model its provider has deprecated or retired emits a `DeprecatedModelWarning` naming the retirement date and the provider's recommended replacement. Move to that replacement rather than silencing the warning.
+A request to a model its provider has deprecated or retired emits a `DeprecatedModelWarning` naming the retirement date, the model the provider routes its requests to from then, if any, and the provider's recommended replacement. Move to that replacement rather than silencing the warning.
 
 ## Keep Anthropic Inference in the US
 
