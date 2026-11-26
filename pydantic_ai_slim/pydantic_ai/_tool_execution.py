@@ -1335,13 +1335,16 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         assert index is not None, 'deferred calls come from a response in the history'
         response = history[index]
         assert isinstance(response, _messages.ModelResponse)
-        history[index] = dataclasses.replace(
+        shown = dataclasses.replace(
             response,
             parts=[
                 redacted.get(part.tool_call_id, part) if isinstance(part, _messages.ToolCallPart) else part
                 for part in response.parts
             ],
         )
+        history[index] = shown
+        # The run's `conversation` is built from its own record of the messages it appended, so it gets the copy too.
+        self.ctx.state.appended_messages.replace(response, shown)
 
     async def _resolve_deferred_calls(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         """Resolve collected deferred calls via capability handlers, else set the `DeferredToolRequests` result."""
