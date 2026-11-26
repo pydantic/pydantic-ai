@@ -852,7 +852,7 @@ print(calls)
 
 You can pass the [`sequential`][pydantic_ai.tools.ToolDefinition.sequential] flag when registering any function tool, and the same barrier is available for [output tools](output.md#tool-output) via [`ToolOutput(sequential=True)`][pydantic_ai.output.ToolOutput] (see [Controlling output tool parallelism](output.md#controlling-output-tool-parallelism)). To run an entire run's tools serially regardless of which tools were called, wrap the run in the [`with agent.parallel_tool_call_execution_mode('sequential')`][pydantic_ai.agent.AbstractAgent.parallel_tool_call_execution_mode] context manager, or set `parallel_tool_calls=False` on the [model settings][pydantic_ai.settings.ModelSettings].
 
-Async functions run on the event loop; sync functions run on worker threads. Prefer `async def` unless you're doing blocking I/O or CPU-bound work (like `numpy` or `scikit-learn`), so lightweight functions aren't offloaded to threads unnecessarily.
+Async functions run on the event loop; sync functions run on worker threads. Prefer `async def` unless you're doing blocking I/O that has no non-blocking alternative, or CPU-bound work (like `numpy` or `scikit-learn`), so lightweight functions aren't offloaded to threads unnecessarily.
 
 !!! warning "Sync tools run concurrently on worker threads"
     Because sync tools run on worker threads, keep two things in mind:
