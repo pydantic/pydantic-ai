@@ -2,14 +2,12 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
-from functools import partial
 from typing import Any, Generic, Literal, Protocol, TypeVar, cast
 
 from temporalio import activity, workflow
 from temporalio.exceptions import ApplicationError, TemporalError
 from temporalio.workflow import ActivityCancellationType, ActivityConfig
 
-from pydantic_ai._cancel import RunCancellation
 from pydantic_ai.durable_exec._operation import (
     CapabilityOperationId,
     DurableOperation,
@@ -20,7 +18,6 @@ from pydantic_ai.durable_exec._operation import (
     ModelCompactMessagesId,
     ModelCountTokensId,
     ModelRequestId,
-    ModelRequestParams,
     OperationConfigRole,
     ParameterTransport,
     ParameterTransports,
@@ -31,9 +28,7 @@ from pydantic_ai.durable_exec._operation import (
 )
 from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, RegisteredOperationBackend
 from pydantic_ai.exceptions import ModelAPIError, UserError
-from pydantic_ai.models._request_timeout import request_deadline_passed
 from pydantic_ai.models._streamed_before_failing import mark_streamed_before_failing
-from pydantic_ai.tools import RunContext
 
 from ._activity_execution import CancelledResultHandler, execute_activity, execute_child_workflow
 from ._model_errors import (
@@ -71,19 +66,8 @@ _STREAM_CANCEL_PARTIAL_PATCH = 'pydantic_ai:stream_cancel_partial'
 
 Only a streamed model activity configured with `WAIT_CANCELLATION_COMPLETED` checks it, so a run with the default
 `TRY_CANCEL` issues the commands it always did. With the marker, the run records the result the activity returns for
-the cancellation, and a deadline doesn't wait for it; without it, the run waited for that result and discarded it, on
-a deadline too.
+the cancellation; without it, the run waited for that result and discarded it.
 """
-
-
-def _cancelled_by_a_deadline(run_context: RunContext[Any] | None) -> bool:
-    """Whether the request's deadline or the run's `timeout=` is what cancelled the current wait.
-
-    Either ends the run with a timeout that doesn't keep what the cancelled stream produced, unlike a cancellation the
-    run's token or the workflow requested.
-    """
-    cancellation: RunCancellation | None = run_context.__dict__.get('_cancellation') if run_context else None
-    return request_deadline_passed() or (cancellation is not None and cancellation.timed_out)
 
 
 class TemporalParameterTransport(ParameterTransport[ParamsT, WireT], Protocol[ParamsT, WireT]):
@@ -188,7 +172,6 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
 
         if isinstance(operation_id, ModelRequestId | ModelCompactMessagesId):
             on_cancelled_result: CancelledResultHandler | None = None
-            skips_wait_on_cancel: Callable[[], bool] | None = None
             if (
                 isinstance(operation_id, ModelRequestId)
                 and operation_id.streaming
@@ -196,15 +179,13 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
                 and workflow.patched(_STREAM_CANCEL_PARTIAL_PATCH)
             ):
                 # The stream's activity returns what it streamed when the run cancels it, which the run waits for and
-                # records. A deadline raises a timeout that keeps nothing, so it doesn't wait.
+                # records.
                 on_cancelled_result = mark_streamed_before_failing
-                skips_wait_on_cancel = partial(_cancelled_by_a_deadline, cast(ModelRequestParams, params).run_context)
             with rebuilt_model_errors(), model_response_payload_errors(model_name):
                 return await execute_activity(
                     activity=self.registration,
                     args=cast(Sequence[Any], payload),
                     on_cancelled_result=on_cancelled_result,
-                    skips_wait_on_cancel=skips_wait_on_cancel,
                     **activity_config,
                 )
         if isinstance(operation_id, ModelCancelSuspendedResponseId | ModelCountTokensId):

@@ -18,8 +18,7 @@ in-flight agent run — the graph engine runs its steps as anyio task-group chil
 This executor keeps the cancellation delivery on OUR task instead (by awaiting the handle through
 `asyncio.wait`, which neither cancels it nor, unlike `asyncio.shield`, logs its error), forwards
 exactly one cancellation to Temporal's graceful machinery, and waits for the configured
-`ActivityCancellationType` resolution (except where a deadline needn't, see `execute_activity`)
-inside an anyio-shielded scope so re-delivery stops and the
+`ActivityCancellationType` resolution inside an anyio-shielded scope so re-delivery stops and the
 activation can complete. Re-raising the original `CancelledError` also keeps standard asyncio
 semantics at the caller: `asyncio.wait_for` produces `TimeoutError` instead of leaking the
 activity's `ActivityError`, and cancelling the Temporal workflow still ends it as *Cancelled*.
@@ -48,15 +47,12 @@ async def execute_activity(
     *,
     args: Sequence[Any],
     on_cancelled_result: CancelledResultHandler | None = None,
-    skips_wait_on_cancel: Callable[[], bool] | None = None,
     **config: Unpack[ActivityConfig],
 ) -> Any:
     """Drop-in replacement for `workflow.execute_activity()` — see the module docstring for why.
 
     An activity that completes after the cancellation was sent, which `WAIT_CANCELLATION_COMPLETED` waits for, has
-    its result passed to `on_cancelled_result` with the cancellation, which is then still raised. When
-    `skips_wait_on_cancel` answers `True` for a cancellation, such as a deadline's, which doesn't keep that result,
-    the cancellation is raised without waiting for the activity to acknowledge it.
+    its result passed to `on_cancelled_result` with the cancellation, which is then still raised.
     """
     if on_cancelled_result is None:
         handle = workflow.start_activity(activity, args=args, **config)
@@ -64,9 +60,7 @@ async def execute_activity(
         # Only an activity whose result is handed over on a cancellation returns one for it.
         with marking_keep_partial():
             handle = workflow.start_activity(activity, args=args, **config)
-    return await _await_with_single_cancel(
-        handle, on_cancelled_result=on_cancelled_result, skips_wait_on_cancel=skips_wait_on_cancel
-    )
+    return await _await_with_single_cancel(handle, on_cancelled_result=on_cancelled_result)
 
 
 async def execute_local_activity(activity: Any, *, args: Sequence[Any], **config: Unpack[LocalActivityConfig]) -> Any:
@@ -83,10 +77,7 @@ async def execute_child_workflow(
 
 
 async def _await_with_single_cancel(
-    handle: asyncio.Future[Any],
-    *,
-    on_cancelled_result: CancelledResultHandler | None = None,
-    skips_wait_on_cancel: Callable[[], bool] | None = None,
+    handle: asyncio.Future[Any], *, on_cancelled_result: CancelledResultHandler | None = None
 ) -> Any:
     try:
         await asyncio.wait([handle])
@@ -97,12 +88,6 @@ async def _await_with_single_cancel(
         # The handle is already done when the cancel lands in the same tick it resolves.
         if not handle.done():
             handle.cancel()
-            if skips_wait_on_cancel is not None and skips_wait_on_cancel():
-                # A deadline that raises a timeout instead keeps nothing to hand over: leave the activity to
-                # acknowledge the cancellation in its own time, as a `TRY_CANCEL` activity does, rather than hold up
-                # the timeout and any fallback by a heartbeat.
-                handle.add_done_callback(_retrieve_error)
-                raise
             with anyio.CancelScope(shield=True):
                 await asyncio.wait([handle])
         # Mark the handle's error (the cancelled activity's `ActivityError`) as retrieved,
@@ -112,9 +97,3 @@ async def _await_with_single_cancel(
             on_cancelled_result(cancellation, handle.result())
         raise
     return handle.result()
-
-
-def _retrieve_error(handle: asyncio.Future[Any]) -> None:
-    """Mark the error a handle nothing awaits resolved with as retrieved, so asyncio doesn't log it."""
-    if not handle.cancelled():
-        handle.exception()

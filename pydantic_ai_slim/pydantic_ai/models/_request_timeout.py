@@ -38,7 +38,6 @@ from contextlib import (
     contextmanager,
     nullcontext,
 )
-from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -103,11 +102,7 @@ class RequestDeadline:
     def enforce(self) -> Generator[None]:
         """Cancel the enclosed wait at the earlier deadline and raise `ModelRequestTimeout` instead."""
         with anyio.CancelScope(deadline=min(self.deadline, self.first_event_deadline)) as scope:
-            token = _enforcing_scopes.set((*_enforcing_scopes.get(), scope))
-            try:
-                yield
-            finally:
-                _enforcing_scopes.reset(token)
+            yield
         if scope.cancelled_caught:
             if self.first_event_deadline < self.deadline:
                 assert self.first_event_timeout is not None
@@ -136,15 +131,6 @@ class RequestDeadline:
                     return
             deadline = deadline.after_first_event()
             yield item
-
-
-_enforcing_scopes: ContextVar[tuple[anyio.CancelScope, ...]] = ContextVar('_enforcing_scopes', default=())
-"""The cancel scopes of the request deadlines enforced on the current wait."""
-
-
-def request_deadline_passed() -> bool:
-    """Whether a request deadline enforced on the current wait has passed, so it's what cancelled the wait."""
-    return any(scope.cancel_called for scope in _enforcing_scopes.get())
 
 
 def _expires_at(deadline: float) -> str:

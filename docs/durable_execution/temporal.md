@@ -723,7 +723,7 @@ To keep what was streamed, set `cancellation_type=ActivityCancellationType.WAIT_
 
 The wait has a cost. A cancellation reaches the activity with its next heartbeat, which Temporal throttles to one per 80% of the activity's `heartbeat_timeout`, so the run can take that long to stop: about 24 seconds with the default `heartbeat_timeout` of 30 seconds. A shorter `heartbeat_timeout` makes cancelling faster.
 
-Deadlines never wait: a [`request_timeout`](../timeouts.md#model-request-deadlines) raises [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] and a run's [`timeout=`](#run-timeouts) raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut] as soon as it passes, without the partial, so a fallback to another model, such as with the [`ModelFallback`](../capabilities/model-fallback.md#durable-execution) capability, isn't held up either. An activity stopped by a worker shutting down, rather than by a cancellation, still fails and is retried.
+The cancellation type applies to every cancellation of the activity, deadlines included: a [`request_timeout`](../timeouts.md#model-request-deadlines) and a run's [`timeout=`](#run-timeouts) wait for the activity too, so they can take as long to raise [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] or [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut], and a fallback to another model, such as with the [`ModelFallback`](../capabilities/model-fallback.md#durable-execution) capability, starts only after that wait. An activity stopped by a worker shutting down, rather than by a cancellation, still fails and is retried.
 
 ### Run Timeouts
 
