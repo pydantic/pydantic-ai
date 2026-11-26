@@ -9,6 +9,7 @@ with and sent.
 from __future__ import annotations
 
 import asyncio
+import warnings
 from dataclasses import dataclass, replace
 
 import pytest
@@ -661,11 +662,14 @@ async def test_anthropic_settings_claude_code_doesnt_send_are_reported():
         await Agent(model, model_settings=settings).run('Hello')
 
 
-async def test_the_cache_setting_is_reported():
+async def test_tuning_settings_are_ignored_silently():
+    """Claude Code always caches, and drops tuning knobs like `anthropic_cache_messages` without changing a guarantee."""
     model, _ = claude_agent(FakeResponse([text('Hi.')]))
+    settings = AnthropicModelSettings(cache=True, anthropic_cache_messages=True, anthropic_service_tier='auto')
 
-    with pytest.warns(UnsupportedSettingWarning, match='`cache` setting is not supported'):
-        await Agent(model, model_settings={'cache': True}).run('Hello')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UnsupportedSettingWarning)
+        await Agent(model, model_settings=settings).run('Hello')
 
 
 async def test_a_failed_request_is_retried():

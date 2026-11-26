@@ -31,16 +31,13 @@ except ImportError as _import_error:  # pragma: no cover
 __all__ = ('ClaudeAgentModel',)
 
 
-_HONORED_ANTHROPIC_SETTINGS = frozenset(
-    {
-        'anthropic_thinking',
-        'anthropic_effort',
-        # `AnthropicModel` itself warns about these, or rejects them, as the Claude Code profile turns them off.
-        'anthropic_speed',
-        'anthropic_task_budget',
-    }
-)
-"""The `anthropic_*` settings Claude Code takes, or that `AnthropicModel` already reports as unsupported."""
+_WARNED_ANTHROPIC_SETTINGS = frozenset({'anthropic_betas', 'anthropic_metadata'})
+"""The `anthropic_*` settings whose loss changes what the request guarantees, like `extra_headers` and `extra_body`.
+
+Claude Code builds the request itself and drops the other `anthropic_*` settings it doesn't take silently, as tuning
+knobs, apart from those `AnthropicModel` already reports or rejects because the Claude Code profile turns them off
+(`anthropic_inference_geo`, `anthropic_speed`, `anthropic_task_budget`).
+"""
 
 
 class ClaudeAgentModelSettings(AnthropicModelSettings, total=False):
@@ -73,8 +70,9 @@ class ClaudeAgentModel(AnthropicModel):
 
     Claude Code doesn't take sampling settings, so `temperature`, `top_p`, `top_k`, `seed`, the penalties and
     `logit_bias` are ignored, as are `stop_sequences`, `parallel_tool_calls=False`, `extra_headers`, `extra_body`,
-    `service_tier` and `timeout`. `max_tokens`, `max_retries`, `thinking`, `tool_choice`, `anthropic_thinking` and
-    `anthropic_effort` are applied.
+    `service_tier` and `timeout`. Claude Code always caches, placing its own cache breakpoints, so `cache` has no
+    effect. `max_tokens`, `max_retries`, `thinking`, `tool_choice`, `anthropic_thinking` and `anthropic_effort` are
+    applied.
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
@@ -123,21 +121,14 @@ class ClaudeAgentModel(AnthropicModel):
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> None:
         super()._warn_unsupported_settings(model_settings, model_request_parameters)
-        if model_settings and model_settings.get('cache'):
+        # `cache` is left alone: Claude Code always caches, placing its own cache breakpoints.
+        for name in sorted(_WARNED_ANTHROPIC_SETTINGS.intersection(model_settings or {})):
             warnings.warn(
-                f'The `cache` setting is not supported by model {self.model_id!r} and will be ignored: '
-                'Claude Code places its own cache breakpoints.',
+                f'The `{name}` setting is not supported by model {self.model_id!r} and will be ignored: '
+                'Claude Code builds the request itself.',
                 UnsupportedSettingWarning,
                 stacklevel=3,
             )
-        for name in sorted(set(model_settings or {}) - _HONORED_ANTHROPIC_SETTINGS):
-            if name.startswith('anthropic_'):
-                warnings.warn(
-                    f'The `{name}` setting is not supported by model {self.model_id!r} and will be ignored: '
-                    'Claude Code builds the request itself.',
-                    UnsupportedSettingWarning,
-                    stacklevel=3,
-                )
 
     @override
     def _run_scope(self) -> AbstractAsyncContextManager[None]:
