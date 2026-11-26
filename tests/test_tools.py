@@ -6156,9 +6156,10 @@ def test_registered_text_that_does_not_parse_or_a_module_that_is_not_running_kee
 
     Either way the class still gets created, and its options go undescribed with the same warning.
     """
-    Urgency = run_cell(NOTEBOOK_CELL, monkeypatch, registered_source='class (\n')['first']
-    with pytest.warns(UserWarning, match='`Urgency` mixes in `UseEnumMemberDocstrings`, but its source could not'):
-        TypeAdapter(Urgency).json_schema(schema_generator=GenerateToolJsonSchema)
+    for registered_source in ['class (\n', 'class Urgency:\x00\n']:
+        Urgency = run_cell(NOTEBOOK_CELL, monkeypatch, registered_source=registered_source)['first']
+        with pytest.warns(UserWarning, match='`Urgency` mixes in `UseEnumMemberDocstrings`, but its source could'):
+            TypeAdapter(Urgency).json_schema(schema_generator=GenerateToolJsonSchema)
 
     Elsewhere = DescribedEnum('Elsewhere', {'a': 'a'}, module='a_module_that_is_not_running')
     with pytest.warns(UserWarning, match='`Elsewhere` mixes in `UseEnumMemberDocstrings`, but its source could not'):

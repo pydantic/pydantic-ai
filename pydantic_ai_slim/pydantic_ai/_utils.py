@@ -1395,7 +1395,7 @@ def capture_class_source(cls: type, frame: FrameType | None) -> None:
     lines = linecache.getlines(frame.f_code.co_filename, frame.f_globals)
     try:
         tree = ast.parse(''.join(lines))
-    except SyntaxError:
+    except (SyntaxError, ValueError):  # Python 3.11 raises `ValueError` for null bytes, later versions `SyntaxError`.
         return
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef) and node.name == cls.__name__:
