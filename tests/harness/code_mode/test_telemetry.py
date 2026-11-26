@@ -17,6 +17,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.util.types import AttributeValue
 
 from pydantic_ai import Agent, RunContext, Tool
+from pydantic_ai._telemetry import RunTelemetry, run_telemetry_scope
 from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelMessage,
@@ -134,34 +135,36 @@ async def diverged_prefix_attributes(
         pending_messages=[],
         tracer=tracer,
     )
-    async with root:
-        manager = await ToolManager(toolset=root).for_run_step(ctx)
-        ctx.tool_manager = manager
-        assert manager.tools is not None
-        run_code = manager.tools['run_code']
-        toolset = run_code.toolset
-        assert isinstance(toolset, CodeModeToolset)
+    # A real run publishes its telemetry before any tool runs; this hand-built run does it here.
+    with run_telemetry_scope(RunTelemetry(tracer=tracer, include_content=ctx.trace_include_content)):
+        async with root:
+            manager = await ToolManager(toolset=root).for_run_step(ctx)
+            ctx.tool_manager = manager
+            assert manager.tools is not None
+            run_code = manager.tools['run_code']
+            toolset = run_code.toolset
+            assert isinstance(toolset, CodeModeToolset)
 
-        async def stream() -> AsyncIterator[PartStartEvent]:
-            yield PartStartEvent(index=0, part=ToolCallPart('run_code', {'code': original}, tool_call_id='c1'))
-            yield PartStartEvent(index=1, part=ToolCallPart('run_code', {'code': sync_code}, tool_call_id='c2'))
+            async def stream() -> AsyncIterator[PartStartEvent]:
+                yield PartStartEvent(index=0, part=ToolCallPart('run_code', {'code': original}, tool_call_id='c1'))
+                yield PartStartEvent(index=1, part=ToolCallPart('run_code', {'code': sync_code}, tool_call_id='c2'))
 
-        async for _ in capability.wrap_run_event_stream(ctx, stream=stream()):
-            pass
-        await asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT)
-        # Dispatched outside any span, so its own outcome is not recorded.
-        sync_ctx = dataclasses.replace(ctx, tool_call_id='c2', tool_name='run_code')
-        try:
-            await toolset.call_tool('run_code', {'code': sync_code}, sync_ctx, run_code)
-        except ModelRetry:
-            pass
+            async for _ in capability.wrap_run_event_stream(ctx, stream=stream()):
+                pass
+            await asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+            # Dispatched outside any span, so its own outcome is not recorded.
+            sync_ctx = dataclasses.replace(ctx, tool_call_id='c2', tool_name='run_code')
+            try:
+                await toolset.call_tool('run_code', {'code': sync_code}, sync_ctx, run_code)
+            except ModelRetry:
+                pass
 
-        exec_ctx = dataclasses.replace(ctx, tool_call_id='c1', tool_name='run_code')
-        with (
-            tracer.start_as_current_span('execute_tool run_code'),
-            pytest.raises(ModelRetry, match='no longer matches'),
-        ):
-            await toolset.call_tool('run_code', {'code': rewritten}, exec_ctx, run_code)
+            exec_ctx = dataclasses.replace(ctx, tool_call_id='c1', tool_name='run_code')
+            with (
+                tracer.start_as_current_span('execute_tool run_code'),
+                pytest.raises(ModelRetry, match='no longer matches'),
+            ):
+                await toolset.call_tool('run_code', {'code': rewritten}, exec_ctx, run_code)
     return code_mode_attributes(exporter)
 
 
