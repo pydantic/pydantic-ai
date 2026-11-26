@@ -667,6 +667,7 @@ class ModelSettings(TypedDict, total=False):
       `20260209` or `20260318` web tools, which on the Anthropic API the setting has the model call directly unless the request
       needs code execution; see [Web Tool Callers](../models/anthropic.md#web-tool-callers))
     * Bedrock (TXT and PDF documents, including those returned by tools, on Anthropic models)
+    * Claude Code (documents in a user prompt)
     * xAI (inline citations)
 
     Only used when the output is text. On Anthropic models, a `tool_choice` that forces a tool call raises a

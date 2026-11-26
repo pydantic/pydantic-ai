@@ -159,6 +159,12 @@ class _Message(BaseModel):
         return [_without_cache_control(block) for block in self.content]
 
 
+class _ToolChoice(BaseModel):
+    model_config = ConfigDict(extra='ignore')
+
+    type: str
+
+
 class _MessagesRequest(BaseModel):
     """The parts of a Messages API request body that a Claude Code session can honor."""
 
@@ -169,12 +175,18 @@ class _MessagesRequest(BaseModel):
     messages: list[_Message]
     system: str | list[_TextBlock] | None = None
     tools: list[_Tool] = []
-    thinking: dict[str, JsonValue] | None = None
+    tool_choice: _ToolChoice | None = None
+    thinking: ThinkingConfig | None = None
+    """Claude Code takes only the thinking configs it has a CLI flag for: a request with another can't be served."""
     output_config: _OutputConfig | None = None
     stream: bool = False
 
+    @property
+    def callable_tools(self) -> list[_Tool]:
+        """The tools the model may call: none when `tool_choice` says so, since Claude Code has no such setting."""
+        return [] if self.tool_choice is not None and self.tool_choice.type == 'none' else self.tools
 
-_thinking_ta: TypeAdapter[ThinkingConfig] = TypeAdapter(ThinkingConfig)
+
 _stream_event_ta: TypeAdapter[BetaRawMessageStreamEvent] = TypeAdapter(BetaRawMessageStreamEvent)
 _tool_result_content_ta: TypeAdapter[str | list[dict[str, JsonValue]]] = TypeAdapter(str | list[dict[str, JsonValue]])
 
@@ -208,7 +220,7 @@ class _SessionConfig:
         return cls(
             model=request.model,
             system_prompt=system_prompt,
-            tools=json.dumps([tool.model_dump() for tool in request.tools], sort_keys=True),
+            tools=json.dumps([tool.model_dump() for tool in request.callable_tools], sort_keys=True),
             thinking=json.dumps(request.thinking, sort_keys=True),
             effort=request.output_config.effort if request.output_config else None,
             max_tokens=request.max_tokens,
@@ -473,7 +485,7 @@ class ClaudeCodeSessions:
 
     def _client_options(self, session: _Session, request: _MessagesRequest) -> ClaudeAgentOptions:
         config = session.config
-        server = create_sdk_mcp_server(_MCP_SERVER, tools=[session.tool(tool) for tool in request.tools])
+        server = create_sdk_mcp_server(_MCP_SERVER, tools=[session.tool(tool) for tool in request.callable_tools])
         return ClaudeAgentOptions(
             model=config.model,
             system_prompt=config.system_prompt,
@@ -485,7 +497,7 @@ class ClaudeCodeSessions:
             verbatim_prompts=True,
             include_partial_messages=True,
             hooks={'PreToolUse': [HookMatcher(matcher=f'^{_TOOL_PREFIX}', hooks=[session.pre_tool_use])]},
-            thinking=_thinking_ta.validate_python(request.thinking) if request.thinking else None,
+            thinking=request.thinking,
             effort=config.effort,
             cli_path=self.options.cli_path,
             cwd=self.options.cwd,
@@ -639,7 +651,10 @@ class ClaudeCodeTransport(httpx2.AsyncBaseTransport):
     async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
         if request.url.path != '/v1/messages':
             return _error_response(404, 'not_found_error', f'Claude Code serves no `{request.url.path}` endpoint.')
-        body = _MessagesRequest.model_validate_json(await request.aread())
+        try:
+            body = _MessagesRequest.model_validate_json(await request.aread())
+        except ValidationError as e:
+            return _error_response(400, 'invalid_request_error', f"Claude Code can't serve this request: {e}")
         # `ClaudeCodeModel` streams every request, and a request's history ends with the user's turn.
         assert body.stream and body.messages[-1].role == 'user'
 

@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Literal
@@ -7,6 +8,7 @@ from typing import Literal
 from typing_extensions import override
 
 from .. import usage
+from ..exceptions import UnsupportedSettingWarning
 from ..messages import ModelMessage, ModelResponse
 from ..profiles import ModelProfileSpec
 from ..settings import ModelSettings
@@ -26,6 +28,18 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 __all__ = ('ClaudeCodeModel',)
+
+
+_HONORED_ANTHROPIC_SETTINGS = frozenset(
+    {
+        'anthropic_thinking',
+        'anthropic_effort',
+        # `AnthropicModel` itself warns about these, or rejects them, as the Claude Code profile turns them off.
+        'anthropic_speed',
+        'anthropic_task_budget',
+    }
+)
+"""The `anthropic_*` settings Claude Code takes, or that `AnthropicModel` already reports as unsupported."""
 
 
 class ClaudeCodeModel(AnthropicModel):
@@ -85,6 +99,20 @@ class ClaudeCodeModel(AnthropicModel):
         if provider == 'claude-code':
             provider = ClaudeCodeProvider()
         super().__init__(model_name, provider=provider, profile=profile, settings=settings)
+
+    @override
+    def _warn_unsupported_settings(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> None:
+        super()._warn_unsupported_settings(model_settings, model_request_parameters)
+        for name in sorted(set(model_settings or {}) - _HONORED_ANTHROPIC_SETTINGS):
+            if name.startswith('anthropic_'):
+                warnings.warn(
+                    f'The `{name}` setting is not supported by model {self.model_id!r} and will be ignored: '
+                    'Claude Code builds the request itself.',
+                    UnsupportedSettingWarning,
+                    stacklevel=3,
+                )
 
     @override
     def _run_scope(self) -> AbstractAsyncContextManager[None]:

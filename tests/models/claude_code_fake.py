@@ -76,6 +76,8 @@ class FakeSession(Transport):
         self.frames: list[dict[str, Any]] = []
         """The user and assistant frames the SDK sent, history replay included."""
         self.tool_results: list[dict[str, Any]] = []
+        self.tool_names: list[str] = []
+        """The tools the SDK's MCP server offered when the last turn started."""
         self.closed = False
         self.write_error: BaseException | None = None
         """Writing to the process fails with this error, as when it fails between requests."""
@@ -188,6 +190,8 @@ class FakeSession(Transport):
             {'protocolVersion': '2025-06-18', 'capabilities': {}, 'clientInfo': {'name': 'fake', 'version': '0'}},
         )
         await self._mcp('notifications/initialized', {}, notification=True)
+        listed = await self._mcp('tools/list', {})
+        self.tool_names = [tool['name'] for tool in listed['result']['tools']]
         self._send(self._init())
         while True:
             response = self.script.responses.pop(0)

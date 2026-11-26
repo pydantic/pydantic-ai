@@ -16,7 +16,13 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, BinaryImage, ImageUrl, ModelRetry, ToolReturn
 from pydantic_ai.direct import model_request
-from pydantic_ai.exceptions import ModelAPIError, ModelAuthenticationError, ModelHTTPError, UserError
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelAuthenticationError,
+    ModelHTTPError,
+    UnsupportedSettingWarning,
+    UserError,
+)
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters, infer_model
 from pydantic_ai.usage import RequestUsage
@@ -27,6 +33,7 @@ with try_import() as imports_successful:
     import anthropic
     from claude_agent_sdk import ProcessError
 
+    from pydantic_ai.models.anthropic import AnthropicModelSettings
     from pydantic_ai.models.claude_code import ClaudeCodeModel
     from pydantic_ai.providers import _claude_code_sessions
     from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -574,6 +581,50 @@ async def test_a_process_that_fails_between_turns_is_replaced():
 
     assert second.output == 'Two.'
     assert len(fake.sessions) == 2 and fake.sessions[0].closed
+
+
+async def test_tool_choice_none_offers_no_tools():
+    """Claude Code has no `tool_choice`, so a request that allows no tool call gets a session without tools."""
+    model, fake = claude_code(FakeResponse([text('Sunny.')]), FakeResponse([text('Rainy.')]))
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_weather() -> str:
+        return 'Sunny'  # pragma: no cover
+
+    await agent.run('Weather?', model_settings={'tool_choice': 'none'})
+    await agent.run('Weather?')
+
+    assert [session.tool_names for session in fake.sessions] == [[], ['get_weather']]
+
+
+async def test_thinking_off_on_a_model_whose_api_turns_it_off_between_tools():
+    """Claude Code has its own flag to turn thinking off, so Claude Sonnet 5.5 doesn't get `between_tools`."""
+    model, fake = claude_code(FakeResponse([text('391')]))
+
+    await Agent(model, model_settings={'thinking': False}).run('17*23?')
+
+    assert fake.sessions[0].options.thinking == {'type': 'disabled'}
+
+
+async def test_a_thinking_config_claude_code_cant_take():
+    model, fake = claude_code()
+
+    with pytest.raises(ModelHTTPError, match="Claude Code can't serve this request") as exc_info:
+        await Agent(model, model_settings=AnthropicModelSettings(anthropic_thinking={'type': 'between_tools'})).run(
+            'Hi'
+        )
+
+    assert exc_info.value.status_code == 400
+    assert fake.sessions == []
+
+
+async def test_anthropic_settings_claude_code_doesnt_send_are_reported():
+    model, _ = claude_code(FakeResponse([text('Hi.')]))
+    settings = AnthropicModelSettings(anthropic_effort='low', anthropic_metadata={'user_id': 'u'})
+
+    with pytest.warns(UnsupportedSettingWarning, match='`anthropic_metadata` setting is not supported'):
+        await Agent(model, model_settings=settings).run('Hello')
 
 
 async def test_an_error_claude_code_has_no_status_for():
