@@ -702,6 +702,7 @@ def _parts(value: object) -> list[object] | None:
     """What a container holds, in order; `None` for a type `_same_value` doesn't know."""
     if is_str_dict(value) and type(value) is dict:
         return [part for item in value.items() for part in item]
+    # Exact types: a subclass instance can hold state its items don't show.
     if type(value) in (list, tuple, set, frozenset) and is_list_tuple_or_set(value):
         return sorted(value, key=repr) if isinstance(value, set | frozenset) else list(value)
     if isinstance(value, BaseModel):

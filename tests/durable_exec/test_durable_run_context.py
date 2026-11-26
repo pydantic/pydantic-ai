@@ -774,6 +774,24 @@ def unhashable_validator(venue: Venue, n: Annotated[int, AfterValidator(Clamp(10
     pass
 
 
+class ListCheck(list[int]):
+    def __call__(self, n: int) -> int:
+        return n
+
+
+class DictCheck(dict[str, int]):
+    def __call__(self, n: int) -> int:
+        return n
+
+
+def list_subclass_validator(venue: Venue, n: Annotated[int, AfterValidator(ListCheck())]) -> None:
+    pass
+
+
+def dict_subclass_validator(venue: Venue, n: Annotated[int, AfterValidator(DictCheck())]) -> None:
+    pass
+
+
 def schema_only(venue: object) -> None:
     pass
 
@@ -810,6 +828,8 @@ GATE_CASES = [
     GateCase(Tool(enum_missing), {'venue': VENUE, 'shade': 'red'}, sent=False),
     GateCase(Tool(copied_default), {'venue': VENUE, 'd': {}}, sent=False),
     GateCase(Tool(unhashable_validator), {'venue': VENUE, 'n': 3}, sent=False),
+    GateCase(Tool(list_subclass_validator), {'venue': VENUE, 'n': 3}, sent=False),
+    GateCase(Tool(dict_subclass_validator), {'venue': VENUE, 'n': 3}, sent=False),
     GateCase(
         Tool.from_schema(
             schema_only,
