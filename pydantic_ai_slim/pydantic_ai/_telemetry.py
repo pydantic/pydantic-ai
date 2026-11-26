@@ -49,11 +49,13 @@ __all__ = (
 class RunTelemetry:
     """The tracer a run's spans go to, and whether they may record content.
 
-    Not `InstrumentationSettings`: in a durable unit both come from the rebuilt `ctx`, whose content flag
-    the engine narrowed to the worker's setting. One built from a `ctx` is used for a single call and never
-    published.
+    [`current_run_telemetry()`][pydantic_ai.telemetry.current_run_telemetry] returns the calling run's, for
+    code that has no `RunContext`.
     """
 
+    # Not `InstrumentationSettings`: in a durable unit both come from the rebuilt `ctx`, whose content flag
+    # the engine narrowed to the worker's setting. One built from a `ctx` is used for a single call and never
+    # published.
     tracer: Tracer
     include_content: bool
 

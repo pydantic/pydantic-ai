@@ -335,15 +335,15 @@ adds no spans because core's `Instrumentation` already covers the run, and
 would grow the trace without recording a decision. Write the reason down. An
 undocumented silence is indistinguishable from an oversight.
 
-The house pattern uses four functions from `pydantic_ai._telemetry`, plus `records_content` for
-content that costs something to build. The module's other names (`RunTelemetry`,
-`current_run_telemetry`, `run_telemetry_scope`) are how code without a `ctx` reaches the run's
+The house pattern uses four functions from the public `pydantic_ai.telemetry` module, the same ones a
+user writing their own capability uses, plus `records_content` for content that costs something to
+build. `RunTelemetry` and `current_run_telemetry` are how code without a `ctx` reaches the run's
 telemetry. Each function takes the run first, as its `ctx` or, where there is none,
 `current_run_telemetry()`, and does nothing when that run isn't traced, so an uninstrumented run
 pays nothing:
 
 ```python
-from pydantic_ai._telemetry import current_span, open_span, record_decision, set_content_attribute
+from pydantic_ai.telemetry import current_span, open_span, record_decision, set_content_attribute
 
 # Work that takes time and can fail (a hypothetical `notes` capability).
 with open_span(ctx, 'notes search', attributes={'notes.backend': backend}, content={'notes.query': query}) as span:

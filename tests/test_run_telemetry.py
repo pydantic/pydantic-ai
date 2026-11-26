@@ -15,21 +15,21 @@ from opentelemetry.trace import INVALID_SPAN, NoOpTracer
 from opentelemetry.util.types import AttributeValue
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai._telemetry import (
+from pydantic_ai._telemetry import run_telemetry_scope
+from pydantic_ai.capabilities import AbstractCapability, Instrumentation, ValidatedToolArgs
+from pydantic_ai.durable_exec import DurableRunContext
+from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.telemetry import (
     RunTelemetry,
     current_run_telemetry,
     current_span,
     open_span,
     record_decision,
     records_content,
-    run_telemetry_scope,
     set_content_attribute,
 )
-from pydantic_ai.capabilities import AbstractCapability, Instrumentation, ValidatedToolArgs
-from pydantic_ai.durable_exec import DurableRunContext
-from pydantic_ai.messages import ToolCallPart
-from pydantic_ai.models.instrumented import InstrumentationSettings
-from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 
 from .conftest import Instrumented, try_import

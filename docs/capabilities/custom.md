@@ -1304,6 +1304,61 @@ Multiple capabilities can each handle a subset: dispatch accumulates results acr
 
 For application code that just needs to plug in a handler, use the dedicated [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] capability — see [Resolving deferred calls with a handler](../deferred-tools.md#resolving-deferred-calls-with-a-handler).
 
+## Tracing what your capability does {#tracing}
+
+When a run is [instrumented](../logfire.md), its trace shows each model request and tool call. To add what your capability does, such as a check that blocked a call or slow work it ran, use the helpers in [`pydantic_ai.telemetry`][pydantic_ai.telemetry]. Each takes the run's `ctx`, so it uses the run's tracer and does nothing when the run isn't instrumented. Pass anything that can quote the run's data, such as tool arguments, prompts, paths or error messages, as `content`: it is recorded only when the run's [`include_content`][pydantic_ai.models.instrumented.InstrumentationSettings.include_content] setting allows it.
+
+```python {title="tracing_capability.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import Agent, RunContext, ToolDefinition
+from pydantic_ai.capabilities import AbstractCapability, WrapToolExecuteHandler
+from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.telemetry import open_span, record_decision
+
+
+@dataclass
+class NoDeletes(AbstractCapability[Any]):
+    """Refuses `delete_*` tools, and times every other tool call."""
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        handler: WrapToolExecuteHandler,
+    ) -> Any:
+        if call.tool_name.startswith('delete_'):
+            record_decision(
+                ctx,
+                'tool call refused',
+                attributes={'no_deletes.tool': call.tool_name},
+                content={'no_deletes.arguments': repr(args)},
+            )
+            return 'Deleting is not allowed.'
+        with open_span(ctx, 'no_deletes checked call', attributes={'no_deletes.tool': call.tool_name}):
+            return await handler(args)
+
+
+agent = Agent(TestModel(), capabilities=[NoDeletes()])
+
+
+@agent.tool_plain
+def delete_file(path: str) -> str:
+    return f'deleted {path}'
+
+
+result = agent.run_sync('Delete notes.txt')
+print(result.output)
+#> {"delete_file":"Deleting is not allowed."}
+```
+
+`open_span` marks the span as failed if the work raises, and records the error's message only when content is allowed. `current_span(ctx)` returns the span already open around your hook, such as the tool call's span, so you can add attributes to it instead of opening a new one. Code that runs during a run but isn't given a `ctx`, such as a [workspace](../workspace-custom.md), passes `current_run_telemetry()` instead.
+
 ## Durable capability operations {#durable-capability-operations}
 
 A capability can move I/O or other non-deterministic work from workflow code into a durable activity, step, or task with [`durable_operation`][pydantic_ai.capabilities.durable_operation]. Give the capability a stable [`id`][pydantic_ai.capabilities.AbstractCapability.id], because engines use the capability ID and operation name to recover and replay persisted work.
