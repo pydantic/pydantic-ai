@@ -40,7 +40,14 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_pax.app import create_stock_agent
 from pydantic_ai_pax.cli.command_context import CommandContext
-from pydantic_ai_pax.config import DEFAULT_FOOTER_FIELDS, FOOTER_FIELDS, FooterField, PluginSettings, Settings
+from pydantic_ai_pax.config import (
+    DEFAULT_FOOTER_FIELDS,
+    FOOTER_FIELDS,
+    FooterField,
+    PermissionMode,
+    PluginSettings,
+    Settings,
+)
 from pydantic_ai_pax.config.project_settings import ProjectSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.plugins import Plugin, SessionStart, TurnStart
@@ -101,6 +108,27 @@ async def test_conditional_fields_empty_layout_and_narrow_terminal() -> None:
         pass
     assert 'ready' in Text.from_ansi(stream.getvalue()).plain
     assert 'agent default' not in Text.from_ansi(stream.getvalue()).plain
+
+
+def test_the_footer_shows_the_permission_mode_it_reads_on_each_paint() -> None:
+    mode: list[PermissionMode] = ['full']
+    shown: list[FooterField] = ['model', 'workspace', 'permissions', 'activity']
+    status = Status(fields=lambda: shown, model='opus', workspace='/work', permissions=lambda: mode[0])
+    assert status.text() == 'opus | /work | full access | ready'
+    assert (theme.WARNING, 'full access') in status.toolbar()
+    mode[0] = 'auto'
+    assert status.text() == 'opus | /work | auto mode | ready'
+    assert (theme.MUTED, 'auto mode') in status.toolbar()
+    mode[0] = 'read-only'
+    assert status.text() == 'opus | /work | read-only | ready'
+    # Without a mode, as for a host that has none, the field is hidden.
+    assert Status(fields=lambda: shown, model='opus', workspace='/work').text() == 'opus | /work | ready'
+    # A narrow row hides it after the plugins and before the context labels.
+    shown[:] = ['model', 'workspace', 'permissions', 'context', 'activity', 'plugins']
+    status.status_segments = (lambda: 'docker sandbox',)
+    status.context_tokens, status.context_window = 61_000, 1_000_000
+    assert ''.join(text for _, text in status.toolbar(width=60)) == 'opus | read-only | context: 61k/1m tokens | ready'
+    assert ''.join(text for _, text in status.toolbar(width=45)) == 'opus | context: 61k/1m tokens | ready'
 
 
 DEEP = '/home/dev/work/clients/acme/services/billing/jsonrc'
@@ -452,7 +480,7 @@ async def test_visible_moves_skip_hidden_neighbours_without_enabling_them(tmp_pa
     store = SettingsStore(tmp_path / 'config.db')
     context = CommandContext(settings=Settings(), store=store, apply_setting=lambda key, settings: None)
     source = FooterSource(context)
-    for name in ('workspace', 'context'):
+    for name in ('workspace', 'permissions', 'context'):
         await source.configure(name, ScriptedDialogs([Pick(value='toggle')]))
     visible = set(context.settings.footer_fields)
     assert await source.configure('context', ScriptedDialogs([Pick(value='earlier')])) == [
