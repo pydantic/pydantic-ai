@@ -71,7 +71,7 @@ import pytest
 
 from pydantic_ai import UnsupportedSettingWarning, models
 from pydantic_ai.direct import model_request
-from pydantic_ai.messages import BinaryContent, ModelRequest, UserContent, UserPromptPart
+from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, UserContent, UserPromptPart
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.system_one import SystemOneModel
 from pydantic_ai.providers.system_one import SystemOneProvider
@@ -224,6 +224,29 @@ DOCUMENT_PROMPT: ProbePrompt = (
 )
 """The prompt `citations` is probed with: Anthropic and Bedrock only change a request that has a document to cite."""
 
+
+def _no_history(model: Model) -> list[ModelMessage]:
+    return []
+
+
+@dataclass(frozen=True)
+class RequestShape:
+    """What a probe request carries besides its settings."""
+
+    prompt: ProbePrompt = PROBE_PROMPT
+    """The content of the final user prompt."""
+    history: Callable[[Model], list[ModelMessage]] = _no_history
+    """The messages before the final prompt, built for the probed model so a replayed part can name its provider."""
+    parameters: ModelRequestParameters | None = None
+    """The request parameters, or `None` for the probe's own: `PROBE_TOOL`, or a decision model's output tool."""
+
+
+PLAIN_REQUEST = RequestShape()
+"""The one plain text request every field but those in `DOCUMENT_PROBE_VALUES` is probed with."""
+
+DOCUMENT_REQUEST = RequestShape(DOCUMENT_PROMPT)
+"""The request `citations` is probed with."""
+
 DOCUMENT_PROBE_VALUES: dict[str, tuple[object, ...]] = {'citations': (True,)}
 """Like `PROBE_VALUES`, for the fields probed with `DOCUMENT_PROMPT` instead of `PROBE_PROMPT`."""
 
@@ -327,6 +350,8 @@ class Observed:
     """The settings the model declares it ignores."""
     warned: frozenset[str]
     """The settings an `UnsupportedSettingWarning` named while the request was made."""
+    error: Exception | None
+    """The exception the request ended with: a probe's own abort or error response, or an error raised before it."""
     warning_messages: tuple[str, ...]
     """Every warning message recorded while the request was made.
 
@@ -351,12 +376,13 @@ async def _observe(model: Model, request: Awaitable[object]) -> Observed:
     Recording `UnsupportedSettingWarning`s instead of letting the suite's `filterwarnings = error` raise them lets the
     request still reach the wire, so a probe sees both what the model sends and what it warns about.
     """
+    error: Exception | None = None
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always', UnsupportedSettingWarning)
         try:
             await request
-        except Exception:
-            pass
+        except Exception as e:
+            error = e
     warned = {
         match.group(1)
         for warning in caught
@@ -366,19 +392,20 @@ async def _observe(model: Model, request: Awaitable[object]) -> Observed:
     return Observed(
         unsupported=model._unsupported_settings(),  # pyright: ignore[reportPrivateUsage]
         warned=frozenset(warned),
+        error=error,
         warning_messages=tuple(str(warning.message) for warning in caught),
     )
 
 
-async def run_probe_request(model: Model, settings: ModelSettings, prompt: ProbePrompt = PROBE_PROMPT) -> Observed:
+async def run_probe_request(model: Model, settings: ModelSettings, shape: RequestShape = PLAIN_REQUEST) -> Observed:
     """Make the one request the recorder is there to capture, swallowing its inevitable failure."""
     return await _observe(
         model,
         model_request(
             model,
-            [ModelRequest(parts=[UserPromptPart(prompt)])],
+            [*shape.history(model), ModelRequest(parts=[UserPromptPart(shape.prompt)])],
             model_settings=settings,
-            model_request_parameters=ModelRequestParameters(function_tools=[PROBE_TOOL]),
+            model_request_parameters=shape.parameters or ModelRequestParameters(function_tools=[PROBE_TOOL]),
         ),
     )
 
@@ -408,10 +435,10 @@ BEDROCK_VOLATILE = HTTP_VOLATILE | {
 
 
 class Probe(Protocol):
-    """Takes the settings and prompt to probe with, returns the canonical payload the model sent (or `None`) and what
-    it declared."""
+    """Takes the settings and request shape to probe with, returns the canonical payload the model sent (or `None`)
+    and what it declared."""
 
-    def __call__(self, settings: ModelSettings, prompt: ProbePrompt = PROBE_PROMPT, /) -> Awaitable[ProbeResult]: ...
+    def __call__(self, settings: ModelSettings, shape: RequestShape = PLAIN_REQUEST, /) -> Awaitable[ProbeResult]: ...
 
 
 def _request_payload(
@@ -443,7 +470,7 @@ def _request_payload(
 def http_probe(build: Callable[[httpx2.AsyncClient], Model]) -> Probe:
     """Probe any model whose provider takes the preferred HTTPX2 `http_client`, recording the whole request."""
 
-    async def probe(settings: ModelSettings, prompt: ProbePrompt = PROBE_PROMPT) -> ProbeResult:
+    async def probe(settings: ModelSettings, shape: RequestShape = PLAIN_REQUEST) -> ProbeResult:
         recorder = Recorder()
 
         def handle(request: httpx2.Request) -> httpx2.Response:
@@ -455,7 +482,7 @@ def http_probe(build: Callable[[httpx2.AsyncClient], Model]) -> Probe:
 
         client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
         try:
-            observed = await run_probe_request(build(client), settings, prompt)
+            observed = await run_probe_request(build(client), settings, shape)
         finally:
             await client.aclose()
         return ProbeResult(recorder.first, observed)
@@ -470,7 +497,7 @@ def legacy_http_probe(build: Callable[[httpx.AsyncClient], Model]) -> Probe:
     the migration warnings the migrated providers raise applies here.
     """
 
-    async def probe(settings: ModelSettings, prompt: ProbePrompt = PROBE_PROMPT) -> ProbeResult:
+    async def probe(settings: ModelSettings, shape: RequestShape = PLAIN_REQUEST) -> ProbeResult:
         recorder = Recorder()
 
         def handle(request: httpx.Request) -> httpx.Response:
@@ -482,7 +509,7 @@ def legacy_http_probe(build: Callable[[httpx.AsyncClient], Model]) -> Probe:
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
         try:
-            observed = await run_probe_request(build(client), settings, prompt)
+            observed = await run_probe_request(build(client), settings, shape)
         finally:
             await client.aclose()
         return ProbeResult(recorder.first, observed)
@@ -493,7 +520,7 @@ def legacy_http_probe(build: Callable[[httpx.AsyncClient], Model]) -> Probe:
 def botocore_probe(build: Callable[[], BedrockConverseModel]) -> Probe:
     """Probe Bedrock through botocore's `before-send` event — there is no httpx client to inject."""
 
-    async def probe(settings: ModelSettings, prompt: ProbePrompt = PROBE_PROMPT) -> ProbeResult:
+    async def probe(settings: ModelSettings, shape: RequestShape = PLAIN_REQUEST) -> ProbeResult:
         recorder = Recorder()
         model = build()
 
@@ -511,7 +538,7 @@ def botocore_probe(build: Callable[[], BedrockConverseModel]) -> Probe:
 
         for operation in ('Converse', 'ConverseStream'):
             model.client.meta.events.register_last(f'before-send.bedrock-runtime.{operation}', handle)
-        observed = await run_probe_request(model, settings, prompt)
+        observed = await run_probe_request(model, settings, shape)
         return ProbeResult(recorder.first, observed)
 
     return probe
@@ -525,14 +552,15 @@ bedrock_probe = botocore_probe(
 )
 
 
-async def huggingface_probe(settings: ModelSettings, prompt: ProbePrompt = PROBE_PROMPT) -> ProbeResult:
+async def huggingface_probe(settings: ModelSettings, shape: RequestShape = PLAIN_REQUEST) -> ProbeResult:
     """Probe HuggingFace at the SDK call — its provider rejects `http_client` outright."""
     recorder = MockHuggingFace(completions=[ProbeAborted()])
+    # A Qwen 3.5 id, whose profile allows native output, so the request-feature probes see what HF sends.
     model = HuggingFaceModel(
-        'probe-model',
+        'Qwen/Qwen3.5-397B-A17B',
         provider=HuggingFaceProvider(api_key=PROBE_KEY, hf_client=cast(AsyncInferenceClient, recorder)),
     )
-    observed = await run_probe_request(model, settings, prompt)
+    observed = await run_probe_request(model, settings, shape)
     return ProbeResult(
         canonical(recorder.chat_completion_kwargs[0]) if recorder.chat_completion_kwargs else None, observed
     )
@@ -541,9 +569,9 @@ async def huggingface_probe(settings: ModelSettings, prompt: ProbePrompt = PROBE
 def xai_sdk_probe(build: Callable[[AsyncXaiClient], Model]) -> Probe:
     """Probe xAI at the SDK call — its transport is gRPC, so there is no HTTP request to read."""
 
-    async def probe(settings: ModelSettings, prompt: ProbePrompt = PROBE_PROMPT) -> ProbeResult:
+    async def probe(settings: ModelSettings, shape: RequestShape = PLAIN_REQUEST) -> ProbeResult:
         recorder = MockXai(responses=[ProbeAborted()])
-        observed = await run_probe_request(build(cast(AsyncXaiClient, recorder)), settings, prompt)
+        observed = await run_probe_request(build(cast(AsyncXaiClient, recorder)), settings, shape)
         return ProbeResult(canonical(recorder.chat_create_kwargs[0]) if recorder.chat_create_kwargs else None, observed)
 
     return probe
@@ -553,17 +581,17 @@ def xai_sdk_probe(build: Callable[[AsyncXaiClient], Model]) -> Probe:
 xai_probe = xai_sdk_probe(lambda client: XaiModel('grok-4.20-non-reasoning', provider=XaiProvider(xai_client=client)))
 
 
-async def mcp_sampling_probe(settings: ModelSettings, prompt: ProbePrompt = PROBE_PROMPT) -> ProbeResult:
+async def mcp_sampling_probe(settings: ModelSettings, shape: RequestShape = PLAIN_REQUEST) -> ProbeResult:
     """Probe MCP sampling at the session call — the payload is an MCP message, not an HTTP request."""
     recorder = Recorder()
 
     class _Session:
         async def create_message(self, messages: Any, **kwargs: Any) -> Any:
-            recorder.record(kwargs)
+            recorder.record({'messages': messages, **kwargs})
             raise ProbeAborted
 
     model = MCPSamplingModel(session=cast(ServerSession, _Session()))
-    observed = await run_probe_request(model, settings, prompt)
+    observed = await run_probe_request(model, settings, shape)
     return ProbeResult(recorder.first, observed)
 
 
@@ -574,7 +602,7 @@ def decision_probe(build: Callable[[httpx2.AsyncClient], Model]) -> Probe:
     `run_probe_request`, which carries `PROBE_TOOL` and no output tool, would never reach the wire.
     """
 
-    async def probe(settings: ModelSettings, prompt: ProbePrompt = PROBE_PROMPT) -> ProbeResult:
+    async def probe(settings: ModelSettings, shape: RequestShape = PLAIN_REQUEST) -> ProbeResult:
         recorder = Recorder()
 
         def handle(request: httpx2.Request) -> httpx2.Response:
@@ -586,7 +614,7 @@ def decision_probe(build: Callable[[httpx2.AsyncClient], Model]) -> Probe:
 
         client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
         try:
-            observed = await run_decision_probe_request(build(client), settings, prompt)
+            observed = await run_decision_probe_request(build(client), settings, shape)
         finally:
             await client.aclose()
         return ProbeResult(recorder.first, observed)
@@ -595,7 +623,7 @@ def decision_probe(build: Callable[[httpx2.AsyncClient], Model]) -> Probe:
 
 
 async def run_decision_probe_request(
-    model: Model, settings: ModelSettings, prompt: ProbePrompt = PROBE_PROMPT
+    model: Model, settings: ModelSettings, shape: RequestShape = PLAIN_REQUEST
 ) -> Observed:
     """Make a decision model's one request, swallowing its inevitable failure like `run_probe_request`."""
     output_tool = ToolDefinition(
@@ -605,11 +633,10 @@ async def run_decision_probe_request(
         model,
         model_request(
             model,
-            [ModelRequest(parts=[UserPromptPart(prompt)])],
+            [*shape.history(model), ModelRequest(parts=[UserPromptPart(shape.prompt)])],
             model_settings=settings,
-            model_request_parameters=ModelRequestParameters(
-                output_mode='tool', output_tools=[output_tool], allow_text_output=False
-            ),
+            model_request_parameters=shape.parameters
+            or ModelRequestParameters(output_mode='tool', output_tools=[output_tool], allow_text_output=False),
         ),
     )
 
@@ -638,7 +665,7 @@ class Case:
     """Whether the model maps the citations its API returns without being asked, so it ignores `citations` without
     declaring it: `settings.py` says "Providers that always cite ignore this setting"."""
     takes_documents: bool = True
-    """Whether the model can send `DOCUMENT_PROMPT`; one that can't is probed for `citations` with `PROBE_PROMPT`."""
+    """Whether the model can send `DOCUMENT_REQUEST`; one that can't is probed for `citations` with `PLAIN_REQUEST`."""
 
 
 def _openai_chat(client: httpx2.AsyncClient) -> Model:
@@ -916,7 +943,7 @@ async def _forwarded_fields(
     case: Case,
     baseline: str,
     probe_values: dict[str, tuple[object, ...]] = PROBE_VALUES,
-    prompt: ProbePrompt = PROBE_PROMPT,
+    shape: RequestShape = PLAIN_REQUEST,
 ) -> tuple[set[str], set[str]]:
     """The fields whose presence changes what `case` puts on the wire, and those it warned about ignoring."""
     forwarded: set[str] = set()
@@ -924,7 +951,7 @@ async def _forwarded_fields(
     for field_name, values in probe_values.items():
         for value in values:
             settings: ModelSettings = {field_name: value}  # pyright: ignore[reportAssignmentType]
-            result = await case.probe(settings, prompt)
+            result = await case.probe(settings, shape)
             # A probe that recorded nothing means the request died before the recorder ran; scoring
             # that as "not forwarded" would let a harness failure quietly agree with a stale list.
             assert result.payload is not None, f'{case.id} sent no request while probing {field_name}'
@@ -950,11 +977,11 @@ async def test_supported_by_lists_match_the_wire(case: Case, allow_model_request
 
     forwarded, warned = await _forwarded_fields(case, baseline)
 
-    document_prompt = DOCUMENT_PROMPT if case.takes_documents else PROBE_PROMPT
-    document_baseline = (await case.probe({}, document_prompt)).payload
+    document_shape = DOCUMENT_REQUEST if case.takes_documents else PLAIN_REQUEST
+    document_baseline = (await case.probe({}, document_shape)).payload
     assert document_baseline is not None, f'{case.id} sent nothing for a request with a document'
     document_forwarded, document_warned = await _forwarded_fields(
-        case, document_baseline, DOCUMENT_PROBE_VALUES, document_prompt
+        case, document_baseline, DOCUMENT_PROBE_VALUES, document_shape
     )
     forwarded |= document_forwarded
     warned |= document_warned
