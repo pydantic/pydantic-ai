@@ -704,15 +704,24 @@ def snapshot_messages(messages: Sequence[ModelMessage]) -> MessagesSnapshot:
     snapshot = MessagesSnapshot(received=[], said={}, copies={}, instructions=set())
     for message in messages:
         if isinstance(message, ModelResponse):
-            _snapshot_item(snapshot, message, deepcopy(message))
+            _snapshot_item(snapshot, message, _copy_said(message))
             continue
         snapshot.received.append(message)
         snapshot.said[id(message)] = _request_shape(message)
         snapshot.instructions.add(message.instructions)
         for part in message.parts:
             # A tool's return reaches the model as tool output whoever edits it, and can hold any object.
-            _snapshot_item(snapshot, part, part if isinstance(part, ToolReturnPart) else deepcopy(part))
+            _snapshot_item(snapshot, part, part if isinstance(part, ToolReturnPart) else _copy_said(part))
     return snapshot
+
+
+def _copy_said(item: ModelResponse | ModelRequestPart) -> object:
+    """A copy of what `item` says, sharing its `metadata`, which the model doesn't read and can hold any object.
+
+    A copied object needn't equal the original, which would make an unchanged item look edited.
+    """
+    kept = (getattr(x, 'metadata', None) for x in (item, *getattr(item, 'parts', ())))
+    return deepcopy(item, {id(metadata): metadata for metadata in kept if metadata is not None})
 
 
 def _snapshot_item(snapshot: MessagesSnapshot, item: ModelResponse | ModelRequestPart, said: object) -> None:

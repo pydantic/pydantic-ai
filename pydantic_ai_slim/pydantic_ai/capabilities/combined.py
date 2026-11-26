@@ -20,7 +20,14 @@ from pydantic_ai._instructions import (
 )
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
 from pydantic_ai.exceptions import ModelRetry, RetryModelRequest, SkipModelRequest, UserError
-from pydantic_ai.messages import AgentStreamEvent, Authority, ModelResponse, ModelResponsePart, ToolCallPart
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    Authority,
+    InstructionPart,
+    ModelResponse,
+    ModelResponsePart,
+    ToolCallPart,
+)
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -1417,6 +1424,7 @@ async def _before_model_request_held(
     if held is None or type(capability).before_model_request is AbstractCapability.before_model_request:
         return await capability.before_model_request(cap_ctx, request_context)
     snapshot = snapshot_messages(request_context.messages)
+    instructions = deepcopy(request_context.model_request_parameters.instruction_parts or [])
     try:
         request_context = await capability.before_model_request(cap_ctx, request_context)
     except SkipModelRequest as e:
@@ -1424,10 +1432,28 @@ async def _before_model_request_held(
     except ModelRetry as e:
         # What it added is already in the history the deprecated mirroring appends to, and the retry keeps it.
         hold_added_messages(request_context.messages, snapshot, *held)
+        _check_instructions_unchanged(held, instructions, request_context)
         hold_feedback(e, held)
         raise
     hold_added_messages(request_context.messages, snapshot, *held)
+    _check_instructions_unchanged(held, instructions, request_context)
     return request_context
+
+
+def _check_instructions_unchanged(
+    held: tuple[str, Authority], instructions: Sequence[InstructionPart], request_context: ModelRequestContext
+) -> None:
+    """Raise if a capability below `'operator'` added to or changed the request's instructions.
+
+    The model reads them as the operator's, so there's no lower authority to hold them to. Removing them adds nothing.
+    """
+    if any(part not in instructions for part in request_context.model_request_parameters.instruction_parts or ()):
+        capability_id, ceiling = held
+        raise UserError(
+            f"Capability {capability_id!r} has {ceiling!r} authority, so it cannot add to or change the request's "
+            "instructions, which the model reads as the operator's. Only a capability with operator authority can "
+            'write instructions.'
+        )
 
 
 async def _after_model_request_held(
