@@ -1,6 +1,7 @@
 """Record what streamed model responses, UI adapters and realtime connections emit, the requests tests send, the tool
-hooks their runs call, the exceptions they catch and warnings they raise, and the names durable execution registers,
-the workflows it runs and the cache keys it computes, per test node, to prove a refactor keeps them.
+hooks their runs call, the event streams their runs hand consumers, what `AgentStream` methods yield and return, the
+spans tests end, the exceptions they catch and warnings they raise, and the names durable execution registers, the
+workflows it runs and the cache keys it computes, per test node, to prove a refactor keeps them.
 
 The capture is off unless pytest loads this module as a plugin, `-p tests.refactor_capture --refactor-capture=DIR`, so
 other runs never import it. To compare a base commit with the working tree, run this from the repository root, over
@@ -23,8 +24,10 @@ The capture wraps `__aiter__` on `StreamedResponse` and on every subclass that o
 defined before the capture starts or after; one that overrides `__init_subclass__` without calling `super()`, or
 assigns `__aiter__` once it's defined, escapes it. A stream whose `__aiter__` iterates other streams, like the
 continuation composite in `models/_continuation.py`, is recorded once itself and once for each stream it iterates.
-When a capture starts, it runs an agent over a streamed canary response and stops the run if that stream wasn't
-recorded, so a consumer that stops iterating through `__aiter__` fails loudly instead of recording nothing.
+When a capture starts, it runs an instrumented agent over a streamed canary response and stops the run if that stream,
+the run's event stream, its `AgentStream` calls or its spans weren't recorded, so a consumer that stops iterating
+through `__aiter__`, or a run that stops reaching the other methods the capture wraps, fails loudly instead of recording
+nothing.
 
 Each request is one JSON line of kind `request`. A request an `httpx` or `httpx2` `AsyncClient` sends is recorded from
 `send`, once per attempt except for Prefect's client, below, and one a botocore client sends, like Bedrock's, from
@@ -119,6 +122,38 @@ is. The calls a run step makes run concurrently, and a sync tool on a worker thr
 tool calls are put in the order the calls started, each call's own in the order they were made: how one call's hooks
 interleave with another's isn't compared.
 
+Each event stream an agent run's root capability hands its consumer from `wrap_run_event_stream` is one line of kind
+`run_event_stream`, with the events it yields, in order, and the error iteration raised, if any. A run hands one for each
+node it streams: the model request node's, which `AgentStream.__aiter__` iterates, and the tool call node's, which a run
+streams whether or not its caller does. So the line holds what `run_stream`, `run_stream_events` and an
+`event_stream_handler` get, with what each capability does to the stream, like what `ProcessEventStream` passes on, and
+the `EnqueuedMessagesEvent`s that delivering a message adds. The stream of each capability the root combines is inside
+the root's, so it isn't recorded again. A call with a run context that has no root capability, as a test makes to call
+a capability directly, is recorded too, and so is each call a capability called that way makes on the capabilities it
+combines. The capture wraps `wrap_run_event_stream` where `AbstractCapability` or a subclass defines it, whether the
+subclass is defined before the capture starts or after, and closes the stream it wraps when the consumer closes the
+recording.
+
+Each call on a method `AGENT_STREAM_ITERATORS` or `AGENT_STREAM_CALLS` lists, on `AgentStream`, is one line of kind
+`agent_stream`, with its arguments, defaults filled in, and what it yields, in order, or returns, or the error it raises:
+the text `stream_text` yields, the partial outputs `stream_output` yields, the output `get_output` returns and what each
+`validate_response_output` call returns or raises, the error of a partial output `stream_output` swallows included. The
+response a call validates is the stream's own, which the stream's `stream` line holds, so it's left out. Lines come in
+the order the calls started, so one a call makes, like `get_output`'s on `validate_response_output`, comes after it.
+`StreamedRunResult` and `StreamedRunResultSync` call these methods, so their calls are recorded through them. A
+`debounce_by`, which `stream_text` and `stream_output` default to, groups what arrives within it into one yield, so
+what a test that leaves it set records depends on how fast the stream arrives.
+
+Each span the OpenTelemetry SDK ends is one line of kind `span`, with its name, number, parent, kind, the name of its
+instrumentation scope, its attributes, its status, and its events, each with its name and attributes. An exception
+event's stack trace is left out, since a refactor moves the lines it names. A test's spans are numbered in the order
+they started, and a parent is named by its number; a parent that didn't start in the test the span ends in, like a
+remote one, is `external`. Concurrent tool calls end their spans in any order, so a test's span lines come after its
+others, ahead of the durable execution ones below, in the order the spans started. A span ended again is recorded once.
+Span IDs, timestamps and durations aren't recorded; the ones its attributes hold are normalized, below. The capture wraps
+`start` and `end` on the SDK's `Span`, so a span that isn't recording, like one a sampler drops or a tracer other than
+the SDK's starts, records nothing, and only its absence shows.
+
 Each exception a `pytest.raises` or `pytest.RaisesGroup` block catches is one line of kind `exception`, with its class,
 message and notes, whether it suppresses its context, and, described alike, the exceptions it groups, its `__cause__`
 and its `__context__`. Each warning the filters let through while a test runs is one line of kind `warning`, whether
@@ -184,9 +219,11 @@ random suffix of the key a capability without an `id` gets, `PromptInjectionDefe
 in, which hashes the file the task function was compiled from, the digest of a run's inputs that keys the task
 `PrefectDurability` draws the run's default ID from, which hashes the timestamps of the history the run is handed,
 the process ID a Temporal worker's identity starts with, the trace and span IDs an online evaluation's dispatch
-references, durations a clock measured, like the evaluated call's in that dispatch, Temporal timers computed from a
-clock reading, and the `custom_id` of each batch request `InMemoryBatchModel` encodes, which hashes a random token, are
-normalized, so two runs of the same code compare equal. A
+references, durations a clock measured, like the evaluated call's in that dispatch and a delegation's that
+`DelegationFinishedEvent` reports, the time a streamed request's chat span records its first chunk took, the id a
+sub-agent's question to its parent gets, Temporal timers computed from a clock reading, and the `custom_id` of each batch
+request `InMemoryBatchModel` encodes, which hashes a random token, are normalized, so two runs of the same code compare
+equal. A
 step id a model echoes back isn't, in a tool call's arguments or where `Planning` renders it from them, as a subtask's
 parent or a dependency. Cassette playback hands a response's headers back in a different order each run, so the
 `HTTPHeaders` botocore copies into an error response's `ResponseMetadata` are sorted where an error message renders
@@ -197,8 +234,9 @@ The comparison lists the test nodes whose records differ or that only one captur
 any. It refuses two captures that imported `pydantic_ai` from the same file, since the base run then didn't load the
 base commit, and a capture that recorded nothing, since it proves nothing. It also counts the nodes whose streams reach
 each module that defines a `StreamedResponse` subclass, the nodes that send to each request target and the nodes with a
-UI, realtime, session, hook, Temporal, DBOS, durable name or cache key record from each of their targets, and names
-the selected nodes that recorded no request, realtime or session record, so the capture's reach over the changed code
+UI, realtime, session, hook, Temporal, DBOS, durable name or cache key record from each of their targets, the nodes
+with each run event kind, `AgentStream` method and span name, and names the selected nodes that recorded no request,
+realtime or session record, so the capture's reach over the changed code
 shows. It first names the nodes that failed on each side: a test that fails records only what it did before it failed,
 so matching records don't prove it. A test that waits on a fixed timeout, like the five seconds an MCP server started from `--mcp-config` has to
 initialize, can fail on both sides on a loaded machine; run it again once the load is down.
@@ -229,6 +267,7 @@ import weakref
 from collections import Counter, defaultdict
 from collections.abc import (
     AsyncGenerator,
+    AsyncIterable,
     AsyncIterator,
     Awaitable,
     Callable,
@@ -251,6 +290,7 @@ import httpx2
 import pytest
 from botocore.awsrequest import AWSPreparedRequest, AWSResponse, HTTPHeaders
 from botocore.endpoint import Endpoint
+from opentelemetry.sdk.trace import ReadableSpan, Span as SdkSpan, TracerProvider
 from pydantic_core import to_json
 from starlette.applications import Starlette
 from starlette.types import Message, Receive, Scope, Send
@@ -263,14 +303,22 @@ import pydantic_ai.realtime.model as realtime_model
 import pydantic_ai.ui._web.api as web_api
 import pydantic_ai.ui._web.app as web_app
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, Instrumentation
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.messages import ModelMessage, ModelResponse, ModelResponseStreamEvent, TextPart, ToolCallPart
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    ModelMessage,
+    ModelResponse,
+    ModelResponseStreamEvent,
+    TextPart,
+    ToolCallPart,
+)
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, override_allow_model_requests
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.bedrock import BedrockConverseModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.groq import GroqModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -280,6 +328,7 @@ from pydantic_ai.realtime import RealtimeModel, RealtimeSession
 from pydantic_ai.realtime._core import SessionCore
 from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.realtime.lifecycle import InferredLifecycle, RealtimeFrame, StaleEvent
+from pydantic_ai.result import AgentStream
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.ui import UIAdapter, UIEventStream
 
@@ -314,9 +363,9 @@ GENERATED_VALUES = [
     # The span an online evaluation's dispatch references.
     (re.compile(r'("trace_id":")[0-9a-f]{32}"'), r'\1TRACE_ID"'),
     (re.compile(r'("span_id":")[0-9a-f]{16}"'), r'\1SPAN_ID"'),
-    # A duration a clock measured, like the evaluated call's in an online evaluation's dispatch. One a test sets has
-    # fewer decimal places.
-    (re.compile(r'("duration":)\d+\.\d{10,}(?:e-\d+)?(?=[,}])'), r'\1"DURATION"'),
+    # A duration a clock measured, like the evaluated call's in an online evaluation's dispatch, or the delegation's a
+    # `DelegationFinishedEvent` reports. One a test sets has fewer decimal places.
+    (re.compile(r'("duration(?:_ms)?":)\d+\.\d{10,}(?:e-\d+)?(?=[,}])'), r'\1"DURATION"'),
     # A Temporal timer given to the nanosecond, which a `timedelta` can't be, was computed from a clock reading, like
     # the time left until a deadline set in an earlier activation: a workflow's time moves on between activations.
     (re.compile(r'"start_to_fire_timeout":"\d+\.\d{9}s"'), '"start_to_fire_timeout":"DURATION"'),
@@ -334,12 +383,16 @@ GENERATED_VALUES = [
     (re.compile(r'(--|boundary=)[0-9a-f]{32}'), r'\1BOUNDARY'),
     # Each pytest session numbers its temporary directory, and puts each `pytest-xdist` worker's in its own.
     (re.compile(r'(pytest-of-[^/"]+/pytest-)\d+(?:/popen-gw\d+)?'), r'\1N'),
+    # The `uuid4().hex[:12]` id a sub-agent's question to its parent gets, which its task question and answer carry.
+    (re.compile(r'("question_id":")[0-9a-f]{12}"'), r'\1QUESTION_ID"'),
     # `uuid4().hex` ids, like `AskUserQuestion.id`; the version and variant digits spare most other hex digests.
     (re.compile(r'(?<![0-9a-f])[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}(?![0-9a-f])'), 'UUID'),
     # The key the framework gives a capability without an `id` ends in a random suffix.
     (re.compile(r'<(\w+):[0-9a-f]{6}>'), r'<\1:ID>'),
     # `PromptInjectionDefender` times each screening it runs.
     (re.compile(r'"latency_ms":[0-9.eE+-]+'), '"latency_ms":"LATENCY"'),
+    # A streamed model request's chat span records how long its first chunk took to arrive.
+    (re.compile(r'("gen_ai\.client\.operation\.time_to_first_chunk":)[0-9.eE+-]+'), r'\1"DURATION"'),
     # `Planning`'s `uuid4().hex[:8]` step ids, in a plan line after the status marker and in the reply that adds a step.
     (re.compile(r'(\[[ ~x!-]\] \[)[0-9a-f]{8}(?=\])'), r'\1STEP_ID'),
     (re.compile(r'(with id: )[0-9a-f]{8}(?![0-9a-f])'), r'\1STEP_ID'),
@@ -456,6 +509,21 @@ DURABLE_KINDS = {
     'durable_name': 'durable name',
     'cache_key': 'cache key',
 }
+# The `AgentStream` methods whose calls a capture records, with what each yields or returns.
+AGENT_STREAM_ITERATORS = ('stream_text', 'stream_output')
+AGENT_STREAM_CALLS = ('get_output', 'validate_response_output')
+# The `AgentStream` method arguments a call's record leaves out: the response a call validates is the stream's own,
+# which its stream record holds.
+UNRECORDED_AGENT_STREAM_ARGUMENTS = frozenset({'self', 'message'})
+# What a canary agent run makes that a capture records, by record kind.
+CANARY_RECORDS = {
+    'stream': 'stream events',
+    'run_event_stream': 'run event stream',
+    'agent_stream': '`AgentStream` calls',
+    'span': 'spans',
+}
+# The span event attributes left out of a capture: a stack trace names the lines a refactor moves.
+UNRECORDED_SPAN_EVENT_ATTRIBUTES = frozenset({'exception.stacktrace'})
 # The capability hooks the tool manager runs a tool call through, whose calls a capture records.
 TOOL_HOOKS = (
     'wrap_tool_validate',
@@ -593,6 +661,11 @@ class RefactorCapture:
         # Each hook record of a tool call in a run, with the run and step it's in and the call's ID, by which `write`
         # orders them.
         self._tool_calls: list[tuple[dict[str, object], tuple[str | None, int], str]] = []
+        # Each span record with its span's number, and the number of each span started since the records were last
+        # written, by span ID, in the order they started, which `write` records the spans in: concurrent tool calls
+        # end theirs in any order.
+        self._spans: list[tuple[int, dict[str, object]]] = []
+        self._span_numbers: dict[int, int] = {}
         # Per stream, by `id`: the stream, the iterator `__aiter__` first returned and the recording that wraps it, all
         # held weakly, as the stream is, and the stream's record with its events. The stream's own reference tells a
         # reused `id` apart.
@@ -723,7 +796,9 @@ class RefactorCapture:
             }
         )
         self._wrap_subclasses(StreamedResponse, self._wrap_aiter)
-        self._wrap_subclasses(AbstractCapability, self._wrap_tool_hooks)
+        self._wrap_subclasses(AbstractCapability, self._wrap_capability)
+        self._wrap_agent_stream()
+        self._wrap_spans()
         self._wrap_sampling_request()
         self._wrap_raises()
         self._wrap_warnings()
@@ -744,20 +819,28 @@ class RefactorCapture:
                 self._wrap_model(model_class, name)
 
     def check_stream_hook(self) -> None:
-        """Stop the run unless the stream an agent iterates is recorded."""
+        """Stop the run unless the streams, run event stream, `AgentStream` calls and spans of an instrumented
+        agent's streamed run are recorded.
+        """
 
         async def run() -> None:
-            async with Agent(FunctionModel(stream_function=stream_canary)).run_stream('canary') as result:
+            tracer_provider = TracerProvider(shutdown_on_exit=False)
+            instrumentation = Instrumentation(settings=InstrumentationSettings(tracer_provider=tracer_provider))
+            agent = Agent(FunctionModel(stream_function=stream_canary), capabilities=[instrumentation])
+            async with agent.run_stream('canary') as result:
                 await result.get_output()
 
         asyncio.run(run())
-        recorded = any(record['events'] for record, _ in self._streams)
+        # A stream or run event stream counts only with the events it handed the consumer.
+        recorded = {record['kind'] for record in self.records if record.get('events', True)}
+        if self._spans:
+            recorded.add('span')
         self.clear()
-        if not recorded:
+        if missed := [label for kind, label in CANARY_RECORDS.items() if kind not in recorded]:
             self._monkeypatch.undo()
             raise pytest.UsageError(
-                'The stream a canary agent run iterated was not recorded, so the capture would miss streams. '
-                'Update `tests/refactor_capture.py` to the way streams are iterated now.'
+                f'The {" and ".join(missed)} of a canary agent run were not recorded, so the capture would miss '
+                'them. Update `tests/refactor_capture.py` to the way they are made now.'
             )
 
     def check_request_hook(self) -> None:
@@ -834,14 +917,16 @@ class RefactorCapture:
 
     def _append_records(self) -> None:
         """Append the records so far to this worker's records file, with the response each stream that lives builds
-        now, and the durable names, cache keys and workflows last, each in a set order: they're made on other threads
-        than the test's, or concurrently, and a workflow's ID is drawn anew each run.
+        now, the spans in the order they started, and the durable names, cache keys and workflows last, each in a set
+        order: they're made on other threads than the test's, or concurrently, and a workflow's ID is drawn anew each
+        run.
         """
         for record, stream_ref in self._streams:
             if (stream := stream_ref()) is not None:
                 record['response'] = built_response(stream)
             record['response'] = recorded_value(record['response'])
         self._order_tool_calls()
+        self.records.extend(record for _, record in sorted(self._spans, key=lambda span: span[0]))
         self.records.extend(sorted(self._durable_names, key=json.dumps))
         for calls in sorted(self._cache_key_calls, key=json.dumps):
             self.records.extend(calls)
@@ -877,6 +962,8 @@ class RefactorCapture:
         self.records.clear()
         self._streams.clear()
         self._tool_calls.clear()
+        self._spans.clear()
+        self._span_numbers.clear()
         self._iterators.clear()
         self._temporal_runs.clear()
         self._dbos_workflows.clear()
@@ -1583,6 +1670,179 @@ class RefactorCapture:
             return original(model, messages, model_settings, model_request_parameters, *args, **kwargs)
 
         self._monkeypatch.setattr(model_class, name, recording_method)
+
+    def _wrap_capability(self, cls: type[AbstractCapability[object]]) -> None:
+        self._wrap_tool_hooks(cls)
+        if 'wrap_run_event_stream' in vars(cls):
+            self._wrap_run_event_stream(cls)
+
+    def _wrap_run_event_stream(self, cls: type[AbstractCapability[object]]) -> None:
+        original: Callable[..., AsyncIterable[AgentStreamEvent]] = vars(cls)['wrap_run_event_stream']
+
+        @functools.wraps(original)
+        def recording_wrap_run_event_stream(
+            capability: AbstractCapability[object], *args: object, **kwargs: object
+        ) -> AsyncIterable[AgentStreamEvent]:
+            stream = original(capability, *args, **kwargs)
+            ctx = args[0] if args else kwargs.get('ctx')
+            if not isinstance(ctx, RunContext):
+                return stream
+            # The root capability's stream is the one the consumer gets, with the streams of the capabilities it
+            # combines inside it. A run context with no root is one a test built to call a capability directly.
+            # A run context's deps type is the run's, which this can't name.
+            if ctx.root_capability is not None and ctx.root_capability is not capability:  # pyright: ignore[reportUnknownMemberType]
+                return stream
+            return self._recorded_run_events(stream)
+
+        self._monkeypatch.setattr(cls, 'wrap_run_event_stream', recording_wrap_run_event_stream)
+
+    def _recorded_run_events(self, stream: AsyncIterable[AgentStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
+        events: list[object] = []
+        record: dict[str, object] = {'kind': 'run_event_stream', 'node': self.node, 'events': events}
+        self.records.append(record)
+
+        async def recorded() -> AsyncIterator[AgentStreamEvent]:
+            iterator = aiter(stream)
+            try:
+                async for event in iterator:
+                    events.append(normalized(event))
+                    yield event
+            except Exception as e:
+                record['error'] = normalized(f'{type(e).__name__}: {e}')
+                raise
+            finally:
+                # The consumer closes the stream once it's done, which closes the streams of the capabilities inside
+                # it, so it's closed with this.
+                if isinstance(iterator, AsyncGenerator):
+                    await iterator.aclose()
+
+        return recorded()
+
+    def _wrap_agent_stream(self) -> None:
+        """Wrap the methods `AGENT_STREAM_ITERATORS` and `AGENT_STREAM_CALLS` list on `AgentStream`."""
+        for name in AGENT_STREAM_ITERATORS:
+            self._wrap_agent_stream_iterator(name)
+        for name in AGENT_STREAM_CALLS:
+            self._wrap_agent_stream_call(name)
+
+    def _agent_stream_record(self, name: str, *args: object, **kwargs: object) -> dict[str, object]:
+        """A new record of a call on the `AgentStream` method `name`, with its arguments, defaults filled in."""
+        signature = inspect.signature(vars(AgentStream)[name])
+        arguments = signature.bind(*args, **kwargs)
+        arguments.apply_defaults()
+        record: dict[str, object] = {
+            'kind': 'agent_stream',
+            'node': self.node,
+            'target': method_target(AgentStream, name),
+            'arguments': normalized(
+                {
+                    argument: value
+                    for argument, value in arguments.arguments.items()
+                    if argument not in UNRECORDED_AGENT_STREAM_ARGUMENTS
+                }
+            ),
+        }
+        self.records.append(record)
+        return record
+
+    def _wrap_agent_stream_iterator(self, name: str) -> None:
+        original: Callable[..., AsyncGenerator[object]] = vars(AgentStream)[name]
+
+        @functools.wraps(original)
+        def recording_iterator(
+            stream: AgentStream[object, object], *args: object, **kwargs: object
+        ) -> AsyncIterator[object]:
+            yields: list[object] = []
+            record = self._agent_stream_record(name, stream, *args, **kwargs)
+            record['yields'] = yields
+            iterator = original(stream, *args, **kwargs)
+
+            async def recorded() -> AsyncIterator[object]:
+                try:
+                    async for item in iterator:
+                        yields.append(normalized(item))
+                        yield item
+                except Exception as e:
+                    record['error'] = normalized(f'{type(e).__name__}: {e}')
+                    raise
+                finally:
+                    # What it holds open, like the stream of text deltas `stream_text` reads, it closes when it's
+                    # closed, so it's closed with this.
+                    await iterator.aclose()
+
+            return recorded()
+
+        self._monkeypatch.setattr(AgentStream, name, recording_iterator)
+
+    def _wrap_agent_stream_call(self, name: str) -> None:
+        original: Callable[..., Awaitable[object]] = vars(AgentStream)[name]
+
+        @functools.wraps(original)
+        async def recording_call(stream: AgentStream[object, object], *args: object, **kwargs: object) -> object:
+            record = self._agent_stream_record(name, stream, *args, **kwargs)
+            try:
+                result = await original(stream, *args, **kwargs)
+            except Exception as e:
+                record['error'] = normalized(f'{type(e).__name__}: {e}')
+                raise
+            record['result'] = normalized(result)
+            return result
+
+        self._monkeypatch.setattr(AgentStream, name, recording_call)
+
+    def _wrap_spans(self) -> None:
+        """Number each span the OpenTelemetry SDK starts, in the order they start, and record each once it ends.
+
+        A span that isn't recording, like one a tracer that's not the SDK's starts, has nothing to record.
+        """
+        original_start: Callable[..., None] = vars(SdkSpan)['start']
+        original_end: Callable[..., None] = vars(SdkSpan)['end']
+
+        @functools.wraps(original_start)
+        def recording_start(span: SdkSpan, *args: object, **kwargs: object) -> None:
+            self._span_numbers.setdefault(span.get_span_context().span_id, len(self._span_numbers))
+            original_start(span, *args, **kwargs)
+
+        @functools.wraps(original_end)
+        def recording_end(span: SdkSpan, *args: object, **kwargs: object) -> None:
+            # A span ended again stays as it was.
+            ended = span.end_time is not None
+            original_end(span, *args, **kwargs)
+            if not ended:
+                number = self._span_numbers.setdefault(span.get_span_context().span_id, len(self._span_numbers))
+                self._spans.append((number, self._span_record(span, number)))
+
+        self._monkeypatch.setattr(SdkSpan, 'start', recording_start)
+        self._monkeypatch.setattr(SdkSpan, 'end', recording_end)
+
+    def _span_record(self, span: ReadableSpan, number: int) -> dict[str, object]:
+        """A record of `span`, which has ended, numbered `number`, with its parent named by its number."""
+        parent = span.parent
+        return {
+            'kind': 'span',
+            'node': self.node,
+            'name': span.name,
+            'number': number,
+            # A parent no span started since the records were last written, like a remote one, is `external`.
+            'parent': None if parent is None else self._span_numbers.get(parent.span_id, 'external'),
+            'span_kind': span.kind.name,
+            'scope': None if span.instrumentation_scope is None else span.instrumentation_scope.name,
+            'attributes': normalized(dict(span.attributes or {})),
+            'status': {'code': span.status.status_code.name, 'description': normalized(span.status.description)},
+            'events': [
+                {
+                    'name': event.name,
+                    'attributes': normalized(
+                        {
+                            key: value
+                            for key, value in (event.attributes or {}).items()
+                            if key not in UNRECORDED_SPAN_EVENT_ATTRIBUTES
+                        }
+                    ),
+                }
+                for event in span.events
+            ],
+        }
 
     def _wrap_tool_hooks(self, cls: type[AbstractCapability[object]]) -> None:
         for name in TOOL_HOOKS:
@@ -2366,8 +2626,8 @@ def compare(base_dir: Path, head_dir: Path) -> int:
     if empty := [d for d, nodes in ((base_dir, base), (head_dir, head)) if not nodes]:
         print(
             f'Nothing recorded in {", ".join(map(str, empty))}; the selected tests may not stream, send requests, '
-            'run a UI adapter, a realtime connection or session or a tool hook, catch an exception, warn, or run '
-            'durable execution code.',
+            'run a UI adapter, a realtime connection or session or a tool hook, catch an exception, warn, end a span, '
+            'or run durable execution code.',
             file=sys.stderr,
         )
         return 2
@@ -2381,6 +2641,9 @@ def compare(base_dir: Path, head_dir: Path) -> int:
     print(f'realtime records: head {sum(record["kind"] == "realtime" for record in head_records)}')
     print(f'session records: head {sum(record["kind"] == "session" for record in head_records)}')
     print(f'hook records: head {sum(record["kind"] == "hook" for record in head_records)}')
+    print(f'run event stream records: head {sum(record["kind"] == "run_event_stream" for record in head_records)}')
+    print(f'agent stream records: head {sum(record["kind"] == "agent_stream" for record in head_records)}')
+    print(f'span records: head {sum(record["kind"] == "span" for record in head_records)}')
     print(f'exception records: head {sum(record["kind"] == "exception" for record in head_records)}')
     print(f'warning records: head {sum(record["kind"] == "warning" for record in head_records)}')
     for kind, label in DURABLE_KINDS.items():
@@ -2392,6 +2655,9 @@ def compare(base_dir: Path, head_dir: Path) -> int:
     realtime_targets: Counter[str] = Counter()
     session_targets: Counter[str] = Counter()
     hook_targets: Counter[str] = Counter()
+    run_events: Counter[str] = Counter()
+    agent_stream_targets: Counter[str] = Counter()
+    span_names: Counter[str] = Counter()
     durable_targets: dict[str, Counter[str]] = {kind: Counter() for kind in DURABLE_KINDS}
     for records in head_nodes.values():
         modules.update({module for record in records for module in record.get('modules', [])})
@@ -2400,6 +2666,16 @@ def compare(base_dir: Path, head_dir: Path) -> int:
         realtime_targets.update({record['target'] for record in records if record['kind'] == 'realtime'})
         session_targets.update({record['target'] for record in records if record['kind'] == 'session'})
         hook_targets.update({record['target'] for record in records if record['kind'] == 'hook'})
+        run_events.update(
+            {
+                event['event_kind']
+                for record in records
+                if record['kind'] == 'run_event_stream'
+                for event in record['events']
+            }
+        )
+        agent_stream_targets.update({record['target'] for record in records if record['kind'] == 'agent_stream'})
+        span_names.update({record['name'] for record in records if record['kind'] == 'span'})
         for kind, counts in durable_targets.items():
             counts.update({str(record['target']) for record in records if record['kind'] == kind})
     for label, counts in (
@@ -2409,6 +2685,9 @@ def compare(base_dir: Path, head_dir: Path) -> int:
         ('realtime target', realtime_targets),
         ('session target', session_targets),
         ('hook target', hook_targets),
+        ('run event kind', run_events),
+        ('agent stream target', agent_stream_targets),
+        ('span name', span_names),
         *((f'{DURABLE_KINDS[kind]} target', counts) for kind, counts in durable_targets.items()),
     ):
         print(f'nodes per {label}, head:')
