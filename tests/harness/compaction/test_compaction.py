@@ -3879,6 +3879,8 @@ class TestCompactionSpan:
         summary_run = next(s for s in spans if s['attributes'].get('agent_name') == 'summarizing_compaction')
         assert summary_run['attributes']['gen_ai.conversation.id'] == 'conversation-1'
         assert 'baggage_conflict.gen_ai.conversation.id' not in summary_run['attributes']
+        # It shares the parent's conversation, so it has no other top-level conversation to record.
+        assert 'pydantic_ai.root_conversation_id' not in summary_run['attributes']
 
     async def test_span_emitted_when_threshold_exceeded(self, capfire: CaptureLogfire) -> None:
 
