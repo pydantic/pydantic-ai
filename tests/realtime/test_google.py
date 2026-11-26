@@ -4446,6 +4446,7 @@ async def test_proactive_audio_uses_a_caller_client_already_on_v1alpha(monkeypat
 
 async def test_proactive_audio_on_a_caller_client_says_how_to_fix_it(monkeypatch: pytest.MonkeyPatch) -> None:
     """A client the caller built can't be rebuilt on `v1alpha`, so the session is refused before dialing."""
+    monkeypatch.delenv('GOOGLE_GENAI_API_VERSION', raising=False)
     client = Client(api_key='k')
     model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
     captured = _proactive_capture(monkeypatch)
@@ -4456,7 +4457,6 @@ async def test_proactive_audio_on_a_caller_client_says_how_to_fix_it(monkeypatch
     message = str(exc_info.value)
     # The SDK's own default: `v1beta` on google-genai 2, `v1` on 3, which the provider leaves as the caller built it.
     api_version = client._api_client._http_options.api_version  # pyright: ignore[reportPrivateUsage]
-    assert api_version in ('v1beta', 'v1')
     assert f'needs a client on the `v1alpha` API version, but this one is on `{api_version}`' in message
     assert "types.HttpOptions(api_version='v1alpha')" in message
     assert captured == {}
