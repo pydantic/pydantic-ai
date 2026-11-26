@@ -35,7 +35,7 @@ loads that agent on its own without Pax's plugins.
 ## Why Pax
 
 - **Your agent, in a coding terminal.** `pax --agent my_module:agent` runs an agent you wrote,
-  with Pax's sessions, models and sandboxes around it. When it behaves, deploy the same object.
+  with Pax's sessions and models around it. When it behaves, deploy the same object.
 - **Everything is a plugin, the coding agent included.** Add tools, commands and menus without
   forking anything, or swap any piece out. Sandboxes and workspaces are plugins too.
 - **Any model, any account.** Switch models mid-conversation, sign in to several accounts, and
@@ -265,7 +265,7 @@ bring one over from another tool.
 
 ### Pick up where you left off: `/resume`
 
-Every conversation is saved. `/resume` opens a browser with your projects on the left
+`/resume` opens a browser with your projects on the left
 and their sessions on the right. Pax names sessions in the background so you can find
 them, using your current model or a smaller `sessions.naming_model`; `/set sessions.naming false`
 keeps the titles taken from each session's first prompt. Press <kbd>/</kbd> to search, <kbd>→</kbd> to read a transcript, and <kbd>Enter</kbd> to resume.
@@ -298,7 +298,7 @@ and the session to resume if you want to continue it.
 
 By default Pax works in the directory you started it in, as you. `/sandbox` starts a new
 conversation somewhere else instead: a micro-VM on your own machine, with [smol](https://pydantic.dev/docs/ai/harness/smol-sandbox/) or [BoxLite](https://pydantic.dev/docs/ai/harness/boxlite-sandbox/), or
-a hosted sandbox with [E2B](https://pydantic.dev/docs/ai/harness/e2b-sandbox/), [boxd](https://pydantic.dev/docs/ai/harness/boxd-sandbox/), [Daytona](https://pydantic.dev/docs/ai/harness/daytona-sandbox/), [OpenSandbox](https://pydantic.dev/docs/ai/harness/opensandbox-sandbox/), [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Render](https://pydantic.dev/docs/ai/harness/render-sandbox/), [Sprites](https://pydantic.dev/docs/ai/harness/sprites-sandbox/), [Kubernetes](https://pydantic.dev/docs/ai/harness/kubernetes-sandbox/). The file and shell tools are the same either way, and `!`
+a hosted sandbox with [E2B](https://pydantic.dev/docs/ai/harness/e2b-sandbox/), [boxd](https://pydantic.dev/docs/ai/harness/boxd-sandbox/), [Daytona](https://pydantic.dev/docs/ai/harness/daytona-sandbox/), [OpenSandbox](https://pydantic.dev/docs/ai/harness/opensandbox-sandbox/), [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Render](https://pydantic.dev/docs/ai/harness/render-sandbox/), [Sprites](https://pydantic.dev/docs/ai/harness/sprites-sandbox/) or [Kubernetes](https://pydantic.dev/docs/ai/harness/kubernetes-sandbox/). The file and shell tools are the same either way, and `!`
 runs your command inside the sandbox rather than on your machine.
 
 The sandbox stands in for the launch directory for that conversation, and `/sandbox delete`
