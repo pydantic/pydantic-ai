@@ -974,12 +974,14 @@ async def test_continue_as_new_publishes_the_enqueued_messages_event(client: Cli
 async def test_declined_continue_as_new_publishes_the_enqueued_messages_event_once(client: Client) -> None:
     """When `continue_as_new` declines, the events published ahead of it aren't published again by the stream."""
     _declined_continuations.clear()
-    received, messages, _ = await _run_continue_as_new_enqueue_workflow(client, continues_as_new=False)
+    received, messages, history = await _run_continue_as_new_enqueue_workflow(client, continues_as_new=False)
 
     assert _declined_continuations
     assert _user_prompts(messages) == ['Hello', 'Follow-up']
     assert _kinds(received) == _CONTINUE_AS_NEW_ENQUEUE_KINDS
     assert _handled == [['Follow-up']]
+    # The handler activity ran ahead of `continue_as_new` and the stream then skipped the event; replay agrees.
+    await _replay_continue_as_new_enqueue_workflow(history)
 
 
 @pytest.mark.parametrize('listener', ['mutate', 'replace'])
