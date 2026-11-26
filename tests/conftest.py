@@ -1078,6 +1078,10 @@ DEPRECATED_MODELS_IN_RECORDINGS: tuple[str, ...] = (
     'claude-opus-4-5-20251101',
     # Anthropic, no retirement date: https://github.com/pydantic/pydantic-ai/issues/14036
     'claude-mythos-preview',
+    # Google, retires 2026-10-20 on Google Cloud and 2026-12-01 on the Gemini API:
+    # https://github.com/pydantic/pydantic-ai/issues/14676
+    'gemini-2.5-pro',
+    'gemini-2.5-flash',
     # OpenAI, retires 2025-07-14: https://github.com/pydantic/pydantic-ai/issues/14037
     'gpt-4.5-preview',
     # OpenAI, retires 2025-10-27: https://github.com/pydantic/pydantic-ai/issues/14037

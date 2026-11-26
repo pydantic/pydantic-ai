@@ -34,21 +34,30 @@ with try_import() as imports_successful:
         AsyncAnthropicFoundry,
         AsyncAnthropicVertex,
     )
+    from google.genai import Client as GoogleClient
     from openai import AsyncAzureOpenAI, AsyncOpenAI
 
     from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers import Provider
-    from pydantic_ai.providers._model_deprecations import ANTHROPIC_MODEL_DEPRECATIONS, OPENAI_MODEL_DEPRECATIONS
+    from pydantic_ai.providers._model_deprecations import (
+        ANTHROPIC_MODEL_DEPRECATIONS,
+        GEMINI_API_MODEL_DEPRECATIONS,
+        GOOGLE_CLOUD_MODEL_DEPRECATIONS,
+        OPENAI_MODEL_DEPRECATIONS,
+    )
     from pydantic_ai.providers.anthropic import AnthropicProvider, AsyncAnthropicClient
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.gateway import gateway_provider
+    from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openai_chatgpt import OpenAIChatGPTProvider
     from pydantic_ai.providers.openai_codex import OpenAICodexProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
-pytestmark = pytest.mark.skipif(not imports_successful(), reason='anthropic or openai not installed')
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='anthropic, google-genai or openai not installed')
 
 CLAUDE = 'claude-retiring'
 GPT = 'gpt-retiring'
@@ -59,10 +68,25 @@ DEPRECATION = ModelDeprecation(
 )
 
 
+GEMINI = 'gemini-retiring'
+GEMINI_API_DEPRECATION = ModelDeprecation(
+    source_url='https://example.com/gemini-api',
+    retirement_date=date(2026, 12, 1),
+    replacement='gemini-current',
+)
+GOOGLE_CLOUD_DEPRECATION = ModelDeprecation(
+    source_url='https://example.com/google-cloud',
+    retirement_date=date(2026, 10, 20),
+    replacement='gemini-current',
+)
+
+
 @pytest.fixture(autouse=True)
 def deprecated_models(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(ANTHROPIC_MODEL_DEPRECATIONS, CLAUDE, DEPRECATION)
     monkeypatch.setitem(OPENAI_MODEL_DEPRECATIONS, GPT, DEPRECATION)
+    monkeypatch.setitem(GEMINI_API_MODEL_DEPRECATIONS, GEMINI, GEMINI_API_DEPRECATION)
+    monkeypatch.setitem(GOOGLE_CLOUD_MODEL_DEPRECATIONS, GEMINI, GOOGLE_CLOUD_DEPRECATION)
 
 
 def not_found_client() -> httpx2.AsyncClient:
@@ -151,6 +175,72 @@ def test_each_request_warns(allow_model_requests: None):
             with pytest.raises(ModelAPIError):
                 agent.run_sync('hello')
     assert len([w for w in record if w.category is DeprecatedModelWarning]) == 2
+
+
+GOOGLE_MODELS: dict[str, tuple[Callable[[], Model], ModelDeprecation]] = {
+    'google': (
+        lambda: GoogleModel(GEMINI, provider=GoogleProvider(api_key='mock-api-key', http_client=not_found_client())),
+        GEMINI_API_DEPRECATION,
+    ),
+    'google-cloud': (
+        lambda: GoogleModel(
+            GEMINI, provider=GoogleCloudProvider(api_key='mock-api-key', http_client=not_found_client())
+        ),
+        GOOGLE_CLOUD_DEPRECATION,
+    ),
+    'gateway/google': (
+        lambda: GoogleModel(
+            GEMINI, provider=gateway_provider('google', api_key='pylf_v1_us_mock', http_client=not_found_client())
+        ),
+        GOOGLE_CLOUD_DEPRECATION,
+    ),
+}
+
+
+@pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
+@pytest.mark.parametrize(('model_factory', 'deprecation'), GOOGLE_MODELS.values(), ids=GOOGLE_MODELS.keys())
+async def test_google_takes_its_transports_dates(
+    allow_model_requests: None, model_factory: Callable[[], Model], deprecation: ModelDeprecation, stream: bool
+):
+    """A request to a deprecated Google model warns once, with the dates of the API it reaches.
+
+    The Gemini API and Google Cloud date the same model differently, and the Gateway's Google route reaches Google
+    Cloud.
+    """
+    model = model_factory()
+    assert model.profile.get('deprecation') == deprecation
+    agent = Agent(model)
+
+    with pytest.warns(DeprecatedModelWarning) as record, pytest.raises(ModelAPIError):
+        if stream:
+            async with agent.run_stream('hello'):
+                pass  # pragma: no cover
+        else:
+            await agent.run('hello')
+
+    assert [str(w.message) for w in record if w.category is DeprecatedModelWarning] == [
+        f"Model '{model.model_id}' is deprecated by its provider, with a retirement date of "
+        f"{deprecation.retirement_date}. It recommends 'gemini-current' instead. See {deprecation.source_url}"
+    ]
+
+
+def test_google_dates_follow_the_client():
+    """Either Google provider can hold the other transport's client, and the client decides whose dates apply."""
+    google_cloud_client = GoogleClient(vertexai=True, project='test-project', location='us-central1')
+    gemini_api_client = GoogleClient(api_key='mock-api-key')
+    assert GoogleModel(GEMINI, provider=GoogleProvider(client=google_cloud_client)).profile.get('deprecation') == (
+        GOOGLE_CLOUD_DEPRECATION
+    )
+    assert GoogleModel(GEMINI, provider=GoogleCloudProvider(client=gemini_api_client)).profile.get('deprecation') == (
+        GEMINI_API_DEPRECATION
+    )
+
+
+def test_google_profile_override():
+    """The user's `profile=` stops the warning for one Google model."""
+    model = GoogleModel(GEMINI, provider=GoogleProvider(api_key='mock-api-key'), profile={'deprecation': None})
+    assert model.profile.get('deprecation') is None
+    model.prepare_request(None, ModelRequestParameters())
 
 
 def anthropic_on(client: AsyncAnthropicClient) -> Model:

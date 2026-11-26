@@ -80,6 +80,7 @@ from ..profiles.google import (
     _with_google_cloud_media_types,  # pyright: ignore[reportPrivateUsage]
 )
 from ..providers import Provider, infer_provider
+from ..providers._model_deprecations import GEMINI_API_MODEL_DEPRECATIONS, GOOGLE_CLOUD_MODEL_DEPRECATIONS
 from ..settings import ModelSettings, ServiceTier, ThinkingEffort, ToolChoiceScalar
 from ..tools import ToolDefinition
 from . import (
@@ -783,7 +784,13 @@ class GoogleModel(Model[Client]):
         On the Gemini API, `gemini-2.5-flash-lite` also gets `google_minimal_thinking_budget=512`, and `gemini-2.5-flash`
         gets `thinking_always_enabled`, so `thinking=False` sends the minimum `thinking_budget` that its reroute target
         accepts instead of 0.
+
+        `deprecation` comes from the Gemini API's or Google Cloud's deprecation schedule, which date the same model
+        differently.
         """
+        deprecations = GOOGLE_CLOUD_MODEL_DEPRECATIONS if self._is_google_cloud else GEMINI_API_MODEL_DEPRECATIONS
+        if (deprecation := deprecations.get(self._model_name)) is not None:
+            profile = merge_profile(profile, ModelProfile(deprecation=deprecation))
         if self._is_google_cloud:
             profile = merge_profile(
                 profile, GoogleModelProfile(google_supports_batch_api=False, google_supports_computer_use=False)

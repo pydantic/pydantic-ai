@@ -134,6 +134,25 @@ After the request, inspect [`ModelResponse`][pydantic_ai.messages.ModelResponse]
 
 See [Google Cloud Model Garden](google-cloud.md#model-garden).
 
+## Gemini 2.5 retirement {#gemini-25-retirement}
+
+Requests to `gemini-2.5-pro` and `gemini-2.5-flash` emit a [`DeprecatedModelWarning`][pydantic_ai.exceptions.DeprecatedModelWarning]
+(see [Deprecated models](overview.md#deprecated-models)).
+From December 1, 2026, the Gemini API [routes them](https://aistudio.google.com/docs/deprecations#gemini-2.5-pro-models)
+to other models, billed at those models' rates: `gemini-2.5-pro` to `gemini-3.8-flash`, and `gemini-2.5-flash` to
+`gemini-3.5-flash-lite`. Google Cloud [lists October 20, 2026](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions#gemini-models)
+as the retirement date of both.
+
+`GoogleModel` keeps building Gemini 2.5 requests for these model names. Sent to the new models on 2026-11-26, they
+worked, except for two:
+
+- `google_logprobs` on `gemini-2.5-pro`: `gemini-3.8-flash` answers `Logprobs is not enabled for this model`.
+- A request that ends with a model turn, which only the [direct API](../direct.md) sends: both new models answer
+  `Requests ending with a model turn are not supported`.
+
+`NativeOutput` with function tools, and native tools with function tools, stay unavailable on these model names, as on
+Gemini 2.5. To use the new models' features, change the model name.
+
 ## Custom HTTP Client
 
 Google providers use `httpx2` by default. You can pass a custom `httpx2.AsyncClient` to control transport settings:
