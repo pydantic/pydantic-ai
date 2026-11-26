@@ -791,24 +791,23 @@ class TestMCPToolsetIntegration:
         FastMCP's `StdioTransport` keeps its server running between connections and stops it from its finalizer,
         so the connection task that outlives the exit must not keep the toolset, and with it the transport, alive.
         """
-        transport = StdioTransport(command='python', args=['-m', 'tests.mcp_server'])
-        toolset = MCPToolset(transport)
+        tasks_before = asyncio.all_tasks()
+        toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
         agent = Agent(TestModel(call_tools=[]), toolsets=[toolset])
         async with agent:
             await agent.run('Hello')
 
-        # The connect task owns the server process; it's still running so the next run can reuse the server.
-        connect_task = transport._connect_task  # pyright: ignore[reportPrivateUsage]
-        assert connect_task is not None
-        assert not connect_task.done()
+        # The connection tasks own the server process. They're still running, so the next run can reuse the server.
+        connection_tasks = asyncio.all_tasks() - tasks_before
+        assert connection_tasks
 
         toolset_ref = weakref.ref(toolset)
-        del agent, toolset, transport
+        del agent, toolset
         gc.collect()
         assert toolset_ref() is None
-        # The transport's finalizer stops the server, and the connect task ends once the process has exited.
+        # The transport's finalizer stops the server, and the connection tasks end once the process has exited.
         with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-            await connect_task
+            await asyncio.wait(connection_tasks)
 
     async def test_get_tools_caches_and_lists(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         toolset = MCPToolset(fastmcp_server, include_instructions=True)
