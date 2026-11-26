@@ -58,7 +58,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ..profiles import ModelProfileSpec
+from ..profiles import ModelProfile, ModelProfileSpec, merge_profile
 from ..profiles.mistral import MistralModelProfile, MistralReasoningEffort
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ThinkingLevel
@@ -345,6 +345,21 @@ class MistralModel(Model[Mistral]):
     def profile(self) -> MistralModelProfile:
         """The model profile."""
         return cast(MistralModelProfile, super().profile)
+
+    def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
+        """Default `mistral_supports_user_message_after_tool_message` by host, unless the provider's profile sets it.
+
+        This is a host-based default `models/AGENTS.md` allows: Mistral's own API accepts a `user` message right after
+        a `tool` message (verified live 2026-11-26 on its current models), while a self-hosted or Mistral-compatible
+        endpoint may still reject it, so any other host keeps the separator. Leaving it in only costs an extra
+        assistant message, and the user's `profile=` can set it either way.
+        """
+        if 'mistral_supports_user_message_after_tool_message' in profile:
+            return profile
+        is_mistral_api = httpx2.URL(self.base_url).host == 'api.mistral.ai'
+        return merge_profile(
+            profile, MistralModelProfile(mistral_supports_user_message_after_tool_message=is_mistral_api)
+        )
 
     async def request(
         self,
@@ -814,6 +829,14 @@ class MistralModel(Model[Mistral]):
                 MistralSystemMessage(content=part.content) for part in instruction_parts
             ]
 
+        return self._separate_tool_and_user_messages_if_needed(mistral_messages)
+
+    def _separate_tool_and_user_messages_if_needed(
+        self, mistral_messages: list[MistralMessages]
+    ) -> list[MistralMessages]:
+        """Separate a `tool` message from a following `user` message, unless the profile says the API takes them."""
+        if self.profile.get('mistral_supports_user_message_after_tool_message', False):
+            return mistral_messages
         return _separate_tool_and_user_messages(mistral_messages)
 
     def _map_model_response(self, message: ModelResponse) -> MistralAssistantMessage | None:
@@ -940,8 +963,8 @@ class MistralModel(Model[Mistral]):
 
 
 def _separate_tool_and_user_messages(mistral_messages: list[MistralMessages]) -> list[MistralMessages]:
-    # Post-process messages to insert fake assistant message after tool message if followed by user message
-    # to work around `Unexpected role 'user' after role 'tool'` error.
+    # Insert an assistant message between a tool message and a following user message, for endpoints that
+    # reject the sequence with `Unexpected role 'user' after role 'tool'`.
     processed_messages: list[MistralMessages] = []
     for i, current_message in enumerate(mistral_messages):
         processed_messages.append(current_message)

@@ -76,7 +76,7 @@ with try_import() as groq_available:
     from pydantic_ai.providers.groq import GroqProvider
 
 with try_import() as mistral_available:
-    from mistralai.client.models import AssistantMessage, TextChunk, ToolMessage, UserMessage
+    from mistralai.client.models import TextChunk, ToolMessage, UserMessage
 
     from pydantic_ai.models.mistral import MistralModel
     from pydantic_ai.providers.mistral import MistralProvider
@@ -976,7 +976,6 @@ async def test_non_pdf_document_url_mistral() -> None:
     assert mapped == snapshot(
         [
             ToolMessage(content='See file fb8964.', tool_call_id='call1'),
-            AssistantMessage(content=[TextChunk(text='OK')]),
             UserMessage(
                 content=[
                     TextChunk(text='<pyai:tool_result tool_name="get_file" tool_call_id="call1" file_id="fb8964">'),
@@ -1440,7 +1439,6 @@ TOOL_MEDIA_WIRE_CASES: list[ToolMediaWireCase] = [
                 },
                 {'content': '["Here it is:","See file photo."]', 'role': 'tool', 'tool_call_id': 'photo1'},
                 {'content': '["Here it is:","See file photo."]', 'role': 'tool', 'tool_call_id': 'photo2'},
-                {'role': 'assistant', 'content': [{'text': 'OK', 'type': 'text'}], 'prefix': False},
                 {
                     'content': [
                         {

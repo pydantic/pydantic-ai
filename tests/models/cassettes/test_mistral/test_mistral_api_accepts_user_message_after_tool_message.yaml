@@ -1,0 +1,96 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.mistral.ai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "714"
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    body:
+      type: json
+      content:
+        model: mistral-small-latest
+        messages:
+        - content: What is the weather in Paris and London?
+          role: user
+        - role: assistant
+          content: []
+          tool_calls:
+          - function:
+              name: get_weather
+              arguments: "{\"city\":\"Paris\"}"
+            id: aB3dE5gH9
+            type: function
+            index: 0
+          - function:
+              name: get_weather
+              arguments: "{\"city\":\"London\"}"
+            id: kL7mN2pQ4
+            type: function
+            index: 0
+          prefix: false
+        - content: Sunny, 21C
+          role: tool
+          tool_call_id: aB3dE5gH9
+        - content: Rainy, 12C
+          role: tool
+          tool_call_id: kL7mN2pQ4
+        - content: "Now answer in one word: should I bring a jacket?"
+          role: user
+        top_p: 1.0
+        stream: false
+        stop: null
+        presence_penalty: null
+        frequency_penalty: null
+        "n": 1
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 01a21a0a-9c7f-7b55-a3bf-dc3607a47902
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: afd7b30559e24917b1e49b75932b6057
+        created: 1795733232
+        model: mistral-small-latest
+        usage:
+          prompt_tokens: 79
+          total_tokens: 83
+          completion_tokens: 4
+          prompt_tokens_details:
+            cached_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 0
+          service_tier: standard
+        object: chat.completion
+        choices:
+        - index: 0
+          finish_reason: stop
+          message:
+            role: assistant
+            tool_calls: null
+            content: "**Yes.**"
+  recorded_at: 2026-11-26T22:47:13.075494+00:00

@@ -93,6 +93,7 @@ with try_import() as imports_successful:
         _map_content,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.profiles import ModelProfile, merge_profile
     from pydantic_ai.profiles.mistral import MistralModelProfile, MistralReasoningEffort
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -4465,6 +4466,113 @@ async def test_mistral_tool_result_tags_name_the_rewritten_tool_call_id(
     assert tags == [
         f'<pyai:tool_result tool_name="get_image" tool_call_id="2pESUE4jw" file_id="{image_content.identifier}">'
     ]
+
+
+def _tool_then_user_history() -> list[ModelMessage]:
+    return [
+        ModelRequest(parts=[UserPromptPart(content='What is the weather in Paris and London?')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='aB3dE5gH9'),
+                ToolCallPart('get_weather', {'city': 'London'}, tool_call_id='kL7mN2pQ4'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('get_weather', 'Sunny, 21C', tool_call_id='aB3dE5gH9'),
+                ToolReturnPart('get_weather', 'Rainy, 12C', tool_call_id='kL7mN2pQ4'),
+            ]
+        ),
+    ]
+
+
+def _roles_on_the_wire(body: dict[str, Any]) -> list[str]:
+    return [message['role'] for message in cast(list[dict[str, Any]], body['messages'])]
+
+
+@pytest.mark.vcr()
+async def test_mistral_api_accepts_user_message_after_tool_message(
+    allow_model_requests: None, mistral_api_key: str, request_capture: RequestCapture
+):
+    """Mistral's own API takes a `user` message right after a `tool` message, so no assistant separator is sent."""
+    provider = MistralProvider(api_key=mistral_api_key, http_client=request_capture.client)
+    agent = Agent(MistralModel('mistral-small-latest', provider=provider))
+
+    result = await agent.run(
+        'Now answer in one word: should I bring a jacket?', message_history=_tool_then_user_history()
+    )
+
+    assert result.output
+    assert _roles_on_the_wire(request_capture.body('/chat/completions')) == snapshot(
+        ['user', 'assistant', 'tool', 'tool', 'user']
+    )
+
+
+_SEPARATED_ROLES = ['user', 'assistant', 'tool', 'tool', 'assistant', 'user']
+_ADJACENT_ROLES = ['user', 'assistant', 'tool', 'tool', 'user']
+
+
+@pytest.mark.parametrize(
+    ('base_url', 'supports_user_after_tool', 'expected_roles'),
+    [
+        pytest.param('https://api.mistral.ai', None, _ADJACENT_ROLES, id='mistral-api'),
+        pytest.param('https://mistral.example.com/v1', None, _SEPARATED_ROLES, id='custom-base-url'),
+        pytest.param('https://api.mistral.ai', False, _SEPARATED_ROLES, id='mistral-api-profile-off'),
+        pytest.param('https://mistral.example.com/v1', True, _ADJACENT_ROLES, id='custom-base-url-profile-on'),
+    ],
+)
+async def test_user_message_after_tool_message_separator(
+    allow_model_requests: None, base_url: str, supports_user_after_tool: bool | None, expected_roles: list[str]
+):
+    """Any host but Mistral's own API keeps the `'OK'` separator, and an explicit profile value wins either way."""
+    bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        return httpx2.Response(
+            200,
+            json={
+                'id': '1',
+                'object': 'chat.completion',
+                'created': 0,
+                'model': 'mistral-small-latest',
+                'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': 'Yes.'}, 'finish_reason': 'stop'}],
+                'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2},
+            },
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
+        provider = MistralProvider(api_key='test-key', http_client=http_client, base_url=base_url)
+        profile = (
+            None
+            if supports_user_after_tool is None
+            else MistralModelProfile(mistral_supports_user_message_after_tool_message=supports_user_after_tool)
+        )
+        agent = Agent(MistralModel('mistral-small-latest', provider=provider, profile=profile))
+        await agent.run('Should I bring a jacket?', message_history=_tool_then_user_history())
+
+    messages = cast(list[dict[str, Any]], bodies[0]['messages'])
+    assert [message['role'] for message in messages] == expected_roles
+    separators = [
+        message['content'] for message in messages if message['role'] == 'assistant' and not message.get('tool_calls')
+    ]
+    assert separators == ([[{'type': 'text', 'text': 'OK'}]] if expected_roles == _SEPARATED_ROLES else [])
+
+
+def test_provider_profile_sets_user_message_after_tool_message():
+    """A provider whose profile sets the flag decides it, whatever the host."""
+
+    class StrictMistralProvider(MistralProvider):
+        @staticmethod
+        def model_profile(model_name: str) -> ModelProfile:
+            return merge_profile(
+                MistralProvider.model_profile(model_name),
+                MistralModelProfile(mistral_supports_user_message_after_tool_message=False),
+            )
+
+    model = MistralModel('mistral-small-latest', provider=StrictMistralProvider(api_key='test-key'))
+    assert model.base_url == 'https://api.mistral.ai'
+    assert model.profile.get('mistral_supports_user_message_after_tool_message') is False
 
 
 async def test_empty_choices_raise_model_empty_response_error(allow_model_requests: None):
