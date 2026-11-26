@@ -23,7 +23,7 @@ from .protocol import (
 from .readonly import ReadOnlyWorkspace
 from .unavailable import UnavailableWorkspace
 from .windows import WindowsWorkspaceBackend
-from .workspace import Workspace, WorkspacePaths, WrapperWorkspace
+from .workspace import Workspace, WorkspacePaths, WrapperWorkspace, lowest_authority_under
 
 __all__ = (
     'AuthorityWorkspace',
@@ -50,4 +50,5 @@ __all__ = (
     'SupportsRealpath',
     'SupportsRunInDirectory',
     'UnavailableWorkspace',
+    'lowest_authority_under',
 )

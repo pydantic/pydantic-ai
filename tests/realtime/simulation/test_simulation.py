@@ -2874,6 +2874,34 @@ def test_live_delegation_decided_during_a_tool_round_opens_once_the_round_settle
     run_clean(LiveSimulation(), scenario)
 
 
+def test_live_text_typed_during_a_tool_round_is_delegated_once_the_round_settles() -> None:
+    """Text typed while a tool round waits for its results is delegated only once the round settles, as a delegation
+    the model decides on is.
+
+    Live works on one delegation at a time. (The simulated server used to open the text's delegation at once, which
+    could call a tool and fail before the round's answer, ending the wait for the text's reply and the round's answer
+    with neither spoken.)
+    """
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.speak(deliver=False)
+        sim.delegate(deliver=False)
+        sim.deliver()
+        sim.backend_call(deliver=False)
+        sim.backend_finish(deliver=False)
+        sim.send_text()
+        sim.wait_for_reply()
+        assert sim.server.running_delegation() is None
+        sim.deliver()
+        sim.finish_tool()
+        sim.backend_finish(deliver=False)
+        sim.backend_call(deliver=False)
+        sim.backend_finish(status='failed', deliver=False)
+        sim.settle()
+
+    run_clean(LiveSimulation(), scenario)
+
+
 def test_scenario_a_provider_reply_before_our_item_is_added_is_not_ours() -> None:
     """SIM-24, for a request with an item of its own: a server VAD reply that starts before the server adds our
     item can't be the one our `response.create` asks for, metadata echoed or not."""

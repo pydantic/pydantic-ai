@@ -41,6 +41,7 @@ from pydantic_ai_pax.runtime.live_registry import (
 from pydantic_ai_pax.runtime.live_runtimes import LiveRuntimes
 from pydantic_ai_pax.runtime.process import ClaiProcess
 from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
+from pydantic_ai_pax.runtime.workspace_trust import WorkspaceTrust
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.pax.test_plugin_flag import PROBE
 
@@ -582,6 +583,8 @@ async def test_each_session_works_in_its_own_folder(tmp_path: Path) -> None:
     for name in ('alpha', 'beta'):
         (fleet.folder(name) / 'AGENTS.md').write_text(f'Rules of {name}.')
         fleet.agents[name] = reader(name)
+    # Only a folder you trust has its `AGENTS.md` in the instructions; an untrusted one's is named, for the file tools.
+    WorkspaceTrust.saved(fleet.process.store, fleet.folder('alpha')).decide(fleet.process.store, trusted=True)
     launched_in = Path.cwd()
     with anyio.fail_after(20):
         async with fleet.live.serving():
@@ -591,7 +594,8 @@ async def test_each_session_works_in_its_own_folder(tmp_path: Path) -> None:
             await until(fleet.live, lambda: len(seen) == 2 and all(fleet.runtimes[s.id].idle for s in sessions))
             assert Path.cwd() == launched_in
     assert 'Rules of alpha.' in seen['alpha'] and 'Rules of beta.' not in seen['alpha']
-    assert 'Rules of beta.' in seen['beta'] and 'Rules of alpha.' not in seen['beta']
+    assert 'Rules of beta.' not in seen['beta'] and 'Rules of alpha.' not in seen['beta']
+    assert 'The working directory has an instruction file that is not loaded here' in seen['beta']
     assert Path.cwd() == launched_in
 
 

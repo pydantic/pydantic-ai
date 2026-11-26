@@ -55,6 +55,20 @@ agent = Agent(model)
 
 The Claude models that aren't covered by the migration note above take `temperature`, `top_p` and `top_k`, with two limits Pydantic AI applies silently instead of sending a request Anthropic rejects: while the model thinks, `temperature` other than `1`, `top_p` below `0.95` and `top_k` are dropped, and Claude Haiku 4.5, Sonnet 4.5 and 4.6, and Opus 4.5 and 4.6 drop `top_p` when it's set together with `temperature`.
 
+This applies to the Messages API version `2023-06-01`, which `anthropic<2` sends. `anthropic>=2` sends `2026-10-21` by default, and on that version Anthropic [rejects `temperature`, `top_p` and `top_k` on every model](https://platform.claude.com/docs/en/api/migration-2026-10-21). When the client's `anthropic-version` header is `2026-10-21` or later, Pydantic AI drops them for every model, with the same warning as for the models above. To keep them on `anthropic>=2`, set the header to `2023-06-01` on the client:
+
+```python
+from anthropic import AsyncAnthropic
+
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
+
+client = AsyncAnthropic(api_key='your-api-key', default_headers={'anthropic-version': '2023-06-01'})
+model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+```
+
+The legacy Amazon Bedrock client (`AsyncAnthropicBedrock`) is unaffected: Pydantic AI pins the `anthropic_version` in its request body to `bedrock-2023-05-31`.
+
 ## `provider` argument
 
 You can provide a custom `Provider` via the `provider` argument:

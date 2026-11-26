@@ -21,6 +21,7 @@ from pydantic_ai_pax.runtime.imported_sessions import ImportSource
 from pydantic_ai_pax.runtime.process import ClaiProcess
 from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_ai_pax.runtime.session_workspace import SessionWorkspace, workspace_directory
+from pydantic_ai_pax.runtime.workspace_trust import undecided_notice
 
 WEB = 'web'
 LAUNCHER_HOST = '127.0.0.1'
@@ -76,6 +77,8 @@ async def run_web(
         store=store,
         launch_plugins=launch_plugins,
     )
+    if (notice := undecided_notice(shell.session.trust)) is not None:
+        console.print(notice, markup=False)
     with open(os.devnull, 'w', encoding='utf-8') as sink:
         # Sessions opened from the browser log nothing: their output would interleave with this one's.
         shell.process.live.build = lambda directory: _web_session(
