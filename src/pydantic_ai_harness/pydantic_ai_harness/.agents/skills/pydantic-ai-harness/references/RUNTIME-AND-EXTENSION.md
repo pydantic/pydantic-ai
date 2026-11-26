@@ -590,8 +590,9 @@ agent = Agent.from_spec(spec, custom_capability_types=[Planning, StepPersistence
 or `{Name: {kwargs}}`, and each class's `from_spec` builds the instance. Opted out (they hold callables
 or live agents, and raise `ValueError` if listed): `AWSLambdaDurability`, `AbsurdDurability`,
 `PGTaskDurability`, `CapabilityCreation`, `DynamicWorkflow`, `InputGuardrail`, `OutputGuardrail`, `SubAgents`,
-`SystemReminders`, `ToolGuardrail`, `TrajectoryJudge`. `AskUser` has a spec name but needs an
-`answerer` callable, so in practice it is passed in code too. `CompactOnRequest`, `DeduplicateFileReads`,
+`SystemReminders`, `ToolGuardrail`, `TrajectoryJudge`. A spec can set `AskUser`'s
+`answerer`, and with it `timeout`, only to `null`, which pauses the run for the host's answer; an
+`AskUser` with an answerer callable is passed in code. `CompactOnRequest`, `DeduplicateFileReads`,
 `FallbackCompaction` and `TieredCompaction` have spec names too, but each requires strategies or a
 `file_key` callable that JSON cannot express, so the spec schema leaves them out and they are
 Python-only. Pass those instances with the

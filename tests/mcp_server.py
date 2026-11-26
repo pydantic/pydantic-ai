@@ -200,7 +200,12 @@ def simple_prompt() -> str:
 
 @mcp.prompt()
 def parameterized_prompt(name: str, topic: str) -> str:
-    """A prompt template with parameters."""
+    """A prompt template with parameters.
+
+    Args:
+        name: Who to greet.
+        topic: What to talk about.
+    """
     return f"Hello {name}, let's talk about {topic}!"
 
 

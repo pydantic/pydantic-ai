@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, AsyncIterable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
+from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from dbos import DBOS, DBOSConfiguredInstance
@@ -85,6 +86,48 @@ _reject_workspace_in_workflow: RejectWorkspaceInContainer[Any] = RejectWorkspace
 )
 
 
+def _dbosify_toolset(
+    toolset: AbstractToolset[AgentDepsT], *, step_name_prefix: str, step_config: StepConfig, seen_mcp_ids: set[str]
+) -> AbstractToolset[AgentDepsT]:
+    """Replace `MCPToolset` with its DBOS-wrapped variant, recording its `id` in `seen_mcp_ids` to reject a duplicate."""
+    try:
+        from pydantic_ai.mcp import MCPToolset
+
+        from ._mcp_toolset import dbosify_mcp_toolset
+    except ImportError:
+        pass
+    else:
+        if isinstance(toolset, MCPToolset):
+            # A hostname-derived `id` doesn't name steps; it has to be chosen.
+            toolset_id = toolset._explicit_id  # pyright: ignore[reportPrivateUsage]
+            if toolset_id is None:
+                raise UserError(
+                    'MCP toolsets need to have a unique `id` in order to be used with DBOS. '
+                    "The ID will be used to identify the MCP server's steps within the workflow. "
+                    'Set it on the toolset itself with `MCPToolset(..., id=...)`, or, when the toolset '
+                    "is contributed by a capability, set the capability's `id` "
+                    "(for example, `MCP(url='...', id='...')`)."
+                )
+            # The id keys the per-run tool-defs cache and the step names, so two leaf toolsets
+            # sharing one id would silently collide (the second server would return the first's
+            # cached tools). A capability can contribute an id-derived leaf (e.g. two `MCP(url=...)`
+            # servers whose URLs derive the same id), so this isn't always a hand-set duplicate.
+            if toolset_id in seen_mcp_ids:
+                raise UserError(
+                    f'MCP toolsets need to have a unique `id` in order to be used with DBOS, '
+                    f'but more than one leaf toolset uses the id {toolset_id!r}. '
+                    "The ID identifies the MCP server's steps within the workflow, so duplicates would collide. "
+                    'Set a distinct `id` on each `MCPToolset` (or the `Capability`/`MCP` that contributes it) to disambiguate them.'
+                )
+            seen_mcp_ids.add(toolset_id)
+            return dbosify_mcp_toolset(
+                wrapped=toolset,
+                step_name_prefix=step_name_prefix,
+                step_config=step_config,
+            )
+    return toolset
+
+
 # TODO(v3): remove `DBOSAgent` in favor of the `DBOSDurability` capability, along with `DBOSDurability(register_legacy_workflows=...)` which exists solely to migrate off it
 @deprecated(
     """`DBOSAgent` is deprecated in favor of the `DBOSDurability` capability. Migrate each constructor argument as follows:
@@ -157,49 +200,10 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         )
         self._model = dbos_model
 
-        dbosagent_name = self._name
-
         seen_mcp_ids: set[str] = set()
-
-        def dbosify_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-            # Replace `MCPToolset` with its DBOS-wrapped variant.
-            try:
-                from pydantic_ai.mcp import MCPToolset
-
-                from ._mcp_toolset import dbosify_mcp_toolset
-            except ImportError:
-                pass
-            else:
-                if isinstance(toolset, MCPToolset):
-                    # A hostname-derived `id` doesn't name steps; it has to be chosen.
-                    toolset_id = toolset._explicit_id  # pyright: ignore[reportPrivateUsage]
-                    if toolset_id is None:
-                        raise UserError(
-                            'MCP toolsets need to have a unique `id` in order to be used with DBOS. '
-                            "The ID will be used to identify the MCP server's steps within the workflow. "
-                            'Set it on the toolset itself with `MCPToolset(..., id=...)`, or, when the toolset '
-                            "is contributed by a capability, set the capability's `id` "
-                            "(for example, `MCP(url='...', id='...')`)."
-                        )
-                    # The id keys the per-run tool-defs cache and the step names, so two leaf toolsets
-                    # sharing one id would silently collide (the second server would return the first's
-                    # cached tools). A capability can contribute an id-derived leaf (e.g. two `MCP(url=...)`
-                    # servers whose URLs derive the same id), so this isn't always a hand-set duplicate.
-                    if toolset_id in seen_mcp_ids:
-                        raise UserError(
-                            f'MCP toolsets need to have a unique `id` in order to be used with DBOS, '
-                            f'but more than one leaf toolset uses the id {toolset_id!r}. '
-                            "The ID identifies the MCP server's steps within the workflow, so duplicates would collide. "
-                            'Set a distinct `id` on each `MCPToolset` (or the `Capability`/`MCP` that contributes it) to disambiguate them.'
-                        )
-                    seen_mcp_ids.add(toolset_id)
-                    return dbosify_mcp_toolset(
-                        wrapped=toolset,
-                        step_name_prefix=dbosagent_name,
-                        step_config=self._mcp_step_config,
-                    )
-            return toolset
-
+        dbosify_toolset = partial(
+            _dbosify_toolset, step_name_prefix=self._name, step_config=self._mcp_step_config, seen_mcp_ids=seen_mcp_ids
+        )
         dbos_toolsets = [
             toolset.visit_and_replace(dbosify_toolset).visit_and_replace(gate_tool_instance_defaults)
             for toolset in wrapped.toolsets

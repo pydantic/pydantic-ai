@@ -2,7 +2,7 @@
 Source tapes/common.tape
 Output shots/code-mode.txt
 Hide
-Type 'clai-demo' Enter
+Type 'pax-demo' Enter
 Wait+Screen /\| ready/
 Ctrl+X
 Ctrl+S
