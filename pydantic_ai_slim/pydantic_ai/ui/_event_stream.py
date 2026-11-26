@@ -566,8 +566,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         Tool calls and returns reach those methods as the client is to be sent them, by their `ui_visibility`
         stamp: nothing for a `'private'` tool, and a placeholder instead of a `'redacted'` tool's result. A result
         event's `content`, from [`ToolReturn.content`][pydantic_ai.messages.ToolReturn], is user-channel content
-        that `ui_visibility` doesn't cover, so it arrives as the tool sent it. See
-        [Tool visibility](../../ui/overview.md#tool-visibility).
+        that `ui_visibility` doesn't cover, so a result event that is sent carries it as the tool sent it; a
+        `'private'` tool's result event isn't sent at all. The built-in adapters never send a result event's
+        `content`. See [Tool visibility](../../ui/overview.md#tool-visibility).
 
         Subclasses are encouraged to override the individual `handle_*` methods rather than this one.
         If you need specific behavior for all events, make sure you call the super method.

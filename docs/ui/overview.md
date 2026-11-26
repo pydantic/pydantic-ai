@@ -347,7 +347,7 @@ Here the client sees that the agent looked up its earlier chat, but not what the
 
 **What a placeholder replaces.** A `'redacted'` result is replaced wherever its content would reach the client: the result itself, the error text of a failed or retried call, and the retry feedback AG-UI carries with a result's outcome. The [MCP Apps](./vercel-ai.md#mcp-apps) record a tool's result carries holds the full result, so it isn't sent either. Events a tool attaches to its result's `metadata`, such as [AG-UI events](./ag-ui.md#events) and [Vercel AI data chunks](./vercel-ai.md#data-chunks), are still sent: they're the channel the tool chose for the client. Events in the result's content are dropped with it.
 
-**What it doesn't cover.** `ui_visibility` covers a tool's call and its return value. Content a tool sends with [`ToolReturn.content`](../tools-advanced.md#advanced-tool-returns) goes to the model as a separate user message, and `dump_messages` sends it to the client as one, whatever the tool's `ui_visibility`. Put data the client must not see in the return value.
+**What it doesn't cover.** `ui_visibility` covers a tool's call and its return value. Content a tool sends with [`ToolReturn.content`](../tools-advanced.md#advanced-tool-returns) goes to the model as a separate user message. The event streams don't send it, but `dump_messages` sends it to the client as a user message, whatever the tool's `ui_visibility`. Put data the client must not see in the return value.
 
 **Setting it in bulk.** For tools you don't define yourself, such as those of an MCP server or another toolset, set the field in a [`prepare_tools`](../tools-advanced.md#prepare-tools) function or with [`PrepareTools`][pydantic_ai.capabilities.PrepareTools]:
 
