@@ -36,7 +36,11 @@ from pydantic_ai.durable_exec import (
     JournalCallableOperationBackend,
     RoleBasedOperationConfig,
 )
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability
+from pydantic_ai.durable_exec._base import (
+    BaseDurabilityCapability,
+    _await_pending_event_dispatch,  # pyright: ignore[reportPrivateUsage]
+    _EventDispatchAborted,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.durable_exec._codec import JSON_CODEC
 from pydantic_ai.durable_exec._operation import (
     CacheIdentity,
@@ -516,6 +520,119 @@ async def test_event_stream_dispatch_does_not_block_embedded_tool_execution() ->
         'dispatch started',
         'dispatch finished',
     ]
+
+
+async def test_model_request_waits_for_events_pulled_before_it() -> None:
+    """A model request in the batched stream starts only once the events pulled before it reached the handler."""
+    finish_dispatch = asyncio.Event()
+    ordering: list[str] = []
+
+    class BlockingJournalDurability(BatchingJournalDurability):
+        async def _dispatch_event_stream_events(self, ctx: RunContext[Any], events: list[AgentStreamEvent]) -> None:
+            ordering.append('dispatch started')
+            await finish_dispatch.wait()
+            ordering.append('dispatch finished')
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        pass  # pragma: no cover
+
+    durability = BlockingJournalDurability(event_stream_handler=handler)
+    event = _tool_events(1)[0]
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        # Nothing pulled yet, so there is nothing to wait for.
+        await _await_pending_event_dispatch()
+        yield event
+        await asyncio.sleep(0)
+        ordering.append('model request waiting')
+        finish_dispatch.set()
+        await _await_pending_event_dispatch()
+        ordering.append('model request started')
+        # The pulled event is recorded by now.
+        await _await_pending_event_dispatch()
+
+    assert [
+        item
+        async for item in durability._batched_event_stream(ctx, stream())  # pyright: ignore[reportPrivateUsage]
+    ] == [event]
+    assert ordering == ['dispatch started', 'model request waiting', 'dispatch finished', 'model request started']
+
+
+@pytest.mark.parametrize('count', [1, 2], ids=['failed-event', 'event-after-the-failed-one'])
+async def test_model_request_after_a_failed_dispatch_does_not_start(count: int) -> None:
+    """A model request waiting on a failed burst stops without the handler's error, which the stream raises."""
+    handler_error = RuntimeError('handler failed')
+    waiting = asyncio.Event()
+    waiters: list[asyncio.Task[None]] = []
+
+    class FailingJournalDurability(BatchingJournalDurability):
+        async def _dispatch_event_stream_events(self, ctx: RunContext[Any], events: list[AgentStreamEvent]) -> None:
+            await waiting.wait()
+            raise handler_error
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        pass  # pragma: no cover
+
+    durability = FailingJournalDurability(event_stream_handler=handler)
+    events = [FunctionToolCallEvent(ToolCallPart('tool', {}, str(index))) for index in range(count)]
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    async def wait_like_a_model_request() -> None:
+        waiting.set()
+        await _await_pending_event_dispatch()
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        for event in events:
+            yield event
+        # A task started here shares the pulling task's context, as a model request run inside a tool would.
+        waiters.append(asyncio.create_task(wait_like_a_model_request()))
+        await asyncio.Event().wait()
+
+    with pytest.raises(RuntimeError, match='handler failed'):
+        async for _ in durability._batched_event_stream(ctx, stream()):  # pyright: ignore[reportPrivateUsage]
+            pass  # pragma: no cover
+    (waiter,) = waiters
+    with pytest.raises(_EventDispatchAborted):
+        await waiter
+
+
+async def test_model_request_wait_propagates_its_own_cancellation() -> None:
+    dispatch_started = asyncio.Event()
+    waiting = asyncio.Event()
+    resumed = False
+
+    class StuckJournalDurability(BatchingJournalDurability):
+        async def _dispatch_event_stream_events(self, ctx: RunContext[Any], events: list[AgentStreamEvent]) -> None:
+            dispatch_started.set()
+            await asyncio.Event().wait()
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        pass  # pragma: no cover
+
+    durability = StuckJournalDurability(event_stream_handler=handler)
+    event = _tool_events(1)[0]
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        nonlocal resumed
+        yield event
+        await dispatch_started.wait()
+        waiting.set()
+        await _await_pending_event_dispatch()
+        resumed = True  # pragma: no cover
+
+    async def consume() -> None:
+        async for _ in durability._batched_event_stream(ctx, stream()):  # pyright: ignore[reportPrivateUsage]
+            pass  # pragma: no cover
+
+    consumer = asyncio.create_task(consume())
+    await waiting.wait()
+    await asyncio.sleep(0)
+    consumer.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await consumer
+    assert not resumed
 
 
 async def test_event_stream_handler_operation_preserves_one_handler_call_per_event() -> None:

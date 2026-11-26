@@ -22,7 +22,7 @@ from contextlib import (
     nullcontext,
     suppress,
 )
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 from dataclasses import replace
 from functools import partial
 from typing import Any, ClassVar, Literal, NamedTuple, Protocol, Self, TypeVar, cast, runtime_checkable
@@ -278,6 +278,152 @@ class _CancelSuspendedResponseCacheIdentity(CacheIdentity[ModelCancelSuspendedRe
 class _CompactMessagesCacheIdentity(CacheIdentity[ModelCompactMessagesParams]):
     def project(self, params: ModelCompactMessagesParams) -> tuple[object, ...]:
         return (params.model_id, params.request_context, params.instructions, params.run_context)
+
+
+_PENDING_EVENT_DISPATCH: ContextVar[Callable[[], Awaitable[None]] | None] = ContextVar(
+    'pydantic_ai_pending_event_dispatch', default=None
+)
+"""Waits for the events a batched event stream has pulled so far to be recorded, in the task that pulls them."""
+
+
+async def _await_pending_event_dispatch() -> None:
+    """Let every workflow-side event pulled before a model request reach the handler before that request does.
+
+    A model-request unit hands its events to the handler live, so under batched dispatch it would otherwise start
+    while an earlier event's handler unit is still in flight, and the handler would see the events out of order.
+    """
+    if (drain := _PENDING_EVENT_DISPATCH.get()) is not None:
+        await drain()
+
+
+class _EventDispatchAborted(BaseException):
+    """Stops a model request whose earlier events' handler unit failed; the event stream raises that failure.
+
+    A `BaseException`, so a capability's `except Exception` around the model request doesn't take the handler's
+    failure for the model's and retry or fall back.
+    """
+
+
+_DispatchItem = tuple[AgentStreamEvent, 'asyncio.Future[None]']
+
+
+class _BatchedEventDispatch:
+    """Hands a node's workflow-side events to the handler in bursts, while the node's stream runs ahead.
+
+    The producer pulls the stream, which is what runs the node's tools, so tools start while earlier events are
+    still being dispatched. The dispatcher sends every event that became ready during the previous dispatch as one
+    durable unit. Events reach the caller in stream order, each dispatched one only once its unit recorded it.
+    Burst boundaries follow task scheduling: see `BaseDurabilityCapability._batch_event_stream_dispatch`.
+    """
+
+    def __init__(
+        self,
+        dispatch_events: Callable[[list[AgentStreamEvent]], Awaitable[None]],
+        stream: AsyncIterable[AgentStreamEvent],
+    ) -> None:
+        self._dispatch_events = dispatch_events
+        self._stream = stream
+        self._ready: list[_DispatchItem] = []
+        self._available = asyncio.Event()  # noqa: TID251  (runs on Temporal's deterministic workflow event loop)
+        self._output: asyncio.Queue[_DispatchItem | BaseException | None] = asyncio.Queue()  # noqa: TID251  (runs on Temporal's deterministic workflow event loop)
+        self._producer_done = False
+        self._failed = False
+        self._last_dispatched: asyncio.Future[None] | None = None
+
+    async def events(self) -> AsyncIterator[AgentStreamEvent]:
+        # The producer pulls the stream, so the model requests the stream runs happen in its task: give that task
+        # `drain` so they wait for the events pulled before them (see `_await_pending_event_dispatch`).
+        producer_context = copy_context()
+        producer_context.run(_PENDING_EVENT_DISPATCH.set, self.drain)
+        producer = asyncio.create_task(self._produce(), context=producer_context)
+        dispatcher = asyncio.create_task(self._dispatch())
+        try:
+            while item := await self._output.get():
+                if isinstance(item, BaseException):
+                    raise item
+                event, acknowledged = item
+                if isinstance(event, MODEL_RESPONSE_STREAM_EVENT_TYPES):
+                    # Acknowledge only once the caller has consumed it, releasing the producer to
+                    # pull the next event off the model stream. See `_produce`.
+                    yield event
+                    acknowledged.set_result(None)
+                    continue
+                # A dispatched event is only safe to hand on once its handler operation has
+                # recorded it, so the burst's future gates the yield rather than following it.
+                await acknowledged
+                yield event
+            await producer
+            await dispatcher
+        finally:
+            producer.cancel()
+            dispatcher.cancel()
+            await asyncio.gather(producer, dispatcher, return_exceptions=True)
+            await aclose_if_supported(self._stream)
+
+    async def drain(self) -> None:
+        """Wait until every event pulled so far has been dispatched, and stop the caller if a dispatch failed."""
+        pending = self._last_dispatched
+        if pending is None:
+            return
+        if not pending.done():
+            try:
+                # Shielded so that cancelling the waiting model request doesn't cancel the dispatch it waits for.
+                await asyncio.shield(pending)
+            except BaseException:
+                # `pending` failed, or was cancelled, which a failed burst does to the events after its first:
+                # `_failed` says which. Only the caller's own cancellation propagates as is.
+                task = asyncio.current_task()
+                if task is not None and task.cancelling():
+                    raise
+        if self._failed:
+            raise _EventDispatchAborted
+
+    async def _produce(self) -> None:
+        try:
+            async for event in self._stream:
+                acknowledged = asyncio.get_running_loop().create_future()
+                self._output.put_nowait((event, acknowledged))
+                if isinstance(event, MODEL_RESPONSE_STREAM_EVENT_TYPES):
+                    # Replayed model events go to no handler, so nothing else will resolve their
+                    # future: the consumer does, after yielding. Waiting for it here is what keeps
+                    # the model stream's backpressure intact. Running ahead instead advances the
+                    # shared stream accumulator underneath events the caller has not seen yet, so
+                    # earlier events observe accumulated text and later deltas apply twice.
+                    await acknowledged
+                    continue
+                self._ready.append((event, acknowledged))
+                self._last_dispatched = acknowledged
+                self._available.set()
+        except BaseException as exc:
+            self._output.put_nowait(exc)
+        finally:
+            self._producer_done = True
+            self._available.set()
+            self._output.put_nowait(None)
+
+    async def _dispatch(self) -> None:
+        while True:
+            await self._available.wait()
+            self._available.clear()
+            if self._ready:
+                await self._dispatch_ready()
+            if self._ready:
+                self._available.set()
+            elif self._producer_done:
+                return
+
+    async def _dispatch_ready(self) -> None:
+        burst, self._ready = self._ready, []
+        try:
+            await self._dispatch_events([event for event, _ in burst])
+        except BaseException as exc:
+            self._failed = True
+            burst[0][1].set_exception(exc)
+            for _, acknowledged in burst[1:]:
+                acknowledged.cancel()
+            raise
+        for _, acknowledged in burst:
+            acknowledged.set_result(None)
 
 
 class _EventStreamHandlerCacheIdentity(CacheIdentity[EventStreamHandlerParams]):
@@ -1025,87 +1171,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """
         return False
 
-    async def _batched_event_stream(  # noqa: C901
+    def _batched_event_stream(
         self, ctx: RunContext[AgentDepsT], stream: AsyncIterable[AgentStreamEvent]
     ) -> AsyncIterator[AgentStreamEvent]:
-        ready: list[tuple[AgentStreamEvent, asyncio.Future[None]]] = []
-        available = asyncio.Event()  # noqa: TID251  (runs on Temporal's deterministic workflow event loop)
-        output: asyncio.Queue[tuple[AgentStreamEvent, asyncio.Future[None]] | BaseException | None] = asyncio.Queue()  # noqa: TID251  (runs on Temporal's deterministic workflow event loop)
-        producer_done = False
-
-        async def produce() -> None:
-            nonlocal producer_done
-            try:
-                async for event in stream:
-                    acknowledged = asyncio.get_running_loop().create_future()
-                    replayed = isinstance(event, MODEL_RESPONSE_STREAM_EVENT_TYPES)
-                    if not replayed:
-                        ready.append((event, acknowledged))
-                        available.set()
-                    output.put_nowait((event, acknowledged))
-                    if replayed:
-                        # Replayed model events go to no handler, so nothing else will resolve their
-                        # future: the consumer does, after yielding. Waiting for it here is what keeps
-                        # the model stream's backpressure intact. Running ahead instead advances the
-                        # shared stream accumulator underneath events the caller has not seen yet, so
-                        # earlier events observe accumulated text and later deltas apply twice.
-                        await acknowledged
-            except BaseException as exc:
-                output.put_nowait(exc)
-            finally:
-                producer_done = True
-                available.set()
-                output.put_nowait(None)
-
-        async def dispatch() -> None:
-            while True:
-                await available.wait()
-                available.clear()
-                if not ready:
-                    if producer_done:
-                        return
-                    continue
-                batch = ready[:]
-                del ready[:]
-                try:
-                    await self._dispatch_event_stream_events(ctx, [event for event, _ in batch])
-                except BaseException as exc:
-                    batch[0][1].set_exception(exc)
-                    for _, acknowledged in batch[1:]:
-                        acknowledged.cancel()
-                    raise
-                else:
-                    for _, acknowledged in batch:
-                        acknowledged.set_result(None)
-                if ready:
-                    available.set()
-                elif producer_done:
-                    return
-
-        producer = asyncio.create_task(produce())
-        dispatcher = asyncio.create_task(dispatch())
-        try:
-            while item := await output.get():
-                if isinstance(item, BaseException):
-                    raise item
-                event, acknowledged = item
-                if isinstance(event, MODEL_RESPONSE_STREAM_EVENT_TYPES):
-                    # Acknowledge only once the caller has consumed it, releasing the producer to
-                    # pull the next event off the model stream. See `produce` above.
-                    yield event
-                    acknowledged.set_result(None)
-                else:
-                    # A dispatched event is only safe to hand on once its handler operation has
-                    # recorded it, so the batch's future gates the yield rather than following it.
-                    await acknowledged
-                    yield event
-            await producer
-            await dispatcher
-        finally:
-            producer.cancel()
-            dispatcher.cancel()
-            await asyncio.gather(producer, dispatcher, return_exceptions=True)
-            await aclose_if_supported(stream)
+        return _BatchedEventDispatch(partial(self._dispatch_event_stream_events, ctx), stream).events()
 
     @property
     @abstractmethod
@@ -1923,6 +1992,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         )
 
         async def request_segment(request: ModelRequestContext) -> ModelResponse:
+            await _await_pending_event_dispatch()
             return await operations.request(
                 ModelRequestParams(
                     model_id,
@@ -1934,6 +2004,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             )
 
         async def request_stream_segment(request: ModelRequestContext) -> StreamedModelRequestResult:
+            await _await_pending_event_dispatch()
             return await operations.request_stream(
                 ModelRequestParams(
                     model_id,
