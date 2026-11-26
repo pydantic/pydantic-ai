@@ -386,15 +386,14 @@ does not count against this budget, and neither does an additional local review 
 after the loop completes.
 
 After the third review, the budget holds one remediation review. Dispatch it for the first
-remediation after the third review whose delta is neither
-[prose-only documentation](#prose-only-documentation) nor exempt under the exempt-delta table below.
-Apply the prose-only definition to the remediation delta, not to the whole PR. The remediation may
-fix a review finding or a CI failure. Scope the remediation
-review to the remediation delta: the diff from the last reviewed SHA to the remediation commit,
-plus the affected callers and invariants that [Review scope](#review-scope) names for follow-ups.
-Include `remediation review after call 3 of 3` in the reviewer prompt, and title its record
-`pre-push remediation review at <candidate-head-sha>`. That record in `pr-decisions.md` spends the
-remediation review.
+remediation after the third review whose delta is neither [prose-only
+documentation](#prose-only-documentation) nor exempt under the exempt-delta table below. Apply the
+prose-only definition to the remediation delta, not to the whole PR. The remediation may fix a
+review finding or a CI failure. Scope the remediation review to the remediation delta: the diff from
+the last reviewed SHA to the remediation commit, plus the affected callers and invariants that
+[Review scope](#review-scope) names for follow-ups. Include `remediation review after call 3 of 3`
+in the reviewer prompt, and title its record `pre-push remediation review at <candidate-head-sha>`.
+That record in `pr-decisions.md` spends the remediation review.
 
 Record each dispatch in `pr-decisions.md` — not in the session, which does not survive a handoff:
 
