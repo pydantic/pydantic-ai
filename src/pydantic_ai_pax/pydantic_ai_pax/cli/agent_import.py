@@ -88,7 +88,7 @@ def _without_deps(path: str, agent: AbstractAgent[object, object]) -> ImportedAg
 
     A `deps_type` that admits `None`, such as `Deps | None`, runs with `deps=None`.
     """
-    deps_type: Any = agent.deps_type
+    deps_type: object = agent.deps_type
     if deps_type not in (NoneType, object, Any) and NoneType not in get_args(deps_type):
         name = deps_type.__name__ if isinstance(deps_type, type) else str(deps_type)
         raise TypeError(

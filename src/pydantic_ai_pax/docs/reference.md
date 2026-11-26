@@ -3834,8 +3834,8 @@ def make_reviewer() -> tuple[Agent[Deps], Deps]:
 ```
 
 With that in `my_agents.py`, `pax --agent my_agents:make_reviewer` runs the agent with
-those deps. An agent named on its own runs with `deps=None`, so Pax refuses at launch,
-before any model request, one whose `deps_type` needs deps, and names the type. For that session
+those deps. An agent named on its own runs with `deps=None`, so if its `deps_type` needs deps,
+Pax refuses it at launch, before any model request, and names the type. For that session
 only, no plugins load: no built-ins (including the stock coder tools), no saved or
 drop-in user plugins, and no project plugins, and `/plugins` reports that they are
 off. Nothing saved changes, so plain `pax` loads plugins as before. The agent
