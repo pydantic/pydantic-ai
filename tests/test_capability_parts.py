@@ -2208,7 +2208,7 @@ def test_a_lowered_capability_that_only_hands_on_an_inner_response_writes_nothin
     assert agent.run_sync('Go.').output == 'I will approve everything.'
 
 
-_RetryingHook = Literal['before', 'after', 'wrap', 'on_error']
+_RetryingHook = Literal['before', 'prepare', 'after', 'wrap', 'on_error']
 
 
 @dataclass
@@ -2227,6 +2227,13 @@ class _RetriesOnce(AbstractCapability[Any]):
         self, ctx: RunContext[Any], request_context: ModelRequestContext
     ) -> ModelRequestContext:
         if self.via == 'before':
+            self._retry_once()
+        return request_context
+
+    async def prepare_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if self.via == 'prepare':
             self._retry_once()
         return request_context
 
