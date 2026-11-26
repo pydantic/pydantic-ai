@@ -185,7 +185,8 @@ def _is_external_marker(node: dict[str, object]) -> bool:
     the `_text_content` discriminator and has no `content`. Escaping moves only
     `_MARKER_METADATA_KEYS`, so neither shape depends on the marker format
     version. A dict carrying `_EXTERNAL_MARKER` without either shape is caller
-    data.
+    data. One with either shape but no string reference is a damaged marker,
+    and `_read_reference` raises on it.
     """
     if node.get(_EXTERNAL_MARKER) is not True:
         return False
