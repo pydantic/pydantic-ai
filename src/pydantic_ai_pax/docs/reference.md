@@ -52,6 +52,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/tasks` | Inspect and control delegated tasks |
 | `/commit [MESSAGE]` | Commit every change in the session's directory; the model drafts the message when none is given |
 | `/sandbox [local smol\|local boxlite\|e2b\|boxd\|daytona\|opensandbox\|modal\|render\|sprites\|kubernetes\|delete]` | Start a new conversation in a sandbox: `local smol` (SmolVM) and `local boxlite` (BoxLite) run a VM on this machine, the others are cloud sandboxes; `/sandbox local` asks which engine, and no argument says where this one runs. See [Sandboxes](#sandboxes-sandbox) |
+| `/computer-use [on\|off]` | Let the model see and control the sandbox's desktop. See [Computer use](#computer-use-computer-use) |
 | `/push [confirm]` | `git push -u origin BRANCH`; `confirm` is needed on the default branch |
 | `/pr [confirm\|TITLE]` | Show a pull request the model drafts; `confirm`, or a `TITLE` of your own, pushes the branch and opens it with `gh` |
 | `/update [now]` | Show whether a newer Pax is out on `updates.channel`, with **Update…** to install it; `/update now` installs at once and restarts |
@@ -1962,7 +1963,8 @@ It retains up to 10,000 items and four million characters, plus a bounded partia
 line. Old output is dropped at those limits; oversized Markdown parts keep their
 rendered tail instead of their source. `/clear` and `/new` forget earlier output,
 so neither the panel nor the exit printout shows it again. Hyperlinks are
-preserved in that printout; Termflow 1.0's live cells do not carry hyperlink metadata.
+preserved in that printout. On the full screen, a click on a link in the status row, such as
+`watch live ↗`, opens it in your browser.
 Redirected output has no live editor or footer.
 No model requests or telemetry are added for status reporting.
 The status row follows Code Puppy's styling: muted surrounding text, an accented
@@ -1971,7 +1973,7 @@ context warnings keep the warning colour. The same styling applies while idle
 and working.
 
 A plugin can contribute its own fragment from `get_status_segments`, such
-as a branch name. Fragments are muted, grouped under the configurable `plugins`
+as a branch name, or a link that ends in `↗` and opens when clicked. Fragments are muted, grouped under the configurable `plugins`
 field, and dropped when the plugin unloads. See [PLUGINS.md](../PLUGINS.md) for the method and its cost
 rules.
 
@@ -2287,7 +2289,8 @@ can be asked in, such as `pax -p` or a web session with questions turned off, us
 harness default text, and answers questions from `AskUser` with "No one is available to answer in this run", so
 the run finishes. A session with the terminal picker or the web UI's approval cards does not deny these. Outside `full`, a delegation whose delegate would run without these checks is refused: a named
 sub-agent, or a delegation to `self` from an agent you supply (`pax --agent`), which gets `/permissions`
-per run rather than bound to the agent. The model is told to do the work itself instead.
+per run rather than bound to the agent. The model is told to do the work itself instead. Outside `full` the model also gets no
+[`computer`](#computer-use-computer-use) tool.
 
 ### Compacting the conversation
 
@@ -3247,6 +3250,43 @@ run there can read it. It reaches every command started afterwards; a server sta
 needs a restart. The table says how long it lasts: one kept for this Pax session is gone once the session
 closes the sandbox, as an idle session does, or in a `/fork`, so the agent asks again. The agent asks only in the terminal,
 not in the web UI.
+
+### Computer use: `/computer-use`
+
+`/computer-use` gives the model a `computer` tool that sees and controls the sandbox's desktop.
+
+- **Before `/sandbox`**: run `/computer-use`, then `/sandbox PROVIDER`. The sandbox starts with a
+  desktop.
+- **In a running sandbox**: `boxd`, `daytona`, `local smol`, `render`, `sprites` and `kubernetes`
+  add a desktop to the sandbox you have. `e2b`, `modal` and `local boxlite` can only
+  give a desktop to a new sandbox, so Pax asks you to run `/sandbox delete`, `/new`, `/computer-use`,
+  then `/sandbox PROVIDER`. It never deletes the sandbox itself, since a fork or copy of the conversation
+  may use it.
+- **Turning it off**: `/computer-use off` removes the `computer` tool from the next turn. The sandbox
+  keeps running until `/sandbox delete`.
+- **Permissions**: the model gets the `computer` tool only under `/permissions full`, since the screen can
+  change anything. Under another mode it is told the desktop needs `/permissions full`, and `/computer-use` says so too.
+- `local smol` needs `smolmachines` for a desktop (`pydantic-ai-pax[local]`, on macOS Apple silicon
+  or Linux), so not on Windows. `opensandbox` has no desktop.
+
+The setting is saved in the conversation, so `/resume`, `/fork` and compaction keep it.
+
+#### Watching the desktop
+
+While computer use is on, the status row shows `watch live ↗` next to the sandbox. Click it to open the
+desktop on the provider's own website. Pax runs no viewer of its own. In a resumed conversation the link
+appears once a turn reaches the sandbox, since getting it would start a stopped one.
+
+- **`boxd`**: the machine's Desktop view in boxd's console. It opens in a browser signed in to your
+  boxd account.
+- **`daytona`**: the desktop's noVNC page, on a signed link that works for 1 hour. Anyone holding the link
+  can see the screen and use the mouse and keyboard until it expires. Pax gets a new link for the status
+  row when a turn starts, once the old one is over 50 minutes old, so in a turn longer than an hour the link
+  disappears until the next turn. A page opened earlier stays connected.
+- **Other providers** have no such link, so the status row shows no `watch live ↗`.
+
+Everything on the sandbox's screen, secrets included, goes to the model's provider in screenshots,
+and text on the screen can steer the model like any tool output.
 
 ### Several sessions in the web UI
 
