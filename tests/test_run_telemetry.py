@@ -179,11 +179,16 @@ async def test_current_span_leaves_the_applications_span_alone_in_an_uninstrumen
     assert [(span.name, dict(span.attributes or {})) for span in exporter.get_finished_spans()] == [('app request', {})]
 
 
-async def test_current_span_in_an_uninstrumented_sub_agent_leaves_the_parents_span_alone(instrumented: Instrumented):
-    """The parent's telemetry is published around the sub-agent, but the sub-agent's own run isn't traced."""
+async def test_an_uninstrumented_sub_agent_does_not_trace_onto_its_parent(instrumented: Instrumented):
+    """The parent's telemetry is published around the sub-agent's run, but not inside it."""
     instrumentation, exporter = instrumented(False)
-    child = agent_with_tool()
+    child = Agent(TestModel(call_tools=['helper']), capabilities=[MarkToolCall()])
     parent = Agent(TestModel(call_tools=['delegate']), capabilities=[instrumentation])
+
+    @child.tool_plain
+    def helper() -> str:
+        with open_span(current_run_telemetry(), 'example helper'):
+            return 'ok'
 
     @parent.tool_plain
     async def delegate() -> str:
@@ -191,6 +196,8 @@ async def test_current_span_in_an_uninstrumented_sub_agent_leaves_the_parents_sp
 
     await parent.run('go')
 
+    names = [span.name for span in exporter.get_finished_spans()]
+    assert 'example helper' not in names
     assert [span.name for span in exporter.get_finished_spans() if (span.attributes or {}).get('example.marked')] == []
 
 
@@ -199,6 +206,29 @@ class MarkWhenPrepared(AbstractCapability[object]):
     async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
         set_content_attribute(ctx, current_span(ctx), 'example.prompt', 'secret')
         return self
+
+
+@dataclass
+class HelperWhenPrepared(AbstractCapability[object]):
+    async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+        # Code without a `ctx`, such as a workspace operation in setup, reads the published telemetry.
+        with open_span(current_run_telemetry(), 'example helper'):
+            return self
+
+
+async def test_a_sub_agents_setup_does_not_trace_onto_its_parent(instrumented: Instrumented):
+    """A sub-agent's `for_run` runs inside its parent's tool call, before the sub-agent's run publishes."""
+    instrumentation, exporter = instrumented(False)
+    child = Agent(TestModel(), capabilities=[HelperWhenPrepared()])
+    parent = Agent(TestModel(call_tools=['delegate']), capabilities=[instrumentation])
+
+    @parent.tool_plain
+    async def delegate() -> str:
+        return (await child.run('go')).output
+
+    await parent.run('go')
+
+    assert 'example helper' not in [span.name for span in exporter.get_finished_spans()]
 
 
 @dataclass
@@ -256,24 +286,15 @@ async def test_a_for_run_does_not_write_to_the_applications_span(instrumented: I
     assert marked_spans(exporter) == []
 
 
-async def test_a_sub_agents_for_run_does_not_write_to_its_parents_span(instrumented: Instrumented):
-    """In a sub-agent's `for_run` the open span is the parent's tool call, which records no content here."""
-    parent, parent_exporter = instrumented(False)
-    child, _ = instrumented(True)
-    await run_marking_sub_agent(parent, child)
-
-    assert marked_spans(parent_exporter) == []
-
-
-async def test_a_sub_agent_on_its_parents_tracer_and_setting_writes_to_the_parents_span():
-    """With the parent's tracer and content setting, the sub-agent's `for_run` gets the parent's span, which allows it."""
+async def test_a_sub_agents_for_run_does_not_write_to_its_parents_span():
+    """Even on the parent's tracer and content setting: setup runs before the sub-agent's run publishes."""
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     settings = InstrumentationSettings(tracer_provider=provider, include_content=True)
     await run_marking_sub_agent(Instrumentation(settings=settings), Instrumentation(settings=settings))
 
-    assert marked_spans(exporter) == ['execute_tool delegate']
+    assert marked_spans(exporter) == []
 
 
 def test_a_durable_unit_that_did_not_carry_the_tracer_is_untraced():
