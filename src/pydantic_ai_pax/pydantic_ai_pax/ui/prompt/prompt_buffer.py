@@ -274,8 +274,10 @@ class PromptBuffer:
         rows: list[list[str]] = [[]]
         cells = 0
         cursor_row = 0
-        # Where the last row's unfinished word starts, in items and in cells, and whether the cursor is in that word.
-        word, word_cells, cursor_in_word = 0, 0, False
+        # Where the last row's unfinished word starts, in items and in cells: zero until a blank follows text
+        # on that row, so leading blanks are never left on a row of their own.
+        word = word_cells = 0
+        has_text = cursor_in_word = False
         text, cursor = self.display()
         # A newline under the cursor paints as a blank, a tab as four spaces.
         painted = {'\n': ' ', '\t': '    '}
@@ -286,31 +288,39 @@ class PromptBuffer:
             if char == '\n' and not is_cursor:
                 rows.append([])
                 cells = word = 0
+                has_text = False
                 continue
             display = painted.get(char, char if char.isprintable() else '?')
             size = visible_length(display)
+            blank = char in painted or char == ' '
             if cells + size > width:
-                # A word that does not fit moves to the next row whole, unless it would not fit there
-                # either: then it splits here.
-                fits = word and not char.isspace() and cells - word_cells + size <= width
-                carried = rows[-1][word:] if fits else []
-                del rows[-1][len(rows[-1]) - len(carried) :]
-                rows.append(carried)
-                cells = cells - word_cells if fits else 0
-                if carried and cursor_in_word:
-                    cursor_row += 1
+                # A word that does not fit moves to the next row whole. It splits here instead when it
+                # started the row, or when the part to move would overflow the next row too.
+                if word and not blank and cells - word_cells + size <= width:
+                    rows.append(rows[-1][word:])
+                    del rows[-2][word:]
+                    cells -= word_cells
+                    cursor_row += cursor_in_word
+                else:
+                    rows.append([])
+                    cells = 0
+                    has_text = False
                 word = 0
             if is_cursor:
                 cursor_row = len(rows) - 1
                 display = f'\x1b[7m{display}\x1b[27m'
             rows[-1].append(display)
             cells += size
-            if char.isspace():
-                word, word_cells, cursor_in_word = len(rows[-1]), cells, False
-            elif is_cursor:
-                cursor_in_word = True
+            if not blank:
+                has_text = True
+                cursor_in_word = cursor_in_word or is_cursor
+            else:
+                cursor_in_word = False
+                if has_text:
+                    word, word_cells = len(rows[-1]), cells
             if char == '\n':
                 rows.append([])
                 cells = word = 0
+                has_text = False
         start = max(0, cursor_row - limit + 1)
         return [''.join(row) for row in rows[start : start + limit]]

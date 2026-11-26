@@ -152,6 +152,29 @@ def test_rows_split_a_word_longer_than_the_row() -> None:
     # A word that would not fit on the next row either, because of a wide character, splits where it is.
     buffer.replace(' bcdef界')
     assert plain_rows(buffer, width=6) == [' bcdef', '界 ']
+    # A new line starts with no place to break, whatever the line above it held.
+    buffer.replace('a b\ncccc')
+    assert plain_rows(buffer, width=3) == ['a b', 'ccc', 'c ']
+
+
+@pytest.mark.parametrize(
+    ('text', 'width', 'expected'),
+    [
+        pytest.param('hello world', 5, ['hello', ' worl', 'd '], id='space-that-overflowed'),
+        pytest.param('  abc', 4, ['  ab', 'c '], id='indent'),
+        pytest.param(' bcde界', 6, [' bcde', '界 '], id='wide-character'),
+    ],
+)
+def test_rows_never_leave_leading_blanks_on_a_row_of_their_own(text: str, width: int, expected: list[str]) -> None:
+    buffer = PromptBuffer()
+    buffer.insert(text)
+    assert plain_rows(buffer, width=width) == expected
+
+
+def test_rows_keep_a_word_in_place_when_only_the_cursor_overflows() -> None:
+    buffer = PromptBuffer()
+    buffer.insert('ab cd')
+    assert buffer.rows(width=5, limit=10) == ['ab cd', '\x1b[7m \x1b[27m']
 
 
 def test_rows_keep_the_cursor_in_view_when_its_word_wraps() -> None:
@@ -160,6 +183,10 @@ def test_rows_keep_the_cursor_in_view_when_its_word_wraps() -> None:
     buffer.cursor = 3
     assert buffer.rows(width=5, limit=10) == ['ab ', '\x1b[7mc\x1b[27mdef']
     assert buffer.rows(width=5, limit=1) == ['\x1b[7mc\x1b[27mdef']
+    # The cursor stays where it is when a later word on its row wraps.
+    buffer.replace('a bbb')
+    buffer.cursor = 0
+    assert buffer.rows(width=4, limit=1) == ['\x1b[7ma\x1b[27m ']
 
 
 def test_empty_history_and_line_end_movement() -> None:
