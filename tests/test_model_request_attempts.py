@@ -1141,12 +1141,23 @@ async def test_a_failed_stream_whose_get_raises_still_falls_back_on_its_own_erro
     ]
 
 
-async def test_attempts_on_an_error_the_consumer_raises_through_the_stream_are_not_counted():
+@pytest.mark.parametrize('stream', ['model', 'recovered'])
+async def test_attempts_on_an_error_the_consumer_raises_through_the_stream_are_not_counted(stream: str):
     """Only attempts that came out of the model's stream count, not those on an error the consumer raised through it.
 
-    Like another agent's `FallbackExceptionGroup`, whose rejected responses that run counted itself. Not a VCR test: the
-    attempts come from an error the consumer raises through the stream, not from a provider exchange to record.
+    Like another agent's `FallbackExceptionGroup`, whose rejected responses that run counted itself. That holds for the
+    model's stream and for the replay of a response an error hook recovered with. Not a VCR test: the attempts come from
+    an error the consumer raises through the stream, not from a provider exchange to record.
     """
+    hooks = Hooks[object]()
+
+    @hooks.on.model_request_error
+    async def recover(
+        ctx: RunContext[object], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('recovered')])
+
+    model = _answer() if stream == 'model' else FunctionModel(stream_function=failure_stream)
     group = FallbackExceptionGroup('All models from FallbackModel failed', [ModelAPIError(model_name='m', message='x')])
     group.attempts = [
         ModelRequestAttempt(
@@ -1161,12 +1172,12 @@ async def test_attempts_on_an_error_the_consumer_raises_through_the_stream_are_n
     for error in (ValueError('consumer failed'), group):
 
         async def raise_from_consumer(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
-            async for _ in events:
-                raise error
+            await anext(aiter(events))
+            raise error
 
         usage = RunUsage()
         with pytest.raises(type(error)):
-            await Agent(_answer()).run('x', usage=usage, event_stream_handler=raise_from_consumer)
+            await Agent(model, capabilities=[hooks]).run('x', usage=usage, event_stream_handler=raise_from_consumer)
         usages.append(usage)
     assert usages[0] == usages[1]
 
