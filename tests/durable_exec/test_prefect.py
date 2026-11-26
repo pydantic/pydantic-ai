@@ -5146,8 +5146,8 @@ async def test_prefect_durability_structured_output_after_preamble_text_in_flow(
 async def test_prefect_durability_fallback_model_structured_output_after_preamble_text_in_flow() -> None:
     """Behind a `FallbackModel`, text streamed before a tool call isn't the final result either.
 
-    The task returns the parameters the candidate that answered prepared with the response, as preparing the request
-    again in the flow leaves `'auto'` to the candidate, and the flow replays the stream against them.
+    Preparing the request again in the flow leaves `'auto'` to the candidate, so the task returns the mode the
+    candidate that answered resolved it to with the response, and the flow prepares the replay's parameters with it.
     """
     agents = preamble_text_agents(PrefectDurability, fallback=True)
 

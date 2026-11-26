@@ -1,8 +1,8 @@
 """Agents with a structured output type whose model streams text before a tool call, for each durability engine.
 
 A durable run replays the unit's stream against the parameters the unit's model prepared, in which `'auto'` has
-resolved to tool output, so the text isn't the final result, as in a plain run. Behind a `FallbackModel`, those are the
-parameters the candidate that answered prepared.
+resolved to tool output, so the text isn't the final result, as in a plain run. Behind a `FallbackModel`, `'auto'` is
+resolved to the mode the candidate that answered resolved it to.
 """
 
 from __future__ import annotations

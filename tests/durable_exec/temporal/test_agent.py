@@ -133,7 +133,7 @@ try:
     from temporalio.workflow import ActivityCancellationType, ActivityConfig
 
     from pydantic_ai.durable_exec._utils import (
-        ServedStreamedResult,
+        ResolvedOutputModeResult,
         StreamedActivityResult,
         StreamedModelRequestResult,
     )
@@ -4704,32 +4704,27 @@ async def test_stream_activity_payload_decodes_every_recorded_shape() -> None:
 
     `TemporalDurability` histories from v2.14 to v2.59 record a `StreamedActivityResult`; newer
     ones, like legacy `TemporalAgent` histories, record the bare `ModelResponse`, or a
-    `ServedStreamedResult` when the activity's model was served with parameters preparing the
-    request again wouldn't give, as behind a `FallbackModel`. Replay of any in-flight workflow
-    decodes the recorded payload through `StreamedModelRequestResult`.
+    `ResolvedOutputModeResult` when the activity's model answers through others, like a
+    `FallbackModel`. Replay of any in-flight workflow decodes the recorded payload through
+    `StreamedModelRequestResult`.
     """
     response = {'parts': [{'content': 'streamed', 'part_kind': 'text'}], 'kind': 'response'}
     event = {'index': 0, 'part': {'content': 'streamed', 'part_kind': 'text'}, 'event_kind': 'part_start'}
-    parameters = {'output_mode': 'tool', 'allow_text_output': False}
     payloads = await pydantic_data_converter.encode(
-        [
-            {'response': response, 'events': [event]},
-            response,
-            {'response': response, 'model_request_parameters': parameters},
-        ]
+        [{'response': response, 'events': [event]}, response, {'response': response, 'output_mode': 'tool'}]
     )
 
     hints = [StreamedModelRequestResult, StreamedModelRequestResult, StreamedModelRequestResult]
-    events_shape, bare_shape, served_shape = await pydantic_data_converter.decode(payloads, hints)  # pyright: ignore[reportArgumentType]
+    events_shape, bare_shape, resolved_shape = await pydantic_data_converter.decode(payloads, hints)  # pyright: ignore[reportArgumentType]
 
     assert isinstance(events_shape, StreamedActivityResult)
     assert events_shape.response.parts == [TextPart(content='streamed')]
     assert events_shape.events == [PartStartEvent(index=0, part=TextPart(content='streamed'))]
     assert isinstance(bare_shape, ModelResponse)
     assert bare_shape.parts == [TextPart(content='streamed')]
-    assert isinstance(served_shape, ServedStreamedResult)
-    assert served_shape.response.parts == [TextPart(content='streamed')]
-    assert served_shape.model_request_parameters == ModelRequestParameters(output_mode='tool', allow_text_output=False)
+    assert isinstance(resolved_shape, ResolvedOutputModeResult)
+    assert resolved_shape.response.parts == [TextPart(content='streamed')]
+    assert resolved_shape.output_mode == 'tool'
 
 
 _buffered_stream_agent = Agent(

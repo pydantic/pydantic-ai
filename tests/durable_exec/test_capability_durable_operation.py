@@ -837,20 +837,20 @@ class JournalingDurability(RecordingDurability):
 async def test_durable_stream_replay_classifies_parts_as_the_fallback_candidate_prepared_them() -> None:
     """Behind a `FallbackModel`, text streamed before a tool call isn't the final result either.
 
-    `FallbackModel.prepare_request` leaves the parameters to the candidate that answers, so preparing the request again
-    keeps `'auto'`, which allows text output. The unit returns the parameters the candidate prepared with the response,
-    and the replay classifies the parts against those, finding the same final result as a plain run. Both run methods
-    replay the response's parts as the model streamed them.
+    `FallbackModel.prepare_request` leaves the output mode to the candidate that answers, so preparing the request again
+    keeps `'auto'`, which allows text output. The unit returns the mode the candidate resolved `'auto'` to with the
+    response, and the replay prepares its parameters with it, finding the same final result as a plain run. Both run
+    methods replay the response's parts as the model streamed them.
     """
     durable = [await run_and_stream(agent) for agent in preamble_text_agents(RecordingDurability, fallback=True)]
     assert durable == await plain_run_and_stream()
 
 
-async def test_durable_stream_unit_returns_its_parameters_only_for_a_model_answering_through_others() -> None:
-    """A streamed request's unit returns the parameters it was served with only when its model answers through others.
+async def test_durable_stream_unit_returns_the_output_mode_only_for_a_model_answering_through_others() -> None:
+    """A streamed request's unit returns the output mode `'auto'` resolved to only when its model answers through others.
 
-    A model that prepares the parameters it sends records the bare response, as before. A `FallbackModel` records the
-    parameters its candidate prepared, with `'auto'` resolved to tool output, alongside the response.
+    A model that resolves `'auto'` itself records the bare response, as before. A `FallbackModel` records the mode its
+    candidate resolved `'auto'` to, tool output, alongside the response.
     """
 
     async def stream_unit_result(model: Model) -> Any:
@@ -865,12 +865,12 @@ async def test_durable_stream_unit_returns_its_parameters_only_for_a_model_answe
 
     bare = await stream_unit_result(FunctionModel(stream_function=preamble_text_before_output_tool))
     assert 'parts' in bare
-    assert 'model_request_parameters' not in bare
+    assert 'output_mode' not in bare
 
-    served = await stream_unit_result(FallbackModel(FunctionModel(stream_function=preamble_text_before_output_tool)))
-    assert served['response']['parts'] == bare['parts']
-    assert served['model_request_parameters']['output_mode'] == 'tool'
-    assert served['model_request_parameters']['allow_text_output'] is False
+    resolved = await stream_unit_result(FallbackModel(FunctionModel(stream_function=preamble_text_before_output_tool)))
+    assert resolved.keys() == {'response', 'output_mode'}
+    assert resolved['response']['parts'] == bare['parts']
+    assert resolved['output_mode'] == 'tool'
 
 
 async def _preamble_text_before_output_tool_then_failure(

@@ -4651,8 +4651,8 @@ async def test_dbos_durability_structured_output_after_preamble_text_in_workflow
 async def test_dbos_durability_fallback_model_structured_output_after_preamble_text_in_workflow(dbos: DBOS) -> None:
     """Behind a `FallbackModel`, text streamed before a tool call isn't the final result either.
 
-    The step returns the parameters the candidate that answered prepared with the response, as preparing the request
-    again in the workflow leaves `'auto'` to the candidate, and the workflow replays the stream against them.
+    Preparing the request again in the workflow leaves `'auto'` to the candidate, so the step returns the mode the
+    candidate that answered resolved it to with the response, and the workflow prepares the replay's parameters with it.
     """
     agents = preamble_text_agents(DBOSDurability, fallback=True)
 

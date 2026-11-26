@@ -4055,8 +4055,9 @@ class FallbackStructuredOutputAfterPreambleTextWorkflow:
 async def test_durability_fallback_model_structured_output_after_preamble_text_in_workflow(client: Client) -> None:
     """Behind a `FallbackModel`, text streamed before a tool call isn't the final result either.
 
-    The activity returns the parameters the candidate that answered prepared with the response, as preparing the
-    request again in the workflow leaves `'auto'` to the candidate, and the workflow replays the stream against them.
+    Preparing the request again in the workflow leaves `'auto'` to the candidate, so the activity returns the mode the
+    candidate that answered resolved it to with the response, and the workflow prepares the replay's parameters with
+    it.
     """
     async with Worker(
         client,

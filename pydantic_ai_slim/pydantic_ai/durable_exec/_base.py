@@ -157,7 +157,7 @@ from ._toolset import (
 from ._utils import (
     CountTokensResult,
     DurableModel,
-    ServedStreamedResult,
+    ResolvedOutputModeResult,
     StreamedModelRequestResult,
     agent_instrumentation_settings,
     consume_event_stream,
@@ -1978,7 +1978,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._stamp_response(response, params.messages)
         return response
 
-    async def _model_request_stream_operation(self, params: ModelRequestParams) -> ModelResponse | ServedStreamedResult:
+    async def _model_request_stream_operation(
+        self, params: ModelRequestParams
+    ) -> ModelResponse | ResolvedOutputModeResult:
         response: ModelResponse | None = None
         streamed: StreamedResponse | None = None
         produced_output = False
@@ -2018,12 +2020,16 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 mark_streamed_before_failing(error, response)
             raise
         self._stamp_response(response, params.messages)
-        if unwrap_model(model)._answers_requests_itself:  # pyright: ignore[reportPrivateUsage]
-            # The run replays the response against the parameters it prepares again, as this model prepared them.
-            return response
-        # A model that answers through others, like a `FallbackModel` through its candidates, leaves the parameters to
-        # the one that answers, so they're returned with the response for the run to replay it against.
-        return ServedStreamedResult(response=response, model_request_parameters=streamed.model_request_parameters)
+        # The run replays the response against the parameters it prepares again, in which the model resolves `'auto'`.
+        # A model that answers through others, like a `FallbackModel` through its candidates, leaves that to the one
+        # that answers, so the mode it resolved to is returned with the response.
+        if (
+            params.model_request_parameters.output_mode == 'auto'
+            and not unwrap_model(model)._answers_requests_itself  # pyright: ignore[reportPrivateUsage]
+            and (output_mode := streamed.model_request_parameters.output_mode) in ('tool', 'native', 'prompted')
+        ):
+            return ResolvedOutputModeResult(response=response, output_mode=output_mode)
+        return response
 
     async def _withdraw_unreturned_response(self, params: ModelRequestParams, response: ModelResponse | None) -> None:
         """Withdraw a pending batch request whose unit failed after the request returned it, once it was sent.
