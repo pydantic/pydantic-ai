@@ -46,7 +46,7 @@ agent = Agent(ClaudeAgentModel('{{ anthropic:medium.name }}', provider=provider)
 
 ## How it works
 
-Each request goes to a Claude Code process. Your agent's [instructions](../agent.md#instructions) replace Claude Code's system prompt, and its [function tools](../tools.md) reach Claude Code as tools of an in-process MCP server: when the model calls one, Pydantic AI runs it, as with any other model. Claude Code's own tools, settings files, `CLAUDE.md` files, skills, hooks, side requests, memory and automatic compaction are turned off, and so are your MCP servers and claude.ai connectors unless you [bring them](#your-own-mcp-servers-and-connectors).
+Each request goes to a Claude Code process. Your agent's [instructions](../agent.md#instructions) replace Claude Code's own coding-agent system prompt, after the identity line and billing block Claude Code always puts first (see [what Claude Code adds](#what-claude-code-adds-to-the-request)), and its [function tools](../tools.md) reach Claude Code as tools of an in-process MCP server: when the model calls one, Pydantic AI runs it, as with any other model. Claude Code's own tools, settings files, `CLAUDE.md` files, skills, hooks, side requests, memory and automatic compaction are turned off, and so are your MCP servers and claude.ai connectors unless you [bring them](#your-own-mcp-servers-and-connectors).
 
 A conversation keeps its Claude Code process for the length of an agent run, so the requests of one run continue in the same process and read from its prompt cache. To keep each conversation's process across runs too, for example one run per chat message, enter the agent (or the model) for as long as you serve the conversation:
 

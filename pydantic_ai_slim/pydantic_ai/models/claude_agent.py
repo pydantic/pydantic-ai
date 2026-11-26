@@ -63,9 +63,10 @@ class ClaudeAgentModel(AnthropicModel):
     """A model that runs on the user's logged-in Claude account, including Claude Code subscriptions (Pro and Max).
 
     Each request goes to a Claude Code process started through the Claude Agent SDK, which signs it with the user's own
-    login; this process never sees the credentials. The agent's instructions replace Claude Code's system prompt, its
-    function tools reach Claude Code as tools that Pydantic AI runs, and Claude Code's own tools, settings files,
-    skills and MCP servers are turned off.
+    login; this process never sees the credentials. The agent's instructions replace Claude Code's own coding-agent
+    system prompt, after the Agent SDK identity line and billing block Claude Code always puts first. Its function
+    tools reach Claude Code as tools that Pydantic AI runs, and Claude Code's own tools, settings files, skills and MCP
+    servers are turned off.
 
     A conversation keeps its Claude Code process for the length of an agent run, or for as long as the model,
     provider or agent is entered with `async with`, so Claude Code's prompt cache carries over between requests.
