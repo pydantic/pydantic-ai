@@ -2,7 +2,7 @@
 Source tapes/common.tape
 Output shots/keys.txt
 Hide
-Type 'clai-demo' Enter
+Type 'pax-demo' Enter
 Wait+Screen /\| ready/
 Type '/keys' Enter
 Wait+Screen /GITHUB_TOKEN/
