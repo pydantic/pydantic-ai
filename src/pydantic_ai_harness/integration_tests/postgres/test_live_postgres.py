@@ -38,8 +38,8 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Protocol
@@ -66,6 +66,7 @@ from pydantic_ai_harness.conversation_search import SnapshotHistorySource
 from pydantic_ai_harness.media import (
     MediaContext,
     MediaStore,
+    PostgresConnection,
     PostgresMediaStore,
     PostgresPool,
     make_static_public_url,
@@ -86,6 +87,7 @@ from pydantic_ai_harness.step_persistence import (
     ToolEffectRecord,
     ToolEffectStatus,
 )
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.harness import _postgres_live
 from tests.harness._postgres_live import (
     UNREACHABLE_URL,
@@ -1726,6 +1728,82 @@ async def test_conversation_store_reads_a_long_history_in_order() -> None:
         await store.save(conversation)
 
         assert await store.load(conversation.conversation_id) == conversation
+
+
+class _PausingConnection:
+    """Delegates to `connection`, and stops after a statement that locks rows `FOR UPDATE` until `resume` is set."""
+
+    def __init__(self, connection: PostgresConnection, locked: anyio.Event, resume: anyio.Event) -> None:
+        self._connection = connection
+        self._locked = locked
+        self._resume = resume
+
+    def transaction(self) -> AbstractAsyncContextManager[object]:
+        return self._connection.transaction()
+
+    async def execute(self, query: str, *args: object) -> object:
+        return await self._connection.execute(query, *args)
+
+    async def fetchval(self, query: str, *args: object) -> object:
+        return await self._connection.fetchval(query, *args)
+
+    async def fetchrow(self, query: str, *args: object) -> Sequence[object] | None:
+        return await self._connection.fetchrow(query, *args)
+
+    async def fetch(self, query: str, *args: object) -> Sequence[Sequence[object]]:
+        rows = await self._connection.fetch(query, *args)
+        if 'FOR UPDATE' in query:
+            self._locked.set()
+            await self._resume.wait()
+        return rows
+
+
+class _PausingPool:
+    def __init__(self, pool: PostgresPool, locked: anyio.Event, resume: anyio.Event) -> None:
+        self._pool = pool
+        self._locked = locked
+        self._resume = resume
+
+    @asynccontextmanager
+    async def acquire(self) -> AsyncGenerator[PostgresConnection, None]:
+        async with self._pool.acquire() as connection:
+            yield _PausingConnection(connection, self._locked, self._resume)
+
+
+async def test_conversation_store_save_sharing_a_message_a_delete_is_releasing_keeps_it() -> None:
+    """A save waits for a delete in another history that is releasing a message it shares, then stores it again."""
+    async with live_tables() as (pool, prefix):
+        store = PostgresConversationStore(pool, table=prefix, media_store=None)
+        shared = ModelRequest(parts=[UserPromptPart('shared')])
+        deleted = Conversation(messages=[shared])
+        kept = Conversation(messages=_user_messages('kept'))
+        await store.save(deleted)
+        await store.save(kept)
+        locked, resume = anyio.Event(), anyio.Event()
+        deleting = PostgresConversationStore(_PausingPool(pool, locked, resume), table=prefix, media_store=None)
+
+        async def save_waiting_for_the_delete() -> None:
+            kept.messages.append(shared)
+            await store.save(kept)
+
+        async def save_is_waiting_on_a_lock() -> bool:
+            async with pool.acquire() as connection:
+                waiting = await connection.fetchval(
+                    "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE $1",
+                    f'%{prefix}_conv_%',
+                )
+            return waiting == 1
+
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(deleting.delete, deleted.conversation_id)
+                await locked.wait()
+                tg.start_soon(save_waiting_for_the_delete)
+                while not await save_is_waiting_on_a_lock():  # real-wait: polls Postgres for the save's lock wait
+                    await anyio.sleep(0.01)
+                resume.set()
+
+        assert await store.load(kept.conversation_id) == kept
 
 
 async def test_conversation_store_shares_a_prefix_with_the_step_store() -> None:

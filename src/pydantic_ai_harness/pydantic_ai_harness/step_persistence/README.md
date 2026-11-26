@@ -911,8 +911,8 @@ store:
   branches use, including the branches it left.
 - `PostgresConversationStore(pool, table='step_persistence')` -- tables `{table}_conv_records`,
   `{table}_conv_entries`, `{table}_conv_messages`, and `{table}_conv_branches`, which don't clash with `PostgresStepStore`'s, so the two
-  can share a prefix. Saves and deletes work as for SQLite. Foreign keys keep a concurrent save from
-  pointing at an entry or message a delete is removing: the save raises `ConversationConflict` instead.
+  can share a prefix. Saves and deletes work as for SQLite. A save that continues from an entry a
+  concurrent delete is removing raises `ConversationConflict`; a message the delete is removing is written again.
 - `MongoConversationStore(client= or db_url=, database=...)` -- collections `conversation_records`,
   `conversation_entries`, and `conversation_messages`. The store uses no transactions, so deleting a conversation
   deletes only its record: without one, it can't tell an entry no conversation uses from one a concurrent save or

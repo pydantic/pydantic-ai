@@ -80,23 +80,6 @@ async def test_an_update_on_a_caller_connection_commits(tmp_path: Path) -> None:
             assert other.execute('SELECT title FROM conversation_records').fetchall() == [('Trip',)]
 
 
-async def test_sqlite_rejects_a_record_whose_history_was_released() -> None:
-    """A fork racing a delete of the conversation it forks can't point at entries the delete removed."""
-    with closing(sqlite3.connect(':memory:', check_same_thread=False, isolation_level=None)) as connection:
-        store = SqliteConversationStore(connection=connection)
-        original = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
-        await store.save(original)
-        record = await store.read_record(original.conversation_id)
-        assert record is not None
-        await store.delete(original.conversation_id)
-
-        with pytest.raises(ConversationConflict):
-            await store.write_record(
-                ConversationRecord(conversation_id='fork', head_id=record.head_id), expected_revision=None
-            )
-        assert await store.read_record('fork') is None
-
-
 async def test_sqlite_creates_its_tables_again_after_a_caller_rolls_them_back() -> None:
     with closing(sqlite3.connect(':memory:', check_same_thread=False, isolation_level=None)) as connection:
         store = SqliteConversationStore(connection=connection)

@@ -261,6 +261,20 @@ class ConversationStoreContract:
                 ConversationRecord(conversation_id='c', head_id=entry.id), new_entries=[entry], expected_revision=None
             )
 
+    async def test_a_record_pointing_at_a_released_history_conflicts(self, backend: Backend) -> None:
+        """A fork racing a delete of the conversation it forks can't point at entries the delete removed."""
+        if not backend.atomic:
+            pytest.skip('A store without transactions never releases entries.')
+        store = backend.store
+        record = await _saved(store, Conversation(messages=[_prompt('one')]))
+        await store.delete(record.conversation_id)
+
+        with pytest.raises(ConversationConflict):
+            await store.write_record(
+                ConversationRecord(conversation_id='fork', head_id=record.head_id), expected_revision=None
+            )
+        assert await store.read_record('fork') is None
+
     async def test_deleting_a_conversation_saved_since_it_was_read_conflicts(self, backend: Backend) -> None:
         store = backend.store
         conversation = Conversation(messages=[_prompt('one')])

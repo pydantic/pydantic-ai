@@ -55,8 +55,8 @@ class PostgresConversationStore(ConversationStore):
 
     A save writes its new entries and the record in one transaction. Deleting a conversation also
     deletes the entries and messages no other conversation's history or branch uses; externalized
-    media stays. Foreign keys keep a concurrent save from pointing at an entry or message a delete
-    is removing: the save raises `ConversationConflict` instead.
+    media stays. A save that continues from an entry a concurrent delete
+    is removing raises `ConversationConflict`; a message the delete is removing is written again.
     """
 
     def __init__(
@@ -203,13 +203,14 @@ class PostgresConversationStore(ConversationStore):
             # A concurrent delete released one of them.
             raise ConversationConflict(record.conversation_id)
         await self._lock_histories(connection, set(roots.values()))
-        await self._insert_messages(connection, dict(messages))
-        # A delete in another history locks the messages it may release in this order, so taking them in the
-        # same order, rather than entry by entry through the foreign key, keeps the two from deadlocking.
+        # A delete in another history may be releasing one of these messages. It locks them in this order,
+        # so locking them in the same order before the insert waits for it, rather than deadlocking with it,
+        # and the insert then writes again any message it removed.
         await connection.fetch(
             f'SELECT 1 FROM {self._messages} WHERE sha256 = ANY($1::text[]) ORDER BY sha256 FOR KEY SHARE',
             sorted({sha256 for sha256, _ in messages}),
         )
+        await self._insert_messages(connection, dict(messages))
         entries: list[tuple[str, str | None, str, str, str]] = []
         for entry, (sha256, _) in zip(new_entries, messages, strict=True):
             roots[entry.id] = entry.id if entry.parent_id is None else roots[entry.parent_id]
@@ -302,15 +303,17 @@ class PostgresConversationStore(ConversationStore):
     async def delete_record(self, conversation_id: str, *, expected_revision: str) -> None:
         await self._ensure_schema()
         async with self._pool.acquire() as connection, connection.transaction():
-            text = await connection.fetchval(
-                f'SELECT record FROM {self._records} WHERE conversation_id = $1 AND revision = $2',
+            row = await connection.fetchrow(
+                f'SELECT head_id FROM {self._records} WHERE conversation_id = $1 AND revision = $2',
                 conversation_id,
                 expected_revision,
             )
-            if text is None:
+            if row is None:
                 raise ConversationConflict(conversation_id)
-            record = load_record(text, None, None)
-            tips = [entry_id for entry_id in (record.head_id, *record.branches) if entry_id is not None]
+            branches = await connection.fetch(
+                f'SELECT entry_id FROM {self._branches} WHERE conversation_id = $1', conversation_id
+            )
+            tips = [str(entry_id) for (entry_id,) in (row, *branches) if entry_id is not None]
             await self._lock_histories(connection, set((await self._roots(connection, set(tips))).values()))
             deleted = await connection.fetchval(
                 f'DELETE FROM {self._records} WHERE conversation_id = $1 AND revision = $2 RETURNING conversation_id',
