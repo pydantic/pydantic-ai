@@ -18,6 +18,7 @@ from pymongo.errors import InvalidOperation
 
 from pydantic_ai import Conversation
 from pydantic_ai_harness.step_persistence import MongoConversationStore
+from tests.harness._mongo_handshake import HARNESS_DRIVER, handshake_server
 from tests.harness.step_persistence._conversation_store_contract import Backend, ConversationStoreContract
 
 
@@ -101,3 +102,18 @@ async def test_a_store_closes_only_the_client_it_created() -> None:
 
     with pytest.raises(InvalidOperation, match='after close'):
         await store.save(Conversation())
+
+
+async def test_a_db_url_client_names_harness_in_its_handshake() -> None:
+    """The handshake is MongoDB wire protocol, which cassettes cannot record, so a local server captures it."""
+    async with handshake_server() as (url, drivers):
+        store = await anyio.to_thread.run_sync(
+            lambda: MongoConversationStore(db_url=url, database='t', media_store=None)
+        )
+        try:
+            assert await store.read_record('handshake') is None
+        finally:
+            await store.aclose()
+
+    assert drivers
+    assert all(driver == HARNESS_DRIVER for driver in drivers)

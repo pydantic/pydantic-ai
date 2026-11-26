@@ -18,6 +18,7 @@ from pydantic_ai.conversation_store import (
     ConversationRecord,
     ConversationStore,
 )
+from pydantic_ai_harness._mongo_driver_info import harness_driver_info
 from pydantic_ai_harness.media import MediaStore
 from pydantic_ai_harness.media._mongo import MongoMediaStore
 from pydantic_ai_harness.step_persistence._conversation_codec import (
@@ -85,7 +86,9 @@ class MongoConversationStore(ConversationStore):
         if database is None:
             raise ValueError('`database=` is required')
         self._own_client = client is None
-        self._client = client if client is not None else AsyncMongoClient[_MongoDocument](db_url)
+        self._client = (
+            client if client is not None else AsyncMongoClient[_MongoDocument](db_url, driver=harness_driver_info())
+        )
         self._db: AsyncDatabase[_MongoDocument] = self._client[database]
         if media_store == 'auto':
             media_store = MongoMediaStore(client=self._client, database=database)

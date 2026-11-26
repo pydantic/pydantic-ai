@@ -900,6 +900,11 @@ conversation with that ID already exists, `save` raises
 `ConversationConflict` instead of overwriting it. `save` advances
 the revision of the conversation you pass it, so keep that conversation in a variable to save again or continue from.
 
+A conversation's `scope` is kept on its record only. Entries, messages and branches have none, and a message that
+conversations in two scopes hold is stored once. So `scope` filters what the store returns, and isolating tenants
+stays with your application: row-level security on the entries or messages tables would make a second tenant's
+`load` fail.
+
 Each message's JSON is stored once, keyed by its SHA-256, however many conversations hold it. Binary and text parts
 at or above `media_threshold_bytes` (64 KiB by default) are externalized like step snapshots' (see
 [Persisting media](#persisting-media)). The constructors take the same connection arguments as the matching step

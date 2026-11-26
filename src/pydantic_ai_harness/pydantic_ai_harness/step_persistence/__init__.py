@@ -6,8 +6,8 @@ Also the Harness backends of [`ConversationStore`][pydantic_ai.conversation_stor
 `MongoStepStore` and `MongoConversationStore` need the `mongodb` extra (`pip install
 pydantic-ai-harness[mongodb]`); it is imported lazily so the rest of this
 module stays usable without `pymongo` installed. `PostgresStepStore` and
-`PostgresConversationStore` import no driver (it takes a caller-owned asyncpg-compatible pool), so it is exported
-eagerly.
+`PostgresConversationStore` import no driver (they take a caller-owned
+asyncpg-compatible pool), so they are exported eagerly.
 """
 
 from typing import TYPE_CHECKING
