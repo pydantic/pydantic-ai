@@ -70,6 +70,18 @@ def _unhandled_below(record: logging.LogRecord) -> bool:
 
 
 @contextmanager
+def telemetry_log(path: Path, *, console: Console) -> Generator[None]:
+    """Send warnings and errors from the Logfire and OpenTelemetry loggers to `path`, and name it on exit if written."""
+    with unhandled_log(
+        path,
+        ('logfire', 'opentelemetry'),
+        notice='Logfire or OpenTelemetry reported problems, such as failed exports',
+        console=console,
+    ):
+        yield
+
+
+@contextmanager
 def unhandled_log(path: Path, names: tuple[str, ...], *, notice: str, console: Console) -> Generator[None]:
     """Send warnings and errors from the `names` loggers to `path`, and print `notice` naming it on exit if written.
 
