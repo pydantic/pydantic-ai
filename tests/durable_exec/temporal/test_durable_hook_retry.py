@@ -1,5 +1,5 @@
 """Capability hooks that run as durable operations under Temporal: a `RetryModelRequest` one raises, and an
-`after_model_request` that returns its response.
+`after_model_request` that returns its response, and a `before_model_request` annotated as returning `Any`.
 
 In a module of its own: building a durable operation for a hook takes a while, and a Temporal workflow imports its
 module again in the sandbox for every run, so an agent with one makes every workflow defined beside it slower.
@@ -131,3 +131,44 @@ async def test_durability_after_model_request_running_as_an_activity_returns_its
             execution_timeout=timedelta(seconds=30),
         )
     assert output == 'Checked: Done.'
+
+
+class _LooselyAnnotatedRequestHook(AbstractCapability[Any]):
+    id = 'loosely_annotated_request_hook'
+
+    @durable_operation('before_model_request')
+    async def before_model_request(self, ctx: RunContext[Any], request_context: ModelRequestContext) -> Any:
+        request_context.model_settings = {'temperature': 0.5}
+        return request_context
+
+
+_loosely_annotated_agent = Agent(
+    TestModel(custom_output_text='Done.'),
+    name='durable_loosely_annotated_before_model_request',
+    capabilities=[_LooselyAnnotatedRequestHook(), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class DurableLooselyAnnotatedHookWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _loosely_annotated_agent.run(prompt)).output
+
+
+async def test_durability_a_before_model_request_annotated_any_still_returns_the_request_context(client: Client):
+    """The override returns what `before_model_request` returns, the request context, whatever its annotation says."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurableLooselyAnnotatedHookWorkflow],
+        plugins=[AgentPlugin(_loosely_annotated_agent)],
+    ):
+        output = await client.execute_workflow(
+            DurableLooselyAnnotatedHookWorkflow.run,
+            args=['Hello'],
+            id=DurableLooselyAnnotatedHookWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+    assert output == 'Done.'

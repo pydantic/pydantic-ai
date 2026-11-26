@@ -5995,6 +5995,33 @@ class _HandsOnTheResponseDurably(AbstractCapability[object]):
         return response
 
 
+@dataclass
+class _UnannotatedChecksTheResponseDurably(AbstractCapability[object]):
+    """A durable `after_model_request` override that doesn't annotate what it returns."""
+
+    @durable_operation('after_model_request')
+    async def after_model_request(
+        self, ctx: RunContext[object], *, request_context: ModelRequestContext, response: ModelResponse
+    ):
+        return replace(response, parts=[TextPart(f'Checked: {response.text}')])
+
+
+async def test_dbos_durability_an_unannotated_durable_after_model_request_returns_its_response(dbos: DBOS) -> None:
+    """An override returns what the hook it overrides returns, so that, not its own annotation, decides how it's sent."""
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_unannotated_after_model_request',
+        capabilities=[_UnannotatedChecksTheResponseDurably(id='unannotated_after'), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await run_agent() == 'Checked: Echo: Hello'
+
+
 async def test_dbos_durability_a_durable_after_model_request_returns_its_response(dbos: DBOS) -> None:
     """The step takes the request context but returns a response, which comes back as the response."""
     agent = Agent(
