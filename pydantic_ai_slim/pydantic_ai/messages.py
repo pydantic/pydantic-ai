@@ -6087,10 +6087,45 @@ class ModelResponse:
         ]
 
     def cost(self) -> genai_types.PriceCalculation:
-        """Calculate the cost of the usage.
+        """Calculate the cost of this response's usage with [`genai-prices`](https://github.com/pydantic/genai-prices).
 
-        Uses [`genai-prices`](https://github.com/pydantic/genai-prices). Raises `ValueError` when the response
-        omitted usage information, since its cost would be incomplete.
+        On [Pydantic AI Gateway](../gateway.md#request-cost), `response.usage.cost` already holds the
+        gateway-reported cost when available, whereas `cost()` always computes a local estimate via `genai-prices`.
+
+        Raises:
+            AssertionError: If `model_name` is missing.
+            ValueError: If the response omitted usage (`usage.unmeasured_requests` is non-zero) or contains
+                inconsistent usage counts.
+            LookupError: If `genai-prices` has no pricing data for the provider or model — for example, on a custom
+                endpoint or a Gateway route like `doubleword` whose client reports `provider_name='openai'`.
+
+        If `cost()` raises `LookupError` because the provider wasn't matched, call `genai_prices.calc_price` directly
+        with an explicit `provider_id`:
+
+        ```python
+        from genai_prices import calc_price
+
+        from pydantic_ai import ModelResponse, RequestUsage, TextPart
+
+        response = ModelResponse(
+            parts=[TextPart('Hello')],
+            usage=RequestUsage(input_tokens=100, output_tokens=50),
+            model_name='deepseek-ai/DeepSeek-V4.1-Flash',
+            provider_name='openai',
+        )
+
+        try:
+            price = response.cost()
+        except LookupError:
+            assert response.model_name
+            price = calc_price(
+                response.usage,
+                response.model_name,
+                provider_id='doubleword',
+                genai_request_timestamp=response.timestamp,
+                price_context=response.provider_details,
+            )
+        ```
         """
         assert self.model_name, 'Model name is required to calculate price'
         if self.usage.unmeasured_requests:
