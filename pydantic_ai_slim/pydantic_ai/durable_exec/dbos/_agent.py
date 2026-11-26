@@ -51,7 +51,12 @@ from pydantic_ai.tools import (
 )
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
-from .._runtime_toolsets import reject_cancellation_token, reject_run_timeout, reject_unsupported_runtime_toolsets
+from .._runtime_toolsets import (
+    reject_cancellation_token,
+    reject_durable_unsupported_capabilities,
+    reject_run_timeout,
+    reject_unsupported_runtime_toolsets,
+)
 from .._workspace import RejectWorkspaceInContainer
 from ._function_toolset import gate_tool_instance_defaults
 from ._model import DBOSModel
@@ -166,6 +171,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 - 'sequential': Run tool calls one at a time in order.
         """
         super().__init__(wrapped)
+        reject_durable_unsupported_capabilities(wrapped, wrapper='DBOSAgent')
 
         self._name = name or wrapped.name
         self._event_stream_handler = event_stream_handler
