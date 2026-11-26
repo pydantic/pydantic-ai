@@ -380,7 +380,7 @@ client = create_custom_retry_client()
 
 #### Retrying based on the response body {#retrying-on-response-body}
 
-`validate_response` is synchronous and runs **before** the response body is read, so accessing `response.text` or `response.content` directly inside it raises `httpx2.ResponseNotRead` on both transports. On [`AsyncHTTPX2TenacityTransport`][pydantic_ai.retries.AsyncHTTPX2TenacityTransport], you also can't `await response.aread()` because `validate_response` is synchronous.
+`validate_response` is synchronous (so it can't `await response.aread()`) and runs **before** the response body is read, so accessing `response.text` or `response.content` inside it raises `httpx2.ResponseNotRead`.
 
 For 4xx and 5xx responses, the transport reads the error body right after `validate_response` raises, before tenacity's `retry` predicate runs. So to retry an error status only for certain bodies, raise in `validate_response` and inspect `exc.response.text` inside `retry_if_exception`:
 
@@ -425,9 +425,9 @@ client = create_async_httpx2_client(transport=transport)
 Two limits to keep in mind:
 
 - Any status `validate_response` raises for still raises `httpx2.HTTPStatusError` when `should_retry` returns `False` — it won't be returned as a normal `Response`.
-- Non-error statuses (2xx/3xx) are closed without reading their body.
+- If `validate_response` raises for a 2xx or 3xx status, the transport closes the response without reading its body, so `exc.response.text` raises `httpx2.ResponseNotRead` in `should_retry`.
 
-If you need non-matching responses returned normally (or need to inspect 2xx bodies), handle those retries outside the transport.
+If you need non-matching responses returned normally, or need to retry based on a 2xx response's body, handle those retries outside the transport.
 
 ### Using with `httpx2`-compatible providers
 
@@ -517,13 +517,14 @@ agent = Agent(model, model_settings={'max_retries': 0})
 
 Once the transport runs out of attempts, it re-raises the last exception, and the model converts it into a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] (a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] for rejected HTTP statuses, or a [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] / [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError] for network failures). A [fallback model](#model-fallback-is-not-a-retry) moves on from any of these by default.
 
-When `validate_response` raises for a 4xx or 5xx status, [`AsyncHTTPX2TenacityTransport`][pydantic_ai.retries.AsyncHTTPX2TenacityTransport] and [`HTTPX2TenacityTransport`][pydantic_ai.retries.HTTPX2TenacityTransport] read the error body before closing the response so the final error keeps its [`body`][pydantic_ai.exceptions.ModelAPIError.body], parsed [error category](models/overview.md#handling-model-api-errors), [`provider_error_code`][pydantic_ai.exceptions.ModelAPIError.provider_error_code], [`provider_error_type`][pydantic_ai.exceptions.ModelAPIError.provider_error_type], and (for Google) [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after]. If reading the error body fails (or if you use the deprecated [`TenacityTransport`][pydantic_ai.retries.TenacityTransport] / [`AsyncTenacityTransport`][pydantic_ai.retries.AsyncTenacityTransport]), the error's `body` is `None`.
+When `validate_response` raises for a 4xx or 5xx status, [`AsyncHTTPX2TenacityTransport`][pydantic_ai.retries.AsyncHTTPX2TenacityTransport] and [`HTTPX2TenacityTransport`][pydantic_ai.retries.HTTPX2TenacityTransport] read the error body before closing the response so the final error keeps its [`body`][pydantic_ai.exceptions.ModelAPIError.body], parsed [error category](models/overview.md#handling-model-api-errors), [`provider_error_code`][pydantic_ai.exceptions.ModelAPIError.provider_error_code], [`provider_error_type`][pydantic_ai.exceptions.ModelAPIError.provider_error_type], and (for Google) [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] (and an OpenAI image generation request blocked for moderation raises [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]). If reading the error body fails, the transport still closes the response and raises `validate_response`'s exception with `body=None`. The deprecated [`TenacityTransport`][pydantic_ai.retries.TenacityTransport] and [`AsyncTenacityTransport`][pydantic_ai.retries.AsyncTenacityTransport] close rejected responses without reading them, so `body` is `None` and only the status sets the error category.
 
 Some provider-specific recoveries still run after a transport gives up (such as Anthropic's [expired code execution container](models/anthropic.md#code-execution-containers) and [stale thinking block](models/anthropic.md#thinking-block-binding) retries), while others don't so fallback can take over (see [Azure content filters](models/azure.md#content-filters) and OpenAI [background mode](models/openai.md#background-mode)).
 
 ### Performance considerations
 
 - Retries add latency to requests, especially with exponential backoff
+- Each rejected 4xx/5xx attempt downloads its error body before returning its connection to the pool
 - Consider the total timeout for your application when configuring retry behavior
 - Monitor retry rates to detect systemic issues
 - Use async transports for better concurrency when handling multiple requests

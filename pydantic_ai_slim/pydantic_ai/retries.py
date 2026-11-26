@@ -165,8 +165,8 @@ class HTTPX2TenacityTransport(httpx2.BaseTransport):
             if the response should be rejected (for example, `lambda r: r.raise_for_status()`).
             Runs before the response body is read. When it raises for a 4xx or 5xx status, the transport reads
             the body before closing the response, so tenacity's `retry` predicate and callers inspecting
-            `httpx2.HTTPStatusError.response` can read it. Non-error statuses (2xx/3xx) are closed without
-            reading their body. If `None`, no response validation is performed.
+            `httpx2.HTTPStatusError.response` can read it. When it raises for a 2xx or 3xx status, the response
+            is closed without reading its body. If `None`, no response validation is performed.
 
     Example:
         ```python
@@ -274,8 +274,8 @@ class AsyncHTTPX2TenacityTransport(httpx2.AsyncBaseTransport):
             if the response should be rejected (for example, `lambda r: r.raise_for_status()`).
             Runs before the response body is read. When it raises for a 4xx or 5xx status, the transport reads
             the body before closing the response, so tenacity's `retry` predicate and callers inspecting
-            `httpx2.HTTPStatusError.response` can read it. Non-error statuses (2xx/3xx) are closed without
-            reading their body. If `None`, no response validation is performed.
+            `httpx2.HTTPStatusError.response` can read it. When it raises for a 2xx or 3xx status, the response
+            is closed without reading its body. If `None`, no response validation is performed.
 
     Example:
         ```python
