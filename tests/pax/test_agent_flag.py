@@ -54,6 +54,8 @@ def fixture_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "    return Agent(TestModel(custom_output_text='built by factory'))\n"
         'def make_number():\n'
         '    return 42\n'
+        'def make_number_pair():\n'
+        '    return 42, None\n'
         'def make_triple():\n'
         '    return agent, None, None\n'
         'tool_agent = Agent(TestModel())\n'
@@ -155,6 +157,11 @@ def test_import_agent_reports_a_launch_directory_target_named_like_an_installed_
             r"expected 'make_number' to return an Agent or an \(agent, deps\) tuple, got int",
         ),
         (f'{_MODULE}:make_triple', TypeError, 'got tuple'),
+        (
+            f'{_MODULE}:make_number_pair',
+            TypeError,
+            r"expected 'make_number_pair' to return an Agent or an \(agent, deps\) tuple, got tuple",
+        ),
         (f'{_MODULE}:deps_agent', TypeError, 'the agent needs deps of type Deps'),
         (f'{_MODULE}:deps_agent_alone', TypeError, 'the agent needs deps of type Deps'),
         (f'{_MODULE}:listed_deps_agent', TypeError, r'the agent needs deps of type list\[.*Deps\]'),
@@ -168,7 +175,7 @@ def test_import_agent_errors(path: str, error: type[Exception], message: str) ->
 
 
 @pytest.mark.usefixtures('fixture_module')
-def test_import_agent_runs_an_agent_whose_deps_may_be_none_without_deps() -> None:
+def test_import_agent_accepts_an_agent_whose_deps_may_be_none_without_deps() -> None:
     imported = import_agent(f'{_MODULE}:optional_deps_agent')
     assert imported.deps is None
 
