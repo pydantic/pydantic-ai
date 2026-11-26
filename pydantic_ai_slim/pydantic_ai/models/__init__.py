@@ -129,6 +129,7 @@ from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWar
 from ..computer_use import COMPUTER_KIND
 from ..exceptions import DeprecatedModelWarning, ModelAPIError, UserError
 from ..messages import (
+    _OUTPUT_TOOL_PART_KIND,  # pyright: ignore[reportPrivateUsage]
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     STANDING_PROMPT_PLANTED_KEY,
     BaseToolCallPart,
@@ -191,12 +192,7 @@ from ..messages import (
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool, ComputerTool
 from ..native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchTool
-from ..output import (
-    _OUTPUT_TOOL_PART_KIND,  # pyright: ignore[reportPrivateUsage]
-    OutputMode,
-    OutputObjectDefinition,
-    StructuredOutputMode,
-)
+from ..output import OutputMode, OutputObjectDefinition, StructuredOutputMode
 from ..profiles import (
     DEFAULT_PROFILE,
     DEFAULT_PROMPTED_OUTPUT_TEMPLATE,

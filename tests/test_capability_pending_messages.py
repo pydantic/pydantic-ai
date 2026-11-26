@@ -858,9 +858,7 @@ async def test_enqueue_when_idle_redirects_after_output_tool_end():
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='final_result',
-                        args='{"value": 1}',
-                        tool_call_id=IsStr(),
+                        tool_name='final_result', args='{"value": 1}', tool_call_id=IsStr(), tool_kind='output'
                     )
                 ],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
@@ -876,6 +874,7 @@ async def test_enqueue_when_idle_redirects_after_output_tool_end():
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id=IsStr(),
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -892,9 +891,7 @@ async def test_enqueue_when_idle_redirects_after_output_tool_end():
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='final_result',
-                        args='{"value": 2}',
-                        tool_call_id=IsStr(),
+                        tool_name='final_result', args='{"value": 2}', tool_call_id=IsStr(), tool_kind='output'
                     )
                 ],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
@@ -910,6 +907,7 @@ async def test_enqueue_when_idle_redirects_after_output_tool_end():
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id=IsStr(),
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],

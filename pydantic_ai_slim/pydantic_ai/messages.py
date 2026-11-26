@@ -2395,15 +2395,23 @@ def _make_typed_part_dataclass(cls: _ToolPartClass, kind: str) -> None:
     dataclass(repr=False)(cls)
 
 
+_OUTPUT_TOOL_PART_KIND: Final = 'output'
+"""The [`tool_kind`][pydantic_ai.messages.ToolPartKind] an output tool's call and return parts carry.
+
+It isn't a defined [`ToolKind`][pydantic_ai.messages.ToolKind]: output tools have no fixed shape, and their
+definitions don't declare a `tool_kind`. See [`is_output_tool_part`][pydantic_ai.output.is_output_tool_part].
+"""
+
+
 def parse_tool_kind(value: str) -> ToolPartKind | None:
-    """Return `value` if it's the id of a defined [`ToolKind`][pydantic_ai.messages.ToolKind], else `None`.
+    """Return `value` if it's the id of a defined [`ToolKind`][pydantic_ai.messages.ToolKind] or `'output'`, else `None`.
 
     UI adapters call this at the wire boundary to validate an untrusted client-supplied `tool_kind`
     string before setting it on a part, so an unknown value degrades to `None` rather than asserting a
     bogus discriminator. A run uses it to refuse a tool with an undefined kind when it collects its
     tools; a stored [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] with one still loads.
     """
-    return value if value in _TOOL_KINDS else None
+    return value if value in _TOOL_KINDS or value == _OUTPUT_TOOL_PART_KIND else None
 
 
 INTERRUPTED_TOOL_RETURN_CONTENT = 'The tool call was interrupted before a result was produced.'

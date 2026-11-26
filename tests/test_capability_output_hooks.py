@@ -830,7 +830,11 @@ class TestModelRetryFromOutputHooks:
                     conversation_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='final_result', args='{"value": -1}', tool_call_id='call-1')],
+                    parts=[
+                        ToolCallPart(
+                            tool_name='final_result', args='{"value": -1}', tool_call_id='call-1', tool_kind='output'
+                        )
+                    ],
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
                     model_name='function:model_fn:',
                     model_id='function:function:model_fn:',
@@ -844,6 +848,7 @@ class TestModelRetryFromOutputHooks:
                             content='Negative values not allowed',
                             tool_name='final_result',
                             tool_call_id='call-1',
+                            tool_kind='output',
                             timestamp=IsDatetime(),
                             outcome='retried',
                             retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
@@ -854,7 +859,11 @@ class TestModelRetryFromOutputHooks:
                     conversation_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='final_result', args='{"value": 42}', tool_call_id='call-2')],
+                    parts=[
+                        ToolCallPart(
+                            tool_name='final_result', args='{"value": 42}', tool_call_id='call-2', tool_kind='output'
+                        )
+                    ],
                     usage=RequestUsage(input_tokens=58, output_tokens=8),
                     model_name='function:model_fn:',
                     model_id='function:function:model_fn:',
@@ -868,6 +877,7 @@ class TestModelRetryFromOutputHooks:
                             tool_name='final_result',
                             content='Final result processed.',
                             tool_call_id='call-2',
+                            tool_kind='output',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -918,7 +928,11 @@ class TestModelRetryFromOutputHooks:
                     conversation_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='final_result', args='{"value": 0}', tool_call_id='call-1')],
+                    parts=[
+                        ToolCallPart(
+                            tool_name='final_result', args='{"value": 0}', tool_call_id='call-1', tool_kind='output'
+                        )
+                    ],
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
                     model_name='function:model_fn:',
                     model_id='function:function:model_fn:',
@@ -932,6 +946,7 @@ class TestModelRetryFromOutputHooks:
                             content='Zero not allowed',
                             tool_name='final_result',
                             tool_call_id='call-1',
+                            tool_kind='output',
                             timestamp=IsDatetime(),
                             outcome='retried',
                             retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
@@ -942,7 +957,11 @@ class TestModelRetryFromOutputHooks:
                     conversation_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='final_result', args='{"value": 10}', tool_call_id='call-2')],
+                    parts=[
+                        ToolCallPart(
+                            tool_name='final_result', args='{"value": 10}', tool_call_id='call-2', tool_kind='output'
+                        )
+                    ],
                     usage=RequestUsage(input_tokens=57, output_tokens=8),
                     model_name='function:model_fn:',
                     model_id='function:function:model_fn:',
@@ -956,6 +975,7 @@ class TestModelRetryFromOutputHooks:
                             tool_name='final_result',
                             content='Final result processed.',
                             tool_call_id='call-2',
+                            tool_kind='output',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -997,7 +1017,11 @@ class TestModelRetryFromOutputHooks:
                     conversation_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='final_result', args='{"value": "bad"}', tool_call_id='call-1')],
+                    parts=[
+                        ToolCallPart(
+                            tool_name='final_result', args='{"value": "bad"}', tool_call_id='call-1', tool_kind='output'
+                        )
+                    ],
                     usage=RequestUsage(input_tokens=51, output_tokens=5),
                     model_name='function:model_fn:',
                     model_id='function:function:model_fn:',
@@ -1018,6 +1042,7 @@ class TestModelRetryFromOutputHooks:
                             ],
                             tool_name='final_result',
                             tool_call_id='call-1',
+                            tool_kind='output',
                             timestamp=IsDatetime(),
                             outcome='retried',
                             retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
@@ -1028,7 +1053,11 @@ class TestModelRetryFromOutputHooks:
                     conversation_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='final_result', args='{"value": 42}', tool_call_id='call-2')],
+                    parts=[
+                        ToolCallPart(
+                            tool_name='final_result', args='{"value": 42}', tool_call_id='call-2', tool_kind='output'
+                        )
+                    ],
                     usage=RequestUsage(input_tokens=77, output_tokens=9),
                     model_name='function:model_fn:',
                     model_id='function:function:model_fn:',
@@ -1042,6 +1071,7 @@ class TestModelRetryFromOutputHooks:
                             tool_name='final_result',
                             content='Final result processed.',
                             tool_call_id='call-2',
+                            tool_kind='output',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -1095,7 +1125,11 @@ class TestModelRetryFromOutputHooks:
                     conversation_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='final_result', args='{"value": "bad"}', tool_call_id='call-1')],
+                    parts=[
+                        ToolCallPart(
+                            tool_name='final_result', args='{"value": "bad"}', tool_call_id='call-1', tool_kind='output'
+                        )
+                    ],
                     usage=RequestUsage(input_tokens=51, output_tokens=5),
                     model_name='function:model_fn:',
                     model_id='function:function:model_fn:',
@@ -1109,6 +1143,7 @@ class TestModelRetryFromOutputHooks:
                             content='Please provide a valid integer',
                             tool_name='final_result',
                             tool_call_id='call-1',
+                            tool_kind='output',
                             timestamp=IsDatetime(),
                             outcome='retried',
                             retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
@@ -1119,7 +1154,11 @@ class TestModelRetryFromOutputHooks:
                     conversation_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='final_result', args='{"value": 42}', tool_call_id='call-2')],
+                    parts=[
+                        ToolCallPart(
+                            tool_name='final_result', args='{"value": 42}', tool_call_id='call-2', tool_kind='output'
+                        )
+                    ],
                     usage=RequestUsage(input_tokens=59, output_tokens=9),
                     model_name='function:model_fn:',
                     model_id='function:function:model_fn:',
@@ -1133,6 +1172,7 @@ class TestModelRetryFromOutputHooks:
                             tool_name='final_result',
                             content='Final result processed.',
                             tool_call_id='call-2',
+                            tool_kind='output',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -1972,7 +2012,11 @@ class TestOutputHookFullLifecycle:
                     conversation_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='final_result', args='{"value": 100}', tool_call_id='call-1')],
+                    parts=[
+                        ToolCallPart(
+                            tool_name='final_result', args='{"value": 100}', tool_call_id='call-1', tool_kind='output'
+                        )
+                    ],
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
                     model_name='function:model_fn:',
                     model_id='function:function:model_fn:',
@@ -1986,6 +2030,7 @@ class TestOutputHookFullLifecycle:
                             tool_name='final_result',
                             content='Final result processed.',
                             tool_call_id='call-1',
+                            tool_kind='output',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -2382,9 +2427,7 @@ class TestOutputHookErrorPaths:
                 ModelResponse(
                     parts=[
                         ToolCallPart(
-                            tool_name='final_result',
-                            args='{"value": 42}',
-                            tool_call_id=IsStr(),
+                            tool_name='final_result', args='{"value": 42}', tool_call_id=IsStr(), tool_kind='output'
                         )
                     ],
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
@@ -2400,6 +2443,7 @@ class TestOutputHookErrorPaths:
                             tool_name='final_result',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -2556,9 +2600,7 @@ class TestOutputHookErrorPaths:
                 ModelResponse(
                     parts=[
                         ToolCallPart(
-                            tool_name='final_result',
-                            args='{"value": 42}',
-                            tool_call_id=IsStr(),
+                            tool_name='final_result', args='{"value": 42}', tool_call_id=IsStr(), tool_kind='output'
                         )
                     ],
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
@@ -2574,6 +2616,7 @@ class TestOutputHookErrorPaths:
                             tool_name='final_result',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -2699,9 +2742,7 @@ class TestOutputHookErrorPaths:
                 ModelResponse(
                     parts=[
                         ToolCallPart(
-                            tool_name='final_result',
-                            args='{"value": 10}',
-                            tool_call_id=IsStr(),
+                            tool_name='final_result', args='{"value": 10}', tool_call_id=IsStr(), tool_kind='output'
                         )
                     ],
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
@@ -2717,6 +2758,7 @@ class TestOutputHookErrorPaths:
                             tool_name='final_result',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -2948,9 +2990,7 @@ class TestStreamingOutputHooks:
                 ModelResponse(
                     parts=[
                         ToolCallPart(
-                            tool_name='final_result',
-                            args='{"value": 42}',
-                            tool_call_id=IsStr(),
+                            tool_name='final_result', args='{"value": 42}', tool_call_id=IsStr(), tool_kind='output'
                         )
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=4),
@@ -2966,6 +3006,7 @@ class TestStreamingOutputHooks:
                             tool_name='final_result',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                             timestamp=IsDatetime(),
                         )
                     ],

@@ -14,7 +14,15 @@ from . import _utils, exceptions
 from ._json_schema import InlineDefsJsonSchemaTransformer
 from ._removed_names import removed_names_getattr
 from ._run_context import RunContext
-from .messages import ModelRequestPart, ModelResponse, ModelResponsePart, RetryPromptPart, ToolCallPart, ToolReturnPart
+from .messages import (
+    _OUTPUT_TOOL_PART_KIND,  # pyright: ignore[reportPrivateUsage]
+    ModelRequestPart,
+    ModelResponse,
+    ModelResponsePart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]
+    ToolCallPart,
+    ToolReturnPart,
+)
 from .tools import ObjectJsonSchema, ToolDefinition
 
 __all__ = (
@@ -810,9 +818,6 @@ DEFAULT_OUTPUT_TOOL_NAME: Final = 'final_result'
 With several output types, each tool gets a suffix: `final_result_{type name}`. To tell an output tool's parts
 apart in a message history, use [`is_output_tool_part`][pydantic_ai.output.is_output_tool_part] rather than this name.
 """
-
-_OUTPUT_TOOL_PART_KIND: Final = 'output'
-"""The [`tool_kind`][pydantic_ai.messages.ToolPartKind] an output tool's call and return parts carry."""
 
 
 def is_output_tool_part(part: ModelRequestPart | ModelResponsePart) -> bool:

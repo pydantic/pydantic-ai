@@ -3451,6 +3451,7 @@ async def test_run_stream_output_tool():
                 'toolCallId': 'search_1',
                 'toolName': 'final_result',
                 'input': {'query': 'Hello world'},
+                'providerMetadata': {'pydantic_ai': {'tool_kind': 'output'}},
             },
             {
                 'type': 'tool-output-available',
@@ -4009,6 +4010,7 @@ async def test_run_stream_skipped_tool_returns():
                 'toolCallId': 'call-output',
                 'toolName': 'final_result',
                 'input': {'value': 'done'},
+                'providerMetadata': {'pydantic_ai': {'tool_kind': 'output'}},
             },
             {'type': 'tool-output-available', 'toolCallId': 'call-output', 'output': 'Final result processed.'},
             {
@@ -15251,3 +15253,19 @@ def test_dump_messages_keeps_the_reserved_namespace_of_tool_return_text_server_s
     assert 'tag' in dumped
     # The caller's own objects are not mutated.
     assert marked.metadata == reserved
+
+
+def test_dump_load_roundtrip_keeps_the_output_tool_kind():
+    """A custom-named output tool's call and return keep `tool_kind='output'` through dump and load.
+
+    Not VCR-backed: this pins local adapter serialization and makes no model request.
+    """
+    original: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart('submit_report', {'title': 'done'}, 'call_1', tool_kind='output')]),
+        ModelRequest(parts=[ToolReturnPart('submit_report', 'Final result processed.', 'call_1', tool_kind='output')]),
+    ]
+    reloaded = VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(original))
+    call = next(iter_message_parts(reloaded, ModelResponse, ToolCallPart))
+    tool_return = next(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
+    assert (call.tool_name, call.tool_kind) == ('submit_report', 'output')
+    assert (tool_return.tool_name, tool_return.tool_kind) == ('submit_report', 'output')

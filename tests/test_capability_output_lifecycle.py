@@ -308,7 +308,11 @@ class TestOutputHookFullLifecycle:
                     conversation_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='final_result', args='{"value": 100}', tool_call_id='call-1')],
+                    parts=[
+                        ToolCallPart(
+                            tool_name='final_result', args='{"value": 100}', tool_call_id='call-1', tool_kind='output'
+                        )
+                    ],
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
                     model_name='function:model_fn:',
                     model_id='function:function:model_fn:',
@@ -322,6 +326,7 @@ class TestOutputHookFullLifecycle:
                             tool_name='final_result',
                             content='Final result processed.',
                             tool_call_id='call-1',
+                            tool_kind='output',
                             timestamp=IsDatetime(),
                         )
                     ],

@@ -1,4 +1,9 @@
-"""Output tool call and return parts carry `tool_kind='output'`, so code can tell them from function tools' without their name."""
+"""Output tool call and return parts carry `tool_kind='output'`, so code can tell them from function tools' without their name.
+
+Not VCR-backed: the marker is set by the framework from the request's output tool definitions, never by a provider,
+so `TestModel` and `FunctionModel` exercise the same code paths a recorded request would, and the legacy-history
+fallback is about parts stored by earlier versions, which only hand-built parts can stand in for.
+"""
 
 from __future__ import annotations
 
@@ -8,12 +13,12 @@ from typing import Literal
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, ModelRetry, RunContext, ToolOutput
+from pydantic_ai import Agent, ModelRetry, ToolOutput
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelResponse,
-    RetryPromptPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -71,9 +76,9 @@ async def test_output_tool_parts_are_marked(route: Literal['run', 'run_stream'],
 async def test_output_tool_parts_survive_serialization():
     result = await Agent(TestModel(), output_type=ToolOutput(Report, name='submit_report')).run('Write the report.')
     messages = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(result.all_messages()))
-    assert [part.tool_kind for message in messages for part in message.parts if is_output_tool_part(part)] == [
-        'output',
-        'output',
+    assert tool_parts(messages) == [
+        ('tool-call', 'submit_report', 'output', ''),
+        ('tool-return', 'submit_report', 'output', 'success'),
     ]
 
 
@@ -90,7 +95,7 @@ async def test_output_tool_retries_are_marked():
     agent = Agent(FunctionModel(model), output_type=ToolOutput(Report, name='submit_report'), retries={'output': 2})
 
     @agent.output_validator
-    def not_a_draft(ctx: RunContext[None], output: Report) -> Report:
+    def not_a_draft(output: Report) -> Report:
         if output.title == 'draft':
             raise ModelRetry('Not a draft, please.')
         return output
