@@ -14,6 +14,7 @@ from collections.abc import (
     Collection,
     Generator,
     Iterable,
+    Mapping,
     Sequence,
 )
 from contextlib import (
@@ -54,7 +55,8 @@ from pydantic_ai._instrumentation import (
     open_request_policy,
 )
 from pydantic_ai._model_request_attempts import AttemptStart, carried_attempts
-from pydantic_ai._tool_execution import process_tool_calls
+from pydantic_ai._parts_manager import stamp_and_type_call_part, ui_visibility_stamps
+from pydantic_ai._tool_execution import last_response_index, process_tool_calls
 from pydantic_ai._utils import (
     ScopedTask,
     aclose_if_supported,
@@ -166,6 +168,7 @@ from .tools import (
     NativeToolFunc,
     RunContext,
     ToolDefinition,
+    ToolUIVisibility,
 )
 from .toolsets._deferred_capability_loader import (
     capability_load_window,
@@ -1367,7 +1370,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 # The history ends on what a run that paused for deferred tool calls wrote after its response.
                 # Run the response's unanswered calls again, as a history ending on the response would, so
                 # deferred ones pause the run again.
-                index = _last_response_index(messages)
+                index = last_response_index(messages)
                 assert index is not None  # `_answered_at_pause` found it.
                 response, _ = await self._adopt_resumed_response(ctx, messages, index)
                 return CallToolsNode[DepsT, NodeRunEndT](response, _answered_calls=answered_at_pause)
@@ -1628,7 +1631,7 @@ def _answered_at_pause(history: Sequence[_messages.ModelMessage]) -> tuple[_Tool
     that run or by a later one that paused again. Returns `None` for any other history: a new message, or a
     request whose model call failed, continues the run.
     """
-    index = _last_response_index(history)
+    index = last_response_index(history)
     if index is None or index == len(history) - 1:
         return None
     response = history[index]
@@ -1680,10 +1683,6 @@ def final_tool_results_request(
     if isinstance(output, DeferredToolRequests):
         mark_deferred_pause(request)
     return request
-
-
-def _last_response_index(history: Sequence[_messages.ModelMessage]) -> int | None:
-    return next((i for i in range(len(history) - 1, -1, -1) if isinstance(history[i], _messages.ModelResponse)), None)
 
 
 def _resumed_request(request: _messages.ModelRequest) -> _messages.ModelRequest:
@@ -2355,7 +2354,7 @@ async def model_request(  # noqa: C901
                     await cancel_abandoned_job(model, response, error)
                 raise
 
-            new_response = _narrow_tool_call_parts(new_response, request_context.model_request_parameters)
+            new_response = _apply_tool_defs_to_call_parts(new_response, request_context.model_request_parameters)
             report_continuation_segment(request_context, new_response)
             if response is None:
                 response = new_response
@@ -3024,6 +3023,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # The consumer didn't iterate the stream far enough to see the failure.
                 raise error
             self._did_stream = True
+            model_response = _stamp_ui_visibility(model_response, wrap_request_context.model_request_parameters)
             replay_sr = CompletedStreamedResponse(
                 model_response,
                 model_request_parameters=wrap_request_context.model_request_parameters,
@@ -4293,6 +4293,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         record_usage: bool,
         described: Sequence[_messages.ModelRequestAttempt] = (),
     ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
+        assert self.last_request_context is not None
+        # A response a capability supplied, or one a hook replaced, has unstamped calls; the model's own are stamped.
+        response = _stamp_ui_visibility(response, self.last_request_context.model_request_parameters)
         self._emit_capability_load_records(ctx)
         if record_usage:
             self._record_response_usage(ctx, response, described=described)
@@ -4336,8 +4339,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         try:
             if not root_capability._handles_model_request_error(run_context, request_context):  # pyright: ignore[reportPrivateUsage]
                 raise error
-            return await root_capability.on_model_request_error(
-                run_context, request_context=request_context, error=error
+            # Before `after_model_request` and the streamed replay, as `Model.request()`'s own response is stamped.
+            return _stamp_ui_visibility(
+                await root_capability.on_model_request_error(run_context, request_context=request_context, error=error),
+                request_context.model_request_parameters,
             )
         except exceptions.RetryModelRequest as retry:
             failed.record(request_context, error, start, retry)
@@ -6065,38 +6070,53 @@ def _build_agent_graph(
     return g.build(validate_graph_structure=False)
 
 
-def _narrow_tool_call_parts(
+def _apply_tool_defs_to_call_parts(
     response: _messages.ModelResponse, model_request_parameters: models.ModelRequestParameters
 ) -> _messages.ModelResponse:
-    """Give each base `ToolCallPart` in the response its tool's kind, promoting it to the kind's typed subclass if one is registered.
+    """Stamp each `ToolCallPart` with its tool's `ui_visibility` and kind, and promote a base one to its typed subclass.
 
     A function tool's kind is its `ToolDefinition.tool_kind`; an output tool's is `'output'`.
 
     Lives here rather than in each model adapter so adapter authors emit base
     `ToolCallPart`s freely and the framework owns the typed-identity translation. Streaming
-    parts are typed up-front by `ModelResponsePartsManager` via the same lookup; this
+    parts are typed and stamped up-front by `ModelResponsePartsManager` via the same lookups; this
     function handles the non-streaming `Model.request()` return path. Either path produces
     the same typed end state — `isinstance(part, ToolSearchCallPart)` is true from the
     moment the call is emitted by the model.
     """
     tool_kind_by_name = model_request_parameters._tool_part_kinds  # pyright: ignore[reportPrivateUsage]
-    if not tool_kind_by_name:
+    return _stamp_and_type_call_parts(response, tool_kind_by_name, ui_visibility_stamps(model_request_parameters))
+
+
+def _stamp_ui_visibility(
+    response: _messages.ModelResponse, model_request_parameters: models.ModelRequestParameters
+) -> _messages.ModelResponse:
+    """Stamp each `ToolCallPart` of a response a capability supplied instead of `Model.request()` with its tool's `ui_visibility`.
+
+    Only the stamp is written: those calls keep the typing they came with, as execution types each call from its tool
+    (`ToolManager._with_tool_kind_and_visibility`).
+    """
+    return _stamp_and_type_call_parts(response, {}, ui_visibility_stamps(model_request_parameters))
+
+
+def _stamp_and_type_call_parts(
+    response: _messages.ModelResponse,
+    tool_kind_by_name: Mapping[str, _messages.ToolPartKind],
+    ui_visibility_by_name: Mapping[str, ToolUIVisibility],
+) -> _messages.ModelResponse:
+    """`response` with each `ToolCallPart` passed through `stamp_and_type_call_part`; `response` itself if none changes."""
+    if not tool_kind_by_name and not ui_visibility_by_name:
         return response
 
-    changed = False
-    new_parts: list[_messages.ModelResponsePart] = []
-    for part in response.parts:
-        if (
-            isinstance(part, _messages.ToolCallPart)
-            and part.tool_kind is None
-            and (tool_kind := tool_kind_by_name.get(part.tool_name)) is not None
-        ):
-            promoted = _messages.ToolCallPart.narrow_type(part, tool_kind=tool_kind)
-            new_parts.append(promoted)
-            changed = True
-        else:
-            new_parts.append(part)
-    return replace(response, parts=new_parts) if changed else response
+    new_parts: list[_messages.ModelResponsePart] = [
+        stamp_and_type_call_part(part, tool_kind_by_name, ui_visibility_by_name)
+        if isinstance(part, _messages.ToolCallPart)
+        else part
+        for part in response.parts
+    ]
+    if all(new is old for new, old in zip(new_parts, response.parts)):
+        return response
+    return replace(response, parts=new_parts)
 
 
 def _first_run_id_index(messages: Sequence[_messages.ModelMessage], run_id: str) -> int:
