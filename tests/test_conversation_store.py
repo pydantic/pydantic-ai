@@ -657,7 +657,7 @@ async def test_a_streamed_run_ending_on_its_streamed_response_keeps_what_a_capab
 
 @pytest.mark.parametrize('output_type', [str, int])
 async def test_a_streamed_run_on_a_loaded_conversation_saves_after_it(output_type: type[Any]) -> None:
-    """The settled result of a streamed run keeps what saving the conversation it was given needs, like its revision."""
+    """The settled result of a streamed run keeps what saving the conversation it was given needs, like its revision, and the next run can go on from it once saved."""
     store = InMemoryConversationStore()
     agent = Agent(TestModel(), output_type=output_type)
     await store.save(await agent.run('one', conversation=Conversation(conversation_id='c')))
@@ -667,10 +667,13 @@ async def test_a_streamed_run_on_a_loaded_conversation_saves_after_it(output_typ
     async with agent.run_stream('two', conversation=loaded) as stream:
         await stream.get_output()
     await store.save(stream.result)
+    # The result saved is the one `result` returns from then on, so the next run can go on from it.
+    third = await agent.run('three', conversation=stream.result.conversation)
+    await store.save(third)
 
     stored = await store.load('c')
     assert stored is not None
-    assert conversation_view(stored.messages) == conversation_view(stream.all_messages())
+    assert conversation_view(stored.messages) == conversation_view(third.all_messages())
     record = await store.read_record('c')
     assert record is not None
     assert record.branches == []

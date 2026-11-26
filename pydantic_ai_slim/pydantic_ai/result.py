@@ -646,6 +646,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     conversation it was given needs, and the full history when a capability dropped or rewrote messages.
     """
 
+    _settled: AgentRunResult[OutputDataT] | None = field(default=None, init=False)
+    """The settled result `result` built, so saving it to a store updates the one every later `result` returns."""
+
     is_complete: bool = field(default=False, init=False)
     """Whether the stream has all been received.
 
@@ -718,7 +721,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         from ._agent_graph import GraphAgentState
         from .run import AgentRunResult
 
-        if (run_result := self._run_result) is not None:
+        if (run_result := self._run_result or self._settled) is not None:
             return run_result
         elif self._stream_response is not None:
             if not self.is_complete:
@@ -749,6 +752,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             )
             # As in AgentRun.result, this isn't a dataclass field because a live workspace can't be serialized.
             result.__dict__['_workspace'] = self.workspace
+            self._settled = result
             return result
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
