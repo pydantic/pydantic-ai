@@ -1918,8 +1918,8 @@ The user wants you to delete X.\
             return 'unreachable'  # pragma: no cover
 
         with pytest.raises(FatalBackgroundError):
-            await asyncio.wait_for(agent.run('go'), timeout=5)
-        await asyncio.wait_for(slow_cancelled.wait(), timeout=5)
+            await asyncio.wait_for(agent.run('go'), timeout=READINESS_WAIT_TIMEOUT)
+        await asyncio.wait_for(slow_cancelled.wait(), timeout=READINESS_WAIT_TIMEOUT)
 
         # Not an `Exception`, so only the outcome says the call failed.
         assert (_span(exporter, 'background_tools execute fatal').attributes or {})[
