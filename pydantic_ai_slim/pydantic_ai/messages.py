@@ -6160,12 +6160,13 @@ class ModelResponse:
         ```
 
         Raises:
-            ValueError: If the response omitted usage (`usage.unmeasured_requests` is non-zero) or contains
-                inconsistent usage counts.
+            ValueError: If the response has no `model_name`, omitted usage (`usage.unmeasured_requests` is non-zero)
+                or contains inconsistent usage counts.
             LookupError: If `genai-prices` has no pricing data for the provider or model — for example, on a custom
                 OpenAI-compatible endpoint whose provider `genai-prices` can't infer.
         """
-        assert self.model_name, 'Model name is required to calculate price'
+        if not self.model_name:
+            raise ValueError('Model name is required to calculate price')
         if self.usage.unmeasured_requests:
             raise ValueError(
                 'Cannot calculate the price of a response that omitted usage information '
