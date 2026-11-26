@@ -56,7 +56,7 @@ class MontyRelay:
     url: str = ''
     metadata: list[Mapping[str, str]] = field(default_factory=list[Mapping[str, str]])
     workers: list[asyncio.subprocess.Process] = field(default_factory=list[asyncio.subprocess.Process])
-    """Every worker a stream started, so the relay can reap any its stream's handler left running."""
+    """Every worker a stream started, so the relay can reap any worker that a stream's handler left running."""
     _streams: list[Stream[bytes, bytes]] = field(default_factory=list[Stream[bytes, bytes]])
 
     def __mapping__(self) -> dict[str, Handler]:
@@ -185,7 +185,6 @@ async def serve_monty_relay(
         # grpclib cancels a stream's handler when the client closes the connection, and that cancel can land
         # before the handler's `finally` has killed or reaped its worker.
         for worker in relay.workers:
-            if worker.returncode is None:
-                with suppress(ProcessLookupError):
-                    worker.kill()
-                await worker.wait()
+            with suppress(ProcessLookupError):  # its handler already reaped it
+                worker.kill()
+            await worker.wait()
