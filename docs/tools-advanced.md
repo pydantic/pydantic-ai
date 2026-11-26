@@ -1213,7 +1213,7 @@ print(ToolKind.get('browser.unknown'))
 #> None
 ```
 
-Defining a kind again with different `allowed_callers` raises `UserError`, as with different shapes.
+Defining a kind again with different `allowed_callers` raises `UserError`, as with different shapes. So does an empty set, which would leave nothing able to call the tool, or a caller that isn't a `ToolCaller`.
 
 ### Superseding a tool by kind {#unless-tool-kind}
 

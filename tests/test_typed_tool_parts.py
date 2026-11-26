@@ -155,6 +155,13 @@ def test_a_kind_can_restrict_its_callers() -> None:
         ToolKind('test', 'lookup', args=LookupArgs, content=LookupResult, allowed_callers={'direct'})
 
 
+def test_a_kind_rejects_empty_or_unknown_callers() -> None:
+    with pytest.raises(UserError, match=r'has empty `allowed_callers`, so nothing could call its tools'):
+        ToolKind('test', 'no-callers', allowed_callers=set())
+    with pytest.raises(UserError, match=r"has unknown `allowed_callers` \['subagent'\]"):
+        ToolKind('test', 'bad-caller', allowed_callers={'direct', 'subagent'})  # pyright: ignore[reportArgumentType]
+
+
 def test_core_kinds_only_the_model_may_call() -> None:
     assert TOOL_SEARCH_KIND.allowed_callers == {'direct'}
     assert CAPABILITY_LOAD_KIND.allowed_callers == {'direct'}

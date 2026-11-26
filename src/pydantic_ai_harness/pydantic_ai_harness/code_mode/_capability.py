@@ -87,9 +87,10 @@ class CodeMode(AbstractCapability[AgentDepsT]):
 
     By default (`tools='all'`) every eligible regular tool the agent has is wrapped
     behind a single `run_code` tool -- the model writes Python that calls them as
-    functions instead of issuing tool calls directly. Framework control tools,
-    undiscovered deferred tools, `requires_approval=True` and external tools, native
-    fallbacks, and other code-execution tools remain native.
+    functions instead of issuing tool calls directly. Tools whose kind only the model
+    may call (see `ToolKind.allowed_callers`), undiscovered deferred tools,
+    `requires_approval=True` and external tools, native fallbacks, and other
+    code-execution tools remain native.
 
     Pass a list of tool names or a callable predicate to `tools` to split the
     toolset: matching tools become callables inside the sandbox, and the rest

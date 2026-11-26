@@ -2046,6 +2046,8 @@ ToolCaller: TypeAlias = Literal['direct', 'programmatic']
   provider's code execution.
 """
 
+_TOOL_CALLERS: frozenset[str] = frozenset(get_args(ToolCaller))
+
 
 def _tool_kind_id(value: ToolKindLike | None) -> ToolPartKind | None:  # pyright: ignore[reportUnusedFunction]
     """The id of the kind a tool declares, given as a [`ToolKind`][pydantic_ai.messages.ToolKind] or its id."""
@@ -2126,6 +2128,17 @@ class ToolKind(Generic[ArgsT_co, ContentT_co, MetadataT_co]):
             raise UserError(f"A tool kind needs a namespace, e.g. `ToolKind('my_capability', {name!r})`.")
         if not name:
             raise UserError(f'Tool kind in namespace {namespace!r} has an empty name.')
+        if allowed_callers is not None:
+            if not allowed_callers:
+                raise UserError(
+                    f'Tool kind {namespace}.{name} has empty `allowed_callers`, so nothing could call its tools; '
+                    'use `None` to allow every caller.'
+                )
+            if unknown := sorted(set(allowed_callers) - _TOOL_CALLERS):
+                raise UserError(
+                    f'Tool kind {namespace}.{name} has unknown `allowed_callers` {unknown}; '
+                    f'a caller is one of {sorted(_TOOL_CALLERS)}.'
+                )
         self._define(namespace, name, args, content, metadata, allowed_callers)
 
     def _define(
