@@ -23,10 +23,12 @@ def trim(path: str) -> None:
     def has_content(y: int) -> bool:
         return any(sum(abs(a - b) for a, b in zip(pixel(x, y), background)) > 30 for x in range(60, width - 60, 2))
 
-    last = max(y for y in range(height - FRAME) if has_content(y))
-    trimmed = Image.new('RGB', (width, last + PAD + FRAME))
-    trimmed.paste(image.crop((0, 0, width, last + PAD)), (0, 0))
-    trimmed.paste(image.crop((0, height - FRAME, width, height)), (0, last + PAD))
+    bottom = min(max(y for y in range(height - FRAME) if has_content(y)) + PAD, height - FRAME)
+    if bottom == height - FRAME:
+        return  # Nothing to cut: the content already reaches the frame.
+    trimmed = Image.new('RGB', (width, bottom + FRAME))
+    trimmed.paste(image.crop((0, 0, width, bottom)), (0, 0))
+    trimmed.paste(image.crop((0, height - FRAME, width, height)), (0, bottom))
     trimmed.save(path)
 
 

@@ -75,7 +75,7 @@ run() {
     PATH="$home/bin:$repo/.venv/bin$tools:/usr/bin:/bin" \
     TERM=xterm-256color COLORTERM=truecolor LANG=en_US.UTF-8 \
     PYTHONPATH="$here" PYTHON_KEYRING_BACKEND=demo_keyring.Keyring \
-    PROJECT="$project" PAX_SHOTS_MODEL="$model" "${key[@]}" \
+    PROJECT="$project" PAX_SHOTS_MODEL="$model" ${key[@]+"${key[@]}"} \
     "$@"
 }
 
