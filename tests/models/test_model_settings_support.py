@@ -1251,7 +1251,7 @@ def test_google_sampling_params_ignored_on_documented_models():
     for model_name in ('gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-4-argon'):
         profile = google_model_profile(model_name)
         assert profile is not None
-        assert profile['google_ignores_sampling_params'] is True
+        assert profile.get('google_ignores_sampling_params') is True
 
 
 def test_google_sampling_params_sent_on_uncovered_models():
@@ -1272,5 +1272,6 @@ def test_google_sampling_params_sent_on_uncovered_models():
 def test_google_interactions_declares_sampling_params_on_documented_models():
     from pydantic_ai.profiles.google import google_interactions_model_profile
 
-    assert google_interactions_model_profile('gemini-3.8-flash')['google_ignores_sampling_params'] is True
+    profile = google_interactions_model_profile('gemini-3.8-flash')
+    assert profile.get('google_ignores_sampling_params') is True
     assert google_interactions_model_profile('gemini-2.5-flash').get('google_ignores_sampling_params', False) is False

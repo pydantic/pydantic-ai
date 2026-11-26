@@ -351,6 +351,12 @@ prefixes keeps `temperature`, `top_p` and `top_k` in the request.
 """
 
 
+def _set_google_ignores_sampling_params(profile: GoogleModelProfile, model_name: str) -> None:
+    """Set `google_ignores_sampling_params` on the profile when the model ignores `temperature`, `top_p`, and `top_k`."""
+    if model_name.startswith(_SAMPLING_PARAM_IGNORING_MODEL_PREFIXES):
+        profile['google_ignores_sampling_params'] = True
+
+
 def google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model."""
     is_image_model = 'image' in model_name
@@ -422,8 +428,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     if thinking_levels is not None:
         profile['google_thinking_levels'] = thinking_levels
     _set_gemini_file_input(profile, is_gemma=is_gemma, is_gemini_2_5=is_gemini_2_5)
-    if model_name.startswith(_SAMPLING_PARAM_IGNORING_MODEL_PREFIXES):
-        profile['google_ignores_sampling_params'] = True
+    _set_google_ignores_sampling_params(profile, model_name)
     return profile
 
 
@@ -453,8 +458,7 @@ def google_interactions_model_profile(model_name: str) -> GoogleModelProfile:
     """Profile overrides for Google's Interactions API, independent of GenerateContent."""
     profile = GoogleModelProfile(supports_tool_return_schema=False)
     model_name = model_name.rsplit('/', 1)[-1]
-    if model_name.startswith(_SAMPLING_PARAM_IGNORING_MODEL_PREFIXES):
-        profile['google_ignores_sampling_params'] = True
+    _set_google_ignores_sampling_params(profile, model_name)
     mime_types = next(
         (types for prefix, types in _INTERACTIONS_TOOL_RETURN_MIME_TYPES if model_name.startswith(prefix)), None
     )
