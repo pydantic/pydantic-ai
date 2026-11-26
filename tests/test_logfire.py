@@ -5224,6 +5224,9 @@ async def test_sub_agent_cost_rolls_up_to_the_root_conversation(capfire: Capture
     grouping by `gen_ai.conversation.id` alone misses their tokens. Spans of nested runs also carry
     the outermost conversation, and top-level spans don't, so the documented query falls back to
     `gen_ai.conversation.id` for them.
+
+    This is not a VCR test: the claim is about which span attributes the runs carry, which a
+    recorded provider response would not change, and exact token counts keep the sums readable.
     """
 
     def leaf_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

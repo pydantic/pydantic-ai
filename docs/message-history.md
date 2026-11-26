@@ -639,8 +639,6 @@ result = agent.run_sync('Tell me a joke.', run_id='run-from-api-42')
 assert result.run_id == 'run-from-api-42'
 ```
 
-An agent run started inside another run, such as a sub-agent called from a tool, usually has a `conversation_id` of its own, so its cost isn't counted when you group spans by `gen_ai.conversation.id`. Its spans also carry `pydantic_ai.root_conversation_id`, the conversation of the outermost run. To get the full cost of a conversation, sub-agents included, group by `pydantic_ai.root_conversation_id` and fall back to `gen_ai.conversation.id` on spans that don't have it.
-
 To override or fork `conversation_id`:
 
 - Pass `conversation_id='<your-id>'` to use an ID from your own application (e.g. a chat thread ID stored in your database).
@@ -665,6 +663,8 @@ assert forked.conversation_id != result1.conversation_id
 ```
 
 The [UI adapters](ui/overview.md) auto-populate `conversation_id` from the protocol's own thread/chat ID, so frontends using these protocols get conversation correlation for free. Protocol-level run IDs (for example AG-UI's `runId`) are **not** mapped into the agent's `run_id` — pass `run_id=` explicitly on [`AGUIAdapter.run_stream`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream] / [`dispatch_request`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request] (or a plain `Agent.run`) if you need them to match.
+
+An agent run started inside another run, such as a sub-agent called from a tool, usually has a `conversation_id` of its own, so its cost isn't counted when you group spans by `gen_ai.conversation.id`. When its conversation differs from the outermost run's, its spans also carry `pydantic_ai.root_conversation_id`, the outermost run's conversation. To get the full cost of a conversation, sub-agents included, group by `pydantic_ai.root_conversation_id` and fall back to `gen_ai.conversation.id` on spans that don't have it.
 
 ### Which model answered
 
