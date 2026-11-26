@@ -222,6 +222,7 @@ from ._speech import assistant_speech_text
 from ._tool_call_ids import hashed_tool_call_id, response_tool_call_id_scopes, with_unqualified_tool_call_ids
 
 if TYPE_CHECKING:
+    from google.genai import Client
     from httpx import AsyncClient
 
     from ..agent.abstract import AbstractAgent
@@ -3782,6 +3783,11 @@ def infer_model_profile(model: str) -> ModelProfile:
         context_window = lookup_context_window(model_name, provider_name=provider)
         if context_window is not None:
             profile = merge_profile(profile, ModelProfile(context_window=context_window))
+    if provider == 'google-interactions':
+        from ..profiles.google import google_interactions_model_profile
+
+        # The overrides `GoogleInteractionsModel._instance_profile_defaults` applies over the `GoogleProvider` profile.
+        profile = merge_profile(profile, google_interactions_model_profile(model_name))
     return profile
 
 
@@ -3908,10 +3914,8 @@ def infer_model(  # noqa: C901
         from .openai import OpenAIChatModel
 
         return OpenAIChatModel(model_name, provider=provider)
-    elif model_kind in ('google', 'google-cloud'):
-        from .google import GoogleModel
-
-        return GoogleModel(model_name, provider=provider)
+    elif model_kind in ('google', 'google-cloud', 'google-interactions'):
+        return _infer_google_model(model_kind, model_name, provider)
     elif model_kind == 'groq':
         from .groq import GroqModel
 
@@ -3955,6 +3959,20 @@ def infer_model(  # noqa: C901
         return XaiModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
+
+
+def _infer_google_model(
+    kind: Literal['google', 'google-cloud', 'google-interactions'],
+    model_name: str,
+    provider: Provider[Client],
+) -> Model:
+    if kind == 'google-interactions':
+        from .google_interactions import GoogleInteractionsModel
+
+        return GoogleInteractionsModel(model_name, provider=provider)
+    from .google import GoogleModel
+
+    return GoogleModel(model_name, provider=provider)
 
 
 def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> AsyncClient:

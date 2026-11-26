@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import base64
-import math
 import re
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Generator, Iterator, Mapping, Sequence
@@ -73,10 +72,7 @@ from ..native_tools import (
 from ..output import OutputObjectDefinition
 from ..profiles import ModelProfile, ModelProfileSpec, merge_profile
 from ..profiles.google import (
-    GOOGLE_THINKING_LEVEL_SCALE,
-    GOOGLE_THINKING_LEVELS,
     GoogleModelProfile,
-    GoogleThinkingLevel,
     _with_google_cloud_media_types,  # pyright: ignore[reportPrivateUsage]
 )
 from ..providers import Provider, infer_provider
@@ -87,6 +83,7 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _google_common,
     _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
@@ -156,8 +153,6 @@ try:
         UrlContextMetadata,
         VideoMetadataDict,
     )
-
-    from ..providers.google import _LONG_DECODE_TIMEOUT  # pyright: ignore[reportPrivateUsage]
 except ImportError as _import_error:
     raise ImportError(
         'Please install `google-genai` to use the Google model, '
@@ -561,15 +556,8 @@ def _move_caller_user_agent(headers: dict[str, str], client_headers: Mapping[str
 def _request_http_options(client: Client, model_settings: ModelSettings, headers: dict[str, str]) -> HttpOptionsDict:
     """The per-request HTTP options for `client`: headers, plus the `timeout` and `max_retries` settings."""
     # The SDK sends the client's timeout, which the provider pins to the HTTP client's read timeout, as
-    # `X-Server-Timeout`: a deadline for the whole request. A read timeout only bounds the wait between bytes,
-    # so the server would cut off a response that streams for longer. The SDK leaves the header alone when
-    # it's already set (in this exact spelling), so ask for at least Google's long-decode figure instead,
-    # unless the caller sent their own in `extra_headers`.
-    if caller_name := next((name for name in headers if name.lower() == 'x-server-timeout'), None):
-        headers['X-Server-Timeout'] = headers.pop(caller_name)
-    elif client_timeout_ms := client._api_client._http_options.timeout:  # pyright: ignore[reportPrivateUsage]
-        server_timeout = max(client_timeout_ms / 1000, _LONG_DECODE_TIMEOUT)
-        headers['X-Server-Timeout'] = str(math.ceil(server_timeout))
+    # `X-Server-Timeout`, and leaves a header already set in this exact spelling alone.
+    _google_common.set_server_timeout(headers, client._api_client._http_options.timeout)  # pyright: ignore[reportPrivateUsage]
     # With no user-agent from the caller, our per-request `user-agent` replaces the client's own, so carry over
     # a value the user set on a client they built, and add ours unless the client has it.
     client_headers = client._api_client._http_options.headers or {}  # pyright: ignore[reportPrivateUsage]
@@ -599,71 +587,11 @@ def _request_http_options(client: Client, model_settings: ModelSettings, headers
     return http_options
 
 
-def _thinking_effort_to_level(thinking: ThinkingEffort) -> GoogleThinkingLevel:
-    """Normalize unified thinking effort to a Gemini thinking level."""
-    level_by_effort: dict[ThinkingEffort, GoogleThinkingLevel] = {
-        'minimal': 'MINIMAL',
-        'low': 'LOW',
-        'medium': 'MEDIUM',
-        'high': 'HIGH',
-        # Models whose level set lacks `XHIGH` snap these to `HIGH`. `google-genai`'s `ThinkingLevel` doesn't list
-        # `XHIGH` yet, so the SDK warns `XHIGH is not a valid ThinkingLevel` and sends it anyway.
-        'xhigh': 'XHIGH',
-        'max': 'XHIGH',
-    }
-    return level_by_effort[thinking]
-
-
 _GEMINI_2_5_PRO_MIN_THINKING_BUDGET = 128
 """The smallest `thinking_budget` Gemini 2.5 Pro accepts, as it can't turn thinking off.
 
 See https://ai.google.dev/gemini-api/docs/thinking#set-budget.
 """
-
-_GOOGLE_THINKING_LEVEL_ORDER: dict[GoogleThinkingLevel, int] = {
-    level: order for order, level in enumerate(GOOGLE_THINKING_LEVEL_SCALE)
-}
-
-
-def _snap_thinking_level(
-    level: GoogleThinkingLevel, levels: frozenset[GoogleThinkingLevel] | None
-) -> GoogleThinkingLevel:
-    """Snap a thinking level to the nearest one the model accepts, on the `MINIMAL < LOW < MEDIUM < HIGH < XHIGH` scale.
-
-    Equidistant levels round down to the cheaper one. `None` means the model takes the default
-    `GOOGLE_THINKING_LEVELS`. Shared with the Live path, which differs only in where its level set
-    comes from.
-    """
-    if levels is None:
-        levels = GOOGLE_THINKING_LEVELS
-    if not levels:
-        raise UserError('`google_thinking_levels` must contain at least one level when `thinking` is set')
-    if unknown := levels - frozenset(GOOGLE_THINKING_LEVEL_SCALE):
-        raise UserError(
-            f'`google_thinking_levels` contains unknown levels: {sorted(unknown)!r}; '
-            f'expected a subset of {sorted(GOOGLE_THINKING_LEVEL_SCALE)!r}'
-        )
-    requested = _GOOGLE_THINKING_LEVEL_ORDER[level]
-    return min(
-        levels,
-        key=lambda candidate: (
-            abs(_GOOGLE_THINKING_LEVEL_ORDER[candidate] - requested),
-            _GOOGLE_THINKING_LEVEL_ORDER[candidate],
-        ),
-    )
-
-
-def _resolve_google_thinking_level(thinking: ThinkingEffort, profile: GoogleModelProfile) -> GoogleThinkingLevel:
-    """Map unified thinking to the closest thinking level the model supports."""
-    levels = profile.get('google_thinking_levels')
-    if levels is None:
-        # Sparse profile without a level set: fall back to the boolean floor flag.
-        levels = (
-            GOOGLE_THINKING_LEVELS
-            if profile.get('google_supports_minimal_thinking_level', True)
-            else GOOGLE_THINKING_LEVELS - {'MINIMAL'}
-        )
-    return _snap_thinking_level(_thinking_effort_to_level(thinking), levels)
 
 
 def _batch_module():
@@ -844,33 +772,8 @@ class GoogleModel(Model[Client]):
         if not profile.get('google_supports_computer_use', False):
             native_tools = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {ComputerTool}
             profile = {**profile, 'supported_native_tools': native_tools}
-        # Google documents only `minimal` and `high` for this model on both APIs, but the Gemini API
-        # alone enforces that: verified live 2026-09-30, the Gemini API 400s `LOW` and `MEDIUM` for this
-        # id and its `-preview`, while Vertex (`global`, `us`, `eu`) accepts them. So the level set
-        # follows the client's transport, which `google_model_profile` can't see from the model name.
-        # https://ai.google.dev/gemini-api/docs/image-generation
-        # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
-        if (
-            self._model_name.startswith('gemini-3.1-flash-image')
-            and 'google_thinking_levels' not in profile
-            and not self._is_google_cloud
-        ):
-            return {**profile, 'google_thinking_levels': frozenset(('MINIMAL', 'HIGH'))}
-        # Verified live 2026-11-18 against the Gemini API: `gemini-4-neon` accepts `LOW`, `MEDIUM`, `HIGH` and
-        # `XHIGH`, and returns 400 `Thinking level MINIMAL is not supported for this model`. Vertex is not probed and
-        # its thinking table doesn't list the model, so Vertex keeps the default levels.
-        # https://ai.google.dev/gemini-api/docs/thinking#thinking-levels
-        # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
-        if (
-            self._model_name.startswith('gemini-4-neon')
-            and 'google_thinking_levels' not in profile
-            and not self._is_google_cloud
-        ):
-            return {
-                **profile,
-                'google_thinking_levels': frozenset(('LOW', 'MEDIUM', 'HIGH', 'XHIGH')),
-                'google_supports_minimal_thinking_level': False,
-            }
+        if not self._is_google_cloud:
+            profile = _google_common.with_gemini_api_thinking_levels(self._model_name, profile)
         # Google documents Gemini 3 Pro as unable to turn thinking off, and the Gemini API 400s
         # `thinking_budget=0` for it, but Vertex (`global`) accepts it and returns no thoughts: verified live
         # 2026-10-23 on `gemini-3.1-pro-preview` and its `-customtools` variant, 8 of 8 reasoning prompts.
@@ -1317,7 +1220,9 @@ class GoogleModel(Model[Client]):
             if profile.get('google_disables_thinking_with_zero_budget', False):
                 return ThinkingConfigDict(thinking_budget=0)
             # Default Gemini 3+ behaviour represents `thinking=False` as its lowest supported thinking level.
-            return ThinkingConfigDict(thinking_level=cast(Any, _resolve_google_thinking_level('minimal', profile)))
+            return ThinkingConfigDict(
+                thinking_level=cast(Any, _google_common.resolve_google_thinking_level('minimal', profile))
+            )
 
         if not supports_thinking_level:
             # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget
@@ -1337,7 +1242,8 @@ class GoogleModel(Model[Client]):
         if thinking is True:
             return ThinkingConfigDict(include_thoughts=True)
         return ThinkingConfigDict(
-            include_thoughts=True, thinking_level=cast(Any, _resolve_google_thinking_level(thinking, profile))
+            include_thoughts=True,
+            thinking_level=cast(Any, _google_common.resolve_google_thinking_level(thinking, profile)),
         )
 
     async def _build_content_and_config(
@@ -2267,11 +2173,17 @@ def _content_model_response(
                 part = _thinking_part_dict(item, item_signature)
             case NativeToolCallPart():
                 part = _native_tool_call_part_dict(
-                    item, accepts(m, item), item_signature, supports_tool_combination=supports_tool_combination
+                    item,
+                    accepts(m, item) and not _is_interactions_step(item),
+                    item_signature,
+                    supports_tool_combination=supports_tool_combination,
                 )
             case NativeToolReturnPart():
                 part = _native_tool_return_part_dict(
-                    item, accepts(m, item), item_signature, supports_tool_combination=supports_tool_combination
+                    item,
+                    accepts(m, item) and not _is_interactions_step(item),
+                    item_signature,
+                    supports_tool_combination=supports_tool_combination,
                 )
             case FilePart():
                 inline_data_dict: BlobDict = {'data': item.content.data, 'mime_type': item.content.media_type}
@@ -2345,6 +2257,15 @@ def _function_call_part_dict(
         # both reject a first function call without one (verified live, 2026-10-27).
         part['thought_signature'] = b'skip_thought_signature_validator'
     return part
+
+
+def _is_interactions_step(item: NativeToolCallPart | NativeToolReturnPart) -> bool:
+    """Whether `item` came from `GoogleInteractionsModel`, which shares the `google` canonical system.
+
+    Interactions native steps include tools and result shapes GenerateContent can't replay, such as remote MCP calls
+    or a string code execution result, so they're omitted, as Interactions omits GenerateContent's native parts.
+    """
+    return 'google_interactions_step_index' in (item.provider_details or {})
 
 
 def _native_tool_call_part_dict(
@@ -2576,21 +2497,10 @@ def _map_inline_data_part(inline_data: Blob, thought: bool | None) -> FilePart |
     return FilePart(content=BinaryContent.narrow_type(content))
 
 
-def _character_index(text: str, byte_index: int) -> int | None:
-    """Convert a Gemini UTF-8 byte offset to a Python string index."""
-    encoded = text.encode()
-    if not 0 <= byte_index <= len(encoded):
-        return None
-    try:
-        return len(encoded[:byte_index].decode())
-    except UnicodeDecodeError:
-        return None
-
-
 def _segment_anchor(text: str, segment: Segment, byte_offset: int = 0) -> ContentCitationAnchor | None:
     """Return the anchor of a segment's offsets in `text`, if they select the segment text Google reports for them."""
-    start = _character_index(text, (segment.start_index or 0) - byte_offset)
-    end = _character_index(text, (segment.end_index or 0) - byte_offset)
+    start = _google_common.character_index(text, (segment.start_index or 0) - byte_offset)
+    end = _google_common.character_index(text, (segment.end_index or 0) - byte_offset)
     if start is not None and end is not None and start < end and text[start:end] == segment.text:
         return ContentCitationAnchor(start=start, end=end)
     return None

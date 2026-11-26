@@ -547,6 +547,9 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # for a relative path. The harness relativizes absolute workspace paths with it.
     ('os.path.abspath', '<frozen posixpath>', 'relpath'),
     ('os.path.abspath', 'posixpath.py', 'relpath'),
+    # Pax looks for its config and state folders, and moves one under the old `pydantic-clai2` name, once per
+    # process for each, on the first `config_dir()` or `state_dir()` call, which may be in async code.
+    ('os.stat', 'pydantic_ai_pax/paths.py', 'pax_dir'),
     # Spawning a Monty worker pool locates the worker binary, once per pool.
     ('os.stat', 'pydantic_monty/_binary.py', 'find_monty_binary'),
     # Inside a Temporal workflow, Code Mode reaches Monty through a blocking portal, the only way to reach it
