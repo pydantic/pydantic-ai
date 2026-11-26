@@ -22,6 +22,7 @@ from ._output import (
     run_output_process_hooks,
     run_output_validate_hooks,
 )
+from ._parts_manager import tool_def_ui_visibility
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import (
     ApprovalRequired,
@@ -607,7 +608,12 @@ class ToolManager(Generic[AgentDepsT]):
         return _record_attempt(
             ToolRetryError(
                 build_retried_tool_return(
-                    error, tool_name=name, tool_call_id=call.tool_call_id, tool_kind=call.tool_kind, cause=cause
+                    error,
+                    tool_name=name,
+                    tool_call_id=call.tool_call_id,
+                    tool_kind=call.tool_kind,
+                    ui_visibility=call.ui_visibility,
+                    cause=cause,
                 )
             ),
             attempt=attempt,
@@ -622,6 +628,7 @@ class ToolManager(Generic[AgentDepsT]):
             content=error.message,
             tool_call_id=call.tool_call_id,
             tool_kind=call.tool_kind,
+            ui_visibility=call.ui_visibility,
             outcome='failed',
         )
         return ToolFailedError(m)
@@ -868,21 +875,26 @@ class ToolManager(Generic[AgentDepsT]):
 
         return await cap.after_tool_execute(ctx, call=call, tool_def=tool_def, args=args, result=tool_result)
 
-    def _with_tool_kind(self, call: ToolCallPart) -> ToolCallPart:
-        """Give a call its tool's `tool_kind` when it lacks one, promoted to the typed part registered for it.
+    def _with_tool_kind_and_visibility(self, call: ToolCallPart, *, approved: bool) -> ToolCallPart:
+        """Give a call its tool's `tool_kind` and `ui_visibility` when it lacks them, promoted to the typed part registered for it.
 
-        Calls the model issues are promoted from the same `ToolDefinition.tool_kind` before they get here;
-        this covers calls a dispatcher builds itself, like code mode's sandboxed calls, so hooks and
-        deferred-call handlers see the same typed part however the tool was called.
+        Calls the model issues are promoted and stamped from the same `ToolDefinition` before they get here;
+        this covers calls a dispatcher builds itself, like code mode's sandboxed calls, and calls rebuilt from
+        history that lost their stamp, like a UI client's, so hooks, deferred-call handlers and the call's return
+        see the same part however the tool was called. An approved call was shown to the user to approve, so a
+        `'private'` one is `'redacted'`, as it was from the moment it deferred.
         """
-        if (
-            call.tool_kind is not None
-            or self.tools is None
-            or (tool := self.tools.get(call.tool_name)) is None
-            or (kind := tool.tool_def.tool_kind) is None
-        ):
+        if self.tools is None or (tool := self.tools.get(call.tool_name)) is None:
             return call
-        return ToolCallPart.narrow_type(call, tool_kind=kind)
+        tool_def = tool.tool_def
+        if (
+            call.ui_visibility is None
+            and (visibility := tool_def_ui_visibility(tool_def, approved=approved)) is not None
+        ):
+            call = replace(call, ui_visibility=visibility)
+        if call.tool_kind is None and (kind := tool_def.tool_kind) is not None:
+            call = ToolCallPart.narrow_type(call, tool_kind=kind)
+        return call
 
     def _resolve_tool(self, call: ToolCallPart) -> tuple[str, ToolsetTool[AgentDepsT]]:
         """Resolve tool name to ResolvedTool, raising ModelRetry for unknown or unavailable tools."""
@@ -1051,7 +1063,7 @@ class ToolManager(Generic[AgentDepsT]):
         assert self.ctx is not None
         ctx = self.ctx
         tool: ToolsetTool[AgentDepsT] | None = None
-        call = self._with_tool_kind(call)
+        call = self._with_tool_kind_and_visibility(call, approved=approved)
 
         try:
             _name, tool = self._resolve_tool(call)
@@ -1429,6 +1441,10 @@ class ToolManager(Generic[AgentDepsT]):
         except SkipToolExecution as e:
             _usage_attribution.record_tool_call(usage)
             tool_result = e.result
+            # Only a call that ran can make the output it submitted the final result.
+            # Only a `RunContext` built outside an agent run has no submitter.
+            if (submitter := validated.ctx._live_output_submitter) is not None:  # pyright: ignore[reportPrivateUsage]  # pragma: no branch
+                submitter.discard_submission(validated.call.tool_call_id)
 
         # Only record success when wrapping is requested, mirroring the `failed_tools` gating:
         # raw-mode callers (e.g. sandboxed dispatch) leave retry-budget state untouched, so a
@@ -1530,7 +1546,7 @@ class ToolManager(Generic[AgentDepsT]):
             CallDeferred / ApprovalRequired: No handler resolved the call, or the
                 approved tool re-raised a deferral.
         """
-        call = self._with_tool_kind(call)
+        call = self._with_tool_kind_and_visibility(call, approved=approved)
         try:
             validated = await self.validate_tool_call(
                 call,
@@ -1698,14 +1714,22 @@ class ToolManager(Generic[AgentDepsT]):
         if isinstance(tool_call_result, ModelRetry):
             raise ToolRetryError(
                 build_retried_tool_return(
-                    tool_call_result, tool_name=call.tool_name, tool_call_id=call.tool_call_id, tool_kind=call.tool_kind
+                    tool_call_result,
+                    tool_name=call.tool_name,
+                    tool_call_id=call.tool_call_id,
+                    tool_kind=call.tool_kind,
+                    ui_visibility=call.ui_visibility,
                 )
             )
         # TODO(v3): remove `RetryPromptPart`
         if isinstance(tool_call_result, _messages.RetryPromptPart):  # pyright: ignore[reportDeprecated]
             raise ToolRetryError(
                 retried_return_from_legacy(
-                    tool_call_result, tool_name=call.tool_name, tool_call_id=call.tool_call_id, tool_kind=call.tool_kind
+                    tool_call_result,
+                    tool_name=call.tool_name,
+                    tool_call_id=call.tool_call_id,
+                    tool_kind=call.tool_kind,
+                    ui_visibility=call.ui_visibility,
                 )
             )
         # Must be a ToolReturn (the only remaining DeferredToolResult variant). Return
