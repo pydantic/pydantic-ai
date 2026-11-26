@@ -591,14 +591,10 @@ def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.R
     if (
         isinstance(
             part,
-            SystemPromptPart
-            | ToolAvailabilityDeltaPart
-            | CapabilityLoadDeltaPart
-            | InstructionDeltaPart
-            | ModelSettingsDeltaPart,
+            SystemPromptPart | ToolAvailabilityDeltaPart | CapabilityLoadDeltaPart | ModelSettingsDeltaPart,
         )
         or (version >= 6 and isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part))
-        or (isinstance(part, CapabilityPart) and effective_authority(part) == 'operator')
+        or (isinstance(part, CapabilityPart | InstructionDeltaPart) and effective_authority(part) == 'operator')
     ):
         return 'system'
     # TODO(v3): remove `RetryPromptPart`, still reachable here because `pydantic_ai.all_messages`

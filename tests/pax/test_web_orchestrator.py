@@ -125,7 +125,7 @@ def test_the_orchestrator_chat_streams_asks_and_is_saved(make_web: MakeWeb, tmp_
         ['user', 'tool', 'tool', 'assistant'],
     )
     assert state['items'][-1]['text'] == 'All set.'
-    saved = tmp_path / 'state' / 'pydantic-clai2' / 'orchestrator.json'
+    saved = tmp_path / 'state' / 'pydantic-ai-pax' / 'orchestrator.json'
     assert saved.is_file() and saved.stat().st_mode & 0o777 == 0o600
     # A restarted Pax reads the same conversation; the session's own stays empty.
     again = Orchestrator(service=web_.plugin.service)
@@ -191,7 +191,7 @@ def test_stopping_failing_and_starting_over(make_web: MakeWeb, tmp_path: Path) -
 
         assert web_.post('/api/orchestrator/clear').status_code == 204
         assert orchestrator_until(socket, OrchestratorState)[1].items == []
-    assert not (tmp_path / 'state' / 'pydantic-clai2' / 'orchestrator.json').exists()
+    assert not (tmp_path / 'state' / 'pydantic-ai-pax' / 'orchestrator.json').exists()
 
     # `/web stop` stops a running turn: no page is left to watch or answer it.
     web_.post('/api/orchestrator/input', {'text': 'Work until I stop you'})
