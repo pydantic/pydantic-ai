@@ -1,5 +1,6 @@
 # !command runs in your shell; the output is saved for the next prompt.
 Source tapes/common.tape
+Set Height 1600
 Output shots/shell.txt
 Hide
 Type 'pax-demo' Enter
