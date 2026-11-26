@@ -20,6 +20,7 @@ version="${version##*/}"
 manifests="$releases/download/${version}/sandbox-with-extensions.yaml"
 name=pydantic-ai-live
 image=pydantic-ai-live/sandboxd:live
+desktop_image=pydantic-ai-live/sandboxd:desktop
 
 if kind get clusters | grep -qx "$name"; then
   kind export kubeconfig --name "$name" --kubeconfig "$KUBECONFIG"
@@ -30,7 +31,9 @@ fi
 # `--pull` so a reused cluster still gets today's `latest-main`, not the copy Docker cached.
 docker build --quiet --pull --tag "$image" --build-arg "SANDBOXD_IMAGE=${sandboxd_image}" \
   --file "$here/sandboxd.Dockerfile" "$here"
-kind load docker-image --name "$name" "$image"
+docker build --quiet --tag "$desktop_image" --target desktop --build-arg "SANDBOXD_IMAGE=${sandboxd_image}" \
+  --file "$here/sandboxd.Dockerfile" "$here"
+kind load docker-image --name "$name" "$image" "$desktop_image"
 
 # A moving tag says nothing in a failed run's log; the digest and release name what ran.
 echo "sandboxd: $(docker buildx imagetools inspect "$sandboxd_image" --format '{{.Name}}@{{.Manifest.Digest}}')"
@@ -39,7 +42,8 @@ kubectl apply --server-side -f "$manifests"
 kubectl -n agent-sandbox-system rollout status deploy --timeout=180s
 kubectl wait --for=condition=Established crd --all --timeout=60s
 
-sed "s|SANDBOXD_IMAGE|${image}|" "$here/pools.yaml" | kubectl apply -f -
+sed -e "s|SANDBOXD_IMAGE|${image}|" -e "s|DESKTOP_IMAGE|${desktop_image}|" "$here/pools.yaml" | kubectl apply -f -
 kubectl wait swp/python-pool --for=jsonpath='{.status.readyReplicas}'=2 --timeout=180s
 kubectl wait swp/sandboxd-other-ports --for=jsonpath='{.status.readyReplicas}'=1 --timeout=180s
 kubectl wait swp/sandboxd-token --for=jsonpath='{.status.readyReplicas}'=1 --timeout=180s
+kubectl wait swp/desktop-pool --for=jsonpath='{.status.readyReplicas}'=1 --timeout=180s

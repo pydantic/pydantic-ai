@@ -272,8 +272,7 @@ Each detection emits a zero-duration `loop detected` span, so it shows in the ru
 | `detect_loops.action` | `nudge`, `error`, or `handler` |
 | `detect_loops.count` | `DetectedLoop.count` |
 | `detect_loops.window` | `DetectedLoop.window` |
-| `detect_loops.tool_names` | The tools involved that the run offers |
-| `detect_loops.unknown_tool_names` | Tools involved that the run doesn't offer, only when `trace_include_content` is enabled, since a made-up name is model output |
+| `detect_loops.tool_names` | The tools involved. Without `trace_include_content`, only the ones the run offers, since a made-up name is model output |
 | `detect_loops.fingerprints` | The hashes of the repeated calls or text, only when `trace_include_content` is enabled |
 | `detect_loops.passage` | The passage that repeated within a response, only when `trace_include_content` is enabled |
 

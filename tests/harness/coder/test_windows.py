@@ -12,11 +12,16 @@ from pathlib import Path
 import anyio
 import pytest
 
+from pydantic_ai import RunContext
 from pydantic_ai.capabilities import WindowsWorkspace
+from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
+from pydantic_ai.workspaces import Workspace
 from pydantic_ai.workspaces.windows import WindowsWorkspaceBackend
 from pydantic_ai_harness import Coder
 from pydantic_ai_harness.file_system import FileSystem
-from pydantic_ai_harness.shell import Shell
+from pydantic_ai_harness.shell import Shell, ShellToolset
 
 from .._tool_calls import call_tool, call_tools
 
@@ -82,6 +87,37 @@ class TestShellOnWindows:
         )
         result = await call_tool([Shell[None](tools=['shell']), workspace], 'shell', {'command': script})
         assert 'True 1' in result
+
+    async def test_a_retried_launch_without_a_handle_is_pending(self, project: Path) -> None:
+        """A claimed job directory is reported as a pending launch, and the command is not started again."""
+        toolset = ShellToolset[None](
+            allowed_commands=[],
+            denied_commands=[],
+            denied_operators=[],
+            default_timeout=10,
+            max_output_chars=50_000,
+            persist_cwd=False,
+            allow_interactive=False,
+        )
+        ctx = RunContext[None](
+            deps=None,
+            model=TestModel(),
+            usage=RunUsage(),
+            prompt=None,
+            messages=[],
+            run_step=0,
+            workspace=Workspace(WindowsWorkspaceBackend(project)),
+            run_id='durable-run',
+            tool_call_id='launch-1',
+        )
+        started = await toolset.start_command(ctx, 'Write-Output hi')
+        directory = project / '.pydantic-ai-harness' / 'shell' / started.rsplit('ID: ', 1)[1].strip()
+        # Without a handle, the claimed directory is a launch still in flight, or one whose reply was lost.
+        (directory / 'handle').unlink()
+        with pytest.raises(
+            ModelRetry, match=r'^Background command launch is pending; retry with the same tool call ID\.$'
+        ):
+            await toolset.start_command(ctx, 'Write-Output hi')
 
     async def test_the_wrapper_reads_its_script_from_the_job_directory(self, project: Path) -> None:
         """Antivirus software flags an `-EncodedCommand` launch, so no script goes on the wrapper's command line."""

@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Literal, TypeAlias
 import anyio
 from opentelemetry.util.types import AttributeValue
 
-from pydantic_ai._telemetry import record_decision
 from pydantic_ai._utils import ScopedTask
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, WrapModelRequestHandler
 from pydantic_ai.exceptions import AgentRunError, ModelRetry
@@ -42,6 +41,7 @@ from pydantic_ai.messages import (
     ToolCallPartDelta,
     ToolReturnPart,
 )
+from pydantic_ai.telemetry import record_decision, records_content
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._durable import in_durable_context
 from pydantic_ai_harness.detect_loops._detectors import (
@@ -764,14 +764,13 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
 
     def _trace(self, ctx: RunContext[AgentDepsT], loop: DetectedLoop) -> None:
         action = self.action
-        # The names come from the model's tool calls, so one the run never offered is model output.
-        offered = self._offered_tool_names
-        known_tool_names = tuple(name for name in loop.tool_names if name in offered)
-        unknown_tool_names = tuple(name for name in loop.tool_names if name not in offered)
+        # The names come from the model's tool calls, so one the run never offered is model output,
+        # recorded only with content.
+        tool_names = loop.tool_names
+        if not records_content(ctx):
+            tool_names = tuple(name for name in tool_names if name in self._offered_tool_names)
         # Hashes of short arguments, such as a user id, can be reversed by trying candidate values.
         content: dict[str, AttributeValue] = {'detect_loops.fingerprints': loop.fingerprints}
-        if unknown_tool_names:
-            content['detect_loops.unknown_tool_names'] = unknown_tool_names
         if loop.passage is not None:
             content['detect_loops.passage'] = loop.passage
         record_decision(
@@ -782,7 +781,7 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
                 'detect_loops.action': action if isinstance(action, str) else 'handler',
                 'detect_loops.count': loop.count,
                 'detect_loops.window': loop.window,
-                'detect_loops.tool_names': known_tool_names,
+                'detect_loops.tool_names': tool_names,
             },
             content=content,
         )

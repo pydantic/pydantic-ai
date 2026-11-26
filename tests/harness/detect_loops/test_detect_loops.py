@@ -471,9 +471,8 @@ class TestDetectLoops:
                     'detect_loops.action': 'nudge',
                     'detect_loops.count': 3,
                     'detect_loops.window': 3,
-                    'detect_loops.tool_names': (),
+                    'detect_loops.tool_names': ('made_up_tool',),
                     'detect_loops.fingerprints': ('abc1c4bb4fcb40a0',),
-                    'detect_loops.unknown_tool_names': ('made_up_tool',),
                 }
             )
         )

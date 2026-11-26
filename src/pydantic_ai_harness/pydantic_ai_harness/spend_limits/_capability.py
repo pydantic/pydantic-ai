@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 
 from pydantic import TypeAdapter
 
-from pydantic_ai._telemetry import record_decision, records_content
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, durable_operation
 from pydantic_ai.exceptions import UsageLimitUnavailableWarning, UserError
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequestAttempt, ModelResponse
@@ -24,6 +23,7 @@ from pydantic_ai.models._continuation import (
     observe_continuation_segments,
     resumed_response,
 )
+from pydantic_ai.telemetry import record_decision
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.spend_limits._budget import (
@@ -279,11 +279,17 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         """Refuse the request if any budget with a ceiling is already spent."""
-        resolved = [(budget, key, resolve_ceilings(budget, ctx)) for budget, key in await self._keyed(ctx)]
-        enforcing = [entry for entry in resolved if entry[2].enforces]
-        read = await self._read(list(dict.fromkeys(key for _, key, _ in enforcing)))
-        for budget, key, limits in enforcing:
-            self._check(budget, limits, read[key], ctx)
+        now = await self._now()
+        # Each scope is resolved once, so a refusal span names the counter that was checked.
+        scoped = [(budget, scope_key(budget, ctx, None)) for budget in self.budgets]
+        resolved = [
+            (budget, scope, self._key(budget, ctx, now, scope), resolve_ceilings(budget, ctx))
+            for budget, scope in scoped
+        ]
+        enforcing = [entry for entry in resolved if entry[3].enforces]
+        read = await self._read(list(dict.fromkeys(key for _, _, key, _ in enforcing)))
+        for budget, scope, key, limits in enforcing:
+            self._check(budget, scope, limits, read[key], ctx)
         return request_context
 
     async def wrap_model_request(
@@ -619,7 +625,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
             ):
                 unresolved.append(budget.name)
                 continue
-            keyed.append((budget, self._key(budget, ctx, now, scope), limits))
+            keyed.append((budget, self._key(budget, ctx, now, scope_key(budget, ctx, scope)), limits))
         read = await self._read(list(dict.fromkeys(key for _, key, _ in keyed)))
         statuses = tuple(_status(budget, key, read[key], limits) for budget, key, limits in keyed)
         return statuses, tuple(unresolved)
@@ -715,13 +721,13 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         budget: Budget[AgentDepsT],
         ctx: RunContext[AgentDepsT] | None,
         now: datetime,
-        scope: str | None,
+        scope: str,
     ) -> str:
-        """The store key this budget accumulates under right now."""
+        """The store key this budget accumulates under right now, in the `scope` segment from `scope_key`."""
         bucket_id = bucket(budget.window, ctx, now)
         if bucket_id is None:  # pragma: no cover - callers filter run-scoped windows out first
             raise UserError(f"Budget {budget.name!r} uses window='{budget.window}', which needs a run.")
-        return store_key(budget, bucket_id, scope_key(budget, ctx, scope))
+        return store_key(budget, bucket_id, scope)
 
     def _dedup_token(self, ctx: RunContext[AgentDepsT], response: ModelResponse, response_index: int) -> str:
         """Identify one response from replay-stable run and response data.
@@ -760,13 +766,16 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         # Preserve existing single-response replay keys; distinguish subsequent provider responses.
         return delimited(token, str(response_index)) if response_index else token
 
-    def _check(self, budget: Budget[AgentDepsT], limits: Ceilings, spent: Spent, ctx: RunContext[AgentDepsT]) -> None:
+    def _check(
+        self, budget: Budget[AgentDepsT], scope: str, limits: Ceilings, spent: Spent, ctx: RunContext[AgentDepsT]
+    ) -> None:
         """Raise if `spent` has reached either of the budget's ceilings, the dollar one checked first."""
         usd, tokens = limits
         if usd is not None and spent.usd >= usd:
             # OpenTelemetry has no decimal type; a dollar amount is recorded as a float.
             self._refuse(
                 budget,
+                scope,
                 ctx,
                 f'spent ${spent.usd} of ${usd}',
                 {'spend.limit_usd': float(usd), 'spend.spent_usd': float(spent.usd)},
@@ -774,6 +783,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         if tokens is not None and spent.tokens >= tokens:
             self._refuse(
                 budget,
+                scope,
                 ctx,
                 f'used {spent.tokens} of {tokens} tokens',
                 {'spend.limit_tokens': tokens, 'spend.spent_tokens': spent.tokens},
@@ -782,6 +792,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     def _refuse(
         self,
         budget: Budget[AgentDepsT],
+        scope: str,
         ctx: RunContext[AgentDepsT],
         detail: str,
         ceiling: Mapping[str, float | int],
@@ -796,8 +807,8 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                 **ceiling,
             },
             # A scope key is usually a tenant or user id, and a trace has a wider audience than the
-            # application that produced it. `budget.scope` is user code, so it runs only when recorded.
-            content={'spend.scope': budget.scope(ctx)} if budget.scope is not None and records_content(ctx) else None,
+            # application that produced it.
+            content={'spend.scope': scope} if budget.scope is not None else None,
         )
         raise SpendLimitExceeded(f'Budget {budget.name!r} exhausted for this {budget.window}: {detail}')
 
@@ -818,7 +829,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     async def _keyed(self, ctx: RunContext[AgentDepsT]) -> list[tuple[Budget[AgentDepsT], str]]:
         """Each budget paired with the store key it accumulates under right now."""
         now = await self._now()
-        return [(budget, self._key(budget, ctx, now, None)) for budget in self.budgets]
+        return [(budget, self._key(budget, ctx, now, scope_key(budget, ctx, None))) for budget in self.budgets]
 
     def _price_of(self, response: ModelResponse, *, failed_attempt: bool = False) -> tuple[Decimal, bool, str | None]:
         """What cost to record, whether it prices the whole response, and why it was rejected.
