@@ -2306,6 +2306,15 @@ sub-agent, or a delegation to `self` from an agent you supply (`pax --agent`), w
 per run rather than bound to the agent. The model is told to do the work itself instead. Outside `full` the model also gets no
 [`computer`](#computer-use-computer-use) tool.
 
+Outside `full`, a change to Pax's own settings always asks, and only you can approve it: a file write to your
+[Pax folder](#files) (its settings database, credential files, and `plugins/`), to the database and `plugins/`
+folder `--database` names, to any `.pax/` or `.clai/` folder, or to a repository's `.git/hooks/`; a shell command
+that names one of these in an argument or redirection, unless it only reads them with a program such as `cat` or
+`grep`; and `pax config set` or `reset` and `pax plugins add`, `enable`, `disable`, or `remove`. A session no one
+can be asked in denies them. Commands are matched by their words, so one that builds the path as it runs, such as
+`cd .pax && ...` or a script the agent wrote, is not caught: like the command patterns, this is a convenience, not
+a sandbox. `full` lets these run too.
+
 ### Compacting the conversation
 
 The built-in `compaction` plugin is on by default, with or without `coder`.

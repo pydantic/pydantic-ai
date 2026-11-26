@@ -383,3 +383,17 @@ def decide(
         if decided is not None:
             found.append(decided)
     return _strictest(found)
+
+
+def command_matches(rules: Sequence[PermissionRule[Any]], command: str, *, posix: bool) -> bool:
+    """Whether one of the ask `rules` matches `command`, not counting the ask for a command too complex to split."""
+    found = _command_rule(rules, command, posix=posix) if rules else None
+    return found is not None and found is not _UNSPLITTABLE_RULE
+
+
+def command_segments(command: str) -> list[tuple[list[str], bool]] | None:
+    """The simple commands in `command`, each with whether it redirects; `None` when it is too complex to split."""
+    if len(command) > _COMMAND_LIMIT:
+        return None
+    segments = _segments(command)
+    return None if segments is None else [(segment.words, segment.redirected) for segment in segments]

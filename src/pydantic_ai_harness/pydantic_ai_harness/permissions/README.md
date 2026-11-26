@@ -133,6 +133,26 @@ An allow rule trusts everything after its words, so allowing `find` also allows 
 
 In an agent spec, `rules` is a list of mappings of these fields (`PermissionRuleSpec`), with `tools` limited to the serializable forms.
 
+## Protected paths
+
+`protected_paths` names paths only a person may approve a change to, such as the agent's own settings, as globs. `protected_commands` names commands that change them, such as the agent's own settings command, as words like an ask rule's `command`. Outside `'full'`, a call that changes one always asks:
+
+```python
+from pydantic_ai_harness.permissions import Permissions
+
+permissions = Permissions(
+    'auto',
+    protected_paths=['/home/me/.config/my-agent', '/home/me/.config/my-agent/*', '.git/hooks/*'],
+    protected_commands=['my-agent config set'],
+)
+```
+
+- A **file write** to a matching path asks. The path is matched as resolved against the working directory and, where the workspace can follow symlinks, as where it leads. A relative glob also matches the end of a path, so `.git/hooks/*` covers every repository's hooks.
+- A **command** asks when one of its words names a matching path, a redirection target or an `--option=value` value included, with quotes removed and `~` and environment variables expanded as in this process. A command made only of programs that read the files they name (`cat`, `grep`, `head`, `ls`, and a few more), without redirection, still runs. A command matching one of `protected_commands`, by the same word matching as an ask rule's `command`, asks too.
+- A rule's allow does not let such a call run, and a rule's deny still refuses it. The held request's `PermissionRequest.protected` is `True`, and an [`ApprovalReviewer`](https://pydantic.dev/docs/ai/harness/approval-reviewer/) never reviews it, so only a person can approve it.
+
+The check is best effort, by the command's text: a path a command builds at run time, as `cd .git && ...` or a script the agent wrote does, is not seen. It keeps an agent from changing these paths without a person noticing, and is not a sandbox: use [one](https://pydantic.dev/docs/ai/core-concepts/workspace/) when the agent must not reach a path.
+
 ## Changing the mode during a run
 
 `mode` can be a function of the run context. It is read on every call, so an application can switch modes while a run is going, and the run's next call follows the new mode:

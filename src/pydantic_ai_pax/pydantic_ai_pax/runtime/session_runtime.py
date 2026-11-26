@@ -970,7 +970,9 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         )
         self.sessions.quiet = self.forks.quiet
         self.session.on_setup_error = self.capability_failed
-        self.permissions = session_permissions(lambda: self.context.settings.permissions)
+        self.permissions = session_permissions(
+            lambda: self.context.settings.permissions, database=self.context.store.path
+        )
 
     def run_plugins(self) -> tuple[AgentCapability[DepsT], ...]:
         """Capabilities bound to the next run: supplied, plugin-registered (guarded), strict mode off, then speculation.

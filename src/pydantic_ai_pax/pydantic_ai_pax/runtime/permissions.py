@@ -5,13 +5,15 @@ the browser's question card both answer it; a typed answer denies the call with 
 plugin answers questions binds `approval_handler` with its answerer, an `ApprovalHandler` whose handler is
 harness `approval_ask`. A call no handler answered, as in a session no one can be asked in, is denied by
 `DenyUnanswered`. A `SubAgents` delegation that the session's `Permissions` would not reach is refused outside
-`full` by `KeepDelegatesChecked`.
+`full` by `KeepDelegatesChecked`. Outside `full`, a change to Pax's own settings always asks: see `protected_paths`.
 """
 
 import difflib
+import glob
 import unicodedata
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
@@ -41,6 +43,8 @@ from pydantic_ai_harness.permissions import (
 from pydantic_ai_harness.sub_agents import SELF_AGENT_NAME, SubAgents
 from pydantic_ai_pax.cli.command_context import CommandContext
 from pydantic_ai_pax.config import PERMISSION_MODES, PERMISSIONS_SETTING as SETTING
+from pydantic_ai_pax.config.project_settings import LEGACY_PROJECT_DIR, PROJECT_DIR
+from pydantic_ai_pax.paths import LEGACY_DIRECTORY_NAME, config_dir
 from pydantic_ai_pax.runtime.task_prompts import is_delegate_tool
 
 MODES: dict[PermissionMode, str] = {
@@ -54,6 +58,25 @@ APPROVE = 'Approve'
 APPROVE_SESSION = 'Approve for this session'
 DENY = 'Deny'
 UNANSWERED = 'No one could be asked to approve it here; /permissions full lets such calls run.'
+PROTECTED = "This may change Pax's own settings, which only you can approve."
+"""The reason a call `Permissions` holds for `protected_paths` or `PROTECTED_COMMANDS` gives in its question."""
+
+_PROGRAMS = ('pax', 'clai2', 'pydantic_ai_pax', 'pydantic_clai2')
+"""The names `pax` runs under: its command, the deprecated one, and their modules for `python -m`."""
+
+PROTECTED_COMMANDS = tuple(
+    f'{program} {change}'
+    for program in _PROGRAMS
+    for change in (
+        'config set',
+        'config reset',
+        'plugins add',
+        'plugins enable',
+        'plugins disable',
+        'plugins remove',
+    )
+)
+"""The `pax` subcommands that change its settings, which ask outside `full` like a write to them."""
 _QUESTION_LENGTH = 500
 """What an `ask_user` question may hold; a longer command is cut, so the terminal prints it in full first."""
 
@@ -69,15 +92,47 @@ def permissions_command(context: CommandContext, args: list[str]) -> str:
     return f'Permissions: {MODES[context.settings.permissions]}\n{choices}'
 
 
+def protected_paths(database: Path | None = None) -> tuple[str, ...]:
+    """Globs for Pax's own settings, which the agent may not change without asking outside `full`.
+
+    The user's Pax folder (its settings database, credential files, and plugins folder) under its name and its
+    name before the rename, the settings `database` with its plugins folder when it is elsewhere, every
+    project's `.pax/` and `.clai/` folders, and every repository's `.git/hooks/`, each as written and resolved.
+    """
+    folder = config_dir()
+    directories = [folder, folder.with_name(LEGACY_DIRECTORY_NAME)]
+    if database is not None:
+        directories.append(database.parent / 'plugins')
+    patterns: list[str] = []
+    for directory in directories:
+        for form in _spellings(directory):
+            patterns += [form, f'{form}/*']
+    if database is not None:
+        # The database's `-wal`, `-shm`, and `-journal` files too.
+        patterns += [f'{form}*' for form in _spellings(database)]
+    for name in (PROJECT_DIR.name, LEGACY_PROJECT_DIR.name, '.git/hooks'):
+        patterns += [name, f'{name}/*']
+    return tuple(dict.fromkeys(patterns))
+
+
+def _spellings(path: Path) -> list[str]:
+    """`path` as written and with its links resolved, escaped for a glob."""
+    return list(dict.fromkeys(glob.escape(str(form)) for form in (path.absolute(), path.resolve())))
+
+
 def session_permissions(
-    mode: Callable[[], PermissionMode],
+    mode: Callable[[], PermissionMode], *, database: Path | None = None
 ) -> 'tuple[Permissions[AgentDepsT], DenyUnanswered[AgentDepsT], KeepDelegatesChecked[AgentDepsT]]':
     """What a session binds: `Permissions` reading `mode` on each call, and its two backstops.
 
-    The runtime keeps them for the session, so approvals remembered for its conversations end with it. It binds the
-    `DenyUnanswered` backstop only to runs no one can be asked in: see `unattended_only`.
+    Outside `full`, `Permissions` asks before every change to `protected_paths(database)` and every
+    `PROTECTED_COMMANDS` command. The runtime keeps them for the session, so approvals remembered for its
+    conversations end with it. It binds the `DenyUnanswered` backstop only to runs no one can be asked in: see
+    `unattended_only`.
     """
-    permissions = Permissions[AgentDepsT](lambda ctx: mode())
+    permissions = Permissions[AgentDepsT](
+        lambda ctx: mode(), protected_paths=protected_paths(database), protected_commands=PROTECTED_COMMANDS
+    )
     return (
         permissions,
         DenyUnansweredInSession[AgentDepsT](),
@@ -197,10 +252,16 @@ def shown_in_full(request: PermissionRequest) -> bool:
     return len(_question_text(request)) <= _QUESTION_LENGTH
 
 
+def approval_reason(request: PermissionRequest) -> str:
+    """Why `request` asks, as the terminal and the web UI show it: `PROTECTED` for a change to Pax's own settings."""
+    return PROTECTED if request.protected else request.reason
+
+
 def _question_text(request: PermissionRequest) -> str:
+    reason = approval_reason(request)
     if request.action == 'command':
-        return _printable(f'{request.reason} Run this command?\n{request.subject}')
-    return _printable(f'{request.reason} Write {request.subject}?')
+        return _printable(f'{reason} Run this command?\n{request.subject}')
+    return _printable(f'{reason} Write {request.subject}?')
 
 
 def decision(response: AskUserResponse) -> PermissionDecision:

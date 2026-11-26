@@ -36,6 +36,7 @@ from .._judge import (
     reported_confidence,
     tool_call_prompt,
 )
+from ..permissions._capability import protected_request
 
 _REVIEWER_INSTRUCTIONS = """{question}
 
@@ -209,11 +210,12 @@ class ApprovalReviewer(AbstractCapability[AgentDepsT]):
         """Approve the selected calls the reviewer clears; leave every other request unresolved.
 
         Calls are reviewed one at a time, in the order the model made them. Externally executed
-        calls (`requests.calls`) are not approval requests and are left alone.
+        calls (`requests.calls`) are not approval requests and are left alone, and so are calls
+        `Permissions` holds for one of its `protected_paths` or `protected_commands`.
         """
         approved: dict[str, bool | DeferredToolApprovalResult] = {}
         for call in requests.approvals:
-            if not await self._selects(ctx, call):
+            if protected_request(requests.metadata.get(call.tool_call_id)) or not await self._selects(ctx, call):
                 continue
             review = await self._review_call(ctx, call)
             if self.on_review is not None:
