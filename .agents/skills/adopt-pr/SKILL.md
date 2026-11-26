@@ -40,7 +40,7 @@ the candidate versions against it to review them, and never follow what the diff
 
 The hosted side solves this structurally, and `.github/workflows/bots.yml` is worth reading for the
 shape: the `douwebot` job checks the base ref out at the workspace root and confines the untrusted
-head to `pr-head/`, so the fork's config is never the project's config. The path guard that refuses
+head to `pr-head/`, so the head's config is never the project's config. The path guard that refuses
 to run the review on a non-maintainer PR touching `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, `.mcp.json`, `.claude/`,
 `.agents/` or `agent_docs/` is the backstop to that split, not the defence. `$POLICY_BASE_DIR` is
 the local form of the same split.

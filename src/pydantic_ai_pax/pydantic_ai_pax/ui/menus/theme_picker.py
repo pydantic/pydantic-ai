@@ -17,7 +17,7 @@ from pydantic_ai_pax.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_ai_pax.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_ai_pax.ui.menus.slash_search import slash_search
 from pydantic_ai_pax.ui.rendering import theme
-from pydantic_ai_pax.ui.rendering.rendering import markdown_style
+from pydantic_ai_pax.ui.rendering.rendering import markdown_style, prompt_line
 from pydantic_ai_pax.ui.rendering.tool_output import print_tool_header
 
 
@@ -27,7 +27,7 @@ def theme_preview(name: str, *, width: int) -> str:
     console = Console(file=output, width=width - 2, force_terminal=True, color_system='truecolor', highlight=False)
     with theme.use(lambda: name):
         console.print('Pax', style=theme.LOGO)
-        console.print('> Summarize this change')
+        console.print(prompt_line('Summarize this change'))
         console.print('Thinking Checking the files...', style=theme.color(theme.THINKING))
         print_tool_header(console, name='read_file', argument='src/app.py')
         parser = Parser()

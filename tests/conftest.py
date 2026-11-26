@@ -4,6 +4,7 @@ import ast
 import asyncio
 import dataclasses
 import importlib.util
+import json
 import os
 import re
 import secrets
@@ -176,6 +177,7 @@ if TYPE_CHECKING:
 
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.xai import XaiProvider
+    from pydantic_ai.tools import ToolUIVisibility
 
     def IsInstance(arg: type[T]) -> T: ...
     def IsDatetime(*args: Any, **kwargs: Any) -> datetime: ...
@@ -547,6 +549,9 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # for a relative path. The harness relativizes absolute workspace paths with it.
     ('os.path.abspath', '<frozen posixpath>', 'relpath'),
     ('os.path.abspath', 'posixpath.py', 'relpath'),
+    # Pax looks for its config and state folders, and moves one under the old `pydantic-clai2` name, once per
+    # process for each, on the first `config_dir()` or `state_dir()` call, which may be in async code.
+    ('os.stat', 'pydantic_ai_pax/paths.py', 'pax_dir'),
     # Spawning a Monty worker pool locates the worker binary, once per pool.
     ('os.stat', 'pydantic_monty/_binary.py', 'find_monty_binary'),
     # Inside a Temporal workflow, Code Mode reaches Monty through a blocking portal, the only way to reach it
@@ -706,6 +711,9 @@ BLOCKBUSTER_LOCAL_FILES: list[tuple[str, str | tuple[str, ...]]] = [
     # pydantic-ai-pax's commands, menus, and sign-ins check and update its own small files in the user's folders.
     ('pydantic_ai_pax/config/api_keys.py', ('save_key', 'load_keys')),
     ('pydantic_ai_pax/config/project_settings.py', ('_present', 'load_project_settings')),
+    # A session's trust in its folder is looked up as the shell is built: where the folder's repository is, and
+    # the decision saved for it.
+    ('pydantic_ai_pax/runtime/workspace_trust.py', ('saved', 'from_scope', 'trust_scope')),
     ('pydantic_ai_pax/ui/menus/key_menu.py', 'storage'),
     ('pydantic_ai_pax/builtin_plugins/coder_folders.py', ('_directory_problem', '_same_directory', 'path')),
     ('pydantic_ai_pax/builtin_plugins/logfire.py', 'credentials'),
@@ -1075,6 +1083,10 @@ DEPRECATED_MODELS_IN_RECORDINGS: tuple[str, ...] = (
     'claude-opus-4-5-20251101',
     # Anthropic, no retirement date: https://github.com/pydantic/pydantic-ai/issues/14036
     'claude-mythos-preview',
+    # Google, retires 2026-10-20 on Google Cloud and 2026-12-01 on the Gemini API:
+    # https://github.com/pydantic/pydantic-ai/issues/14676
+    'gemini-2.5-pro',
+    'gemini-2.5-flash',
     # OpenAI, retires 2025-07-14: https://github.com/pydantic/pydantic-ai/issues/14037
     'gpt-4.5-preview',
     # OpenAI, retires 2025-10-27: https://github.com/pydantic/pydantic-ai/issues/14037
@@ -2052,6 +2064,25 @@ def legacy_retry_prompt_part(
     if timestamp is not None:
         part.timestamp = timestamp
     return part
+
+
+def sse_data(encoded: Sequence[str]) -> list[dict[str, Any]]:
+    """The JSON payloads of a server-sent event stream, without its closing `[DONE]`."""
+    return [
+        json.loads(line.removeprefix('data: '))
+        for line in ''.join(encoded).splitlines()
+        if line.startswith('data: ') and line != 'data: [DONE]'
+    ]
+
+
+def tool_part_stamps(messages: Sequence[ModelMessage]) -> list[tuple[str, str, ToolUIVisibility | None]]:
+    """Each tool call and return part in `messages`, as `(part kind, tool name, ui_visibility stamp)`."""
+    return [
+        (part.part_kind, part.tool_name, part.ui_visibility)
+        for message in messages
+        for part in message.parts
+        if isinstance(part, (ToolCallPart, ToolReturnPart, NativeToolCallPart, NativeToolReturnPart))
+    ]
 
 
 _RequestPartT = TypeVar(
