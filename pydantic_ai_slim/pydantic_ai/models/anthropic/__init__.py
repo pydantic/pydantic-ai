@@ -1524,7 +1524,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         The legacy Bedrock client pins its own version in the request body instead.
         """
         if isinstance(self.client, AsyncAnthropicBedrock):
-            return False
+            return None
         version = ''
         headers = [*self.client.default_headers.items(), *(model_settings.get('extra_headers') or {}).items()]
         for name, value in headers:
