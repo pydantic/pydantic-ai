@@ -24,7 +24,7 @@ from pydantic import Field, TypeAdapter, ValidationError
 
 from pydantic_ai import _utils
 from pydantic_ai_pax.config.private_files import write_private
-from pydantic_ai_pax.config.settings_store import state_dir
+from pydantic_ai_pax.paths import state_dir
 from pydantic_ai_pax.plugins import LiveSession
 
 ProtocolVersion = Literal[1]

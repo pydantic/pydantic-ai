@@ -203,7 +203,7 @@ class DisplayArgs(BaseModel):
 
     path: str | None = None
     command: str | None = None
-    offset: int = 0
+    offset: int = 1
     limit: int | None = None
     glob: str | None = None
     recursive: bool = True
@@ -349,9 +349,9 @@ class ToolOutput:
             details = ''
             if args.limit is not None:
                 # The default read limit is 2000 lines, whatever the model asks for.
-                details = f' lines {args.offset + 1}-{args.offset + min(args.limit, 2000)}'
-            elif args.offset:
-                details = f' from line {args.offset + 1}'
+                details = f' lines {args.offset}-{args.offset + min(args.limit, 2000) - 1}'
+            elif args.offset > 1:
+                details = f' from line {args.offset}'
             argument = args.path + details
         else:
             first = None if args.limit is None else f'first {args.limit}'
