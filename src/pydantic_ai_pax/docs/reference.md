@@ -112,7 +112,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `run.speculative_code_mode` | `false` | Also start read-only calls in run_code before the model reaches them. Turns on code mode for its runs. Ctrl+X Ctrl+S toggles it. |
 | `run.permissions` | `"full"` | What runs without asking: full runs everything; auto asks before commands that delete, push, install, or reach the network; read-only asks before every file write and command. /permissions sets it. |
 | `run.instructions` | `""` | Your own instructions, sent after Pax's built-in, AGENTS.md, and plugin instructions. /system_prompt edits them. |
-| `accounts.pool` | `true` | A model without @PROFILE runs on every signed-in account of its provider, in /accounts order, as @* does. PROVIDER@default:MODEL runs the default account alone. |
+| `accounts.pool` | `false` | A model without @PROFILE runs on every signed-in account of its provider, in /accounts order, as @* does, instead of on the default account. PROVIDER@default:MODEL runs the default account alone. |
 | `sessions.naming` | `true` | Name saved sessions in the background using a model, at extra cost. By default only sessions held with the current model are named; once saved, even as true, every session from any workspace is. |
 | `sessions.naming_model` | `null` | Naming model override; null uses the current model. |
 | `updates.channel` | `stable` | Where /update looks: stable PyPI releases, or main for the newest Pax commit on main. |
@@ -417,7 +417,7 @@ values for known settings and unsupported database schema versions still cause a
 /set display.thinking false
 /set run.request_limit 10000
 /set run.tool_retries 3
-/set accounts.pool false
+/set accounts.pool true
 ```
 
 `/set` on its own opens a full-screen menu, the same kind Code Puppy uses: the
@@ -930,7 +930,7 @@ fails the turn until you pick another. The row
 shows when the environment variable, such as `OPENAI_API_KEY`, already supplies a key.
 The plain model's `api_key` also applies to its `@default` account, which uses the
 environment's key; a profile such as `openai@work` keeps its own sign-in unless its
-own model sets `api_key`. While `accounts.pool` runs a plain model on every signed-in
+own model sets `api_key`. When `accounts.pool` runs a plain model on every signed-in
 account, each keeps its own key, so its `api_key` reaches only the `@default` account,
 if that is one of them. OpenRouter, vLLM, GitHub Copilot, Codex, chains, `@*` pools,
 and plugin models take their keys elsewhere and have no API Key row. Pax versions
@@ -1110,12 +1110,11 @@ when a request fails with a model API error, such as a rate or usage limit. Sign
 in to another account adds it to the rotation, with nothing else to change. If
 every account fails, Pax lists why each one did.
 
-A model that names no account, such as `claude-code:claude-opus-5-5`, works the
-same way: once its provider has two or more signed-in accounts, it runs on all of
-them in `/accounts` order, as `@*` does. With one, it runs on that one. To run the
-default account alone, write `PROVIDER@default:MODEL`; picking an account in
-`/model add` saves it that way. `/set accounts.pool false` turns this off, so a
-model without an account runs on the default one only, as it did before.
+A model that names no account, such as `claude-code:claude-opus-5-5`, runs on the
+default account. `/set accounts.pool true` makes it work like `@*` instead: once its
+provider has two or more signed-in accounts, it runs on all of them in `/accounts`
+order. With one, it runs on that one. `PROVIDER@default:MODEL` runs the default
+account alone either way; picking an account in `/model add` saves it that way.
 
 Under the menus, an account other than the default is a profile, written
 `PROVIDER@PROFILE`. You can type it instead:
