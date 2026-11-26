@@ -1182,7 +1182,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     self._map_response_thinking_part(item)
                 elif isinstance(item, ToolCallPart):
                     self._map_response_tool_call_part(item)
-                elif isinstance(item, NativeToolCallPart | NativeToolReturnPart):  # pragma: no cover
+                elif isinstance(item, NativeToolCallPart | NativeToolReturnPart):
                     self._map_response_builtin_part(item)
                 elif isinstance(item, FilePart):  # pragma: no cover
                     self._map_response_file_part(item)
