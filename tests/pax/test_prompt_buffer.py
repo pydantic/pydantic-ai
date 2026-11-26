@@ -149,9 +149,9 @@ def test_rows_split_a_word_longer_than_the_row() -> None:
     # Only the long word is split: the short one before it keeps its row.
     buffer.replace('ab ' + 'c' * 6)
     assert plain_rows(buffer, width=4) == ['ab ', 'cccc', 'cc ']
-    # A word that would not fit on the next row either, because of a wide character, splits where it is.
-    buffer.replace(' bcdef界')
-    assert plain_rows(buffer, width=6) == [' bcdef', '界 ']
+    # A wide character moves with its word.
+    buffer.replace('a bcde界')
+    assert plain_rows(buffer, width=6) == ['a ', 'bcde界', ' ']
     # A new line starts with no place to break, whatever the line above it held.
     buffer.replace('a b\ncccc')
     assert plain_rows(buffer, width=3) == ['a b', 'ccc', 'c ']
@@ -163,6 +163,7 @@ def test_rows_split_a_word_longer_than_the_row() -> None:
         pytest.param('hello world', 5, ['hello', ' worl', 'd '], id='space-that-overflowed'),
         pytest.param('  abc', 4, ['  ab', 'c '], id='indent'),
         pytest.param(' bcde界', 6, [' bcde', '界 '], id='wide-character'),
+        pytest.param('a\n bcd', 3, ['a', ' bc', 'd '], id='indent-after-a-newline'),
     ],
 )
 def test_rows_never_leave_leading_blanks_on_a_row_of_their_own(text: str, width: int, expected: list[str]) -> None:

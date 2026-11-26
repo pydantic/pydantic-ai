@@ -294,9 +294,9 @@ class PromptBuffer:
             size = visible_length(display)
             blank = char in painted or char == ' '
             if cells + size > width:
-                # A word that does not fit moves to the next row whole. It splits here instead when it
-                # started the row, or when the part to move would overflow the next row too.
-                if word and not blank and cells - word_cells + size <= width:
+                # A word that does not fit moves to the next row whole, unless it started the row: then it
+                # is longer than the row and splits here.
+                if word and not blank:
                     rows.append(rows[-1][word:])
                     del rows[-2][word:]
                     cells -= word_cells
