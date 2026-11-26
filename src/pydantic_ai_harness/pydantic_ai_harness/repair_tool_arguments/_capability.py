@@ -13,9 +13,9 @@ except ImportError as _import_error:
     ) from _import_error
 
 from pydantic_ai import RunContext
-from pydantic_ai._telemetry import open_span
 from pydantic_ai.capabilities import AbstractCapability, RawToolArgs
 from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.telemetry import open_span
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
 

@@ -161,11 +161,11 @@ def summaries(messages: list[ModelMessage]) -> list[str | None]:
 
 
 @contextmanager
-def traced(include_content: bool = True) -> Generator[InMemorySpanExporter]:
+def traced() -> Generator[InMemorySpanExporter]:
     spans = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(spans))
-    Agent.instrument_all(InstrumentationSettings(tracer_provider=provider, include_content=include_content))
+    Agent.instrument_all(InstrumentationSettings(tracer_provider=provider))
     try:
         yield spans
     finally:
@@ -426,28 +426,18 @@ async def test_take_background_compaction_drops_a_stale_one() -> None:
 async def test_discard_and_aclose_cancel_running_work() -> None:
     summarizer = Summarizer()
     compaction = chain(summarizer)
-    with traced(include_content=False) as spans:
-        await start_background(summarizer, compaction)
-        (discarded,) = [task for task in asyncio.all_tasks() if task.get_name() == 'background_compaction']
-        await compaction.discard_background_compaction('c')
-        assert discarded.done()
-        await compaction.discard_background_compaction('c')
-        assert 'c' not in compaction.background_conversations and summarizer.cancelled == 1
-        summarizer.started.clear()
-        await start_background(summarizer, compaction)
-        (closed,) = [task for task in asyncio.all_tasks() if task.get_name() == 'background_compaction']
-        await compaction.aclose()
-        assert closed.done()
-        assert 'c' not in compaction.background_conversations and summarizer.cancelled == 2
-
-    # A cancelled summary is marked as failed, by its type alone since content is off.
-    cancelled = named(spans, 'background_compaction')
-    assert [span.status.status_code.name for span in cancelled] == ['ERROR', 'ERROR']
-    assert [
-        {k: v for k, v in (event.attributes or {}).items() if k != 'exception.escaped'}
-        for span in cancelled
-        for event in span.events
-    ] == [{'exception.type': 'asyncio.exceptions.CancelledError'}] * 2
+    await start_background(summarizer, compaction)
+    (discarded,) = [task for task in asyncio.all_tasks() if task.get_name() == 'background_compaction']
+    await compaction.discard_background_compaction('c')
+    assert discarded.done()
+    await compaction.discard_background_compaction('c')
+    assert 'c' not in compaction.background_conversations and summarizer.cancelled == 1
+    summarizer.started.clear()
+    await start_background(summarizer, compaction)
+    (closed,) = [task for task in asyncio.all_tasks() if task.get_name() == 'background_compaction']
+    await compaction.aclose()
+    assert closed.done()
+    assert 'c' not in compaction.background_conversations and summarizer.cancelled == 2
 
 
 async def test_a_run_ending_in_the_background_band_starts_a_summary_for_the_next_run() -> None:

@@ -18,7 +18,6 @@ from opentelemetry.trace import Span
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai._framing import neutralize_tags
-from pydantic_ai._telemetry import open_span, records_content
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequestPart,
@@ -33,6 +32,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.telemetry import open_span, records_content
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness._message_text import CHARS_PER_TOKEN, user_prompt_text

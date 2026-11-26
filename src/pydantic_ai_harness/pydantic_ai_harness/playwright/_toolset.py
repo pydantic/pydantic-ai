@@ -138,9 +138,9 @@ from urllib.parse import quote, quote_plus, unquote, unquote_plus, urlparse
 import anyio
 from opentelemetry import trace
 
-from pydantic_ai._telemetry import current_run_telemetry, open_span
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ToolReturn
+from pydantic_ai.telemetry import current_run_telemetry, open_span, records_content
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._browser_egress import (
@@ -187,7 +187,7 @@ if TYPE_CHECKING:
         WebSocketRoute as PlaywrightWebSocketRoute,
     )
 
-    from pydantic_ai._telemetry import RunTelemetry
+    from pydantic_ai.telemetry import RunTelemetry
 
 _T = TypeVar('_T')
 
@@ -915,7 +915,11 @@ class PlaywrightBrowserSession:
         # reconnects and gets new frame objects for the same documents.
         self._admitted_documents: set[tuple[str, bool]] = set()
         self.tracer: Tracer = _FALLBACK_TRACER
-        """Tracer browser operations report to. `PlaywrightBrowser.wrap_run` sets the run's own."""
+        """Tracer browser operations report to when the calling run is not instrumented, or there is none.
+
+        An instrumented run's operations report to that run's tracer instead. `PlaywrightBrowser.wrap_run`
+        sets the run's own, so an uninstrumented run reports nothing.
+        """
         self.events: deque[BrowserEvent] = deque(maxlen=_EVENT_LOG_LIMIT)
         """What the browser did outside the tool calls, newest last."""
         self.events_recorded = 0
@@ -933,18 +937,22 @@ class PlaywrightBrowserSession:
         operation's span cannot be recovered from the OpenTelemetry context there.
         The toolset publishes it here for the length of an operation instead.
         """
-        self._operation_includes_content = False
-        """Whether the run that opened `operation_span` includes content in traces, published with it."""
+        self._content_free_span: Span | None = None
+        """The toolset's operation span whose run leaves content out of traces, so `record` leaves it out too.
+
+        Bound to the span rather than held as a flag, so a span a caller assigns to `operation_span` itself
+        keeps every event attribute.
+        """
 
     def _begin_operation(self, span: Span, *, include_content: bool) -> None:
         """Publish the running operation's span, with whether its run includes content in traces."""
         self.operation_span = span
-        self._operation_includes_content = include_content
+        self._content_free_span = None if include_content else span
 
     def _end_operation(self) -> None:
         """Clear what `_begin_operation` published, once the operation ends."""
         self.operation_span = None
-        self._operation_includes_content = False
+        self._content_free_span = None
 
     def record(self, event: BrowserEvent) -> None:
         """Log a browser event and attach it to the operation that was running.
@@ -965,7 +973,7 @@ class PlaywrightBrowserSession:
         span = self.operation_span
         if span is not None and span.is_recording():
             attributes = event.attributes()
-            if not self._operation_includes_content:
+            if span is self._content_free_span:
                 # The message and URL can quote page text, form values or tokens in a query string.
                 attributes.pop('browser.event.message', None)
                 attributes.pop('url.full', None)
@@ -1903,7 +1911,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
             reported = deadlines.navigation_ms if governed_by_navigation else deadlines.action_ms
             # The session can outlive a run, so the telemetry is the calling run's, read now.
             telemetry = current_run_telemetry()
-            include_content = telemetry is None or telemetry.include_content
+            include_content = telemetry is None or records_content(telemetry)
             with self._operation_span(
                 telemetry,
                 action,
@@ -1955,15 +1963,11 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         async with self._operation_lock:
             if (error := self._timeout_error(timeout_ms)) is not None:
                 return error
-            telemetry = current_run_telemetry()
-            with self._operation_span(telemetry, action, {'browser.action': action, 'browser.outcome': 'ok'}) as span:
-                self._session._begin_operation(  # pyright: ignore[reportPrivateUsage]
-                    span, include_content=telemetry is None or telemetry.include_content
-                )
-                try:
-                    return self._error(message)
-                finally:
-                    self._session._end_operation()  # pyright: ignore[reportPrivateUsage]
+            # No page means no events and no URL, so the span is never published to the session.
+            with self._operation_span(
+                current_run_telemetry(), action, {'browser.action': action, 'browser.outcome': 'error'}
+            ):
+                return self._truncate_output(message)
 
     def _operation_span(
         self, telemetry: RunTelemetry | None, action: str, attributes: dict[str, str | int]

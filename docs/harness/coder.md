@@ -309,8 +309,8 @@ If the repair parser raises a value or recursion error, original arguments go th
 
 Repair is heuristic: malformed input can be ambiguous, and inferred strings may differ from the model's
 intent. It does not supply a schema to the repair library or bypass exact edit matching.
-Each attempt emits a `repair_tool_arguments` span in the run's trace, without arguments or file
-contents. Other Coder operations rely on core tool spans and on the events its `FileSystem` and `Shell`
+Each attempt emits a `repair_tool_arguments` span in the run's trace, with no attribute for the arguments or
+file contents; see [what it records](repair-tool-arguments.md#telemetry). Other Coder operations rely on core tool spans and on the events its `FileSystem` and `Shell`
 capabilities emit.
 
 ## Strict tool schemas

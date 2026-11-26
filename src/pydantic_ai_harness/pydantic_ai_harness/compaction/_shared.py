@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Literal, Protocol, Self, TypeAlias, TypeGuard,
 
 from pydantic_ai._context_size import context_input_tokens, context_tokens
 from pydantic_ai._instructions import instruction_window_start, is_loaded_block, window_boundary_index
-from pydantic_ai._telemetry import open_span
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -50,6 +49,7 @@ from pydantic_ai.messages import (
     _post_compaction_window_start,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.models import AbstractModel, Model
+from pydantic_ai.telemetry import open_span
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._message_text import CHARS_PER_TOKEN, capability_part_text, tool_return_text, user_prompt_texts
 from pydantic_ai_harness._provenance import harness_origin
@@ -760,7 +760,7 @@ def record_failed_compaction(
     tokenizer: Callable[[str], int] | None = None,
 ) -> None:
     """Emit a `compact_messages` span recording a compaction attempt that raised *error* and was skipped."""
-    with ctx.tracer.start_as_current_span(_SPAN_NAME) as span:
+    with open_span(ctx, _SPAN_NAME) as span:
         span.set_attributes(
             {
                 'compaction.strategy': strategy,

@@ -24,7 +24,6 @@ from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent
 from pydantic_ai._framing import neutralize_tags, second_model_prompt
-from pydantic_ai._telemetry import open_span
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.messages import (
@@ -37,6 +36,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models import KnownModelName, Model
+from pydantic_ai.telemetry import open_span
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness._message_text import CHARS_PER_TOKEN, tool_return_text, user_prompt_text

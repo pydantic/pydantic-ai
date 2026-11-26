@@ -459,7 +459,7 @@ between tool calls.
   uncaught script errors, responses, requests the egress policy refused, dialogs
   the page opened, and tabs it opened. Each event carries `browser.event.kind`,
   `browser.event.level`, and, for a request, `http.request.method` and
-  `http.response.status_code`. The page's URLs (`url.full`, on the span and its
+  `http.response.status_code` when it has them: a failed or refused request has no status. The page's URLs (`url.full`, on the span and its
   events) and an event's text (`browser.event.message`) are recorded only when the
   run includes content in traces. The spans go to the run's own tracer, so an agent
   instrumented for [Logfire](../logfire.md) reports them with everything else. A

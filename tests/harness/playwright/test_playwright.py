@@ -3957,6 +3957,24 @@ class TestBrowserEvents:
         assert await toolset.console_messages() == 'No console messages recorded.'
         assert await toolset.network_requests() == 'No network requests recorded.'
 
+    async def test_a_span_assigned_to_the_session_keeps_every_event_attribute(self) -> None:
+        # A caller driving the session itself publishes its own span: nothing says to leave content out.
+        session = self._session(_FakePage())
+        tracer, exporter = _recording_tracer()
+        with tracer.start_as_current_span('my operation') as span:
+            session.operation_span = span
+            session.record(
+                toolset_module.BrowserEvent(
+                    kind='console', level='error', message='error: boom', url='https://example.com/page'
+                )
+            )
+            session.operation_span = None
+        (finished,) = exporter.get_finished_spans()
+        (event,) = finished.events
+        assert event.attributes is not None
+        assert event.attributes['browser.event.message'] == 'error: boom'
+        assert event.attributes['url.full'] == 'https://example.com/page'
+
     async def test_operation_span_carries_the_action_and_page_events(self) -> None:
         page = _FakePage()
         session = self._session(page)
