@@ -1159,6 +1159,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
         return profile
 
+    def _classifies_schema_too_complex(self) -> bool:
+        return True
+
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """The set of builtin tool types this model can handle."""
