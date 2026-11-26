@@ -62,6 +62,7 @@ from ..messages import (
 from ..output import OutputDataT
 from ..run import AgentRunResult, AgentRunResultEvent
 from ..tools import AgentDepsT
+from ._utils import TOOL_INTERRUPTED_BY_ERROR
 
 if TYPE_CHECKING:
     from starlette.responses import StreamingResponse
@@ -451,7 +452,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         error_part = ToolReturnPart(
             tool_call_id=tool_call_id,
             tool_name=tool_name,
-            content=INTERRUPTED_TOOL_RETURN_CONTENT if cancelled else 'Tool execution was interrupted by an error.',
+            content=INTERRUPTED_TOOL_RETURN_CONTENT if cancelled else TOOL_INTERRUPTED_BY_ERROR,
             outcome='interrupted' if cancelled else 'failed',
         )
         if kind == 'output':

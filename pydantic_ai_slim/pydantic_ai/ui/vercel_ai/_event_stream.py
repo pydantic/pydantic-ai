@@ -45,7 +45,7 @@ from .._adapter import (
     model_settings_delta_payload,
     tool_availability_delta_payload,
 )
-from .._utils import client_error_text
+from .._utils import TOOL_INTERRUPTED_BY_ERROR, client_error_text
 from ._utils import (
     CAPABILITY_LOAD_DELTA_DATA_TYPE,
     COMPACTION_DATA_TYPE,
@@ -207,8 +207,13 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         # normally fires at the call/result event, but a mid-stream error aborts the run before either,
         # leaving the client stuck in `input-streaming`. The base class synthesizes the open part's
         # `PartEndEvent` on error, which `handle_tool_call_end` stashes here, so flush whatever remains.
+        # On SDK v6+ the call is closed with `tool-input-error` instead, as the run discarded it:
+        # `tool-input-available` would have the client run it through `onToolCall`.
         for part in self._streamed_call_parts.values():
-            yield self._tool_input_available_chunk(part)
+            if self.sdk_version >= 6:
+                yield self._tool_input_error_chunk(part, TOOL_INTERRUPTED_BY_ERROR)
+            else:
+                yield self._tool_input_available_chunk(part)
         self._streamed_call_parts.clear()
 
         # No `MessageMetadataChunk` here: an errored run has no `AgentRunResultEvent` to source
@@ -370,6 +375,22 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             ),
         )
 
+    def _tool_input_error_chunk(self, part: ToolCallPart, error_text: str) -> ToolInputErrorChunk:
+        """Build the `tool-input-error` chunk closing a tool call that didn't run, in place of `tool-input-available`."""
+        return ToolInputErrorChunk(
+            tool_call_id=part.tool_call_id,
+            tool_name=part.tool_name,
+            input=part.args_as_dict(),
+            provider_metadata=dump_provider_metadata(
+                id=part.id,
+                provider_name=part.provider_name,
+                provider_details=part.provider_details,
+                canonical_system=self._canonical_system_for(part.provider_name),
+                tool_kind=part.tool_kind,
+            ),
+            error_text=error_text,
+        )
+
     async def handle_function_tool_call(self, event: FunctionToolCallEvent) -> AsyncIterator[BaseChunk]:
         async for chunk in self._handle_tool_call(event):
             yield chunk
@@ -508,6 +529,17 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
 
         invalidated_part = self._invalidated_tool_calls.pop(tool_call_id, None)
         streamed_part = self._streamed_call_parts.pop(tool_call_id, None)
+        # The call closes with `tool-input-error` on SDK v6+ when its args failed validation, or when it
+        # was streamed but never made available and a failed or interrupted result closes it: the run
+        # discarded it, and backfilling `tool-input-available` would have the client run it through `onToolCall`.
+        input_error_part = invalidated_part
+        if (
+            input_error_part is None
+            and streamed_part is not None
+            and self.sdk_version >= 6
+            and part.outcome in ('failed', 'interrupted')
+        ):
+            input_error_part = streamed_part
 
         # Backfill `tool-input-available` if `_handle_tool_call` didn't emit it for this
         # streamed call. Two cases:
@@ -520,33 +552,22 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         #   arrives here.
         # Without the backfill, v5/v6 frontends would move the call out of `input-streaming`
         # with no input announcement in between.
-        # `invalidated_part is not None` means `_handle_tool_call` deliberately suppressed
-        # the chunk for the v6 invalidated path — don't backfill in that case.
-        if streamed_part is not None and invalidated_part is None:
+        # `input_error_part is not None` means the chunk is deliberately suppressed on v6, for an
+        # invalidated or discarded call — don't backfill in that case.
+        if streamed_part is not None and input_error_part is None:
             yield self._tool_input_available_chunk(streamed_part)
 
         if self.sdk_version >= 6 and part.outcome == 'denied':
             yield ToolOutputDeniedChunk(tool_call_id=tool_call_id)
-        elif invalidated_part is not None:
-            # The original `tool-input-available` was suppressed because `args_valid=False`.
-            # Complete the v6 lifecycle by emitting `tool-input-error` instead of letting the
-            # result chunk (success/output-error) fire — the call never actually executed.
-            # `error_text` comes from `ToolReturnPart.model_response_str()` — the retry feedback
-            # itself, or the status part on the exhaustive output-strategy skip path (which says
-            # e.g. "Output tool not used …").
-            yield ToolInputErrorChunk(
-                tool_call_id=tool_call_id,
-                tool_name=invalidated_part.tool_name,
-                input=invalidated_part.args_as_dict(),
-                provider_metadata=dump_provider_metadata(
-                    id=invalidated_part.id,
-                    provider_name=invalidated_part.provider_name,
-                    provider_details=invalidated_part.provider_details,
-                    canonical_system=self._canonical_system_for(invalidated_part.provider_name),
-                    tool_kind=invalidated_part.tool_kind,
-                ),
-                error_text=client_error_text(part),
-            )
+        elif input_error_part is not None:
+            # The original `tool-input-available` was suppressed because `args_valid=False`, or
+            # never sent for a call the run discarded. Complete the v6 lifecycle by emitting
+            # `tool-input-error` instead of letting the result chunk (success/output-error) fire —
+            # the call never actually executed. `error_text` comes from
+            # `ToolReturnPart.model_response_str()` — the retry feedback itself, the synthetic
+            # interruption message, or the status part on the exhaustive output-strategy skip path
+            # (which says e.g. "Output tool not used …").
+            yield self._tool_input_error_chunk(input_error_part, client_error_text(part))
         elif part.outcome in ERROR_OUTCOMES:
             # A retry takes the error channel like a failure does, and its `error_text` is the
             # feedback itself — unwrapped, and with none of the instruction framing the retry part

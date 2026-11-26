@@ -103,6 +103,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai.usage import UsageLimits
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
@@ -1602,4 +1603,43 @@ def test_server_held_history_has_none_of_the_client_round_trip_gaps() -> None:
             'structured_content',
             'tool_availability_delta',
         ]
+    )
+
+
+async def test_vercel_discarded_tool_call_never_reaches_on_tool_call(js_driver: JSDriver) -> None:
+    """A tool call that a run error discarded doesn't reach the AI SDK client's `onToolCall`, so a frontend never runs it.
+
+    The run errors while the call is still streaming its args. `tool-input-available` would have the client run the
+    call through `onToolCall`, so the adapter closes it with `tool-input-error`, which leaves it in `output-error`.
+    """
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {0: DeltaToolCall(name='frontend_tool', json_args='{"query": "hi"}', tool_call_id='call_1')}
+        # A second call trips the usage limit mid-stream, so the run errors before `call_1` is dispatched.
+        while True:  # unbounded loop so the aborted stream leaves no uncovered exit branch
+            yield {1: DeltaToolCall(name='frontend_tool', json_args=' '.join(f'word{i}' for i in range(40)))}
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    client = VercelClient(js_driver, 'discarded-tool-call', {})
+    adapter = client.adapter(agent, client.submit('Hello', None))
+    encoded = [
+        chunk
+        async for chunk in adapter.encode_stream(adapter.run_stream(usage_limits=UsageLimits(output_tokens_limit=10)))
+    ]
+    # Straight to the driver: `Client.receive` asserts the client finished without an error.
+    result = js_driver.request('vercel.receive', session=client.session, **client.stream(encoded))
+
+    assert result['error'] == snapshot(
+        'Error: Exceeded the output_tokens_limit of 10 (output_tokens=44). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits'
+    )
+    assert result['toolCalls'] == []
+    [tool_part] = [part for part in result['messages'][-1]['parts'] if part['type'] == 'tool-frontend_tool']
+    assert tool_part == snapshot(
+        {
+            'type': 'tool-frontend_tool',
+            'toolCallId': 'call_1',
+            'state': 'output-error',
+            'rawInput': {'query': 'hi'},
+            'errorText': 'Tool execution was interrupted by an error.',
+        }
     )
