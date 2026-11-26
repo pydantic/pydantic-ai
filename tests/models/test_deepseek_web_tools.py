@@ -10,6 +10,7 @@ import pytest
 from pydantic import JsonValue, TypeAdapter
 
 from pydantic_ai import Agent, ModelResponse
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import WebFetch, WebSearch
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.messages import (
@@ -101,6 +102,11 @@ async def test_deepseek_web_fetch_history(
         assert response.parts.index(call) < response.parts.index(result_part) < text_index
         assert response.usage.details['tool_fetch'] == 1
         assert b'recorded-page-signature' in messages_json
+        if api == 'responses':
+            # Client annotations on persisted results are not Responses protocol fields.
+            assert is_str_dict(result_part.content) and result_part.provider_details
+            result_part.content['client_note'] = 'local annotation'
+            result_part.provider_details['deepseek_responses_web_tool']['type'] = 'client_annotation'
 
         await Agent(model, model_settings={'thinking': False}).run('What was the UUID?', message_history=history)
         if api == 'chat':
@@ -161,6 +167,8 @@ async def test_deepseek_web_fetch_history(
     assert 'web_search_options' not in requests[0]
     assert not requests[1].get('tools')
     wire_history = json.dumps(requests[1]['input' if api == 'responses' else 'messages'])
+    assert 'local annotation' not in wire_history
+    assert 'client_annotation' not in wire_history
     assert wire_history.count('recorded-page-signature') == 1
     assert call.tool_call_id in wire_history
 

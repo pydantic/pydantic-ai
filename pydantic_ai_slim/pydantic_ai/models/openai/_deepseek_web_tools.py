@@ -41,8 +41,6 @@ def web_tool_usage(usage: BaseModel | None) -> dict[str, int]:
 
 
 class _WebToolItem(BaseModel):
-    model_config = ConfigDict(extra='allow')
-
     type: Literal['web_search_call']
     id: str
     kind: DeepSeekWebToolKind
@@ -93,15 +91,22 @@ def web_tool_parts(
 def web_tool_replay(call: NativeToolCallPart, result: NativeToolReturnPart) -> responses.ResponseInputItemParam:
     metadata = (result.provider_details or {})[RESPONSES_WEB_TOOL_KEY]
     assert is_str_dict(result.content)
-    content = result.content.copy()
+    content = result.content
     action = call.args_as_dict()
     if 'sources' in content:
-        action = {**action, 'sources': content.pop('sources')}
-    # DeepSeek extends the SDK's web_search_call with the signed page and tool kind.
-    return cast(
-        responses.ResponseInputItemParam,
-        {'type': 'web_search_call', 'id': call.tool_call_id, 'action': action, **content, **metadata},
+        action = {**action, 'sources': content['sources']}
+    # History may be supplied by a client. Only restore fields owned by the web tool.
+    item = _WebToolItem(
+        type='web_search_call',
+        id=call.tool_call_id,
+        action=action,
+        status=content['status'],
+        page=content.get('page'),
+        error=content.get('error'),
+        kind=metadata['kind'],
+        signature=metadata.get('signature'),
     )
+    return cast(responses.ResponseInputItemParam, item.model_dump(mode='json', exclude_none=True))
 
 
 class ChatWebCall(BaseModel):
