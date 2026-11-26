@@ -127,6 +127,41 @@ def test_unicode_wrapping_and_nonblinking_cursor() -> None:
     assert len(buffer.rows(width=4, limit=5)) == 2
 
 
+def plain_rows(buffer: PromptBuffer, *, width: int, limit: int = 10) -> list[str]:
+    return [row.replace('\x1b[7m', '').replace('\x1b[27m', '') for row in buffer.rows(width=width, limit=limit)]
+
+
+def test_rows_wrap_at_word_boundaries() -> None:
+    buffer = PromptBuffer()
+    buffer.insert('look at the subagents code')
+    # A word that does not fit moves to the next row whole; the space before it stays behind.
+    assert plain_rows(buffer, width=12) == ['look at the ', 'subagents ', 'code ']
+    assert buffer.rows(width=12, limit=10)[-1] == 'code\x1b[7m \x1b[27m'
+    # A tab is a place to break too.
+    buffer.replace('ab\tcdef')
+    assert plain_rows(buffer, width=8) == ['ab    ', 'cdef ']
+
+
+def test_rows_split_a_word_longer_than_the_row() -> None:
+    buffer = PromptBuffer()
+    buffer.insert('a' * 10)
+    assert plain_rows(buffer, width=4) == ['aaaa', 'aaaa', 'aa ']
+    # Only the long word is split: the short one before it keeps its row.
+    buffer.replace('ab ' + 'c' * 6)
+    assert plain_rows(buffer, width=4) == ['ab ', 'cccc', 'cc ']
+    # A word that would not fit on the next row either, because of a wide character, splits where it is.
+    buffer.replace(' bcdef界')
+    assert plain_rows(buffer, width=6) == [' bcdef', '界 ']
+
+
+def test_rows_keep_the_cursor_in_view_when_its_word_wraps() -> None:
+    buffer = PromptBuffer()
+    buffer.insert('ab cdef')
+    buffer.cursor = 3
+    assert buffer.rows(width=5, limit=10) == ['ab ', '\x1b[7mc\x1b[27mdef']
+    assert buffer.rows(width=5, limit=1) == ['\x1b[7mc\x1b[27mdef']
+
+
 def test_empty_history_and_line_end_movement() -> None:
     buffer = PromptBuffer()
     buffer.recall(backwards=True)
