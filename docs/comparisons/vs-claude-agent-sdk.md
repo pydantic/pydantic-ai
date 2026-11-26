@@ -44,7 +44,7 @@ same [`Agent`][pydantic_ai.Agent]; the harness repository has a
 [complete coding agent](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/examples/coding_agent.py)
 built from the pieces `Coder` puts together.
 
-**Can I continue a Claude Code session in Pydantic AI?** Yes. `pax --resume-claude` imports a Claude Code session into [Pax](../harness/pax.md), tool calls and sub-agents included, and you continue it on any model.
+**Can I continue a Claude Code session in Pydantic AI?** Yes. `pax --resume-claude` imports a Claude Code session into [Pax](../harness/pax.md#pick-up-where-you-left-off-resume), tool calls and sub-agents included, and you continue it on any model.
 
 **Can I run my agents in CI?** Yes. [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) runs Pydantic AI agents
 from a Markdown workflow file in GitHub Actions, or run a Python script directly with `uv run`;
