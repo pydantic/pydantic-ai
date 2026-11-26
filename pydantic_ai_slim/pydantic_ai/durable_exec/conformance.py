@@ -132,12 +132,15 @@ class DurableEngine(Protocol):
     async def run(self, agent: Agent[None, str], prompt: str) -> EngineRun:
         """Run `agent` with `prompt` durably, as the engine runs a workflow, and return what it recorded.
 
-        A run that raises returns the error as its `output` rather than raising it.
+        A run that raises returns the error as its `output` rather than raising it. `EngineRun.units` holds only the
+        units whose result the engine recorded; a unit that raised goes in `EngineRun.failed`.
         """
         ...
 
     async def recover(self, run: EngineRun, *, after: int | None = None) -> EngineRun:
         """Recover `run` from its record, as the engine does after a crash, and return the recovered run.
+
+        Its `units` and `failed` report the recovered run's record the way `run` reports the first run's.
 
         With `after=k`, keep only the first `k` units of the record, as if the run had stopped there, so the rest
         runs again. Only called when the suite's `can_fork_mid_run` fixture is `True`.
@@ -231,8 +234,10 @@ class DurableEngineSuite:
       before the cut. When `expected_units` names the units, the run records exactly those.
     - `limited`: the same, and the cell's `check` asserts the limit.
     - `refused`: the engine raises a [`UserError`][pydantic_ai.exceptions.UserError] matching `match`, before the
-      refused operation records anything: at build or run start, or mid-run with the units recorded before it
-      unaffected, so recovering the record records the same units and refuses again, without a counted request.
+      refused operation records anything: at build or run start, or mid-run. A refused operation that runs in a unit
+      leaves that one unit failed, with no result recorded for it. The units recorded before it are unaffected, so
+      recovering the record records the same units, fails the same unit and refuses again, without a counted
+      request.
     - `broken`: some check above fails with a message, or the run raises an error, that matches `match`. Once the
       bug is fixed it no longer does, and the cell fails, saying to update it.
 
@@ -351,7 +356,7 @@ class DurableEngineSuite:
 
         if isinstance(run.output, BaseException):
             breaks = [f'the run raised {_describe(run.output)}']
-            breaks += await self._refusal_breaks(engine, run, observer, counts) if run.units else []
+            breaks += await self._refusal_breaks(engine, run, observer, counts) if run.units or run.failed else []
         else:
             breaks = self._run_breaks(name, script, observed, run, await counts())
             breaks += await self._recovery_breaks(engine, run, observer, can_fork_mid_run, counts)
@@ -420,8 +425,14 @@ class DurableEngineSuite:
         recovered = await _observed(engine.recover(run), observer)
         after = await counts()
         breaks: list[str] = []
+        if len(run.failed) > 1:
+            breaks.append(f'the refused run recorded more than the refused unit as failed: {run.failed}')
+        if completed := sorted(set(run.failed) & set(run.units)):
+            breaks.append(f'the refused run also recorded a result for the unit that raised: {completed}')
         if recovered.units != run.units:
             breaks.append(f'recovering the refused run recorded {recovered.units}, not {run.units}')
+        if recovered.failed != run.failed:
+            breaks.append(f'recovering the refused run failed {recovered.failed}, not {run.failed}')
         if not isinstance(recovered.output, UserError) or str(recovered.output) != str(run.output):
             breaks.append(f'recovering the refused run returned {_describe(recovered.output)}, not the refusal')
         if self.recovery.mode == 'replay' and after != before:

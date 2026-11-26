@@ -30,6 +30,7 @@ from ..capability_cases import (
     PENDING_ENGINES,
     SCENARIO_RUNS,
     SCENARIOS,
+    UNTESTED_ISSUE,
     Contract,
     Engine,
     EngineTable,
@@ -152,7 +153,8 @@ def test_the_manifest_and_the_docs_name_every_engine() -> None:
 def test_every_cell_names_a_real_case_or_scenario(engine: Engine) -> None:
     """A cell only means something for a case whose calls the suite runs, or for a scenario.
 
-    An engine with a suite lists only the cells that aren't `supported`; one still pending lists what is measured.
+    An engine with a suite lists only the cells that aren't `supported`; one still pending lists only the scenarios
+    a test measures, as nothing runs its cases.
 
     It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
     """
@@ -165,6 +167,10 @@ def test_every_cell_names_a_real_case_or_scenario(engine: Engine) -> None:
         assert engine in PENDING_ENGINES or cell.level != 'supported', f'{name}: an unlisted cell is `supported`'
         if name in SCENARIOS:
             continue
+        assert engine not in PENDING_ENGINES, (
+            f'{engine} names the case {name}, but no suite runs cases under it yet, so nothing checks the cell: list '
+            f'only scenarios a test measures until it runs `DurableEngineSuite` (#{UNTESTED_ISSUE})'
+        )
         assert name in PUBLIC, f'{engine} names {name}, which is neither a scenario nor a public capability'
         assert CASES[name].calls is not None, f'{engine} names {name}, which has no `calls` to run'
 

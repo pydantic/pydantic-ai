@@ -105,7 +105,8 @@ class DBOSEngine:
                 output: str | BaseException = await _run_agent(agent.name, prompt)
         except Exception as error:
             output = error
-        return EngineRun(workflow_id, output, await self._units(workflow_id))
+        units, failed = await self._units(workflow_id)
+        return EngineRun(workflow_id, output, units, failed=failed)
 
     async def recover(self, run: EngineRun, *, after: int | None = None) -> EngineRun:
         steps = await DBOS.list_workflow_steps_async(run.id)
@@ -120,13 +121,16 @@ class DBOSEngine:
             output: str | BaseException = await handle.get_result(polling_interval_sec=0.01)
         except Exception as error:
             output = error
-        return EngineRun(handle.workflow_id, output, await self._units(handle.workflow_id))
+        units, failed = await self._units(handle.workflow_id)
+        return EngineRun(handle.workflow_id, output, units, failed=failed)
 
-    async def _units(self, workflow_id: str) -> list[str]:
+    async def _units(self, workflow_id: str) -> tuple[list[str], list[str]]:
+        """The steps whose result DBOS recorded, and the ones it recorded an error for."""
         prefix = f'{self.agent_names[workflow_id]}__'
-        return [
-            step['function_name'].removeprefix(prefix) for step in await DBOS.list_workflow_steps_async(workflow_id)
-        ]
+        steps = await DBOS.list_workflow_steps_async(workflow_id)
+        units = [step['function_name'].removeprefix(prefix) for step in steps if step['error'] is None]
+        failed = [step['function_name'].removeprefix(prefix) for step in steps if step['error'] is not None]
+        return units, failed
 
 
 class TestDBOS(BuiltInEngineSuite):

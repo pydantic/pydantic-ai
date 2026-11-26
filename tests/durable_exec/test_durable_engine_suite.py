@@ -209,6 +209,20 @@ async def test_a_refusal_when_the_case_is_built_is_judged_by_its_cell(tmp_path: 
         await _suite(cases=cases).test_case('case', _Engine(), True, dict, tmp_path)
 
 
+async def test_a_refused_unit_records_no_result() -> None:
+    """The unit a refusal raised in is failed, and only that one: an engine that recorded its result breaks the cell."""
+    run = EngineRun('', REFUSAL, ['model'], failed=['tool'])
+    engine = _Engine([(EngineRun('', REFUSAL, ['model'], failed=['tool']), [])])
+    assert await _suite()._refusal_breaks(engine, run, None, _counts({}, {})) == []  # pyright: ignore[reportPrivateUsage]
+    completed = EngineRun('', REFUSAL, ['model', 'tool'], failed=['tool', 'other'])
+    engine = _Engine([(EngineRun('', REFUSAL, ['model', 'tool']), [])])
+    assert await _suite()._refusal_breaks(engine, completed, None, _counts({}, {})) == [  # pyright: ignore[reportPrivateUsage]
+        "the refused run recorded more than the refused unit as failed: ['tool', 'other']",
+        "the refused run also recorded a result for the unit that raised: ['tool']",
+        "recovering the refused run failed [], not ['tool', 'other']",
+    ]
+
+
 async def test_a_refusal_mid_run_may_repeat_requests_under_a_restarting_engine() -> None:
     """A restart makes every call again, so recovering a refused run under one doesn't have to repeat no request."""
     suite = _suite(recovery=Recovery('restart', 'reruns the entry task', issue=1))

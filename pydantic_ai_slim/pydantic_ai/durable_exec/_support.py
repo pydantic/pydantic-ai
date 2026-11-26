@@ -30,12 +30,16 @@ class EngineRun:
     """The run's output, or what it raised. A refusal is a [`UserError`][pydantic_ai.exceptions.UserError]:
     an engine that wraps the errors a run raises unwraps it."""
     units: list[str] = field(default_factory=list[str])
-    """The durable units the engine recorded for the run, in order: its journal or history, model requests
-    included, with the agent's name left out of each unit's name."""
+    """The durable units whose result the engine recorded for the run, in order: its journal or history, model
+    requests included, with the agent's name left out of each unit's name. A unit that raised recorded no result, so
+    it is in `failed`, not here."""
     observed: list[str] = field(default_factory=list[str])
     """What the run observed in workflow code: `event:<text>` per custom or capability event, `enqueued:<text>` per
     enqueued message's event, and `message:<text>` per enqueued message in the history. The suite fills it in for a
     scenario's run; an engine leaves it empty."""
+    failed: list[str] = field(default_factory=list[str])
+    """The durable units the engine recorded as having raised, in order and named as in `units`: a refused
+    operation's unit, when it runs in one."""
 
 
 @dataclass(frozen=True)
@@ -45,7 +49,8 @@ class Support:
     - `supported`: the suite runs it under the engine and checks what the engine records and recovers.
     - `limited`: the same, and `check` asserts the limit, which `reason` documents.
     - `refused`: the engine raises a [`UserError`][pydantic_ai.exceptions.UserError] matching the `match` regex
-      before the refused operation records anything, and the record it leaves recovers unaffected.
+      before the refused operation records anything: its unit, if it runs in one, is in `EngineRun.failed`, with no
+      result in `EngineRun.units`. The record it leaves recovers unaffected.
     - `broken`: the engine runs it and gets it wrong. `match` is a regex of the symptom and `issue` tracks the bug.
       The suite checks the symptom still shows, so the cell fails, saying to update it, once the bug is fixed.
     - `untested`: no suite runs it under the engine yet. Only the generated docs table uses it: a suite fails a cell

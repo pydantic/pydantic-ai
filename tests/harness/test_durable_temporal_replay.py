@@ -79,6 +79,22 @@ def _failure(error: WorkflowFailureError) -> BaseException:
     return RuntimeError(f'the workflow fails: {chain}')  # pragma: lax no cover - only a broken cell fails so
 
 
+def _units(history: WorkflowHistory, prefix: str) -> tuple[list[str], list[str]]:
+    """The activities whose result the history recorded, and the ones it recorded as failed, by scheduled name."""
+    scheduled: dict[int, str] = {}
+    completed: list[str] = []
+    failed: list[str] = []
+    for event in history.events:
+        if event.HasField('activity_task_scheduled_event_attributes'):
+            name = event.activity_task_scheduled_event_attributes.activity_type.name
+            scheduled[event.event_id] = name.removeprefix(prefix)
+        elif event.HasField('activity_task_completed_event_attributes'):
+            completed.append(scheduled[event.activity_task_completed_event_attributes.scheduled_event_id])
+        elif event.HasField('activity_task_failed_event_attributes'):
+            failed.append(scheduled[event.activity_task_failed_event_attributes.scheduled_event_id])
+    return completed, failed
+
+
 @dataclass
 class _Record:
     agent: Agent[None, str]
@@ -126,13 +142,8 @@ class TemporalEngine:
                 output = _failure(error)
         history = await self.client.get_workflow_handle(workflow_id).fetch_history()
         self.records[workflow_id] = _Record(agent, history)
-        prefix = f'agent__{agent.name}__'
-        units = [
-            event.activity_task_scheduled_event_attributes.activity_type.name.removeprefix(prefix)
-            for event in history.events
-            if event.HasField('activity_task_scheduled_event_attributes')
-        ]
-        return EngineRun(workflow_id, output, units)
+        units, failed = _units(history, f'agent__{agent.name}__')
+        return EngineRun(workflow_id, output, units, failed=failed)
 
     async def recover(self, run: EngineRun, *, after: int | None = None) -> EngineRun:
         assert after is None, 'Temporal replays the whole history'
@@ -144,8 +155,9 @@ class TemporalEngine:
         )
         replay = await replayer.replay_workflow(record.history, raise_on_replay_failure=False)
         if (failure := replay.replay_failure) is not None:  # pragma: lax no cover - only a broken cell fails so
-            return EngineRun(run.id, RuntimeError(f'the recorded history does not replay: {failure!r}'), run.units)
-        return EngineRun(run.id, run.output, run.units)
+            error = RuntimeError(f'the recorded history does not replay: {failure!r}')
+            return EngineRun(run.id, error, run.units, failed=run.failed)
+        return EngineRun(run.id, run.output, run.units, failed=run.failed)
 
 
 class TestTemporal(BuiltInEngineSuite):
