@@ -27,6 +27,7 @@ from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_ai_pax.runtime.session_workspace import SessionWorkspace
 from pydantic_ai_pax.runtime.workspace_trust import (
     WorkspaceTrust,
+    describe,
     repository_files,
     trust_command,
     trust_scope,
@@ -118,7 +119,7 @@ async def test_trust_shows_what_it_covers(repository: Path) -> None:
         assert await shell.commands.execute_async('/trust') == (
             f'This folder is untrusted, as every folder is until you decide.\n'
             f'{repository}: this repository and its worktrees.\n'
-            'Found here: ../AGENTS.md, skills (agent folders still reach the model as yours either way, for now).\n'
+            'Found here: ../AGENTS.md, skills.\n'
             'Untrusted, the agent can still read, edit and run code here, '
             "and instruction files and skills reach the model as the repository's, not yours.\n"
             'Either way, these still wait for their own approval: ../.clai/settings.json (/project approve, /plugins enable).\n'
@@ -452,9 +453,15 @@ def test_repository_files_lists_names_only(repository: Path) -> None:
     (repository / '.agents' / 'agents').mkdir(parents=True)
     (repository / '.mcp.json').write_text('{}')
     files = repository_files(repository)
-    assert (files.trusted, files.approved_separately) == (
+    assert (files.trusted, files.approved_separately, files.agent_folders) == (
         ('CLAUDE.md', '.agents/agents'),
         (('.mcp.json', '/mcp trust'),),
+        True,
+    )
+    store = SettingsStore(repository.parent / 'config.db')
+    assert (
+        'Found here: CLAUDE.md, .agents/agents (agent folders still reach the model as yours either way, for now).'
+        in describe(WorkspaceTrust.saved(store, repository), repository)
     )
 
 

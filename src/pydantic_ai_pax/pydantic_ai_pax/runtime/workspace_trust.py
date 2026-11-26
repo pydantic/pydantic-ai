@@ -218,6 +218,8 @@ class RepositoryFiles:
     """Instruction files, skill folders and agent folders: what reaches the model as yours once trusted."""
     approved_separately: tuple[tuple[str, str], ...] = ()
     """Each file that waits for its own approval, trusted or not, with the command that approves it."""
+    agent_folders: bool = False
+    """Whether `trusted` holds an agent folder, which still reaches the model as yours either way."""
 
 
 def repository_files(directory: Path) -> RepositoryFiles:
@@ -228,17 +230,22 @@ def repository_files(directory: Path) -> RepositoryFiles:
     start = directory.resolve()
     trusted: list[str] = []
     approved: list[tuple[str, str]] = []
+    agents: list[str] = []
     for folder in repository_directories(start):
         # Each folder contributes its first instruction file, as `repo_context` loads it.
         name = next((name for name in _INSTRUCTION_FILES if os.path.isfile(folder / name)), None)
         trusted += [] if name is None else [_label(folder / name, start)]
-        trusted += [
-            _label(folder / sub, start) for sub in (*_SKILL_FOLDERS, *_AGENT_FOLDERS) if os.path.isdir(folder / sub)
-        ]
+        found = _folders(folder, _AGENT_FOLDERS, start)
+        trusted += [*_folders(folder, _SKILL_FOLDERS, start), *found]
+        agents += found
         approved += [
             (_label(folder / sub, start), how) for sub, how in _APPROVED_SEPARATELY if os.path.isfile(folder / sub)
         ]
-    return RepositoryFiles(trusted=tuple(trusted), approved_separately=tuple(approved))
+    return RepositoryFiles(trusted=tuple(trusted), approved_separately=tuple(approved), agent_folders=bool(agents))
+
+
+def _folders(folder: Path, names: tuple[Path, ...], start: Path) -> list[str]:
+    return [_label(folder / name, start) for name in names if os.path.isdir(folder / name)]
 
 
 def _label(path: Path, start: Path) -> str:
@@ -254,9 +261,8 @@ def describe(trust: WorkspaceTrust, directory: Path) -> str:
         lines.append('This is your home folder or the filesystem root, so the answer holds for this session only.')
     files = repository_files(directory)
     if files.trusted:
-        lines.append(
-            f'Found here: {_names(files.trusted)} (agent folders still reach the model as yours either way, for now).'
-        )
+        note = ' (agent folders still reach the model as yours either way, for now)' if files.agent_folders else ''
+        lines.append(f'Found here: {_names(files.trusted)}{note}.')
     lines.append(
         'Untrusted, the agent can still read, edit and run code here, '
         "and instruction files and skills reach the model as the repository's, not yours."
