@@ -79,7 +79,7 @@ That is a `uv tool install` of an application, not a library you add to a projec
 without installing it, run `uvx pydantic-ai-pax`.
 
 **Faster first start (optional).** `uv tool install --compile-bytecode pydantic-ai-pax` spends
-a little longer installing so the first start is quicker; `/update now` keeps that setting, and
+a little longer installing so the first start is quicker; `/update now` always installs this way whichever way you installed, and
 `UV_COMPILE_BYTECODE=1` does the same for `uvx`.
 
 Pax comes with the OpenAI and Anthropic SDKs. Other providers may need their SDK
@@ -377,9 +377,8 @@ Pax streams every turn in a session, so a chain moves on when a model fails with
 while a refusal or an answer cut off at the token limit arrives as it is: a stream's finish
 reason is only known once it has been streamed.
 
-In a session a chain runs through `SelectionFallback`, a [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/)
-subclass, so a task you delegate falls back too. Outside a session, where a plugin resolves the
-same chain itself, it is a core `FallbackModel` that moves on for an API error or a refusal.
+A task Pax delegates to another model falls back the same way. Chains are built on
+[`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/).
 
 ### API keys and environment variables
 
