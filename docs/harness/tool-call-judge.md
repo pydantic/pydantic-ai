@@ -128,7 +128,7 @@ A tool registered with `requires_approval=True` and a judge are two gates, and b
 
 1. The call's arguments are validated and the call is deferred, before any execution hook runs. The judge does not see it and is not billed for it.
 2. A person approves or denies it.
-3. On denial the call is over. On approval the call is executed, and the judge is asked then, about the same arguments the person saw, unless a [tool validation hook](../hooks.md#tool-validation-hooks) rewrote them: the person sees the model's arguments, the judge the rewritten ones.
+3. On denial the call is over. On approval the call is executed, and the judge is asked then, about the arguments the tool will receive, which the request's [`validated_args`][pydantic_ai.tools.DeferredToolRequests.validated_args] previews, including any rewrite by a [tool validation hook](../hooks.md#tool-validation-hooks).
 
 So the judge is the second gate, not the first, and the effective rule is that both must allow. The judge can still block a call a person approved; it can never release one a person denied, because a denied call never reaches execution. Adding a judge to a tool that already asks a person can only narrow what runs.
 

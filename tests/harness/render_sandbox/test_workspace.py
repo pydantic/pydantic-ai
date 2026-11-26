@@ -234,12 +234,25 @@ async def test_failed_create_lets_a_later_operation_create(
     # As on E2B: a failed create records no sandbox, so the next operation tries again.
     workspace_harness.create_error = error
     backend = workspace_harness.backend()
-    with pytest.raises(expected):
+    with pytest.raises(expected, match=str(error)):
         await backend.working_dir()
     assert backend.ref is None
     workspace_harness.create_error = None
     await backend.working_dir()
     assert backend.ref == WorkspaceRef(provider='render', id='sb-1')
+
+
+async def test_failed_create_before_render_answers_keeps_the_key_out_of_the_message(
+    workspace_harness: WorkspaceHarness,
+) -> None:
+    # The SDK wraps a transport failure, whose text can quote the `Authorization` header, with it as the cause.
+    error = ClientError("create sandbox failed: Illegal header value b'Bearer rnd_secret\\n'")
+    error.__cause__ = ValueError('illegal header')
+    workspace_harness.create_error = error
+    with pytest.raises(WorkspaceUnavailableError) as caught:
+        await workspace_harness.backend().working_dir()
+    assert str(caught.value) == 'Could not create a Render sandbox'
+    assert caught.value.__cause__ is error
 
 
 async def test_interrupted_stream_on_a_stopped_sandbox_is_unavailable(workspace_harness: WorkspaceHarness) -> None:

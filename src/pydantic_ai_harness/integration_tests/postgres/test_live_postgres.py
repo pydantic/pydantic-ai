@@ -42,6 +42,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
+from typing import Protocol
 from uuid import uuid4
 
 import anyio
@@ -521,10 +522,70 @@ async def test_memory_store_adds_the_metadata_column_to_a_previous_release_table
                 'write_metadata',
             )
         assert column_type == 'jsonb'
+        # Building the path index would block writes to an existing table, so it is left to the application.
+        assert not await table_exists(pool, f'{prefix}_path_idx')
         await stores[0].write_with_metadata(
             'main/MEMORY.md', 'new', expected_version=versions[0], metadata={'updated_by': 'ui'}
         )
         assert await _memory_metadata(stores[1], 'main/MEMORY.md') == {'updated_by': 'ui'}
+
+
+class _LoggedQuery(Protocol):
+    """The fields of asyncpg's untyped `LoggedQuery` that the index test reads."""
+
+    query: str
+    args: tuple[object, ...]
+
+
+async def test_memory_prefix_listings_seek_the_path_index_under_a_linguistic_collation() -> None:
+    """Prefix filters select by code point under any database collation and use the store's index in a generic plan.
+
+    The `postgres` image's default `en_US.utf8` collation ignores `/`, `-`, `_` and `.` at the first
+    comparison level, so a range in the database collation would select the wrong paths for `a/`.
+    """
+    queries: list[tuple[str, tuple[object, ...]]] = []
+
+    def log(record: _LoggedQuery) -> None:
+        queries.append((record.query, record.args))
+
+    async def init(connection: asyncpg.Connection) -> None:
+        connection.add_query_logger(log)  # pyright: ignore[reportUnknownMemberType]
+
+    async with live_tables() as (_, prefix):
+        driver_pool = await asyncpg.create_pool(  # pyright: ignore[reportUnknownMemberType]
+            postgres_url(), min_size=1, max_size=2, init=init
+        )
+        try:
+            pool = as_store_pool(driver_pool)
+            store = PostgresMemoryStore(pool, table=prefix)
+            for path in ['a.md', 'a-b.md', 'a/x.md', 'a/b/c.md', 'a_b/c.md', 'ab/c.md', 'b.md']:
+                await store.write(path, 'tea', expected_version=None)
+            queries.clear()
+
+            assert await store.list_paths('a/', limit=10) == ['a/b/c.md', 'a/x.md']
+            assert await store.list_child_paths('a/', limit=10) == ['a/x.md']
+            assert await store.list_paths(limit=4) == ['a-b.md', 'a.md', 'a/b/c.md', 'a/x.md']
+            assert await store.list_child_paths('', limit=10) == ['a-b.md', 'a.md', 'b.md']
+            result = await store.search('a/', 'tea', limit=10, max_files=10, max_chars=100, max_file_chars=100)
+            assert [match.path for match in result.matches] == ['a/x.md']
+
+            selects = [(query, args) for query, args in queries if query.startswith('SELECT path')]
+            assert len(selects) == 5
+            async with pool.acquire() as connection, connection.transaction():
+                # The plan asyncpg's cached prepared statements reuse after their first executions.
+                await connection.execute('SET LOCAL plan_cache_mode = force_generic_plan')
+                await connection.execute('SET LOCAL enable_seqscan = off')
+                for index, (query, args) in enumerate(selects):
+                    await connection.execute(f'PREPARE {prefix}_{index} AS {query}')
+                    literals = [
+                        str(await connection.fetchval('SELECT quote_literal($1::TEXT)', str(arg))) for arg in args
+                    ]
+                    rows = await connection.fetch(f'EXPLAIN EXECUTE {prefix}_{index}({", ".join(literals)})')
+                    plan = '\n'.join(str(row[0]) for row in rows)
+                    assert f'{prefix}_path_idx' in plan and 'Index Cond' in plan, plan
+                    await connection.execute(f'DEALLOCATE {prefix}_{index}')
+        finally:
+            await driver_pool.close()
 
 
 async def test_memory_agent_write_replaces_the_provenance_a_ui_write_recorded() -> None:

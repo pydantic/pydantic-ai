@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, SupportsIndex
 
 import anyio
 import pytest
@@ -26,7 +27,6 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     RetryFeedbackPart,
-    SystemPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -41,13 +41,14 @@ from pydantic_ai.models.function import (
 )
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import UsageLimits
-from pydantic_ai_harness import DetectLoops
+from pydantic_ai_harness import DetectLoops, GuardrailResult, InputGuardrail
 from pydantic_ai_harness.detect_loops import (
     DetectedLoop,
     LoopDetectedError,
     LoopDetector,
     LoopHandler,
     LoopJudge,
+    LoopNudgePart,
     Repetition,
     RepetitionDetector,
     StreamSample,
@@ -113,13 +114,13 @@ async def _drain(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent
         pass
 
 
-def _nudges(messages: Sequence[ModelMessage]) -> list[SystemPromptPart]:
+def _nudges(messages: Sequence[ModelMessage]) -> list[LoopNudgePart]:
     return [
         part
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, SystemPromptPart)
+        if isinstance(part, LoopNudgePart)
     ]
 
 
@@ -161,14 +162,11 @@ class TestDetectLoops:
         # The stream was cut long before the model finished its 61 chunks.
         assert script.sent[0] < 45
         [nudge] = _nudges(result.all_messages())
-        assert (nudge.content, nudge.metadata, nudge.scope) == snapshot(
+        assert (nudge.content, nudge.pattern, nudge.tool_names, nudge.scope) == snapshot(
             (
                 'Your thinking repeated the same passage 37 times, which is not making progress. Change your approach, or explain what is blocking you.',
-                {
-                    'origin': 'pydantic-ai-harness.detect_loops.nudge.v1',
-                    'pattern': 'repeated_thinking',
-                    'tool_names': [],
-                },
+                'repeated_thinking',
+                (),
                 'request',
             )
         )
@@ -240,14 +238,11 @@ class TestDetectLoops:
         assert result.output == 'done'
         assert script.sent[0] < 80
         [nudge] = _nudges(result.all_messages())
-        assert (nudge.content, nudge.metadata) == snapshot(
+        assert (nudge.content, nudge.pattern, nudge.tool_names) == snapshot(
             (
                 'The arguments of your call to `write_file` repeated the same passage 63 times, which is not making progress. Change your approach, or explain what is blocking you.',
-                {
-                    'origin': 'pydantic-ai-harness.detect_loops.nudge.v1',
-                    'pattern': 'repeated_tool_args',
-                    'tool_names': ['write_file'],
-                },
+                'repeated_tool_args',
+                ('write_file',),
             )
         )
 
@@ -266,14 +261,11 @@ class TestDetectLoops:
 
         assert script.sent[0] < 8
         [nudge] = _nudges(result.all_messages())
-        assert (nudge.content, nudge.metadata) == snapshot(
+        assert (nudge.content, nudge.pattern, nudge.tool_names) == snapshot(
             (
                 'You called `read_file` with the same arguments 5 times in one response, which is not making progress. Change your approach, or explain what is blocking you.',
-                {
-                    'origin': 'pydantic-ai-harness.detect_loops.nudge.v1',
-                    'pattern': 'repeated_parallel_call',
-                    'tool_names': ['read_file'],
-                },
+                'repeated_parallel_call',
+                ('read_file',),
             )
         )
 
@@ -284,8 +276,8 @@ class TestDetectLoops:
             output = await result.get_output()
 
         assert output == 'The config is fine.'
-        assert [nudge.metadata for nudge in _nudges(result.all_messages())] == [
-            {'origin': 'pydantic-ai-harness.detect_loops.nudge.v1', 'pattern': 'repeated_thinking', 'tool_names': []}
+        assert [(nudge.pattern, nudge.tool_names) for nudge in _nudges(result.all_messages())] == [
+            ('repeated_thinking', ())
         ]
 
     async def test_text_that_makes_progress_is_not_a_loop(self):
@@ -301,7 +293,7 @@ class TestDetectLoops:
     async def test_short_repetition_is_not_a_loop(self):
         loops, detector = _collect()
         # A long run of a short unit, like a divider or a row of zeros, repeats a unit shorter than `min_period`.
-        script = _script(['=' * 50] * 20 + ['0, '] * 300)
+        script = _script(['=' * 50] * 50 + ['0, '] * 700)
 
         await _agent(script, detector).run('Draw a table', event_stream_handler=_drain)
 
@@ -354,11 +346,66 @@ class TestDetectLoops:
             action='error',
         )
         calls = [_args('{"path": "a.txt"}', index=index, name='read_file') for index in range(6)]
-        script = _script(calls, [*(_thinking(LOOP) for _ in range(30)), *([LOOP] * 30)])
+        script = _script(calls, [*(_thinking(LOOP) for _ in range(40)), *([LOOP] * 40)])
 
         result = await _agent(script, detector).run('Explain', event_stream_handler=_drain)
 
-        assert result.output == LOOP * 30
+        assert result.output == LOOP * 40
+
+    async def test_a_long_part_is_fed_without_copying_its_rest(self):
+        slices: list[tuple[str, int]] = []
+
+        class Text(str):
+            def __getitem__(self, key: SupportsIndex | slice, /) -> str:
+                piece = super().__getitem__(key)
+                frame = inspect.currentframe()
+                assert frame is not None and frame.f_back is not None
+                slices.append((frame.f_back.f_code.co_name, len(piece)))
+                return piece
+
+        content = Text(PROGRESS * 20)
+        agent = Agent(
+            FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(content)])),
+            capabilities=[DetectLoops(stream_check_every=64)],
+        )
+
+        await agent.run('Explain')
+
+        fed = [length for caller, length in slices if caller == '_feed']
+        assert sum(fed) == len(content)
+        assert max(fed) == 64
+
+    async def test_a_pending_parallel_input_guard_decides_before_the_loop_is_acted_on(self):
+        detected = asyncio.Event()
+
+        @dataclass
+        class Signalling(RepetitionDetector[object]):
+            async def detect(self, ctx: RunContext[object], sample: StreamSample) -> Repetition | None:
+                repetition = await super().detect(ctx, sample)
+                if repetition is not None:
+                    detected.set()
+                return repetition
+
+        async def guard(prompt: str) -> GuardrailResult:
+            await detected.wait()
+            return GuardrailResult.block('Not allowed.')
+
+        script = _script(
+            [*(_thinking(LOOP) for _ in range(60)), 'answer'], [_args('{"path": "a.txt"}', name='read_file')]
+        )
+        agent = Agent(
+            script.model(),
+            capabilities=[DetectLoops(stream_detector=Signalling()), InputGuardrail(guard=guard, parallel=True)],
+        )
+
+        @agent.tool_plain
+        def read_file(path: str) -> str:  # pragma: no cover
+            raise AssertionError('a blocked prompt runs no tools')
+
+        result = await agent.run('Explain', event_stream_handler=_drain)
+
+        assert result.output == 'Not allowed.'
+        assert len(script.requests) == 1
 
     async def test_error_stops_the_stream_and_the_run(self):
         script = _script([LOOP] * 60)
@@ -398,11 +445,7 @@ class TestDetectLoops:
         assert result.output == 'The config is fine.'
         assert len(seen) == 2
         [nudge] = _nudges(result.all_messages())
-        assert nudge.metadata == {
-            'origin': 'pydantic-ai-harness.detect_loops.nudge.v1',
-            'pattern': 'repeated_thinking',
-            'tool_names': [],
-        }
+        assert (nudge.pattern, nudge.tool_names) == ('repeated_thinking', ())
         # The response arrived whole, so it stays in history ahead of the retry, as for any rejected response.
         first_response = result.all_messages()[1]
         assert isinstance(first_response, ModelResponse)
@@ -460,12 +503,8 @@ class TestDetectLoops:
 
         result = await agent.run('Read a.txt')
 
-        assert [nudge.metadata for nudge in _nudges(result.all_messages())] == [
-            {
-                'origin': 'pydantic-ai-harness.detect_loops.nudge.v1',
-                'pattern': 'repeated_parallel_call',
-                'tool_names': ['read_file'],
-            }
+        assert [(nudge.pattern, nudge.tool_names) for nudge in _nudges(result.all_messages())] == [
+            ('repeated_parallel_call', ('read_file',))
         ]
 
     async def test_a_streamed_loop_a_handler_let_through_is_not_counted_again(self):
@@ -700,9 +739,7 @@ class TestLoopJudge:
 
         assert result.output == 'done'
         assert script.sent[0] < 45
-        assert [nudge.metadata['pattern'] for nudge in _nudges(result.all_messages()) if nudge.metadata] == [
-            'repeated_stream_text'
-        ]
+        assert [nudge.pattern for nudge in _nudges(result.all_messages())] == ['repeated_stream_text']
         [prompt] = prompts
         assert '<streamed_output channel="text">' in prompt
 
@@ -802,9 +839,7 @@ class TestLoopJudge:
         result = await agent.run('Explain', event_stream_handler=_drain)
 
         assert result.output == 'done'
-        assert [nudge.metadata['pattern'] for nudge in _nudges(result.all_messages()) if nudge.metadata] == [
-            'repeated_stream_text'
-        ]
+        assert [nudge.pattern for nudge in _nudges(result.all_messages())] == ['repeated_stream_text']
         [span] = [span for span in exporter.get_finished_spans() if span.name == 'loop judge failed']
         assert dict(span.attributes or {}) == {'error.type': 'RuntimeError'}
 
@@ -819,9 +854,7 @@ class TestLoopJudge:
 
         result = await _agent(script, DetectLoops(stream_detector=judge)).run('Explain', event_stream_handler=_drain)
 
-        assert [nudge.metadata['pattern'] for nudge in _nudges(result.all_messages()) if nudge.metadata] == [
-            'repeated_stream_text'
-        ]
+        assert [nudge.pattern for nudge in _nudges(result.all_messages())] == ['repeated_stream_text']
 
     async def test_a_judge_agent(self):
         verdicts = [True]

@@ -5,13 +5,19 @@ How `Workspace` treats a `'windows'` backend's paths is checked everywhere, with
 
 from __future__ import annotations
 
+import codecs
 import os
 import shutil
+import stat
+import subprocess
 import sys
-from collections.abc import Callable
+import tempfile
+from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Any
 
 import anyio
+import anyio.abc
 import pytest
 
 from pydantic_ai import Agent
@@ -25,6 +31,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
 )
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
+from pydantic_ai.workspaces.windows import powershell_script
 
 windows_only = pytest.mark.skipif(sys.platform != 'win32', reason='`WindowsWorkspaceBackend` runs only on Windows')
 
@@ -117,9 +124,33 @@ class TestWindowsCommands:
         assert 'WINDOWS_WORKSPACE_HOST_SECRET' not in names
         assert {'PATH', 'SYSTEMROOT', 'WINDOWS_WORKSPACE_ADDED'} <= names
 
-    async def test_a_script_too_long_for_a_command_line(self, tmp_path: Path) -> None:
-        with pytest.raises(OSError, match='too long'):
-            await WindowsWorkspaceBackend(tmp_path).run('#' * 20_000, shell=True)
+    async def test_a_long_non_ascii_script_runs_from_a_file_it_removes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Longer than one Windows command line holds, which an `-EncodedCommand` script once had to fit in."""
+        temp = tmp_path / 'temp'
+        temp.mkdir()
+        monkeypatch.setattr(tempfile, 'tempdir', str(temp))
+        script = '#' * 40_000 + "\n[Console]::Out.Write('héllo ✓')"
+        result = await WindowsWorkspaceBackend(tmp_path).run(script, shell=True)
+        assert (result.exit_code, result.stdout) == (0, 'héllo ✓')
+        assert list(temp.iterdir()) == []
+
+    async def test_the_script_directory_is_owner_only(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The script may hold secrets, so its directory doesn't inherit the temporary directory's ACL."""
+        temp = tmp_path / 'temp'
+        temp.mkdir()
+        monkeypatch.setattr(tempfile, 'tempdir', str(temp))
+        script = (
+            f"$acl = Get-Acl -LiteralPath (Get-ChildItem -LiteralPath '{temp}' -Directory)[0].FullName; "
+            '[Console]::Out.Write("$($acl.AreAccessRulesProtected) " + ($acl.Access.IdentityReference -join \';\'))'
+        )
+        result = await WindowsWorkspaceBackend(tmp_path).run(script, shell=True)
+        protected, identities = result.stdout.split(' ', 1)
+        assert protected == 'True', result
+        assert not {'Users', 'Everyone', 'Authenticated Users'} & {
+            name.split('\\')[-1] for name in identities.split(';')
+        }
 
     async def test_capability(self, tmp_path: Path) -> None:
         agent = Agent(TestModel(call_tools=[]), capabilities=[WindowsWorkspace(tmp_path)])
@@ -127,3 +158,92 @@ class TestWindowsCommands:
         assert result.workspace is not None
         assert result.workspace.ref == WorkspaceRef(provider='windows', id=str(tmp_path))
         assert result.workspace.platform == 'windows'
+
+
+class _NoJobObjects:
+    def assign(self, pid: int) -> None:
+        return None
+
+
+_POWERSHELL = r'C:\PowerShell\pwsh.exe'
+
+_Launches = list[tuple[list[str], dict[Path, tuple[bytes, int]]]]
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='stands `/bin/sh` in for PowerShell; `TestWindowsCommands` runs it')
+class TestPowerShellLaunch:
+    """What a `shell=True` command starts: no script on the command line, where antivirus flags `-EncodedCommand`."""
+
+    @pytest.fixture
+    def temp(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        # Quotes in the path check that it is quoted for PowerShell, which also ends a string at U+2019.
+        temp = tmp_path / "o'temp\u2019"
+        temp.mkdir()
+        monkeypatch.setattr(tempfile, 'tempdir', str(temp))
+        return temp
+
+    @pytest.fixture
+    def launches(self, temp: Path, monkeypatch: pytest.MonkeyPatch) -> _Launches:
+        """Each launch's argv, with the temporary files that existed then; `/bin/sh` runs in PowerShell's place."""
+        launches: _Launches = []
+        open_process = anyio.open_process
+
+        def read_files() -> dict[Path, tuple[bytes, int]]:
+            """Each file's content, and its directory's mode."""
+            return {path: (path.read_bytes(), path.parent.stat().st_mode) for path in temp.rglob('*') if path.is_file()}
+
+        async def fake_open_process(command: Sequence[str], **kwargs: Any) -> anyio.abc.Process:
+            launches.append((list(command), await anyio.to_thread.run_sync(read_files)))
+            return await open_process(['/bin/sh', '-c', 'exit 0'], **kwargs)
+
+        monkeypatch.setattr('pydantic_ai.workspaces.windows._on_windows', lambda: True)
+        monkeypatch.setattr('pydantic_ai.workspaces.windows._job_objects', _NoJobObjects)
+        monkeypatch.setattr(anyio, 'open_process', fake_open_process)
+        return launches
+
+    @pytest.mark.parametrize('script', ["Write-Output 'héllo ✓'", '#' * 40_000], ids=['non-ascii', 'long'])
+    async def test_the_script_runs_from_a_temporary_file(
+        self, tmp_path: Path, temp: Path, launches: _Launches, script: str
+    ) -> None:
+        result = await WindowsWorkspaceBackend(tmp_path, powershell=_POWERSHELL).run(script, shell=True)
+        assert result.exit_code == 0
+        [(argv, files)] = launches
+        [(path, (content, mode))] = files.items()
+        assert path.suffix == '.ps1'
+        assert '-EncodedCommand' not in argv
+        quoted = str(path).replace("'", "''").replace('\u2019', '\u2019\u2019')
+        assert argv == [
+            _POWERSHELL,
+            '-NoLogo',
+            '-NoProfile',
+            '-NonInteractive',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-OutputFormat',
+            'Text',
+            '-Command',
+            f"& ([ScriptBlock]::Create([IO.File]::ReadAllText('{quoted}')))",
+        ]
+        assert len(subprocess.list2cmdline(argv)) < 1_000
+        # UTF-8 with a BOM, like the harness's `command.ps1`.
+        assert content == codecs.BOM_UTF8 + powershell_script(script).encode()
+        # The script may hold secrets, so its directory is `mkdtemp`'s: owner-only here, and an owner-only ACL on Windows.
+        assert stat.S_IMODE(mode) == 0o700
+        assert list(temp.iterdir()) == []
+
+    async def test_the_temporary_file_is_removed_when_powershell_cannot_start(
+        self, tmp_path: Path, temp: Path, launches: _Launches
+    ) -> None:
+        with pytest.raises(FileNotFoundError):
+            await WindowsWorkspaceBackend(tmp_path, powershell='missing-pwsh').run('Get-Date', shell=True)
+        assert launches == []
+        assert list(temp.iterdir()) == []
+
+    async def test_the_temporary_file_is_removed_when_writing_it_fails(
+        self, tmp_path: Path, temp: Path, launches: _Launches
+    ) -> None:
+        # A lone surrogate has no UTF-8 encoding.
+        with pytest.raises(UnicodeEncodeError):
+            await WindowsWorkspaceBackend(tmp_path, powershell=_POWERSHELL).run('Write-Output \ud800', shell=True)
+        assert launches == []
+        assert list(temp.iterdir()) == []

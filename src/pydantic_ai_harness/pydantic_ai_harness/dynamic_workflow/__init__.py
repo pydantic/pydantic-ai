@@ -2,6 +2,7 @@
 
 from pydantic_ai_harness.dynamic_workflow._capability import DynamicWorkflow
 from pydantic_ai_harness.dynamic_workflow._toolset import (
+    AgentRevealPart,
     DynamicWorkflowToolset,
     WorkflowAgent,
     WorkflowCall,
@@ -10,6 +11,7 @@ from pydantic_ai_harness.dynamic_workflow._toolset import (
 )
 
 __all__ = [
+    'AgentRevealPart',
     'DynamicWorkflow',
     'DynamicWorkflowToolset',
     'WorkflowAgent',

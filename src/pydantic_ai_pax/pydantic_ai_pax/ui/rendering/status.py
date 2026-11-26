@@ -1,0 +1,458 @@
+"""A terminal-only prompt frame and status row, separate from conversation output."""
+
+import asyncio
+import contextlib
+import math
+import time
+from collections.abc import AsyncGenerator, Callable, Sequence
+from dataclasses import dataclass, field
+from decimal import Decimal
+from pathlib import Path, PurePath
+from typing import ClassVar, Literal, Self, cast
+
+import anyio
+from rich.cells import cell_len, set_cell_size
+from rich.console import Console
+
+from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    TextPart,
+    TextPartDelta,
+    ThinkingPart,
+    ThinkingPartDelta,
+    ToolCallPart,
+    ToolCallPartDelta,
+)
+from pydantic_ai_pax.config import DEFAULT_FOOTER_FIELDS, FooterField, TrustLevel
+from pydantic_ai_pax.ui.rendering import theme
+from pydantic_ai_pax.ui.rendering.duration import format_duration
+from pydantic_ai_pax.ui.rendering.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER, Spinner
+from pydantic_ai_pax.ui.rendering.tool_output import terminal_text
+from pydantic_ai_pax.ui.rendering.usage_report import format_cost
+
+TEXT_TIME = 'clai2_last_text_at'
+"""Local text-observation time stored in response metadata, not sent to the provider."""
+
+LINK_MARK = '↗'
+"""Follows a link's text in the status row, so it reads as clickable."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class StatusLink:
+    """A status-row fragment that opens `url` when clicked; the row shows `text` followed by `LINK_MARK`."""
+
+    text: str
+    url: str
+
+
+class LinkText(str):
+    """Toolbar text that a click opens; every painter that ignores links sees a plain string."""
+
+    url: str
+
+    def __new__(cls, text: str, *, url: str) -> Self:
+        """Keep `url` beside the text."""
+        linked = super().__new__(cls, text)
+        linked.url = url
+        return linked
+
+
+StatusSegment = Callable[[], str | StatusLink]
+"""One short status-row fragment supplied by a plugin; see `PluginHost.status_segment`."""
+
+
+@dataclass(kw_only=True)
+class Status:
+    """Reported context and explicitly approximate live output counts."""
+
+    fields: Callable[[], Sequence[FooterField]] = lambda: DEFAULT_FOOTER_FIELDS
+    clock: Callable[[], float] = time.time
+    text_updates: int = 0
+    last_text_at: float | None = None
+    """Main-assistant text time, independent of the subagent whose figures are shown."""
+    updates: Callable[[], str] = lambda: ''
+    live: Callable[[], str] = lambda: ''
+    queued: Callable[[], int] = lambda: 0
+    _text_response: ModelResponse | None = field(default=None, init=False, repr=False)
+    _streamed_text: bool = field(default=False, init=False, repr=False)
+    model: str = 'agent default'
+    workspace: str = ''
+    """The session's working directory; hidden while empty."""
+    trust: Callable[[], TrustLevel | None] = lambda: None
+    """Whether you trust the session's directory, painted after it; hidden for `None`, as for a host that decides."""
+    context_tokens: int | None = None
+    context_estimated: bool = False
+    """`context_tokens` is a character estimate, made before any response reported usage; painted with `~`."""
+    context_window: int | None = None
+    """Known context capacity for the latest request; `None` when unresolved."""
+    model_window: int | None = None
+    """The selected model's known window, shown until a request resolves `context_window`."""
+    context_alert: bool = False
+    """Paint the context figure `WARNING`; set by whoever knows the window, such as the `compaction` plugin."""
+    output_tokens: int | None = None
+    cost: Decimal | None = None
+    """Retained-history cost; `None` (hidden) until a priced response exists."""
+    cost_is_lower_bound: bool = False
+    """Whether omitted response usage makes the retained-history cost a lower bound."""
+    streamed_chars: int = 0
+    activity: str = 'ready'
+    status_segments: tuple[StatusSegment, ...] = ()
+    """Fragments in the main footer's configurable `plugins` group; the shell fills this in each turn."""
+    agent: str = ''
+    """The subagent these figures belong to, painted before the model; empty for the main conversation."""
+    subagent: 'Callable[[], Status | None]' = lambda: None
+    """The running subagent whose figures replace these on the row until it settles; see `Tasks.focused`."""
+
+    FIT_STEPS: ClassVar[tuple[tuple[Literal['shorten', 'hide'], FooterField], ...]] = (
+        ('shorten', 'workspace'),
+        ('hide', 'assistant_age'),
+        ('hide', 'output'),
+        ('hide', 'cost'),
+        ('hide', 'queued'),
+        ('hide', 'updates'),
+        ('hide', 'live'),
+        ('hide', 'workspace'),
+        ('hide', 'plugins'),
+        ('shorten', 'context'),
+        ('hide', 'model'),
+    )
+    """How a footer too wide for the terminal gives way, first step first.
+
+    `workspace` shortens to its last folder and `context` to its bare figure. `activity` is never
+    hidden, nor is `context`'s figure: they say whether Pax is working and how full the conversation
+    is. `model` goes last because it names a focused subagent whose figures are shown.
+    """
+
+    def clear_conversation(self) -> None:
+        """Forget the figures of a conversation the shell switched away from."""
+        self.context_tokens = None
+        self.context_estimated = False
+        self.context_window = None
+        self.context_alert = False
+        self.output_tokens = None
+        self.cost = None
+        self.cost_is_lower_bound = False
+        self.streamed_chars = 0
+        self.last_text_at = None
+        self._text_response = None
+        self._streamed_text = False
+
+    def restore_text_age(self, messages: Sequence[ModelMessage], *, keep_live: bool = True) -> None:
+        """Restore from the last textual response's local receipt time, retaining an observed live delta time.
+
+        A rewind passes `keep_live=False`; no user, tool or thinking timestamp substitutes for text.
+        """
+        response = next(
+            (
+                message
+                for message in reversed(messages)
+                if isinstance(message, ModelResponse)
+                and any(isinstance(part, TextPart) and part.content for part in message.parts)
+            ),
+            None,
+        )
+        streamed = self._streamed_text
+        self._streamed_text = False
+        if response is self._text_response and keep_live:
+            return
+        self._text_response = response
+        if keep_live and streamed and response is not None:
+            return
+        if response is None:
+            self.last_text_at = None
+            return
+        saved = response.metadata.get(TEXT_TIME) if response.metadata else None
+        if isinstance(saved, (int, float)) and not isinstance(saved, bool) and math.isfinite(saved):
+            self.last_text_at = float(saved)
+        else:
+            self.last_text_at = response.timestamp.timestamp()
+
+    @property
+    def window(self) -> int | None:
+        """The window to show: the latest request's, or the selected model's before a request resolved one."""
+        return self.model_window if self.context_window is None else self.context_window
+
+    def _observe_text(self, event: AgentStreamEvent) -> None:
+        """Track only nonempty text starts and deltas, independently of token estimates."""
+        if (isinstance(event, PartStartEvent) and isinstance(event.part, TextPart) and event.part.content) or (
+            isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta) and event.delta.content_delta
+        ):
+            self.last_text_at = self.clock()
+            self.text_updates += 1
+            self._streamed_text = True
+
+    def observe(self, event: AgentStreamEvent) -> None:
+        """Include text, thinking, and streamed tool arguments in the estimate."""
+        self._observe_text(event)
+        if isinstance(event, PartStartEvent):
+            part = event.part
+            if isinstance(part, (TextPart, ThinkingPart)):
+                self.streamed_chars += len(part.content)
+                self.activity = 'thinking' if isinstance(part, ThinkingPart) else 'responding'
+            elif isinstance(part, ToolCallPart):
+                self.streamed_chars += len(part.args_as_json_str())
+                self.activity = f'tool: {part.tool_name}'
+        elif isinstance(event, PartDeltaEvent):
+            delta = event.delta
+            if isinstance(delta, (TextPartDelta, ThinkingPartDelta)):
+                self.streamed_chars += len(delta.content_delta or '')
+            elif isinstance(delta, ToolCallPartDelta) and isinstance(delta.args_delta, str):
+                self.streamed_chars += len(delta.args_delta)
+        elif isinstance(event, FunctionToolCallEvent):
+            self.activity = f'running: {event.part.tool_name}'
+        elif isinstance(event, FunctionToolResultEvent):
+            self.activity = 'working'
+
+    def segments(self, frame: str = '') -> tuple[str, ...]:
+        """The configured visible fields, sharing the toolbar's boundaries and conditional visibility."""
+        painted = self.toolbar()
+        return (frame + ' ' if frame else '', *(text for _, text in painted))
+
+    def _fields(self) -> tuple[dict[FooterField, list[tuple[str, str]]], dict[FooterField, list[tuple[str, str]]]]:
+        """Style each field by meaning, before applying the main conversation's layout.
+
+        Also returns the shorter form of each field a `FIT_STEPS` step shortens.
+        """
+        shown = self.subagent() or self
+        estimated = '~' if shown.context_estimated else ''
+        context = f'{estimated}{_compact_tokens(shown.context_tokens)}/{_compact_tokens(shown.window)}'
+        output = f'~{math.ceil(shown.streamed_chars / 4):,}'
+        output_label = 'streamed tokens'
+        if shown.output_tokens is not None:
+            output = f'{shown.output_tokens:,}'
+            output_label = 'output tokens'
+        cost = '' if shown.cost is None else f'{">=" if shown.cost_is_lower_bound else ""}{format_cost(shown.cost)}'
+        named = [(theme.INFO, shown.agent)] if shown.agent else []
+        if shown.agent and shown.model:
+            named.append((theme.MUTED, ': '))
+        activity = [(theme.MUTED, shown.activity)]
+        if shown.activity.startswith(('tool: ', 'running: ')):
+            label, _, tool = shown.activity.partition(': ')
+            activity = [(theme.MUTED, label + ': '), (theme.THINKING, tool)]
+        age = (
+            'last text: ' + format_duration(self.clock() - self.last_text_at, started_at=self.last_text_at)
+            if self.last_text_at is not None
+            else ''
+        )
+        queued = self.queued()
+        # A POSIX path can contain terminal controls; sanitize it on every painter.
+        path = _short_path(terminal_text(shown.workspace, keep=''))
+        folder = f'…/{PurePath(path).name}'
+        figure = (theme.WARNING if shown.context_alert else theme.MUTED, context)
+        trust = shown.trust()
+        trust_parts = [(theme.WARNING if trust == 'untrusted' else theme.MUTED, trust)] if trust is not None else []
+        short_path = folder if cell_len(folder) < cell_len(path) else path
+        shorter: dict[FooterField, list[tuple[str, str]]] = {
+            'workspace': _workspace_with_trust(short_path, trust_parts),
+            'context': [figure],
+        }
+        return {
+            'model': [*named, (theme.MUTED, shown.model)],
+            'workspace': _workspace_with_trust(path, trust_parts),
+            'context': [(theme.MUTED, 'context: '), figure, (theme.MUTED, ' tokens')],
+            'output': [(theme.LITHIUM, output), (theme.MUTED, f' {output_label}')],
+            'cost': [(theme.MUTED, cost)],
+            'activity': activity,
+            'plugins': self._plugin_fragments(),
+            'updates': [(theme.MUTED, self.updates())],
+            'live': [(theme.MUTED, self.live())],
+            'queued': [(theme.MUTED, f'queued: {queued}' if queued else '')],
+            'assistant_age': [(theme.MUTED, age)],
+        }, shorter
+
+    def _plugin_fragments(self) -> list[tuple[str, str]]:
+        """Plugin fragments separated by ` | `: plain text runs as one fragment, and each link as its own, keeping its URL."""
+        texts: list[str] = []
+        for text in filter(None, map(_segment_text, self.status_segments)):
+            for piece in (' | ', text) if texts else (text,):
+                if texts and not isinstance(texts[-1], LinkText) and not isinstance(piece, LinkText):
+                    texts[-1] += piece
+                else:
+                    texts.append(piece)
+        return [(theme.MUTED, text) for text in texts]
+
+    def text(self, frame: str = '') -> str:
+        """Show compact used/max context, with `?` for unknown counts."""
+        return ''.join(self.segments(frame))
+
+    def toolbar(self, *, width: int | None = None) -> list[tuple[str, str]]:
+        """Apply visibility and ordering without tying any field's style to its position.
+
+        With `width`, take `FIT_STEPS` in turn until the row fits in that many cells, keeping the
+        configured order of what is left; a row that still does not fit is the painter's to cut.
+        """
+        (fields, shorter), order = self._fields(), self.fields()
+        row = _join(fields, order)
+        if width is None:
+            return row
+        for step, name in self.FIT_STEPS:
+            if sum(cell_len(text) for _, text in row) <= width:
+                break
+            fields[name] = shorter[name] if step == 'shorten' else []
+            row = _join(fields, order)
+        return row
+
+
+class StatusLine:
+    """Keep the prompt frame and status visible below streamed output during a run."""
+
+    def __init__(
+        self,
+        console: Console,
+        status: Status,
+        *,
+        enabled: bool = True,
+        spinner: Callable[[], Spinner] = lambda: BUILTIN_SPINNERS[DEFAULT_SPINNER],
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        """Bind the footer to the same output stream as the renderer; `spinner` is read on every frame."""
+        self.console = console
+        self.status = status
+        self.enabled = enabled
+        self.spinner = spinner
+        self.clock = clock
+        self._task: asyncio.Task[None] | None = None
+        self._height = 0
+        self._rows = 0
+
+    async def __aenter__(self) -> Self:
+        """Reserve the prompt area only on an interactive terminal."""
+        self._reserve()
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        """Restore scrolling on success, failure, and cancellation."""
+        await self._release()
+
+    @contextlib.asynccontextmanager
+    async def paused(self) -> AsyncGenerator[None]:
+        """Give the whole screen to something else, then restore the prompt area."""
+        await self._release()
+        try:
+            yield
+        finally:
+            self._reserve()
+
+    def _reserve(self) -> None:
+        if self.enabled and self.console.is_terminal and not self.console.is_dumb_terminal:
+            self.console.show_cursor(False)
+            self._draw()
+            self._task = asyncio.create_task(self._animate())
+
+    async def _release(self) -> None:
+        task, self._task = self._task, None
+        if task is not None:
+            task.cancel()
+            try:
+                # `asyncio.wait` never forwards our cancellation to the animation, so a
+                # `CancelledError` here is ours and propagates: Ctrl+C must still abort.
+                await asyncio.wait({task})
+                with contextlib.suppress(asyncio.CancelledError):
+                    task.result()  # Surface an animation failure; its cancellation was ours.
+            finally:
+                self._clear()
+                self.console.show_cursor(True)
+                self.console.file.flush()
+
+    def _clear(self) -> None:
+        if self._height:
+            rows = range(max(1, self._height - self._rows + 1), min(self._height, self.console.height) + 1)
+            cleared = ''.join(f'\x1b[{row};1H\x1b[2K' for row in rows)
+            self.console.file.write(f'\x1b7\x1b[r{cleared}\x1b8')
+            self._height = self._rows = 0
+
+    def _draw(self) -> None:
+        width, height = self.console.size
+        if height < 3:
+            self._clear()
+            self.console.file.flush()
+            return
+        rows = 4 if height >= 6 and width >= 4 else 1
+        # Leave one column unused so the footer cannot trigger autowrap.
+        fragments = self.status.toolbar(width=max(0, width - 1))
+        prefix = '\x1b7'
+        if (height, rows) != (self._height, self._rows):
+            self._clear()
+            # Move inside the new scroll region before excluding the footer rows.
+            prefix = '\x1bD' * rows + f'\x1b[{rows}A\x1b7\x1b[1;{height - rows}r'
+            self._height, self._rows = height, rows
+        remaining = max(0, width - 1)
+        painted = ''
+        for role, fragment in fragments:
+            text = _printable(fragment)[:remaining]
+            painted += ''.join(theme.sgr(role) + char for char in text)
+            remaining -= len(text)
+        if rows == 4:
+            inner_width = width - 3
+            glyph = self.spinner().frame(self.clock())
+            hint = set_cell_size(f'> Working {glyph} Ctrl+C to interrupt', inner_width)
+            border = '─' * inner_width
+            for row, line in enumerate((f'┌{border}┐', f'│{hint}│', f'└{border}┘'), start=height - 3):
+                prefix += f'\x1b[{row};1H\x1b[2K{theme.sgr(theme.MUTED)}{line}\x1b[0m'
+        self.console.file.write(f'{prefix}\x1b[{height};1H\x1b[2K{painted}\x1b[0m\x1b8')
+        self.console.file.flush()
+
+    async def _animate(self) -> None:
+        while True:
+            # Refresh live counts at least ten times a second, whatever the spinner's speed.
+            self._draw()
+            await anyio.sleep(max(0, min(0.1, self.spinner().interval)))
+
+
+def _workspace_with_trust(path: str, trust: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    if path and trust:
+        return [(theme.MUTED, path), (theme.MUTED, ' | '), *trust]
+    return trust or [(theme.MUTED, path)]
+
+
+def _join(fields: dict[FooterField, list[tuple[str, str]]], order: Sequence[FooterField]) -> list[tuple[str, str]]:
+    """The fields of `order` that have text, joined by separators."""
+    painted: list[tuple[str, str]] = []
+    for name in order:
+        fragments = [(role, text) for role, text in fields[name] if text]
+        if fragments:
+            if painted:
+                painted.append((theme.MUTED, ' | '))
+            painted.extend(fragments)
+    return painted
+
+
+def _compact_tokens(count: int | None) -> str:
+    """Round to whole thousands or tenths of a million without trailing `.0`."""
+    if count is None:
+        return '?'
+    if count >= 999_500:
+        return f'{count / 1_000_000:.1f}'.removesuffix('.0') + 'm'
+    if count >= 1_000:
+        return f'{count / 1_000:.0f}k'
+    return str(count)
+
+
+def _short_path(path: str, limit: int = 40) -> str:
+    """Abbreviate the home directory, then keep the path's tail, the part that tells worktrees apart."""
+    # `Path.home()` raises `RuntimeError` when the account has no resolvable home directory.
+    with contextlib.suppress(ValueError, RuntimeError):
+        path = str(Path('~', Path(path).relative_to(Path.home())))
+    return path if len(path) <= limit else '…' + path[-(limit - 1) :]
+
+
+def _segment_text(segment: StatusSegment) -> str:
+    """A plugin fragment's sanitized text, a link's as `LinkText`; one that raises or returns another type is reported."""
+    try:
+        # Plugins may be untyped, so validate the runtime result despite the callable's contract.
+        shown = cast(object, segment())
+        if isinstance(shown, StatusLink):
+            return LinkText(f'{_printable(shown.text)} {LINK_MARK}', url=_printable(shown.url))
+    except Exception as exc:  # noqa: BLE001 -- a plugin fragment must not take down the footer.
+        return f'!{type(exc).__name__}'
+    if isinstance(shown, str):
+        # Sanitized here rather than only in the row painter: the toolbar draws fragments too.
+        return _printable(shown)
+    # Another type cannot be joined; report its type instead of raising out of the painter.
+    return f'!{type(shown).__name__}' if shown else ''
+
+
+def _printable(text: str) -> str:
+    return ''.join(char if (char.isascii() and char.isprintable()) or char == LINK_MARK else '?' for char in text)

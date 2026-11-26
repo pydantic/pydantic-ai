@@ -110,7 +110,7 @@ class CompactOnRequest(AbstractCapability[AgentDepsT]):
     """Refuse requests once this many have been accepted in the run. `None` disables the check."""
 
     tokenizer: Callable[[str], int] | None = field(default=None, kw_only=True)
-    """Optional token counter for `min_tokens` and the span; defaults to the characters-per-token heuristic."""
+    """Optional token counter for `min_tokens` and the span; defaults to the built-in text estimate."""
 
     id: str | None = field(default='compact_on_request', kw_only=True)
 

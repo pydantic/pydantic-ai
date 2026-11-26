@@ -57,6 +57,9 @@ from pydantic_ai_harness._workspace_provider import (
     running_on_asyncio,
     stop_shielded,
 )
+from pydantic_ai_harness.computer_use import Display, SupportsDisplay
+from pydantic_ai_harness.computer_use._display import checked_desktop_size
+from pydantic_ai_harness.computer_use._x11 import DISPLAY, x11_display
 
 try:
     from opensandbox import Sandbox
@@ -64,7 +67,7 @@ try:
     from opensandbox.exceptions import SandboxApiException, SandboxConnectionException, SandboxException
     from opensandbox.manager import SandboxManager
     from opensandbox.models.execd import ExecutionHandlers, OutputMessage, RunCommandOpts
-    from opensandbox.models.sandboxes import CredentialProxyConfig, NetworkPolicy, SandboxFilter
+    from opensandbox.models.sandboxes import CredentialProxyConfig, NetworkPolicy, SandboxFilter, Volume
 except ImportError as _import_error:
     raise ImportError('Install `pydantic-ai-harness[opensandbox]` to use OpenSandbox.') from _import_error
 
@@ -193,7 +196,7 @@ async def destroy_sandbox(sandbox_id: str, connection: ConnectionConfig | None =
         await manager.close()
 
 
-class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
+class OpenSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
     """Run commands in an [OpenSandbox](https://open-sandbox.ai) sandbox, created on first use.
 
     Built with `image`, the first operation creates a sandbox from it; built with `ref`, it attaches to that
@@ -222,12 +225,18 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
         credential_proxy: The SDK's `CredentialProxyConfig` for a new sandbox, passed to `Sandbox.create`
             unchanged. `CredentialProxyConfig(enabled=True)` has the server add the tokens in the sandbox's
             `credential_vault` to matching requests as they leave the sandbox. Ignored on attach.
+        volumes: The SDK's `Volume` mounts for a new sandbox, passed to `Sandbox.create` unchanged. Ignored on
+            attach.
         secure_access: Ask the server to turn on Secure Access for a new sandbox, so its ingress gateway and
             proxy require the sandbox's token. Requires Kubernetes with an ingress gateway; Docker rejects `True`.
             Ignored on attach.
         sandbox_timeout: Seconds a sandbox may go unused before the server deletes it, files included. Every
             operation renews it as it starts, so a single command must finish within it. `None` keeps it until it
             is destroyed.
+        desktop: Whether the sandbox has a display for
+            [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for 1280x800, or its
+            `(width, height)`. The first use installs the programs it needs with `apt-get` when the image's user is
+            root; passwordless `sudo` works only where the server allows it. No port or endpoint is opened for it.
     """
 
     def __init__(
@@ -242,8 +251,10 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
         allow_internet_access: bool = True,
         network_policy: NetworkPolicy | None = None,
         credential_proxy: CredentialProxyConfig | None = None,
+        volumes: list[Volume] | None = None,
         secure_access: bool = False,
         sandbox_timeout: int | None = None,
+        desktop: bool | tuple[int, int] = False,
     ) -> None:
         if (image is None) == (ref is None):
             raise ValueError('pass exactly one of `image`, to create a sandbox, or `ref`, to attach to one')
@@ -260,12 +271,12 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
         self._ref = ref
         self._connection = connection
         self._working_dir = working_dir
-        self._env = dict(env or {})
         self._resource = dict(resource) if resource is not None else None
         if network_policy is None and not allow_internet_access:
             network_policy = NetworkPolicy(defaultAction='deny')
         self._network_policy = network_policy
         self._credential_proxy = credential_proxy
+        self._volumes = list(volumes) if volumes is not None else None
         self._secure_access = secure_access
         self._sandbox_timeout = sandbox_timeout
         self._sandbox: Sandbox | None = None
@@ -273,6 +284,17 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
         self._lock = anyio.Lock()
         self._operations = 0
         self._close_after_operation = False
+        self._display = x11_display(
+            self._run_argv,
+            checked_desktop_size(desktop),
+            lambda: f'OpenSandbox sandbox {self._ref.id if self._ref else "(not created)"}',
+        )
+        self._env = {**({'DISPLAY': DISPLAY} if self._display else {}), **(env or {})}
+
+    @property
+    def display(self) -> Display | None:
+        """The sandbox's desktop, when created with `desktop=True`."""
+        return self._display
 
     @property
     def ref(self) -> WorkspaceRef | None:
@@ -366,6 +388,7 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
                         resource=self._resource,
                         network_policy=self._network_policy,
                         credential_proxy=self._credential_proxy,
+                        volumes=self._volumes,
                         secure_access=self._secure_access,
                         metadata={_CREATE_TAG: tag},
                         connection_config=_connection_config(self._connection),
@@ -466,11 +489,18 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
         check_timeout(timeout)
         argv = command_argv(command, shell)
         check_env(env)
+        if self._display is not None:
+            # Started first, so a program the command opens shows on the screen.
+            await self._display.start()
+        return await self._run_argv(argv, env=env or {}, timeout=timeout)
+
+    async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
+        """Run `argv` without starting the display, as the display's own commands do."""
         async with self._operation():
             # The first command also creates the sandbox, which the command's timeout does not bound.
             sandbox = await self._acquire()
             assert self._resolved_working_dir is not None
-            return await self._exec(sandbox, argv, {**self._env, **(env or {})}, timeout, self._resolved_working_dir)
+            return await self._exec(sandbox, argv, {**self._env, **env}, timeout, self._resolved_working_dir)
 
     async def _exec(
         self, sandbox: Sandbox, argv: list[str], env: Mapping[str, str], timeout: float | None, cwd: str | None

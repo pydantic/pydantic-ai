@@ -139,6 +139,15 @@ def is_direct_child(prefix: str, path: str) -> bool:
     return '/' not in path.removeprefix(prefix)
 
 
+def prefix_end(prefix: str) -> str:
+    """An exclusive upper bound for the paths starting with `prefix` under a binary collation.
+
+    Paths are printable ASCII (`validate_store_path`), so each one starting with `prefix` sorts below
+    `prefix` plus DEL. A bound in ASCII is also valid in every PostgreSQL server encoding.
+    """
+    return f'{prefix}\x7f'
+
+
 def _snippet(content: str, query: str, max_chars: int) -> str:
     if max_chars <= 0:  # pragma: no cover - lexical_search rejects non-positive budgets
         return ''
@@ -275,6 +284,28 @@ class MetadataMemoryStore(MemoryStore, Protocol):
         `None` or an empty mapping records no metadata, as `write` does.
         """
         ...  # pragma: no cover
+
+
+@runtime_checkable
+class ChildListingMemoryStore(MemoryStore, Protocol):
+    """A `MemoryStore` that can list only the paths directly below a prefix.
+
+    A scope nested under another, such as namespace `acme/main` under `acme`, stores its paths below
+    the outer scope's prefix. `list_paths` returns them too, so they would fill the `limit` of the outer
+    scope's file listing. `Memory` uses `list_child_paths` for that listing, and for the `search_memory`
+    fallback, when the store implements it. All bundled stores do.
+    """
+
+    async def list_child_paths(self, prefix: str, *, limit: int) -> list[str]:
+        """Return the stored paths starting with `prefix` with no `/` after it, sorted."""
+        ...  # pragma: no cover
+
+
+async def list_scope_paths(store: MemoryStore, prefix: str, *, limit: int) -> list[str]:
+    """List the paths directly below `prefix`, or every path below it for a store that cannot tell them apart."""
+    if isinstance(store, ChildListingMemoryStore):
+        return await store.list_child_paths(prefix, limit=limit)
+    return await store.list_paths(prefix, limit=limit)
 
 
 @runtime_checkable

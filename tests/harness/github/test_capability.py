@@ -5,11 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TypeVar
 
-import httpx
+import httpx2
 import pytest
 from fastmcp.client.transports import StreamableHttpTransport
-from mcp.server.fastmcp import FastMCP
-from mcp.types import ToolAnnotations
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
@@ -23,23 +21,18 @@ from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.github import GITHUB_MCP_URL, GitHub
 from tests.harness._hosted_mcp import mcp_connection, only_leaf
 
-# MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
-pytestmark = [
-    pytest.mark.filterwarnings(
-        "ignore:Field 'lifespan' has an incomplete definition:UserWarning:pydantic_settings.sources.utils"
-    ),
-]
+from .._mcp_server import NOT_READ_ONLY, READ_ONLY, MCPServer
 
 
 @pytest.fixture
-def server() -> FastMCP:
-    server = FastMCP('provider', instructions='Provider instructions.')
+def server() -> MCPServer:
+    server = MCPServer('provider', instructions='Provider instructions.')
 
-    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    @server.tool(annotations=READ_ONLY)
     def read_resource() -> str:
         return 'read'
 
-    @server.tool(annotations=ToolAnnotations(readOnlyHint=False))
+    @server.tool(annotations=NOT_READ_ONLY)
     def write_resource() -> str:
         return 'written'
 
@@ -82,7 +75,7 @@ def per_user_token(ctx: RunContext[str | None]) -> str | None:
 def bearer(connection: AbstractToolset[DepsT]) -> str:
     auth = transport(connection).auth
     assert auth is not None
-    request = next(auth.auth_flow(httpx.Request('POST', 'https://example.com/mcp')))
+    request = next(auth.auth_flow(httpx2.Request('POST', 'https://example.com/mcp')))
     return request.headers['Authorization']
 
 
@@ -97,13 +90,13 @@ class TestGitHub:
             (True, '{"github_read_resource":"read"}'),
         ],
     )
-    async def test_agent_executes_selected_tools(self, server: FastMCP, read_only: bool, expected: str) -> None:
+    async def test_agent_executes_selected_tools(self, server: MCPServer, read_only: bool, expected: str) -> None:
         agent = Agent(TestModel(), capabilities=[GitHub(client=server, read_only=read_only)])
         result = await agent.run('Use the tools')
         assert result.output == expected
 
     @pytest.mark.parametrize('include', [True, False])
-    async def test_server_instructions(self, server: FastMCP, include: bool) -> None:
+    async def test_server_instructions(self, server: MCPServer, include: bool) -> None:
         agent = Agent(TestModel(call_tools=[]), capabilities=[GitHub(client=server, include_instructions=include)])
         result = await agent.run('Hello')
         request = result.all_messages()[0]
@@ -130,7 +123,7 @@ class TestGitHub:
         with pytest.raises(UserError, match='`client` owns the connection'):
             GitHub(client='https://example.com/mcp', auth=auth, url=url, toolsets=toolsets, lockdown=lockdown)
 
-    async def test_client_accepts_empty_auth(self, server: FastMCP) -> None:
+    async def test_client_accepts_empty_auth(self, server: MCPServer) -> None:
         # The `auth` table documents `''` as unset, so it does not conflict with `client`.
         agent = Agent(TestModel(), capabilities=[GitHub(client=server, auth='', read_only=True)])
         result = await agent.run('Use the tools')
@@ -161,7 +154,7 @@ class TestGitHub:
         # filter, so only the connection under it keeps the id then (see `test_custom_id_is_forwarded`).
         assert capability.get_toolset().id == 'work-github'
 
-    def test_defer_loading_needs_no_id(self, server: FastMCP) -> None:
+    def test_defer_loading_needs_no_id(self, server: MCPServer) -> None:
         Agent(TestModel(), capabilities=[GitHub(client=server, defer_loading=True)])
 
     def test_two_that_differ_raise_when_the_agent_is_built(self) -> None:
@@ -184,7 +177,8 @@ class TestGitHub:
         assert only_leaf(GitHub[str | None](id=unset, auth='token').get_toolset()).id == 'github'
 
     def test_unset_ids_are_not_combined(self) -> None:
-        # Without an id there is nothing to combine on, so differing settings keep working as separate connections.
+        # Without an id there is nothing to combine on, so differing settings don't raise when the agent is built.
+        # Its first run still fails: https://github.com/pydantic/pydantic-ai/issues/13968.
         Agent(
             TestModel(),
             capabilities=[
@@ -279,7 +273,7 @@ class TestGitHub:
         url = 'https://copilot-api.acme.ghe.com/mcp'
         assert transport(GitHub(auth='token', url=url).get_toolset()).url == url
 
-    async def test_hosted_read_only_keeps_only_marked_tools(self, server: FastMCP) -> None:
+    async def test_hosted_read_only_keeps_only_marked_tools(self, server: MCPServer) -> None:
         # Stand in a server that ignores `X-MCP-Readonly` for the hosted connection, to show the client-side filter.
         def ignore_header(leaf: AbstractToolset[None]) -> AbstractToolset[None]:
             return MCPToolset[None](server) if isinstance(leaf, MCPToolset) else leaf

@@ -12,7 +12,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.detect_loops import DetectLoops, LoopJudge
 from tests.conftest import try_import
 
-from ._stuck_agent import NUDGE_METADATA, nudges, read_file, stuck_model
+from ._stuck_agent import NUDGE, nudges, read_file, stuck_model
 
 with try_import() as imports_successful:
     from prefect import flow
@@ -41,7 +41,7 @@ async def test_flow_delivers_the_nudge(prefect_test_server: None, tmp_path: Path
     with temporary_settings({PREFECT_LOCAL_STORAGE_PATH: tmp_path}):
         messages = await run()
 
-    assert nudges(messages) == [NUDGE_METADATA]
+    assert nudges(messages) == [NUDGE]
     assert isinstance(messages[-1], ModelResponse)
     assert messages[-1].text == 'missing.txt does not exist.'
 
@@ -69,7 +69,8 @@ async def test_a_judge_is_not_asked_in_flow_code(prefect_test_server: None, tmp_
     with temporary_settings({PREFECT_LOCAL_STORAGE_PATH: tmp_path}):
         messages = await run()
 
-    # The heuristic alone found the loop in the response, checked whole in flow code.
-    assert [nudge['pattern'] for nudge in nudges(messages) if isinstance(nudge, dict)] == ['repeated_stream_text']
+    # The heuristic alone found the loop in the response, checked whole in flow code. `nudges` reads only
+    # `LoopNudgePart`s, so this also shows the nudge came back from Prefect as one.
+    assert nudges(messages) == [('repeated_stream_text', ())]
     assert isinstance(messages[-1], ModelResponse)
     assert messages[-1].text == 'The config is fine.'

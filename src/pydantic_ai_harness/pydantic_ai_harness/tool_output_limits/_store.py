@@ -17,11 +17,14 @@ import tempfile
 import threading
 import time
 import warnings
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from datetime import timedelta
+from io import BufferedReader
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+import anyio.lowlevel
 import anyio.to_thread
 
 from pydantic_ai.exceptions import UserError
@@ -161,6 +164,28 @@ async def _confine(workspace: Workspace, path: str, name: str) -> str:
     return real_path
 
 
+_CHUNK_SIZE = 1 << 16
+
+
+def iter_payload(store: OverflowStore, handle: str) -> AsyncGenerator[bytes]:
+    """Yield a stored payload in chunks.
+
+    A `LocalFileOverflowStore` is streamed from disk unless a subclass overrides `read`, such as to decode what it
+    wrote; any other store is read whole, then yielded in chunks of the same size.
+    """
+    if isinstance(store, LocalFileOverflowStore) and type(store).read is LocalFileOverflowStore.read:
+        return store._chunks(handle)  # pyright: ignore[reportPrivateUsage]
+    return _read_whole(store, handle)
+
+
+async def _read_whole(store: OverflowStore, handle: str) -> AsyncGenerator[bytes]:
+    data = await store.read(handle)
+    for start in range(0, len(data), _CHUNK_SIZE):
+        yield data[start : start + _CHUNK_SIZE]
+        # The caller splits each chunk without awaiting, so return to the event loop between chunks.
+        await anyio.lowlevel.checkpoint()
+
+
 def _default_root() -> Path:
     """Per-user root under the system temp dir, so users on one host never share it."""
     geteuid = getattr(os, 'geteuid', None)
@@ -177,8 +202,10 @@ class LocalFileOverflowStore:
     see them.
 
     The handle equals the key: a relative `run_id/tool_call_id.retry` path under
-    `base_dir`. The root is stable on purpose -- a later agent or run by the same user can
-    read a spill a previous run produced, so the store is not isolated per instance.
+    `base_dir`, with a `run_step/` segment before the file name when a later response in the run
+    reuses a `tool_call_id` an earlier response in the run already spilled. The root is stable on purpose -- a
+    later agent or run by the same user can read a spill a previous run produced, so the store is
+    not isolated per instance.
 
     Security comes from three mechanisms: the default root is per user
     (`pyai_harness_overflow-<euid>` under the system temp dir); the root itself cannot be a
@@ -260,8 +287,20 @@ class LocalFileOverflowStore:
         return await anyio.to_thread.run_sync(self._read, handle)
 
     def _read(self, handle: str) -> bytes:
+        with self._open(handle) as file:
+            return file.read()
+
+    async def _chunks(self, handle: str) -> AsyncGenerator[bytes]:
+        file = await anyio.to_thread.run_sync(self._open, handle)
+        try:
+            while chunk := await anyio.to_thread.run_sync(file.read, _CHUNK_SIZE):
+                yield chunk
+        finally:
+            file.close()
+
+    def _open(self, handle: str) -> BufferedReader:
         self._check_root()
-        return self._confined_path(handle).read_bytes()
+        return self._confined_path(handle).open('rb')
 
     def _confined_path(self, handle: str) -> Path:
         """Return the file for `handle` with symlinks resolved, refusing one outside the root."""

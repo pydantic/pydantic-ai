@@ -6,13 +6,19 @@ import asyncio
 from collections.abc import AsyncIterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, PendingModelResponse
-from pydantic_ai.capabilities import AbstractCapability, BatchModelRequests, HandleDeferredToolCalls, LocalWorkspace
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    BatchModelRequests,
+    HandleDeferredToolCalls,
+    LocalWorkspace,
+    WrapperCapability,
+)
 from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -37,12 +43,13 @@ from pydantic_ai.workspaces import (
     WorkspaceReadOnlyError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness import HarnessDeprecationWarning
+from pydantic_ai_harness import DenyUnanswered, HarnessDeprecationWarning
+from pydantic_ai_harness.deny_unanswered import DEFAULT_QUESTION_MESSAGE
 from pydantic_ai_harness.sub_agents import ModelOption, SubAgent, SubAgents, SubAgentToolset
 
 from ...batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
-from .._deferred_tools import deferring_agent, pending_agent
-from ..conftest import CountingModel
+from .._deferred_tools import asking_agent, deferring_agent, pending_agent
+from ..conftest import CountingModel, openai_imports_successful, openai_without_token_counting
 
 
 @dataclass
@@ -449,7 +456,7 @@ class TestDelegation:
 
         @dataclass
         class _ToolCapability(AbstractCapability[object]):
-            def get_toolset(self) -> Any:
+            def get_toolset(self) -> FunctionToolset[object]:
                 def cap_tool() -> str:
                     return 'CT'  # pragma: no cover - never offered to the sub-agent
 
@@ -487,6 +494,31 @@ class TestDelegation:
         result = await parent.run('go')
         assert result.output == 'all done'
         assert cap.log == ['applied']  # the shared capability ran during the sub-agent run
+
+    async def test_parent_deny_unanswered_answers_the_childs_question(self) -> None:
+        """The parent run's `DenyUnanswered` is passed on, so the child's unanswered question is answered in-run."""
+        observed: list[str] = []
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('child'),
+            capabilities=[DenyUnanswered(), SubAgents(agents=[SubAgent(asking_agent(observed))])],
+        )
+        result = await parent.run('go')
+        assert result.output == 'all done'
+        assert observed == [DEFAULT_QUESTION_MESSAGE]
+
+    async def test_parent_deny_unanswered_inside_a_wrapper_reaches_the_child(self) -> None:
+        """A `DenyUnanswered` wrapped in a `WrapperCapability` is found and passed on to the child unwrapped."""
+        observed: list[str] = []
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('child'),
+            capabilities=[
+                WrapperCapability(wrapped=DenyUnanswered()),
+                SubAgents(agents=[SubAgent(asking_agent(observed))]),
+            ],
+        )
+        result = await parent.run('go')
+        assert result.output == 'all done'
+        assert observed == [DEFAULT_QUESTION_MESSAGE]
 
     async def test_event_stream_handler_forwarded_to_subagent(self) -> None:
         events: list[str] = []
@@ -679,6 +711,29 @@ class TestDelegation:
         )
         result = await parent.run('go', usage=usage, usage_limits=UsageLimits(count_tokens_before_request=True))
         assert result.output == 'all done'
+        assert usage.requests == 3
+
+    @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+    @pytest.mark.parametrize('provider', ['openai-codex', 'openai-chatgpt'])
+    async def test_unmanaged_child_drops_inherited_token_counting_on_openai_codex_and_chatgpt(
+        self, allow_model_requests: None, provider: Literal['openai-codex', 'openai-chatgpt']
+    ) -> None:
+        """These providers serve no token counting, so the child starts again without the up-front count."""
+        worker = Agent(openai_without_token_counting(provider, 'W'), name='worker')
+        usage = RunUsage()
+        parent: Agent[object, str] = Agent(
+            CountingModel(_delegate_then_finish('worker')),
+            capabilities=[SubAgents(agents=[SubAgent(worker)], agent_folders=None)],
+        )
+        result = await parent.run('go', usage=usage, usage_limits=UsageLimits(count_tokens_before_request=True))
+        assert result.output == 'all done'
+        assert [
+            part.content
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ] == snapshot(['W'])
         assert usage.requests == 3
 
 
@@ -991,6 +1046,52 @@ Sub-agent 'worker' exceeded its 0.05s time budget. Treat this as a recoverable o
         ]
         assert retries == []
         assert _delegate_returns(result) == ['steer: use existing evidence']
+
+    async def test_on_model_error_return_keeps_cause(self) -> None:
+        def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise UnexpectedModelBehavior('kaboom')
+
+        boomer = Agent(FunctionModel(boom), name='boomer')
+        parent: Agent[object, str] = Agent(
+            _delegate_two_then_finish('plain', 'boomer'),
+            capabilities=[
+                SubAgents(
+                    agents=[
+                        SubAgent(boomer, name='plain', on_model_error='return'),
+                        SubAgent(boomer, on_failure='steer: decide', on_model_error='return'),
+                    ]
+                )
+            ],
+        )
+        result = await parent.run('go')
+        assert _delegate_retries(result) == []
+        assert _delegate_returns(result) == snapshot(
+            [
+                """\
+Sub-agent 'plain' failed: kaboom
+
+Treat this as a recoverable observation and decide from existing evidence.\
+""",
+                """\
+Sub-agent 'boomer' failed: kaboom
+
+steer: decide\
+""",
+            ]
+        )
+
+    async def test_on_model_error_retry_with_on_failure(self) -> None:
+        def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise UnexpectedModelBehavior('kaboom')
+
+        boomer = Agent(FunctionModel(boom), name='boomer')
+        parent: Agent[object, str] = Agent(
+            _delegate_n_then_finish('boomer', 1),
+            capabilities=[SubAgents(agents=[SubAgent(boomer, on_failure='steer: decide', on_model_error='retry')])],
+        )
+        result = await parent.run('go')
+        assert _delegate_retries(result) == snapshot(["Sub-agent 'boomer' failed: kaboom"])
+        assert _delegate_returns(result) == snapshot([])
 
     async def test_on_failure_overrides_default_steering(self) -> None:
         worker = Agent(TestModel(custom_output_text='W'), name='worker')

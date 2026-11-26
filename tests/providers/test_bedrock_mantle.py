@@ -10,6 +10,7 @@ from pytest_mock import MockerFixture
 
 from pydantic_ai import Agent, ModelSettings, UserError
 from pydantic_ai.models import infer_model, infer_model_profile
+from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 from pydantic_ai.providers import infer_provider_class
@@ -240,6 +241,7 @@ def test_bedrock_converse_accepts_gpt_5_6_and_gpt_6_models() -> None:
     ):
         assert BedrockProvider.model_profile(f'openai.{base_name}') == {
             'bedrock_disallows_sampling_settings': True,
+            'bedrock_supports_stop_sequences': False,
             'bedrock_thinking_variant': 'openai_responses',
             'supports_thinking': True,
             'thinking_always_enabled': base_name in ('gpt-6-astra', 'gpt-6.1-sol'),
@@ -348,8 +350,12 @@ def test_bedrock_mantle_profiles() -> None:
             'openai_supports_prompt_cache_breakpoints': True,
             'bedrock_mantle_interface': 'openai-responses',
             'openai_supports_minimal_reasoning_effort': False,
+            'delegates_unprompted': True,
+            'reinterprets_malformed_inputs': True,
+            'omits_handoff_evidence': True,
+            'ignores_stated_runtime_constraints': True,
             'tool_call_ids_are_response_scoped': True,
-            'supported_native_tools': frozenset(),
+            'supported_native_tools': frozenset({ComputerTool}),
         }
     )
     # Compare against a direct genai-prices query so the test doesn't pin a data value.
@@ -368,6 +374,9 @@ def test_bedrock_mantle_profiles() -> None:
         is False
     )
     assert infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get('bedrock_mantle_interface') == 'responses'
+    assert infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get('supported_native_tools') == frozenset()
+    # GPT-5.2 is on the Responses interface but OpenAI doesn't offer it the computer tool.
+    assert infer_model_profile('bedrock-mantle:openai.gpt-5.2').get('supported_native_tools') == frozenset()
     assert infer_model_profile('bedrock-mantle:openai.gpt-oss-safeguard-20b').get('bedrock_mantle_interface') == 'chat'
     # Non-OpenAI and unknown models fall back to the default profile (best-effort).
     assert infer_model_profile('bedrock-mantle:anthropic.claude-sonnet-5') == DEFAULT_PROFILE

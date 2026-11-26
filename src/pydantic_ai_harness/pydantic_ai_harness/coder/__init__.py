@@ -2,13 +2,13 @@
 
 from typing import TYPE_CHECKING
 
-from pydantic_ai_harness.coder._capability import FILE_TOOL_NAMES, BenchmarkInstructions, Coder
+from pydantic_ai_harness.coder._capability import FILE_TOOL_NAMES, MAX_IMAGE_SIDE, BenchmarkInstructions, Coder
 from pydantic_ai_harness.coder._instructions import Autonomy
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.coder._agent import coder_agent
 
-__all__ = ['FILE_TOOL_NAMES', 'Autonomy', 'BenchmarkInstructions', 'Coder', 'coder_agent']
+__all__ = ['FILE_TOOL_NAMES', 'MAX_IMAGE_SIDE', 'Autonomy', 'BenchmarkInstructions', 'Coder', 'coder_agent']
 
 
 def __getattr__(name: str) -> object:

@@ -19,11 +19,19 @@ from pydantic_ai_harness.memory._store import (
     decode_metadata,
     encode_metadata,
     lexical_search,
+    prefix_end,
     validate_store_path,
     validate_store_prefix,
 )
 
 _TABLE_RE = re.compile(r'[A-Za-z_][A-Za-z0-9_]{0,51}')
+# A range under the binary `C` collation, which the `(path COLLATE "C")` index serves even in a generic plan.
+# Under a linguistic collation such as `en_US` or ICU, `/`, `-`, `_` and `.` are ignored at the first
+# comparison level, so the same range would not select the paths starting with the prefix.
+_PREFIX_SQL = 'path COLLATE "C" >= $1 AND path COLLATE "C" < $2'
+_ORDER_SQL = 'ORDER BY path COLLATE "C"'
+# Paths in a deeper scope nested under the prefix belong to another namespace or agent.
+_CHILD_SQL = f"{_PREFIX_SQL} AND strpos(substr(path, length($1) + 1), '/') = 0"
 
 
 @runtime_checkable
@@ -117,6 +125,7 @@ class PostgresMemoryStore:
                     return
             async with self._connection() as connection, connection.transaction():
                 await connection.fetchval('SELECT pg_advisory_xact_lock(hashtext($1))', self._metadata_table)
+                creating = await connection.fetchval('SELECT to_regclass($1) IS NULL', self._table)
                 await connection.execute(
                     f'CREATE TABLE IF NOT EXISTS {self._table} ('
                     'path TEXT PRIMARY KEY, content TEXT NOT NULL, '
@@ -127,6 +136,11 @@ class PostgresMemoryStore:
                 )
                 await connection.execute(f'ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS last_operation_id TEXT')
                 await connection.execute(f'ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS write_metadata JSONB')
+                # Building it on an existing table would block its writes; the docs give the statement to run.
+                if creating:
+                    await connection.execute(
+                        f'CREATE INDEX IF NOT EXISTS {self._table}_path_idx ON {self._table} (path COLLATE "C")'
+                    )
                 await connection.execute(
                     f'CREATE TABLE IF NOT EXISTS {self._operations_table} ('
                     'id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, version TEXT, '
@@ -308,13 +322,22 @@ class PostgresMemoryStore:
             return mutation
 
     async def list_paths(self, prefix: str = '', *, limit: int) -> list[str]:
+        return await self._list_paths(_PREFIX_SQL, prefix, limit)
+
+    async def list_child_paths(self, prefix: str, *, limit: int) -> list[str]:
+        return await self._list_paths(_CHILD_SQL, prefix, limit)
+
+    async def _list_paths(self, where: str, prefix: str, limit: int) -> list[str]:
         validate_store_prefix(prefix)
         if limit <= 0:
             raise ValueError('limit must be positive')
         await self._ensure_schema()
         async with self._connection() as connection:
             rows = await connection.fetch(
-                f'SELECT path FROM {self._table} WHERE starts_with(path, $1) ORDER BY path LIMIT $2', prefix, limit
+                f'SELECT path FROM {self._table} WHERE {where} {_ORDER_SQL} LIMIT $3',
+                prefix,
+                prefix_end(prefix),
+                limit,
             )
         return [str(row[0]) for row in rows]
 
@@ -333,12 +356,11 @@ class PostgresMemoryStore:
             return MemorySearchResult(matches=[], scanned=0, truncated=False)
         await self._ensure_schema()
         async with self._connection() as connection:
-            # Paths in a deeper scope nested under `prefix` belong to another namespace or agent.
             rows = await connection.fetch(
-                f'SELECT path, left(content, $2), length(content) FROM {self._table} '
-                "WHERE starts_with(path, $1) AND strpos(substr(path, length($1) + 1), '/') = 0 "
-                'ORDER BY path LIMIT $3',
+                f'SELECT path, left(content, $3), length(content) FROM {self._table} '
+                f'WHERE {_CHILD_SQL} {_ORDER_SQL} LIMIT $4',
                 prefix,
+                prefix_end(prefix),
                 max_file_chars,
                 max_files + 1,
             )

@@ -1,6 +1,6 @@
 """The deprecated Harness copy of session naming keeps working until it is removed.
 
-CLAI owns the maintained copy, tested in `tests/clai2/test_session_naming.py`.
+Pax owns the maintained copy, tested in `tests/pax/test_session_naming.py`.
 """
 
 import importlib

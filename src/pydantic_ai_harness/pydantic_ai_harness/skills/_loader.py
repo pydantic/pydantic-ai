@@ -102,6 +102,9 @@ Skipping suits a selection shared by several projects, such as a person's list o
 _ARGUMENTS_PLACEHOLDER = re.compile(r'\$ARGUMENTS(?![\[\w])')
 """`$ARGUMENTS` itself, not Claude Code's indexed `$ARGUMENTS[0]` or a longer name such as `$ARGUMENTS_LIST`."""
 
+_PLACEHOLDERS = re.compile(rf'{_ARGUMENTS_PLACEHOLDER.pattern}|\$\{{(?:CLAUDE_)?SKILL_DIR\}}')
+"""`$ARGUMENTS`, Claude Code's `${CLAUDE_SKILL_DIR}`, and the `${SKILL_DIR}` other clients use."""
+
 
 @dataclass(frozen=True, kw_only=True)
 class SkillDefinition:
@@ -158,15 +161,19 @@ class SkillDefinition:
         `$ARGUMENTS[0]`, are left unchanged. Without `arguments`, the result is the instructions the
         model gets when it loads the skill.
 
-        The directory line is left out unless `in_run_workspace`.
+        When `in_run_workspace`, `${CLAUDE_SKILL_DIR}` and `${SKILL_DIR}` in the body become the skill's
+        directory. Otherwise they are left unchanged, and the directory line is left out.
         """
-        body = self.body
-        if arguments is not None:
-            if _ARGUMENTS_PLACEHOLDER.search(body):
-                # A function, so backslashes in the arguments are not read as group references.
-                body = _ARGUMENTS_PLACEHOLDER.sub(lambda _: arguments, body)
-            elif arguments:
-                body = '\n\n'.join(part for part in (body, f'ARGUMENTS: {arguments}') if part)
+        directory = self.directory if self.in_run_workspace else None
+
+        # One pass over the original body, so a value put in for one placeholder is not read as another.
+        def substitute(match: re.Match[str]) -> str:
+            value = arguments if match.group() == '$ARGUMENTS' else directory
+            return match.group() if value is None else value
+
+        body = _PLACEHOLDERS.sub(substitute, self.body)
+        if arguments and not _ARGUMENTS_PLACEHOLDER.search(self.body):
+            body = '\n\n'.join(part for part in (body, f'ARGUMENTS: {arguments}') if part)
         heading = f'# Skill: {self.name}'
         if self.in_run_workspace:
             heading += f'\n\nSkill directory: `{self.directory}`. Relative paths in this skill resolve against it.'
@@ -410,6 +417,17 @@ def parse_skill(text: str, skill_file: str) -> SkillDefinition:
         user_invocable=frontmatter.user_invocable,
         path=skill_file,
     )
+
+
+def catalog_description(skill: SkillDefinition) -> str:
+    """The text the model is shown for `skill`: its description, then its `when_to_use`.
+
+    The same in the catalog and from `list_skills`.
+    """
+    if skill.when_to_use is None:
+        return skill.description
+    # Appended verbatim, Claude Code style: the author writes the trigger clause, e.g. 'Use when ...'.
+    return f'{skill.description} {skill.when_to_use}'
 
 
 async def load_skill_libraries(

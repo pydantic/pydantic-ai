@@ -115,7 +115,7 @@ Scanning an artifact that nothing flags emits nothing. `ArtifactScanner.scan` ca
 ## Scope and limitations
 
 - This is pattern matching. Prompt injection is ordinary language, so the scanner misses paraphrased or translated instructions, and an empty result does not mean an artifact is safe. It can also flag a note that quotes an attack, such as a memory recording that a web page said "ignore previous instructions".
-- It scans what the integrations route through it: memory text going through `write_memory`, `read_memory`, `search_memory`, and the injected `MEMORY.md`, and each skill's description, `when_to_use` and body. Memory files read with `FileSystem`, bundled skill files, and other artifacts are not scanned unless you call `scan`.
+- It scans what the integrations route through it: memory text going through `write_memory`, `read_memory`, `search_memory`, and the injected `MEMORY.md`, and each skill's description, `when_to_use` and body. Bundled skill files are scanned when the model reads them with `Skills(read_files=True)`. Memory files read with `FileSystem`, bundled skill files read any other way, and other artifacts are not scanned unless you call `scan`.
 - For indirect prompt injection in tool results, see [Prompt Injection Defender](prompt-injection-defender.md). For secrets and personal data in prompts and outputs, see [Guardrails](guardrails.md).
 
 ## API reference

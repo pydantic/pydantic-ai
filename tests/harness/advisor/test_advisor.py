@@ -16,6 +16,7 @@ from pydantic_ai.capabilities import AbstractCapability, ModelFallback, NativeTo
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     ModelMessage,
+    ModelRequest,
     ModelResponse,
     TextPart,
     ToolCallPart,
@@ -31,7 +32,12 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.advisor import Advisor
 from tests.conftest import try_import
-from tests.harness.conftest import CountingModel, agent_run_names
+from tests.harness.conftest import (
+    CountingModel,
+    agent_run_names,
+    openai_imports_successful,
+    openai_without_token_counting,
+)
 
 with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -464,12 +470,11 @@ class TestAdvisor:
         class Budget:
             used: int = 0
 
-        advisor_calls = 0
+        budget = Budget(used=1)
         tool_returns: list[object] = []
 
         def advisor_model(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-            nonlocal advisor_calls
-            advisor_calls += 1
+            budget.used += 1
             return ModelResponse(parts=[TextPart('advice')])
 
         def executor(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -487,17 +492,16 @@ class TestAdvisor:
                 Advisor(_ProviderFunctionModel('anthropic', advisor_model), max_uses=lambda ctx: 3 - ctx.deps.used)
             ],
         )
-        budget = Budget(used=2)
 
-        await agent.run('Ask three times.', deps=budget)
-        budget.used += advisor_calls
+        with agent.parallel_tool_call_execution_mode('sequential'):
+            await agent.run('Ask three times.', deps=budget)
         await agent.run('Ask again.', deps=budget)
 
-        assert advisor_calls == 1
+        assert budget.used == 3
         assert tool_returns == snapshot(
             [
                 'advice',
-                'Advisor consultation limit reached for this model request. Continue without further advice.',
+                'advice',
                 'Advisor consultation limit reached for this model request. Continue without further advice.',
                 'Advisor consultation limit reached for this model request. Continue without further advice.',
                 'Advisor consultation limit reached for this model request. Continue without further advice.',
@@ -565,6 +569,29 @@ class TestAdvisor:
 
         assert result.output == 'done'
         assert advisor.last_model_request_parameters is not None
+        assert result.usage.requests == 3
+
+    @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+    @pytest.mark.parametrize('provider', ['openai-codex', 'openai-chatgpt'])
+    async def test_local_advisor_drops_token_counting_on_openai_codex_and_chatgpt(
+        self, allow_model_requests: None, provider: Literal['openai-codex', 'openai-chatgpt']
+    ) -> None:
+        """These providers serve no token counting, so the consultation runs again without the up-front count."""
+        agent = Agent(
+            CountingModel(TestModel(custom_output_text='done')),
+            capabilities=[Advisor(openai_without_token_counting(provider, 'advice'))],
+        )
+
+        result = await agent.run('Ask for advice.', usage_limits=UsageLimits(count_tokens_before_request=True))
+
+        assert result.output == 'done'
+        assert [
+            part.content
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ] == snapshot(['advice'])
         assert result.usage.requests == 3
 
     async def test_local_advisor_counts_tokens_before_its_request_when_its_model_can(self) -> None:

@@ -6,6 +6,8 @@ preservation, and in-place tool-result clearing -- anything used by more than on
 
 from __future__ import annotations
 
+import re
+import string
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -18,7 +20,9 @@ from pydantic_ai._utils import is_str_dict
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     CompactionPart,
+    DataCapabilityPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
     LoadCapabilityCallPart,
@@ -46,7 +50,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness._message_text import CHARS_PER_TOKEN, tool_return_text, user_prompt_texts
+from pydantic_ai_harness._message_text import CHARS_PER_TOKEN, capability_part_text, tool_return_text, user_prompt_texts
 from pydantic_ai_harness._provenance import harness_origin
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW, resolve_context_window
 from pydantic_ai_harness.compaction._pinning import is_pinned
@@ -141,53 +145,58 @@ def _collect_text(messages: Sequence[ModelMessage]) -> list[str]:
 
 def _request_part_text(part: ModelRequestPart) -> list[str]:
     """Text segments a single request part contributes to the token estimate."""
-    if isinstance(part, UserPromptPart):
-        return [''.join(user_prompt_texts(part))]
-    elif isinstance(part, SystemPromptPart):
-        return [part.content]
-    elif isinstance(part, InstructionDeltaPart):
-        return [part.render()]
-    # Records what the request's instructions were made of, which are counted with the request.
-    elif isinstance(part, InstructionBaselinePart):
-        return []
-    elif isinstance(part, ToolReturnPart):
-        # Sent in full, a retried call's feedback included: a retry that answers a call travels as
-        # that call's return. The tool-search and capability-load returns subclass `ToolReturnPart`,
-        # so they arrive here too.
-        return [tool_return_text(part)]
-    elif isinstance(part, RetryFeedbackPart):
-        # Retry feedback that answers no tool call. It is stored model-neutral and translated at
-        # request time into a system prompt or a `<pyai:validation_errors>`-fenced user prompt, so it
-        # occupies the window like the parts above. `model_response()` rather than
-        # `str(part.content)`: the content is a list of `ErrorDetails` for a validation failure,
-        # and this renders it the way the model sees it.
-        return [part.model_response()]
-    # TODO(v3): remove RetryPromptPart
-    elif isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
-        # The part the two above replaced. A stored history loads as one of them, but code that
-        # builds one by hand and passes it as `message_history` still puts an instance here, and
-        # this reads the history before the model translates it.
-        return [str(part.content)]
-    # Control bookkeeping rather than message text: it records which tools became available or capabilities were loaded,
-    # and the schemas themselves travel in the request's tool definitions. Those schemas are not free -- this estimator
-    # counts no tool definitions at all, so revealing tools mid-run costs context it does not see (tracked separately);
-    # skipping the part is not a claim that the reveal was free.
-    elif isinstance(part, ToolAvailabilityDeltaPart | CapabilityLoadDeltaPart | ModelSettingsDeltaPart):
-        return []
-    elif isinstance(part, CompactionPart):
-        # A summary the application wrote, sent as text.
-        return [part.content or '']
-    elif isinstance(part, SpeechPart):
-        # Count the transcript the provider bills against the window, not the binary audio.
-        # The explicit `isinstance` keeps the `else` a real runtime branch.
-        return [part.transcript or '']
-    else:
-        # A part type newer than this code: skip it, since this runs on every request.
-        # `assert_never` under `TYPE_CHECKING` keeps the chain exhaustive for pyright
-        # without crashing at runtime on a newer pydantic-ai.
-        if TYPE_CHECKING:
-            assert_never(part)
-        return []  # pragma: no cover - reachable only on a pydantic-ai release newer than this one
+    match part:
+        case UserPromptPart():
+            return [''.join(user_prompt_texts(part))]
+        case SystemPromptPart():
+            return [part.content]
+        case InstructionDeltaPart():
+            return [part.render()]
+        # Records what the request's instructions were made of, which are counted with the request.
+        case InstructionBaselinePart():
+            return []
+        case ToolReturnPart():
+            # Sent in full, a retried call's feedback included: a retry that answers a call travels as
+            # that call's return. The tool-search and capability-load returns subclass `ToolReturnPart`,
+            # so they arrive here too.
+            return [tool_return_text(part)]
+        case RetryFeedbackPart():
+            # Retry feedback that answers no tool call. It is stored model-neutral and translated at
+            # request time into a system prompt or a `<pyai:validation_errors>`-fenced user prompt, so it
+            # occupies the window like the parts above. `model_response()` rather than
+            # `str(part.content)`: the content is a list of `ErrorDetails` for a validation failure,
+            # and this renders it the way the model sees it.
+            return [part.model_response()]
+        # TODO(v3): remove RetryPromptPart
+        case RetryPromptPart():  # pyright: ignore[reportDeprecated]
+            # The part the two above replaced. A stored history loads as one of them, but code that
+            # builds one by hand and passes it as `message_history` still puts an instance here, and
+            # this reads the history before the model translates it.
+            return [str(part.content)]
+        # Control bookkeeping rather than message text: it records which tools became available or capabilities were
+        # loaded, and the schemas themselves travel in the request's tool definitions. Those schemas are not free -- this
+        # estimator counts no tool definitions at all, so revealing tools mid-run costs context it does not see (tracked
+        # separately); skipping the part is not a claim that the reveal was free.
+        case ToolAvailabilityDeltaPart() | CapabilityLoadDeltaPart() | ModelSettingsDeltaPart():
+            return []
+        case CompactionPart():
+            # A summary the application wrote, sent as text.
+            return [part.content or '']
+        case CapabilityPart():
+            # A capability's record, rendered on the way to the model: its content fills the window. The frame's tags
+            # and a kind's note aren't counted.
+            return [capability_part_text(part)]
+        case SpeechPart():
+            # Count the transcript the provider bills against the window, not the binary audio.
+            # Its own case keeps `case _` a real runtime branch.
+            return [part.transcript or '']
+        case _:  # pragma: no cover - reachable only on a pydantic-ai release newer than this one
+            # A part type newer than this code: skip it, since this runs on every request.
+            # `assert_never` under `TYPE_CHECKING` keeps the match exhaustive for pyright
+            # without crashing at runtime on a newer pydantic-ai.
+            if TYPE_CHECKING:
+                assert_never(part)
+            return []
 
 
 def _response_part_text(part: ModelResponsePart) -> list[str]:
@@ -225,21 +234,81 @@ def _instructions_text(messages: Sequence[ModelMessage]) -> list[str]:
     return []
 
 
+_LATIN_OR_CYRILLIC = re.compile(r'[\u00c0-\u024f\u0400-\u04ff]')
+"""Accented Latin and Cyrillic letters, which tokenize denser than other non-ASCII text."""
+
+_ASTRAL = re.compile(r'[\U00010000-\U0010ffff]')
+"""Code points outside the BMP (emoji, CJK Extension B and later): about three tokens each."""
+
+_ENCODED_RUN = re.compile(r'[A-Za-z0-9+/_-]{24,}={0,2}')
+"""A base64 or base64url-like run, counted only when it mixes digits and both cases.
+
+That rules out paths and identifiers, and leaves lowercase hex (hashes, UUIDs) at the prose rate.
+"""
+
+
+def _dense_surcharge(text: str) -> float:
+    """Tokens *text* costs beyond `CHARS_PER_TOKEN`, for content that tokenizes denser than English prose.
+
+    Rates are set at or above cl100k_base counts for Latin, Cyrillic, Greek, Arabic, CJK, base64 and
+    JSON: an overcount compacts a little early, an undercount sends a request the provider rejects.
+    cl100k_base spends more than the one-token rate on Hebrew and Thai (up to ~1.15 tokens per
+    character), Indic scripts (1.3 to 1.5), Georgian, Armenian and Myanmar (~2) and Ethiopic (~2.3,
+    on o200k_base too). o200k_base spends under 0.5 on most of these, so charging cl100k_base's rate
+    would overcount newer tokenizers several times over; a `tokenizer` measures them exactly.
+
+    - Accented Latin and Cyrillic cost 1.5 characters per token (Cyrillic measures ~2), code points
+      outside the BMP three tokens each, and other non-ASCII characters a token each.
+    - Encoded runs cost 1.25 characters per token (random base64 measures ~1.4).
+    - Of the rest, the baseline covers a 12% share of JSON punctuation and an 8% share of digits, which
+      prose and code stay under; each one beyond that costs ~1.25 and 0.5 tokens. Charging the surplus
+      rather than switching on a density threshold means appended prose never lowers the estimate: the
+      surplus shrinks by at most 0.14 tokens per added character, against the baseline's 0.25. Text
+      under 32 characters skips this, so a reference like `See file 1a2b3c.` stays at the baseline.
+    """
+    baseline = 1 / CHARS_PER_TOKEN
+    ascii_chars = len(text) if text.isascii() else len(text.encode('ascii', 'ignore'))
+    non_ascii = len(text) - ascii_chars
+    latin_or_cyrillic = len(text) - len(_LATIN_OR_CYRILLIC.sub('', text)) if non_ascii else 0
+    astral = len(text) - len(_ASTRAL.sub('', text)) if non_ascii else 0
+    runs = [
+        run
+        for run in _ENCODED_RUN.findall(text)
+        if any(c.isdigit() for c in run) and any(c.isupper() for c in run) and any(c.islower() for c in run)
+    ]
+    encoded = sum(map(len, runs))
+    surcharge = (
+        latin_or_cyrillic * (1 / 1.5 - baseline)
+        + astral * (3 - baseline)
+        + (non_ascii - latin_or_cyrillic - astral) * (1 - baseline)
+        + encoded * (1 / 1.25 - baseline)
+    )
+    if len(text) < 32:
+        return surcharge
+    plain = len(text) - encoded
+    punctuation = sum(text.count(c) for c in '{}[],:"')
+    digits = sum(text.count(c) - sum(run.count(c) for run in runs) for c in string.digits)
+    return (
+        surcharge
+        + max(0, punctuation - 0.12 * plain) * (1.25 - baseline)
+        + max(0, digits - 0.08 * plain) * (0.5 - baseline)
+    )
+
+
 def estimate_text_tokens(text: str, tokenizer: Callable[[str], int] | None = None) -> int:
     """Approximate the token count of a single string.
 
-    Uses *tokenizer* when given, otherwise the ~4 characters-per-token heuristic.
+    Uses *tokenizer* when given, otherwise ~4 characters per token, priced up for non-ASCII
+    scripts, base64-like runs and compact JSON (see the compaction docs' Triggers section).
     """
-    if tokenizer is not None:
-        return tokenizer(text)
-    return len(text) // CHARS_PER_TOKEN
+    return _count_segments([text], tokenizer)
 
 
 def _count_segments(segments: Sequence[str], tokenizer: Callable[[str], int] | None) -> int:
-    """Token count of text segments: per segment with *tokenizer*, otherwise the heuristic over their total."""
+    """Token count of text segments: per segment with *tokenizer* or the text estimate, truncated once over the sum."""
     if tokenizer is not None:
         return sum(tokenizer(s) for s in segments)
-    return sum(len(s) for s in segments) // CHARS_PER_TOKEN
+    return int(sum(len(s) / CHARS_PER_TOKEN + _dense_surcharge(s) for s in segments))
 
 
 def estimate_token_count(
@@ -251,7 +320,8 @@ def estimate_token_count(
     Args:
         messages: Messages to count tokens for.
         tokenizer: Optional callable that returns the token count for a string.
-            When `None`, falls back to a ~4 characters-per-token heuristic.
+            When `None`, uses ~4 characters per token, priced up for non-ASCII scripts,
+            base64-like runs and compact JSON (see the compaction docs' Triggers section).
     """
     return _count_segments(_collect_text(messages), tokenizer)
 
@@ -271,13 +341,13 @@ def estimate_context_tokens(
     that response. A response whose usage sums several model requests re-counts the context of each,
     so it anchors on the input tokens of the one that measures the context instead: the first
     request of a Google long decode, the last sampling pass of an Anthropic response that reported
-    its passes. Only the messages after the anchor are estimated with the character
-    heuristic (or *tokenizer*), without re-counting instructions, which the anchor already
-    covers; when the instructions changed since the anchor, the estimate swaps the old set for
-    the new one rather than adding the new set on top. Tool schemas named by availability
-    deltas after the anchor are estimated from the pending request parameters. This is what makes the estimate robust where the pure heuristic
-    is not: token-dense content (minified JSON, base64, non-Latin scripts) and the tool
-    definitions the heuristic cannot see at all are both inside the provider's number.
+    its passes. Only the messages after the anchor are estimated with *tokenizer* or ~4
+    characters per token, priced up for non-ASCII scripts, base64-like runs and compact JSON,
+    without re-counting instructions, which the anchor already covers; when the instructions
+    changed since the anchor, the estimate swaps the old set for the new one rather than adding
+    the new set on top. Tool schemas named by availability deltas after the anchor are estimated
+    from the pending request parameters. The tool definitions the heuristic cannot see, and the
+    exact count of token-dense content before the anchor, are both inside the provider's number.
 
     Without provider usage, the history's message text falls back to `estimate_token_count`,
     while schemas named by availability deltas are still estimated from the pending request
@@ -320,14 +390,15 @@ def estimate_message_tokens(
 ) -> list[int]:
     """Tokens each message adds to a request, measured with provider-reported usage where the history has it.
 
-    The text estimate (`tokenizer`, or ~4 characters per token) misses what a provider counts but
-    does not return as text, such as thinking kept as an empty part with a signature, and it
-    underestimates token-dense content. Usage measures both. A response counts at least its
-    `output_tokens`. Between two responses that carry usage, the later `input_tokens` minus the
-    earlier one is exactly what the earlier response and the requests after it added, so those
-    messages share that difference in proportion to their estimates. Where the history did not grow
-    between two such responses, as across a compaction, the difference measures nothing and the
-    estimates stand; so do messages before the first such response and after the last. A response
+    The text estimate (`tokenizer`, or ~4 characters per token priced up for dense text) misses
+    what a provider counts but does not return as text, such as thinking kept as an empty part
+    with a signature, and only approximates token-dense content. Usage measures both. A response
+    counts at least its `output_tokens`. Between two responses that carry usage, the later
+    `input_tokens` minus the earlier one is exactly what the earlier response and the requests
+    after it added, so those messages share that difference in proportion to their estimates.
+    Where the history did not grow between two such responses, as across a compaction, the
+    difference measures nothing and the estimates stand; so do messages before the first such
+    response and after the last. A response
     whose usage sums several model requests enters the difference with its input tokens as
     `context_input_tokens` reads them, since its summed `input_tokens` re-count each request's context.
     An Anthropic last pass also read that response's own earlier passes, so the difference credits
@@ -630,7 +701,7 @@ async def compact_with_span(
         messages: The pre-compaction messages, measured for the `*_before` attributes.
         compact: Zero-argument async callable returning the compacted message list.
         tokenizer: Optional tokenizer for the `compaction.tokens_*` estimates. When `None`,
-            uses the same ~4 characters-per-token heuristic as `estimate_token_count`.
+            uses the same text estimate as `estimate_token_count`.
         model_requested: Whether the model asked for this compaction, recorded as
             `compaction.model_requested` (set only when `True`).
         background: What became of a background compaction, recorded as `compaction.background`
@@ -842,16 +913,32 @@ def find_safe_cutoff(messages: list[ModelMessage], keep: int) -> int:
 
     The newest message is always kept, since in a run it is the request being answered, so a
     *keep* of 0 keeps one. Returns 0 if trimming is unnecessary (no more messages than *keep*).
+    The tail also reaches back to the latest response when it names a workspace, as the next run
+    finds its workspace there.
     """
     keep = max(keep, 1)
     if len(messages) <= keep:
         return 0
 
-    target = len(messages) - keep
+    target = _keeping_workspace(messages, len(messages) - keep)
     for index in range(target, -1, -1):
         if _is_safe_cutoff(messages, index):
             return index
     return 0  # pragma: no cover
+
+
+def _keeping_workspace(messages: list[ModelMessage], cutoff: int) -> int:
+    """*cutoff*, moved back so the kept tail holds the latest response when it names a workspace.
+
+    The next run finds its workspace from that response's `workspace_ref`, so a tail of requests alone, such as
+    a large user turn after it, would move the conversation out of its workspace. The response is kept whatever
+    its size, and for a local workspace too: running in the wrong workspace is worse than a larger history.
+    """
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if isinstance(message, ModelResponse):
+            return index if index < cutoff and message.workspace_ref is not None else cutoff
+    return cutoff
 
 
 def _include_tool_dependencies(messages: list[ModelMessage], cutoff: int) -> int:
@@ -892,7 +979,8 @@ def find_token_cutoff(
     A history with provider-reported usage is measured with `estimate_message_tokens`, so the
     suffix holds *target_tokens* as the provider counts them; one without falls back to the text
     estimate. Attached instructions do not count toward this message-content floor. A zero
-    target retains the legacy behavior below.
+    target retains the legacy behavior below. Either way the suffix also reaches back to the latest
+    response when it names a workspace, as the next run finds its workspace there.
     """
     if _has_reported_usage(messages):
         counts = estimate_message_tokens(messages, tokenizer)
@@ -916,7 +1004,7 @@ def find_token_cutoff(
                 lo = mid + 1
             else:
                 hi = mid
-        return _include_tool_dependencies(messages, max(0, lo - 1))
+        return _include_tool_dependencies(messages, _keeping_workspace(messages, max(0, lo - 1)))
     return _legacy_token_cutoff(messages, target_tokens, tail_tokens)
 
 
@@ -940,7 +1028,7 @@ def _legacy_token_cutoff(messages: list[ModelMessage], target_tokens: int, tail_
         candidate = max(0, len(messages) - 1)
 
     # Walk backward to a safe point.
-    for index in range(candidate, -1, -1):
+    for index in range(_keeping_workspace(messages, candidate), -1, -1):
         if _is_safe_cutoff(messages, index):
             return index
     return 0  # pragma: no cover
@@ -1022,8 +1110,13 @@ def _split_legacy_part(part: ModelRequestPart) -> list[ModelRequestPart]:
 
 
 def is_harness_data(part: ModelRequestPart) -> bool:
-    """Whether *part* is user-channel content a harness capability added, such as a `SubAgents` task report."""
-    return isinstance(part, UserPromptPart) and harness_data_origin(part) is not None
+    """Whether *part* is user-channel content a capability added, such as a `SubAgents` task report.
+
+    That's a `DataCapabilityPart`, recognized by its type, or user text an earlier version marked with its `origin`.
+    """
+    return isinstance(part, DataCapabilityPart) or (
+        isinstance(part, UserPromptPart) and harness_data_origin(part) is not None
+    )
 
 
 def _is_harness_marker_part(part: ModelRequestPart) -> bool:
@@ -1031,12 +1124,49 @@ def _is_harness_marker_part(part: ModelRequestPart) -> bool:
     return is_pinned(part) or is_receipt_part(part) or is_harness_data(part)
 
 
+def is_user_part(part: ModelRequestPart) -> TypeGuard[UserPromptPart]:
+    """Whether *part* is a user prompt the user wrote, not a pin, receipt or harness capability's content."""
+    return isinstance(part, UserPromptPart) and not _is_harness_marker_part(part)
+
+
+def starts_user_turn(message: ModelMessage) -> TypeGuard[ModelRequest]:
+    """Whether *message* is a `ModelRequest` carrying a user prompt, not only harness bookkeeping or data."""
+    return isinstance(message, ModelRequest) and any(is_user_part(part) for part in message.parts)
+
+
+def user_turn_starts(messages: Sequence[ModelMessage]) -> list[int]:
+    """Indices of the requests in *messages* that start a user turn.
+
+    A request carrying a user prompt starts one, unless it also answers a tool call within a run: core
+    sends a `ToolReturn`'s `content` as a user prompt next to the tool's result. A run that ends on an
+    output tool leaves that tool's return as a trailing request, and core merges the next run's prompt
+    into it, so a request that answers a tool call still starts a turn when the responses around it
+    belong to different runs. Without run ids to compare, it continues the turn, which keeps more
+    rather than less; so does a prompt sent along with deferred tool results in the run they resume.
+    """
+    starts: list[int] = []
+    previous_run_id: str | None = None
+    for index, message in enumerate(messages):
+        if isinstance(message, ModelResponse):
+            previous_run_id = message.run_id
+        elif starts_user_turn(message) and (
+            not any(_is_tool_reply(part) for part in message.parts)
+            or _starts_new_run(previous_run_id, messages[index + 1 :])
+        ):
+            starts.append(index)
+    return starts
+
+
+def _starts_new_run(previous_run_id: str | None, later: Sequence[ModelMessage]) -> bool:
+    """Whether the first response in *later* belongs to a different run than *previous_run_id*."""
+    following_run_id = next((message.run_id for message in later if isinstance(message, ModelResponse)), None)
+    return previous_run_id is not None and following_run_id is not None and previous_run_id != following_run_id
+
+
 def find_first_user_message(messages: list[ModelMessage]) -> ModelRequest | None:
     """Return the first `ModelRequest` that contains a `UserPromptPart`, or `None`."""
     for message in messages:
-        if isinstance(message, ModelRequest) and any(
-            isinstance(part, UserPromptPart) and not _is_harness_marker_part(part) for part in message.parts
-        ):
+        if starts_user_turn(message):
             return message
     return None
 
@@ -1077,7 +1207,7 @@ non-JSON placeholder would reach the provider as malformed function arguments.
 
 
 @dataclass(frozen=True)
-class _ToolPair:
+class ToolPair:
     """A matched tool call and its return, with the order the return appeared."""
 
     tool_call_id: str
@@ -1086,7 +1216,7 @@ class _ToolPair:
     order: int
 
 
-def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[_ToolPair]:
+def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[ToolPair]:
     """Return matched tool-call / tool-return pairs in return-appearance order.
 
     A retried return (`outcome='retried'`) isn't a result: it tells the model to make the call again. It
@@ -1108,13 +1238,18 @@ def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[_ToolPair]:
         if isinstance(part, ToolReturnPart) and part.outcome != 'retried' and part.tool_call_id in calls
     ]
     return [
-        _ToolPair(part.tool_call_id, calls[part.tool_call_id].tool_name, calls[part.tool_call_id], order)
+        ToolPair(part.tool_call_id, calls[part.tool_call_id].tool_name, calls[part.tool_call_id], order)
         for order, part in enumerate(returns)
     ]
 
 
 CLEARED_TOOL_RESULT_METADATA = 'pydantic-ai-harness.compaction.cleared-tool-result.v1'
 """Model-invisible `ToolReturnPart.metadata` key marking a result compaction has cleared."""
+
+
+def _has_clearable_type(part: ToolReturnPart) -> bool:
+    """Whether *part* is a plain `ToolReturnPart` or a `read_file` return, the types `cleared_return` clears."""
+    return type(part) is ToolReturnPart or part.tool_kind == READ_FILE_KIND.id
 
 
 def cleared_return(part: ToolReturnPart, placeholder: str) -> ToolReturnPart | None:
@@ -1130,9 +1265,9 @@ def cleared_return(part: ToolReturnPart, placeholder: str) -> ToolReturnPart | N
     `is_cleared_return` recognizes it without trusting its model-visible content. A typed part with
     other metadata can't be marked, so it isn't cleared.
     """
-    is_plain = type(part) is ToolReturnPart
-    if not is_plain and part.tool_kind != READ_FILE_KIND.id:
+    if not _has_clearable_type(part):
         return None
+    is_plain = type(part) is ToolReturnPart
     metadata = part.metadata
     if metadata is None:
         metadata = {CLEARED_TOOL_RESULT_METADATA: True}
@@ -1146,6 +1281,11 @@ def cleared_return(part: ToolReturnPart, placeholder: str) -> ToolReturnPart | N
     return replace(part, content=placeholder, metadata=metadata)
 
 
+def has_cleared_mark(part: ToolReturnPart) -> bool:
+    """Whether *part* carries the mark `cleared_return` leaves in its metadata, whichever strategy cleared it."""
+    return is_str_dict(part.metadata) and part.metadata.get(CLEARED_TOOL_RESULT_METADATA) is True
+
+
 def is_cleared_return(part: ToolReturnPart, placeholder: str) -> bool:
     """Whether a compaction using *placeholder* cleared *part*.
 
@@ -1157,44 +1297,78 @@ def is_cleared_return(part: ToolReturnPart, placeholder: str) -> bool:
     """
     if str(part.content) != placeholder:
         return False
-    metadata = part.metadata
-    return type(part) is ToolReturnPart or (
-        is_str_dict(metadata) and metadata.get(CLEARED_TOOL_RESULT_METADATA) is True
-    )
+    return type(part) is ToolReturnPart or has_cleared_mark(part)
+
+
+PLACEHOLDER_FUNCTION_METADATA = 'pydantic-ai-harness.compaction.cleared-by-placeholder-function.v1'
+"""Model-invisible `ToolReturnPart.metadata` key marking a result cleared with a placeholder function.
+
+Set next to `CLEARED_TOOL_RESULT_METADATA`, which other strategies set too: a function's output differs
+per result, so this key is what tells `ClearToolResults` which cleared results are its own.
+"""
+
+
+def is_cleared_by_placeholder_function(part: ToolReturnPart) -> bool:
+    """Whether a compaction with a placeholder function cleared *part*."""
+    return is_str_dict(part.metadata) and part.metadata.get(PLACEHOLDER_FUNCTION_METADATA) is True
+
+
+def _clear_once(part: ToolReturnPart, placeholder: str | Callable[[ToolReturnPart], str]) -> ToolReturnPart | None:
+    """*part* cleared with *placeholder*, or `None` if it is already cleared or can't be cleared.
+
+    A string placeholder recognizes its own clears by their content, as it always has. A function's
+    output differs per part, so its clears are recognized by their metadata marks instead, and a part
+    whose metadata can't hold them is left alone: clearing it again would call the placeholder on its
+    own output.
+    """
+    if isinstance(placeholder, str):
+        return cleared_return(part, placeholder) if str(part.content) != placeholder else None
+    metadata: object = {} if part.metadata is None else part.metadata
+    if not is_str_dict(metadata) or has_cleared_mark(part) or not _has_clearable_type(part):
+        return None
+    marks = {CLEARED_TOOL_RESULT_METADATA: True, PLACEHOLDER_FUNCTION_METADATA: True}
+    return replace(part, content=placeholder(part), metadata={**metadata, **marks})
 
 
 def rebuild_with_cleared(
     messages: Sequence[ModelMessage],
     clear_return_ids: set[str],
     clear_input_ids: set[str],
-    placeholder: str,
+    placeholder: str | Callable[[ToolReturnPart], str],
 ) -> list[ModelMessage]:
     """Return *messages* with selected tool results (and optionally inputs) blanked.
 
     The `ToolReturnPart` / `ToolCallPart` are kept in place with placeholder content,
     so tool-call pairing is never broken.  Already-blanked parts are left untouched. A
+    callable *placeholder* is called once per part it clears, with the original part. A
     `load_capability` call keeps its input: core reads which capability is loaded from it.
     """
+    contents = dict.fromkeys(clear_return_ids, placeholder)
     return [
-        _clear_returns(message, clear_return_ids, placeholder)
+        _clear_returns(message, contents)
         if isinstance(message, ModelRequest)
         else _clear_inputs(message, clear_input_ids)
         for message in messages
     ]
 
 
-def _clear_returns(message: ModelRequest, clear_return_ids: set[str], placeholder: str) -> ModelRequest:
-    """*message* with the returns in *clear_return_ids* blanked, or *message* itself when none changes."""
+def replace_returns(messages: Sequence[ModelMessage], contents: Mapping[str, str]) -> list[ModelMessage]:
+    """Return *messages* with each tool result in *contents*, keyed by tool call ID, replaced by its content.
+
+    Like `rebuild_with_cleared`, but with a replacement per result, and the tool calls left as they are.
+    """
+    return [_clear_returns(message, contents) if isinstance(message, ModelRequest) else message for message in messages]
+
+
+def _clear_returns(
+    message: ModelRequest, contents: Mapping[str, str | Callable[[ToolReturnPart], str]]
+) -> ModelRequest:
+    """*message* with the returns in *contents* replaced, or *message* itself when none changes."""
     request_parts: list[ModelRequestPart] = []
     changed = False
     for part in message.parts:
-        cleared = (
-            cleared_return(part, placeholder)
-            if isinstance(part, ToolReturnPart)
-            and part.tool_call_id in clear_return_ids
-            and str(part.content) != placeholder
-            else None
-        )
+        content = contents.get(part.tool_call_id) if isinstance(part, ToolReturnPart) else None
+        cleared = _clear_once(part, content) if isinstance(part, ToolReturnPart) and content is not None else None
         if cleared is not None:
             request_parts.append(cleared)
             changed = True

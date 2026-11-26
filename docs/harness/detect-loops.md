@@ -10,20 +10,14 @@ Notice when an agent repeats the same actions without making progress, and inter
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
 ```mermaid
-flowchart TB
+flowchart LR
     accTitle: Detect Loops: interrupt an agent that repeats itself
-    accDescr: The model calls your tool, and the tool result and the next request pass through DetectLoops, which checks whether the same call gave the same result 3 times. If no, the request goes on to the model. If yes, with action='nudge' a system prompt joins the next request to the model, and with action='error' LoopDetectedError ends the run.
-    model(["model"])
-    tool["your tool"]
-    detect["DetectLoops()<br/>same call, same result,<br/>3 times?"]:::capability
-    nudge["system prompt joins<br/>the next request"]:::capability
-    error["LoopDetectedError<br/>ends the run"]:::blocked
-    model -->|"tool call"| tool
-    tool -->|"tool result, next request"| detect
-    detect -->|"no"| model
-    detect -->|"yes, action='nudge'"| nudge
-    nudge --> model
-    detect -.-x|"yes, action='error'"| error
+    accDescr: Left to right, the model makes a tool call to your tool, and DetectLoops checks whether the same call gave the same result 3 times. If no, the next request goes to the model. If yes, with action='nudge' the next request goes to the model with a system prompt added, and with action='error' a dotted edge leads to LoopDetectedError, which ends the run.
+    model(["model"]) -->|tool call| tool["your tool"]
+    tool --> check{"DetectLoops()<br/>same call, same result,<br/>3 times?"}:::capability
+    check -->|no| next(["next request<br/>to model"])
+    check -->|"yes, nudge"| nudge["next request +<br/>system prompt"]:::capability
+    check -.-x|"yes, error"| error["LoopDetectedError<br/>ends the run"]:::blocked
     classDef capability stroke:#E520E9,stroke-width:2px
     classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
 ```
@@ -85,6 +79,29 @@ A model can also loop inside one response: going over the same reasoning in its 
 `stream_channels` (default `('thinking', 'text', 'tool_args')`) picks which of a response's parts `stream_detector` checks, and `stream_detector=None` turns those checks off. Each part is checked every `stream_check_every` (default `256`) characters as it streams, and once more when it ends. Only [function tool](../tools.md) and output tool calls are checked, not [native tool](../native-tools.md) calls.
 
 A response that isn't streamed, such as one from `agent.run()` without an `event_stream_handler`, gets the same checks once it has arrived, at the same offsets, so it reaches the same decisions. `DetectLoops` doesn't make a run stream.
+
+Here the model writes the same sentence 100 times in one response. `action='error'` ends the run at the first check that finds the loop, at 2,048 characters, so the loop it reports has 51 repeats:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai_harness import DetectLoops
+from pydantic_ai_harness.detect_loops import LoopDetectedError
+
+
+def repeating_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('Let me check the config file once more. ' * 100)])
+
+
+agent = Agent(FunctionModel(repeating_model), capabilities=[DetectLoops(action='error')])
+
+try:
+    agent.run_sync('Why does the build fail?')
+except LoopDetectedError as error:
+    print(error.loop.pattern, error.loop.count)
+    #> repeated_stream_text 51
+```
 
 ### The default heuristic
 
@@ -155,19 +172,19 @@ detect_loops = DetectLoops(stream_detector=RepeatedLines())
 
 ### `'nudge'` (default)
 
-The capability enqueues a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] with [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue], which joins the request being prepared. It keeps the default conversation scope, so like a course correction it keeps applying on later requests instead of being shown once, and later requests send it unchanged. For example:
+The capability enqueues a `LoopNudgePart`, an [`InstructionCapabilityPart`][pydantic_ai.messages.InstructionCapabilityPart] kind (a [capability part](../capabilities/custom.md#capability-parts) in the application's voice), with [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue], which joins the request being prepared. It keeps the default conversation scope, so like a course correction it keeps applying on later requests instead of being shown once, and later requests send it unchanged. The model sees its text as a [mid-conversation system prompt](../message-history.md#mid-conversation-system-prompts), or as `<system>` user text on a model without inline system prompts. For example:
 
 ```text
 Your last 3 calls to `read_file` used the same arguments and returned the same result, so calling it again will not change the outcome. Change your approach, or explain what is blocking you.
 ```
 
-The text names tools using only letters, digits, and `_`; any other character becomes `_`. The real names, and the pattern, are in the part's `metadata`:
+The text names tools using only letters, digits, and `_`; any other character becomes `_`. The part's `pattern` and `tool_names` fields hold the pattern and the real names, and never reach the model. Find nudges in history by their type, not by their text:
 
 ```python {test="skip" lint="skip"}
-{'origin': 'pydantic-ai-harness.detect_loops.nudge.v1', 'pattern': 'repeated_result', 'tool_names': ['read_file']}
-```
+from pydantic_ai_harness.detect_loops import LoopNudgePart
 
-Find nudges in history by that `origin`, not by their text ([identifying system prompts](../message-history.md#identifying-system-prompts)). On a model without inline system prompts, Pydantic AI sends the part as `<system>` user text, as it does any [mid-conversation system prompt](../message-history.md#mid-conversation-system-prompts).
+nudges = [part for message in messages for part in message.parts if isinstance(part, LoopNudgePart)]
+```
 
 For a [loop within a response](#loops-within-a-response), the stream is also stopped and the request made again, with the nudge. The nudge is request-scoped there: the response that looped is gone, so it's sent with that one request instead of staying in the conversation. The capability raises `ModelRetry`, so the model also sees `Your previous response was rejected because it kept repeating itself.` as retry feedback, and each such retry counts against the agent's [output retries](../agent.md#how-output-retries-are-enforced): a model that keeps looping ends the run with `UnexpectedModelBehavior` once they run out. A streamed response that was stopped isn't kept in history, and the tokens it used aren't added to the run's usage. A response that arrived whole stays in history ahead of the retry, as any rejected response does.
 
@@ -267,6 +284,7 @@ When a `LoopJudge` fails or times out, a zero-duration `loop judge failed` span 
 
 - Several `DetectLoops` on one agent run independently. Each reports the loops its own settings describe, so you can, for example, nudge at the defaults and add a second one with higher thresholds and `action='error'` to stop a run that ignores the nudge.
 - [System Reminders](system-reminders.md) re-inject guidance on a cadence or condition, and [Trajectory Judge](trajectory-judge.md) asks a second model whether the run is on track. By default `DetectLoops` needs no second model and only acts on exact repetition; a [`LoopJudge`](#a-model-judge) adds a small model for loops within a response that aren't exact.
+- A loop found within a response while an [`InputGuardrail(parallel=True)`](guardrails.md#parallel-input-guards) is still deciding waits for its verdict, whatever the action. If the guard allows the prompt, the action runs as usual. If it blocks, the run ends with the guard's outcome instead of the action.
 
 `DetectLoops` does not detect a run that keeps exceeding the model's context window, and it doesn't truncate, restart, or roll back the run: compaction and your own handler cover those.
 

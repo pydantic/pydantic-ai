@@ -35,6 +35,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.memory import (
+    ChildListingMemoryStore,
     FileMemoryStore,
     InMemoryMemoryStore,
     MemoryConflictError,
@@ -51,7 +52,7 @@ from pydantic_ai_harness.memory import (
 )
 
 
-class Store(MemoryStore, SearchableMemoryStore, Protocol):
+class Store(ChildListingMemoryStore, SearchableMemoryStore, Protocol):
     """Combined contract implemented by the bundled stores."""
 
 
@@ -279,6 +280,21 @@ async def test_local_store_search_skips_nested_scopes(tmp_path: Path, index: int
     ]
 
 
+@pytest.mark.parametrize('index', _STORE_INDEXES)
+async def test_local_store_lists_child_paths_without_nested_scopes(tmp_path: Path, index: int) -> None:
+    store = _local_store(tmp_path, index)
+    assert isinstance(store, ChildListingMemoryStore)
+    for path in ['acme/main/MEMORY.md', 'acme/main/main/MEMORY.md', 'acme/main/main/notes.md', 'acme/main/notes.md']:
+        await store.write(path, 'tea', expected_version=None)
+
+    assert await store.list_child_paths('acme/main/', limit=10) == ['acme/main/MEMORY.md', 'acme/main/notes.md']
+    assert await store.list_child_paths('acme/main/', limit=1) == ['acme/main/MEMORY.md']
+    assert await store.list_child_paths('acme/main/no', limit=10) == ['acme/main/notes.md']
+    assert await store.list_child_paths('acme/', limit=10) == []
+    with pytest.raises(ValueError, match='limit must be positive'):
+        await store.list_child_paths('acme/', limit=0)
+
+
 async def test_search_yields_to_the_event_loop_between_files() -> None:
     store = InMemoryMemoryStore()
     for index in range(20):
@@ -312,11 +328,12 @@ async def test_sqlite_store_prefix_queries_seek_the_path_index(tmp_path: Path) -
         statements: list[str] = []
         connection.set_trace_callback(statements.append)
         await store.list_paths('acme/main/', limit=10)
+        await store.list_child_paths('acme/main/', limit=10)
         await store.search('acme/main/', 'tea', limit=10, max_files=10, max_chars=100, max_file_chars=100)
         connection.set_trace_callback(None)
 
         queries = [query for query in statements if query.startswith('SELECT') and 'FROM memory_files' in query]
-        assert len(queries) == 2
+        assert len(queries) == 3
         for query in queries:
             plan = ' '.join(str(row[3]) for row in connection.execute(f'EXPLAIN QUERY PLAN {query}'))
             assert plan.startswith('SEARCH memory_files USING'), plan
@@ -1109,6 +1126,11 @@ class FakePostgresConnection:
         if query.startswith('SELECT pg_advisory_xact_lock'):
             return None
         if query.startswith('SELECT to_regclass'):
+            if query == 'SELECT to_regclass($1) IS NULL':
+                return not any(
+                    statement.startswith('CREATE TABLE IF NOT EXISTS agent_memory (')
+                    for statement in self._database.statements
+                )
             return self._database.schema_current
         if query.startswith('INSERT INTO agent_memory_metadata'):
             if self._database.versions_initialized:
@@ -1170,16 +1192,19 @@ class FakePostgresConnection:
 
     async def fetch(self, query: str, *args: object) -> list[tuple[object, ...]]:
         self._database.statements.append(query)
-        prefix = str(args[0])
-        files = sorted((path, file) for path, file in self._database.files.items() if path.startswith(prefix))
-        if query.startswith('SELECT path, left(content'):
+        assert 'path COLLATE "C" >= $1 AND path COLLATE "C" < $2' in query
+        assert 'ORDER BY path COLLATE "C"' in query
+        prefix, end = str(args[0]), str(args[1])
+        files = sorted((path, file) for path, file in self._database.files.items() if prefix <= path < end)
+        if query.startswith('SELECT path, left(content') or 'strpos' in query:
             assert "strpos(substr(path, length($1) + 1), '/') = 0" in query
-            direct = [(path, file) for path, file in files if '/' not in path.removeprefix(prefix)]
-            max_chars = int(str(args[1]))
+            files = [(path, file) for path, file in files if '/' not in path.removeprefix(prefix)]
+        if query.startswith('SELECT path, left(content'):
+            max_chars = int(str(args[2]))
+            limit = int(str(args[3]))
+            return [(path, file.content[:max_chars], len(file.content)) for path, file in files[:limit]]
+        if query.startswith('SELECT path FROM'):
             limit = int(str(args[2]))
-            return [(path, file.content[:max_chars], len(file.content)) for path, file in direct[:limit]]
-        if query.startswith('SELECT path'):
-            limit = int(str(args[1]))
             return [(path,) for path, _ in files[:limit]]
         raise AssertionError(f'unexpected fetch query: {query}')  # pragma: no cover
 
@@ -1236,6 +1261,8 @@ async def test_postgres_store_contract_schema_and_parameterization() -> None:
     result = await store.search('tenant/', 'alpha', limit=10, max_files=10, max_chars=100, max_file_chars=1_000)
     assert [match.path for match in result.matches] == ['tenant/main.md']
     assert await store.list_paths('tenant/', limit=100) == ['tenant/main.md', 'tenant/nested/deep.md']
+    assert await store.list_child_paths('tenant/', limit=100) == ['tenant/main.md']
+    assert await store.list_paths(limit=100) == ['other/private.md', 'tenant/main.md', 'tenant/nested/deep.md']
 
     assert pool.database.transactions == 8
     assert len([query for query in pool.database.statements if query.startswith('CREATE TABLE')]) == 3
@@ -1249,6 +1276,12 @@ async def test_postgres_store_contract_schema_and_parameterization() -> None:
             assert '$' in query or query.startswith(
                 ('INSERT INTO agent_memory_metadata', 'UPDATE agent_memory SET version')
             )
+
+    # Only the store that creates the table indexes it, since the build would block writes to an existing table.
+    assert await PostgresMemoryStore(pool).list_paths(limit=1) == ['other/private.md']
+    assert [query for query in pool.database.statements if query.startswith('CREATE INDEX')] == [
+        'CREATE INDEX IF NOT EXISTS agent_memory_path_idx ON agent_memory (path COLLATE "C")'
+    ]
 
 
 async def test_postgres_store_write_metadata_contract() -> None:
@@ -1340,6 +1373,17 @@ async def test_postgres_store_version_does_not_repeat_after_delete_and_recreate(
     assert recreated.version != first.version
     with pytest.raises(MemoryConflictError):
         await store.write('main.md', 'stale', expected_version=first.version)
+
+
+async def test_postgres_store_does_not_index_a_table_from_an_earlier_release() -> None:
+    pool = FakePostgresPool()
+    # The table exists but predates the `write_metadata` column, so the schema is not current.
+    pool.database.statements.append('CREATE TABLE IF NOT EXISTS agent_memory (path TEXT PRIMARY KEY)')
+
+    await PostgresMemoryStore(pool).write('main.md', 'content', expected_version=None)
+
+    assert not [query for query in pool.database.statements if query.startswith('CREATE INDEX')]
+    assert 'ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS write_metadata JSONB' in pool.database.statements
 
 
 async def test_postgres_concurrent_store_initialization_cannot_regress_versions() -> None:
