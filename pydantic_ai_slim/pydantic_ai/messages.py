@@ -6994,6 +6994,10 @@ def sanitize_messages(
       Pydantic AI routes later requests by it, like a suspended response's continuation going back to the
       [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] candidate that started it, so it is only honored on
       trusted server-side `message_history`.
+    - [`ui_visibility`][pydantic_ai.messages.BaseToolCallPart.ui_visibility] on tool call and return parts,
+      resetting it to `None`. It decides what a [UI adapter](../ui/overview.md#tool-visibility) sends a client of a
+      tool's result, so only the server sets it: a call from this history that the run executes, such as one the
+      user approved, is stamped again from its tool's definition before it runs.
     - The framework-reserved `__pydantic_ai__` key from
       [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] and
       [`ModelResponse.metadata`][pydantic_ai.messages.ModelResponse.metadata], keeping your own keys
@@ -7550,12 +7554,12 @@ def _sanitize_tool_return_part(
     dropped_uploaded_file_providers: set[str],
     stripped_text_metadata: list[TextContent],
 ) -> _ReturnPartT:
-    """Sanitize the file references in a tool return part's content; see `_sanitize_tool_return_content`.
+    """Sanitize the file references in a tool return part's content, and reset its `ui_visibility`.
 
-    Typed parts are sanitized too: neither a client-claimed `tool_kind` nor a declared content shape
-    guarantees the content is free of file references. A typed part whose content sanitizing changes
-    may no longer fit its declared shape, so it falls back to `base` and is promoted again only if it
-    still fits.
+    See `_sanitize_tool_return_content` for the content. Typed parts are sanitized too: neither a
+    client-claimed `tool_kind` nor a declared content shape guarantees the content is free of file
+    references. A typed part whose content sanitizing changes may no longer fit its declared shape, so
+    it falls back to `base` and is promoted again only if it still fits.
     """
     keep_content, sanitized_content = _sanitize_tool_return_content(
         part.content,
@@ -7569,10 +7573,10 @@ def _sanitize_tool_return_part(
     )
     content = sanitized_content if keep_content else None
     if type(part) is base:
-        return replace(part, content=content)
+        return replace(part, content=content, ui_visibility=None)
     if content == part.content:
-        return part
-    return _narrow_return(_utils.copy_dataclass_fields(part, base, content=content), None)
+        return part if part.ui_visibility is None else replace(part, ui_visibility=None)
+    return _narrow_return(_utils.copy_dataclass_fields(part, base, content=content, ui_visibility=None), None)
 
 
 def _sanitize_tool_return_content(
@@ -7693,7 +7697,8 @@ def _sanitize_response_parts(
 ) -> list[ModelResponsePart]:
     """Sanitize unsafe metadata and file references in an untrusted response's parts.
 
-    Strips compaction provenance stamps from `CompactionPart.provider_details`. Drops
+    Strips compaction provenance stamps from `CompactionPart.provider_details`, and resets `ui_visibility`
+    on tool call and return parts. Drops
     non-allowlisted schemes and resets non-allowlisted `force_download` values on
     [`FileUrl`][pydantic_ai.messages.FileUrl]s nested in tool return parts, and drops
     [`UploadedFile`][pydantic_ai.messages.UploadedFile]s nested in tool return parts unless
@@ -7717,6 +7722,8 @@ def _sanitize_response_parts(
                 key: value for key, value in part.provider_details.items() if key != STANDING_PROMPT_PLANTED_KEY
             }
             new_parts.append(replace(part, provider_details=provider_details))
+        elif isinstance(part, ToolCallPart | NativeToolCallPart) and part.ui_visibility is not None:
+            new_parts.append(replace(part, ui_visibility=None))
         elif isinstance(part, NativeToolReturnPart):
             new_parts.append(
                 _sanitize_tool_return_part(

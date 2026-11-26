@@ -34,6 +34,8 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
+    UserPromptPart,
+    sanitize_messages,
 )
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, BuiltinToolCallsReturns, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -633,6 +635,38 @@ async def test_call_approved_from_a_client_held_history_without_a_setting_is_unc
 
     assert SECRET in run.wire
     assert {stamp for *_, stamp in stamps(run.messages)} == {None}
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+@pytest.mark.parametrize('client_stamp', [None, 'public'])
+async def test_sanitizing_resets_the_stamp_a_client_sends_on_its_history(
+    protocol: ProtocolName, client_stamp: ToolUIVisibility | None
+):
+    """A client can't make an approved call's result public: `sanitize_messages` resets the stamp it sends.
+
+    The protocols don't carry the stamp, so the client here sends Pydantic AI's own message format, as an endpoint
+    taking `message_history` from a browser would accept it. The approved call is then stamped from its tool's
+    definition, so the `'redacted'` tool's result is the placeholder whatever the client claimed.
+    """
+    agent = approving_agent('requires_approval_redacted')
+    sent: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Where is my order?')]),
+        ModelResponse(
+            parts=[ToolCallPart('refund', {'order_id': 'o_1'}, tool_call_id='call_0', ui_visibility=client_stamp)]
+        ),
+    ]
+
+    run = await resume(
+        protocol,
+        agent,
+        sanitize_messages(sent, resolved_tool_call_ids={'call_0'}),
+        DeferredToolResults(approvals={'call_0': True}),
+    )
+
+    assert SECRET not in run.wire
+    assert run.tool_events() == EXPECTED_CLIENT_APPROVED_EVENTS[protocol]
+    assert stamps(run.messages)[-1] == ('tool-return', 'refund', 'redacted')
+    assert SECRET not in dump(protocol, run.messages)
 
 
 DeferralName = Literal['CallDeferred', 'ApprovalRequired', 'question']

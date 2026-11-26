@@ -657,10 +657,6 @@ _CORRELATION = Keep(
     "`conversation_id`')."
 )
 _KIND = Kind('Names the class, which the client picks by sending it.')
-_UI_VISIBILITY = Keep(
-    'Decides only what a UI adapter sends a client of the tool part, never what the model sees, so a stamp a client '
-    'sends shows or hides only a part that client already holds (docs/ui/overview.md, "Tool visibility").'
-)
 
 
 def _request(
@@ -701,6 +697,25 @@ class ForgedInstructionPart(InstructionCapabilityPart, namespace='sanitize_field
 
 _LAST = _request(_prompt('Next.'))
 """A request that ends a history, so no tool call is left dangling at its end."""
+
+_UI_VISIBILITY = Rewrite(
+    'reset',
+    "Decides what a UI adapter sends a client of a tool's result, which the server produces, so it is the server's to "
+    "set: a call the run executes from client-held history, such as an approved one, is stamped again from its tool's "
+    'definition (docs/ui/overview.md, "Tool visibility").',
+    (
+        Sentinel(
+            before=[
+                _response(ToolCallPart('look', tool_call_id='call-1', ui_visibility='public')),
+                _request(ToolReturnPart('look', 'Seen.', tool_call_id='call-1', ui_visibility='public', timestamp=_T)),
+            ],
+            after=[
+                _response(ToolCallPart('look', tool_call_id='call-1')),
+                _request(ToolReturnPart('look', 'Seen.', tool_call_id='call-1', timestamp=_T)),
+            ],
+        ),
+    ),
+)
 
 
 POLICY: dict[type, Fields | Dropped] = {
