@@ -446,9 +446,12 @@ _DURABLE = 'a durable round trip, which D1 covers per case'
 _PENDING = "PENDING: rewrites history the model later sees, and isn't a `Transform` yet"
 
 TRANSFORM_EXEMPT: dict[str, str] = {
+    # The messages type adapter's validator: points equal `instructions` at one string, changing no content.
+    'pydantic_ai.messages._share_instructions': 'interns equal instructions strings when history is loaded; the content is unchanged',
     **dict.fromkeys(
         [
             'pydantic_ai._cli.ask_agent',
+            'pydantic_ai._appended_messages.AppendedMessages.start',
             'pydantic_ai.agent.abstract.AgentRunEvents.all_messages',
             'pydantic_ai.agent.abstract.AgentRunEvents.new_messages',
             'pydantic_ai.agent.abstract._recorded_at_pause',
@@ -537,6 +540,7 @@ TRANSFORM_EXEMPT: dict[str, str] = {
     ),
     **dict.fromkeys(
         [
+            'pydantic_ai.ui._utils.client_view',
             'pydantic_ai.ui._adapter.enqueued_messages_for_client',
             'pydantic_ai.ui._adapter.UIAdapter.load_messages',
             'pydantic_ai.ui._adapter.UIAdapter.messages',
