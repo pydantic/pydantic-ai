@@ -886,7 +886,7 @@ async def run_claim_then_cold(
     )
 
     @agent.tool_plain
-    def cold() -> str:
+    async def cold() -> str:
         """Run without speculating."""
         cold_started.set()
         return 'ran'
