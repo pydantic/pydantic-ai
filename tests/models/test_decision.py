@@ -18,6 +18,7 @@ from pydantic_ai import (
     BoolCriteria,
     DocumentUrl,
     ModelRetry,
+    PartialRubricWarning,
     RunContext,
     Tool,
     ToolOutput,
@@ -1118,7 +1119,9 @@ async def test_a_rubric_with_a_level_left_undescribed_warns_that_it_is_a_pick_on
     A level whose docstring is missing, or could not be read, turned the rubric into a pick-one with nothing said.
     """
     model = InMemoryDecisionModel()
-    with pytest.warns(UserWarning, match="Output field 'urgency' has levels 0 to 2, but not every level is described"):
+    with pytest.warns(
+        PartialRubricWarning, match="Output field 'urgency' has levels 0 to 2, but not every level is described"
+    ):
         result = await Agent(model, output_type=UrgencyReview).run('Triage this.')
 
     assert result.output == UrgencyReview(urgency=Urgency.routine)

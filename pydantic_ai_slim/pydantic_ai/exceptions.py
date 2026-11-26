@@ -71,6 +71,7 @@ __all__ = (
     'MessageHistoryMutatedWarning',
     'UnsupportedSettingWarning',
     'DeprecatedModelWarning',
+    'PartialRubricWarning',
     'CostCalculationFailedWarning',
     'CostNotFoundWarning',
     'UsageExtractionFailedWarning',
@@ -1506,5 +1507,25 @@ class DeprecatedModelWarning(UserWarning):
     from pydantic_ai import DeprecatedModelWarning
 
     warnings.filterwarnings('error', category=DeprecatedModelWarning)
+    ```
+    """
+
+
+class PartialRubricWarning(UserWarning):
+    """Warning emitted when a [decision model](../models/decision.md) asks a field that was likely meant as a rubric as a pick-one.
+
+    A field whose options are the whole numbers from 0 upwards is scored as a rubric only when every level is
+    described. When some levels are described and others are not, such as an `IntEnum` mixing in
+    [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] with a docstring missing under one member, the
+    field is asked as a pick-one instead, and this warning names it. Describe every level to have it scored.
+
+    If the pick-one is what you want, silence it with a warnings filter:
+
+    ```python {test="skip"}
+    import warnings
+
+    from pydantic_ai import PartialRubricWarning
+
+    warnings.filterwarnings('ignore', category=PartialRubricWarning)
     ```
     """

@@ -26,7 +26,7 @@ from .._json_schema import InlinedValues
 from .._output import DEFAULT_OUTPUT_TOOL_DESCRIPTION, DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
-from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
+from ..exceptions import ModelAPIError, PartialRubricWarning, UnexpectedModelBehavior, UserError
 from ..messages import (
     ERROR_OUTCOMES,
     BaseToolReturnPart,
@@ -2423,7 +2423,7 @@ def _option_question(
         warnings.warn(
             f'Output field {name!r} has levels 0 to {len(options) - 1}, but not every level is described, so it '
             'is asked as a pick-one rather than scored as a rubric. Describe every level to score it.',
-            UserWarning,
+            PartialRubricWarning,
         )
     if len(options) == 2 and all(isinstance(option, bool) for option in options):
         # `True` and `False` are the two options a yes/no already has, so an `Enum` or `Literal` of
