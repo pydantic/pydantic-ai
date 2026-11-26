@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
-from copy import copy, deepcopy
+from copy import copy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Self, cast
+from typing import TYPE_CHECKING, Any, Literal, Self, cast
 
 from pydantic import ValidationError
 from typing_extensions import TypeIs
 
-from pydantic_ai._enqueue import hold_added_messages, hold_feedback, snapshot_messages
+from pydantic_ai._enqueue import copy_said, hold_added_messages, hold_feedback, snapshot_messages
 from pydantic_ai._history_mirroring import keep_mirroring
 from pydantic_ai._instructions import (
     AgentInstruction,
@@ -774,7 +774,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for capability in self._dispatch:
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 messages = request_context.messages
-                request_context = await _before_model_request_held(capability, cap_ctx, request_context)
+                request_context = await _request_hook_held('before_model_request', capability, cap_ctx, request_context)
                 keep_mirroring(messages, request_context)
         return request_context
 
@@ -785,7 +785,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> ModelRequestContext:
         for capability in self._dispatch:
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
-                request_context = await capability.prepare_model_request(cap_ctx, request_context)
+                request_context = await _request_hook_held(
+                    'prepare_model_request', capability, cap_ctx, request_context
+                )
         return request_context
 
     async def after_model_request(
@@ -1197,7 +1199,7 @@ class _HeldHandler:
         self._held = held
         self._inner = inner
         self._snapshot = snapshot_messages(request_context.messages)
-        self._instructions = deepcopy(request_context.model_request_parameters.instruction_parts or [])
+        self._instructions = copy_said(request_context.model_request_parameters.instruction_parts or [])
         # Each response with a copy of its parts, so a change made to it in place isn't taken for the handler's.
         self.returned: list[tuple[ModelResponse, Sequence[ModelResponsePart]]] = []
         # Each error with what it told the model when raised, so one changed before it's re-raised isn't handed on.
@@ -1211,7 +1213,7 @@ class _HeldHandler:
         except BaseException as e:
             self._raised.append((e, _what_it_says(e, copy=True)))
             raise
-        self.returned.append((response, deepcopy(response.parts)))
+        self.returned.append((response, copy_said(response.parts)))
         return response
 
     def handed_on(self, error: BaseException) -> bool:
@@ -1436,21 +1438,25 @@ def _capability_active(capability: AbstractCapability[AgentDepsT], ctx: RunConte
     return capability.id is not None and ctx._is_deferred_capability_dispatch_active(capability.id)  # pyright: ignore[reportPrivateUsage]
 
 
-async def _before_model_request_held(
-    capability: AbstractCapability[AgentDepsT], cap_ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
+async def _request_hook_held(
+    hook: Literal['before_model_request', 'prepare_model_request'],
+    capability: AbstractCapability[AgentDepsT],
+    cap_ctx: RunContext[AgentDepsT],
+    request_context: ModelRequestContext,
 ) -> ModelRequestContext:
-    """`capability`'s `before_model_request`, held to its authority when that's below `'operator'`.
+    """`capability`'s `before_model_request` or `prepare_model_request`, held to its authority below `'operator'`.
 
-    It can't write the model's turn with `SkipModelRequest`, its `ModelRetry` feedback is its own text, and what it
-    adds to the request's messages is held as if it had enqueued it.
+    It can't write the model's turn with `SkipModelRequest` or change the instructions, its `ModelRetry` feedback is
+    its own text, and what it adds to the request's messages is held as if it had enqueued it.
     """
     held = _held_to_ceiling(cap_ctx)
-    if held is None or type(capability).before_model_request is AbstractCapability.before_model_request:
-        return await capability.before_model_request(cap_ctx, request_context)
+    run_hook = capability.before_model_request if hook == 'before_model_request' else capability.prepare_model_request
+    if held is None or getattr(type(capability), hook) is getattr(AbstractCapability, hook):
+        return await run_hook(cap_ctx, request_context)
     snapshot = snapshot_messages(request_context.messages)
-    instructions = deepcopy(request_context.model_request_parameters.instruction_parts or [])
+    instructions = copy_said(request_context.model_request_parameters.instruction_parts or [])
     try:
-        request_context = await capability.before_model_request(cap_ctx, request_context)
+        request_context = await run_hook(cap_ctx, request_context)
     except SkipModelRequest as e:
         raise _writes_model_turn(held, 'raise `SkipModelRequest` with a response') from e
     except ModelRetry as e:
@@ -1494,7 +1500,7 @@ async def _after_model_request_held(
     held = _held_to_ceiling(cap_ctx)
     if held is None or type(capability).after_model_request is AbstractCapability.after_model_request:
         return await capability.after_model_request(cap_ctx, request_context=request_context, response=response)
-    parts = deepcopy(response.parts)
+    parts = copy_said(response.parts)
     try:
         returned = await capability.after_model_request(cap_ctx, request_context=request_context, response=response)
     except SkipModelRequest as e:
@@ -1513,7 +1519,7 @@ async def _after_model_request_held(
 def _what_it_says(error: BaseException, *, copy: bool = False) -> object:
     """What an error tells the model: a skip's response parts or a retry's feedback, or `None`."""
     if isinstance(error, SkipModelRequest):
-        return deepcopy(error.response.parts) if copy else error.response.parts
+        return copy_said(error.response.parts) if copy else error.response.parts
     if isinstance(error, ModelRetry):
         return error.message
     return None

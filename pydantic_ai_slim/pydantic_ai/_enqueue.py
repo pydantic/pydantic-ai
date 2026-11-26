@@ -9,8 +9,8 @@ from __future__ import annotations
 import threading
 from collections.abc import Iterable, Sequence
 from copy import deepcopy
-from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Literal, SupportsIndex, TypeAlias
+from dataclasses import dataclass, field, fields, is_dataclass, replace
+from typing import TYPE_CHECKING, Any, Literal, SupportsIndex, TypeAlias, TypeVar, cast
 
 from ._capability_parts import operator_voice_lookalike
 from ._framing import resembles_frame
@@ -703,24 +703,42 @@ def snapshot_messages(messages: Sequence[ModelMessage]) -> MessagesSnapshot:
     snapshot = MessagesSnapshot(received=[], said={}, copies={}, instructions=set())
     for message in messages:
         if isinstance(message, ModelResponse):
-            _snapshot_item(snapshot, message, _copy_said(message))
+            _snapshot_item(snapshot, message, copy_said(message))
             continue
         snapshot.received.append(message)
         snapshot.said[id(message)] = _request_shape(message)
         snapshot.instructions.add(message.instructions)
         for part in message.parts:
             # A tool's return reaches the model as tool output whoever edits it, and can hold any object.
-            _snapshot_item(snapshot, part, part if isinstance(part, ToolReturnPart) else _copy_said(part))
+            _snapshot_item(snapshot, part, part if isinstance(part, ToolReturnPart) else copy_said(part))
     return snapshot
 
 
-def _copy_said(item: ModelResponse | ModelRequestPart) -> object:
-    """A copy of what `item` says, sharing its `metadata`, which the model doesn't read and can hold any object.
+T = TypeVar('T')
 
-    A copied object needn't equal the original, which would make an unchanged item look edited.
+
+def copy_said(item: T) -> T:
+    """A deep copy of what `item` tells the model, sharing every `metadata` in it, which the model doesn't read.
+
+    Application metadata can hold any object: one whose copy doesn't equal it would make an unchanged item look
+    edited, and one that can't be copied would fail a hook that changed nothing.
     """
-    kept = (getattr(x, 'metadata', None) for x in (item, *getattr(item, 'parts', ())))
-    return deepcopy(item, {id(metadata): metadata for metadata in kept if metadata is not None})
+    memo: dict[int, Any] = {}
+    _share_metadata(item, memo)
+    return deepcopy(item, memo)
+
+
+def _share_metadata(value: object, memo: dict[int, Any]) -> None:
+    if isinstance(value, list | tuple):
+        for item in cast(Sequence[object], value):
+            _share_metadata(item, memo)
+    elif is_dataclass(value) and not isinstance(value, type):
+        for f in fields(value):
+            child = getattr(value, f.name, None)
+            if f.name == 'metadata':
+                memo[id(child)] = child
+            else:
+                _share_metadata(child, memo)
 
 
 def _snapshot_item(snapshot: MessagesSnapshot, item: ModelResponse | ModelRequestPart, said: object) -> None:
