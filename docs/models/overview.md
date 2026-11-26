@@ -19,7 +19,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [Pydantic AI Gateway](../gateway.md) | Gateway | `gateway/<provider>:` |
 | [OpenAI](openai.md) | Model developer | `openai:`, `openai-chat:`, `openai-responses:` |
 | [Anthropic](anthropic.md) | Model developer | `anthropic:` |
-| [Google / Gemini API](google.md) | Model developer | `google:` |
+| [Google / Gemini API](google.md) | Model developer | `google:`, `google-interactions:` |
 | [AWS Bedrock](bedrock.md) | Cloud platform | `bedrock:`, `bedrock-mantle:`; Anthropic client |
 | [Google Cloud / Vertex AI](google-cloud.md) | Cloud platform | `google-cloud:`; Anthropic client |
 | [Microsoft Azure / Foundry](azure.md) | Cloud platform | `azure:`, `azure-responses:`; Anthropic client |
@@ -417,6 +417,17 @@ print(should_retry(ModelHTTPError.for_category(ModelRateLimitError, status_code=
 [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] are all a
 `ModelRequestRejectedError`, so `should_retry` skips them too. Under [Temporal](../durable_execution/temporal.md#activity-retries), the activity
 doesn't retry them either, as they're in `non_retryable_model_errors` by default.
+
+Match model errors by type, with `except` or `isinstance`, or by a `ModelHTTPError`'s `status_code`, not by
+comparing the class name, as in `type(error).__name__ == 'ModelHTTPError'`. A later version may raise an error as a
+more specific category, which `except ModelHTTPError` still catches but a name comparison doesn't. A Temporal retry
+policy's `non_retryable_error_types` can only match names, so it sees every categorized error as `ModelHTTPError` or
+`ModelAPIError`; see [Activity Retries](../durable_execution/temporal.md#activity-retries).
+
+!!! tip "Logging error class names to Logfire"
+    Logfire's [default scrubbing](https://pydantic.dev/docs/logfire/instrument/python/scrubbing/) redacts any value
+    you log whose text matches a pattern like `auth`, so a class name like `ModelAuthenticationError` logged as an
+    attribute shows up as `[Scrubbed due to 'Auth']`. The `exception.type` on Pydantic AI's own spans isn't scrubbed.
 
 ### HTTP errors {#handling-http-errors}
 

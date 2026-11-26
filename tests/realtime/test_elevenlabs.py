@@ -150,6 +150,7 @@ def test_profile() -> None:
             'supports_appending_voice_instructions': False,
             'async_tool_call_mode': 'never',
             'supports_tool_return_schema': False,
+            'supports_tool_updates': False,
             'supported_native_tools': frozenset(),
             'emits_input_speech_events': True,
             'output_speech_timestamp_granularity': None,

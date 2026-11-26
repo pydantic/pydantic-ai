@@ -9,8 +9,7 @@ A Pydantic AI [agent](agent.md) is plain Python with no interface baked in: the 
 | Surface | What it looks like | Where |
 |---|---|---|
 | **Your code** | `result = await agent.run('...')`, an ordinary awaitable in any Python function, with [typed output](output.md) | [Running agents](agent.md#running-agents) |
-| **Terminal** | `agent.to_cli_sync()`, or `clai -a mymodule:agent` against any agent you can import | [CLI](cli.md) |
-| **Coding agent TUI** | A full terminal UI with plugins, sandboxes and sessions: `pax`, or `pax --agent mymodule:agent` against your own | [Pax](harness/pax.md) |
+| **Terminal** | `pax` for a coding agent with plugins, sandboxes and sessions, `pax --agent mymodule:agent` for any agent you can import, headless with `pax -p "..."`; or `agent.to_cli_sync()` for a plain chat ([Legacy CLI](cli.md)) | [Pax](harness/pax.md) |
 | **Web chat** | A built-in browser chat for any agent: `clai web` or `agent.to_web()` | [Web Chat UI](web.md) |
 | **Your frontend** | Stream agent runs to your own UI over the [AG-UI](ui/ag-ui.md) or [Vercel AI](ui/vercel-ai.md) protocols, including Vercel's `useChat` React hooks | [UI Event Streams](ui/overview.md) |
 | **Editors** | Serve an agent to Zed and other editors over the [Agent Client Protocol](https://agentclientprotocol.com) | [ACP](https://pydantic.dev/docs/ai/harness/acp/) |

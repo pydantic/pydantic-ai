@@ -63,6 +63,7 @@ from .._canonical_system import accepts_stateless_artifact
 from .._capability_parts import (
     LookalikeNaming,
     is_downgraded_request_scoped,
+    lowered_instruction_statement,
     render_capability_part,
     render_capability_parts,
 )
@@ -96,8 +97,10 @@ from .._http import (
 from .._instructions import (
     InstructionValues,
     LoadedInstructionValues,
+    LoweredInstructions,
     advance_instruction_window,
     instruction_window_start,
+    is_lowered_statement,
     window_boundary_index,
 )
 from .._json_schema import (
@@ -219,6 +222,7 @@ from ._speech import assistant_speech_text
 from ._tool_call_ids import hashed_tool_call_id, response_tool_call_id_scopes, with_unqualified_tool_call_ids
 
 if TYPE_CHECKING:
+    from google.genai import Client
     from httpx import AsyncClient
 
     from ..agent.abstract import AbstractAgent
@@ -1544,6 +1548,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
     _honors_compaction_boundaries: ClassVar[bool] = False
     """Whether the adapter drops the history before a compaction part it sends, with `_trim_before_compaction`."""
+
+    @property
+    def _rewrite_instructions_outside_prefix(self) -> bool:
+        """Whether this model reads dynamic rewrite-mode instructions outside the cached prompt prefix.
+
+        A change to one then doesn't end the instruction window (see `update_instruction_history`).
+        """
+        return False
 
     def _model_for_response(self, response: ModelResponse) -> Model:
         """The model that produced `response`, for a model that delegates requests to others."""
@@ -3764,6 +3776,11 @@ def infer_model_profile(model: str) -> ModelProfile:
         context_window = lookup_context_window(model_name, provider_name=provider)
         if context_window is not None:
             profile = merge_profile(profile, ModelProfile(context_window=context_window))
+    if provider == 'google-interactions':
+        from ..profiles.google import google_interactions_model_profile
+
+        # The overrides `GoogleInteractionsModel._instance_profile_defaults` applies over the `GoogleProvider` profile.
+        profile = merge_profile(profile, google_interactions_model_profile(model_name))
     return profile
 
 
@@ -3890,10 +3907,8 @@ def infer_model(  # noqa: C901
         from .openai import OpenAIChatModel
 
         return OpenAIChatModel(model_name, provider=provider)
-    elif model_kind in ('google', 'google-cloud'):
-        from .google import GoogleModel
-
-        return GoogleModel(model_name, provider=provider)
+    elif model_kind in ('google', 'google-cloud', 'google-interactions'):
+        return _infer_google_model(model_kind, model_name, provider)
     elif model_kind == 'groq':
         from .groq import GroqModel
 
@@ -3937,6 +3952,20 @@ def infer_model(  # noqa: C901
         return XaiModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
+
+
+def _infer_google_model(
+    kind: Literal['google', 'google-cloud', 'google-interactions'],
+    model_name: str,
+    provider: Provider[Client],
+) -> Model:
+    if kind == 'google-interactions':
+        from .google_interactions import GoogleInteractionsModel
+
+        return GoogleInteractionsModel(model_name, provider=provider)
+    from .google import GoogleModel
+
+    return GoogleModel(model_name, provider=provider)
 
 
 def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> AsyncClient:
@@ -5331,6 +5360,10 @@ def _project_instruction_state(
     statements are rendered until the compaction that ends the load, each change as a diff against the text an
     earlier statement delivered.
 
+    So is a statement of a block below `'operator'` authority, a lowered capability's instructions: it's rendered until
+    the latest compaction as a capability part at its authority, framed data on the user channel that the lookalike
+    pass renders like any other (`lowered_instruction_statement`), never in the application's voice.
+
     The baseline parts themselves are dropped. Every request in the current window was sent the same prefix,
     `prefix` (the request's instruction parts), so those requests get their `instructions` rendered from it,
     tagged, for the adapters that read a request's instructions from history rather than from the request
@@ -5341,6 +5374,7 @@ def _project_instruction_state(
     window: InstructionBaselinePart | None = None
     values = InstructionValues.at(None)
     loaded = LoadedInstructionValues()
+    lowered = LoweredInstructions()
     # Loads are folded over the post-compaction window alone, as everywhere else they're derived from history.
     loads_start = _post_compaction_window_start(messages)
     projected: list[ModelMessage] = []
@@ -5360,22 +5394,23 @@ def _project_instruction_state(
         opened_at = window_boundary_index(message) if index == current_start else -1
         for part_index, part in enumerate(message.parts):
             in_loads_window = (index, part_index) >= loads_start
-            if in_loads_window and loaded.tracks(part):
+            if is_lowered_statement(part):
+                parts.extend(_project_lowered_statement(part, lowered, in_window=in_loads_window, message=message))
+            elif in_loads_window and loaded.tracks(part):
                 # A statement of a loaded capability's block, which no instruction window restates, so it stays in
                 # effect until the compaction that ends the load.
                 text = part.render(inline_system=inline_system, previous=loaded.apply(part))
                 parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
-            elif isinstance(part, InstructionDeltaPart):
-                # A change a newer version wrote, which this one can't address, is superseded by the window
-                # the next request opens.
-                if index >= current_start and part_index > opened_at and part.id is not None:
-                    text = part.render(inline_system=inline_system, previous=values.apply(part))
-                    parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
-            else:
+            elif not isinstance(part, InstructionDeltaPart):
                 if in_loads_window:
                     loaded.observe(part)
                 if not isinstance(part, InstructionBaselinePart):
                     parts.append(part)
+            # A change a newer version wrote, which this one can't address, is superseded by the window the next
+            # request opens.
+            elif index >= current_start and part_index > opened_at and part.id is not None:
+                text = part.render(inline_system=inline_system, previous=values.apply(part))
+                parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
         instructions = message.instructions
         if (
             window is not None
@@ -5389,6 +5424,21 @@ def _project_instruction_state(
             message = replace(message, parts=parts, instructions=instructions)
         projected.append(message)
     return projected
+
+
+def _project_lowered_statement(
+    part: InstructionDeltaPart, lowered: LoweredInstructions, *, in_window: bool, message: ModelRequest
+) -> list[SystemPromptPart | CapabilityPart]:
+    """What a statement of a block below operator authority in `message` is projected as.
+
+    No instruction window restates such a block, so its statements stay in effect until the latest compaction, before
+    which they're dropped (`in_window` is `False`). Each is a capability part at the block's authority.
+    """
+    if not in_window:
+        return []
+    return lowered_instruction_statement(
+        part, restated=lowered.apply(part), timestamp=message.timestamp or _utils.now_utc()
+    )
 
 
 def _drop_capability_load_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:

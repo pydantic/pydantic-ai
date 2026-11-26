@@ -116,13 +116,16 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import (
+    AgentInstructionSource,
     CapabilitySource,
     DataCapabilityPart,
     InstructionCapabilityPart,
     LoadCapabilityReturnPart,
     OperatorSource,
     OperatorText,
+    RunInstructionSource,
     ToolResultSource,
+    ToolsetInstructionSource,
 )
 from pydantic_ai.models import (
     Model,
@@ -158,6 +161,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 try:
@@ -194,11 +198,12 @@ except ImportError:  # pragma: lax no cover
 
 try:
     from fastmcp import FastMCP
-    from fastmcp.client.transports import StdioTransport
+    from fastmcp.client.transports import FastMCPTransport, StdioTransport
     from fastmcp.server.dependencies import get_http_request
 
     from pydantic_ai._mcp_compat import MCP_SDK_V2
     from pydantic_ai.mcp import MCPToolset
+    from tests.mcp_server import mcp as test_mcp_server
     from tests.mcp_task_server import TASK_SERVER_UNAVAILABLE
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
@@ -2392,6 +2397,37 @@ def test_cache_policy_normalizes_a_synthetic_capability_id_on_a_source():
     assert key_for('fetcher') != key_for('crawler')
 
 
+def test_cache_policy_keys_for_instruction_ids_are_pinned():
+    """Instruction sources' `kind` tag stays out of the key, so a flow retried across the upgrade that added it hits.
+
+    The digests were computed before the tag existed; a model request's parameters carry its instruction parts' ids.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+    ids = [
+        InstructionId(AgentInstructionSource(), name='persona'),
+        InstructionId(RunInstructionSource(), name='task'),
+        InstructionId(ToolsetInstructionSource('memory')),
+        InstructionId(CapabilityInstructionSource('memory'), name='usage'),
+    ]
+    part = InstructionPart(content='Keep notes short.', id=InstructionId(CapabilityInstructionSource('memory')))
+    parameters = ModelRequestParameters(instruction_parts=[part])
+
+    def key_for(value: Any) -> str | None:
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'value': value}, flow_parameters={})
+
+    assert key_for(part) == snapshot('371a510820fa52497114a702b5fe1bcf')
+    assert key_for(parameters) == snapshot('a7303d336722ed24df27df4bca54d50f')
+    assert [key_for(id) for id in ids] == snapshot(
+        [
+            '5006ff5014df6944343041dd24711207',
+            'c71eb5db3f64fbc25e31531a0433cd26',
+            '0888bba0476c0180b3f2a7766bd379b7',
+            'd080d54547ecfe63be80e0edb1942c8c',
+        ]
+    )
+
+
 def test_cache_policy_normalizes_only_framework_tool_call_ids():
     cache_policy = PrefectAgentInputs()
     mock_task_ctx = MagicMock()
@@ -2986,6 +3022,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
         'conversation_id',  # per-conversation id; same rationale as run_id
         'capability_active',  # derived from loaded_capability_ids plus the static capability set, which are projected
         '_mcp_tool_defs_cache',  # live per-run memo of MCP tool defs, reconstructed from messages
+        '_appended_messages',  # live record of the history, which `messages` already projects
         '_event_stream_buffer',  # live per-run event buffer drained in flow code, not a task input
         '_pending_immediate_dispatches',  # live stream-deduplication state, not a task input
         '_event_stream_replacements',  # live legacy-replacement state applied at stream position, not a task input
@@ -4441,7 +4478,6 @@ async def test_prefect_durability_task_name_assembly_sequence() -> None:
     ]
 
 
-@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 @pytest.mark.parametrize('blockbuster_enabled', [False])
 async def test_prefect_durability_journals_mcp_discovery(blockbuster_enabled: bool) -> None:
     assert blockbuster_enabled is False
@@ -4461,8 +4497,10 @@ async def test_prefect_durability_journals_mcp_discovery(blockbuster_enabled: bo
             task_names.append(task_run_context.task.name)
             return InstructionPart(content='Server instructions', dynamic=False)
 
+    # The default 5 s init_timeout is shorter than a stalled CI worker can take to finish the initialize handshake.
     toolset = RecordingMCPToolset(
-        StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+        FastMCPTransport(test_mcp_server),
+        init_timeout=READINESS_WAIT_TIMEOUT,
         id='recording_mcp',
         include_instructions=True,
     )

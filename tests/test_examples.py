@@ -1036,6 +1036,21 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         tool_name='final_result_list_2',
         args={'response': [10, 20, 30]},
     ),
+    '<contract>\nInvoices are payable within 30 days of receipt. Late payments accrue\ninterest at 1.5% per month.\n</contract>': ToolCallPart(
+        tool_name='final_result',
+        args={
+            'facts': [
+                {
+                    'statement': 'Invoices are due 30 days after receipt.',
+                    'quote': 'Invoices are payable within 30 days of receipt.',
+                },
+                {
+                    'statement': 'Late payments accrue 1.5% interest per month.',
+                    'quote': 'Late payments accrue 1.5% monthly interest.',
+                },
+            ]
+        },
+    ),
     'get me users who were last active yesterday.': ToolCallPart(
         tool_name='final_result_Success',
         args={'sql_query': 'SELECT * FROM users WHERE last_active::date = today() - interval 1 day'},
@@ -1195,6 +1210,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Remember that I live in Mexico City': "Got it! I've recorded that you live in Mexico City. I'll remember this for future reference.",
     'Where do I live?': 'You live in Mexico City.',
     'Tell me about the pydantic/pydantic-ai repo.': 'The pydantic/pydantic-ai repo is a Python agent framework for building Generative AI applications.',
+    'Use Google Maps to find the address of the Eiffel Tower.': 'The Eiffel Tower is at Av. Gustave Eiffel, 75007 Paris, France.',
     'What do I have on my calendar today?': "You're going to spend all day playing with Pydantic AI.",
     'Write a long story about a cat': 'Once upon a time, there was a curious cat named Whiskers who loved to explore the world around him...',
     'What is the first sentence on https://ai.pydantic.dev?': 'Pydantic AI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.',
@@ -1879,6 +1895,27 @@ async def model_logic(  # noqa: C901
         return ModelResponse(parts=[ToolCallPart(tool_name='do_work', args={}, tool_call_id='pyd_ai_tool_call_id')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_order_status':
         return ModelResponse(parts=[TextPart('Order 1234 shipped on 2032-01-02.')])
+    elif (
+        isinstance(m, RetryPromptPart)  # pyright: ignore[reportDeprecated]
+        and isinstance(m.content, str)
+        and m.content.startswith('These quotes do not appear in the contract:')
+    ):
+        # docs/output.md grounding validator: the retry quotes the contract verbatim, across its line break
+        args = {
+            'facts': [
+                {
+                    'statement': 'Invoices are due 30 days after receipt.',
+                    'quote': 'Invoices are payable within 30 days of receipt.',
+                },
+                {
+                    'statement': 'Late payments accrue 1.5% interest per month.',
+                    'quote': 'Late payments accrue interest at 1.5% per month.',
+                },
+            ]
+        }
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result', args=args, tool_call_id='pyd_ai_tool_call_id')]
+        )
     elif isinstance(m, RetryPromptPart) and m.tool_name == 'calc_volume':  # pyright: ignore[reportDeprecated]
         return ModelResponse(
             parts=[ToolCallPart(tool_name='calc_volume', args={'size': 6}, tool_call_id='pyd_ai_tool_call_id')]

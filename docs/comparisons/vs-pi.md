@@ -18,7 +18,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Observability | Telemetry contract, no exporter | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Enterprise support | None documented | [For the framework itself](../enterprise-support.md), no platform required |
 | Durable execution | No | [Nine integrations](../durable_execution/overview.md) |
-| Interfaces | CLI | [Pax](../harness/pax.md) coding terminal (`pax --agent` runs yours), [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
+| Interfaces | CLI | [Pax](../harness/pax.md) coding terminal (`pax --agent` runs yours), [legacy CLI](../cli.md) (`clai`), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
 | Realtime voice | No | [Realtime](../realtime/overview.md) |
 | Evals | No | [Pydantic Evals](../evals.md) |
 | Image generation | No | [Image Generation](../image-generation.md) |
@@ -33,8 +33,8 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Memory | No | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Yes | [Compaction](../capabilities/compaction.md) |
 | Guardrails | Yes (`tool_call` hook) | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
-| Code sandboxes | No | [Your machine, SSH and 11 sandboxes](../workspace.md#supported-workspaces), with per-path [trust](../workspace-custom.md#workspace-authority) |
-| Browser use | No | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research), and [computer use](../harness/computer-use.md) on a desktop in 11 sandboxes |
+| Code sandboxes | No | [Workspaces](../workspace.md#supported-workspaces) |
+| Browser use | No | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research) |
 
 ## FAQ
 
@@ -49,5 +49,5 @@ built from the pieces `Coder` puts together.
 
 ## Sources
 
-- [Pi coding agent documentation](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent)
-- [Pi packages](https://github.com/badlogic/pi-mono/tree/main/packages)
+- [Pi coding agent documentation](https://github.com/earendil-works/pi/tree/main/packages/coding-agent)
+- [Pi packages](https://github.com/earendil-works/pi/tree/main/packages)

@@ -16,7 +16,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Enterprise support | With a Microsoft Unified support agreement, when used with Azure AI services | [For the framework itself](../enterprise-support.md), no platform required |
 | Durable execution | Yes | [Nine integrations](../durable_execution/overview.md) |
-| Interfaces | DevUI (sample app), AG-UI, A2A | [Pax](../harness/pax.md) coding terminal (`pax --agent` runs yours), [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
+| Interfaces | DevUI (sample app), AG-UI, A2A | [Pax](../harness/pax.md) coding terminal (`pax --agent` runs yours), [legacy CLI](../cli.md) (`clai`), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
 | Realtime voice | No | [Realtime](../realtime/overview.md) |
 | Evals | Yes | [Pydantic Evals](../evals.md) |
 | Image generation | Provider-hosted tools only | [Image Generation](../image-generation.md) |
@@ -31,12 +31,12 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Memory | Yes | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Yes | [Compaction](../capabilities/compaction.md) |
 | Guardrails | Yes | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
-| Code sandboxes | Yes (beta) | [Your machine, SSH and 11 sandboxes](../workspace.md#supported-workspaces), with per-path [trust](../workspace-custom.md#workspace-authority) |
-| Browser use | Computer-use tools; you run the browser | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research), and [computer use](../harness/computer-use.md) with the desktop provisioned for you in 11 sandboxes |
+| Code sandboxes | Yes (beta) | [Workspaces](../workspace.md#supported-workspaces) |
+| Browser use | Computer-use tools; you run the browser | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research) |
 
 ## FAQ
 
-**Can I use Pydantic AI with Microsoft Foundry?** Yes. Run agents on [Azure OpenAI and other Foundry model deployments](../models/azure.md), including [Claude on Foundry](../models/azure.md#claude-on-microsoft-foundry), and voice agents on [Azure AI Voice Live](../realtime/azure.md#azure-ai-voice-live).
+**Can I use Pydantic AI with Microsoft Foundry?** Yes. Run agents on [Azure OpenAI and other Foundry model deployments](../models/azure.md), including [Claude on Foundry](../models/azure.md#claude-on-microsoft-foundry), and voice agents on [Azure AI Voice Live](../realtime/azure.md#azure-ai-voice-live). Make them durable on [Azure Durable Task Scheduler](../harness/azure-durable-task.md).
 
 **Can I build a coding agent on Pydantic AI?** Yes. Give your agent the
 [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) capability, or assemble your own from the
