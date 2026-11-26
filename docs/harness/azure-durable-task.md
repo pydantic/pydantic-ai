@@ -114,6 +114,9 @@ completed results from history. This shapes how you write agents for it:
 - **Token counts are activities.** With `count_tokens_before_request=True`, the count ahead of each
   model request runs as an activity. Earlier versions counted in orchestrator code, so let
   orchestrations that set it finish before you upgrade.
+- **Rejected responses reach the handler in an activity.** With an `event_stream_handler`, each
+  `ModelResponseRejectedEvent` is handed to it in an activity. Earlier versions didn't hand that event
+  over, so let orchestrations with an `event_stream_handler` finish before you upgrade.
 - **Replay cost grows with run length.** Each replay re-runs the agent up to its latest step, so
   orchestrator CPU grows with the square of the number of model and tool steps. Keep very long
   conversations in separate orchestrations.

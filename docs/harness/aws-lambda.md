@@ -331,8 +331,10 @@ execution's traces show only the work that invocation did, and costs are counted
 - **Changing the shape of the run breaks in-flight executions.** A resumed execution matches
   checkpoints by the order operations are reached, so anything that changes the number or order of
   steps breaks executions started under the old code: adding or removing a tool or MCP server,
-  flipping a `metadata={'aws_lambda': False}` opt-out, or adding an `event_stream_handler` (which
-  switches the model step to `model.request_stream` and adds handler steps). SDK 2.0 and later
+  flipping a `metadata={'aws_lambda': False}` opt-out, adding an `event_stream_handler` (which
+  switches the model step to `model.request_stream` and adds handler steps), or upgrading an agent with
+  an `event_stream_handler` to a version that hands it `ModelResponseRejectedEvent`, which adds a
+  handler step for each rejected response. SDK 2.0 and later
   compare each step's type and name on replay, so these changes, and renaming the agent, a toolset
   `id` or a tool, or changing the id a non-default model runs under (a `models=` key or the `model=`
   passed to `agent.run`), which is [part of its step names](#what-gets-checkpointed), fail the
