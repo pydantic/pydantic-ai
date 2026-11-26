@@ -282,10 +282,8 @@ this stateless adapter's scope. URI-only output raises an error.
 Interactions has no token-counting endpoint, batch support, or explicit prompt caching. Implicit caching is
 provider-managed. The SDK continues a [long decode](#long-decode) in further requests: the response holds every
 request's steps and their summed usage, context-window checks read the first request's input, and a later request that
-fails raises the error its own failure maps to. Unlike on `GoogleModel`, a numeric
-[`timeout`][pydantic_ai.settings.ModelSettings.timeout] bounds the whole call rather than each request: the SDK sends
-each further request with the time left, and a streamed response checks it before each event. Running out raises
-[`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError].
+fails raises the error its own failure maps to. [`timeout`][pydantic_ai.settings.ModelSettings.timeout] applies to each
+of those requests.
 Sampling settings absent from this API are ignored; its settings class describes them. Finish reasons are derived from
 interaction status, which has less detail than GenerateContent's finish reasons. Raw status and usage remain available
 in `provider_details`.

@@ -72,7 +72,6 @@ with try_import() as imports_successful:
     from google.genai import Client, interactions as gi
     from google.genai._gaos.lib.compat_errors import APIConnectionError, APIError, APITimeoutError
     from google.genai._gaos.utils.serializers import ALLOW_UNKNOWN_UNION_VARIANTS
-    from google.genai._interactions_continuation import ContinuationTimeoutError
     from google.genai.errors import ContinuationInterruptedError
     from google.genai.types import HarmBlockThreshold, HarmCategory, HttpOptions, MediaResolution
 
@@ -1462,16 +1461,16 @@ async def test_sdk_error_mapping(
 _CONTINUATION_FAILURES: dict[str, type[ModelAPIError]] = {
     'status': ModelHTTPError,
     'connection': ModelConnectionError,
-    'deadline': ModelTimeoutError,
+    'timeout': ModelTimeoutError,
 }
-# The deadline runs out before a second request is sent. A stream sends a request that fails to connect 3 more times.
+# A stream sends a request that fails to connect or times out 3 more times.
 _CONTINUATION_FAILURE_REQUESTS: dict[tuple[bool, str], int] = {
     (False, 'status'): 2,
     (False, 'connection'): 2,
-    (False, 'deadline'): 1,
+    (False, 'timeout'): 2,
     (True, 'status'): 2,
     (True, 'connection'): 5,
-    (True, 'deadline'): 1,
+    (True, 'timeout'): 5,
 }
 
 
@@ -1480,10 +1479,8 @@ _CONTINUATION_FAILURE_REQUESTS: dict[tuple[bool, str], int] = {
 async def test_failed_continuation_request(stream: bool, failure: str, allow_model_requests: None):
     """A request google-genai sends to continue a long decode fails the model request with that request's own error.
 
-    google-genai raises `ContinuationInterruptedError` with the request's error as its cause. A numeric `timeout`
-    bounds the whole call across requests, and a stream checks it before each event, so the `deadline` case runs out
-    before the first event when streamed, where google-genai raises its timeout as is. Not recorded: a live continued
-    request can't be made to fail.
+    google-genai raises `ContinuationInterruptedError` with the request's error as its cause. Not recorded: a live
+    continued request can't be made to fail.
     """
     completed: dict[str, JsonValue] = {
         'status': 'requires_continuation',
@@ -1510,28 +1507,77 @@ async def test_failed_continuation_request(stream: bool, failure: str, allow_mod
         elif failure == 'status':
             # google-genai retries a 5xx with a real backoff, and doesn't retry a 400.
             return httpx2.Response(400, json={'error': {'code': 'invalid_request', 'message': 'bad continuation'}})
+        elif failure == 'timeout':
+            raise httpx2.ReadTimeout('Timed out', request=request)
         raise httpx2.ConnectError('Connection refused', request=request)
 
     provider = GoogleProvider(
         api_key='test-key', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
     )
     model = GoogleInteractionsModel('gemini-test', provider=provider)
-    settings: GoogleInteractionsModelSettings = {'timeout': 0} if failure == 'deadline' else {}
     messages = [ModelRequest.user_text_prompt('Count.')]
 
     with pytest.raises(_CONTINUATION_FAILURES[failure]) as exc_info:
         if stream:
-            async with model_request_stream(model, messages, model_settings=settings) as response:
+            async with model_request_stream(model, messages) as response:
                 async for _ in response:
                     pass
         else:
-            await model_request(model, messages, model_settings=settings)
+            await model_request(model, messages)
 
     if failure == 'status':
         assert isinstance(exc_info.value, ModelHTTPError) and exc_info.value.status_code == 400
     assert len(requests) == _CONTINUATION_FAILURE_REQUESTS[stream, failure]
-    raised = ContinuationTimeoutError if stream and failure == 'deadline' else ContinuationInterruptedError
-    assert type(exc_info.value.__cause__) is raised
+    assert type(exc_info.value.__cause__) is ContinuationInterruptedError
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_timeout_applies_to_each_continued_request(stream: bool, allow_model_requests: None):
+    """`ModelSettings['timeout']` bounds each request google-genai continues a long decode in, not the whole call.
+
+    google-genai would turn a number into a deadline for the whole call, sending each request with the time left and
+    checking it before each streamed event. Not recorded: the claim is about the timeout each request is sent with.
+    """
+    first: dict[str, JsonValue] = {
+        'status': 'requires_continuation',
+        'continuation_token': 'token',
+        'steps': [{'type': 'model_output', 'content': [{'type': 'text', 'text': '1\n'}]}],
+    }
+    second: dict[str, JsonValue] = {
+        'status': 'completed',
+        'steps': [{'type': 'model_output', 'content': [{'type': 'text', 'text': '2\n'}]}],
+    }
+    timeouts: list[object] = []
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        timeouts.append(request.extensions['timeout'])
+        interaction = second if timeouts[1:] else first
+        if not stream:
+            return httpx2.Response(200, json=interaction)
+        events: list[dict[str, JsonValue]] = [
+            {'event_type': 'interaction.created', 'interaction': {'object': 'interaction', 'model': 'gemini-test'}},
+            {'event_type': 'step.start', 'index': 0, 'step': {'type': 'model_output'}},
+            {'event_type': 'step.delta', 'index': 0, 'delta': {'type': 'text', 'text': f'{len(timeouts)}\n'}},
+            {'event_type': 'step.stop', 'index': 0},
+            {'event_type': 'interaction.completed', 'interaction': {**interaction, 'steps': []}},
+        ]
+        content = b''.join(f'data: {json.dumps(event)}\n\n'.encode() for event in events)
+        return httpx2.Response(200, content=content, headers={'content-type': 'text/event-stream'})
+
+    provider = GoogleProvider(
+        api_key='test-key', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
+    )
+    model = GoogleInteractionsModel('gemini-test', provider=provider)
+    settings: GoogleInteractionsModelSettings = {'timeout': 30}
+    messages = [ModelRequest.user_text_prompt('Count.')]
+    if stream:
+        async with model_request_stream(model, messages, model_settings=settings) as response:
+            async for _ in response:
+                pass
+    else:
+        await model_request(model, messages, model_settings=settings)
+
+    assert timeouts == [{'connect': 30.0, 'read': 30.0, 'write': 30.0, 'pool': 30.0}] * 2
 
 
 async def test_continuation_error_without_an_sdk_cause(
