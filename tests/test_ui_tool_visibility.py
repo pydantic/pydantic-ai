@@ -132,14 +132,15 @@ async def run_adapter(
     agent: Agent[None, Any],
     *,
     manage_message_history: Literal['client', 'server'] = 'server',
-    ag_ui_version: str = DEFAULT_AG_UI_VERSION,
+    ag_ui_version: str | None = None,
     approving: Sequence[ModelMessage] | None = None,
     **adapter_kwargs: Any,
 ) -> Run:
     """Run `agent` through the protocol's adapter for one user message, decoding the SSE wire it writes.
 
     The history is held on the server, as non-public tools need it to be. With `approving`, the request instead
-    carries that paused history the way a client holding it sends it back, approving `call_0`.
+    carries that paused history the way a client holding it sends it back, approving `call_0`. `ag_ui_version`
+    defaults to the adapter's own.
     """
     adapter_kwargs['manage_message_history'] = manage_message_history
     messages: list[ModelMessage] = []
@@ -148,6 +149,7 @@ async def run_adapter(
         messages.extend(result.all_messages())
 
     if protocol == 'ag_ui':
+        ag_ui_version = ag_ui_version or DEFAULT_AG_UI_VERSION
         client_messages: list[Message] = [UserMessage(id='msg_1', content='Where is my order?')]
         resume: dict[str, Any] = {}
         if approving is not None:
