@@ -47,7 +47,7 @@ separately.
 /mcp auth NAME [logout]               sign in to an OAuth server in the browser, or sign out
 /mcp edit NAME                        the same form, prefilled
 /mcp remove NAME
-/mcp trust [status|accept|revoke]     load this repository's .clai/mcp_servers.json and .mcp.json
+/mcp trust [status|accept|revoke]     load this repository's .pax/mcp_servers.json and .mcp.json
 /mcp help
 ```
 
@@ -189,7 +189,7 @@ looking in the session's directory, then each parent up to the git root:
 
 | Path | Shape |
 | --- | --- |
-| `.clai/mcp_servers.json` | `{"servers": {...}}`, the same shape as your `mcp.json` |
+| `.pax/mcp_servers.json` | `{"servers": {...}}`, the same shape as your `mcp.json` |
 | `.mcp.json` | Claude Code's project scope: `{"mcpServers": {...}}` |
 
 A `.mcp.json` written for Claude Code loads as is in the common case:
@@ -212,12 +212,12 @@ Because a stdio server runs a program, project servers do not load until you run
 `/mcp trust accept`, which accepts every project file found. Trust is
 stored in your `mcp.json`, keyed by each file's path and a SHA-256 of its
 contents: any change to a file unloads its servers until you accept again, and
-a repository cannot trust itself. A symlinked project file or `.clai` folder is
+a repository cannot trust itself. A symlinked project file or `.pax` folder is
 never trusted, so a repository cannot point at a file you trusted elsewhere.
 `/mcp stop` on a project server lasts for the
 session; edit the project file to change it permanently. When a name exists in
 more than one place, your own server wins, then plugin settings, then
-`.clai/mcp_servers.json`, then `.mcp.json`.
+`.pax/mcp_servers.json`, then `.mcp.json`.
 
 ### Plugin settings and gaps
 
@@ -489,7 +489,7 @@ Many per-project rules are one command: format a file after an edit, refuse
 edits under `migrations/`, run a linter when a turn ends, or ping the desktop.
 The default-enabled `hooks` plugin (`pydantic_ai_pax.builtin_plugins.hooks`) runs
 commands from a `hooks` table, with no Python plugin to write. A repository puts
-the table under the `hooks` key of its `.clai/settings.json`:
+the table under the `hooks` key of its `.pax/settings.json`:
 
 ```json
 {
@@ -534,7 +534,7 @@ Each entry takes:
 
 Commands run one after another in the session's folder. A project's list
 command whose program is a relative path containing a `/`, such as
-`./scripts/guard-paths.sh`, is found from the project folder (the one holding `.clai`), whichever
+`./scripts/guard-paths.sh`, is found from the project folder (the one holding `.pax`), whichever
 subdirectory you start Pax in. Each command gets a JSON object on stdin:
 
 | Field | Events | Value |
@@ -1398,13 +1398,13 @@ Two global user-only `/set` keys control autoload boundaries, not plugin JSON fi
 | `repo_context.walk_up_roots` | `["~"]` | JSON string list of inclusive stops, resolved through symlinks, used only when `walk_up` is `true`; the nearest one containing the workspace applies, and with none, the walk stops at the repository root |
 | `repo_context.autoload_symlink_roots` | `[]` | JSON string list of authorized external instruction-symlink target directories |
 
-These keys are rejected in `.clai/settings.json` and plugin JSON. Changes apply
+These keys are rejected in `.pax/settings.json` and plugin JSON. Changes apply
 next run. See [Repository instructions](docs/reference.md#repository-instructions)
 for commands, path rules, and trust guidance, and
 [Repo Context](../../docs/harness/repo-context.md#shared-instruction-symlinks)
 for symlink loading and backend requirements.
 
-A repository can declare plugins too, in `.clai/settings.json`; they show as
+A repository can declare plugins too, in `.pax/settings.json`; they show as
 `(project)` and rank just above the built-ins. They start off, because a
 repository must not run code as you just because you opened it: Pax names the
 ones waiting at startup, and `/plugins enable NAME` approves one. See
@@ -1548,7 +1548,7 @@ Claude Code or Codex carries that agent's name (`source`), shown beside its titl
 
 Under `pax --web`, clicking a session opens it live (`POST /api/sessions/ID/open`, which calls
 `host.live.open`), even while other sessions run turns: it is resumed in a session of its own, in
-the directory it was saved in, with that directory's `.clai/settings.json` and its own instance of
+the directory it was saved in, with that directory's `.pax/settings.json` and its own instance of
 each session plugin, so the coding tools, `repo_context`, skills, and MCP project files refer to
 it. **New session** does the same in the folder the user picks (`POST /api/sessions/new`, which
 calls `host.live.new`), offering the sidebar's checkouts and every other worktree Git lists for
@@ -3624,7 +3624,7 @@ supplies `settings_database=`. Process-scoped plugins see the same path in every
 session; it does not follow `host.live.current()`.
 
 `host.workspace` is the directory the session works in: where its runs' file and
-shell tools work, and where its `AGENTS.md`, skills, `.clai/settings.json`, and MCP
+shell tools work, and where its `AGENTS.md`, skills, `.pax/settings.json`, and MCP
 project files are read. Never read `Path.cwd()` or call `os.chdir`: Pax does not
 change the process's working directory after startup, and under `pax --web` each
 session has its own directory. Resolve a relative path against `host.workspace`,

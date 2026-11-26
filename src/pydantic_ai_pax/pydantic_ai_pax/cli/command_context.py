@@ -84,7 +84,7 @@ class CommandContext:
         project, root = self.project, self.project.root
         stored = self._stored_approvals()
         if root is None and not stored:
-            raise ValueError('No project file: Pax looks for .clai/settings.json from here up to the repository root.')
+            raise ValueError('No project file: Pax looks for .pax/settings.json from here up to the repository root.')
         match args:
             case [] | ['list']:
                 return _project_listing(project, stored)

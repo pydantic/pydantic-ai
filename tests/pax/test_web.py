@@ -2206,8 +2206,8 @@ def test_sessions_continue_in_their_own_directories(
     """
     launch, other, gone = tmp_path / 'launch', tmp_path / 'other', tmp_path / 'gone'
     launch.mkdir()
-    (other / '.clai').mkdir(parents=True)
-    (other / '.clai' / 'settings.json').write_text('{"instructions": "Work in other.", "model": "test"}')
+    (other / '.pax').mkdir(parents=True)
+    (other / '.pax' / 'settings.json').write_text('{"instructions": "Work in other.", "model": "test"}')
     monkeypatch.chdir(launch)
     web_ = make_web(
         Agent(TestModel(call_tools=[], custom_output_text='ok'), deps_type=type(None)), extra=[REPO_CONTEXT]
@@ -2288,8 +2288,8 @@ def test_a_session_moves_only_between_turns(
 ) -> None:
     """A move waits for whatever runs; a project file that does not load, or the current directory, changes nothing."""
     broken = tmp_path / 'broken'
-    (broken / '.clai').mkdir(parents=True)
-    (broken / '.clai' / 'settings.json').write_text('{"model": 1}')
+    (broken / '.pax').mkdir(parents=True)
+    (broken / '.pax' / 'settings.json').write_text('{"model": 1}')
     monkeypatch.chdir(tmp_path)
     web_ = make_web(Agent(TestModel()), extra=[REPO_CONTEXT])
     workspace = follow_workspaces(web_, lambda project: Settings(model=None))

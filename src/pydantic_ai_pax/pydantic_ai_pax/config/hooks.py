@@ -1,6 +1,6 @@
 """The `hooks` table: commands Pax runs before and after tool calls, and as a turn starts and ends.
 
-Validated here, apart from the plugin that runs them, so `.clai/settings.json` is checked at startup
+Validated here, apart from the plugin that runs them, so `.pax/settings.json` is checked at startup
 without importing it.
 """
 
@@ -71,7 +71,7 @@ class HooksSettings(HookTable):
     """The `hooks` plugin's settings: a table, plus the project it came from when a project file declared it."""
 
     project: str | None = None
-    """The folder holding `.clai` for a project's table. It runs only in sessions under that folder, since
+    """The folder holding `.pax` (or `.clai`) for a project's table. It runs only in sessions under that folder, since
     the approval is saved with your settings, which every repository shares."""
 
     def project_programs(self) -> list[Path]:

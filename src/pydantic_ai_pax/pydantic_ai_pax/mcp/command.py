@@ -39,7 +39,7 @@ Servers
   /mcp edit NAME                 Edit a saved server in the same form
   /mcp remove NAME               Stop and forget a saved server
   /mcp trust [status|accept|revoke]
-                                 Load this repository's .clai/mcp_servers.json and .mcp.json
+                                 Load this repository's .pax/mcp_servers.json and .mcp.json
 
 States:  + running (connected)  o ready (connects on your next prompt)  - stopped  ! error
 
@@ -296,7 +296,7 @@ class MCPCommand:
         if len(args) > 1 or action not in ('status', 'accept', 'revoke'):
             raise ValueError('Usage: /mcp trust [status|accept|revoke]')
         if not paths:
-            return 'No .clai/mcp_servers.json or .mcp.json between here and the repository root.'
+            return 'No .pax/mcp_servers.json or .mcp.json between here and the repository root.'
         listed = ', '.join(map(str, paths))
         if action == 'accept':
             store.trust(*paths)

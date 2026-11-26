@@ -14,7 +14,7 @@ ends the web UI; `/web status` shows its address.
 To use only the browser, start Pax with `--web` (also `uvx pydantic-ai-pax --web`). It prints
 the address, opens it, and logs the session it started with to the terminal until Ctrl+C, which
 ends every session. There, each session you open is live in its own directory, with that
-directory's `AGENTS.md`, skills, `.clai/settings.json`, and MCP files, as if Pax had started
+directory's `AGENTS.md`, skills, `.pax/settings.json`, and MCP files, as if Pax had started
 there; Pax's own working directory never changes. **New session** asks where the session runs.
 It lists one row per project from the sidebar, the current one first, and a project's row starts
 in the checkout you are in, else the project's main one. A project's chevron, or →, shows its

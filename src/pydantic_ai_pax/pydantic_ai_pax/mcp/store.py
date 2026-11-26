@@ -1,12 +1,13 @@
 """Where `/mcp` keeps servers: a user file, plus project files that load only once trusted.
 
-A repository can ship `.clai/mcp_servers.json` and Claude Code's `.mcp.json`. A stdio server
-runs a program, so a cloned repository must not be able to start one by shipping either.
-Trust is recorded on the user side, keyed by the file's path and a SHA-256 of its bytes: any
-edit makes the file untrusted again, and a repository cannot trust itself. A symlinked file
-(or `.clai` folder) is never trusted, so a repository cannot borrow trust given to a file
-elsewhere. Files are opened with `O_NOFOLLOW` where the platform has it, so a symlink swapped
-in after the check is not read. This follows Code Puppy's `/mcp trust`.
+A repository can ship `.pax/mcp_servers.json` and Claude Code's `.mcp.json`; a directory without the first is
+read for `.clai/mcp_servers.json`, its name before Pax was renamed. A stdio server runs a program, so a cloned
+repository must not be able to start one by shipping either. Trust is recorded on the user side, keyed by the
+file's path and a SHA-256 of its bytes: any edit makes the file untrusted again, a file moved from `.clai/` to
+`.pax/` is asked about again, and a repository cannot trust itself. A symlinked file (or `.pax` or `.clai`
+folder) is never trusted, so a repository cannot borrow trust given to a file elsewhere. Files are opened with
+`O_NOFOLLOW` where the platform has it, so a symlink swapped in after the check is not read. This follows Code
+Puppy's `/mcp trust`.
 """
 
 import hashlib
@@ -18,11 +19,11 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from pydantic_ai_pax.config.credential_store import write_private
-from pydantic_ai_pax.config.project_settings import find_project_file
+from pydantic_ai_pax.config.project_settings import PROJECT_DIR, find_project_file
 from pydantic_ai_pax.mcp.settings import HTTPServer, Server, Servers, SSEServer, StdioServer
 from pydantic_ai_pax.paths import config_dir
 
-PROJECT_MCP_FILE = Path('.clai') / 'mcp_servers.json'
+PROJECT_MCP_FILE = PROJECT_DIR / 'mcp_servers.json'
 CLAUDE_MCP_FILE = Path('.mcp.json')
 PROJECT_MCP_FILES = (PROJECT_MCP_FILE, CLAUDE_MCP_FILE)
 """Project files in precedence order: when both define a name, the earlier file wins."""
@@ -39,7 +40,7 @@ class UserFile(BaseModel):
 
 
 class ProjectFile(BaseModel):
-    """A repository's `.clai/mcp_servers.json`."""
+    """A repository's `.pax/mcp_servers.json`."""
 
     model_config = ConfigDict(extra='forbid', frozen=True, hide_input_in_errors=True)
     servers: Servers = Field(default_factory=dict[str, StdioServer | HTTPServer | SSEServer])

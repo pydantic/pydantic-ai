@@ -402,17 +402,17 @@ async def test_your_own_table_is_the_hooks_builtin_settings(tmp_path: Path) -> N
 # Project hooks
 
 
-def repository(root: Path, name: str, hooks: dict[str, JsonValue] | None) -> Path:
+def repository(root: Path, name: str, hooks: dict[str, JsonValue] | None, *, file: Path = PROJECT_FILE) -> Path:
     directory = root / name
     (directory / '.git').mkdir(parents=True)
     (directory / 'src').mkdir()
     if hooks is not None:
-        write_hooks(directory, hooks)
+        write_hooks(directory, hooks, file=file)
     return directory
 
 
-def write_hooks(directory: Path, hooks: dict[str, JsonValue]) -> None:
-    path = directory / PROJECT_FILE
+def write_hooks(directory: Path, hooks: dict[str, JsonValue], *, file: Path = PROJECT_FILE) -> None:
+    path = directory / file
     path.parent.mkdir(exist_ok=True)
     path.write_text(json.dumps({'hooks': hooks}))
 
@@ -469,7 +469,7 @@ BAD_PROJECT_FILES: list[dict[str, JsonValue]] = [
 
 @pytest.mark.parametrize('content', BAD_PROJECT_FILES)
 def test_bad_project_tables_fail_startup(tmp_path: Path, content: dict[str, JsonValue]) -> None:
-    (tmp_path / '.clai').mkdir()
+    (tmp_path / '.pax').mkdir()
     (tmp_path / PROJECT_FILE).write_text(json.dumps(content))
     with pytest.raises(ValueError, match=r'settings\.json'):
         load_project_settings(tmp_path)
@@ -535,9 +535,11 @@ async def test_an_approval_never_runs_in_another_repository(tmp_path: Path) -> N
     assert not (other / 'ran').exists() and not (trusted / 'ran').exists()
 
 
+@pytest.mark.parametrize('file', [PROJECT_FILE, Path('.clai') / 'settings.json'], ids=['pax', 'clai'])
 @pytest.mark.parametrize('program', ['./scripts/mark.sh', './mark.sh'])
-async def test_a_project_program_path_is_relative_to_the_project_root(tmp_path: Path, program: str) -> None:
-    repo = repository(tmp_path, 'repo', {'turn_end': [{'command': [program, 'marked']}]})
+async def test_a_project_program_path_is_relative_to_the_project_root(tmp_path: Path, program: str, file: Path) -> None:
+    """The root is the folder holding `.pax`, or `.clai` from before the rename, never that folder itself."""
+    repo = repository(tmp_path, 'repo', {'turn_end': [{'command': [program, 'marked']}]}, file=file)
     script = repo / program
     script.parent.mkdir(exist_ok=True)
     script.write_text('#!/bin/sh\ntouch "$1"\n')
@@ -741,7 +743,7 @@ async def test_a_redeclared_builtin_never_replaces_your_table(tmp_path: Path, fa
 
     The package's former name, `pydantic_clai2`, still imports the same module, so it is refused too.
     """
-    (tmp_path / '.clai').mkdir()
+    (tmp_path / '.pax').mkdir()
     (tmp_path / PROJECT_FILE).write_text(json.dumps({'plugins': [{'id': 'hooks', 'factory': factory}]}))
     with pytest.raises(ValueError, match='declare hooks with the `hooks` key'):
         load_project_settings(tmp_path)

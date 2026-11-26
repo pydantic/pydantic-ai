@@ -415,7 +415,7 @@ def test_future_layout_fields_are_read_without_rewriting_saved_or_project_values
         assert (
             connection.execute('SELECT value_json FROM settings WHERE key = ?', (FOOTER_SETTING,)).fetchone()[0] == raw
         )
-    project_file = tmp_path / '.clai' / 'settings.json'
+    project_file = tmp_path / '.pax' / 'settings.json'
     project_file.parent.mkdir()
     contents = json.dumps({'footer_fields': fields, 'thinking': False, 'future_setting': {'keep': True}})
     project_file.write_text(contents)
@@ -450,7 +450,7 @@ def test_saved_layout_tolerance_keeps_invalid_values_strict(tmp_path: Path, fiel
         connection.execute('INSERT INTO settings VALUES (?, ?)', (FOOTER_SETTING, raw))
     with pytest.raises(ValidationError):
         store.load()
-    project_file = tmp_path / '.clai' / 'settings.json'
+    project_file = tmp_path / '.pax' / 'settings.json'
     project_file.parent.mkdir()
     project_file.write_text(json.dumps({'footer_fields': fields}))
     with pytest.raises(ValueError):

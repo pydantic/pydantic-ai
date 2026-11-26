@@ -1,7 +1,7 @@
 """Run commands from a `hooks` table before and after tool calls, and as a turn starts and ends.
 
 The built-in `hooks` plugin runs your own table, saved as its settings. `project_hooks` runs the table a
-project's `.clai/settings.json` declares, once `/plugins enable project_hooks` approves it.
+project's `.pax/settings.json` declares, once `/plugins enable project_hooks` approves it.
 """
 
 import asyncio

@@ -211,7 +211,7 @@ class SessionPlugins(Generic[DepsT]):
 
         Without one, the session gets a process of its own over `store`, with `builtin` as the
         declarations shipped with Pax, as a host with one session does. `project` comes from the
-        session's `.clai/settings.json`; the store overrides it and the built-ins.
+        session's `.pax/settings.json`; the store overrides it and the built-ins.
 
         `enabled=False` lists and loads no plugins at all, without changing anything saved.
 

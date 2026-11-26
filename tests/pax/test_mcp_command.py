@@ -299,7 +299,7 @@ def test_editor_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
 
 async def test_project_file_trust(tmp_path: Path) -> None:
     command, store = make(tmp_path)
-    assert 'No .clai/mcp_servers.json' in await command(['trust'])
+    assert 'No .pax/mcp_servers.json' in await command(['trust'])
     project = tmp_path / 'repo' / PROJECT_MCP_FILE
     project.parent.mkdir()
     project.write_text('{"servers": {"team": {"type": "stdio", "command": "team-server"}}}')
@@ -373,45 +373,68 @@ async def test_claude_code_mcp_json(tmp_path: Path) -> None:
         store.project_servers()
 
 
-async def test_both_project_files_load_with_clai_first(tmp_path: Path) -> None:
+async def test_both_project_files_load_with_pax_first(tmp_path: Path) -> None:
     command, store = make(tmp_path)
-    clai = tmp_path / 'repo' / PROJECT_MCP_FILE
-    clai.parent.mkdir()
-    clai.write_text('{"servers": {"shared": {"type": "stdio", "command": "from-clai"}}}')
+    pax = tmp_path / 'repo' / PROJECT_MCP_FILE
+    pax.parent.mkdir()
+    pax.write_text('{"servers": {"shared": {"type": "stdio", "command": "from-pax"}}}')
     claude = tmp_path / 'repo' / CLAUDE_MCP_FILE
     claude.write_text('{"mcpServers": {"shared": {"command": "from-claude"}, "extra": {"command": "x"}}}')
-    clai, claude = clai.resolve(), claude.resolve()
+    pax, claude = pax.resolve(), claude.resolve()
 
     dashboard = await command([])
-    assert f'{clai} is not trusted' in dashboard and f'{claude} is not trusted' in dashboard
-    assert (await command(['trust'])).splitlines() == [f'{clai}: untrusted', f'{claude}: untrusted']
-    assert f'Trusted {clai}, {claude}. Servers loaded: shared, shared, extra' in await command(['trust', 'accept'])
+    assert f'{pax} is not trusted' in dashboard and f'{claude} is not trusted' in dashboard
+    assert (await command(['trust'])).splitlines() == [f'{pax}: untrusted', f'{claude}: untrusted']
+    assert f'Trusted {pax}, {claude}. Servers loaded: shared, shared, extra' in await command(['trust', 'accept'])
     shared, extra = command.servers.entries()
-    assert isinstance(shared.server, StdioServer) and shared.server.command == 'from-clai'
-    assert shared.path == clai and extra.path == claude
+    assert isinstance(shared.server, StdioServer) and shared.server.command == 'from-pax'
+    assert shared.path == pax and extra.path == claude
 
     assert 'Stopped shared' in await command(['stop', 'shared'])
-    clai.write_text('{"servers": {}}')
-    store.trust(clai)
+    pax.write_text('{"servers": {}}')
+    store.trust(pax)
     [fallback, _] = command.servers.entries()
     assert fallback.path == claude and command.servers.state(fallback) == 'ready', (
         "a session stop belongs to the definition, not to another file's server of the same name"
     )
 
-    clai.write_text('{"servers": {"mine": {"type": "stdio", "command": "from-clai"}}}')
-    store.trust(clai)
+    pax.write_text('{"servers": {"mine": {"type": "stdio", "command": "from-pax"}}}')
+    store.trust(pax)
     claude.write_text('{"mcpServers": {}}')
     assert f'{claude} is changed since you trusted it' in await command([])
     assert [entry.name for entry in command.servers.entries()] == ['mine'], 'the unchanged file stays loaded'
-    assert await command(['trust', 'revoke']) == f'Revoked trust in {clai}, {claude}.'
+    assert await command(['trust', 'revoke']) == f'Revoked trust in {pax}, {claude}.'
+    assert store.project_servers() == {}
+
+
+async def test_a_folder_without_pax_servers_reads_clai(tmp_path: Path) -> None:
+    """`.clai`, the folder's name before Pax was renamed, is still read, and trusted like any project file."""
+    command, store = make(tmp_path)
+    legacy = tmp_path / 'repo' / '.clai' / 'mcp_servers.json'
+    legacy.parent.mkdir()
+    legacy.write_text('{"servers": {"team": {"type": "stdio", "command": "from-clai"}}}')
+    legacy = legacy.resolve()
+    assert store.project_files() == [legacy]
+    assert f'{legacy} is not trusted' in await command([])
+    assert store.project_servers() == {}
+    assert 'Servers loaded: team' in await command(['trust', 'accept'])
+    assert list(store.project_servers()) == [legacy]
+
+    pax = tmp_path / 'repo' / PROJECT_MCP_FILE
+    pax.parent.mkdir()
+    pax.write_text(legacy.read_text())
+    assert store.project_files() == [pax.resolve()], 'a .pax file wins, and the .clai one beside it is ignored'
+    assert store.trust_state(pax.resolve()) == 'untrusted', (
+        'trust is kept by path, so a moved file is asked about again'
+    )
     assert store.project_servers() == {}
 
 
 def test_trust_is_all_or_nothing_when_one_file_is_a_symlink(tmp_path: Path) -> None:
     _, store = make(tmp_path)
-    clai = tmp_path / 'repo' / PROJECT_MCP_FILE
-    clai.parent.mkdir()
-    clai.write_text('{"servers": {}}')
+    pax = tmp_path / 'repo' / PROJECT_MCP_FILE
+    pax.parent.mkdir()
+    pax.write_text('{"servers": {}}')
     elsewhere = tmp_path / 'elsewhere.json'
     elsewhere.write_text('{"mcpServers": {}}')
     claude = tmp_path / 'repo' / CLAUDE_MCP_FILE

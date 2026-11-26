@@ -405,7 +405,7 @@ async def test_open_menu_runs_in_a_thread(tmp_path: Path) -> None:
 
 def test_project_overrides_are_marked_on_the_row(tmp_path: Path) -> None:
     context, _ = make_context(tmp_path)
-    context.project = ProjectSettings(path=tmp_path / '.clai' / 'settings.json', overrides={'display.thinking': False})
+    context.project = ProjectSettings(path=tmp_path / '.pax' / 'settings.json', overrides={'display.thinking': False})
     menu = FieldMenu(SettingsSource(context))
     items = {item.value: item for item in menu.items()}
     assert items['display.thinking'].description.endswith('project')

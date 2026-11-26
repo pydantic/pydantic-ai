@@ -163,7 +163,7 @@ opt in. An explicit false remains an opt-out. To run without coding tools,
 /plugins disable coder; to stop reading the instruction file,
 /plugins disable repo_context. /plugins remove coder resets the
 built-in to its defaults rather than removing it. A repository's
-.clai/settings.json can declare plugins too; they show as (project), rank
+.pax/settings.json can declare plugins too; they show as (project), rank
 just above the built-ins, and start off until the user runs /plugins enable
 NAME, so repository code never runs without that approval. Its "hooks" table
 (commands run before and after tool calls and as a turn starts and ends) is the
@@ -189,7 +189,7 @@ Authorize shared instruction targets with
 
 Use absolute paths, `~`, or `~/...`, and single-quote the whole JSON list,
 which also covers paths containing spaces. Keep these user-only settings out of
-plugin JSON and `.clai/settings.json`; changes apply next run. Choose a directory
+plugin JSON and `.pax/settings.json`; changes apply next run. Choose a directory
 containing only trusted instructions, not `/` or all of home. See the user
 reference's Repository instructions section for setup and path rules, and
 [Repo Context](https://pydantic.dev/docs/ai/harness/repo-context/#shared-instruction-symlinks)
@@ -836,7 +836,7 @@ them. The tools work in `workspace` unless a passed capability supplies a worksp
 a sandbox. Model names resolve as in the CLI, with Pax's per-model defaults.
 `plugin_settings` merges settings over a built-in's stock ones, for example
 {'coder': {'sub_agents': False, 'agent_folders': []}}. Saved, drop-in, and project plugins,
-.clai/settings.json, saved model settings, and chain: fallback chains do not apply; nor do
+.pax/settings.json, saved model settings, and chain: fallback chains do not apply; nor do
 ask_user, observability, mcp, or this guide. When approvals end the run, as over ACP, set
 coder sub_agents to false: a delegated task's approval fails the run
 (https://github.com/pydantic/pydantic-ai/issues/4302).

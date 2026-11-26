@@ -108,7 +108,7 @@ async def open_stock_agent(
     `{'coder': {'sub_agents': False}}`. Unlike in the CLI, `coder`'s `task_control` is off: pass
     `{'coder': {'task_control': True}}` to give the model the task tools and background delegation.
     Nothing saved for the `pax` CLI applies: no saved or drop-in
-    plugins, no project `.clai/settings.json`, no saved model settings or `chain:` fallback chains.
+    plugins, no project `.pax/settings.json`, no saved model settings or `chain:` fallback chains.
     Raises `UserError` when `plugin_settings` names another plugin, and `PluginSettingsError` when a
     built-in rejects its merged settings.
 
@@ -203,7 +203,7 @@ async def chat(
     Esc cancels the current turn; Ctrl+C also clears idle input. Ctrl+D and `/exit` quit.
     Failed and cancelled turns retain their captured history. Resume never replays tools.
     `resume_from` imports `resume` from Claude Code or Codex instead; an empty `resume` browses its sessions.
-    `project` is the parsed `.clai/settings.json`; layer its overrides into `settings` yourself.
+    `project` is the parsed `.pax/settings.json`; layer its overrides into `settings` yourself.
     `load_plugins=False` loads no built-in, project, saved, or drop-in plugin and turns `/plugins` off for this
     session only; saved plugin preferences are untouched.
     `resume` restores a saved conversation (`''` opens the browser); `fork_session` then continues in a copy.
