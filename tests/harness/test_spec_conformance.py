@@ -67,6 +67,7 @@ OPT_OUT: dict[str, dict[str, str]] = {
 
 _DISAGREEMENT = 'https://github.com/pydantic/pydantic-ai/issues/13979'
 KNOWN: dict[str, dict[str, str]] = {
+    'CDPBrowser': {'policy': _DISAGREEMENT},
     'CodeMode': dict.fromkeys(('os_policy', 'monty_sandbox_url'), _DISAGREEMENT),
     'E2BSandbox': {'network': _DISAGREEMENT},
     'Memory': {'write_metadata': _DISAGREEMENT},
