@@ -107,13 +107,25 @@ _TIME_LIMIT_MESSAGE = (
 )
 
 
-_RuntimeResetReason = Literal['duration', 'memory', 'session_lost']
+_RuntimeResetReason = Literal['duration', 'memory', 'feed_time', 'turn_time', 'unknown', 'session_lost']
 _RUNTIME_RESET_MESSAGES: dict[_RuntimeResetReason, str] = {
     'duration': _TIME_LIMIT_MESSAGE,
     'memory': (
         'The sandbox ran out of memory and the session was reset. '
         'Re-run any imports, recreate any state you need, and use less memory: '
         'process smaller batches, avoid large intermediate values, and print less output.'
+    ),
+    'feed_time': (
+        'The code exceeded the feed time limit, so the session was reset. '
+        'Re-run any imports, recreate any state you need, and split the work across smaller `run_code` calls.'
+    ),
+    'turn_time': (
+        'The code exceeded the turn time limit (one uninterrupted stretch of execution), so the session was reset. '
+        'Re-run any imports, recreate any state you need, and do less Python work at a time.'
+    ),
+    'unknown': (
+        'The sandbox reported an unrecognized failure classification, so the session was reset. '
+        'Re-run any imports and recreate any state you need before continuing.'
     ),
     'session_lost': (
         'The sandbox could not keep the session after this error, so it was reset. '
@@ -122,12 +134,9 @@ _RUNTIME_RESET_MESSAGES: dict[_RuntimeResetReason, str] = {
 }
 
 
-# One entry per limit `CodeModeResourceLimits` exposes, mapped to the wording Monty reports when
-# it trips. Monty offers no typed marker for either, so its phrasing is load-bearing here and
-# nowhere else. `test_every_resource_limit_reports_started_calls_when_exhausted` exhausts each
-# option the type declares and checks the summary survives, so a limit added without an entry here
-# fails there rather than silently losing its summary, and a Monty reword fails it rather than
-# quietly disabling recognition.
+# For errors without a classification, match the wording Monty uses for each Code Mode limit.
+# `test_every_resource_limit_reports_started_calls_when_exhausted` checks that each limit reports
+# the calls already started, including limits for which Monty still sends no classification.
 _SANDBOX_LIMIT_MARKERS = {
     'max_duration_seconds': 'time limit exceeded',
     'max_memory': 'memory limit exceeded',
@@ -872,11 +881,21 @@ def _runtime_failure_retry(
     if report_started_calls:
         message += _started_calls_note(execution)
     message += reset_advice
-    if 'RuntimeError' in error.exception_types and re.fullmatch(r'suspension limit [0-9]+ exceeded', error.message):
-        # Monty has no typed marker for this limit, and unlike a timeout it has a
-        # traceback. Keep the advice conditional: a tool could raise the same text.
+    typed_suspension_limit = error.runtime_classification == 'suspension_limit'
+    if typed_suspension_limit and error.session_lost:
+        message += "\n\nThe sandbox session's `max_suspensions` limit was reached."
+    elif typed_suspension_limit or (
+        error.runtime_classification is None
+        and 'RuntimeError' in error.exception_types
+        and re.fullmatch(r'suspension limit [0-9]+ exceeded', error.message)
+    ):
+        # An unclassified error might be a tool exception with the same text.
         message += (
-            "\n\nIf this reports the sandbox session's `max_suspensions` limit, "
+            "\n\nThe sandbox session's `max_suspensions` limit was reached, so "
+            if typed_suspension_limit
+            else "\n\nIf this reports the sandbox session's `max_suspensions` limit, "
+        )
+        message += (
             'its cumulative host-interaction budget is exhausted. Further tool calls, '
             'OS callbacks, name lookups and future resolutions need a fresh session; '
             'revising the snippet does not replenish this budget. Pure Python using '
@@ -1497,6 +1516,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
     @staticmethod
     def _runtime_reset_reason(error: MontyFailure) -> _RuntimeResetReason | None:
+        classification = error.runtime_classification
+        if classification in ('ordinary', 'recursion_depth', 'suspension_limit'):
+            return 'session_lost' if error.session_lost else None
+        if classification is not None:
+            return classification
         if _is_duration_exhausted(error):
             return 'duration'
         if 'MemoryError' in error.exception_types and (
@@ -1561,11 +1585,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     await run_state.reset()
                     reset_advice = f'\n\n{_RUNTIME_RESET_MESSAGES[reset_reason]}'
                 _raise_escaped_tool_failed(failure, execution, reset_advice=reset_advice)
-                # Include likely limit failures even when the evidence does not justify a reset.
+                # With unclassified errors, also report likely limit failures that do not justify a reset.
                 report_started_calls = (
                     execution.budget_exhausted
                     or reset_reason is not None
-                    or _exhausted_sandbox_limit(failure) is not None
+                    or failure.runtime_classification == 'suspension_limit'
+                    or (failure.runtime_classification is None and _exhausted_sandbox_limit(failure) is not None)
                 )
                 return _runtime_failure_retry(
                     failure, execution, reset_advice=reset_advice, report_started_calls=report_started_calls

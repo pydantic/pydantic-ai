@@ -135,12 +135,19 @@ functions carry over until the run ends. The model passes `restart: true` in the
 reset state. A timeout, worker crash, or interrupted eager statement also resets the session, and the
 retry message says so -- the next snippet must recreate its state.
 
+A Monty feed time limit asks the model to split work into smaller `run_code` calls. A turn time
+limit asks for less work between host interactions. Both reset the session, as do sandbox memory
+limits and unrecognized failure classifications. If Monty identifies a `MemoryError` with
+sandbox-limit wording as coming from a snippet or tool, Code Mode keeps the REPL unless it
+knows the session is unusable. Without a classification, Code Mode uses the diagnostic and traceback.
+A tool-raised `TimeoutError` with a sandbox traceback does not by itself reset the REPL.
+An unclassified `MemoryError` with sandbox-limit wording resets it. Exceeding the 10 MiB
+printed-output cap reports such an error.
+A `RecursionError` from the sandbox recursion-depth limit does not by itself reset the session.
+An exhausted `max_suspensions` budget also does not by itself reset the session. The retry
+confirms a classified limit and gives conditional guidance if the error is unclassified.
 A pool's `request_timeout` and a remote `turn_timeout` ask the model to do less work per call.
-Remote session and idle timeouts explain that state is lost. Sandbox memory-limit errors and
-`MemoryError`s without a traceback reset the session and ask the model to use smaller batches.
-Other snippet or nested-tool `MemoryError`s keep state unless their diagnostic is indistinguishable
-from a sandbox memory limit: Monty does not guarantee heap integrity after a limit fires.
-Exceeding the 10 MiB printed-output cap also resets the session because it has the same diagnostic.
+Remote session and idle timeouts explain that state is lost.
 Remote host-side error details are omitted
 from retries because they may contain pool URLs or credentials; the original exception remains
 the cause for application-side diagnostics. Retries list nested calls that already started so

@@ -23,6 +23,7 @@ from unittest.mock import MagicMock
 from uuid import UUID
 
 import anyio
+import pydantic_monty
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, create_model
@@ -33,6 +34,7 @@ from pydantic_monty import (
     AsyncMonty,
     AsyncSnapshot,
     MontyComplete,
+    MontyRuntimeError,
     MountDir,
     OSAccess,
     OsFunction,
@@ -315,6 +317,13 @@ _ANY_VALIDATOR = SchemaValidator(schema=core_schema.any_schema())
 
 def _build_function_toolset(*tools: Any) -> FunctionToolset[object]:
     return FunctionToolset[object](tools=[Tool(t) for t in tools])
+
+
+def _monty_reply_classification(retry: ModelRetry) -> object | None:
+    # A new SDK can receive an unclassified reply from an old worker.
+    cause = retry.__cause__
+    assert isinstance(cause, MontyRuntimeError)
+    return getattr(cause, 'failure', None)
 
 
 # ---------------------------------------------------------------------------
@@ -776,16 +785,17 @@ class TestCodeMode:
         assert printed.return_value == {'output': 'done\n'}
 
     async def test_run_code_caps_printed_output_and_resets(self) -> None:
-        """An output collector's memory-limit diagnostic is indistinguishable from an unsafe heap limit."""
+        """The unclassified output-cap error uses legacy memory recovery, discarding state."""
         wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(add))
         assert isinstance(wrapper, CodeModeToolset)
         ctx = await build_ctx(None, wrapper)
         tools = await wrapper.get_tools(ctx)
 
+        await wrapper.call_tool('run_code', {'code': 'x = 7'}, ctx, tools['run_code'])
         with pytest.raises(ModelRetry, match='memory limit exceeded') as exc_info:
             await wrapper.call_tool(
                 'run_code',
-                {'code': "x = 7\nprint('x' * (10 * 1024 * 1024))"},
+                {'code': "print('x' * (10 * 1024 * 1024))"},
                 ctx,
                 tools['run_code'],
             )
@@ -950,7 +960,17 @@ class TestCodeMode:
         message = exhausted.value.message
         assert 'suspension limit 4 exceeded' in message
         assert "record({'value': 1}) returned 1" in message
-        assert '`max_suspensions`' in message
+        classification = _monty_reply_classification(exhausted.value)
+        definite = "The sandbox session's `max_suspensions` limit was reached"
+        conditional = "If this reports the sandbox session's `max_suspensions` limit"
+        if classification is None:
+            assert conditional in message
+            assert definite not in message
+        else:
+            assert isinstance(classification, getattr(pydantic_monty, 'SuspensionLimit'))
+            assert definite in message
+            assert conditional not in message
+        assert 'session was reset' not in message
         assert '`restart: true`' in message
         assert 'discards all REPL variables, imports and definitions' in message
         assert 'do not replay completed side effects' in message
@@ -958,8 +978,8 @@ class TestCodeMode:
         with pytest.raises(ModelRetry, match='suspension limit 4 exceeded'):
             await wrapper.call_tool('run_code', {'code': 'await record(value=2)'}, ctx, tools['run_code'])
         assert executed == [0, 1]
-        kept = await wrapper.call_tool('run_code', {'code': 'saved'}, ctx, tools['run_code'])
-        assert kept.return_value == 0
+        kept = await wrapper.call_tool('run_code', {'code': 'saved + 1'}, ctx, tools['run_code'])
+        assert kept.return_value == 1
 
         fresh = await wrapper.call_tool(
             'run_code', {'code': 'await record(value=99)', 'restart': True}, ctx, tools['run_code']
@@ -969,18 +989,30 @@ class TestCodeMode:
         with pytest.raises(ModelRetry, match="name 'saved' is not defined"):
             await wrapper.call_tool('run_code', {'code': 'saved'}, ctx, tools['run_code'])
 
-    async def test_suspension_wording_in_tool_error_does_not_require_restart(self) -> None:
+    @pytest.mark.parametrize('from_tool', [True, False], ids=['tool', 'snippet'])
+    async def test_suspension_wording_in_ordinary_error_does_not_require_restart(self, from_tool: bool) -> None:
+        message = 'suspension limit 1000 exceeded'
+
         def boom() -> None:
-            raise RuntimeError('suspension limit 1000 exceeded')
+            raise RuntimeError(message)
 
         wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(boom))
         assert isinstance(wrapper, CodeModeToolset)
         ctx = await build_ctx(None, wrapper)
         tools = await wrapper.get_tools(ctx)
         await wrapper.call_tool('run_code', {'code': 'saved = 42'}, ctx, tools['run_code'])
-        with pytest.raises(ModelRetry) as error:
-            await wrapper.call_tool('run_code', {'code': 'await boom()'}, ctx, tools['run_code'])
-        assert "If this reports the sandbox session's `max_suspensions` limit" in error.value.message
+        code = 'await boom()' if from_tool else f'raise RuntimeError({message!r})'
+        with pytest.raises(ModelRetry, match=message) as error:
+            await wrapper.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
+        classification = _monty_reply_classification(error.value)
+        if classification is None:
+            assert "If this reports the sandbox session's `max_suspensions` limit" in error.value.message
+            assert "The sandbox session's `max_suspensions` limit was reached" not in error.value.message
+        else:
+            assert isinstance(classification, getattr(pydantic_monty, 'OrdinaryException'))
+            assert '`max_suspensions`' not in error.value.message
+            assert '`restart: true`' not in error.value.message
+        assert 'session was reset' not in error.value.message
         assert 'before the limit was reached' not in error.value.message
         result = await wrapper.call_tool('run_code', {'code': 'saved'}, ctx, tools['run_code'])
         assert result.return_value == 42
@@ -1030,7 +1062,7 @@ class TestCodeMode:
 
         def boom() -> str:
             """Fail with wording that matches the sandbox's own timeout."""
-            raise ValueError('time limit exceeded: 999s > 1s')
+            raise TimeoutError('time limit exceeded: 999s > 1s')
 
         wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(boom))
         assert isinstance(wrapper, CodeModeToolset)
@@ -1042,12 +1074,60 @@ class TestCodeMode:
 
         with pytest.raises(ModelRetry) as exc_info:
             await wrapper.call_tool('run_code', {'code': 'await boom()'}, ctx, tools['run_code'])
-        assert 'time limit exceeded' in exc_info.value.message
+        assert 'Traceback' in exc_info.value.message
+        assert 'TimeoutError: time limit exceeded' in exc_info.value.message
         assert 'session was reset' not in exc_info.value.message
 
         # The session was never exhausted, so its REPL state is still there to use.
         kept = await wrapper.call_tool('run_code', {'code': 'saved'}, ctx, tools['run_code'])
         assert kept.return_value == 42
+
+    @pytest.mark.skipif(not hasattr(pydantic_monty, 'VmLimit'), reason='requires a typed Monty runtime')
+    @pytest.mark.parametrize('from_tool', [True, False], ids=['tool', 'snippet'])
+    async def test_typed_ordinary_memory_error_keeps_the_repl(self, from_tool: bool) -> None:
+        message = 'memory limit exceeded: 1025 bytes > 1024 bytes'
+        effects: list[int] = []
+
+        def fail_tool(value: int) -> None:
+            effects.append(value)
+            raise MemoryError(message)
+
+        wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(fail_tool))
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+        await wrapper.call_tool('run_code', {'code': 'saved = 1729'}, ctx, tools['run_code'])
+        code = 'await fail_tool(value=73)' if from_tool else f'raise MemoryError({message!r})'
+        with pytest.raises(ModelRetry) as error:
+            await wrapper.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
+
+        assert f'MemoryError: {message}' in error.value.message
+        assert 'session was reset' not in error.value.message
+        kept = await wrapper.call_tool('run_code', {'code': 'saved'}, ctx, tools['run_code'])
+        assert kept.return_value == 1729
+        assert effects == ([73] if from_tool else [])
+
+    @pytest.mark.parametrize('caught', [False, True], ids=['escaped', 'caught'])
+    async def test_recursion_depth_limit_does_not_reset_the_repl(self, caught: bool) -> None:
+        wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(add))
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+        await wrapper.call_tool('run_code', {'code': 'saved = 1729'}, ctx, tools['run_code'])
+        define = 'def recurse():\n    return recurse()\n'
+
+        if caught:
+            code = define + 'try:\n    recurse()\nexcept RecursionError as exc:\n    message = str(exc)\nmessage'
+            result = await wrapper.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
+            assert result.return_value == 'maximum recursion depth exceeded'
+        else:
+            with pytest.raises(ModelRetry, match='RecursionError: maximum recursion depth exceeded') as error:
+                await wrapper.call_tool('run_code', {'code': define + 'recurse()'}, ctx, tools['run_code'])
+            assert 'Traceback' in error.value.message
+            assert 'session was reset' not in error.value.message
+
+        kept = await wrapper.call_tool('run_code', {'code': 'saved'}, ctx, tools['run_code'])
+        assert kept.return_value == 1729
 
     async def test_duration_exhaustion_reports_calls_already_made(self) -> None:
         """A timeout resets the session, so the retry has to say what already ran.
@@ -1076,18 +1156,31 @@ class TestCodeMode:
         assert "add({'a': 1, 'b': 2}) returned 3" in message
 
     async def test_memory_exhaustion_reports_calls_and_resets(self) -> None:
-        """A live worker's heap is not safe after `max_memory`; reset state but retain completed calls."""
+        """A heap limit resets the REPL but still reports completed and unfinished calls."""
+        effects: list[int] = []
+
+        def fail_after_effect(value: int) -> None:
+            effects.append(value)
+            raise ValueError('failed after applying a change')
+
         wrapper = CodeMode[object](resource_limits={'max_memory': 8 * 1024 * 1024}).get_wrapper_toolset(
-            _build_function_toolset(add)
+            _build_function_toolset(add, fail_after_effect)
         )
         assert isinstance(wrapper, CodeModeToolset)
         ctx = await build_ctx(None, wrapper)
         tools = await wrapper.get_tools(ctx)
+        await wrapper.call_tool('run_code', {'code': 'saved = 1729'}, ctx, tools['run_code'])
 
         with pytest.raises(ModelRetry) as exc_info:
             await wrapper.call_tool(
                 'run_code',
-                {'code': 'r = await add(a=1, b=2)\nx = [0] * 50_000_000\nlen(x)'},
+                {
+                    'code': (
+                        'await add(a=1, b=2)\n'
+                        'try:\n    await fail_after_effect(value=73)\nexcept ValueError:\n    pass\n'
+                        'x = [0] * 50_000_000\nlen(x)'
+                    )
+                },
                 ctx,
                 tools['run_code'],
             )
@@ -1095,9 +1188,11 @@ class TestCodeMode:
         message = exc_info.value.message
         assert 'memory limit exceeded' in message
         assert "add({'a': 1, 'b': 2}) returned 3" in message
+        assert "fail_after_effect({'value': 73}) did not finish, so it may have applied a partial change" in message
         assert 'The sandbox ran out of memory and the session was reset.' in message
-        with pytest.raises(ModelRetry, match='Name `r` used when not defined'):
-            await wrapper.call_tool('run_code', {'code': 'r'}, ctx, tools['run_code'])
+        with pytest.raises(ModelRetry, match='Name `saved` used when not defined'):
+            await wrapper.call_tool('run_code', {'code': 'saved'}, ctx, tools['run_code'])
+        assert effects == [73]
 
     async def test_every_resource_limit_reports_started_calls_when_exhausted(self) -> None:
         """Exhausting any option a caller can set still reports the calls that already ran.

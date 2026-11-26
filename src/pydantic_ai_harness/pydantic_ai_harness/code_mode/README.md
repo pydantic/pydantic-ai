@@ -251,7 +251,9 @@ consecutive snippets). External calls, OS callbacks, name lookups, and future re
 count, so it isn't a tool-call count. Once it's exhausted, host interactions fail, though pure
 Python on existing state may work, and `run_code` returns the started calls with restart guidance:
 check partial results first, since `restart: true` discards REPL state and replaying completed calls
-repeats side effects. Nothing restarts or replays automatically.
+repeats side effects. Nothing restarts or replays automatically. When Monty identifies the limit,
+the retry confirms the budget is exhausted. For errors without a classification, the restart
+advice is conditional because a tool error can have the same wording.
 
 `max_tool_calls` caps nested tool calls per `run_code` call (default 100). The budget is reserved
 before each call is scheduled, and a call past it fails at its call site in the sandbox. A snippet
@@ -646,16 +648,22 @@ the model retry policy.
 Errors the model can act on are returned as model retries:
 
 - Syntax, type, and ordinary runtime errors include the sandbox's diagnostic.
-- Execution time limits, including a pool's `request_timeout` and a remote `turn_timeout`, reset the
-  session and ask for less work per call.
-- Remote `session_timeout` and `idle_timeout` errors explain that the session ended and state is
-  lost.
-- A sandbox memory-limit error, or a `MemoryError` without a traceback, resets the session and asks
-  the model to use less memory, for example with smaller batches; other `MemoryError`s from the
-  snippet or a nested tool keep it. Errors indistinguishable from a memory-limit failure also reset
-  it, since Monty doesn't guarantee heap integrity after the limit fires, even if the worker
-  survives. So does exceeding the 10 MiB printed-output cap, which Monty reports with the same
-  diagnostic.
+- An uncaught `RecursionError` from exceeding the sandbox recursion-depth limit includes the
+  Python diagnostic and does not by itself reset the session.
+- Terminal Monty execution limits reset the session. If Monty identifies a feed time limit, the retry asks
+  the model to split work across smaller `run_code` calls. If it identifies a turn time limit, it
+  asks for less work in one uninterrupted stretch of sandbox execution. Memory limits ask the
+  model to use less memory. A classification Code Mode doesn't recognize also resets the session,
+  without guessing the cause.
+- A pool's `request_timeout` and a remote `turn_timeout` reset the session and ask for less work per
+  call. Remote `session_timeout` and `idle_timeout` errors explain that the session ended and state
+  is lost.
+- When Monty identifies a `MemoryError` that looks like a sandbox memory limit as coming from a
+  snippet or tool, Code Mode keeps the REPL unless it knows the session is unusable. For replies
+  without a classification, Code Mode uses the diagnostic and traceback. A tool-raised
+  `TimeoutError` with a sandbox traceback does not by itself reset the REPL. An unclassified
+  `MemoryError` that looks like a sandbox memory limit resets it. Exceeding the 10 MiB
+  printed-output cap reports such an error.
 - A worker crash, lost connection, or unexpected execution failure reports the session reset. Remote
   host-side error details, which can contain pool URLs or credentials, are left out of model
   retries; the original exception stays the retry's cause.

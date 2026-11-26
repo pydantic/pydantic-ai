@@ -26,6 +26,7 @@ from functools import cache
 from types import EllipsisType, NotImplementedType
 from typing import Literal, assert_never, get_args
 
+import pydantic_monty
 from pydantic_core import PydanticSerializationError, to_json
 from pydantic_monty import (
     AsyncFunctionSnapshot,
@@ -298,6 +299,39 @@ class TurnCall:
     is_os_function: bool
 
 
+_RuntimeFailureClassification = Literal[
+    'ordinary', 'memory', 'feed_time', 'turn_time', 'recursion_depth', 'suspension_limit', 'unknown'
+]
+
+
+def _runtime_failure_classification(error: MontyRuntimeError) -> _RuntimeFailureClassification | None:
+    # SDKs without classification and replies without a classification both use the legacy path.
+    vm_limit = getattr(pydantic_monty, 'VmLimit', None)
+    ordinary_exception = getattr(pydantic_monty, 'OrdinaryException', None)
+    if vm_limit is None or ordinary_exception is None:
+        return None
+
+    suspension_limit = getattr(pydantic_monty, 'SuspensionLimit', None)
+    classification: object = getattr(error, 'failure', None)
+    match classification:
+        case None:
+            return None
+        case ordinary_exception():
+            return 'ordinary'
+        case vm_limit.Memory():
+            return 'memory'
+        case vm_limit.FeedTime():
+            return 'feed_time'
+        case vm_limit.TurnTime():
+            return 'turn_time'
+        case vm_limit.RecursionDepth():
+            return 'recursion_depth'
+        case _ if suspension_limit is not None and isinstance(classification, suspension_limit):
+            return 'suspension_limit'
+        case _:
+            return 'unknown'
+
+
 @dataclass
 class MontyFailure:
     """What CodeMode reads from an error a Monty call raised, as data that can leave the worker process.
@@ -323,6 +357,8 @@ class MontyFailure:
     """Why the server dropped the connection, for a disconnect."""
     session_lost: bool = False
     """Whether the server could not keep the session a runtime error left, so the next turn starts fresh."""
+    runtime_classification: _RuntimeFailureClassification | None = None
+    """The SDK's runtime failure classification, or `None` when not supplied."""
 
     @classmethod
     def from_error(cls, error: BaseException) -> MontyFailure | None:
@@ -341,6 +377,7 @@ class MontyFailure:
                     type_name=type(exception).__name__,
                     exception_types=tuple(base.__name__ for base in type(exception).__mro__),
                     has_traceback=bool(error.traceback()),
+                    runtime_classification=_runtime_failure_classification(error),
                 )
             case MontyCrashedError():
                 return cls('crashed', timed_out=error.timed_out)

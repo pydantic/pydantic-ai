@@ -8,14 +8,16 @@ Real subprocess bridge tests remain skipped until #8824 is resolved.
 from __future__ import annotations
 
 import asyncio
+import sys
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Never
+from typing import Any, Literal, Never
 from unittest.mock import AsyncMock, MagicMock
 
+import pydantic_monty
 import pytest
 from pydantic_monty import (
     AsyncFutureSnapshot,
@@ -27,6 +29,8 @@ from pydantic_monty import (
     MontyError,
     MontyRefusedError,
     MountDir,
+    OSPolicy,
+    ResourceLimits,
 )
 
 from pydantic_ai import Agent, capture_run_messages
@@ -343,8 +347,74 @@ class TestCodeModeErrorRouting:
         )
         result = await agent.run('exhaust the configured execution time limit')
         (retry,) = _retries(result.all_messages())
-        assert 'ran longer than its time limit' in str(retry.content)
+        assert 'time limit' in str(retry.content)
+        assert 'session was reset' in str(retry.content)
         assert local_backed_factory_pool.checkout.call_args.kwargs['limits']['max_feed_duration_secs'] == 0.01
+
+    @pytest.mark.skipif(not hasattr(pydantic_monty, 'VmLimit'), reason='requires a typed Monty runtime')
+    @pytest.mark.skipif(sys.platform != 'linux', reason='Monty supports a subprocess CPU clock only on Linux')
+    @pytest.mark.parametrize('scope', ['feed', 'turn'])
+    async def test_typed_time_limit_resets_and_reports_started_calls(self, scope: Literal['feed', 'turn']) -> None:
+        """One feed can exhaust its budget across turns, or hit a smaller per-turn budget."""
+        if scope == 'feed':
+            # Each turn alternates a little Python work and a host call. The feed budget is
+            # smaller than the per-turn budget so the cumulative limit must fire first.
+            code = 'for n in range(1000):\n    for _ in range(100_000):\n        pass\n    await record(n=n)'
+            feed_budget, turn_budget = 0.1, 1.0
+            advice = 'split the work across smaller `run_code` calls'
+        else:
+            code = 'await record(n=0)\nwhile True:\n    pass'
+            feed_budget, turn_budget = 1.0, 0.1
+            advice = 'do less Python work at a time'
+        effects: list[int] = []
+        async with AsyncMonty(
+            execution_clock='cpu', request_timeout=5, feed_duration_limit_grace=None, turn_duration_limit_grace=None
+        ) as local_pool:
+            pool = MagicMock(spec=AsyncMontyRemote)
+            pool.__aenter__.return_value = pool
+            pool.__aexit__.return_value = None
+
+            def checkout(
+                *, limits: ResourceLimits, type_check: bool, type_check_stubs: str | None, os_policy: OSPolicy
+            ) -> AbstractAsyncContextManager[AsyncMontySession]:
+                return local_pool.checkout(
+                    limits={**limits, 'max_turn_duration_secs': turn_budget},
+                    type_check=type_check,
+                    type_check_stubs=type_check_stubs,
+                    os_policy=os_policy,
+                )
+
+            pool.checkout.side_effect = checkout
+            agent = Agent(
+                _snippets_model('saved = 1729', code, 'saved', '1 + 1'),
+                capabilities=[
+                    CodeMode(
+                        monty_sandbox=MagicMock(return_value=pool),
+                        resource_limits={'max_duration_seconds': feed_budget, 'max_suspensions': 2000},
+                        max_tool_calls=1000,
+                    )
+                ],
+            )
+
+            @agent.tool_plain
+            def record(n: int) -> int:
+                effects.append(n)
+                return n
+
+            result = await agent.run('observe recovery after a sandbox time limit')
+
+        failure, next_feed = _retries(result.all_messages())
+        assert f'{scope} time limit' in str(failure.content)
+        assert advice in str(failure.content)
+        assert 'session was reset' in str(failure.content)
+        assert "record({'n': 0}) returned 0" in str(failure.content)
+        assert 'Name `saved` used when not defined' in str(next_feed.content)
+        assert _parts(result.all_messages(), ToolReturnPart)[-1].content == 2
+        if scope == 'feed':
+            assert len(effects) >= 2
+            assert effects == list(range(len(effects)))
+        else:
+            assert effects == [0]
 
     @pytest.mark.parametrize(
         ('causes', 'expected_cause', 'expected_status', 'expected_checkouts'),
@@ -549,13 +619,10 @@ class TestCodeModeErrorRouting:
         assert 'session was reset' not in str(retry.content)
         assert _parts(result.all_messages(), ToolReturnPart)[-1].content == 42
 
-    @pytest.mark.parametrize('code', ['data = [0] * 1_000_000', 'raise MemoryError("memory limit exceeded")'])
-    async def test_local_backed_factory_memory_limit_resets(
-        self, local_backed_factory_pool: MagicMock, code: str
-    ) -> None:
-        """Heap limits invalidate state even on live workers; an indistinguishable spoof resets conservatively."""
+    async def test_local_backed_factory_memory_limit_resets(self, local_backed_factory_pool: MagicMock) -> None:
+        """Heap limits invalidate state even on live workers."""
         agent = Agent(
-            _snippets_model(f'saved = 42\nawait ping()\n{code}', 'saved', '1 + 1'),
+            _snippets_model('saved = 42\nawait ping()\ndata = [0] * 1_000_000', 'saved', '1 + 1'),
             capabilities=[
                 CodeMode(
                     monty_sandbox=MagicMock(return_value=local_backed_factory_pool),
