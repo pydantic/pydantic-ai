@@ -130,7 +130,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `NO_COLOR` | Also skips the splash |
 | `CLAI_BLEEDING_URL` | Where the `main` update channel looks for builds; see [Updating](#updating) |
 | `PYTHON_DOTENV_DISABLED` | `1` turns off `.env` loading; see [Environment variables](#environment-variables) |
-| `XDG_CONFIG_HOME` | Moves Pax's folder to `$XDG_CONFIG_HOME/pydantic-clai2/` (default `~/.config/pydantic-clai2/`) |
+| `XDG_CONFIG_HOME` | Moves Pax's folder to `$XDG_CONFIG_HOME/pydantic-ai-pax/` (default `~/.config/pydantic-ai-pax/`) |
 | `VISUAL`, `EDITOR` | The editor `/system_prompt` and other text fields open |
 | `LOGFIRE_TOKEN` | A Logfire write token for the `observability` plugin; see [Telemetry](#telemetry-and-references) |
 | `GITHUB_COPILOT_API_KEY`, `GITHUB_COPILOT_API_TOKEN`, `COPILOT_GITHUB_TOKEN` | A Copilot token when you have not run `/login github-copilot` |
@@ -141,7 +141,8 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 
 ### Files
 
-Paths are under `$XDG_CONFIG_HOME/pydantic-clai2/`, or `~/.config/pydantic-clai2/` by default.
+Paths are under `$XDG_CONFIG_HOME/pydantic-ai-pax/`, or `~/.config/pydantic-ai-pax/` by default. State that is not a
+preference, such as workspaces, is under `$XDG_STATE_HOME/pydantic-ai-pax/` (default `~/.local/state/pydantic-ai-pax/`).
 
 | Path | Holds |
 |---|---|
@@ -398,8 +399,8 @@ values. Keep `.env` files containing credentials out of version control.
 
 ### Settings and commands
 
-Preferences live in `$XDG_CONFIG_HOME/pydantic-clai2/config.db`, falling back to
-`~/.config/pydantic-clai2/config.db`. Use `--database PATH` to select another database.
+Preferences live in `$XDG_CONFIG_HOME/pydantic-ai-pax/config.db`, falling back to
+`~/.config/pydantic-ai-pax/config.db`. Use `--database PATH` to select another database.
 A repository can add its own layer with a `.clai/settings.json` file; see
 [Project settings](#project-settings). Conversation messages and Pax's
 Codex tokens are not written to the settings database. Plugin settings are arbitrary
@@ -737,18 +738,21 @@ the model-aware request and thinking controls described below. They are
 saved per model and passed to every run with that model. Unsupported settings
 may be ignored or rejected by the provider; select only settings your provider supports. `/model NAME` sets the model without the menu.
 
-Pax installs the SDKs for OpenAI and Anthropic. Selecting a model whose provider SDK is
-missing from the Python Pax runs on fails right away, naming the install command, instead
-of on the next prompt. TypeSafe's Jev needs the `typesafe` extra:
+Pax installs the SDKs for OpenAI, Anthropic, and Google. Every other model provider
+has a Pax extra of the same name as its `pydantic-ai-slim` extra, such as `bedrock`,
+`groq`, `mistral`, or `typesafe` (TypeSafe's Jev), and `all` installs every provider
+and every `/sandbox` provider but `local`. Selecting a model whose provider SDK is
+missing from the Python Pax runs on fails right away, naming the extra to install,
+instead of on the next prompt:
 
 ```bash
-pip install "pydantic-ai-pax[typesafe]"
+uv tool install "pydantic-ai-pax[bedrock]"
 ```
 
 From a pydantic-ai checkout, run Pax with the extra instead:
 
 ```bash
-uv run --package pydantic-ai-pax --extra typesafe pax
+uv run --package pydantic-ai-pax --extra bedrock pax
 ```
 
 #### Model settings and custom parameters
@@ -985,7 +989,7 @@ address bar and paste it at the prompt Pax shows under the login link; the bare
 before exchanging the code. Whichever arrives first, the callback or the paste,
 completes the login.
 
-Tokens are encrypted into `0600` files in `$XDG_CONFIG_HOME/pydantic-clai2/`
+Tokens are encrypted into `0600` files in `$XDG_CONFIG_HOME/pydantic-ai-pax/`
 (`credentials-ACCOUNT.enc`), not stored in SQLite or `~/.codex/auth.json`. The key
 that decrypts them is the only entry Pax keeps in the configured Python `keyring`
 backend (service `pydantic-clai2`, account `encryption-key`). Pax reads that entry
@@ -1006,7 +1010,7 @@ When no usable keyring backend exists (keyring raises `NoKeyringError`,
 `InitError`, `RuntimeError`, or `PasswordSetError`, `kwallet.DBusKeyring`
 cannot open a wallet, or the backend does not retain the key, typical on a headless
 Linux box, over SSH, or on KDE / Steam Deck with KWallet disabled or unconfigured), credentials go to a
-`0600` file in `$XDG_CONFIG_HOME/pydantic-clai2/` (`~/.config/pydantic-clai2/` by
+`0600` file in `$XDG_CONFIG_HOME/pydantic-ai-pax/` (`~/.config/pydantic-ai-pax/` by
 default) instead, named for the account: Codex uses `credentials-openai-codex.json`,
 and the GitHub Copilot, vllm and openrouter connections use their own files. Like keyring entries,
 these files are per user, so `--database PATH` does not move them; `/login` says so in its
@@ -1324,7 +1328,11 @@ the full output of commands in place (see [How tool calls look](#how-tool-calls-
 Claude Code: the transcript is forgotten, but the conversation, your draft, and
 queued messages stay. During a turn, the response still streaming keeps showing.
 Use `/clear` to start a new conversation instead. Drag with the mouse to select
-text; releasing the button copies it to the clipboard and the footer says so.
+text, double-click to select a word, or triple-click to select a line; a line the panel
+wrapped counts as one, and its copy has no line break where it wrapped. Dragging after a
+double- or triple-click extends the selection by words or lines. Releasing the button
+copies the selection to the clipboard and the footer says so. A click on a URL opens it,
+and a double-click on one selects instead of opening it again.
 Locally Pax copies with `pbcopy` on macOS, PowerShell on Windows, and `wl-copy`,
 `xclip`, or `xsel` on Linux. Over SSH, or without one of those, it asks the
 terminal to copy with OSC 52, which some terminals need enabling first (iTerm2:
@@ -1424,8 +1432,8 @@ your draft as a separate message.
 
 Submitted prompts and slash commands persist across restarts for Up/Down recall,
 including multiline input. They are stored as plaintext in `input-history` next
-to `config.db`: `$XDG_CONFIG_HOME/pydantic-clai2/input-history`, or
-`~/.config/pydantic-clai2/input-history` by default. On POSIX the file is restricted
+to `config.db`: `$XDG_CONFIG_HOME/pydantic-ai-pax/input-history`, or
+`~/.config/pydantic-ai-pax/input-history` by default. On POSIX the file is restricted
 to its owner (mode 0600). Avoid entering secrets in the prompt: input history is
 not encrypted. Delete this file while Pax is closed to clear saved input.
 `/clear` (alias `/new`), or bare `clear`, starts a new saved conversation, without
@@ -2070,7 +2078,7 @@ next frame, with no restart.
 
 A changed speed, from the picker or `SECONDS`, is saved as that spinner's
 `interval` in `spinners.json` next to Pax's settings
-(`~/.config/pydantic-clai2/spinners.json`). The file is also where you add your
+(`~/.config/pydantic-ai-pax/spinners.json`). The file is also where you add your
 own; `/spinner init` writes a starter:
 
 ```json
@@ -2246,8 +2254,9 @@ whole request, which the model is told so it can make a stated choice and carry
 on. Several questions show progress in the title. The tool's transcript line
 names the questions by header, not their raw JSON. The editor's draft is
 preserved, and the question and your picks are printed to the transcript afterwards.
-Drag over the question, its header, or an option to select text; releasing copies it
-to the clipboard without choosing an answer. Transcript text remains selectable too.
+Drag over the question, its header, or an option, or double- or triple-click one, to
+select text; releasing copies it to the clipboard without choosing an answer. Transcript
+text remains selectable too.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for
@@ -3432,7 +3441,7 @@ class Search(Plugin):
         self.host.console.bell()
 ```
 
-Drop the file in `~/.config/pydantic-clai2/plugins/`, register anything
+Drop the file in `~/.config/pydantic-ai-pax/plugins/`, register anything
 importable with `/plugins add NAME module[:Class] [JSON]`, or clone a trusted
 repository with `/plugins add https://github.com/your-org/my-plugin.git`.
 Git repositories need an `__init__.py` or `plugin.py` at their root; install
@@ -3628,8 +3637,8 @@ same plugin; it appears as `observability` in `/plugins`.
 
 Set `LOGFIRE_TOKEN` to a write token for your Logfire project. Alternatively,
 place the SDK's `logfire_credentials.json` in your user config directory at
-`$XDG_CONFIG_HOME/pydantic-clai2/logfire/` (default
-`~/.config/pydantic-clai2/logfire/`). SDK configuration is also read only from
+`$XDG_CONFIG_HOME/pydantic-ai-pax/logfire/` (default
+`~/.config/pydantic-ai-pax/logfire/`). SDK configuration is also read only from
 that directory. The plugin ignores repository-local Logfire configuration and
 credentials, plus `LOGFIRE_CONFIG_DIR` and `LOGFIRE_CREDENTIALS_DIR`, so a checkout
 cannot choose the telemetry destination. Relative `XDG_CONFIG_HOME` values fall
