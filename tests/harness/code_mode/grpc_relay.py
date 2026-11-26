@@ -14,6 +14,7 @@ import struct
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
+from time import monotonic
 from typing import Any
 
 from grpclib.const import Cardinality, Handler, Status
@@ -51,6 +52,9 @@ class MontyRelay:
     """Refuse every stream with `UNAUTHENTICATED`, as a server does for a bad key."""
     refusal_causes: tuple[str, *tuple[str, ...]] | None = None
     """Refuse streams with one or more causes in order, repeating the last cause after exhaustion."""
+    refusal_hints: tuple[str | None, *tuple[str | None, ...]] = (None,)
+    """Trailing `Retry-After` values in order, repeating the last value after exhaustion."""
+    refusal_times: list[float] = field(default_factory=list[float])
     url: str = ''
     metadata: list[Mapping[str, str]] = field(default_factory=list[Mapping[str, str]])
     _streams: list[Stream[bytes, bytes]] = field(default_factory=list[Stream[bytes, bytes]])
@@ -74,9 +78,12 @@ class MontyRelay:
                 'unauthenticated': Status.UNAUTHENTICATED,
                 'permission_denied': Status.PERMISSION_DENIED,
             }.get(cause, Status.RESOURCE_EXHAUSTED)
-            await stream.send_trailing_metadata(
-                status=status, status_message='refused', metadata={'monty-cause': cause}
-            )
+            self.refusal_times.append(monotonic())
+            hint = self.refusal_hints[min(len(self.metadata), len(self.refusal_hints)) - 1]
+            trailers = {'monty-cause': cause}
+            if hint is not None:
+                trailers['retry-after'] = hint
+            await stream.send_trailing_metadata(status=status, status_message='refused', metadata=trailers)
             return
         if self.refuse:
             raise GRPCError(Status.UNAUTHENTICATED, 'unauthorized')
@@ -152,10 +159,14 @@ class _RelayServer(Server):
 
 @asynccontextmanager
 async def serve_monty_relay(
-    port: int = 0, *, refuse: bool = False, refusal_causes: tuple[str, *tuple[str, ...]] | None = None
+    port: int = 0,
+    *,
+    refuse: bool = False,
+    refusal_causes: tuple[str, *tuple[str, ...]] | None = None,
+    refusal_hints: tuple[str | None, *tuple[str | None, ...]] = (None,),
 ) -> AsyncGenerator[MontyRelay]:
     """Serve a relay with its URL set; one or more explicit causes override `refuse`."""
-    relay = MontyRelay(refuse=refuse, refusal_causes=refusal_causes)
+    relay = MontyRelay(refuse=refuse, refusal_causes=refusal_causes, refusal_hints=refusal_hints)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(('127.0.0.1', port))

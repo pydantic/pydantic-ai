@@ -9,8 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Never
@@ -21,7 +20,6 @@ from pydantic_monty import (
     AsyncFutureSnapshot,
     AsyncMonty,
     AsyncMontyRemote,
-    AsyncMontySession,
     AsyncSnapshot,
     ExternalSettledResult,
     MontyError,
@@ -297,15 +295,6 @@ async def test_disconnect_mid_snippet_reports_started_calls(monty_relay: MontyRe
 _SECRET = 'https://alice:secret@sandbox.example.com/?token=private Bearer factory-key'
 
 
-async def _native_refusal(cause: str) -> MontyRefusedError:
-    async with serve_monty_relay(refusal_causes=(cause,)) as relay:
-        async with AsyncMontyRemote(relay.url) as pool:
-            with pytest.raises(MontyRefusedError) as exc_info:
-                async with pool.checkout():
-                    pytest.fail('refusal server admitted a session')  # pragma: no cover
-    return exc_info.value
-
-
 @dataclass
 class _DisconnectError(Exception):
     cause: str | None
@@ -390,41 +379,48 @@ class TestCodeModeErrorRouting:
         assert str(exc_info.value) not in str(messages)
         assert relay.url not in str(messages)
         assert len(relay.metadata) == expected_checkouts
-        assert sleep.await_args_list == ([((0.1,), {})] if expected_checkouts == 2 else [])
+        if expected_checkouts == 2:
+            assert relay.refusal_times[1] - relay.refusal_times[0] >= 0.09
+        sleep.assert_not_awaited()
 
-    @pytest.mark.parametrize('cause', ['caller_cap', 'capacity', 'worker_unavailable'])
-    async def test_local_backed_factory_recovers_after_native_capacity_refusal(
-        self, monkeypatch: pytest.MonkeyPatch, local_backed_factory_pool: MagicMock, cause: str
+    @pytest.mark.parametrize(
+        ('hints', 'deadline', 'attempts', 'final_delay'),
+        [
+            pytest.param(('0',), 5, 2, 0.0, id='one-hinted-retry'),
+            pytest.param(('0', None), 5, 2, None, id='final-unhinted-refusal'),
+            pytest.param(('2',), 1, 1, 2.0, id='hint-exceeds-deadline'),
+            pytest.param(('3',), 5, 1, 3.0, id='hint-exceeds-sdk-delay-limit'),
+            pytest.param(('invalid',), 5, 1, None, id='invalid-hint'),
+        ],
+    )
+    async def test_harness_leaves_hinted_checkout_retry_to_sdk(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        hints: tuple[str | None, *tuple[str | None, ...]],
+        deadline: float,
+        attempts: int,
+        final_delay: float | None,
     ) -> None:
-        """A local-backed checkout proves successful retry without relying on the skipped remote bridge.
-
-        The first checkout raises an actual transport refusal; the second uses a real local session.
-        """
-        error = await _native_refusal(cause)
         sleep = AsyncMock()
         monkeypatch.setattr('anyio.sleep', sleep)
-        checkout = local_backed_factory_pool.checkout.side_effect
-        attempts = 0
+        async with serve_monty_relay(refusal_causes=('capacity',), refusal_hints=hints) as relay:
 
-        @asynccontextmanager
-        async def checkout_after_refusal(**kwargs: Any) -> AsyncGenerator[AsyncMontySession]:
-            nonlocal attempts
-            attempts += 1
-            if attempts == 1:
-                raise error
-            async with checkout(**kwargs) as session:
-                yield session
+            def checkout_pool() -> AsyncMontyRemote:
+                return AsyncMontyRemote(relay.url, checkout_timeout=deadline)
 
-        local_backed_factory_pool.checkout.side_effect = checkout_after_refusal
-        factory = MagicMock(return_value=local_backed_factory_pool)
-        agent = Agent(_snippets_model('1 + 1'), capabilities=[CodeMode(monty_sandbox=factory)])
-        result = await agent.run('recover after capacity refusal')
+            agent = Agent(_snippets_model('1 + 1'), capabilities=[CodeMode(monty_sandbox=checkout_pool)])
+            with capture_run_messages() as messages, pytest.raises(MontyRefusedError) as exc_info:
+                await agent.run('checkout')
 
-        assert _parts(result.all_messages(), ToolReturnPart)[-1].content == 2
-        assert _retries(result.all_messages()) == []
-        assert attempts == 2
-        factory.assert_called_once_with()
-        sleep.assert_awaited_once_with(0.1)
+        assert exc_info.value.status_message == 'refused'
+        assert exc_info.value.cause == 'capacity'
+        assert exc_info.value.retry_after == final_delay
+        assert _retries(messages) == []
+        assert str(exc_info.value) not in str(messages)
+        assert len(relay.refusal_times) == attempts
+        if attempts == 2:
+            assert relay.refusal_times[1] - relay.refusal_times[0] >= 0.09
+        sleep.assert_not_awaited()
 
     @pytest.mark.parametrize('error_type', [RuntimeError, UserError])
     async def test_local_backed_factory_checkout_error(
