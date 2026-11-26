@@ -106,7 +106,7 @@ def run(*, splash: Splash | None = None) -> None:
     parser.add_argument(
         '--web',
         action='store_true',
-        help='Drive Pax from a local web UI instead of the terminal prompt; prints the address and opens it',
+        help='(alpha) Drive Pax from a local web UI instead of the terminal prompt; prints the address and opens it',
     )
     parser.add_argument(
         '--port',

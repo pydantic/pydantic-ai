@@ -9,7 +9,8 @@ import ipaddress
 import os
 import secrets
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 
@@ -18,7 +19,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from rich.console import RenderableType
 
 from pydantic_ai import AgentStreamEvent
-from pydantic_ai.capabilities import AgentCapability
+from pydantic_ai.capabilities import AgentCapability, WrapperCapability
+from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness.ask_user import AskUser
 from pydantic_ai_pax.builtin_plugins.ask_user_menu import TerminalAnswerer, render_question
 from pydantic_ai_pax.builtin_plugins.web.app import ASGIApp, create_app
@@ -100,12 +102,16 @@ class WebPlugin(Plugin[WebSettings]):
         self.server: WebServer | None = None
         self.url: str | None = None
         self._launch_page: Path | None = None
+        self.offers_questions = True
+        """Whether the agent gets `ask_user_question`. `pax --web --agent` turns it off: the browser still answers
+        approvals there, but an agent of your own gets no tool it didn't define."""
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         observer = Observer(self.service)
         if not self.settings.ask_user:
             return (observer,)
-        return (observer, AskUser(answerer=self.service.answerer), approval_handler(self.service.answerer.approve))
+        questions = _OfferedQuestions(AskUser(answerer=self.service.answerer), offered=lambda: self.offers_questions)
+        return (observer, questions, approval_handler(self.service.answerer.approve))
 
     def get_commands(self) -> Sequence[Command]:
         return (
@@ -221,3 +227,13 @@ def _launch_page(url: str) -> Path:
             f'<a href="{html.escape(url)}">Open Pax</a>'
         )
     return Path(name)
+
+
+@dataclass
+class _OfferedQuestions(WrapperCapability[None]):
+    """`AskUser`, whose `ask_user_question` tool the agent gets only while `offered()` says so, checked each run."""
+
+    offered: Callable[[], bool] = lambda: True
+
+    def get_toolset(self) -> AgentToolset[None] | None:
+        return super().get_toolset() if self.offered() else None

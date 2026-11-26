@@ -938,8 +938,8 @@ async def test_run_web_serves_an_agent_of_your_own(tmp_path: Path, monkeypatch: 
                 await output.logged('Saved model. Applied.').wait()
                 assert (await snapshot()).status.model == 'test'
             group.cancel_scope.cancel()
-    # Its own tool, and the web UI's way to ask you questions; none of the stock plugins' tools.
-    assert offered == [['ask_user_question', 'shout']] * 2
+    # Only its own tool: the web UI adds no question tool to an agent of your own, nor any stock plugin's tools.
+    assert offered == [['shout']] * 2
     assert len(await SqliteConversationStore(database=store.path.with_name('sessions.db')).listing(limit=10)) == 1
 
 

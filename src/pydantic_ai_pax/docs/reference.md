@@ -3305,7 +3305,9 @@ appears once a turn reaches the sandbox, since getting it would start a stopped 
 Everything on the sandbox's screen, secrets included, goes to the model's provider in screenshots,
 and text on the screen can steer the model like any tool output.
 
-### Several sessions in the web UI
+### Several sessions in the web UI (alpha)
+
+The web UI is in alpha: expect rough edges and changes between releases.
 
 ```bash
 pax --web

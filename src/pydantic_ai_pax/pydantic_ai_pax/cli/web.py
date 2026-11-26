@@ -103,6 +103,7 @@ async def run_web(
             port=port,
             token=token,
             restart=restart,
+            own_agent=agent is not None,
         )
 
 
@@ -163,6 +164,7 @@ async def _serve_web(
     port: int | None,
     token: str | None,
     restart: WebHandoff | None,
+    own_agent: bool = False,
 ) -> None:
     """Run `shell`, the session Pax started with, serving the web UI until it ends; other live sessions end first."""
     reason: SessionEndReason = 'error'
@@ -180,6 +182,8 @@ async def _serve_web(
                 await shell.loader.load(WEB)
             web = _loaded_web(shell.loader)
             assert web is not None, 'a failed load raises'
+            # An agent of your own gets approvals in the browser, but no tool it didn't define.
+            web.offers_questions = not own_agent
             if resume is not None:
                 shell.session.record_resumed()
             if notice:
