@@ -5,6 +5,8 @@ import sys
 from dataclasses import dataclass
 from importlib.util import find_spec
 from pathlib import Path
+from types import NoneType
+from typing import Any, get_args
 
 from pydantic_ai.agent import AbstractAgent
 
@@ -82,10 +84,15 @@ def _agent_and_deps(value: object) -> ImportedAgent | None:
 
 
 def _without_deps(path: str, agent: AbstractAgent[object, object]) -> ImportedAgent:
-    """Refuse an agent whose `deps_type` needs deps, since none were supplied; it would fail mid-run otherwise."""
-    if agent.deps_type not in (type(None), object):
+    """Refuse an agent whose `deps_type` needs deps, since none were supplied; it would fail mid-run otherwise.
+
+    A `deps_type` that admits `None`, such as `Deps | None`, runs with `deps=None`.
+    """
+    deps_type: Any = agent.deps_type
+    if deps_type not in (NoneType, object, Any) and NoneType not in get_args(deps_type):
+        name = deps_type.__name__ if isinstance(deps_type, type) else str(deps_type)
         raise TypeError(
-            f'--agent {path}: the agent needs deps of type {agent.deps_type.__name__}; point --agent at a '
+            f'--agent {path}: the agent needs deps of type {name}; point --agent at a '
             'zero-argument function that returns (agent, deps) instead'
         )
     return ImportedAgent(agent=agent)

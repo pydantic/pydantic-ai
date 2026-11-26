@@ -205,8 +205,8 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
                         project=project,
                         resume=args.resume,
                         resume_from=args.resume_from,
-                        agent=imported and imported.agent,
-                        deps=imported and imported.deps,
+                        agent=imported.agent if imported else None,
+                        deps=imported.deps if imported else None,
                         session_id=args.session_id,
                         fork_session=args.fork_session,
                     )

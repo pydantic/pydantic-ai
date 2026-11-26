@@ -46,6 +46,8 @@ def fixture_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "    return f'key is {ctx.deps.api_key}'\n"
         'def with_deps():\n'
         "    return deps_agent, Deps(api_key='secret')\n"
+        'optional_deps_agent = Agent(TestModel(), deps_type=Deps | None)\n'
+        'listed_deps_agent = Agent(TestModel(), deps_type=list[Deps])\n'
         'def deps_agent_alone():\n'
         '    return deps_agent\n'
         'def make_agent():\n'
@@ -155,6 +157,7 @@ def test_import_agent_reports_a_launch_directory_target_named_like_an_installed_
         (f'{_MODULE}:make_triple', TypeError, 'got tuple'),
         (f'{_MODULE}:deps_agent', TypeError, 'the agent needs deps of type Deps'),
         (f'{_MODULE}:deps_agent_alone', TypeError, 'the agent needs deps of type Deps'),
+        (f'{_MODULE}:listed_deps_agent', TypeError, r'the agent needs deps of type list\[.*Deps\]'),
         ('clai_agent_flag_broken:agent', ModuleNotFoundError, 'clai_agent_flag_missing_dependency'),
     ],
 )
@@ -162,6 +165,12 @@ def test_import_agent_reports_a_launch_directory_target_named_like_an_installed_
 def test_import_agent_errors(path: str, error: type[Exception], message: str) -> None:
     with pytest.raises(error, match=message):
         import_agent(path)
+
+
+@pytest.mark.usefixtures('fixture_module')
+def test_import_agent_runs_an_agent_whose_deps_may_be_none_without_deps() -> None:
+    imported = import_agent(f'{_MODULE}:optional_deps_agent')
+    assert imported.deps is None
 
 
 @pytest.mark.parametrize(
