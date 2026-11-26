@@ -28,6 +28,7 @@ from pydantic_ai.durable_exec import DurableRunContext
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.realtime.codec import ResponseDone
 from pydantic_ai.telemetry import (
     current_run_telemetry,
     current_span,
@@ -40,6 +41,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
 
 from .conftest import Instrumented, try_import
+from .realtime.test_session import FakeRealtimeConnection, FakeRealtimeModel
 
 with try_import() as otel_sdk_installed:
     from opentelemetry.sdk.trace import TracerProvider
@@ -225,6 +227,23 @@ async def test_a_sub_agents_setup_does_not_trace_onto_its_parent(instrumented: I
     @parent.tool_plain
     async def delegate() -> str:
         return (await child.run('go')).output
+
+    await parent.run('go')
+
+    assert 'example helper' not in [span.name for span in exporter.get_finished_spans()]
+
+
+async def test_a_realtime_sessions_setup_does_not_trace_onto_its_parent(instrumented: Instrumented):
+    """A realtime session opened in a parent's tool prepares its capabilities before the session publishes."""
+    instrumentation, exporter = instrumented(False)
+    child = Agent(capabilities=[HelperWhenPrepared()])
+    parent = Agent(TestModel(call_tools=['talk']), capabilities=[instrumentation])
+
+    @parent.tool_plain
+    async def talk() -> str:
+        async with child.realtime(FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))).session() as session:
+            _ = [event async for event in session]
+        return 'ok'
 
     await parent.run('go')
 

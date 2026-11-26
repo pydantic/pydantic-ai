@@ -86,6 +86,7 @@ from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, File
 from pydantic_ai.output import PromptedOutput
 from pydantic_ai.realtime import RealtimeModelSettings
 from pydantic_ai.realtime.codec import InputTranscript, OutputTranscript, ResponseDone, ToolCall
+from pydantic_ai.telemetry import current_run_telemetry, open_span, set_content_attribute
 from pydantic_ai.tools import Tool, ToolDefinition
 
 from .conftest import try_import
@@ -142,6 +143,7 @@ SECRETS = {
     'model_settings': 'SENTINEL-model-settings',
     'deps': 'SENTINEL-deps',
     'validation_context': 'SENTINEL-validation-context',
+    'helper_content': 'SENTINEL-helper-content',
 }
 
 
@@ -1372,6 +1374,44 @@ async def test_no_content_reaches_telemetry_from_a_lowered_capabilitys_instructi
     check(exporter, include_content, {'user_prompt', 'capability_instruction', 'model_text'})
     exported = '\n'.join(_span_text(span) for span in exporter.get_finished_spans())
     assert ('capability:sentinel_lowered_block' in exported) is include_content
+
+
+def _record_without_a_context() -> str:
+    """What code with no `RunContext`, such as a workspace, records through the run's published telemetry."""
+    telemetry = current_run_telemetry()
+    with open_span(telemetry, 'example helper', content={'example.first': SECRETS['helper_content']}) as span:
+        set_content_attribute(telemetry, span, 'example.later', SECRETS['helper_content'])
+    return 'done'
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+@pytest.mark.parametrize('mode', ['run', 'realtime'])
+async def test_no_content_reaches_telemetry_from_a_helper_without_a_context(
+    include_content: bool, mode: Literal['run', 'realtime']
+) -> None:
+    """`current_run_telemetry()` carries the run's content setting to code that has no `RunContext`."""
+    settings, exporter = redacted_setup(include_content)
+
+    def lookup() -> str:
+        return _record_without_a_context()
+
+    if mode == 'run':
+        agent = Agent(
+            TestModel(call_tools=['lookup']), tools=[lookup], capabilities=[Instrumentation(settings=settings)]
+        )
+        await agent.run('go')
+    else:
+        connection = FakeRealtimeConnection(
+            [ToolCall(tool_call_id='call-1', tool_name='lookup', args='{}'), ResponseDone()]
+        )
+        realtime = Agent(capabilities=[Instrumentation(settings=settings)]).realtime(
+            FakeRealtimeModel(connection), toolsets=[FunctionToolset([lookup])]
+        )
+        async with realtime.session() as session:
+            _ = [event async for event in session]
+
+    assert 'example helper' in [span.name for span in exporter.get_finished_spans()]
+    check(exporter, include_content, {'helper_content'})
 
 
 @dataclass(frozen=True)
