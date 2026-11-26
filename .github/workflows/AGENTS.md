@@ -290,6 +290,14 @@ A clean OpenCode fallback approval satisfies the same gate as a Claude approval.
 An `engine=opencode-zai` review from before the Coding Plan moved to `glm-5.4` names `glm-5.3-flash` in its attribution.
 The gate and the `prior-findings` job read both attributions; `EARLIER_REVIEW_ATTRIBUTIONS` in `publish_douwebot_review.py` lists the earlier ones.
 
+`Gate: compliance lock` fails a PR that adds, changes, deletes or renames a file in `LOCKED_PATHS` of
+`.github/scripts/compliance_lock.py`, which lists the module itself, until it carries `compliance:approved`. The label counts only
+when its latest `labeled` event comes from a `User` with write access, after GitHub received the current head: after
+the PR's first `pull_request` workflow run on that head and after any force push. Both are GitHub's own times; commit
+dates aren't read. A push after the approval needs the label removed and added again. A fork PR's runs aren't linked
+to it, so the gate fails closed there. The gate runs default-branch code like the others, so a PR can't loosen it
+for itself.
+
 `pr-review-gates-events.yml` observes PR opens, pushes, reopening, edits, label changes, reviews
 and inline-comment changes with a read-only token, including on forks. GitHub Actions has no
 review-thread trigger, so resolving an optional finding's thread updates the status on the next wake-up. Its completion wakes

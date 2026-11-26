@@ -7,9 +7,10 @@ import shlex
 import shutil
 import subprocess
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import compliance_lock
 import pr_gates
 import publish_douwebot_review
 import pytest
@@ -546,6 +547,11 @@ class ReviewGitHub:
     statuses: list[tuple[str, review_gates.ReviewGate, review_gates.CommitStatus]] = field(
         default_factory=list[tuple[str, review_gates.ReviewGate, review_gates.CommitStatus]]
     )
+    events: list[review_gates.IssueEvent] = field(default_factory=list[review_gates.IssueEvent])
+    pushed: datetime | None = datetime(2026, 11, 26, 12, tzinfo=UTC)
+    """When this PR's first workflow run on the head started."""
+    permissions: dict[str, str] = field(default_factory=dict[str, str])
+    """The permission of each user other than the author."""
 
     def pull_request(self) -> review_gates.ReviewPullRequest:
         return review_gates.ReviewPullRequest.model_validate(
@@ -565,8 +571,14 @@ class ReviewGitHub:
         return self.files.copy()
 
     def permission(self, login: str) -> str:
-        assert login == self.author[0]
-        return self.author_permission
+        return self.author_permission if login == self.author[0] else self.permissions.get(login, 'none')
+
+    def issue_events(self) -> list[review_gates.IssueEvent]:
+        return self.events.copy()
+
+    def first_run_at(self, head: str) -> datetime | None:
+        assert head == self.head
+        return self.pushed
 
     def size(self, pull: review_gates.ReviewPullRequest) -> review_gates.Size:
         return self.size_label
@@ -601,7 +613,7 @@ def test_review_bar_by_size(size: review_gates.Size):
     github = ReviewGitHub(size_label=size, current_reviews=[])
     result = verdicts(github)
     assert bool(result['douwebot'].failures) is (size != 'size: S')
-    assert set(result) == {'douwebot', 'github-dir'}
+    assert set(result) == {'douwebot', 'github-dir', 'compliance'}
     github.current_reviews = [review()]
     assert all(not item.failures for item in verdicts(github).values())
 
@@ -823,14 +835,17 @@ ENV = {
 def test_reevaluation_replaces_a_failure_with_success_on_the_live_head():
     github = ReviewGitHub(current_reviews=[])
     assert review_gates.reconcile_reviews(github, ENV) == 0
-    assert github.statuses == [(HEAD, 'douwebot', 'failure'), (HEAD, 'github-dir', 'success')]
-    github.current_reviews = [review()]
-    assert review_gates.reconcile_reviews(github, ENV) == 0
     assert github.statuses == [
         (HEAD, 'douwebot', 'failure'),
         (HEAD, 'github-dir', 'success'),
+        (HEAD, 'compliance', 'success'),
+    ]
+    github.current_reviews = [review()]
+    assert review_gates.reconcile_reviews(github, ENV) == 0
+    assert github.statuses[3:] == [
         (HEAD, 'douwebot', 'success'),
         (HEAD, 'github-dir', 'success'),
+        (HEAD, 'compliance', 'success'),
     ]
 
 
@@ -845,7 +860,11 @@ def test_errors_and_changing_snapshots_fail_closed(error: Exception):
 
     github = Unreachable()
     assert review_gates.reconcile_reviews(github, ENV) == 1
-    assert github.statuses == [(HEAD, 'douwebot', 'failure'), (HEAD, 'github-dir', 'failure')]
+    assert github.statuses == [
+        (HEAD, 'douwebot', 'failure'),
+        (HEAD, 'github-dir', 'failure'),
+        (HEAD, 'compliance', 'failure'),
+    ]
 
     class Moving(ReviewGitHub):
         def pull_request(self) -> review_gates.ReviewPullRequest:
@@ -854,7 +873,11 @@ def test_errors_and_changing_snapshots_fail_closed(error: Exception):
 
     moving = Moving(current_reviews=[])
     assert review_gates.reconcile_reviews(moving, ENV) == 1
-    assert moving.statuses == [(HEAD, 'douwebot', 'failure'), (HEAD, 'github-dir', 'failure')]
+    assert moving.statuses == [
+        (HEAD, 'douwebot', 'failure'),
+        (HEAD, 'github-dir', 'failure'),
+        (HEAD, 'compliance', 'failure'),
+    ]
 
 
 def test_review_status_publication_errors_propagate():
@@ -902,7 +925,11 @@ def test_merge_group_skips_metadata_and_reports_every_gate():
 
     github = NoMetadata()
     assert review_gates.reconcile_reviews(github, {**ENV, 'MERGE_GROUP_SHA': OLD_HEAD}) == 0
-    assert github.statuses == [(OLD_HEAD, 'douwebot', 'success'), (OLD_HEAD, 'github-dir', 'success')]
+    assert github.statuses == [
+        (OLD_HEAD, 'douwebot', 'success'),
+        (OLD_HEAD, 'github-dir', 'success'),
+        (OLD_HEAD, 'compliance', 'success'),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1225,3 +1252,148 @@ def test_gate_uses_shared_calculator_with_base_attributes(
             review_gates.ReviewGhCli('o/r', 7).size(pull)
     else:
         assert review_gates.ReviewGhCli('o/r', 7).size(pull) == 'size: M'
+
+
+LOCKED = ChangedFile(filename='tests/models/test_claude_agent_compliance.py')
+PUSHED = datetime(2026, 11, 26, 12, tzinfo=UTC)
+
+
+def labeled(at: datetime, login: str = 'reviewer', type: str = 'User') -> review_gates.IssueEvent:
+    return review_gates.IssueEvent.model_validate(
+        {
+            'event': 'labeled',
+            'actor': {'id': 5, 'login': login, 'type': type},
+            'created_at': at,
+            'label': {'name': 'compliance:approved'},
+        }
+    )
+
+
+def compliance(github: ReviewGitHub) -> pr_gates.Verdict:
+    return verdicts(github)['compliance']
+
+
+def locked_pr(**kwargs: object) -> ReviewGitHub:
+    github = ReviewGitHub(files=[LOCKED], labels=['size: M', 'compliance:approved'], permissions={'reviewer': 'write'})
+    for name, value in kwargs.items():
+        setattr(github, name, value)
+    return github
+
+
+def test_a_pr_that_changes_no_locked_file_passes_the_compliance_lock():
+    assert compliance(ReviewGitHub()) == pr_gates.Verdict(summary=['No compliance-locked file changed.'])
+
+
+@pytest.mark.parametrize(
+    'file',
+    [
+        LOCKED,
+        ChangedFile(filename='.github/scripts/compliance_lock.py'),
+        ChangedFile(
+            filename='tests/models/test_other.py', previous_filename='tests/models/test_claude_agent_compliance.py'
+        ),
+    ],
+)
+def test_changing_a_locked_file_needs_the_approval_label(file: ChangedFile):
+    """An edit, a deletion, a rename out of the list and a change to the list itself are all locked."""
+    failures = compliance(ReviewGitHub(files=[file]))
+    assert failures.failures == [
+        f'Changes compliance-locked {file.previous_filename or file.filename}: '
+        'a maintainer reviews it and adds `compliance:approved`.'
+    ]
+
+
+def test_a_maintainers_label_after_the_push_approves_the_head():
+    github = locked_pr(events=[labeled(PUSHED + timedelta(minutes=5))])
+    assert compliance(github) == pr_gates.Verdict(
+        summary=['@reviewer approved the compliance-locked changes on this head.']
+    )
+
+
+@pytest.mark.parametrize(
+    'events',
+    [
+        pytest.param([], id='no labeled event'),
+        pytest.param([labeled(PUSHED + timedelta(minutes=5), login='outsider')], id='no write access'),
+        pytest.param([labeled(PUSHED + timedelta(minutes=5), login='reviewer', type='Bot')], id='an app'),
+        pytest.param(
+            [labeled(PUSHED + timedelta(minutes=1)), labeled(PUSHED + timedelta(minutes=2), login='outsider')],
+            id='the latest labeler counts',
+        ),
+    ],
+)
+def test_only_a_maintainer_can_approve(events: list[review_gates.IssueEvent]):
+    failures = compliance(locked_pr(events=events)).failures
+    assert failures == [
+        'Changes compliance-locked tests/models/test_claude_agent_compliance.py: '
+        'only a user with write access can add `compliance:approved`.'
+    ]
+
+
+@pytest.mark.parametrize(
+    'events',
+    [
+        pytest.param([labeled(PUSHED - timedelta(minutes=5))], id='labeled before the push'),
+        pytest.param(
+            [
+                labeled(PUSHED + timedelta(minutes=5)),
+                review_gates.IssueEvent(event='head_ref_force_pushed', created_at=PUSHED + timedelta(minutes=10)),
+            ],
+            id='a force push after the label',
+        ),
+    ],
+)
+def test_an_approval_from_before_the_head_doesnt_count(events: list[review_gates.IssueEvent]):
+    failures = compliance(locked_pr(events=events)).failures
+    assert failures == [
+        'Changes compliance-locked tests/models/test_claude_agent_compliance.py: '
+        '`compliance:approved` predates the head; a maintainer reviews it, then re-adds the label.'
+    ]
+
+
+def test_a_head_no_run_of_the_pr_shows_fails_closed():
+    """A fork PR's runs aren't linked to it, so when its head was pushed is unknown."""
+    failures = compliance(locked_pr(events=[labeled(PUSHED + timedelta(minutes=5))], pushed=None)).failures
+    assert failures == [
+        'Changes compliance-locked tests/models/test_claude_agent_compliance.py: '
+        'no workflow run of this PR shows when its head was pushed.'
+    ]
+
+
+def test_the_lock_covers_the_compliance_tests_and_itself():
+    assert {'tests/models/test_claude_agent_compliance.py', '.github/scripts/compliance_lock.py'} <= (
+        compliance_lock.LOCKED_PATHS
+    )
+    for path in compliance_lock.LOCKED_PATHS:
+        assert (Path(__file__).parents[2] / path).is_file(), path
+
+
+def test_the_gh_client_reads_history_and_this_prs_first_run_on_the_head(monkeypatch: pytest.MonkeyPatch):
+    """A run started for another branch with the same head isn't this PR's, so it doesn't date the push."""
+    responses = {
+        'repos/o/r/issues/7/events?per_page=100': [
+            [
+                {'event': 'labeled', 'actor': None, 'created_at': '2026-11-26T12:00:00Z', 'label': {'name': 'x'}},
+                {'event': 'head_ref_force_pushed', 'actor': None, 'created_at': '2026-11-26T12:01:00Z'},
+            ]
+        ],
+        f'repos/o/r/actions/runs?head_sha={HEAD}&event=pull_request&per_page=100': [
+            {
+                'workflow_runs': [
+                    {'created_at': '2026-11-26T11:00:00Z', 'pull_requests': [{'number': 8}]},
+                    {'created_at': '2026-11-26T12:05:00Z', 'pull_requests': [{'number': 7}]},
+                    {'created_at': '2026-11-26T12:03:00Z', 'pull_requests': [{'number': 7}]},
+                ]
+            }
+        ],
+    }
+
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert args[:4] == ['gh', 'api', '--paginate', '--slurp']
+        return subprocess.CompletedProcess(args, 0, json.dumps(responses.get(args[-1], [{'workflow_runs': []}])), '')
+
+    monkeypatch.setattr(pr_gates.subprocess, 'run', fake_run)
+    client = review_gates.ReviewGhCli('o/r', 7)
+    assert [event.event for event in client.issue_events()] == ['labeled', 'head_ref_force_pushed']
+    assert client.first_run_at(HEAD) == datetime(2026, 11, 26, 12, 3, tzinfo=UTC)
+    assert client.first_run_at(OLD_HEAD) is None

@@ -68,6 +68,8 @@ If douwebot already reviewed the head, triage its findings in step 4; otherwise 
 [`.github/workflows/AGENTS.md`](../../../.github/workflows/AGENTS.md#pr-review-checks-reviews-every-same-repository-pull-request-head) and [`publish_pr_review_checks.py`](../../../.github/scripts/publish_pr_review_checks.py) define the workflow and its verdict.
 A maintainer can pass a head despite its findings by applying `pr-review-checks:accepted`. That label covers only the current head; a push removes it.
 Never apply `pr-review-checks:accepted` yourself.
+`Gate: compliance lock` fails a PR that changes a file `.github/scripts/compliance_lock.py` lists until a maintainer adds `compliance:approved` after its last push.
+Never apply `compliance:approved` yourself, and never change a compliance-locked file to make a test pass: hand the failure to a maintainer.
 `PR Review Checks` posts as `github-actions[bot]` with its own `<!-- pr-review-checks run=… head=… -->` receipt. Its comments are not douwebot comments.
 
 ### Who merges

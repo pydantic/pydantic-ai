@@ -133,7 +133,7 @@ jobs:
               }
               head = pull.head.sha;
             }
-            for (const gate of ['Gate: clean douwebot approval', 'Gate: .github changes by a maintainer']) {
+            for (const gate of ['Gate: clean douwebot approval', 'Gate: .github changes by a maintainer', 'Gate: compliance lock']) {
               await github.rest.repos.createCommitStatus({
                 ...context.repo, sha: head, context: gate,
                 state: 'pending', description: 'Reading current files, size and reviews.',
@@ -148,6 +148,7 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
           sparse-checkout: |
+            .github/scripts/compliance_lock.py
             .github/scripts/pr_gates.py
             .github/scripts/review_gates.py
             .github/scripts/publish_douwebot_review.py

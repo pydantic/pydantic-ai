@@ -29,6 +29,11 @@ uv.lock                   @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
 /src/pydantic_ai_harness/pydantic_ai_harness/sub_agents/_capability.py  @DouweM @adtyavrdhn
 /src/pydantic_ai_harness/pydantic_ai_harness/sub_agents/_toolset.py     @DouweM @adtyavrdhn
 
+# What keeps `ClaudeAgentModel` within Anthropic's terms. `Gate: compliance lock` fails a change to these until a
+# maintainer adds `compliance:approved` after the last push; `.github/scripts/compliance_lock.py` lists them.
+/tests/models/test_claude_agent_compliance.py  @DouweM @adtyavrdhn @dsfaccini @mpfaffenberger
+/.github/scripts/compliance_lock.py            @DouweM @adtyavrdhn @dsfaccini @mpfaffenberger
+
 # This file, after `/.github/` because the last matching pattern wins.
 # The durable owners review it too, so no PR drops them from a path unseen.
 /.github/CODEOWNERS       @DouweM @adtyavrdhn @dsfaccini

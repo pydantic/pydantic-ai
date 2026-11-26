@@ -1,4 +1,4 @@
-"""Publish size-dependent review statuses, and the `.github/` change gate, from trusted default-branch code."""
+"""Publish size-dependent review statuses, and the `.github/` and compliance-lock gates, from default-branch code."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal, Protocol
 
+from compliance_lock import APPROVAL_LABEL, LOCKED_PATHS
 from pr_gates import ChangedFile, Commit, GateError, GhCli, Label, Verdict
 from publish_douwebot_review import (
     APPROVAL_BODY,
@@ -22,12 +23,13 @@ from publish_douwebot_review import (
 from publish_pr_review_checks import MARKER as PR_REVIEW_CHECKS_MARKER
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
-ReviewGate = Literal['douwebot', 'github-dir']
+ReviewGate = Literal['douwebot', 'github-dir', 'compliance']
 Size = Literal['size: S', 'size: M', 'size: L', 'size: XL']
 CommitStatus = Literal['pending', 'success', 'failure']
 REVIEW_CONTEXTS: dict[ReviewGate, str] = {
     'douwebot': 'Gate: clean douwebot approval',
     'github-dir': 'Gate: .github changes by a maintainer',
+    'compliance': 'Gate: compliance lock',
 }
 # Dependabot owns the action-pin bumps in `.github/workflows/` and holds no repository permission of its own.
 # Exact logins, not a `*[bot]` glob: `pydanty[bot]` builds branches out of outside text.
@@ -150,12 +152,26 @@ class _SizeResult(BaseModel):
     score: int
 
 
+class IssueEvent(BaseModel):
+    """An event in a pull request's history: a label change or a force push, with when GitHub recorded it."""
+
+    event: str
+    actor: ReviewUser | None = None
+    created_at: datetime
+    label: Label | None = None
+
+
 class ReviewGitHub(Protocol):
     """The metadata needed by the review gates."""
 
     def pull_request(self) -> ReviewPullRequest: ...
     def changed_files(self) -> list[ChangedFile]: ...
     def permission(self, login: str) -> str: ...
+    def issue_events(self) -> list[IssueEvent]: ...
+    def first_run_at(self, head: str) -> datetime | None:
+        """When GitHub started this PR's first `pull_request` workflow run on `head`, which a push of it starts."""
+        ...
+
     def size(self, pull: ReviewPullRequest) -> Size: ...
     def reviews(self) -> list[Review]: ...
     def review_comments(self) -> list[ReviewComment]: ...
@@ -172,7 +188,11 @@ def review_verdicts(
     resolved: set[int],
 ) -> dict[ReviewGate, Verdict]:
     """Apply the `.github/` change gate and the size-dependent review bar to a live metadata snapshot."""
-    verdicts: dict[ReviewGate, Verdict] = {'douwebot': Verdict(), 'github-dir': github_dir_change(github, pull)}
+    verdicts: dict[ReviewGate, Verdict] = {
+        'douwebot': Verdict(),
+        'github-dir': github_dir_change(github, pull),
+        'compliance': compliance_lock(github, pull),
+    }
     size = github.size(pull)
     size_labels = {label.name for label in pull.labels if label.name.startswith('size:')}
     if not size_labels:
@@ -217,11 +237,48 @@ def github_dir_change(github: ReviewGitHub, pull: ReviewPullRequest) -> Verdict:
     if not protected:
         return Verdict(summary=['No file under `.github/` changed.'])
     author = pull.user
-    if author.login in GITHUB_DIR_BOTS or (
-        author.type == 'User' and github.permission(author.login) in {'write', 'admin'}
-    ):
+    if author.login in GITHUB_DIR_BOTS or _maintainer(github, author):
         return Verdict(summary=[f'@{author.login} may change `.github/`.'])
     return Verdict(failures=[f'Only a maintainer may change `.github/`; this PR changes {", ".join(protected)}.'])
+
+
+def compliance_lock(github: ReviewGitHub, pull: ReviewPullRequest) -> Verdict:
+    """A change to a file in `LOCKED_PATHS` needs a maintainer's `APPROVAL_LABEL`, applied after the head was pushed.
+
+    The label counts once its latest `labeled` event comes from a `User` with write access after GitHub received the
+    current head: after this PR's first workflow run on it, and after any force push, which can return a branch to an
+    older head. Both times are GitHub's own; commit dates are the author's, so they aren't read. A fork PR's runs
+    aren't linked to it, so it can't be approved here: a maintainer recreates it as a same-repository PR.
+    """
+    locked = sorted(
+        {path for file in github.changed_files() for path in (file.filename, file.previous_filename) if path}
+        & LOCKED_PATHS
+    )
+    if not locked:
+        return Verdict(summary=['No compliance-locked file changed.'])
+    changes = f'Changes compliance-locked {", ".join(locked)}'
+    if APPROVAL_LABEL not in {label.name for label in pull.labels}:
+        return Verdict(failures=[f'{changes}: a maintainer reviews it and adds `{APPROVAL_LABEL}`.'])
+    events = github.issue_events()
+    labeled = [event for event in events if event.event == 'labeled' and event.label == Label(name=APPROVAL_LABEL)]
+    approval = max(labeled, key=lambda event: event.created_at, default=None)
+    if approval is None or approval.actor is None or not _maintainer(github, approval.actor):
+        return Verdict(failures=[f'{changes}: only a user with write access can add `{APPROVAL_LABEL}`.'])
+    approver = approval.actor
+    if (first_run := github.first_run_at(pull.head.sha)) is None:
+        return Verdict(failures=[f'{changes}: no workflow run of this PR shows when its head was pushed.'])
+    pushed = max([first_run, *(event.created_at for event in events if event.event == 'head_ref_force_pushed')])
+    if approval.created_at <= pushed:
+        return Verdict(
+            failures=[
+                f'{changes}: `{APPROVAL_LABEL}` predates the head; a maintainer reviews it, then re-adds the label.'
+            ]
+        )
+    return Verdict(summary=[f'@{approver.login} approved the compliance-locked changes on this head.'])
+
+
+def _maintainer(github: ReviewGitHub, user: ReviewUser) -> bool:
+    return user.type == 'User' and github.permission(user.login) in {'write', 'admin'}
 
 
 def douwebot_approval(
@@ -378,6 +435,23 @@ class _Permission(BaseModel):
 
 
 _PERMISSION = TypeAdapter(_Permission)
+_ISSUE_EVENT_PAGES = TypeAdapter(list[list[IssueEvent]])
+
+
+class _RunPullRequest(BaseModel):
+    number: int
+
+
+class _WorkflowRun(BaseModel):
+    created_at: datetime
+    pull_requests: list[_RunPullRequest]
+
+
+class _WorkflowRuns(BaseModel):
+    workflow_runs: list[_WorkflowRun]
+
+
+_WORKFLOW_RUN_PAGES = TypeAdapter(list[_WorkflowRuns])
 _SIZED_FILE_PAGES = TypeAdapter(list[list[_SizedFile]])
 _SIZED_FILES = TypeAdapter(list[_SizedFile])
 _REVIEW_PAGES = TypeAdapter(list[list[Review]])
@@ -419,6 +493,28 @@ class ReviewGhCli(GhCli):
             print(f'No repository permission for @{login}: {error}')
             return 'none'
         return permission.permission
+
+    def issue_events(self) -> list[IssueEvent]:
+        """Read every event of the PR's history, label changes and force pushes included."""
+        pages = _ISSUE_EVENT_PAGES.validate_json(
+            self._api('--paginate', '--slurp', f'{self._issue}/events?per_page=100')
+        )
+        return [event for page in pages for event in page]
+
+    def first_run_at(self, head: str) -> datetime | None:
+        """Read this PR's `pull_request` runs on `head`; a run started for another branch with the same head isn't one."""
+        pages = _WORKFLOW_RUN_PAGES.validate_json(
+            self._api(
+                '--paginate', '--slurp', f'{self._repo}/actions/runs?head_sha={head}&event=pull_request&per_page=100'
+            )
+        )
+        runs = [
+            run.created_at
+            for page in pages
+            for run in page.workflow_runs
+            if any(pull.number == self._number for pull in run.pull_requests)
+        ]
+        return min(runs, default=None)
 
     def size(self, pull: ReviewPullRequest) -> Size:
         """Use the same Git-attribute-aware calculation as PR Bots."""
