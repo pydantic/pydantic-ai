@@ -78,7 +78,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _provider_url: str
     _tool_call_ids_are_response_scoped: bool
     _process_provider_details: Callable[[responses.Response], dict[str, Any] | None]
-    _deepseek_web_tools: bool = False
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
     _usage_received: bool | None = field(default=False, init=False)
@@ -107,6 +106,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     """The history this response was created from, digested with its parts as `ModelResponse.history_digest`."""
     # Custom HTTP clients can return streams outside the SDK's AsyncStream class.
     _is_websocket: bool = False
+    _deepseek_web_tools: bool = field(default=False, kw_only=True)
 
     def get(self) -> ModelResponse:
         response = super().get()

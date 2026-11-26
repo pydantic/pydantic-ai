@@ -1,13 +1,24 @@
 """DeepSeek's Anthropic-compatible Messages endpoint."""
 
 import os
+from collections.abc import Mapping
+from typing import Any
 
 import httpx2
+from anthropic import AsyncAnthropic
 
+from .._http import create_async_httpx2_client
 from ..native_tools import WebFetchTool, WebSearchTool
 from ..profiles.anthropic import AnthropicModelProfile
 from . import missing_api_key_error
 from .anthropic import AnthropicProvider
+
+
+class _DeepSeekMessagesClient(AsyncAnthropic):
+    def __init__(self, *, default_headers: Mapping[str, str] | None = None, **kwargs: Any) -> None:
+        super().__init__(default_headers=default_headers, **kwargs)
+        # The SDK merges ANTHROPIC_CUSTOM_HEADERS again whenever with_options() constructs a copy.
+        self._custom_headers = dict(default_headers or {})
 
 
 class DeepSeekMessagesProvider(AnthropicProvider):
@@ -38,4 +49,12 @@ class DeepSeekMessagesProvider(AnthropicProvider):
         api_key = api_key or os.getenv('DEEPSEEK_API_KEY')
         if not api_key:
             raise missing_api_key_error('Set `DEEPSEEK_API_KEY` or pass `api_key` to `DeepSeekMessagesProvider`.')
-        super().__init__(api_key=api_key, base_url='https://api.deepseek.com/anthropic', http_client=http_client)
+        if http_client is None:
+            http_client = create_async_httpx2_client()
+            self._own_http_client = http_client
+            self._http_client_factory = create_async_httpx2_client
+        super().__init__(
+            anthropic_client=_DeepSeekMessagesClient(
+                api_key=api_key, base_url='https://api.deepseek.com/anthropic', http_client=http_client
+            )
+        )
