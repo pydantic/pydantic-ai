@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
+import shutil
 import sys
 import urllib.parse
 from collections.abc import Mapping
@@ -9,10 +11,14 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 import pytest
+import yaml
+from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).parent))
 import latest_versions_canary_report as report
 
+CANARY = Path(__file__).parents[1] / 'workflows' / 'latest-versions-canary.yml'
+NIGHTLY = CANARY.with_name('latest-versions-canary-nightly.yml')
 REPO = 'pydantic/pydantic-ai'
 BOT = 'github-actions[bot]'
 DAY = dt.timedelta(days=1)
@@ -469,6 +475,58 @@ def test_a_missing_leg_makes_the_run_incomplete(tmp_path: Path, root: Path):
     reports = tmp_path / 'reports'
     write_leg(reports, '3.11', cases=[case('tests/models/test_anthropic.py', 'test_request', UNION_311)])
     assert not report.collect(reports, root).complete
+
+
+class _Step(BaseModel):
+    uses: str = ''
+    settings: dict[str, str] = Field(default_factory=dict[str, str], alias='with')
+
+
+class _Job(BaseModel):
+    env: dict[str, str] = Field(default_factory=dict[str, str])
+    steps: list[_Step] = Field(default_factory=list[_Step])
+
+
+class _Workflow(BaseModel):
+    jobs: dict[str, _Job]
+
+
+def _step(path: Path, job: str, action: str) -> tuple[_Job, _Step]:
+    # `BaseLoader` reads every scalar as a string, as the runner receives `with:` inputs.
+    workflow = _Workflow.model_validate(yaml.load(path.read_text(encoding='utf-8'), Loader=yaml.BaseLoader))
+    (step,) = [step for step in workflow.jobs[job].steps if step.uses.startswith(f'actions/{action}@')]
+    return workflow.jobs[job], step
+
+
+def test_one_uploaded_leg_or_two_land_where_the_report_job_reads_them(tmp_path: Path, root: Path):
+    leg, upload = _step(CANARY, 'latest-versions', 'upload-artifact')
+    _, download = _step(NIGHTLY, 'report', 'download-artifact')
+    # A leg writes its report only under `canary-report/$REPORT_NAME/` and uploads `canary-report/`, so the
+    # artifact holds one directory named like the artifact.
+    assert upload.settings['name'] == '${{ env.REPORT_NAME }}'
+    assert upload.settings['path'] == '${{ runner.temp }}/canary-report/'
+    outside = re.compile(r'canary-report/(?!\$\{REPORT_NAME\}|\$\{\{ env\.REPORT_NAME \}\}|$)', re.MULTILINE)
+    assert outside.findall(CANARY.read_text(encoding='utf-8')) == []
+
+    # A runner lost mid-run leaves one artifact, as in https://github.com/pydantic/pydantic-ai/actions/runs/45775560566.
+    for pythons in (['3.11', '3.15'], ['3.15']):
+        reports = tmp_path / '-'.join(pythons) / 'reports'
+        for python in pythons:
+            name = leg.env['REPORT_NAME'].replace('${{ matrix.python-version }}', python)
+            assert name == f'latest-versions-canary-{python}'
+            # The leg's `canary-report/`.
+            uploaded = tmp_path / '-'.join(pythons) / python
+            write_leg(uploaded, python, cases=[case('tests/models/test_anthropic.py', 'test_request', UNION_311)])
+            # `actions/download-artifact` v8.0.2 extracts into `path` itself when `merge-multiple` is set or
+            # one artifact matched, and each artifact into `path/<name>/` otherwise.
+            merged = download.settings.get('merge-multiple') == 'true' or len(pythons) == 1
+            shutil.copytree(uploaded, reports if merged else reports / name, dirs_exist_ok=True)
+
+        observation = report.collect(reports, root)
+        assert {signature: sorted(failure.pythons) for signature, failure in observation.failures.items()} == {
+            UNION: pythons
+        }
+        assert observation.complete == (len(pythons) == 2)
 
 
 def test_new_signature_files_one_labeled_issue_with_fenced_evidence(tmp_path: Path, root: Path):

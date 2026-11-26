@@ -2697,7 +2697,7 @@ class _WindowsCommandsBackend:
     workspace_platform = 'windows'
 
     async def working_dir(self) -> str:
-        raise NotImplementedError
+        return 'C:\\project'
 
     async def run(
         self,
