@@ -2,10 +2,10 @@
 Source tapes/common.tape
 Output shots/theme.txt
 Hide
-Type 'clai-demo' Enter
+Type 'pax-demo' Enter
 Wait+Screen /\| ready/
 Type '/theme' Enter
-Wait+Screen /enter apply/
+Wait+Screen /Enter apply/
 Type '/tokyo_night'
 Show
 Sleep 1500ms
@@ -19,7 +19,7 @@ Escape
 Sleep 500ms
 Sleep 1s
 Type '/theme' Enter
-Wait+Screen /enter apply/
+Wait+Screen /Enter apply/
 Type '/github_light'
 Show
 Sleep 1500ms

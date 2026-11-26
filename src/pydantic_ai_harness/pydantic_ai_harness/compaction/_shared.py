@@ -1125,12 +1125,49 @@ def _is_harness_marker_part(part: ModelRequestPart) -> bool:
     return is_pinned(part) or is_receipt_part(part) or is_harness_data(part)
 
 
+def is_user_part(part: ModelRequestPart) -> TypeGuard[UserPromptPart]:
+    """Whether *part* is a user prompt the user wrote, not a pin, receipt or harness capability's content."""
+    return isinstance(part, UserPromptPart) and not _is_harness_marker_part(part)
+
+
+def starts_user_turn(message: ModelMessage) -> TypeGuard[ModelRequest]:
+    """Whether *message* is a `ModelRequest` carrying a user prompt, not only harness bookkeeping or data."""
+    return isinstance(message, ModelRequest) and any(is_user_part(part) for part in message.parts)
+
+
+def user_turn_starts(messages: Sequence[ModelMessage]) -> list[int]:
+    """Indices of the requests in *messages* that start a user turn.
+
+    A request carrying a user prompt starts one, unless it also answers a tool call within a run: core
+    sends a `ToolReturn`'s `content` as a user prompt next to the tool's result. A run that ends on an
+    output tool leaves that tool's return as a trailing request, and core merges the next run's prompt
+    into it, so a request that answers a tool call still starts a turn when the responses around it
+    belong to different runs. Without run ids to compare, it continues the turn, which keeps more
+    rather than less; so does a prompt sent along with deferred tool results in the run they resume.
+    """
+    starts: list[int] = []
+    previous_run_id: str | None = None
+    for index, message in enumerate(messages):
+        if isinstance(message, ModelResponse):
+            previous_run_id = message.run_id
+        elif starts_user_turn(message) and (
+            not any(_is_tool_reply(part) for part in message.parts)
+            or _starts_new_run(previous_run_id, messages[index + 1 :])
+        ):
+            starts.append(index)
+    return starts
+
+
+def _starts_new_run(previous_run_id: str | None, later: Sequence[ModelMessage]) -> bool:
+    """Whether the first response in *later* belongs to a different run than *previous_run_id*."""
+    following_run_id = next((message.run_id for message in later if isinstance(message, ModelResponse)), None)
+    return previous_run_id is not None and following_run_id is not None and previous_run_id != following_run_id
+
+
 def find_first_user_message(messages: list[ModelMessage]) -> ModelRequest | None:
     """Return the first `ModelRequest` that contains a `UserPromptPart`, or `None`."""
     for message in messages:
-        if isinstance(message, ModelRequest) and any(
-            isinstance(part, UserPromptPart) and not _is_harness_marker_part(part) for part in message.parts
-        ):
+        if starts_user_turn(message):
             return message
     return None
 
@@ -1171,7 +1208,7 @@ non-JSON placeholder would reach the provider as malformed function arguments.
 
 
 @dataclass(frozen=True)
-class _ToolPair:
+class ToolPair:
     """A matched tool call and its return, with the order the return appeared."""
 
     tool_call_id: str
@@ -1180,7 +1217,7 @@ class _ToolPair:
     order: int
 
 
-def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[_ToolPair]:
+def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[ToolPair]:
     """Return matched tool-call / tool-return pairs in return-appearance order.
 
     A retried return (`outcome='retried'`) isn't a result: it tells the model to make the call again. It
@@ -1202,13 +1239,18 @@ def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[_ToolPair]:
         if isinstance(part, ToolReturnPart) and part.outcome != 'retried' and part.tool_call_id in calls
     ]
     return [
-        _ToolPair(part.tool_call_id, calls[part.tool_call_id].tool_name, calls[part.tool_call_id], order)
+        ToolPair(part.tool_call_id, calls[part.tool_call_id].tool_name, calls[part.tool_call_id], order)
         for order, part in enumerate(returns)
     ]
 
 
 CLEARED_TOOL_RESULT_METADATA = 'pydantic-ai-harness.compaction.cleared-tool-result.v1'
 """Model-invisible `ToolReturnPart.metadata` key marking a result compaction has cleared."""
+
+
+def _has_clearable_type(part: ToolReturnPart) -> bool:
+    """Whether *part* is a plain `ToolReturnPart` or a `read_file` return, the types `cleared_return` clears."""
+    return type(part) is ToolReturnPart or part.tool_kind == READ_FILE_KIND.id
 
 
 def cleared_return(part: ToolReturnPart, placeholder: str) -> ToolReturnPart | None:
@@ -1224,9 +1266,9 @@ def cleared_return(part: ToolReturnPart, placeholder: str) -> ToolReturnPart | N
     `is_cleared_return` recognizes it without trusting its model-visible content. A typed part with
     other metadata can't be marked, so it isn't cleared.
     """
-    is_plain = type(part) is ToolReturnPart
-    if not is_plain and part.tool_kind != READ_FILE_KIND.id:
+    if not _has_clearable_type(part):
         return None
+    is_plain = type(part) is ToolReturnPart
     metadata = part.metadata
     if metadata is None:
         metadata = {CLEARED_TOOL_RESULT_METADATA: True}
@@ -1240,6 +1282,11 @@ def cleared_return(part: ToolReturnPart, placeholder: str) -> ToolReturnPart | N
     return replace(part, content=placeholder, metadata=metadata)
 
 
+def has_cleared_mark(part: ToolReturnPart) -> bool:
+    """Whether *part* carries the mark `cleared_return` leaves in its metadata, whichever strategy cleared it."""
+    return is_str_dict(part.metadata) and part.metadata.get(CLEARED_TOOL_RESULT_METADATA) is True
+
+
 def is_cleared_return(part: ToolReturnPart, placeholder: str) -> bool:
     """Whether a compaction using *placeholder* cleared *part*.
 
@@ -1251,22 +1298,50 @@ def is_cleared_return(part: ToolReturnPart, placeholder: str) -> bool:
     """
     if str(part.content) != placeholder:
         return False
-    metadata = part.metadata
-    return type(part) is ToolReturnPart or (
-        is_str_dict(metadata) and metadata.get(CLEARED_TOOL_RESULT_METADATA) is True
-    )
+    return type(part) is ToolReturnPart or has_cleared_mark(part)
+
+
+PLACEHOLDER_FUNCTION_METADATA = 'pydantic-ai-harness.compaction.cleared-by-placeholder-function.v1'
+"""Model-invisible `ToolReturnPart.metadata` key marking a result cleared with a placeholder function.
+
+Set next to `CLEARED_TOOL_RESULT_METADATA`, which other strategies set too: a function's output differs
+per result, so this key is what tells `ClearToolResults` which cleared results are its own.
+"""
+
+
+def is_cleared_by_placeholder_function(part: ToolReturnPart) -> bool:
+    """Whether a compaction with a placeholder function cleared *part*."""
+    return is_str_dict(part.metadata) and part.metadata.get(PLACEHOLDER_FUNCTION_METADATA) is True
+
+
+def _clear_once(part: ToolReturnPart, placeholder: str | Callable[[ToolReturnPart], str]) -> ToolReturnPart | None:
+    """*part* cleared with *placeholder*, or `None` if it is already cleared or can't be cleared.
+
+    A string placeholder recognizes its own clears by their content, as it always has. A function's
+    output differs per part, so its clears are recognized by their metadata marks instead, and a part
+    whose metadata can't hold them is left alone: clearing it again would call the placeholder on its
+    own output.
+    """
+    if isinstance(placeholder, str):
+        return cleared_return(part, placeholder) if str(part.content) != placeholder else None
+    metadata: object = {} if part.metadata is None else part.metadata
+    if not is_str_dict(metadata) or has_cleared_mark(part) or not _has_clearable_type(part):
+        return None
+    marks = {CLEARED_TOOL_RESULT_METADATA: True, PLACEHOLDER_FUNCTION_METADATA: True}
+    return replace(part, content=placeholder(part), metadata={**metadata, **marks})
 
 
 def rebuild_with_cleared(
     messages: Sequence[ModelMessage],
     clear_return_ids: set[str],
     clear_input_ids: set[str],
-    placeholder: str,
+    placeholder: str | Callable[[ToolReturnPart], str],
 ) -> list[ModelMessage]:
     """Return *messages* with selected tool results (and optionally inputs) blanked.
 
     The `ToolReturnPart` / `ToolCallPart` are kept in place with placeholder content,
     so tool-call pairing is never broken.  Already-blanked parts are left untouched. A
+    callable *placeholder* is called once per part it clears, with the original part. A
     `load_capability` call keeps its input: core reads which capability is loaded from it.
     """
     contents = dict.fromkeys(clear_return_ids, placeholder)
@@ -1286,17 +1361,15 @@ def replace_returns(messages: Sequence[ModelMessage], contents: Mapping[str, str
     return [_clear_returns(message, contents) if isinstance(message, ModelRequest) else message for message in messages]
 
 
-def _clear_returns(message: ModelRequest, contents: Mapping[str, str]) -> ModelRequest:
+def _clear_returns(
+    message: ModelRequest, contents: Mapping[str, str | Callable[[ToolReturnPart], str]]
+) -> ModelRequest:
     """*message* with the returns in *contents* replaced, or *message* itself when none changes."""
     request_parts: list[ModelRequestPart] = []
     changed = False
     for part in message.parts:
         content = contents.get(part.tool_call_id) if isinstance(part, ToolReturnPart) else None
-        cleared = (
-            cleared_return(part, content)
-            if isinstance(part, ToolReturnPart) and content is not None and str(part.content) != content
-            else None
-        )
+        cleared = _clear_once(part, content) if isinstance(part, ToolReturnPart) and content is not None else None
         if cleared is not None:
             request_parts.append(cleared)
             changed = True

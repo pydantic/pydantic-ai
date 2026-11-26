@@ -22,9 +22,10 @@ JavaScript-rendered SPAs, and interactive multi-step flows.
     This page covers driving the browser from the host model: typed,
     deterministic actions, one tool call at a time. To hand an open-ended goal
     to an autonomous agent that drives the browser for you, see
-    [Browser Use](browser-use.md). Give an agent one or the other: each
-    capability runs its own browser, so a session opened by one is not visible
-    to the other.
+    [Browser Use](browser-use.md). For one raw Chrome DevTools Protocol tool
+    that code calls in loops, see [CDP Browser](cdp-browser.md). Give an agent
+    one of them: each capability runs its own browser, so a session opened by
+    one is not visible to the others.
 
 ```mermaid
 flowchart TB
@@ -335,7 +336,9 @@ those of workers registered before attachment, unless
 attachment bypass the guards, and so does a new WebSocket opened through the
 browser's own `WebSocket` constructor if script that ran before attachment kept
 a reference to it. A page loaded before attachment can still register a worker
-until it navigates.
+until it navigates. Those documents also keep the page APIs the session removes
+under an enforced policy (see [Egress and SSRF](#egress-and-ssrf)) until they
+navigate.
 
 ### Provisioning a browser per run
 
@@ -562,6 +565,32 @@ private-address block ignores that split entirely: it applies to every frame and
 every resource type. WebSocket connections, which a network route never sees, get
 their own guard, applying the same policy the table above describes.
 
+Some page APIs open connections or send requests that neither guard sees: WebRTC
+(`RTCPeerConnection`), WebTransport, `WebSocketStream`, and FedCM, whose requests
+the browser sends itself. Under an enforced policy, which
+`block_private_addresses=True` makes the default, every context the session uses
+gets an init script that removes `RTCPeerConnection`, `webkitRTCPeerConnection`,
+`WebTransport`, `WebSocketStream`, `IdentityCredential` and `IdentityProvider`,
+and rejects a `navigator.credentials.get` call that carries `identity`. A browser
+the session launches also starts with
+`--disable-blink-features=FedCm,WebSocketStream`. A session with nothing to
+enforce keeps them all.
+
+These paths stay outside the policy:
+
+- **Workers.** The init script does not reach dedicated, nested or shared workers.
+  A worker can open a WebTransport connection, and in a browser reached over
+  `cdp_url`, a `WebSocketStream`.
+- **Sandboxed iframes Chromium isolates.** The full Chromium binary runs a
+  sandboxed iframe in a process of its own and gives it `WebTransport` back. This
+  affects `headless=False` and `cdp_url` browsers, not the default headless
+  launch.
+- **Documents loaded before attachment** under `cdp_context='default'` keep every
+  API the script removes until they navigate.
+
+Where these paths matter, enforce egress outside the browser with a firewall or a
+filtering proxy that also covers UDP.
+
 A host that is not already an address is resolved before the private-address block
 classifies it, so a name pointing at an internal address (`169.254.169.254.nip.io`
 and similar wildcard DNS services) is refused rather than followed. That lookup runs
@@ -657,8 +686,8 @@ not a guarantee.
 - [Browser automation with Pydantic-AI + Playwright](https://techcommunity.microsoft.com/blog/azuredevcommunityblog/browser-automation-with-pydantic-ai--playwright/4547971) (Microsoft) -- this
   capability driving a manual QA pass over a live site, wired to Microsoft
   Foundry models, with the run's OpenTelemetry traces.
-- [Browser Use](browser-use.md) -- the other browser capability. Each runs its
-  own browser, so give an agent one or the other.
+- [Browser Use](browser-use.md) and [CDP Browser](cdp-browser.md) -- the other
+  browser capabilities. Each runs its own browser, so give an agent one of them.
 - [Playwright for Python](https://playwright.dev/python/) -- the automation
   library underneath, and the reference for selector syntax.
 - [Capabilities](../capabilities/overview.md)

@@ -30,6 +30,7 @@ from opentelemetry.trace import Tracer
 from playwright._impl._errors import TargetClosedError
 from playwright.async_api import Error as PlaywrightError, StorageState, TimeoutError as PlaywrightTimeoutError
 
+import pydantic_ai_harness._browser_egress as egress_module
 import pydantic_ai_harness.playwright._toolset as toolset_module
 from pydantic_ai import Agent, AgentRunResult
 from pydantic_ai.agent.spec import AgentSpec
@@ -50,6 +51,7 @@ from pydantic_ai_harness.playwright import (
     BrowserEvent,
     BrowserUnavailableError,
     BrowserUnavailableWarning,
+    CdpContextMode,
     EgressPolicy,
     EgressRequest,
     PlaywrightBrowser,
@@ -283,6 +285,7 @@ class _FakeBrowserContext:
         self.websocket_routes: list[str] = []
         self.websocket_handler: Callable[[_FakeWebSocketRoute], Awaitable[None]] | None = None
         self.init_scripts: list[str] = []
+        self.init_scripts_at_first_page: list[str] | None = None
 
     @property
     def pages(self) -> list[_FakePage]:
@@ -294,6 +297,7 @@ class _FakeBrowserContext:
 
     async def new_page(self) -> _FakePage:
         if not self.opened:
+            self.init_scripts_at_first_page = list(self.init_scripts)
             self.opened.append(self.page)
             return self.page
         page = _FakePage(url='about:blank', title='')
@@ -715,6 +719,7 @@ class _FakeChromium:
         self.connected: list[str] = []
         self.no_defaults: list[bool | None] = []
         self.launch_timeouts: list[int] = []
+        self.launch_args: list[list[str]] = []
         self.browser: _FakePlaywrightBrowser | None = None
         self.browsers: list[_FakePlaywrightBrowser] = []
 
@@ -723,11 +728,17 @@ class _FakeChromium:
         return self._executable_path
 
     async def launch(
-        self, *, headless: bool, chromium_sandbox: bool = False, timeout: int | None = None
+        self,
+        *,
+        headless: bool,
+        chromium_sandbox: bool = False,
+        timeout: int | None = None,
+        args: Sequence[str] | None = None,
     ) -> _FakePlaywrightBrowser:
         self.launched.append(headless)
         self.sandboxed.append(chromium_sandbox)
         self.launch_timeouts.append(timeout if timeout is not None else -1)
+        self.launch_args.append(list(args or ()))
         if self._launch_error is not None:
             raise self._launch_error
         self.browser = _FakePlaywrightBrowser(self._page, close_error=self._close_error)
@@ -1414,9 +1425,24 @@ _BLOCKED_ADDRESS_HOSTS = [
     'app.localhost',
     'localhost.',
     '169.254.169.254.',
+    'fec0::1',
+    '2606:4700:a9fe:a9fe::',
+    '2606:4700:4700:1111:a9:fea9:fe00:0',
+    '2606:4700:4700:1111::a9fe:a9fe',
+    '2606:4700::5efe:169.254.169.254',
+    '2606:4700::5efe:10.0.0.1',
+    '2606:4700::200:5efe:192.168.1.1',
 ]
 
-_PUBLIC_ADDRESS_HOSTS = ['example.com', '8.8.8.8', '2606:4700:4700::1111', 'localhost.example.com', 'my-localhost.dev']
+_PUBLIC_ADDRESS_HOSTS = [
+    'example.com',
+    '8.8.8.8',
+    '2606:4700:4700::1111',
+    'localhost.example.com',
+    'my-localhost.dev',
+    '2606:4700:4700:1111::808:808',
+    '::ffff:8.8.8.8',
+]
 
 
 class TestPrivateAddressBlocking:
@@ -1498,7 +1524,7 @@ class TestNameResolutionBlocking:
             looked_up.append(host)
             return (address,)
 
-        monkeypatch.setattr(toolset_module, '_getaddrinfo', resolve)
+        monkeypatch.setattr(egress_module, 'getaddrinfo', resolve)
         return looked_up
 
     async def test_navigate_refuses_a_name_that_resolves_private(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1653,7 +1679,7 @@ class TestNameResolutionBlocking:
         async def unresolvable(host: str) -> tuple[str, ...]:
             raise socket.gaierror('Name or service not known')
 
-        monkeypatch.setattr(toolset_module, '_getaddrinfo', unresolvable)
+        monkeypatch.setattr(egress_module, 'getaddrinfo', unresolvable)
         page = _FakePage()
         result = await _toolset(page).navigate('https://nope.invalid/')
         assert result == (
@@ -1668,7 +1694,7 @@ class TestNameResolutionBlocking:
         async def unencodable(host: str) -> tuple[str, ...]:
             raise UnicodeError('label empty or too long')
 
-        monkeypatch.setattr(toolset_module, '_getaddrinfo', unencodable)
+        monkeypatch.setattr(egress_module, 'getaddrinfo', unencodable)
         page = _FakePage()
         result = await _toolset(page).navigate('http://a..com/')
         assert result == (
@@ -1681,13 +1707,13 @@ class TestResolutionIsBounded:
     """The lookup runs before an operation's deadline exists, so it carries its own."""
 
     async def test_a_stalled_resolver_does_not_hold_the_call(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(toolset_module, '_RESOLUTION_TIMEOUT_SECONDS', 0.01)
+        monkeypatch.setattr(egress_module, 'RESOLUTION_TIMEOUT_SECONDS', 0.01)
 
         async def never_answers(host: str) -> tuple[str, ...]:
             await asyncio.Event().wait()
             raise AssertionError('unreachable')  # pragma: no cover
 
-        monkeypatch.setattr(toolset_module, '_getaddrinfo', never_answers)
+        monkeypatch.setattr(egress_module, 'getaddrinfo', never_answers)
         result = await _toolset(_FakePage()).navigate('https://example.com/')
         # Bounded, and refused rather than allowed: an attacker who controls the name
         # controls how long its lookup takes, so a stall must not be a way through.
@@ -1707,7 +1733,7 @@ class TestResolutionCaching:
         assert looked_up == ['example.com']
 
     async def test_a_full_cache_is_emptied_rather_than_grown(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(toolset_module, '_RESOLUTION_CACHE_MAX', 1)
+        monkeypatch.setattr(egress_module, 'RESOLUTION_CACHE_MAX', 1)
         looked_up = TestNameResolutionBlocking._pointing_at(monkeypatch, '93.184.216.34')  # pyright: ignore[reportPrivateUsage]
         toolset = _toolset(_FakePage())
         await toolset.navigate('https://one.example/')
@@ -2359,7 +2385,7 @@ class TestPlaywrightBrowserLifecycle:
         assert all(not existing.closed and not existing.handlers for existing in context.pages)
         # The check can wait on a loading frame while the inherited pages run, so the guards are already on.
         assert context.routes == ['**/*'] and context.websocket_routes == ['**/*']
-        assert len(context.init_scripts) == 1 and 'ServiceWorkerContainer.prototype.register' in context.init_scripts[0]
+        assert len(context.init_scripts) == 2 and 'ServiceWorkerContainer.prototype.register' in context.init_scripts[0]
 
     async def test_default_context_rechecks_inactive_tabs_and_recovers_once_fixed(self) -> None:
         page = _FakePage(url='about:blank', body='Allowed content')
@@ -2387,7 +2413,7 @@ class TestPlaywrightBrowserLifecycle:
                 await asyncio.Event().wait()
             return ('93.184.216.34',)
 
-        monkeypatch.setattr(toolset_module, '_getaddrinfo', resolve)
+        monkeypatch.setattr(egress_module, 'getaddrinfo', resolve)
 
         def inherit(context: _FakeBrowserContext) -> None:
             # A fresh page per connection: a retried attach reconnects and sees new frame objects.
@@ -2403,12 +2429,12 @@ class TestPlaywrightBrowserLifecycle:
             assert 'retry the call to check the rest' in await tools.tabs()
             assert looked_up == ['example.com', 'frame0.example.org']
             # As if the lookup cache had churned: only the session's own record of admitted documents remains.
-            toolset_module._resolution_cache.clear()  # pyright: ignore[reportPrivateUsage]
+            egress_module.resolution_cache.clear()
             looked_up.clear()
             stalled -= {'frame0.example.org', 'frame1.example.org'}
             assert 'retry the call to check the rest' in await tools.tabs()
             assert looked_up == ['frame0.example.org', 'frame1.example.org', 'frame2.example.org']
-            toolset_module._resolution_cache.clear()  # pyright: ignore[reportPrivateUsage]
+            egress_module.resolution_cache.clear()
             looked_up.clear()
             stalled.clear()
             assert await tools.tabs() == '0 (active): Crowded -- https://example.com/'
@@ -2423,7 +2449,7 @@ class TestPlaywrightBrowserLifecycle:
             looked_up.append(host)
             return ('93.184.216.34',)
 
-        monkeypatch.setattr(toolset_module, '_getaddrinfo', resolve)
+        monkeypatch.setattr(egress_module, 'getaddrinfo', resolve)
         page = _FakePage(url='https://example.com/', title='Embedding')
         frame = _FakeFrameContent(url='https://embed.example.org/')
         page.frames.append(frame)
@@ -2436,21 +2462,21 @@ class TestPlaywrightBrowserLifecycle:
             tools = _toolset(page, session=session)
             await tools.tabs()
             assert looked_up == ['example.com', 'embed.example.org']
-            toolset_module._resolution_cache.clear()  # pyright: ignore[reportPrivateUsage]
+            egress_module.resolution_cache.clear()
             looked_up.clear()
             await tools.tabs()
             assert looked_up == []
             frame.url = 'https://blocked.example/'
             assert 'blocked by the browser policy' in await tools.tabs()
         frame.url = 'https://embed.example.org/'
-        toolset_module._resolution_cache.clear()  # pyright: ignore[reportPrivateUsage]
+        egress_module.resolution_cache.clear()
         looked_up.clear()
         # A new use of the session checks everything again.
         async with session:
             tools = _toolset(page, session=session)
             await tools.tabs()
             assert looked_up == ['example.com', 'embed.example.org']
-        toolset_module._resolution_cache.clear()  # pyright: ignore[reportPrivateUsage]
+        egress_module.resolution_cache.clear()
         looked_up.clear()
         # So does another session on the same browser: the record belongs to one session, and each run
         # gets its own session (`test_for_run_isolates_state`).
@@ -2474,7 +2500,7 @@ class TestPlaywrightBrowserLifecycle:
             looked_up.append(host)
             return (addresses[host],)
 
-        monkeypatch.setattr(toolset_module, '_getaddrinfo', resolve)
+        monkeypatch.setattr(egress_module, 'getaddrinfo', resolve)
 
         def inherit(context: _FakeBrowserContext) -> None:
             page = _FakePage(url='https://example.com/', title='Embedding')
@@ -2490,7 +2516,7 @@ class TestPlaywrightBrowserLifecycle:
             assert looked_up == ['example.com', 'embed.example.org']
             # The name now points inward, and the lookup cache has expired.
             addresses['embed.example.org'] = '127.0.0.1'
-            toolset_module._resolution_cache.clear()  # pyright: ignore[reportPrivateUsage]
+            egress_module.resolution_cache.clear()
             looked_up.clear()
             # The loaded document is not checked again, but every new request to its host is.
             assert await tools.tabs() == '0 (active): Embedding -- https://example.com/'
@@ -2642,7 +2668,7 @@ class TestPlaywrightBrowserLifecycle:
         assert len(context.pages) == max(tabs, 1)
         assert context.routes == ['**/*']
         assert context.websocket_routes == ['**/*']
-        assert len(context.init_scripts) == 1 and 'ServiceWorkerContainer.prototype.register' in context.init_scripts[0]
+        assert len(context.init_scripts) == 2 and 'ServiceWorkerContainer.prototype.register' in context.init_scripts[0]
         assert context.accept_downloads is None
         for existing in context.pages:
             assert existing.popup_events == ['popup']
@@ -3122,7 +3148,8 @@ class TestPlaywrightBrowserLifecycle:
         assert [c.storage_state for c in browser.contexts] == [_STORAGE_STATE]
         assert [c.service_workers for c in browser.contexts] == ['block']
         assert page.context.routes == ['**/*']
-        assert page.context.init_scripts == []  # the context's own `service_workers='block'` covers it
+        # The context's own `service_workers='block'` covers it, so the one script is the enforced-policy one.
+        assert len(page.context.init_scripts) == 1 and 'ServiceWorkerContainer' not in page.context.init_scripts[0]
 
     async def test_storage_state_defaults_to_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         page = _FakePage()
@@ -4262,6 +4289,87 @@ class TestWebSocketEgress:
         ]
 
 
+class TestEnforcedPolicyPageApis:
+    """An enforced policy limits the page APIs of every browser the session uses."""
+
+    @pytest.mark.parametrize(
+        ('cdp_url', 'cdp_context'),
+        [(None, 'new'), ('http://localhost:9222', 'new'), ('http://localhost:9222', 'default')],
+        ids=['launched', 'cdp-new-context', 'cdp-default-context'],
+    )
+    async def test_every_context_gets_the_script_under_an_enforced_policy(
+        self, monkeypatch: pytest.MonkeyPatch, cdp_url: str | None, cdp_context: CdpContextMode
+    ) -> None:
+        page = _FakePage()
+        _install_fake_driver(monkeypatch, page)
+        if cdp_context == 'default':
+            _populate_default_context(monkeypatch, tabs=1)
+        agent = Agent(
+            TestModel(call_tools=['screenshot']),
+            capabilities=[PlaywrightBrowser(cdp_url=cdp_url, cdp_context=cdp_context)],
+        )
+        await agent.run('screenshot the page')
+        [script] = [script for script in page.context.init_scripts if 'WebTransport' in script]
+        for name in (
+            'RTCPeerConnection',
+            'webkitRTCPeerConnection',
+            'WebTransport',
+            'WebSocketStream',
+            'IdentityCredential',
+            'IdentityProvider',
+        ):
+            assert f'delete self.{name};' in script
+        assert 'container.prototype.get = function (options)' in script
+        assert 'copy.identity !== undefined' in script
+
+    @pytest.mark.parametrize('cdp_url', [None, 'http://localhost:9222'], ids=['launched', 'cdp-new-context'])
+    async def test_the_first_page_opens_with_the_script_in_place(
+        self, monkeypatch: pytest.MonkeyPatch, cdp_url: str | None
+    ) -> None:
+        page = _FakePage()
+        _install_fake_driver(monkeypatch, page)
+        agent = Agent(TestModel(call_tools=['screenshot']), capabilities=[PlaywrightBrowser(cdp_url=cdp_url)])
+        await agent.run('screenshot the page')
+        assert page.context.init_scripts_at_first_page == page.context.init_scripts
+
+    async def test_no_script_when_nothing_is_enforced(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        page = _FakePage()
+        _install_fake_driver(monkeypatch, page)
+        agent = Agent(
+            TestModel(call_tools=['screenshot']), capabilities=[PlaywrightBrowser(block_private_addresses=False)]
+        )
+        await agent.run('screenshot the page')
+        assert page.context.init_scripts == []
+
+    @pytest.mark.parametrize('block_private_addresses', [True, False], ids=['enforced', 'nothing-enforced'])
+    async def test_launch_switches_follow_the_policy(
+        self, monkeypatch: pytest.MonkeyPatch, block_private_addresses: bool
+    ) -> None:
+        cm = _install_fake_driver(monkeypatch, _FakePage())
+        agent = Agent(
+            TestModel(call_tools=['screenshot']),
+            capabilities=[PlaywrightBrowser(block_private_addresses=block_private_addresses)],
+        )
+        await agent.run('screenshot the page')
+        switches: list[str] = ['--disable-blink-features=FedCm,WebSocketStream'] if block_private_addresses else []
+        assert cm.driver.chromium.launch_args == [switches]
+
+    async def test_a_browser_installed_on_demand_gets_the_launch_switches(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cm = _install_fake_driver(monkeypatch, _FakePage(), executable_missing=True)
+
+        async def installed() -> None:
+            return None
+
+        monkeypatch.setattr(toolset_module, '_auto_install_chromium', installed)
+        agent = Agent(
+            TestModel(call_tools=['screenshot']), capabilities=[PlaywrightBrowser(auto_install_chromium=True)]
+        )
+        await agent.run('screenshot the page')
+        assert cm.driver.chromium.launch_args == [['--disable-blink-features=FedCm,WebSocketStream']]
+
+
 class TestMessageRedaction:
     async def test_a_console_message_loses_its_credentials(self) -> None:
         page = _FakePage()
@@ -4410,7 +4518,12 @@ class _HangingContextBrowser(_FakePlaywrightBrowser):
 
 class _HangingContextChromium(_FakeChromium):
     async def launch(
-        self, *, headless: bool, chromium_sandbox: bool = False, timeout: int | None = None
+        self,
+        *,
+        headless: bool,
+        chromium_sandbox: bool = False,
+        timeout: int | None = None,
+        args: Sequence[str] | None = None,
     ) -> _FakePlaywrightBrowser:
         return _HangingContextBrowser(self._page)
 
@@ -5084,3 +5197,17 @@ class TestReviewFollowUps:
         assert f'URL: {redacted}' in await toolset.click('a#next')
         assert f'URL: {redacted}' in await toolset.go_back()
         assert redacted in await toolset.tabs('list')
+
+
+@pytest.mark.parametrize(
+    ('url', 'reason'),
+    [
+        ('https://example.com/a', 'domain in blocked_domains'),
+        ('https://example.com/a?b=c#d', 'domain in blocked_domains'),
+        ('https://example.com/a?b=c\\d', 'domain in blocked_domains'),
+        ('https://example.com\\a?b=c', 'URL with no host'),
+    ],
+)
+def test_url_host_parses_up_to_the_query(url: str, reason: str) -> None:
+    policy = EgressPolicy(blocked_domains=['example.com'])
+    assert policy.refuse(EgressRequest(url=url, kind='navigation')) == reason

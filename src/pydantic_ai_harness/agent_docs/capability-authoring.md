@@ -272,8 +272,14 @@ Pick by asking what the capability's toolset registers:
   way `StackOne` uses `stackone-{account_id}` and Pydantic AI's `MCP` uses its
   URL. Two resources stay two capabilities; two of one resource collide, which
   is the right answer for a mistake.
-- **Neither: hooks, guards, observers** -- no default `id`. Several per agent
-  is the normal shape, and `CombinedCapability` chains them.
+- **Hooks that apply one run-wide policy** (a wrap-up, a budget, a run-level
+  setting) -- declare a default `id`: this is the "single fixed concern" of
+  [Building Custom Capabilities](../../../docs/capabilities/custom.md), and a
+  second instance can only repeat or contradict the first. Override `combine` when the field-by-field merge picks
+  the wrong value, such as a margin that should take the larger of two.
+- **Hooks, guards, observers that compose** (several validators, several
+  observers) -- no default `id`. Several per agent is the normal shape, and
+  `CombinedCapability` chains them.
 
 ### An `id` Is Not A Namespace
 
@@ -318,6 +324,12 @@ reason from what the capability actually does, not from what would be
 convenient: a reason like "one per rooted directory" is wrong if the toolset's
 fixed tool names make two unreachable.
 
+The same entry is what the conformance contracts run: a capability whose
+toolset or tool hooks run when a tool is called also declares `calls`, and
+each area in
+[Capability Conformance](../../../agent_docs/capability-conformance.md) says
+what else the entry must pass.
+
 ## Telemetry
 
 Decide what a capability emits to OpenTelemetry while designing it, not after
@@ -335,15 +347,15 @@ adds no spans because core's `Instrumentation` already covers the run, and
 would grow the trace without recording a decision. Write the reason down. An
 undocumented silence is indistinguishable from an oversight.
 
-The house pattern uses four functions from `pydantic_ai._telemetry`, plus `records_content` for
-content that costs something to build. The module's other names (`RunTelemetry`,
-`current_run_telemetry`, `run_telemetry_scope`) are how code without a `ctx` reaches the run's
+The house pattern uses four functions from the public `pydantic_ai.telemetry` module, the same ones a
+user writing their own capability uses, plus `records_content` for content that costs something to
+build. `RunTelemetry` and `current_run_telemetry` are how code without a `ctx` reaches the run's
 telemetry. Each function takes the run first, as its `ctx` or, where there is none,
 `current_run_telemetry()`, and does nothing when that run isn't traced, so an uninstrumented run
 pays nothing:
 
 ```python
-from pydantic_ai._telemetry import current_span, open_span, record_decision, set_content_attribute
+from pydantic_ai.telemetry import current_span, open_span, record_decision, set_content_attribute
 
 # Work that takes time and can fail (a hypothetical `notes` capability).
 with open_span(ctx, 'notes search', attributes={'notes.backend': backend}, content={'notes.query': query}) as span:
@@ -383,12 +395,13 @@ What to record, and where:
 
 - Prefer an attribute on a span that is already open, through `current_span(ctx)`. In a tool hook
   (`before_tool_execute`, `after_tool_execute`, `wrap_tool_execute`) that is the call's `execute_tool`
-  span; in `before_model_request` it is the request's `chat` span. This holds because `Instrumentation`
-  is outermost; a capability that is also outermost and listed before an explicit `Instrumentation`
-  sees the enclosing span instead. Don't call `opentelemetry.trace.get_current_span()` directly: in an
+  span; in `before_model_request` it is the request's `chat` span. The helpers work only inside the
+  run's `agent run` span: in `for_run`, and in a `wrap_run` of a capability that is also outermost and
+  listed before an explicit `Instrumentation`, they do nothing. Don't call `opentelemetry.trace.get_current_span()` directly: in an
   uninstrumented run it returns whatever span the application has open, such as its request span.
 - `current_span(ctx)` in a tool's own body, including a toolset's `call_tool`, is also that call's
-  `execute_tool` span, not only the span seen by tool hooks.
+  `execute_tool` span, not only the span seen by tool hooks, except in a durable unit that runs out of
+  process, such as a Temporal activity, where it is `INVALID_SPAN`.
 - Take `current_span(ctx)` before or after nested work, never while a child span may be current in
   another task.
 - A durable-unit context that did not carry the tracer makes every telemetry helper a no-op: the unit
@@ -396,8 +409,8 @@ What to record, and where:
 - Holding a `RunTelemetry` for one operation and clearing it in `finally` is not storing a tracer.
 - Give a decision its own `record_decision` when there's no span to put it on, when one span can see
   several decisions (guards in a chain), or when operators should find it by name across capabilities
-  (`guardrail blocked input`, `spend budget exhausted`). It is currently a zero-duration span and may
-  become an OpenTelemetry event (#11562) without changing the call.
+  (`guardrail blocked input`, `spend budget exhausted`). It is a span that ends at once today; its public
+  docstring says a later release may record it as a span event (#11562) under the same name and attributes.
 - Open a span for work with its own duration, and give slow setup, such as starting a sandbox or a
   browser, its own child span, so it isn't mistaken for the work that triggered it.
 - Record what was acted on and what happened (ids, counts, sizes, outcomes) as plain attributes, so
@@ -410,8 +423,9 @@ Content:
   run captures content. A trace has a wider audience than the application that produced it.
 - Never put content in a span's name or in `logfire.msg`. Logfire does not scrub `logfire.msg`.
 - `open_span` records an uncaught error by its type only, unless the run captures content, because an
-  exception message can quote content. Pass `not_errors=` for an exception that is an expected answer,
-  such as a `FileNotFoundError` from an existence check.
+  exception message can quote content. A cancellation is not an error and leaves the status unset. For
+  an exception that is an expected answer, such as a `FileNotFoundError` from an existence check, catch
+  it inside the span and record the outcome as an attribute.
 - `content=` and `attributes=` are built even when nothing is recorded, so pass plain values. When
   building a content value costs something or can raise, such as `str()` of an object a guard returned
   or a serialized message, build it only `if records_content(ctx)` and pass `None` otherwise:
