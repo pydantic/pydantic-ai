@@ -744,6 +744,29 @@ def _share_metadata(value: object, memo: dict[int, Any]) -> None:
                 _share_metadata(child, memo)
 
 
+def says_the_same(a: object, b: object) -> bool:
+    """Whether `a` and `b` tell the model the same, comparing every field but `metadata`, which the model doesn't read.
+
+    A durable hook's return comes back through its engine rebuilt, with application metadata that needn't equal the
+    original, such as a tuple that comes back a list, so a hook that changed nothing still compares the same.
+    """
+    if is_dataclass(a) and not isinstance(a, type):
+        return type(a) is type(b) and all(
+            says_the_same(getattr(a, f.name), getattr(b, f.name))
+            for f in fields(a)
+            if f.compare and f.name != 'metadata'
+        )
+    if isinstance(a, list | tuple) and isinstance(b, list | tuple):
+        first, second = cast(Sequence[object], a), cast(Sequence[object], b)
+        return len(first) == len(second) and all(says_the_same(x, y) for x, y in zip(first, second))
+    if isinstance(a, dict) and isinstance(b, dict):
+        first_map, second_map = cast(dict[object, object], a), cast(dict[object, object], b)
+        return first_map.keys() == second_map.keys() and all(
+            says_the_same(value, second_map[key]) for key, value in first_map.items()
+        )
+    return a == b
+
+
 def _snapshot_item(snapshot: MessagesSnapshot, item: ModelResponse | ModelRequestPart, said: object) -> None:
     snapshot.received.append(item)
     snapshot.said[id(item)] = said
@@ -813,10 +836,10 @@ class _Added:
         if said is _NOT_RECEIVED:
             if isinstance(item, ModelRequest):
                 return True
-            return not any(item == old for old in self._snapshot.copies.get(_fingerprint(item), ()))
+            return not any(says_the_same(item, old) for old in self._snapshot.copies.get(_fingerprint(item), ()))
         if isinstance(item, ModelRequest):
             return _request_shape(item) != said
-        return item != said
+        return not says_the_same(item, said)
 
 
 def _held_part(part: ModelRequestPart, capability_id: str, ceiling: Authority) -> ModelRequestPart:

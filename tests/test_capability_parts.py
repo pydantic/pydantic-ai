@@ -2126,6 +2126,25 @@ class _ChangesTheResponseThenRetries(AbstractCapability[Any]):
         raise ModelRetry('Try again.')
 
 
+@dataclass
+class _HandsOnARebuiltResponse(AbstractCapability[Any]):
+    """Returns a copy of the response from `after_model_request`, as a hook that runs as a durable step gets back."""
+
+    async def after_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        [rebuilt] = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([response]))
+        assert isinstance(rebuilt, ModelResponse)
+        return rebuilt
+
+
+def test_a_capability_below_operator_can_hand_on_a_rebuilt_response() -> None:
+    """A copy that says the same isn't a response of its own."""
+    model = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('Done.')]))
+    agent = Agent(model, capabilities=[_HandsOnARebuiltResponse(id='plugin').with_authority('user')])
+    assert agent.run_sync('Go.').output == 'Done.'
+
+
 @pytest.mark.parametrize('via', ['after', 'wrap'])
 def test_a_capability_below_operator_cannot_change_the_response_a_retry_keeps(via: Literal['after', 'wrap']) -> None:
     """The retry keeps the model's response in history, so a change made to it before the retry is refused too."""

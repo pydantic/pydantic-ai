@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal, Self, cast
 from pydantic import ValidationError
 from typing_extensions import TypeIs
 
-from pydantic_ai._enqueue import copy_said, hold_added_messages, hold_feedback, snapshot_messages
+from pydantic_ai._enqueue import copy_said, hold_added_messages, hold_feedback, says_the_same, snapshot_messages
 from pydantic_ai._history_mirroring import keep_mirroring
 from pydantic_ai._instructions import (
     AgentInstruction,
@@ -1218,7 +1218,7 @@ class _HeldHandler:
 
     def handed_on(self, error: BaseException) -> bool:
         """Whether `error` is one the handler raised, unchanged."""
-        return any(error is raised and _what_it_says(error) == said for raised, said in self._raised)
+        return any(error is raised and says_the_same(_what_it_says(error), said) for raised, said in self._raised)
 
 
 def _make_tool_validate_wrap(
@@ -1477,7 +1477,10 @@ def _check_instructions_unchanged(
 
     The model reads them as the operator's, so there's no lower authority to hold them to. Removing them adds nothing.
     """
-    if any(part not in instructions for part in request_context.model_request_parameters.instruction_parts or ()):
+    if any(
+        not any(says_the_same(part, old) for old in instructions)
+        for part in request_context.model_request_parameters.instruction_parts or ()
+    ):
         capability_id, ceiling = held
         raise UserError(
             f"Capability {capability_id!r} has {ceiling!r} authority, so it cannot add to or change the request's "
@@ -1510,7 +1513,8 @@ async def _after_model_request_held(
         _check_handler_responses_unchanged(held, [(response, parts)], 'in `after_model_request`')
         hold_feedback(e, held)
         raise
-    if returned is not response:
+    # A durable hook's return comes back through its engine as a new object, so what the model reads is compared.
+    if returned is not response and not says_the_same(returned.parts, parts):
         raise _writes_model_turn(held, 'return a different response from `after_model_request`')
     _check_handler_responses_unchanged(held, [(response, parts)], 'in `after_model_request`')
     return returned
@@ -1531,7 +1535,7 @@ def _check_handler_responses_unchanged(
     where: str = 'its handler returned in `wrap_model_request`',
 ) -> None:
     """Raise if a capability below operator authority changed a response's parts in place since they were copied."""
-    if any(response.parts != parts for response, parts in responses):
+    if any(not says_the_same(response.parts, parts) for response, parts in responses):
         raise _writes_model_turn(held, f"change the response's parts {where}")
 
 
