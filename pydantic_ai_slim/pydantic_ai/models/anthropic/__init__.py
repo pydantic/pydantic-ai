@@ -1505,17 +1505,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> ModelSettings | None:
         """Drop the sampling settings the model rejects alone or with the rest of the request."""
         profile = self.profile
-        if profile.get('anthropic_disallows_sampling_settings', False) or self._api_version_rejects_sampling(
-            model_settings
-        ):
+        if profile.get('anthropic_disallows_sampling_settings', False):
             filtered: ModelSettings = {**model_settings}
             self._drop_unsupported_sampling_settings(filtered)
+            return filtered or None
+        if api_version := self._sampling_rejecting_api_version(model_settings):
+            filtered = {**model_settings}
+            self._drop_unsupported_sampling_settings(filtered, api_version=api_version)
             return filtered or None
         thinking = request_thinking_type(profile, model_settings, model_request_parameters) is not None
         return drop_conflicting_sampling_settings(model_settings, profile, thinking=thinking) or None
 
-    def _api_version_rejects_sampling(self, model_settings: ModelSettings) -> bool:
-        """Whether the request's API version rejects `temperature`, `top_p` and `top_k` on every model.
+    def _sampling_rejecting_api_version(self, model_settings: ModelSettings) -> str | None:
+        """The request's API version, if it rejects `temperature`, `top_p` and `top_k` on every model.
 
         `anthropic>=2` sends `anthropic-version: 2026-10-21` by default, which rejects them even at their defaults.
         The version is the client's `default_headers` entry, unless the request's `extra_headers` sets its own.
@@ -1529,9 +1531,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # The SDK folds header names case-insensitively, the last one winning, and drops one set to `omit`.
             if name.lower() == 'anthropic-version':
                 version = value if isinstance(value, str) else ''
-        return version >= _SAMPLING_REJECTED_API_VERSION
+        return version if version >= _SAMPLING_REJECTED_API_VERSION else None
 
-    def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
+    def _sampling_rejection_reason(self, api_version: str | None) -> str:
+        if api_version is None:
+            return f'are not supported by {self.model_name!r}'
+        return (
+            f'are rejected by Anthropic API version {api_version!r}, which `anthropic>=2` sends by default; '
+            "set the client's `anthropic-version` header to '2023-06-01' to keep them"
+        )
+
+    def _drop_unsupported_sampling_settings(
+        self, model_settings: ModelSettings, *, api_version: str | None = None
+    ) -> None:
+        """Drop the sampling settings, warning that the model, or the API version if given, rejects them."""
         dropped = {setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in model_settings}
         extra_body = model_settings.get('extra_body')
         if is_str_dict(extra_body):
@@ -1546,7 +1559,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if dropped:
             ordered = [setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in dropped]
             warnings.warn(
-                f'Sampling parameters {ordered} are not supported by {self.model_name!r}. These settings will be ignored.',
+                f'Sampling parameters {ordered} {self._sampling_rejection_reason(api_version)}. '
+                'These settings will be ignored.',
                 UserWarning,
                 stacklevel=2,
             )

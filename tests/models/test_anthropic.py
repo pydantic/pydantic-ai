@@ -7294,9 +7294,14 @@ async def test_anthropic_api_version_2026_10_21_drops_sampling_settings(
     m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, model_settings=AnthropicModelSettings(temperature=0, extra_body={'metadata': {'keep': True}}))
 
-    with pytest.warns(UserWarning, match='Sampling parameters'):
+    with pytest.warns(UserWarning) as recorded:
         await agent.run('What is 2+2?')
 
+    assert [str(w.message) for w in recorded if 'Sampling parameters' in str(w.message)] == snapshot(
+        [
+            "Sampling parameters ['temperature'] are rejected by Anthropic API version '2026-10-21', which `anthropic>=2` sends by default; set the client's `anthropic-version` header to '2023-06-01' to keep them. These settings will be ignored."
+        ]
+    )
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert kwargs['extra_body'] == {'metadata': {'keep': True}}
 
