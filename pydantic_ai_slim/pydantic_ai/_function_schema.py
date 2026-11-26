@@ -86,7 +86,7 @@ class FunctionSchema:
     json_parameter_serializers: dict[str, SchemaSerializer] = field(default_factory=dict[str, SchemaSerializer])
     """A serializer for each parameter whose schema takes a `Json` value, for `dump_json_parameters`."""
     json_kwargs_serializer: SchemaSerializer | None = None
-    """A serializer for the arguments `**kwargs` takes, when its schema takes a `Json` value, for `dump_json_parameters`."""
+    """A serializer for the arguments `**kwargs` takes, when its schema takes a `Json` value."""
 
     @cached_property
     def parameter_names(self) -> dict[str, str]:
@@ -135,7 +135,7 @@ class FunctionSchema:
     def dump_json_parameters(
         self, args_dict: dict[str, Any], *, by_alias: bool | None, round_trip: bool
     ) -> dict[str, Any]:
-        """Dump each validated argument whose parameter takes a `Json` value in JSON mode, with those values as JSON strings.
+        """Dump each validated argument whose parameter takes a `Json` value, with those values as JSON strings.
 
         A validated `Json` value is the parsed value, which `validator` rejects, as it reads a JSON string. Arguments
         that cross a boundary as JSON go through this first, so `revalidate` reads them back. Only `round_trip=True`
@@ -419,7 +419,7 @@ _NON_SCHEMA_KEYS = frozenset({'metadata', 'serialization', 'default'})
 def _json_argument_serializers(
     schema: core_schema.CoreSchema, single_arg_name: str | None, core_config: core_schema.CoreConfig
 ) -> tuple[dict[str, SchemaSerializer], SchemaSerializer | None]:
-    """Build `FunctionSchema.json_parameter_serializers` and `json_kwargs_serializer` from the cleaned arguments `schema`."""
+    """Build `FunctionSchema.json_parameter_serializers` and `json_kwargs_serializer` from the arguments `schema`."""
     definitions: list[core_schema.CoreSchema] = []
     if schema['type'] == 'definitions':
         definitions = schema['definitions']
