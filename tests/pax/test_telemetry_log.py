@@ -1,5 +1,6 @@
 """Telemetry SDK warnings, such as failed Logfire exports, go to a file instead of over the interactive editor."""
 
+import asyncio
 import io
 import logging
 import os
@@ -197,10 +198,57 @@ async def test_a_root_handler_added_during_the_session_still_gets_records(
     assert 'Currently retrying 1 failed export(s) (955 bytes)' in stream.getvalue()
 
 
+class _Reset(AbstractCapability[None]):
+    """`/reset` fails a loop callback as Windows' Proactor teardown does when the peer already reset the socket."""
+
+    def get_commands(self, context: CommandContext) -> Sequence[Command]:
+        def shutdown() -> None:
+            raise ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host')
+
+        def reset(args: list[str]) -> str:
+            asyncio.get_running_loop().call_soon(shutdown)
+            return 'Reset.'
+
+        return [Command(name='reset', description='Fail a loop callback', handler=reset)]
+
+
+async def test_event_loop_errors_go_to_a_file_not_the_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    inputs(monkeypatch, ['/reset', '/exit'])
+    output = io.StringIO()
+    loop = asyncio.get_running_loop()
+    # The default handler, as under `pax`'s own loop, rather than the one anyio's test runner installs.
+    runner_handler = loop.get_exception_handler()
+    loop.set_exception_handler(None)
+    try:
+        with unconfigured_logging():
+            await chat(
+                Agent(TestModel()),
+                deps=None,
+                plugins=[_Reset()],
+                settings=Settings(model='test'),
+                console=Console(file=output, width=1000),
+                store=SettingsStore(tmp_path / 'config.db'),
+            )
+            assert capsys.readouterr().err == ''
+    finally:
+        loop.set_exception_handler(runner_handler)
+
+    log = (tmp_path / 'asyncio.log').read_text()
+    assert 'ERROR asyncio: Exception in callback' in log
+    assert 'ConnectionResetError: [Errno 10054]' in log
+    assert output.getvalue().endswith(
+        f'The event loop reported errors, such as connections reset while closing. See {tmp_path / "asyncio.log"}.\n'
+    )
+    assert not (tmp_path / 'telemetry.log').exists()
+
+
 async def test_a_session_without_problems_creates_no_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     with unconfigured_logging():
         text = await _chat(tmp_path, monkeypatch, [])
     assert not (tmp_path / 'telemetry.log').exists()
+    assert not (tmp_path / 'asyncio.log').exists()
     assert 'Logfire or OpenTelemetry' not in text
 
 

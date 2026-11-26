@@ -1,14 +1,14 @@
-"""Keep telemetry SDK log records out of the interactive terminal.
+"""Keep telemetry SDK and event loop log records out of the interactive terminal.
 
-Logfire and OpenTelemetry report export problems, such as a request to Logfire timing out, through `logging`.
-With no handler configured, Python's last-resort handler writes them to stderr, over the editor. While the
-interactive session runs they go to a small rotating file instead.
+Logfire and OpenTelemetry report export problems, such as a request to Logfire timing out, through `logging`, as
+`asyncio` reports a callback's unhandled error. With no handler configured, Python's last-resort handler writes them
+to stderr, over the editor. While the interactive session runs they go to small rotating files instead.
 """
 
 import logging
 import os
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from io import TextIOWrapper
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -70,9 +70,26 @@ def _unhandled_below(record: logging.LogRecord) -> bool:
     )
 
 
+def telemetry_log(path: Path, *, console: Console) -> AbstractContextManager[None]:
+    """Send warnings and errors from the Logfire and OpenTelemetry loggers to `path`, and name it on exit if written."""
+    return _unhandled_log(
+        path, _LOGGERS, problems='Logfire or OpenTelemetry reported problems, such as failed exports', console=console
+    )
+
+
+def event_loop_log(path: Path, *, console: Console) -> AbstractContextManager[None]:
+    """Send the event loop's unhandled callback errors, such as Windows' `WinError 10054` on teardown, to `path`."""
+    return _unhandled_log(
+        path,
+        ('asyncio',),
+        problems='The event loop reported errors, such as connections reset while closing',
+        console=console,
+    )
+
+
 @contextmanager
-def telemetry_log(path: Path, *, console: Console) -> Generator[None]:
-    """Send warnings and errors from the Logfire and OpenTelemetry loggers to `path`, and name it on exit if written.
+def _unhandled_log(path: Path, names: tuple[str, ...], *, problems: str, console: Console) -> Generator[None]:
+    """Send warnings and errors from the `names` loggers to `path`, and print `problems` naming it on exit if written.
 
     A logger that already reaches a handler, one the embedding application configured on it, an ancestor, or a
     descendant, is left alone: only records no handler would write out are redirected, whether they would fall
@@ -85,7 +102,7 @@ def telemetry_log(path: Path, *, console: Console) -> Generator[None]:
     handler.addFilter(_unhandled_below)
     # `lastResort` only fires when no handler at all is on a record's path, so a handler on these loggers is enough;
     # records still propagate, so a handler the application adds to the root later sees them too.
-    loggers = [logger for name in _LOGGERS if not _shown(logger := logging.getLogger(name))]
+    loggers = [logger for name in names if not _shown(logger := logging.getLogger(name))]
     for logger in loggers:
         logger.addHandler(handler)
     try:
@@ -96,7 +113,7 @@ def telemetry_log(path: Path, *, console: Console) -> Generator[None]:
         handler.close()
         if handler.wrote:
             console.print(
-                f'Logfire or OpenTelemetry reported problems, such as failed exports. See {path}.',
+                f'{problems}. See {path}.',
                 style=theme.color(theme.MUTED),
                 markup=False,
             )

@@ -57,7 +57,7 @@ from pydantic_ai_pax.ui.prompt.terminal import Terminal
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.welcome import print_welcome
 from pydantic_ai_pax.ui.stderr_relay import relay_stderr
-from pydantic_ai_pax.ui.telemetry_log import telemetry_log
+from pydantic_ai_pax.ui.telemetry_log import event_loop_log, telemetry_log
 from pydantic_ai_pax.ui.terminal_background import terminal_background
 
 DepsT = TypeVar('DepsT')
@@ -248,6 +248,7 @@ async def chat(
     served: WebHandoff | None = None
     with (
         telemetry_log(shell.context.store.path.with_name('telemetry.log'), console=console),
+        event_loop_log(shell.context.store.path.with_name('asyncio.log'), console=console),
         relay_stderr() if console.is_terminal else nullcontext(),
     ):
         async with agent:
