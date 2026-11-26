@@ -786,7 +786,7 @@ class TestMCPToolsetIntegration:
 
     @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
     async def test_stdio_server_stops_once_agent_and_toolset_are_dropped(self):
-        """A stdio server outlives `async with agent` while the toolset is held, and stops once it's dropped.
+        """A stdio connection outlives `async with agent` while the toolset is held, and ends once the toolset is dropped.
 
         FastMCP's `StdioTransport` keeps its server running between connections and stops it from its finalizer,
         so the connection task that outlives the exit must not keep the toolset, and with it the transport, alive.
@@ -797,7 +797,7 @@ class TestMCPToolsetIntegration:
         async with agent:
             await agent.run('Hello')
 
-        # The connection tasks own the server process. They're still running, so the next run can reuse the server.
+        # The connection tasks own the server process. They're still pending, so the next run can reuse the server.
         connection_tasks = asyncio.all_tasks() - tasks_before
         assert connection_tasks
 
