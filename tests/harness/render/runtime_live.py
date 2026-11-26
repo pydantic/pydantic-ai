@@ -181,7 +181,7 @@ def _require_render_cli() -> None:
     if executable is None:
         pytest.fail('local Render Workflows runtime requires the `render` CLI')
     # Not `--version`: after printing the version it asks the GitHub API for the latest release, with no timeout,
-    # so a slow API stalls it. The help header carries the same version without a network call.
+    # so a slow API stalls it. The help header carries the same version without that request.
     completed = subprocess.run(
         [executable, '--help'],
         check=False,
