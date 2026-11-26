@@ -179,11 +179,16 @@ async def test_current_span_leaves_the_applications_span_alone_in_an_uninstrumen
     assert [(span.name, dict(span.attributes or {})) for span in exporter.get_finished_spans()] == [('app request', {})]
 
 
-async def test_current_span_in_an_uninstrumented_sub_agent_leaves_the_parents_span_alone(instrumented: Instrumented):
-    """The parent's telemetry is published around the sub-agent, but the sub-agent's own run isn't traced."""
+async def test_an_uninstrumented_sub_agent_does_not_trace_onto_its_parent(instrumented: Instrumented):
+    """The parent's telemetry is published around the sub-agent's run, but not inside it."""
     instrumentation, exporter = instrumented(False)
-    child = agent_with_tool()
+    child = Agent(TestModel(call_tools=['helper']), capabilities=[MarkToolCall()])
     parent = Agent(TestModel(call_tools=['delegate']), capabilities=[instrumentation])
+
+    @child.tool_plain
+    def helper() -> str:
+        with open_span(current_run_telemetry(), 'example helper'):
+            return 'ok'
 
     @parent.tool_plain
     async def delegate() -> str:
@@ -191,6 +196,8 @@ async def test_current_span_in_an_uninstrumented_sub_agent_leaves_the_parents_sp
 
     await parent.run('go')
 
+    names = [span.name for span in exporter.get_finished_spans()]
+    assert 'example helper' not in names
     assert [span.name for span in exporter.get_finished_spans() if (span.attributes or {}).get('example.marked')] == []
 
 
