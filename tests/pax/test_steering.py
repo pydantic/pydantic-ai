@@ -1,6 +1,7 @@
 """Messages queue first; explicit steering uses core delivery."""
 
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Sequence
+from contextlib import asynccontextmanager
 from io import StringIO
 from pathlib import Path
 
@@ -19,7 +20,7 @@ from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.plugins import TurnStart
 from pydantic_ai_pax.runtime.session import Session
 from pydantic_ai_pax.runtime.session_runtime import create_shell
-from pydantic_ai_pax.ui.prompt.live_prompt import LivePrompt
+from pydantic_ai_pax.ui.prompt.live_prompt import LivePrompt, PromptWakeup
 from pydantic_ai_pax.ui.rendering.rendering import StreamRenderer
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.conftest import no_leaked_tasks
@@ -139,12 +140,12 @@ async def test_steering_an_edited_queued_prompt_takes_it_out_of_the_queue() -> N
         assert accepted == ['second now']
         assert live.queued_messages == ('first',)
         live.feed('up')
-        assert await live.read() == 'first'
         live.buffer.insert(' again')
         live.feed('alt-enter')
-        # The run already took the recalled prompt, so the edit steers without touching the queue.
         assert accepted == ['second now', 'first again']
         assert live.queued_messages == ()
+        live.submit('later')
+        assert await live.read() == 'later'
 
 
 @pytest.mark.parametrize('draft', ['/help', '!git status', 'clear', 'idle prompt'])
@@ -441,6 +442,53 @@ async def test_deleting_from_a_recalled_queued_prompt_survives_navigation() -> N
         assert live.queued_messages == ('a', 'b')
 
 
+@pytest.mark.parametrize('key', ['x', 'backspace', 'ctrl-w', 'ctrl-u'])
+async def test_restored_nonempty_draft_does_not_rewrite_the_recalled_queue(key: str) -> None:
+    async with editor() as (live, _, _):
+        queue(live, 'queued word')
+        live.buffer.insert('draft')
+        live.feed('up')
+        live.feed(key)
+        edited = live.buffer.text
+        live.feed('down')
+        assert live.buffer.text == 'draft'
+        assert queue_rows(live) == ['Follow-up: queued word']
+        live.feed('ctrl-z')
+        assert live.buffer.text == edited
+        live.feed('ctrl-y')
+        assert live.buffer.text == 'draft'
+        live.feed('enter')
+        assert live.queued_messages == ('queued word', 'draft')
+
+
+async def test_restoring_a_queued_edit_draft_restores_its_own_target() -> None:
+    async with editor() as (live, _, _):
+        queue(live, 'first', 'second')
+        for key in ('up', 'x', 'up', 'up', 'y', 'down', 'down'):
+            live.feed(key)
+        assert live.buffer.text == 'secondx'
+        assert queue_rows(live) == ['Follow-up: first', 'Follow-up (editing): second']
+        live.feed('enter')
+        assert live.queued_messages == ('first', 'secondx')
+
+
+@pytest.mark.parametrize(('key', 'expected'), [('x', 'queued wordx'), ('backspace', 'queued wor'), ('ctrl-u', '')])
+async def test_enter_on_edited_queue_with_nonempty_original_draft(key: str, expected: str) -> None:
+    async with editor() as (live, _, _):
+        queue(live, 'queued word')
+        live.buffer.insert('draft')
+        live.feed('up')
+        live.feed(key)
+        live.feed('enter')
+        assert live.queued_messages == ((expected,) if expected else ())
+        assert live.buffer.text == 'draft'
+        # Enter brings back the draft Up set aside; undo and redo step over that, never back to the saved edit.
+        live.feed('ctrl-z')
+        assert live.buffer.text == ''
+        live.feed('ctrl-y')
+        assert live.buffer.text == 'draft'
+
+
 async def test_history_search_from_a_recalled_queued_prompt() -> None:
     async with editor() as (live, _, _):
         live.buffer.history = ['old']
@@ -484,14 +532,197 @@ async def test_recalling_history_leaves_the_queued_prompt_alone() -> None:
         assert live.queued_messages == ('queued', 'old')
 
 
-async def test_edit_of_a_consumed_prompt_becomes_a_new_follow_up() -> None:
+async def test_a_queued_prompt_being_edited_waits_while_the_queue_runs() -> None:
     async with editor() as (live, _, _):
-        queue(live, 'taken')
+        queue(live, 'a', 'b', 'c')
         live.feed('up')
-        assert await live.read() == 'taken'
+        live.feed('up')
+        # `b` is out of the queue while it is edited, so the run takes the others around it.
+        assert await live.read() == 'a'
+        assert queue_rows(live) == ['Follow-up (editing): b', 'Follow-up: c']
+        assert await live.read() == 'c'
+        live.buffer.insert('2')
+        live.feed('enter')
+        assert await live.read() == 'b2'
+
+
+async def test_walking_onto_a_prompt_the_run_took_edits_a_new_follow_up() -> None:
+    async with editor() as (live, _, _):
+        queue(live, 'a', 'b')
+        live.feed('up')
+        assert await live.read() == 'a'
+        live.feed('up')
+        # The walk still shows `a`, but the run took it: `b` is back in the queue and `a` is a new follow-up.
+        assert live.buffer.text == 'a'
+        assert queue_rows(live) == ['Follow-up: b']
         live.buffer.insert(' again')
         live.feed('enter')
-        assert live.queued_messages == ('taken again',)
+        assert live.queued_messages == ('b', 'a again')
+
+
+async def test_a_queued_prompt_being_edited_becomes_the_draft_once_idle() -> None:
+    async with editor() as (live, _, _):
+        queue(live, 'only')
+        live.feed('up')
+        live.wake()
+        with pytest.raises(PromptWakeup):
+            await live.read()
+        # Nothing is queued any more: Esc leaves the draft alone and Enter sends it like any other.
+        live.feed('escape')
+        assert (live.buffer.text, live.queued_messages) == ('only', ())
+        live.buffer.insert(' again')
+        live.feed('enter')
+        assert await live.read() == 'only again'
+
+
+@pytest.mark.parametrize(
+    ('edit', 'keys', 'expected'),
+    [(' again', (), 'only again'), ('', (), 'only'), (' again', ('ctrl-z', 'ctrl-y'), 'only again\ndraft')],
+)
+async def test_an_edit_left_once_idle_keeps_the_draft_up_set_aside(
+    edit: str, keys: tuple[str, ...], expected: str
+) -> None:
+    async with editor() as (live, _, _):
+        queue(live, 'only')
+        live.buffer.replace('draft')
+        live.feed('up')
+        live.buffer.insert(edit)
+        # Undo and redo end the recall walk.
+        for key in keys:
+            live.feed(key)
+        live.wake()
+        with pytest.raises(PromptWakeup):
+            await live.read()
+        assert (live.buffer.text, live.queued_messages) == (expected, ())
+        # Still walking, the draft is where Down finds it, not added to the input as well.
+        if not keys:
+            live.feed('down')
+            assert live.buffer.text == 'draft'
+
+
+@asynccontextmanager
+async def running(live: LivePrompt) -> AsyncGenerator[list[bool]]:
+    """Run an operation Esc and Ctrl+C can cancel, yielding whether it completed once it ends."""
+    started = anyio.Event()
+    completed: list[bool] = []
+
+    async def operation() -> None:
+        started.set()
+        await anyio.sleep_forever()
+
+    async def run_operation() -> None:
+        completed.append(await live.interrupts.run(operation()))
+
+    async with anyio.create_task_group() as tasks:
+        tasks.start_soon(run_operation)
+        await started.wait()
+        yield completed
+
+
+async def test_esc_stops_editing_a_queued_prompt_before_it_interrupts() -> None:
+    async with editor() as (live, _, _):
+        async with running(live) as completed:
+            queue(live, 'follow up')
+            live.buffer.replace('draft')
+            live.feed('up')
+            live.buffer.insert(' changed')
+            live.feed('escape')
+            # The edit is dropped, the queued prompt and the draft are as they were, and the turn runs on.
+            assert live.interrupts.active
+            assert (live.buffer.text, live.queued_messages) == ('draft', ('follow up',))
+            assert queue_rows(live) == ['Follow-up: follow up']
+            live.feed('escape')
+        assert completed == [False]
+        # The interrupt leaves the queued prompt to run next, and the draft where it was.
+        assert (live.buffer.text, live.queued_messages) == ('draft', ('follow up',))
+        assert await live.read() == 'follow up'
+
+
+async def test_esc_on_a_cleared_queued_prompt_removes_it() -> None:
+    async with editor() as (live, _, _):
+        async with running(live):
+            queue(live, 'a', 'b')
+            live.feed('up')
+            live.feed('ctrl-u')
+            live.feed('escape')
+            assert live.interrupts.active
+            assert live.queued_messages == ('a',)
+            assert live.buffer.text == ''
+            assert Text.from_ansi(live.frame()[-1]).plain == 'Removed the queued message. | queued: 1'
+            live.feed('escape')
+        assert (live.buffer.text, live.queued_messages) == ('', ('a',))
+
+
+async def test_a_draft_set_aside_to_edit_a_queued_prompt_keeps_its_images() -> None:
+    async with editor() as (live, _, _):
+        queue(live, 'queued')
+        marker = live.images.attach([BinaryContent(data=b'image', media_type='image/png')])
+        live.buffer.replace(f'look {marker}')
+        live.feed('up')
+        # Pasting while the draft is set aside releases the images nothing holds any more.
+        live.feed('paste', ' more')
+        live.feed('escape')
+        assert live.images.resolve(live.buffer.text) == ('look', [BinaryContent(data=b'image', media_type='image/png')])
+
+
+async def test_a_draft_down_restores_after_the_queue_runs_keeps_its_images() -> None:
+    image = BinaryContent(data=b'image', media_type='image/png')
+    async with editor() as (live, _, _):
+        queue(live, 'queued')
+        marker = live.images.attach([image])
+        live.buffer.replace(f'look {marker}')
+        live.feed('up')
+        live.wake()
+        with pytest.raises(PromptWakeup):
+            await live.read()
+        # As the session's read loop does before each read.
+        live.images.retain(live.drafts)
+        # The walk still holds the draft from before Up, so Down brings it back with its image.
+        live.feed('down')
+        assert live.images.resolve(live.buffer.text) == ('look', [image])
+
+
+@pytest.mark.parametrize('key', ['escape', 'ctrl-c'])
+async def test_interrupt_leaves_the_queue_to_run_in_order(key: str) -> None:
+    async with editor() as (live, _, _):
+        async with running(live) as completed:
+            queue(live, 'first', '!pwd', 'second')
+            live.submit(EOFError())
+            live.buffer.replace('draft')
+            live.feed(key)
+        assert completed == [False]
+        # Nothing moves into the input: prompts, shell lines and exit signals run next, in the order queued.
+        assert live.buffer.text == 'draft'
+        assert [await live.read() for _ in range(3)] == ['first', '!pwd', 'second']
+        with pytest.raises(EOFError):
+            await live.read()
+
+
+@pytest.mark.parametrize(('queued', 'ups'), [(('b',), 1), (('a', 'b'), 1), (('a', 'b', 'c'), 2)])
+async def test_ctrl_c_while_editing_a_queued_prompt_runs_it_unchanged_and_keeps_the_draft(
+    queued: tuple[str, ...], ups: int
+) -> None:
+    async with editor() as (live, _, _):
+        async with running(live):
+            queue(live, *queued)
+            live.buffer.replace('draft')
+            for _ in range(ups):
+                live.feed('up')
+            live.buffer.insert('2')
+            live.feed('ctrl-c')
+        # Only Enter saves the edit: the queue runs as it was, the draft from before Up comes back, and Up finds the edit.
+        assert (live.buffer.text, live.queued_messages, live.buffer.history[-1]) == ('draft', queued, 'b2')
+        assert [await live.read() for _ in queued] == list(queued)
+
+
+async def test_ctrl_c_on_an_unchanged_edit_adds_nothing_to_history() -> None:
+    async with editor() as (live, _, _):
+        async with running(live):
+            queue(live, '/help')
+            live.feed('up')
+            history = list(live.buffer.history)
+            live.feed('ctrl-c')
+        assert (live.buffer.history, live.queued_messages) == (history, ('/help',))
 
 
 async def test_recalled_queued_prompt_edited_into_immediate_command_leaves_queue() -> None:
@@ -667,3 +898,173 @@ async def test_turn_drains_accepted_steering_before_finishing(
         assert output.index('> second') < output.index('ValueError: final hook failed')
     monkeypatch.undo()
     assert not shell.steer('after turn')
+
+
+async def test_removing_the_prompt_before_the_one_being_edited_keeps_its_place() -> None:
+    async with editor() as (live, _, _):
+        async with running(live):
+            queue(live, 'a', 'b', 'c')
+            live.feed('up')
+            # As the web UI removes a queued prompt while the terminal edits the one after it.
+            b = live.queued_prompts()[1]
+            live.discard(b)
+            live.feed('escape')
+            assert live.queued_messages == ('a', 'c')
+            live.feed('ctrl-c')
+        assert (live.buffer.text, live.queued_messages) == ('', ('a', 'c'))
+
+
+@pytest.mark.parametrize('edit', ['!printf injected', '!'])
+async def test_ctrl_c_never_queues_an_edit_that_was_not_sent(edit: str) -> None:
+    async with editor() as (live, _, _):
+        async with running(live):
+            queue(live, 'follow up')
+            live.feed('up')
+            live.buffer.replace(edit)
+            live.feed('ctrl-c')
+        # Only Enter makes an edit runnable: the queued prompt returns unchanged, and Up finds the edit in history.
+        assert (live.buffer.text, live.queued_messages) == ('', ('follow up',))
+        assert live.buffer.history[-1] == edit
+
+
+@pytest.mark.parametrize(('queued', 'expected'), [(('b',), ()), (('a', 'b'), ('a',))])
+async def test_ctrl_c_removes_a_queued_prompt_whose_edit_was_cleared(
+    queued: tuple[str, ...], expected: tuple[str, ...]
+) -> None:
+    async with editor() as (live, _, _):
+        async with running(live):
+            queue(live, *queued)
+            live.buffer.replace('draft')
+            live.feed('up')
+            live.buffer.replace('')
+            live.feed('ctrl-c')
+        # As Esc on a cleared edit does, and the draft from before Up comes back.
+        assert (live.buffer.text, live.queued_messages, live.notice) == (
+            'draft',
+            expected,
+            'Removed the queued message.',
+        )
+
+
+async def test_removing_the_prompt_being_edited_keeps_the_edit_as_the_draft() -> None:
+    async with editor() as (live, _, _):
+        async with running(live):
+            queue(live, 'a', 'b')
+            live.buffer.replace('draft')
+            live.feed('up')
+            live.buffer.insert('2')
+            # As the web UI removes the queued prompt the terminal is editing.
+            live.discard(live.queued_prompts()[1])
+            # The edit stays in the input, as when it becomes the draft once idle, and Down still finds the draft.
+            assert (live.buffer.text, live.queued_messages) == ('b2', ('a',))
+            live.feed('down')
+            assert live.buffer.text == 'draft'
+            # No edit remains, so Enter queues the draft as a new prompt.
+            live.feed('enter')
+            assert live.queued_messages == ('a', 'draft')
+            live.feed('ctrl-c')
+
+
+async def test_removing_the_front_prompt_returns_the_one_edited_after_it_to_the_front() -> None:
+    async with editor() as (live, _, _):
+        async with running(live):
+            queue(live, 'a', 'b', 'c')
+            live.feed('up')
+            live.feed('up')
+            # As the web UI removes the first queued prompt while the terminal edits the second.
+            live.discard(live.queued_prompts()[0])
+            live.feed('escape')
+            assert live.queued_messages == ('b', 'c')
+            live.feed('ctrl-c')
+
+
+@pytest.mark.parametrize(('edit', 'queued'), [('a2', ('a2',)), ('a', ('a',)), ('', ())])
+async def test_enter_on_an_edited_queued_prompt_brings_back_the_draft(edit: str, queued: tuple[str, ...]) -> None:
+    async with editor() as (live, _, _):
+        async with running(live):
+            queue(live, 'a')
+            live.buffer.replace('draft')
+            live.feed('up')
+            live.buffer.replace(edit)
+            live.feed('enter')
+            # Saved, unchanged, or removed: the draft set aside by Up comes back, as Esc brings it back.
+            assert (live.buffer.text, live.queued_messages) == ('draft', queued)
+            live.feed('ctrl-c')
+
+
+async def test_steering_an_edited_queued_prompt_brings_back_the_draft() -> None:
+    accepted: list[str] = []
+
+    def steer(text: str) -> bool:
+        accepted.append(text)
+        return True
+
+    async with editor() as (live, _, _):
+        live.steer = steer
+        queue(live, 'b')
+        live.buffer.replace('x')
+        live.feed('up')
+        live.buffer.insert('2')
+        live.feed('alt-enter')
+        assert (accepted, live.buffer.text, live.queued_messages) == (['b2'], 'x', ())
+
+
+async def test_a_draft_a_search_hides_keeps_its_images() -> None:
+    image = BinaryContent(data=b'image', media_type='image/png')
+    async with editor() as (live, _, _):
+        live.buffer.history = ['old']
+        marker = live.images.attach([image])
+        live.buffer.replace(f'look {marker}')
+        for key in ('ctrl-r', 'o', 'l'):
+            live.feed(key)
+        assert live.buffer.text == 'old'
+        # As the session's read loop does before each read.
+        live.images.retain(live.drafts)
+        # Ctrl+G cancels the search, bringing back the draft it hid.
+        live.feed('ctrl-g')
+        assert live.images.resolve(live.buffer.text) == ('look', [image])
+
+
+@pytest.mark.parametrize(
+    ('draft', 'edit'),
+    [
+        ('printf injected', '!'),
+        ('please explain', '!git status'),
+        ('more', '/help'),
+        ('!git status', 'only2'),
+        ('/help', 'only2'),
+        ('clear', 'only2'),
+        ('more', 'clear'),
+    ],
+)
+async def test_a_command_never_joins_the_edit_and_the_draft_up_set_aside(draft: str, edit: str) -> None:
+    async with editor() as (live, _, _):
+        queue(live, 'only')
+        live.buffer.replace(draft)
+        live.feed('up')
+        live.feed('ctrl-u')
+        live.buffer.insert(edit)
+        # Undo and redo end the recall walk, which would otherwise keep the draft for Down.
+        live.feed('ctrl-z')
+        live.feed('ctrl-y')
+        live.wake()
+        with pytest.raises(PromptWakeup):
+            await live.read()
+        # Joined, one would turn the other into part of a command, or a command into prompt text: the edit stays
+        # alone and Up finds the draft.
+        assert (live.buffer.text, live.buffer.history[-1]) == (edit, draft)
+
+
+async def test_a_cleared_edit_left_once_idle_brings_back_a_command_draft() -> None:
+    async with editor() as (live, _, _):
+        queue(live, 'only')
+        live.buffer.replace('!ls')
+        live.feed('up')
+        live.feed('ctrl-u')
+        # Undo and redo end the recall walk, which would otherwise keep the draft for Down.
+        live.feed('ctrl-z')
+        live.feed('ctrl-y')
+        live.wake()
+        with pytest.raises(PromptWakeup):
+            await live.read()
+        assert live.buffer.text == '!ls'

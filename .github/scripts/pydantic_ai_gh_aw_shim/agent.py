@@ -24,9 +24,11 @@ from pydantic_ai.capabilities import (
     ResolveModelId,
     WrapRunHandler,
 )
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelHTTPError, ModelOverloadedError
 from pydantic_ai.models import Model, ModelResolutionContext
 from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import Tool
 from pydantic_ai_harness import Coder, RepoContext
@@ -119,13 +121,45 @@ class WorkflowPolicy(AbstractCapability[object]):
             )
 
 
+OVERLOAD_FALLBACK_MODEL_ENV = 'PYDANTIC_AI_OVERLOAD_FALLBACK_MODEL'
+"""The model a request goes to when Z.ai refuses the configured model as overloaded, unset for none."""
+
 _model: AnthropicModel | None = None
+"""The configured model, whose client each run enters."""
+_run_model: Model | None = None
+"""What a run sends its requests to: `_model`, or a `FallbackModel` of it and the overload fallback."""
+
+
+def _configured_model_overloaded(error: Exception) -> bool:
+    """Fall back only when Z.ai refuses the configured model as overloaded, and say so in the run log.
+
+    Z.ai's Anthropic endpoint answers an overloaded model with HTTP 529, `overloaded_error` and code `1305`,
+    which pydantic-ai raises as `ModelOverloadedError` once the SDK's own retries are spent. Z.ai's code table
+    lists `1305` under HTTP 429, which `cli.rate_limit_retry_transport` retries first for up to
+    `cli.RATE_LIMIT_RETRY_SECS`, as any transient 429.
+    Authentication errors, rate and plan limits, and an overloaded fallback keep failing the run with their own error.
+    """
+    if _model is None or not isinstance(error, ModelHTTPError) or error.model_name != _model.model_name:
+        return False
+    code = cli.zai_error_code(error.body)
+    if not isinstance(error, ModelOverloadedError) and code != '1305':
+        return False
+    reason = f'HTTP {error.status_code}'
+    if code:
+        reason += f', Z.ai code {code}'
+    print(
+        f'[pydantic-ai] {error.model_name} is overloaded ({reason}); '
+        f'this request falls back to {os.environ[OVERLOAD_FALLBACK_MODEL_ENV]}',
+        file=sys.stderr,
+        flush=True,
+    )
+    return True
 
 
 def workflow_model(ctx: ModelResolutionContext[object], model_id: str) -> Model:
     """Resolve Pax's explicit model with the workflow's existing transport policy."""
     del ctx
-    global _model
+    global _model, _run_model
     provider, separator, name = model_id.partition(':')
     if provider != 'anthropic' or not separator or not name:
         raise ValueError(f'The Z.ai workflow expects an Anthropic model ID, got {model_id!r}')
@@ -133,9 +167,25 @@ def workflow_model(ctx: ModelResolutionContext[object], model_id: str) -> Model:
         model, _ = cli.build_model(cli.Args(model=name))
         assert isinstance(model, AnthropicModel)
         _model = model
+        # The fallback shares the configured model's client and settings, so it also runs at low effort.
+        fallback_name = os.environ.get(OVERLOAD_FALLBACK_MODEL_ENV)
+        _run_model = (
+            FallbackModel(
+                model,
+                AnthropicModel(
+                    fallback_name,
+                    provider=AnthropicProvider(anthropic_client=model.client),
+                    settings=model.settings,
+                ),
+                fallback_on=_configured_model_overloaded,
+            )
+            if fallback_name and fallback_name != name
+            else model
+        )
     if _model.model_name != name:
         raise ValueError('A workflow cannot change its configured model during execution')
-    return _model
+    assert _run_model is not None
+    return _run_model
 
 
 # Workflows that get no shell. gh-aw rejects `tools: bash: []` for this engine and passes it no tool

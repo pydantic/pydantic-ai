@@ -509,6 +509,7 @@ async def converse():
 
 - `opened()` cancels and drains workers on exit. If a child hasn't released its resources within ten seconds, `opened()` raises `RuntimeError`, or only logs it when an error is already closing the owner, so that error isn't masked. Keep workspace and plugin resources alive outside that scope.
 - A task still running when its process exited loads as cancelled when the owner next opens; if it was waiting for an answer, its output names the question, so the parent can resume it with the answer.
+- A running task records the process running it. An owner opening the same `directory` in another process while that process still runs leaves the task out of `records` and never saves over it; once that process is gone, the next owner to open loads it as cancelled. As with saved sessions, this is a check on the local machine, not a lock: don't share `directory` between hosts.
 - Detached execution is refused for run-owned non-local workspaces; foreground delegation still works.
 - The owner's `max_depth=4` counts the main run and allows three child layers. An explicitly set non-default `SubAgents.max_depth` takes precedence; plain `SubAgents` keeps its own default.
 - `restore(task)` adds a finished `DelegationTask` made elsewhere, such as one imported from another agent's session, so the parent can resume it by ID. It works before `opened()` too; the owner loads the task when it opens. A task with the same ID that has run since, under a different `run_id`, is kept rather than replaced, and `restore` returns `False`.

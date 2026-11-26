@@ -1,13 +1,15 @@
 """The terminal app: `chat`, its stock agent, and `open_stock_agent` for runs from code."""
 
 import os
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+import sys
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager, nullcontext
+from functools import partial
 from pathlib import Path
 from threading import Thread
 from typing import TypeVar
 
-from anyio import CancelScope, create_task_group
+from anyio import CancelScope, create_task_group, to_thread
 from pydantic import JsonValue
 from rich.console import Console
 
@@ -48,6 +50,7 @@ from pydantic_ai_pax.runtime.session import (
 from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_ai_pax.runtime.strict_schemas import NON_STRICT_SCHEMAS
 from pydantic_ai_pax.runtime.temporary_directory import temporary_directory
+from pydantic_ai_pax.runtime.workspace_trust import describe
 from pydantic_ai_pax.runtime.worktrees import Worktree
 from pydantic_ai_pax.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_ai_pax.ui.prompt.terminal import Terminal
@@ -134,7 +137,7 @@ async def open_stock_agent(
     reason: SessionEndReason = 'error'
     # A private settings store keeps the user's saved and drop-in plugins out; plugin output goes nowhere.
     root = Path(workspace).resolve()
-    async with temporary_directory(prefix='clai2-') as config:
+    async with temporary_directory(prefix='pax-') as config:
         with open(os.devnull, 'w', encoding='utf-8') as sink:
             console = Console(file=sink, force_terminal=False)
             store = SettingsStore(config / 'config.db')
@@ -197,7 +200,7 @@ async def chat(
 ) -> None:
     """Start an asyncio terminal conversation with a caller-supplied agent.
 
-    Esc cancels the current turn; Ctrl-C also clears idle input. Ctrl-D and `/exit` quit.
+    Esc cancels the current turn; Ctrl+C also clears idle input. Ctrl+D and `/exit` quit.
     Failed and cancelled turns retain their captured history. Resume never replays tools.
     `resume_from` imports `resume` from Claude Code or Codex instead; an empty `resume` browses its sessions.
     `project` is the parsed `.clai/settings.json`; layer its overrides into `settings` yourself.
@@ -222,7 +225,7 @@ async def chat(
     use_stock_defaults = builtin_plugins is STOCK_PLUGINS
     # Before the banner, the first output painted in the theme's colours.
     background = _terminal_background(console)
-    shell = _create_home_shell(
+    shell: SessionRuntime[DepsT, OutputT] = _create_home_shell(
         agent,
         deps=deps,
         plugins=plugins,
@@ -238,6 +241,8 @@ async def chat(
         worktree=worktree,
         background=background,
     )
+    with theme.use(lambda: shell.context.settings.theme, background=background), transcript.capture(console):
+        await _decide_trust(shell, console=console)
     fresh = False
     warming: Thread | None = None
     served: WebHandoff | None = None
@@ -378,6 +383,46 @@ def _create_home_shell(
         )
 
 
+async def _decide_trust(
+    shell: SessionRuntime[DepsT, OutputT],
+    *,
+    console: Console,
+    ask: Callable[[str], Awaitable[bool | None]] | None = None,
+) -> None:
+    """Ask whether you trust the folder of `shell`, the session Pax starts with, unless you decided before.
+
+    Asked only with a terminal to answer in, before any plugin loads or turn runs, through `ask` (by default
+    the inline question), and kept in your settings unless dismissed (`None`), which keeps the folder untrusted
+    for this session and asks again next launch. Nothing the folder holds is read to decide whether to ask,
+    only its file names to say what trusting it covers.
+    """
+    trust = shell.session.trust
+    assert trust is not None, 'create_shell sets the trust of every session it builds'
+    if trust.decided or not (console.is_terminal and sys.stdin.isatty()):
+        return
+    if ask is None:
+        from pydantic_ai_pax.ui.menus.trust_prompt import ask_trust
+
+        ask = partial(ask_trust, console=console)
+    trusted = await ask(await to_thread.run_sync(describe, trust, Path(shell.session.workspace)))
+    if trusted is None:
+        console.print(
+            "Untrusted for this session: capabilities that check workspace authority treat this folder's files "
+            "as the repository's. /trust changes it.",
+            style=theme.color(theme.INFO),
+            markup=False,
+        )
+        return
+    await shell.process.decide_trust(trust, trusted=trusted)
+    level = (
+        'Trusted'
+        if trusted
+        else "Untrusted: capabilities that check workspace authority treat this folder's files as the repository's"
+    )
+    held = '' if trust.scope.remembered else ' for this session'
+    console.print(f'{level}{held}. /trust changes it.', style=theme.color(theme.INFO), markup=False)
+
+
 async def _start_session(
     shell: SessionRuntime[DepsT, OutputT],
     *,
@@ -464,6 +509,8 @@ def _reload_shell(
             load_plugins=load_plugins,
             workspace=Path(shell.session.workspace),
             settings_for=shell.context.settings_for,
+            # A reload keeps the decision, also one held for the session only, as in your home folder.
+            trust=shell.session.trust,
         )
     )
 

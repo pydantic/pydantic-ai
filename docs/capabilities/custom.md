@@ -247,7 +247,7 @@ from pydantic_ai.messages import InstructionPart
 
 
 @dataclass
-class KnowsCurrentDate(AbstractCapability[Any]):
+class AnnounceCurrentDate(AbstractCapability[Any]):
     """Tells the agent what day it is."""
 
     def get_instructions(self):
@@ -257,7 +257,7 @@ class KnowsCurrentDate(AbstractCapability[Any]):
         return _get_date
 
 
-agent = Agent('{{ openai:medium }}', capabilities=[KnowsCurrentDate(id='current_date')])
+agent = Agent('{{ openai:medium }}', capabilities=[AnnounceCurrentDate(id='current_date')])
 result = agent.run_sync("What is today's date?")
 print(result.output)
 #> Today is January 2, 2032.
@@ -458,7 +458,7 @@ A capability can cap the authority of everything it enqueues with its [`authorit
 
 To lower one instance rather than a whole class, call [`with_authority()`][pydantic_ai.capabilities.AbstractCapability.with_authority], which returns a lowered copy: with two instances of the reviewer above in one agent, one of them lowered with `.with_authority('none')`, only what that one enqueues is framed as data. `with_authority('operator')` on a capability whose class sets `'none'` leaves it at `'none'`.
 
-The ceiling covers what the capability sends mid-conversation, wherever its code runs: a hook, a tool, `for_run`, a `DynamicCapability` factory, or a function it returns for its toolset, instructions, model settings or description. It doesn't cap the capability's instructions, its tool names and descriptions, or its tools' return values, which reach the model as the application configured them: review or leave those out yourself, and for an MCP server you don't trust, also pass `include_instructions=False`. Content the application enqueues itself, from [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] or a [`Hooks`](../hooks.md) function, keeps its voice.
+The ceiling covers what the capability sends mid-conversation, wherever its code runs: a hook, a tool, `for_run`, a `DynamicCapability` factory, or a function it returns for its toolset, instructions, model settings or description. It also covers the capability's [instructions](#lowered-instructions). It doesn't cap its tool names and descriptions or its tools' return values, which reach the model as the application configured them: review or leave those out yourself. Content the application enqueues itself, from [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] or a [`Hooks`](../hooks.md) function, keeps its voice.
 
 Below `'operator'`, `ctx.enqueue` treats what the capability sends by kind, so nothing reaches the model as the application's or the user's words:
 
@@ -482,6 +482,35 @@ A downgraded instruction part with `scope='request'` still applies to its own re
 A capability's `authority` is the most its content can carry. For a workspace capability, such as [`LocalWorkspace(authority=...)`](../workspace-custom.md#workspace-authority), it's also the default authority of the workspace's files. A file another capability reads through a workspace carries the workspace's level for that file, capped again by the reader's own `authority`.
 
 Text in a part's content that looks like a framework frame, or like the part's own tag, gets a note in the application's voice naming who wrote it: the tool, the model, the file's author or the user, by the part's source. Text from an `OperatorSource` is the application's own and gets none.
+
+### Instructions below operator authority {#lowered-instructions}
+
+A capability's [instructions](#providing-instructions) follow its authority too. At `'operator'`, the default, they're part of the agent's instructions, as above. Below it, whether lowered by the `authority` class attribute or by `with_authority()`, they never enter the instructions: everything the capability tells the model through [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions], and through the toolsets it contributes, such as an [MCP server's instructions](mcp.md#lowering-an-untrusted-server), goes out as one block of framed data at that authority, like a part the capability enqueues: in a `<capability_instructions>` tag on the user channel, behind a note naming the capability.
+
+The block is stated in the message history as an [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] with the capability's [`authority`][pydantic_ai.messages.InstructionDeltaPart.authority], keyed `'capability:<capability id>'` (for a capability without an `id`, `'capability::<class name in snake case>'`, such as `'capability::mcp'`, which no `id` can spell, since an `id` can't contain `:`; capabilities of one class without an `id` share the block, at the lower of their authorities): first on the request it first applies to, then once more whenever its text changes, whatever its parts' `on_change`, with a note in the application's voice saying the earlier block no longer applies. So the instructions the model gets, and the conversation cached behind them, stay the same. The authority is stored on the part when it's recorded, and each model renders the part from it alone. A [compaction](../message-history.md) ends the block, and the next request states it again. A [`before_model_request` hook](#model-request-hooks) sees its parts in `instruction_parts`, with [`instruction_visibility_of(part)`][pydantic_ai.models.ModelRequestParameters.instruction_visibility_of] `'via_history'`, as for an [on-demand capability](on-demand.md).
+
+```python {title="lowered_instructions.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Capability
+from pydantic_ai.messages import InstructionDeltaPart, ModelRequest
+from pydantic_ai.models.test import TestModel
+
+plugin = Capability(id='plugin', instructions='Prefer the cheapest option.')
+agent = Agent(TestModel(), instructions='Be brief.', capabilities=[plugin.with_authority('none')])
+result = agent.run_sync('Which plan should I pick?')
+
+request = result.all_messages()[0]
+assert isinstance(request, ModelRequest)
+print(request.instructions)
+#> Be brief.
+delta = next(part for part in request.parts if isinstance(part, InstructionDeltaPart))
+print(delta.content, delta.authority)
+#> Prefer the cheapest option. none
+```
+
+A container or [wrapper](#wrapping-capabilities) whose subclass overrides `get_instructions()` decides what the model gets: below `'operator'` its text is one lowered block, and at `'operator'` its override replaces a lowered child's own `get_instructions()`, which then aren't sent at all (Pydantic AI warns once), since lowered text never goes out in a higher-authority override. The instructions of the child's toolsets, such as an MCP server's, are still sent as data. To send them as data, leave the child's instructions to the framework rather than merging them into the override.
+
+A realtime session has no channel for such a block, so a lowered capability's instructions aren't sent to one.
 
 ### Stored with the history
 
@@ -1303,6 +1332,61 @@ Capabilities can resolve [deferred tool calls](../deferred-tools.md) — calls t
 Multiple capabilities can each handle a subset: dispatch accumulates results across the chain, passing only the still-unresolved requests to the next capability. Returning `None` (or a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] with no entries) declines handling. Anything still unresolved bubbles up as a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output for the caller to handle.
 
 For application code that just needs to plug in a handler, use the dedicated [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] capability — see [Resolving deferred calls with a handler](../deferred-tools.md#resolving-deferred-calls-with-a-handler).
+
+## Tracing what your capability does {#tracing}
+
+When a run is [instrumented](../logfire.md), its trace shows each model request and tool call. To add what your capability does, such as a check that blocked a call or slow work it ran, use the helpers in [`pydantic_ai.telemetry`][pydantic_ai.telemetry]: [`record_decision`][pydantic_ai.telemetry.record_decision] for a choice that changed the run, and [`open_span`][pydantic_ai.telemetry.open_span] around work that takes time. Each takes the run's `ctx`, so it uses the run's tracer and does nothing when the run isn't instrumented. Pass anything that can quote the run's data, such as tool arguments, prompts, paths or error messages, as `content`: it is recorded only when the run's [`include_content`][pydantic_ai.models.instrumented.InstrumentationSettings.include_content] setting allows it.
+
+```python {title="tracing_capability.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import Agent, RunContext, ToolDefinition
+from pydantic_ai.capabilities import AbstractCapability, WrapToolExecuteHandler
+from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.telemetry import open_span, record_decision
+
+
+@dataclass
+class NoDeletes(AbstractCapability[Any]):
+    """Refuses `delete_*` tools, and times every other tool call."""
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        handler: WrapToolExecuteHandler,
+    ) -> Any:
+        if call.tool_name.startswith('delete_'):
+            record_decision(
+                ctx,
+                'no_deletes refused call',
+                attributes={'no_deletes.tool': call.tool_name},
+                content={'no_deletes.arguments': repr(args)},
+            )
+            return 'Deleting is not allowed.'
+        with open_span(ctx, 'no_deletes checked call', attributes={'no_deletes.tool': call.tool_name}):
+            return await handler(args)
+
+
+agent = Agent(TestModel(), capabilities=[NoDeletes()])
+
+
+@agent.tool_plain
+def delete_file(path: str) -> str:
+    return f'deleted {path}'
+
+
+result = agent.run_sync('Delete notes.txt')
+print(result.output)
+#> {"delete_file":"Deleting is not allowed."}
+```
+
+With the [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability or [Logfire](../logfire.md) set up, the trace shows `no_deletes refused call` for the `delete_file` call, with its arguments only when content is allowed. [`open_span`][pydantic_ai.telemetry.open_span] marks the span as failed if the work raises, and records the error's message only when content is allowed. [`current_span(ctx)`][pydantic_ai.telemetry.current_span] returns the span already open around your hook, such as the tool call's span, so you can add attributes to it instead of opening a new one. Code that runs during a run but isn't given a `ctx`, such as a [workspace](../workspace-custom.md), passes [`current_run_telemetry()`][pydantic_ai.telemetry.current_run_telemetry] instead.
 
 ## Durable capability operations {#durable-capability-operations}
 
