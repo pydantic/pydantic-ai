@@ -1093,3 +1093,45 @@ agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 ```
 
 The toolset emits Pydantic AI `instructions` that nudge the agent to call the matching `harness_*` tool before generating. Pass `add_instructions=False` to suppress and supply routing guidance from your own system prompt.
+
+### feraterra-sdk {#feraterra-tools}
+
+[`feraterra-sdk`](https://pypi.org/project/feraterra-sdk/) ([source](https://github.com/FeraTerra/feraterra-sdk)) provides a zero-dependency Python client and 24-tool MCP server (`stdio` and Streamable HTTP) for headless Spot, Perpetuals, and SpreadBook markets on [Arena Exchange](https://testnet.feraterra.app). It exposes tools for market discovery (`arena_list_markets`, `arena_get_orderbook`), stateless pre-trade margin simulation (`arena_preview_order`), order execution (`arena_place_order`), and L2 solvency and Merkle-escape verification (`arena_verify_ledger_tip`, `arena_get_withdrawals_and_escape_proof`).
+
+Run the MCP server over [`StdioTransport`](https://gofastmcp.com/clients/transports) with [`MCPToolset`][pydantic_ai.mcp.MCPToolset], or install `feraterra-sdk` and register selected SDK methods on a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset]:
+
+```python {test="skip" lint="skip"}
+from typing import Any
+
+from arena_sdk import ArenaHttpClient, verify_ledger_tip
+from fastmcp.client.transports import StdioTransport
+
+from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai.mcp import MCPToolset
+
+mcp_toolset = MCPToolset(
+    StdioTransport(command='uvx', args=['feraterra-sdk', '--testnet', '--read-only'])
+)
+
+client = ArenaHttpClient.testnet()
+sdk_toolset = FunctionToolset()
+
+
+@sdk_toolset.tool_plain
+def preview_margin(
+    account_id: int, market_id: int, side: str, price_ticks: int, qty_lots: int
+) -> dict[str, Any]:
+    """Simulate order margin impact without mutating exchange state."""
+    return client.preview_order(account_id, market_id, side, price_ticks, qty_lots)
+
+
+@sdk_toolset.tool_plain
+def check_solvency() -> bool:
+    """Verify the latest signed L2 ledger tip digest."""
+    return verify_ledger_tip(client.ledger_tip(), allow_self_asserted_signer=True)
+
+
+agent = Agent('{{ openai:medium }}', toolsets=[mcp_toolset])
+```
+
+Pass `--read-only` or `--max-order-notional-usd <amount>` to the MCP server to restrict order execution, or set `ARENA_API_KEY` and `ARENA_API_SECRET` (or `ARENA_WALLET_PRIVKEY`) for authenticated trading tools.
