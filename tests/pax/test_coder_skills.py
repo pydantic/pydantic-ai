@@ -386,6 +386,7 @@ class TestSkillFoldersAboveTheLaunchDirectory:
         )
 
     def test_each_directory_is_searched_for_every_relative_folder_before_its_parent(self) -> None:
+        # Not a VCR test: pure path ordering with no model request. The run above covers it end to end.
         settings = CoderSettings()
 
         assert settings.skill_libraries(home=Path('/home/tester'), parents=[Path('/repo/pkg'), Path('/repo')]) == [
