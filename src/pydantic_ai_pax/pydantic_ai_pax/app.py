@@ -413,18 +413,14 @@ async def _decide_trust(
     trusted = await ask(await to_thread.run_sync(describe, trust, Path(shell.session.workspace)))
     if trusted is None:
         console.print(
-            "Untrusted for this session: capabilities that check workspace authority treat this folder's files "
-            "as the repository's. /trust changes it.",
+            "Untrusted for this session: instruction files and skills reach the model as the repository's. "
+            '/trust changes it.',
             style=theme.color(theme.INFO),
             markup=False,
         )
         return
     await shell.process.decide_trust(trust, trusted=trusted)
-    level = (
-        'Trusted'
-        if trusted
-        else "Untrusted: capabilities that check workspace authority treat this folder's files as the repository's"
-    )
+    level = 'Trusted' if trusted else "Untrusted: instruction files and skills reach the model as the repository's"
     held = '' if trust.scope.remembered else ' for this session'
     console.print(f'{level}{held}. /trust changes it.', style=theme.color(theme.INFO), markup=False)
 

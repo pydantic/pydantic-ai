@@ -24,6 +24,7 @@ from pydantic_ai.messages import (
     ToolKind,
     ToolKindLike,
     ToolPartKind,
+    ToolUIVisibility,
     _tool_kind_id,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.tools import (
@@ -206,6 +207,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         tool_kind: ToolKind[KindArgsT, KindContentT],
         timeout: float | None = None,
         durable: bool | None = None,
+        ui_visibility: ToolUIVisibility | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> KindedToolPlainDecorator[KindArgsT, KindContentT]: ...
@@ -230,6 +232,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         tool_kind: ToolPartKind | None = None,
         timeout: float | None = None,
         durable: bool | None = None,
+        ui_visibility: ToolUIVisibility | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
@@ -254,6 +257,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
         durable: bool | None = None,
+        ui_visibility: ToolUIVisibility | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Any:
@@ -278,6 +282,7 @@ class Capability(AbstractCapability[AgentDepsT]):
             tool_kind=_tool_kind_id(tool_kind),
             timeout=timeout,
             durable=durable,
+            ui_visibility=ui_visibility,
             defer_loading=defer_loading,
             include_return_schema=include_return_schema,
         )
@@ -306,6 +311,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         tool_kind: ToolKind[KindArgsT, KindContentT],
         timeout: float | None = None,
         durable: bool | None = None,
+        ui_visibility: ToolUIVisibility | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> KindedToolDecorator[AgentDepsT, KindArgsT, KindContentT]: ...
@@ -330,6 +336,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         tool_kind: ToolPartKind | None = None,
         timeout: float | None = None,
         durable: bool | None = None,
+        ui_visibility: ToolUIVisibility | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
@@ -354,6 +361,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
         durable: bool | None = None,
+        ui_visibility: ToolUIVisibility | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Any:
@@ -378,6 +386,7 @@ class Capability(AbstractCapability[AgentDepsT]):
             tool_kind=_tool_kind_id(tool_kind),
             timeout=timeout,
             durable=durable,
+            ui_visibility=ui_visibility,
             defer_loading=defer_loading,
             include_return_schema=include_return_schema,
         )
