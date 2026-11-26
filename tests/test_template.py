@@ -234,8 +234,6 @@ class TestAgentFromSpecDeps:
 
 # --- Integration: full agent run with templated instructions ---
 
-pytestmark = [pytest.mark.anyio]
-
 
 async def test_agent_run_with_template_instructions() -> None:
     """Full integration: run an agent with templated instructions and verify they render."""

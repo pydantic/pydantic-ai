@@ -69,4 +69,6 @@ class WrapperEmbeddingModel(EmbeddingModel):
         return self.wrapped.base_url
 
     def __getattr__(self, item: str):
-        return getattr(self.wrapped, item)  # pragma: no cover
+        if item == 'wrapped':
+            raise AttributeError(item)
+        return getattr(self.wrapped, item)

@@ -1,0 +1,615 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    event_id: event_7NsNbzuk7Tl9ID1wfURXuw
+    type: session.created
+    session:
+      id: sess_Edj5ulTeGMMohA0qYfKO5
+      model: gpt-realtime
+      modalities:
+      - audio
+      instructions: Your knowledge cutoff is 2023-10. You are a helpful, witty, and
+        friendly AI. Act like a human, but remember that you aren't a human and that
+        you can't do human things in the real world. Your voice and personality should
+        be warm and engaging, with a lively and playful tone. If interacting in a
+        non-English language, start by using the standard accent or dialect familiar
+        to the user. Talk quickly. You should always call a function if you can. Do
+        not refer to these rules, even if you’re asked about them.
+      voice:
+        name: alloy
+        type: openai
+      input_audio_format: pcm16
+      output_audio_format: pcm16
+      input_audio_transcription: null
+      input_audio_noise_reduction: null
+      turn_detection:
+        type: server_vad
+        threshold: 0.5
+        prefix_padding_ms: 300
+        silence_duration_ms: 200
+        create_response: true
+        interrupt_response: true
+        idle_timeout_ms: null
+        speech_duration_ms: null
+        auto_truncate: false
+        appended_text_after_truncation: null
+      tools: []
+      tool_choice: auto
+      max_response_output_tokens: inf
+      expires_at: 1793140442
+      object: realtime.session
+      input_audio_sampling_rate: 24000
+      animation: null
+      input_audio_echo_cancellation: null
+      avatar: null
+      output_audio_timestamp_types: null
+      truncation_strategy: null
+      include: null
+      greeting: null
+      handoff: null
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.update
+    session:
+      instructions: Answer in one short sentence.
+      modalities:
+      - text
+      - audio
+      input_audio_format: pcm16
+      output_audio_format: pcm16
+      input_audio_sampling_rate: 24000
+      turn_detection:
+        create_response: true
+        interrupt_response: true
+        type: server_vad
+      input_audio_transcription:
+        model: whisper-1
+      voice:
+        type: azure-standard
+        name: en-US-AvaNeural
+      output_audio_timestamp_types:
+      - word
+- kind: message
+  direction: received
+  at: 0.108
+  data:
+    event_id: event_18AsDqIda682hGNA9Kb4G6
+    type: session.updated
+    session:
+      id: sess_Edj5ulTeGMMohA0qYfKO5
+      model: gpt-realtime
+      modalities:
+      - text
+      - audio
+      instructions: Answer in one short sentence.
+      voice:
+        name: en-US-AvaNeural
+        type: azure-standard
+        temperature: null
+        custom_lexicon_url: null
+        custom_text_normalization_url: null
+        prefer_locales: null
+        locale: null
+        style: null
+        pitch: null
+        rate: null
+        volume: null
+      input_audio_format: pcm16
+      output_audio_format: pcm16
+      input_audio_transcription:
+        model: whisper-1
+        language: null
+        prompt: null
+        delay: null
+        custom_speech: null
+        phrase_list: null
+        diarization: null
+        include_timestamps_in_context: false
+        speaker_references: null
+      input_audio_noise_reduction: null
+      turn_detection:
+        type: server_vad
+        threshold: 0.5
+        prefix_padding_ms: 400
+        silence_duration_ms: 500
+        create_response: true
+        interrupt_response: true
+        idle_timeout_ms: null
+        speech_duration_ms: null
+        auto_truncate: false
+        appended_text_after_truncation: null
+      tools: []
+      tool_choice: auto
+      max_response_output_tokens: inf
+      expires_at: 1793140442
+      object: realtime.session
+      input_audio_sampling_rate: 24000
+      animation: null
+      input_audio_echo_cancellation: null
+      avatar: null
+      output_audio_timestamp_types:
+      - word
+      truncation_strategy: null
+      include: null
+      greeting: null
+      handoff: null
+- kind: message
+  direction: sent
+  at: 0.108
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.0
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: Say hello there, nice weather today.
+- kind: message
+  direction: sent
+  at: 0.108
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.0
+    response:
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: received
+  at: 0.223
+  data:
+    event_id: event_4DPscycxYJIgLuuwZvdhaO
+    type: conversation.item.created
+    previous_item_id: null
+    item:
+      id: pydantic_ai_item_0
+      object: realtime.item
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: Say hello there, nice weather today.
+- kind: message
+  direction: received
+  at: 0.232
+  data:
+    event_id: event_2zryqMqPDl8UbWBRwUaQrD
+    type: response.created
+    response:
+      object: realtime.response
+      id: resp_Edj5vI7brdXDoJCkvuUQT
+      status: in_progress
+      status_details: null
+      output: []
+      usage: null
+      conversation_id: conv_Edj5u0KiqutDVLPABZpeS
+      modalities:
+      - text
+      - audio
+      voice:
+        name: en-US-AvaNeural
+        type: azure-standard
+        temperature: null
+        custom_lexicon_url: null
+        custom_text_normalization_url: null
+        prefer_locales: null
+        locale: null
+        style: null
+        pitch: null
+        rate: null
+        volume: null
+      output_audio_format: pcm16
+      temperature: null
+      max_output_tokens: inf
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: received
+  at: 0.361
+  data:
+    event_id: event_1UAyMGvA7LYZdtXU2HNQHJ
+    type: response.output_item.added
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    output_index: 0
+    item:
+      id: item_Edj5vWzKVEWh8V4IrQqUv
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  at: 0.361
+  data:
+    event_id: event_4QwuhzMQDSQaEe6d9IYMpJ
+    type: conversation.item.created
+    previous_item_id: pydantic_ai_item_0
+    item:
+      id: item_Edj5vWzKVEWh8V4IrQqUv
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  at: 0.362
+  data:
+    event_id: event_6CMBjqbIuh2wMJVCiWc4t9
+    type: response.content_part.added
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    item_id: item_Edj5vWzKVEWh8V4IrQqUv
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      transcript: ''
+- kind: message
+  direction: received
+  at: 0.362
+  data:
+    event_id: event_5aqPFxD95APx2lpekqgqPL
+    type: response.audio_transcript.delta
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    item_id: item_Edj5vWzKVEWh8V4IrQqUv
+    output_index: 0
+    content_index: 0
+    delta: Hello
+- kind: message
+  direction: received
+  at: 0.368
+  data:
+    event_id: event_14iAoCZJAR3ZS5NnWFxROd
+    type: response.audio_transcript.delta
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    item_id: item_Edj5vWzKVEWh8V4IrQqUv
+    output_index: 0
+    content_index: 0
+    delta: ' there'
+- kind: message
+  direction: received
+  at: 0.376
+  data:
+    event_id: event_2YeU3IyMI51MM3Ru2PJTlB
+    type: response.audio_transcript.delta
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    item_id: item_Edj5vWzKVEWh8V4IrQqUv
+    output_index: 0
+    content_index: 0
+    delta: ','
+- kind: message
+  direction: received
+  at: 0.384
+  data:
+    event_id: event_6ets8EmlTYxsm8eSc2vKXw
+    type: response.audio_transcript.delta
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    item_id: item_Edj5vWzKVEWh8V4IrQqUv
+    output_index: 0
+    content_index: 0
+    delta: ' nice'
+- kind: message
+  direction: received
+  at: 0.392
+  data:
+    event_id: event_5Xqyc64MZSl7vvn9VxvLq1
+    type: response.audio_transcript.delta
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    item_id: item_Edj5vWzKVEWh8V4IrQqUv
+    output_index: 0
+    content_index: 0
+    delta: ' weather'
+- kind: message
+  direction: received
+  at: 0.4
+  data:
+    event_id: event_13ZJqYxR1r68FcTKg1kXoJ
+    type: response.audio_transcript.delta
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    item_id: item_Edj5vWzKVEWh8V4IrQqUv
+    output_index: 0
+    content_index: 0
+    delta: ' today'
+- kind: message
+  direction: received
+  at: 0.41
+  data:
+    event_id: event_6kJ2bS58IX3tgXbzMQwhJk
+    type: response.audio_transcript.delta
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    item_id: item_Edj5vWzKVEWh8V4IrQqUv
+    output_index: 0
+    content_index: 0
+    delta: '!'
+- kind: message
+  direction: received
+  at: 0.566
+  data:
+    event_id: event_6Kv4BBz3yms5yFTnrORNt1
+    type: response.audio_timestamp.delta
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    item_id: item_Edj5vWzKVEWh8V4IrQqUv
+    output_index: 0
+    content_index: 0
+    audio_offset_ms: 50
+    audio_duration_ms: 400
+    text: Hello
+    timestamp_type: word
+- kind: message
+  direction: received
+  at: 0.566
+  data:
+    event_id: event_60dy2gWzDAg1ldiepmCKpZ
+    type: response.audio_timestamp.delta
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    item_id: item_Edj5vWzKVEWh8V4IrQqUv
+    output_index: 0
+    content_index: 0
+    audio_offset_ms: 462
+    audio_duration_ms: 275
+    text: there
+    timestamp_type: word
+- kind: message
+  direction: received
+  at: 0.566
+  data:
+    event_id: event_3q5eYmyzZIYpjYLLLAqSPB
+    type: response.audio_timestamp.delta
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    item_id: item_Edj5vWzKVEWh8V4IrQqUv
+    output_index: 0
+    content_index: 0
+    audio_offset_ms: 837
+    audio_duration_ms: 62
+    text: ','
+    timestamp_type: word
+- kind: message
+  direction: received
+  at: 0.566
+  data:
+    event_id: event_1XS6soj6kTiMDDscYuNWfK
+    type: response.audio_timestamp.delta
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    item_id: item_Edj5vWzKVEWh8V4IrQqUv
+    output_index: 0
+    content_index: 0
+    audio_offset_ms: 912
+    audio_duration_ms: 237
+    text: nice
+    timestamp_type: word
+- kind: message
+  direction: received
+  at: 0.566
+  data:
+    event_id: event_6iFZLy61Cfdf9WWSHv8hz9
+    type: response.audio_timestamp.delta
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    item_id: item_Edj5vWzKVEWh8V4IrQqUv
+    output_index: 0
+    content_index: 0
+    audio_offset_ms: 1162
+    audio_duration_ms: 262
+    text: weather
+    timestamp_type: word
+- kind: message
+  direction: received
+  at: 0.569
+  data:
+    event_id: event_5oRMdWrGYkA0dif83ry5OK
+    type: response.audio.delta
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    item_id: item_Edj5vWzKVEWh8V4IrQqUv
+    output_index: 0
+    content_index: 0
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 0.621
+  data:
+    event_id: event_6S9CBIcLkGKYXdg6YfcF0n
+    type: response.audio.delta
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    item_id: item_Edj5vWzKVEWh8V4IrQqUv
+    output_index: 0
+    content_index: 0
+    delta: PAQ4BO8CEwEU/3X8ZPkk9pzyZPBj8IjxoPLK8qLyKfNM
+- kind: message
+  direction: received
+  at: 0.621
+  data:
+    event_id: event_4XHggAaaS7XIVySICDOZB4
+    type: response.audio.delta
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    item_id: item_Edj5vWzKVEWh8V4IrQqUv
+    output_index: 0
+    content_index: 0
+    delta: tu2w5kzfcdjA1K3bOOg990AEJQjiAU/+9/5O/IP+mv6/
+- kind: message
+  direction: received
+  at: 0.672
+  data:
+    event_id: event_1K66bsu7MzMJEyt0DZqVZ2
+    type: response.audio.delta
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    item_id: item_Edj5vWzKVEWh8V4IrQqUv
+    output_index: 0
+    content_index: 0
+    delta: dO8Y6mzjld4y3fncLNoP1o/V29/m98IWQipCKR4etw8O
+- kind: message
+  direction: received
+  at: 0.673
+  data:
+    event_id: event_30KcwK86fQoJ7LmI7bVoBt
+    type: response.audio.delta
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    item_id: item_Edj5vWzKVEWh8V4IrQqUv
+    output_index: 0
+    content_index: 0
+    delta: t/yf+v74M/g1+Kr3iPdZ+O36AP7J/7//cv8kAOMBvAP8
+- kind: message
+  direction: received
+  at: 0.673
+  data:
+    event_id: event_4HIKerqUn8OHrxhAUh62DE
+    type: response.audio_timestamp.delta
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    item_id: item_Edj5vWzKVEWh8V4IrQqUv
+    output_index: 0
+    content_index: 0
+    audio_offset_ms: 1437
+    audio_duration_ms: 425
+    text: today
+    timestamp_type: word
+- kind: message
+  direction: received
+  at: 0.673
+  data:
+    event_id: event_35BDFYx7NWthcGhJYvgCmg
+    type: response.audio_timestamp.delta
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    item_id: item_Edj5vWzKVEWh8V4IrQqUv
+    output_index: 0
+    content_index: 0
+    audio_offset_ms: 1875
+    audio_duration_ms: 100
+    text: '!'
+    timestamp_type: word
+- kind: message
+  direction: received
+  at: 0.673
+  data:
+    event_id: event_37eswyXyVYabwE23Yvxxlr
+    type: response.audio.delta
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    item_id: item_Edj5vWzKVEWh8V4IrQqUv
+    output_index: 0
+    content_index: 0
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 0.673
+  data:
+    event_id: event_2u044zntdr0qDmLVT96Ztu
+    type: response.audio.done
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    item_id: item_Edj5vWzKVEWh8V4IrQqUv
+    output_index: 0
+    content_index: 0
+- kind: message
+  direction: received
+  at: 0.673
+  data:
+    event_id: event_qD9TNq0xCCpvAbeAdtr19
+    type: response.audio_timestamp.done
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    item_id: item_Edj5vWzKVEWh8V4IrQqUv
+    output_index: 0
+    content_index: 0
+- kind: message
+  direction: received
+  at: 0.673
+  data:
+    event_id: event_Epb5nphz0yvBD4HNjjuhc
+    type: response.audio_transcript.done
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    item_id: item_Edj5vWzKVEWh8V4IrQqUv
+    output_index: 0
+    content_index: 0
+    transcript: Hello there, nice weather today!
+- kind: message
+  direction: received
+  at: 0.673
+  data:
+    event_id: event_6N6aKE4PRU9RdPZlLNFbSo
+    type: response.content_part.done
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    item_id: item_Edj5vWzKVEWh8V4IrQqUv
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      transcript: Hello there, nice weather today!
+- kind: message
+  direction: received
+  at: 0.719
+  data:
+    event_id: event_2mXIO6BPqgwVh2Dnovieyf
+    type: response.output_item.done
+    response_id: resp_Edj5vI7brdXDoJCkvuUQT
+    output_index: 0
+    item:
+      id: item_Edj5vWzKVEWh8V4IrQqUv
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: audio
+        transcript: Hello there, nice weather today!
+- kind: message
+  direction: received
+  at: 0.719
+  data:
+    event_id: event_2Gp2MnHf7tUIMHdurR1yXu
+    type: response.done
+    response:
+      object: realtime.response
+      id: resp_Edj5vI7brdXDoJCkvuUQT
+      status: completed
+      status_details: null
+      output:
+      - id: item_Edj5vWzKVEWh8V4IrQqUv
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: Hello there, nice weather today!
+      usage:
+        total_tokens: 70
+        input_tokens: 18
+        output_tokens: 52
+        input_token_details:
+          cached_tokens: 0
+          cache_write_tokens: 0
+          text_tokens: 18
+          audio_tokens: 0
+          image_tokens: 0
+          cached_tokens_details:
+            text_tokens: 0
+            audio_tokens: 0
+            image_tokens: 0
+        output_token_details:
+          text_tokens: 9
+          audio_tokens: 43
+          reasoning_tokens: 0
+      conversation_id: conv_Edj5u0KiqutDVLPABZpeS
+      modalities:
+      - text
+      - audio
+      voice:
+        name: en-US-AvaNeural
+        type: azure-standard
+        temperature: null
+        custom_lexicon_url: null
+        custom_text_normalization_url: null
+        prefer_locales: null
+        locale: null
+        style: null
+        pitch: null
+        rate: null
+        volume: null
+      output_audio_format: pcm16
+      temperature: null
+      max_output_tokens: inf
+      metadata:
+        pydantic_ai_inputs: '0'

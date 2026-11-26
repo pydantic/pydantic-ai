@@ -9,23 +9,21 @@ from __future__ import annotations
 
 import ast
 import inspect
-import json
-import os
-import subprocess
-import sys
 import textwrap
 from collections.abc import Callable
-from pathlib import Path
 
 import pytest
 from inline_snapshot import snapshot
 
+import pydantic_ai.agent
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.agent.wrapper import WrapperAgent
 from pydantic_ai.models.test import TestModel
 
 from .conftest import try_import
+
+pytest_plugins = ('tests.kw_only_walker',)
 
 with try_import() as temporal_imports:
     from pydantic_ai.durable_exec.temporal import TemporalAgent  # pyright: ignore[reportDeprecated]
@@ -45,7 +43,8 @@ with try_import() as prefect_imports:
 # "Public" here means the defining module path and the class name carry no leading underscore, and
 # the class is not a `StreamedResponse` implementation -- see `kw_only_walker.py`, which owns both
 # rules and explains why. Classes that hand-write a keyword-only `__init__` under
-# `@dataclass(init=False)` are already safe and are deliberately absent.
+# `@dataclass(init=False)` are already safe and are deliberately absent, and so are subclasses that
+# take their public base's constructor unchanged, since the base's entry already covers it.
 #
 # This list only ever shrinks. Converting an entry to keyword-only breaks positional callers, so
 # the drain path is a major version: drop entries here in the same change that flips them,
@@ -80,6 +79,8 @@ _KW_ONLY_ALLOWLIST: frozenset[str] = frozenset(
         # and the hazard this gate exists for cannot reach it. Listed only because the walk used to
         # be blind to `*args` and so never surfaced it.
         'pydantic_ai.models.fallback.FallbackModel',
+        # The capability counterpart, variadic for the same reason: `ModelFallback(m1, m2)`.
+        'pydantic_ai.capabilities.model_fallback.ModelFallback',
         'pydantic_ai.models.function.DeltaToolCall',
         'pydantic_ai.models.instrumented.InstrumentedModel',
         'pydantic_ai.output.OutputContext',
@@ -99,7 +100,7 @@ _KW_ONLY_ALLOWLIST: frozenset[str] = frozenset(
 )
 
 
-def test_new_public_dataclasses_are_keyword_only():
+def test_new_public_dataclasses_are_keyword_only(public_dataclasses: dict[str, list[str]]):
     """New public dataclasses must not add a second positional `__init__` parameter.
 
     "Pretty much all plain dataclasses need `_: KW_ONLY`" is the most-repeated unenforced review
@@ -109,26 +110,13 @@ def test_new_public_dataclasses_are_keyword_only():
     trap lives. Make the new dataclass keyword-only, or add it to the allowlist with maintainer
     sign-off.
 
-    The walk runs out of process with the `COVERAGE_*` environment scrubbed -- see
-    `kw_only_walker.py` for why -- so failures arrive as the child's stderr rather than as an
-    exception here.
+    The fixture pauses coverage while importing optional modules. See `kw_only_walker.py` for why.
     """
-    env = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
-    process = subprocess.run(
-        [sys.executable, str(Path(__file__).parent / 'kw_only_walker.py')],
-        capture_output=True,
-        text=True,
-        timeout=600,
-        env=env,
-    )
-    assert process.returncode == 0, f'dataclass walk failed:\n{process.stderr}'
+    offenders = set(public_dataclasses['offenders'])
+    skipped = public_dataclasses['skipped']
 
-    result: dict[str, list[str]] = json.loads(process.stdout)
-    offenders = set(result['offenders'])
-    skipped = result['skipped']
-
-    assert result['unreadable'] == [], (
-        f'could not read a constructor signature for: {result["unreadable"]}; '
+    assert public_dataclasses['unreadable'] == [], (
+        f'could not read a constructor signature for: {public_dataclasses["unreadable"]}; '
         'the walk cannot classify these, so they are neither gated nor grandfathered'
     )
     # Floor: a walk that collapses -- a renamed package, an import that stops resolving -- must
@@ -149,6 +137,16 @@ def test_new_public_dataclasses_are_keyword_only():
         assert stale_entries == set(), (
             f'`_KW_ONLY_ALLOWLIST` entries no longer offend and must be removed: {sorted(stale_entries)}'
         )
+
+
+def test_agent_module_all_exports_resolve_at_runtime():
+    """Every name in `pydantic_ai.agent.__all__` must be bound at runtime, not only under `TYPE_CHECKING`.
+
+    A star-import resolves each `__all__` entry with `getattr`, so an entry that type checkers can see but
+    the module never binds makes `from pydantic_ai.agent import *` raise `AttributeError`.
+    """
+    unresolved = [name for name in pydantic_ai.agent.__all__ if not hasattr(pydantic_ai.agent, name)]
+    assert unresolved == []
 
 
 _AGENT_IMPLEMENTATIONS: dict[str, type] = {
@@ -238,20 +236,20 @@ _UNFORWARDED_BY_DESIGN: dict[tuple[str, str], frozenset[str] | None] = {
     # configuration until `session()` opens the connection, so every keyword lands on a private
     # dataclass field (`_deps=deps`) rather than on a same-named parameter. The rename is what the
     # walk sees; nothing is dropped, and `AgentRealtime` passing them on is covered by the realtime
-    # session tests.
+    # session tests. `conversation` is resolved first, into the `message_history`, `usage` and
+    # `conversation_id` it stands in for; those three are passed on by keyword to that resolution, so
+    # the walk counts them as forwarded, and it is the resolved values `AgentRealtime` then holds.
     ('AbstractAgent', 'realtime'): frozenset(
         {
+            'conversation',
             'deps',
             'model_settings',
             'instructions',
             'toolsets',
             'capabilities',
-            'usage',
             'usage_limits',
             'metadata',
-            'conversation_id',
             'run_id',
-            'message_history',
         }
     ),
     # Same for `infer_name`, plus `event_stream_handler`, which these two consume rather than
@@ -260,28 +258,32 @@ _UNFORWARDED_BY_DESIGN: dict[tuple[str, str], frozenset[str] | None] = {
     ('AbstractAgent', 'run'): frozenset({'infer_name', 'event_stream_handler'}),
     ('AbstractAgent', 'run_stream'): frozenset({'infer_name', 'event_stream_handler'}),
     # Transformed before forwarding: `model` is resolved to the engine's own model wrapper (or to
-    # `None` inside a workflow) and that result is what `super().iter()` receives. `cancellation_token`
-    # is consumed locally: it is a same-process handle that cannot cross the durable boundary, so
-    # every durable-wrapper entry point rejects it up front with a `UserError` instead of forwarding.
-    ('TemporalAgent', 'iter'): frozenset({'model', 'cancellation_token'}),
+    # `None` inside a workflow) and that result is what `super().iter()` receives. `timeout` is
+    # consumed locally: the deprecated wrappers have no replay-safe clock to keep the run's deadline
+    # across replay or recovery, which the durability capabilities do, so they reject it up front.
+    ('TemporalAgent', 'iter'): frozenset({'model', 'timeout'}),
     # Defaulted before forwarding: `event_stream_handler or self.event_stream_handler`.
-    # `cancellation_token` rejected locally (see the `TemporalAgent.iter` note).
-    ('TemporalAgent', 'run'): frozenset({'event_stream_handler', 'cancellation_token'}),
-    ('TemporalAgent', 'run_sync'): frozenset({'cancellation_token'}),
-    ('TemporalAgent', 'run_stream'): frozenset({'cancellation_token'}),
-    ('TemporalAgent', 'run_stream_events'): frozenset({'cancellation_token'}),
-    ('DBOSAgent', 'run'): frozenset({'cancellation_token'}),
-    ('DBOSAgent', 'run_sync'): frozenset({'cancellation_token'}),
-    ('DBOSAgent', 'run_stream'): frozenset({'cancellation_token'}),
-    ('PrefectAgent', 'run'): frozenset({'cancellation_token'}),
-    ('PrefectAgent', 'run_sync'): frozenset({'cancellation_token'}),
-    ('PrefectAgent', 'run_stream'): frozenset({'cancellation_token'}),
-    ('PrefectAgent', 'run_stream_events'): frozenset({'cancellation_token'}),
+    # `timeout` rejected locally (see the `TemporalAgent.iter` note).
+    ('TemporalAgent', 'run'): frozenset({'event_stream_handler', 'timeout'}),
+    ('TemporalAgent', 'run_sync'): frozenset({'timeout'}),
+    ('TemporalAgent', 'run_stream'): frozenset({'timeout'}),
+    ('TemporalAgent', 'run_stream_events'): frozenset({'timeout'}),
+    # `cancellation_token` is consumed locally: it is a same-process handle that cannot cross the
+    # DBOS or Prefect durable boundary, so their wrapper entry points reject it up front with a
+    # `UserError` instead of forwarding. (Temporal forwards it: a token fired from a workflow signal
+    # handler cancels the run deterministically.) `timeout` is rejected as for `TemporalAgent`.
+    ('DBOSAgent', 'run'): frozenset({'cancellation_token', 'timeout'}),
+    ('DBOSAgent', 'run_sync'): frozenset({'cancellation_token', 'timeout'}),
+    ('DBOSAgent', 'run_stream'): frozenset({'cancellation_token', 'timeout'}),
+    ('PrefectAgent', 'run'): frozenset({'cancellation_token', 'timeout'}),
+    ('PrefectAgent', 'run_sync'): frozenset({'cancellation_token', 'timeout'}),
+    ('PrefectAgent', 'run_stream'): frozenset({'cancellation_token', 'timeout'}),
+    ('PrefectAgent', 'run_stream_events'): frozenset({'cancellation_token', 'timeout'}),
     # `toolsets` is applied through the engine's override context instead of the run argument, which
     # is explicitly passed as `toolsets=None` so the runtime toolsets are not added twice.
-    # `cancellation_token` rejected locally (see the `TemporalAgent.iter` note).
-    ('DBOSAgent', 'iter'): frozenset({'toolsets', 'cancellation_token'}),
-    ('PrefectAgent', 'iter'): frozenset({'toolsets', 'cancellation_token'}),
+    # `cancellation_token` and `timeout` rejected locally (see the `DBOSAgent.run` note).
+    ('DBOSAgent', 'iter'): frozenset({'toolsets', 'cancellation_token', 'timeout'}),
+    ('PrefectAgent', 'iter'): frozenset({'toolsets', 'cancellation_token', 'timeout'}),
     # Forwarded only when set, through a `**` splat this walk deliberately does not read. The
     # conditional is residue of the removed `output_retries` deprecation shim (`24c8cdca7`) rather
     # than a compatibility mechanism; the other nine keywords forward unconditionally.
@@ -356,7 +358,6 @@ def test_agent_implementation_forwarding_parity(implementation: type, method_nam
     )
 
 
-@pytest.mark.anyio
 async def test_wrapper_agent_override_metadata_reaches_the_run():
     """End-to-end pin for the forwarding the meta-tests above check structurally.
 

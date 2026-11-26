@@ -1,8 +1,14 @@
+---
+description: "Connect a Pydantic AI agent to a chat frontend with UI event stream protocols such as AG-UI and the Vercel AI SDK, served from Starlette or FastAPI."
+---
+
 # UI Event Streams
 
 If you're building a chat app or other interactive frontend for an AI agent, your backend will need to receive agent run input (like a chat message or complete [message history](../message-history.md)) from the frontend, and will need to stream the [agent's events](../agent.md#streaming-all-events) (like text, thinking, and tool calls) to the frontend so that the user knows what's happening in real time.
 
 While your frontend could use Pydantic AI's [`ModelRequest`][pydantic_ai.messages.ModelRequest] and [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] directly, you'll typically want to use a UI event stream protocol that's natively supported by your frontend framework.
+
+To push data of your own to the frontend mid-run, like a progress update from a long-running tool, emit a [custom event](../agent.md#custom-events): both protocols below forward it as their own custom-data event, unless its class is declared `ui=False` for events you only want server-side.
 
 Pydantic AI natively supports two UI event stream protocols:
 
@@ -17,11 +23,13 @@ The protocol-specific [`UIAdapter`][pydantic_ai.ui.UIAdapter] subclass (i.e. [`A
 
 If you're using a Starlette-based web framework like FastAPI, you can use the [`UIAdapter.dispatch_request()`][pydantic_ai.ui.UIAdapter.dispatch_request] class method from an endpoint function to directly handle a request and return a streaming response of protocol-specific events. This is demonstrated in the next section.
 
-If you're using a web framework not based on Starlette (e.g. Django or Flask) or need fine-grained control over the input or output, you can create a `UIAdapter` instance and directly use its methods. This is demonstrated in "Advanced Usage" section below.
+If you're using a web framework not based on Starlette (e.g. Django or Flask) or need fine-grained control over the input or output, you can create a `UIAdapter` instance and directly use its methods. This is demonstrated in the "Advanced Usage" section below.
 
 ### Usage with Starlette/FastAPI
 
 Besides the request, [`UIAdapter.dispatch_request()`][pydantic_ai.ui.UIAdapter.dispatch_request] takes the agent, the same optional arguments as [`Agent.run_stream_events()`](../agent.md#running-agents), an optional `on_complete` callback for successful runs, and an optional `on_cancel` callback that receives [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] for [first-party cancelled](../agent.md#cancelling-a-run) runs (a client disconnect is an external cancellation and does not trigger it). Both callbacks can optionally yield additional protocol-specific events.
+
+`on_complete` runs once the agent run has finished and the response is already streaming, so an exception it raises, such as a failure to save the conversation, doesn't reach your request handler. It goes to the event stream's [`on_error()`][pydantic_ai.ui.UIEventStream.on_error] like any other error during streaming, which sends the client the protocol's error event. It's also recorded, as its exception type only, on the OpenTelemetry span that's current when it's raised, which is your HTTP request's span if your server is instrumented. To log the exception or raise it yourself, override `on_error` in a subclass of the adapter's event stream, and return that subclass from your adapter's [`build_event_stream()`][pydantic_ai.ui.UIAdapter.build_event_stream].
 
 !!! note
     These examples use the `VercelAIAdapter`, but the same patterns apply to all `UIAdapter` subclasses.
@@ -34,7 +42,7 @@ from starlette.responses import Response
 from pydantic_ai import Agent
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 app = FastAPI()
 
@@ -51,6 +59,7 @@ If you're using a web framework not based on Starlette (e.g. Django or Flask) or
     - You can also use the [`UIAdapter.from_request()`][pydantic_ai.ui.UIAdapter.from_request] class method to build an adapter directly from a Starlette/FastAPI request.
 2. The [`UIAdapter.run_stream()`][pydantic_ai.ui.UIAdapter.run_stream] method runs the agent and returns a stream of protocol-specific events. It supports the same optional arguments as [`Agent.run_stream_events()`](../agent.md#running-agents), including the `on_complete` and `on_cancel` callbacks.
     - You can also use [`UIAdapter.run_stream_native()`][pydantic_ai.ui.UIAdapter.run_stream_native] to run the agent and return a stream of Pydantic AI events instead, which can then be transformed into protocol-specific events using [`UIAdapter.transform_stream()`][pydantic_ai.ui.UIAdapter.transform_stream].
+    - A request the adapter rejects as malformed — an AG-UI [resume payload](ag-ui.md#tool-approval-interrupts) that doesn't match the schema it advertised, for instance — raises on the first iteration of the stream rather than when the run method is called, so that pairing it with `transform_stream()` turns it into a protocol error event. Consuming the native stream without that pairing means catching it around your `async for`.
 3. The [`UIAdapter.encode_stream()`][pydantic_ai.ui.UIAdapter.encode_stream] method encodes the stream of protocol-specific events as SSE (HTTP Server-Sent Events) strings, which you can then return as a streaming response.
     - You can also use [`UIAdapter.streaming_response()`][pydantic_ai.ui.UIAdapter.streaming_response] to generate a Starlette/FastAPI streaming response directly from the protocol-specific event stream returned by `run_stream()`.
 
@@ -70,13 +79,17 @@ from pydantic_ai import Agent
 from pydantic_ai.ui import SSE_CONTENT_TYPE
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 app = FastAPI()
 
 
 @app.post('/chat')
 async def chat(request: Request) -> Response:
+    media_type = request.headers.get('content-type', '').split(';')[0].strip().lower()
+    if media_type != 'application/json':  # (1)!
+        return Response(status_code=HTTPStatus.UNSUPPORTED_MEDIA_TYPE)
+
     accept = request.headers.get('accept', SSE_CONTENT_TYPE)
     try:
         run_input = VercelAIAdapter.build_run_input(await request.body())
@@ -93,6 +106,30 @@ async def chat(request: Request) -> Response:
     sse_event_stream = adapter.encode_stream(event_stream)
     return StreamingResponse(sse_event_stream, media_type=accept)
 ```
+
+1. `build_run_input()` takes bytes, so it can't apply the media-type check that
+   [`from_request()`][pydantic_ai.ui.UIAdapter.from_request] does — see
+   [the trust model](#trust-model-for-client-submitted-messages) for what it's for. Do it in your own
+   framework's idiom, as here, whenever you read the body yourself.
+
+### Running the agent elsewhere
+
+The adapter assumes the agent runs inside the request that serves the frontend. It doesn't have to. If the agent runs on a [durable execution](../durable_execution/overview.md) worker, a background job, or another service, the adapter's two jobs simply split across that boundary: the request side builds the run input and transforms the events it receives back into protocol events, and whatever runs the agent builds the run arguments from the same request body.
+
+The request side never calls `run_stream()`. It hands [`UIAdapter.transform_stream()`][pydantic_ai.ui.UIAdapter.transform_stream] the agent's events as they arrive over your transport (the media-type and validation handling from the example above still applies, and is elided here):
+
+```py {title="remote_run_handler.py" test="skip" lint="skip"}
+async def chat(request: Request) -> Response:
+    body = await request.body()
+    events = start_the_run_somewhere_else(body)  # an async iterator of Pydantic AI events
+
+    adapter = VercelAIAdapter(agent=agent, run_input=VercelAIAdapter.build_run_input(body))
+    return adapter.streaming_response(adapter.transform_stream(events))
+```
+
+The transport has to deliver the run's [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] as well as its [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s — that's what closes the protocol out and what `on_complete` receives — so it needs to carry what [`Agent.run_stream_events()`](../agent.md#running-agents) yields, not just the model's events.
+
+Temporal's [Workflow Streams](../durable_execution/temporal.md#streaming-events-to-a-frontend-with-workflow-streams) are one such transport, and are worth reading as a worked example: the workflow is the queue, the events are durable and offset-addressed, and a frontend that reconnects can be reattached to a run it didn't start.
 
 ### Encoding events without a request
 
@@ -111,7 +148,7 @@ async def encode_events(events: AsyncIterator[NativeEvent]) -> AsyncIterator[str
         yield sse_event
 ```
 
-An event stream instance carries the state of one run as it goes (the current message ID, the part it's streaming, the tool calls it's waiting on), so build a new one per run rather than reusing it.
+An event stream instance carries the state of one run as it goes (the current message ID, the part it's streaming, the tool calls it's waiting on), so build a new one per run.
 
 The AG-UI protocol identifies every run to the frontend: its `RUN_STARTED` and `RUN_FINISHED` events carry a thread ID and a run ID, which [`AGUIEventStream`][pydantic_ai.ui.ag_ui.AGUIEventStream] reads off the run input when it has one, warning you if you pass IDs it then overrides. Without a run input, pass the IDs your own transport already assigns to the conversation and the run:
 
@@ -125,21 +162,238 @@ Each defaults to a new UUID, minted every time the stream is constructed: a conv
 
 ## Trust model for client-submitted messages
 
-UI adapter endpoints aren't authentication boundaries. Both the AG-UI and Vercel AI protocols are designed around the client transmitting the full conversation history on each request, so anything in `message_history` from the protocol — assistant messages, tool calls, file URLs, tool results — is under the caller's control. Treat the adapter endpoint as an internal backend service, running it inside your own authenticated route handler. See the [AG-UI security considerations](https://learn.microsoft.com/en-us/agent-framework/integrations/ag-ui/security-considerations) page for more on the deployment model both protocols assume.
+UI adapter endpoints aren't authentication boundaries. Both the AG-UI and Vercel AI protocols are designed around the client transmitting the full conversation history on each request, so anything in `message_history` from the protocol — assistant messages, tool calls, file URLs, tool results — is under the caller's control. An AG-UI client also declares its own frontend tools, and their names, descriptions and argument schemas reach the model as the client sent them; see the [AG-UI trust model](./ag-ui.md#trust-model) for how to limit them. Treat the adapter endpoint as an internal backend service, running it inside your own authenticated route handler. See the [AG-UI security considerations](https://learn.microsoft.com/en-us/agent-framework/integrations/ag-ui/security-considerations) page for more on the deployment model both protocols assume.
+
+Authenticating the endpoint settles *who* may call it, not *what caused the call*. Where that authentication is a cookie or any other credential the browser attaches on its own, a page your user has open elsewhere can post to your route on their behalf: the run starts and its tools execute, and the attacker never needs to read the response. To keep a request a browser can forge without a preflight from reaching the agent, the adapters accept only `application/json` request bodies, answering anything else with a `415` before the body is read. Both protocols' SDK transports send that content type, so a frontend on another origin is preflighted and admitted by your own CORS policy exactly as before. Widen the set, or skip the check on a route that carries CSRF protection of its own, with the `allowed_content_types` argument to [`UIAdapter.from_request()`][pydantic_ai.ui.UIAdapter.from_request] and [`UIAdapter.dispatch_request()`][pydantic_ai.ui.UIAdapter.dispatch_request]. It's one control rather than a CSRF strategy: on a route that carries ambient credentials, pair it with whatever your framework offers.
 
 The adapters apply a few defaults so that the authoritative state stays on your side:
 
-- **System prompts** — client-submitted [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s are stripped by default and replaced with the agent's configured prompt. Control with [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt]; see each adapter's docs for details.
+- **System prompts** — client-submitted [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s are stripped by default and replaced with the agent's configured prompt. [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s and [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart]s are stripped too, and request-level [`ModelRequest.instructions`][pydantic_ai.messages.ModelRequest.instructions] are reset to `None`. [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]s are kept, so the model still sees why it corrected itself, but the metadata marker that reloads one is echoed by the client, so a client can forge one and pick its cause. Pydantic AI's own [retry feedback](../retries.md#feedback-that-belongs-to-no-tool-call) reaches the model in the user voice, fenced, for a validation error or a `ModelRetry`, and in the system voice only for `'no_output'`, so a returned `'no_output'` part is demoted to the same fenced user text: the client can't earn the system voice by forging one. Control with [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt]; `'client'` hands over the system prompt and `'no_output'` feedback both — see each adapter's docs for details. [Request-scoped](../message-history.md#request-scoped-system-prompts) ones are left out of `dump_messages` altogether, with either setting, since they're only for the model's current request, so a history that round-trips through the frontend loses them; keep it server-side, as described below, where that matters. Persist [append-on-change instruction history](../agent.md#appending-instruction-changes) server-side as well; UI message dumps omit its operator records.
 - **Dangling tool calls** — if the client-submitted history ends in a [`ModelResponse`][pydantic_ai.messages.ModelResponse] with unresolved [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s and no matching `deferred_tool_results`, the tool calls are dropped with a warning, as a best-effort default so the agent doesn't execute an unresolved tool call the model never emitted. For human-in-the-loop resumption, pass explicit `deferred_tool_results` to the run method — tool calls resolved by those results are kept (see the warning below).
 - **File URL schemes** — only `http` and `https` are accepted by default for [`FileUrl`][pydantic_ai.messages.FileUrl] parts in client-submitted messages. Non-HTTP schemes like `s3://` or `gs://` are dropped, since they cause the provider to fetch the object using your server's IAM role or service account. See [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes].
 - **File URL download mode** — [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values other than `False` are reset to `False` by default on client-submitted messages. This prevents clients from forcing the server to fetch a URL, or using `'allow-local'` to opt out of the SSRF private-IP block. After auditing your frontend, opt into additional values with [`UIAdapter.allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download].
 - **Uploaded files** — client-submitted [`UploadedFile`][pydantic_ai.messages.UploadedFile] parts are dropped by default, just like non-HTTP `FileUrl`s, since the server resolves them against the provider's file storage API using its own credentials. After auditing your frontend, honor them by setting [`UIAdapter.allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files] to `True`. This is a purely inbound security setting: file content the agent produces is always serialized on the way back out to the client.
+- **Workspace references** — [`ModelResponse.workspace_ref`][pydantic_ai.messages.ModelResponse.workspace_ref] is reset to `None` on client-submitted messages by default, so a client can't point your agent at another conversation's [workspace](../workspace.md) through your server's provider credentials. As a result, a sandbox capability starts a new sandbox on every request. To keep one per conversation, save `result.workspace.ref` in `on_complete` and pass it back as `workspace=` on the next request; see [Continuing in the same workspace](../workspace.md#continuing-in-the-same-workspace). The Vercel AI and AG-UI protocols do not carry workspace references, so `strip_workspace_refs=False` only affects `sanitize_messages` and custom adapters; it cannot round-trip a ref through those protocols. Keep the saved ref server-side and authorize it before passing `workspace=`.
+- **Tool visibility stamps** — [`ui_visibility`][pydantic_ai.messages.BaseToolCallPart.ui_visibility] is reset to `None` on client-submitted tool call and return parts, so a client can't change what it's sent of a tool's result: a call the run executes from that history, such as one the user approved, is stamped again from its tool's definition. The Vercel AI and AG-UI protocols don't carry the stamp, so this only affects `sanitize_messages` and custom adapters. See [Tool visibility](#tool-visibility).
+- **Framework-reserved metadata** — the `__pydantic_ai__` key in [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] and [`ModelResponse.metadata`][pydantic_ai.messages.ModelResponse.metadata] holds state Pydantic AI and its capabilities act on in later runs, such as the file descriptions [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding] records, so it's dropped from client-submitted messages with a warning, and that state is computed again where it's needed. Your own metadata keys are kept. The UI message id the adapter keeps there is the client's own, so it survives, and `dump_messages` gives each message back under the id it was sent with.
 
 !!! warning "Tool approvals and results are submitted by the client"
     On the [human-in-the-loop resumption](../deferred-tools.md#human-in-the-loop-tool-approval) path, the [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] passed to the run method — approvals, denials, and externally-executed tool results — are submitted by the client along with the history, and the adapter does not verify that an approved tool call is one the server actually issued. A client that can reach the endpoint can therefore approve a tool call of its own making, including one for an approval-gated tool. Approval guards against the *model* acting without human sign-off; it is not an authorization boundary against the client.
 
-    Authenticate the endpoint (as above) and enforce authorization for sensitive actions inside the tool function itself — against the authenticated user carried in your [dependencies](../dependencies.md#accessing-dependencies), not the client-supplied approval — for any call that reaches the tool function. Alternatively, persist paused runs server-side and pass your own `deferred_tool_results` rather than honoring the client's.
+    Authenticate the endpoint (as above) and enforce authorization for sensitive actions inside the tool function itself — against the authenticated user carried in your [dependencies](../dependencies.md#accessing-dependencies), not the client-supplied approval — for any call that reaches the tool function. For approval-gated tools, also [keep the history on the server](#keeping-the-history-on-the-server): with `manage_message_history='server'`, an approval or denial has to answer a tool call that the stored history is waiting on, so a request with an approval for a call that isn't pending, including a tool call the model didn't make, is rejected before any tool runs. Alternatively, persist paused runs server-side and pass your own `deferred_tool_results` rather than honoring the client's.
 
-For stricter conversation integrity (e.g. ensuring prior assistant turns and tool returns match what the server actually produced), persist the history server-side keyed by the thread/session ID and pass it to the adapter via `message_history` — caller-supplied history is trusted as coming from server-side persistence and isn't subject to this sanitization.
+For stricter conversation integrity (e.g. ensuring prior assistant turns and tool returns match what the server actually produced), keep the history on the server, as described [below](#keeping-the-history-on-the-server) — caller-supplied `message_history` is trusted as coming from server-side persistence and isn't subject to this sanitization.
 
 These defaults narrow what a fabricated history can reach, but a client that can submit history can always fabricate it; see [Trust boundary for client-supplied history](../message-history.md#trust-boundary-for-client-supplied-history) for what that means for your application's authorization model.
+
+### Keeping the history on the server
+
+The AI SDK's `useChat` and `@ag-ui/client` both send the whole conversation on every request. To make your own stored history the conversation instead, persist the agent's messages when a run completes, pass them back as `message_history` on the next request, and set [`manage_message_history='server'`][pydantic_ai.ui.UIAdapter.manage_message_history], which [`UIAdapter.from_request()`][pydantic_ai.ui.UIAdapter.from_request] and [`UIAdapter.dispatch_request()`][pydantic_ai.ui.UIAdapter.dispatch_request] also accept:
+
+```py {title="server_side_history.py"}
+from fastapi import FastAPI
+from starlette.requests import Request
+from starlette.responses import Response
+
+from pydantic_ai import Agent, AgentRunResult
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+
+agent = Agent('{{ openai:medium }}')
+
+app = FastAPI()
+
+conversations: dict[str, list[ModelMessage]] = {}  # (1)!
+
+
+@app.post('/chat/{chat_id}')
+async def chat(chat_id: str, request: Request) -> Response:
+    def save(result: AgentRunResult[str]) -> None:
+        conversations[chat_id] = result.all_messages()
+
+    return await VercelAIAdapter.dispatch_request(
+        request,
+        agent=agent,
+        message_history=conversations.get(chat_id),
+        manage_message_history='server',
+        on_complete=save,
+    )
+```
+
+1. Use a database in production, and check that the user may access the conversation before reading or writing it.
+
+From the client's messages, the adapter then uses only the new turn: the messages after the last assistant response, such as the user's new message or the output of a tool the frontend ran. Everything before it comes from `message_history`, so the model sees each turn once, and the client can't change what the model saw on earlier turns. This works whether the client sends its whole history or only its new messages.
+
+- **Regenerating and editing.** When the new turn starts with a user message whose UI message id is already in `message_history`, the stored history is cut just before that message, so the run replaces that turn and everything after it. Tool results the server recorded alongside that message stay, so the client can't answer those calls again. That's what the AI SDK's `regenerate()` and `sendMessage({ messageId })` send, and what a retried submit looks like. A client can roll its own conversation back to any of its earlier user messages this way, as those features require, but not to any other message. When the id isn't in `message_history`, the new turn is appended, except for a regenerate, which is rejected with a protocol error event (Vercel AI's `error` chunk, AG-UI's `RUN_ERROR`) instead of answering a turn the server doesn't have: either the server never stored that message, as after a run that didn't complete (see below), or the client holds a different conversation than the server, as a client in a stale tab does.
+- **Saving the stored record.** Saving `result.all_messages()` over the stored history drops the turns a cut replaced, the client's own messages included, so a client can remove them before moderation or review reads them. If you need an append-only record, keep the earlier version too, for example by [saving to a conversation store](#saving-to-a-conversation-store), which keeps the turn a cut replaced as a branch, or, if your app doesn't offer edit or regenerate, reject a request whose first message resubmits a stored user message id before calling the adapter.
+- **Histories without UI message ids.** Matching a resubmitted message relies on the UI message ids the adapter keeps on the requests it loads, so `message_history` must be the history an adapter run produced, such as `result.all_messages()` saved in `on_complete`. A history persisted another way, such as from `agent.run()` or rebuilt from your own tables, carries no UI message ids, so every Vercel AI regenerate is rejected as stale and an edit is appended instead of replacing the turn.
+- **Tool results.** A tool result from the client is kept only if it answers a tool call that is still unanswered at the end of `message_history`. Others are dropped with a warning.
+- **Capability loads.** A [`CapabilityLoadDeltaPart`][pydantic_ai.messages.CapabilityLoadDeltaPart] in the new turn is dropped, like a compaction part, since `message_history` holds the loads the server recorded.
+- **Tool approvals.** A run that resumes after an approval has no new turn: `message_history` ends with the calls awaiting approval, and the approvals and denials come from the request. Each one has to answer one of those calls. A request with an approval for a call that isn't pending, such as a tool call the model didn't make or one that was already answered, is rejected with a protocol error event, and no tool runs. Who may approve a call is still up to your application, as described in the warning above.
+- **Sanitization.** The new turn is still client input, so the defaults above apply to it.
+- **Runs that don't complete.** `on_complete` only runs for a run that completes, so a turn whose run fails or is stopped isn't in the stored history. Once the client holds an assistant response after it, such as the partial one of a stopped stream, the client's copy of the turn isn't used either, since only the messages after the client's last assistant response are: the model doesn't see that turn again, though the frontend may still show it. A `regenerate()` of that turn, which is how the AI SDK's usual retry after an error or a stop works, is rejected as described above, since the server has no copy of the message to regenerate: have the frontend send the user's message again as a new one (`sendMessage`) instead. To keep a [cancelled](../agent.md#cancelling-a-run) run, also save [`RunCancelled.all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages] in `on_cancel`. A client disconnect, as when the user stops `useChat`, is an external cancellation that triggers neither callback. A saved history that ends with a request no response answered, as a run cancelled before its first response leaves, gets that request again from the client, so the model sees it twice: until that's handled ([#11031](https://github.com/pydantic/pydantic-ai/issues/11031)), drop such a trailing request before saving, or don't save a cancelled run that produced no response.
+
+The default, `manage_message_history='client'`, treats the client's messages as the conversation and puts any `message_history` you pass in front of them, which suits server-only context such as a pinned preamble. If a client message's UI message id already appears in `message_history`, the adapter warns, because the model sees that message twice. Only a history that went through an adapter carries those ids, so for one built any other way, such as by hand or from `agent.run()`, the adapter can't tell: passing it as `message_history` while the client sends its whole conversation sends that conversation to the model twice, without a warning.
+
+The client needs no changes, but it can save bandwidth by sending only its new messages; see the [Vercel AI](./vercel-ai.md#keeping-the-history-on-the-server) and [AG-UI](./ag-ui.md#keeping-the-history-on-the-server) pages.
+
+#### Saving to a conversation store
+
+Instead of loading and saving the history yourself, you can give the adapter a [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] (see [Persistence](../persistence.md)) as [`conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store]. Passing a store means the history is held on the server: `manage_message_history` is ignored, and the client's new turn follows the `'server'` rules above. A store also keeps the conversation's [`usage`][pydantic_ai.conversation.Conversation.usage], so it can't be combined with the run methods' `message_history` or `usage` arguments. The adapter then loads the conversation the request names (the Vercel AI chat `id` or the AG-UI `threadId`, unless you pass `conversation_id`), applies the rules above to the client's new turn, runs the agent and saves what the run added. Always pass the authenticated user or tenant as [`conversation_scope`][pydantic_ai.ui.UIAdapter.conversation_scope]: a conversation saved with another scope is treated as not found, as is one saved with any scope when you pass none, so `dispatch_request` answers `404` before running anything, and the other run methods reject the request with a protocol error event.
+
+A store keys conversations by ID alone, and the ID comes from the client, so in a multi-tenant app conversation IDs must be unguessable or prefixed per scope, which you can do by passing your own `conversation_id`. Otherwise, a tenant who creates an ID first holds it, and its owner gets that `404`. A client can also tell from the `404` that an ID it holds exists under another scope, but no tenant reaches another's messages. A [`delete`][pydantic_ai.conversation_store.ConversationStore.delete] that names the owner's scope leaves the conversation as it is, so freeing the ID takes one from your app without a scope.
+
+```py {title="conversation_store_ui.py"}
+from fastapi import FastAPI
+from starlette.requests import Request
+from starlette.responses import Response
+
+from pydantic_ai import Agent
+from pydantic_ai.conversation_store import InMemoryConversationStore
+from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+
+agent = Agent('{{ openai:medium }}')
+
+app = FastAPI()
+
+store = InMemoryConversationStore()  # (1)!
+
+
+@app.post('/chat')
+async def chat(request: Request) -> Response:
+    user_id = 'user-123'  # (2)!
+    return await VercelAIAdapter.dispatch_request(
+        request,
+        agent=agent,
+        conversation_store=store,
+        conversation_scope=user_id,
+    )
+```
+
+1. Use a database-backed store in production; see [Persistence](../persistence.md).
+2. The user your own authentication identified.
+
+With a store, the adapter also uses what the store knows that the messages don't:
+
+- **Tool approvals and results.** The stored conversation's [`deferred_tool_requests`][pydantic_ai.conversation.Conversation.deferred_tool_requests] say what each pending call is waiting for, so an approval or denial has to answer a call waiting on one, and a tool result a call waiting on a result. A result for a call that's waiting on an approval is dropped with a warning.
+- **Regenerating and editing.** The turn a resubmitted message replaces stays stored as a branch of the conversation, rather than being dropped from the record. The stored conversation only changes once the new run completes, so a regenerate whose run fails leaves it as it was.
+- **Usage limits.** A run counts on from the stored conversation's usage, so [`usage_limits`][pydantic_ai.usage.UsageLimits], including the default `request_limit` of 50, cover the whole conversation rather than each request. A conversation that reaches a limit fails every later turn, since a failed run isn't saved, so pass limits sized for a whole chat, or `UsageLimits(request_limit=None)`.
+- **Concurrent requests.** If another request saved the conversation while this one ran, this run's turn isn't saved, and the stream ends with a protocol error event asking the client to reload the conversation.
+- **Store failures.** If the store itself raises while loading or saving, the client's protocol error event, or the `500` that `dispatch_request` answers if the store fails before the run starts, says only that the conversation could not be loaded or saved, since a database error can hold queries or hostnames. The original exception's type and text go to a `UserWarning` on the server, and its type is recorded on the current OpenTelemetry span, if one is recording. A [`UserError`][pydantic_ai.exceptions.UserError] the store raises itself is the exception: it's sent to the client as is, so keep queries, hostnames and credentials out of it.
+
+After saving, the stream sends the ids of the stored [`ConversationEntry`][pydantic_ai.conversation_store.ConversationEntry]s to the client, so it can record them next to its own messages, for a rating, say: a transient Vercel AI `data-conversation-saved` part, or an AG-UI `pydantic_ai_conversation_saved` custom event, each with a `conversation_id` and a list of `entry_ids`. An adapter instance drives one run at a time, as [`from_request`][pydantic_ai.ui.UIAdapter.from_request] builds one per request.
+
+A run that fails or is stopped isn't saved, so the rules under "Runs that don't complete" above still apply.
+
+## Tool visibility
+
+By default, the adapters stream every tool call to the client, with its arguments and its full result, and `dump_messages` writes the same. A tool that reads something only the agent should see, such as internal notes, a classifier's scores or another customer's data, can keep its result on the server with [`ui_visibility`][pydantic_ai.tools.ToolDefinition.ui_visibility], one of the [`ToolUIVisibility`][pydantic_ai.tools.ToolUIVisibility] values:
+
+| `ui_visibility` | What the client is sent |
+|---|---|
+| `'public'` (default) | The call, with its arguments, and the full result. |
+| `'redacted'` | The call, with its arguments, and the placeholder `'[REDACTED]'` instead of the result, so a frontend that waits for a result to close the tool's UI still does. |
+| `'private'` | Nothing: neither the call nor the result. |
+
+Set it on a tool with the tool decorators, [`Tool`][pydantic_ai.tools.Tool] or a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], and for every tool without a setting with the adapter's [`default_ui_visibility`][pydantic_ai.ui.UIAdapter.default_ui_visibility], which [`UIAdapter.from_request()`][pydantic_ai.ui.UIAdapter.from_request] and [`UIAdapter.dispatch_request()`][pydantic_ai.ui.UIAdapter.dispatch_request] also accept. A public chat widget can then redact every tool and open up the ones the user may see:
+
+```py {title="tool_visibility.py"}
+from fastapi import FastAPI
+from starlette.requests import Request
+from starlette.responses import Response
+
+from pydantic_ai import Agent
+from pydantic_ai.conversation_store import InMemoryConversationStore
+from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+
+agent = Agent('{{ openai:medium }}')
+
+
+@agent.tool_plain
+def get_chat_insights(chat_id: str) -> dict[str, str]:
+    """Look up what the support team noted about an earlier chat."""
+    return {'sentiment': 'negative', 'agent_notes': 'Escalate to tier 2'}
+
+
+@agent.tool_plain(ui_visibility='public')
+def order_status(order_id: str) -> str:
+    """Look up an order's shipping status."""
+    return 'shipped'
+
+
+app = FastAPI()
+store = InMemoryConversationStore()
+
+
+@app.post('/chat')
+async def chat(request: Request) -> Response:
+    return await VercelAIAdapter.dispatch_request(
+        request,
+        agent=agent,
+        conversation_store=store,
+        conversation_scope='user-123',
+        default_ui_visibility='redacted',
+    )
+```
+
+Here the client sees that the agent looked up its earlier chat, but not what the notes said, and sees its order status in full. The model still gets every result, and the stored history keeps them: only what goes to the client changes.
+
+### Keep the history on the server
+
+A client that only saw the placeholder, or nothing, sends that back as the tool's result when it holds the history, so the model loses the real one. Pair visibility with [`manage_message_history='server'`](#keeping-the-history-on-the-server) or a [conversation store](#saving-to-a-conversation-store), where a client's copy of a tool result can never replace the one the server stored. Under the default client-held history, a run warns when it has a non-public `default_ui_visibility`, or when it hides or redacts a tool's call or result.
+
+### Reloading a conversation
+
+When the model calls a tool, in a run or a [realtime session](../realtime/overview.md), or a capability answers the request with a response that calls one, the call and its return are stamped with the tool's visibility ([`ToolCallPart.ui_visibility`][pydantic_ai.messages.BaseToolCallPart.ui_visibility]), and both the event streams and `dump_messages` read the stamp, never the current tool definitions. A conversation reloaded from history, whether by your own `dump_messages` call, from a conversation store or as an AG-UI `MESSAGES_SNAPSHOT`, is therefore sent the way it was streamed, even if a tool was renamed or removed since. A run's non-public `default_ui_visibility` is written onto the tools without a setting, so it ends up in their stamps too. [`AGUIAdapter.dump_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.dump_messages] and [`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] take a `default_ui_visibility` of their own, which only reaches parts without a stamp, such as those of a run with the `'public'` default or of a history from an earlier version. The protocols don't carry the stamp, and [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] resets one a client sends in Pydantic AI's own message format, so a history the client sends back has none: that's one more reason to [keep the history on the server](#keeping-the-history-on-the-server). A call from that history that the run then executes, such as one the user approved, is stamped from its tool's definition before it runs, so its result is sent the way it would have been when the call was made. A version of Pydantic AI from before `ui_visibility` loads a stamped history but ignores the stamps, so if you roll back, its adapters send the calls and results the stamps hid.
+
+### Tools that are always shown
+
+An [external tool](../deferred-tools.md#external-tool-execution), such as an AG-UI frontend tool, is always `'public'`, since its result comes from the client, and so is an [output tool](../output.md#tool-output), whose arguments are the run's answer. A `'private'` tool that [needs approval](../deferred-tools.md#human-in-the-loop-tool-approval) is shown as `'redacted'`, since the user can't approve a call they can't see. So is a `'private'` tool that defers its call while it runs, by raising [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or [`CallDeferred`][pydantic_ai.exceptions.CallDeferred]: the stream then sends the call it hid, and the response in the run's history gets a copy of the call stamped `'redacted'`.
+
+### Tools without a definition
+
+A [native tool](../native-tools.md)'s calls and results, and a call to a tool the run doesn't know, take the adapter's `default_ui_visibility`. A run stamps them with it after each model response, unless a capability's `wrap_model_request` returns a response without calling its handler, or a hook raises [`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest], which skips that step: such parts are still streamed by the default, but a later `dump_messages` without the default shows them. A tool call and result added with [`enqueue`][pydantic_ai.tools.RunContext.enqueue] are streamed by the default too, but nothing stamps them, so a later `dump_messages` sends them by its own `default_ui_visibility`. Set `ui_visibility` on the `ToolCallPart` and `ToolReturnPart` you enqueue to have them sent the same way everywhere.
+
+### What a placeholder replaces
+
+A `'redacted'` result is replaced wherever its content would reach the client: the result itself, the error text of a failed or retried call, and the retry feedback AG-UI carries with a result's outcome. The [MCP Apps](./vercel-ai.md#mcp-apps) record a tool's result carries holds the full result, so it isn't sent either. Events a tool attaches to its result's `metadata`, such as [AG-UI events](./ag-ui.md#events) and [Vercel AI data chunks](./vercel-ai.md#data-chunks), are still sent: they're the channel the tool chose for the client. Events in the result's content are dropped with it. A `'private'` tool's result isn't sent at all, so neither are the events in its `metadata`. To update the client from a `'private'` tool, such as AG-UI state, emit a [`CustomEvent`][pydantic_ai.messages.CustomEvent] with [`ctx.emit()`][pydantic_ai.tools.RunContext.emit] instead, which reaches the client as an [AG-UI event](./ag-ui.md#events) or a [Vercel AI data chunk](./vercel-ai.md#data-chunks) while the tool runs. It carries no call id unless its [`to_payload()`][pydantic_ai.messages.CustomEvent.to_payload] adds one, and it isn't kept in the history.
+
+### Tool names streamed in pieces
+
+The event streams decide what to send for a tool call from its first event, which carries the name streamed so far. A model that streams a tool's name in pieces can start a `'private'` tool's call under a partial name that isn't stamped `'private'`: the name of a tool the client is shown, such as `lookup` for `lookup_secret`, or a name no tool has, such as `look`, which takes the `default_ui_visibility`. The client is then sent that call and its arguments, though never its result, and the run's history still stamps the call `'private'`. A `'private'` default keeps a name no tool has hidden; for the rest, don't give a tool the client must not see a name that starts with another tool's name.
+
+### What it doesn't cover
+
+`ui_visibility` covers a tool's call and its return value. Content a tool sends with [`ToolReturn.content`](../tools-advanced.md#advanced-tool-returns) goes to the model as a separate user message. The event streams don't send it, but `dump_messages` sends it to the client as a user message, whatever the tool's `ui_visibility`. Put data the client must not see in the return value. A failure a tool reports with [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] or [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] is its result, so its message follows `ui_visibility`. Any other exception it raises ends the run, and like every error that ends a run, its text goes to the client as the protocol's error event (Vercel AI's `error` chunk, AG-UI's `RUN_ERROR`), whatever the tool's `ui_visibility`. To send the client something else, override [`on_error()`][pydantic_ai.ui.UIEventStream.on_error] in a subclass of the adapter's event stream. Nor does it cover what the model writes: a model that repeats a `'redacted'` result in its answer sends it to the client there. A file in the model's response is part of its answer too, such as an image that [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] generates, which can be the run's [image output](../output.md#image-output): it's sent like the response's text, even when the native tool's call and result are hidden.
+
+A tool that runs other tools and returns their results as its own, such as Tool Bridge's `tool_call` or Code Mode's `run_code`, is sent by its own visibility, not theirs, so under a `'public'` default a `'private'` tool's result reaches the client through it. Keep such a tool out of the capability with its `tools` selector, or set a non-public `default_ui_visibility`, which these tools take.
+
+Nor does `ui_visibility` hide a tool's name, which other parts carry: a call to a tool the run doesn't know is retried with a message listing the tools the model can call, a [tool search](../capabilities/tool-search.md) result lists the tools it found, and a tool that becomes available during the run is named in the [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] the adapters send, which keeps it available in a client-held history. Under a non-public `default_ui_visibility`, the retry and the search result take the default, so only that record still names the tool.
+
+### Setting it in bulk
+
+For tools you don't define yourself, such as those of an MCP server or another toolset, set the field in a [`prepare_tools`](../tools-advanced.md#prepare-tools) function or with [`PrepareTools`][pydantic_ai.capabilities.PrepareTools]:
+
+```py {title="tool_visibility_bulk.py"}
+from dataclasses import replace
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import PrepareTools
+from pydantic_ai.tools import ToolDefinition
+
+
+def redact_crm_tools(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    return [
+        replace(tool_def, ui_visibility='redacted') if tool_def.name.startswith('crm_') else tool_def
+        for tool_def in tool_defs
+    ]
+
+
+agent = Agent('{{ openai:medium }}', capabilities=[PrepareTools(redact_crm_tools)])
+```
+
+These functions get the tools of the agent and its toolsets, not the ones a capability adds around them, such as tool search's `search_tools` or the tools of Pydantic AI Harness's [Tool Bridge](../harness/tool-bridge.md) and [Code Mode](../harness/code-mode.md): those take the adapter's `default_ui_visibility`.
+
+### Using the event stream on its own
+
+A [`UIEventStream`][pydantic_ai.ui.UIEventStream] used [without an adapter](#encoding-events-without-a-request) reads the stamps the same way, and its own [`default_ui_visibility`][pydantic_ai.ui.UIEventStream.default_ui_visibility] applies only to parts without one. Without an adapter run, nothing writes that default onto the tools or stamps external and output tools `'public'`, so the default applies to frontend and output tools too. Under a `'private'` default, a stream of its own sends nothing for an output tool's call, and sends a frontend tool's call only when the run defers it, after the model's response, rather than as it streams. Set visibility on the tools instead. An adapter's [`transform_stream()`][pydantic_ai.ui.UIAdapter.transform_stream] over the events of a run it didn't start, such as a durable run encoded in another process, works the same way: its `default_ui_visibility` applies like a stream's own, and a client-held history doesn't warn.

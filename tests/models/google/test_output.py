@@ -21,7 +21,7 @@ from pydantic import AnyUrl, BaseModel, ConfigDict, Field
 
 from pydantic_ai import Agent
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.tools import ToolDefinition, ToolKind
+from pydantic_ai.tools import ToolDefinition, ToolDefinitionKind
 
 from ..._inline_snapshot import snapshot
 from ...conftest import try_import
@@ -37,12 +37,11 @@ if TYPE_CHECKING:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
 
-def make_tool(name: str, *, strict: bool | None = None, kind: ToolKind = 'function') -> ToolDefinition:
+def make_tool(name: str, *, strict: bool | None = None, kind: ToolDefinitionKind = 'function') -> ToolDefinition:
     return ToolDefinition(
         name=name,
         parameters_json_schema={'type': 'object', 'properties': {}},

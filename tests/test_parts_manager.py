@@ -338,7 +338,7 @@ def test_tool_call_buffer_changes_are_atomic_when_typed_promotion_fails(mocker: 
     manager.handle_tool_call_delta(vendor_part_id='tool', tool_name='tool', args='initial', tool_call_id='call')
     manager.handle_tool_call_delta(vendor_part_id='tool', args=' buffered')
 
-    promotion = mocker.patch.object(manager, '_typed_call_part', side_effect=RuntimeError('typed promotion failed'))
+    promotion = mocker.patch.object(manager, '_stamp_and_type', side_effect=RuntimeError('typed promotion failed'))
     with pytest.raises(RuntimeError, match='typed promotion failed'):
         manager.handle_tool_call_delta(vendor_part_id='tool', args=' discarded')
     mocker.stop(promotion)
@@ -742,6 +742,25 @@ def test_handle_tool_call_deltas_without_args():
             ToolCallPart(tool_name='tool', args='{"arg1":', tool_call_id=IsStr()),
             ToolCallPart(tool_name='tool', args={'arg1': 'value1'}, tool_call_id=IsStr()),
         ]
+    )
+
+
+def test_handle_tool_call_delta_events():
+    """`handle_tool_call_delta_events` yields what `handle_tool_call_delta` returns, and nothing for `None`.
+
+    Provider stream tests reach it through recordings; this pins the `None` case, which few recordings produce.
+    """
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+
+    assert list(manager.handle_tool_call_delta_events(vendor_part_id='tool', args='{"value":')) == []
+    assert list(manager.handle_tool_call_delta_events(vendor_part_id='tool', tool_name='tool')) == snapshot(
+        [PartStartEvent(index=0, part=ToolCallPart(tool_name='tool', args='{"value":', tool_call_id=IsStr()))]
+    )
+    assert list(manager.handle_tool_call_delta_events(vendor_part_id='tool', args=' true}')) == snapshot(
+        [PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta=' true}', tool_call_id=IsStr()))]
+    )
+    assert manager.get_parts() == snapshot(
+        [ToolCallPart(tool_name='tool', args='{"value": true}', tool_call_id=IsStr())]
     )
 
 

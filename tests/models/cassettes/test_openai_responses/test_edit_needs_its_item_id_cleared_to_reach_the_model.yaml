@@ -1,0 +1,381 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "253"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6-luna
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: "Write exactly 80 lines of the form `LINE <n>: <eight random lowercase English words>`. No preamble."
+        reasoning:
+          context: all_turns
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "17401"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_07c07e6cdc2e53bb006aebcf49ad0487d1b8ff75885da79976
+        object: response
+        created_at: 1793838921
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1793838938
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-6-luna
+        moderation: null
+        output:
+        - id: rs_07c07e6cdc2e53bb006aebcf4a331c87d1a62ade03b7fe3272
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABq689bXrlknJqGPWWTq1FDNvrzJtMfFDe9XTj9wJL3YM6_SufNMz32DFjyl-wLyHjqqr_plIIS1f2AHMI8bcFwFMXym5nVrT7YZXpC_Pfyazg6I8O-4pyLMyWKQ19KcEw2SDTz4EP3y9ETQb0UTHmMhJ2raswi5gpXBzY5D461axTarOXNK0XBHOT8-3_9kjtyjmI3MeAYNV6k9F8BNi2HgtznzY44y9WpFF6eOCd8m-rRShnKlsfSqtYuU1DYgH9zfhLkyckTbh0K88ZPxnEtWoLmouKraZoiUYE2-wt2G5t7NirygfDLa9IaSoF_WTELjvcSJF389WKj0KF_kqq9t6cPViygBHwgBtbRU6S2eYszNEd_JaXU1LbsWDypGc8a_FPB6aMv-9CEyS3oR9vFvjNDOD5l0ntRUzHhAVlJ550LWAvRocy_K33DA38cjV01d6aCeRyiVLzE5rVRFbsa7ZUCsG6C2V5Kwg0l6kvCitJuJbTbvE7FqaW92jSi8thF8ky-FcpA1eU-R7FcF_DsBxVL5JxAoyqayYWRR3T9iqUC_O-3hE3UWhRrrgqSTbCqVTHqx__yjSq2kPYl2JZ_jz0Tbp9uKBWjMb61kSjbW0BvYpOrAfAPrya4p0c8u31zeF86t-_wzCn_K3wmIkrrQ7rGd9ejpJnI8GEExeowAaSmcyLkK4mC6EtXQVh1ubl6CPmleJsJ6lNN7wmEa1DkXwW2y69ZoYvRPVKvfYqCAJDU_1ClA7_SgXkFXGPV_QfXo8VVdZup84GE9uD9UE2LhPIABSMtBy926EpXXuNLVoYmHW4sY9NTQRqM571DaXhS9Yh94Dj34N7lqQIt3qqPYzLz1M0Gs8VV2BU0jqQ2wRt7Eme-YbedXCG9WyRo2bWWBbquRb4jyAObS8Pu-sMe9NCQIaniues2mUxPNTEZAKTqVHKbP-5MuoWXbVpeG_aQsDa5WURxCNB5SIjJL6yoKXuQ5aduCy9hNyFUuDEqir3uYse1v-DbykFLuZ8M9bEaJmm1S7KV8jzTK_6sseBNEPNvVltrDOiEt2fTDnQP5DY9xGSAzCgRWzwTnD4K3dxqEBcS97WduCeGr6kEDQR_XgDnBf-VRlCYF6xYqrsUbwRUhLBj35GA0luGT-4aRaiJ3Pt_brDOpQx5_BN92WxpHS0K367W89kO2b5TgUwihTltzemfcni7CcH5fYKWOiFNiIRxvIslxi4OTXDDv2XB6pnXIZVtwkkvZoJaPNMILSRvbkVKcyzJJfDgxCxBQT2J4y4Fbm1TyxaBN0NIGOEsatogWjOflcuwbhflQsL_tXFTWxwI6mM3ukXGgD6mFrJsQ77jEKnNWRbK0PHlN3q6atNwfpKDnthm2tPEiFYEpGnzdWKmbM_sTjJ3azN7FIuW_GMsj86nvEua4RtTS99EljnyysB1BDg06FR7JlIPDpkH0wO5p3D6i5a3lg5AXg6pSZayETeC5_4QqS0WNKCFLBBr7F63XXhqYtJzduxhWbMGpqdKvbt16pcu-RZKEvDHzPfQDVyqPr9f2LTQ1lanT_LxuXOtEGG2gGThBJxoNQ41lXmOcRRGLDYldwK4YrPIePDBSVPkL5qf-RNSOYj2SWj_pdYkNDDTftxcOGHNXTFPRRxy4Uxddn_Wsyo2wkGLFEYn_2PdYM-GR4Le1wiQv4Fj4VKBkClDVznwLy7uqB49WEDjsIhzTLOvoNxtJsyiDR9KbjcUpRAByrigD0ilIjKVe2EJSDU7HXvC2Oeog30D9IjedoVK6YXkTOVnvP55PQSvE3YDnbKYtFteQIhZFip02Apr-gxBb5KunUk6mTUMMj_mMvA1MXnAfgkYtsZcJ1N1ZJKVOFHQWUevjWf0-d4aDvva_uKSntSVILhKfMvkXivYaFd-YwLeAOxxBz-57cuxmLQkcw2HIQ36LFKXC0klwoL1cz_tv-4MMiSDciqX6KWIpFZj_FyUao0r73bYSCk9R2CGYyH3-TQMdIgWrnX3zn5F4PGUrFpU_rgGMBuUX3Zjr7HAReXr8VXLxgVKZcB1Z7SnB7ifnJPkkf4odSpNDiyuiOkKNrybdMCnp--8M4Kj_6_gWec3UHb55SXqSDbBtOaW3JA5zkXJCRL_kgBfmQ16641-fR9UvxWZqeafTKtKZ_r8QZtVNaiChllGKWowSJNKkZYzz_hSVcGnFwPut16aZ1zjGRPBZFPECUlpHHEjiTx6LBKIG5H-nE7Ib2I4dDUTpvhaTQaLHQ542cNZE3BHm1aRHWMVppT8_7KAT0w6DN-GdaBgSeIeu9KUzi8dm5SNGRPZWUL77w32_eoLcxL9__kQeB8EqRzKKGMN-P77odNFmXofxQ71gbQRIMB_K9ptNGF6v0QalcTmWzpFtbhA3hXFF2XdzZAjxKWzO2p_g4quuRZxsgA42Ok379-_QioIwaXX32asZ9-2FYOh3pJKCZqlI15_TS4t5ACqVV98R3ayk1gthK5Z86ONbX5cBS3ij8bO5LXf0mkzlxQxqg==
+          summary: []
+        - id: msg_07c07e6cdc2e53bb006aebcf4b3ccc87d1b832e9e153eccf66
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: |-
+              LINE 1: velvet orchard lantern meadow copper whisper pebble sunrise
+              LINE 2: gentle harbor thistle window marble cricket feather blossom
+              LINE 3: silver kettle wander cabin lemon pocket river candle
+              LINE 4: quiet button jungle ribbon thunder acorn mirror basket
+              LINE 5: golden ladder cloud pillow walnut bicycle violet compass
+              LINE 6: soft mitten forest sugar anchor tulip blanket canyon
+              LINE 7: brisk feather wagon honey island candle rabbit stone
+              LINE 8: amber garden whistle pocket mossy teacup silver meadow
+              LINE 9: hollow lantern picnic velvet mountain apple ribbon breeze
+              LINE 10: tiny compass dandelion kettle moonlight harbor walnut feather
+              LINE 11: bright meadow shovel cinnamon window pebble sparrow blanket
+              LINE 12: sleepy orchard basket thunder linen pumpkin driftwood teapot
+              LINE 13: crystal pocket willow mitten sunrise copper daisy wagon
+              LINE 14: mellow cabin parsley river button starlight marble hummingbird
+              LINE 15: nimble acorn blanket lemon staircase violet kettle whisper
+              LINE 16: dusty harbor sunflower cricket pillow lantern pebble apple
+              LINE 17: cheerful garden walnut compass thimble breeze canyon ribbon
+              LINE 18: frosty meadow candle basket feather island ginger window
+              LINE 19: purple wagon moonlight thistle sugar mirror orchard button
+              LINE 20: tender pillow sparrow copper kettle blossom forest marble
+              LINE 21: crooked ladder violet teacup pebble sunrise mitten river
+              LINE 22: tranquil lemon cabin whistle feather walnut cloud garden
+              LINE 23: nimble basket candle driftwood apple compass thimble harbor
+              LINE 24: rosy meadow cricket blanket silver pocket staircase moss
+              LINE 25: sturdy lantern tulip canyon window honey marble wagon
+              LINE 26: sleepy river acorn teapot violet feather orchard copper
+              LINE 27: brisk garden button island cinnamon pillow whistle pebble
+              LINE 28: velvet moonlight basket sparrow cabin lemon thistle mirror
+              LINE 29: gentle wagon sunflower harbor ribbon walnut meadow candle
+              LINE 30: amber pillow forest compass sugar ladder daisy pocket
+              LINE 31: quiet teacup thunder apple mitten river blossom marble
+              LINE 32: golden orchard feather window canyon kettle mossy blanket
+              LINE 33: soft whistle violet garden pebble lantern honey bicycle
+              LINE 34: bright cabin walnut tulip breeze pocket cricket sunrise
+              LINE 35: hollow basket lemon mirror thistle meadow copper pillow
+              LINE 36: cheerful river candle sparrow island blanket button driftwood
+              LINE 37: frosty compass apple garden teapot feather marble wagon
+              LINE 38: tender walnut moonlight ribbon kettle pebble orchard violet
+              LINE 39: dusty meadow lantern cinnamon pillow harbor acorn whistle
+              LINE 40: crystal ladder forest teacup sugar blossom window mitten
+              LINE 41: mellow basket canyon feather sunrise button lemon river
+              LINE 42: purple garden pocket thunder marble sparrow kettle tulip
+              LINE 43: crooked orchard honey blanket mirror wagon violet candle
+              LINE 44: tranquil harbor pebble daisy cabin whistle walnut moonlight
+              LINE 45: rosy ladder teapot island feather copper meadow cricket
+              LINE 46: sturdy pillow apple lantern ribbon forest thistle sugar
+              LINE 47: sleepy compass blossom window kettle canyon mitten silver
+              LINE 48: nimble river violet basket candle orchard breeze walnut
+              LINE 49: brisk teacup garden marble feather sunrise pocket wagon
+              LINE 50: velvet cabin button lemon meadow sparrow thunder pillow
+              LINE 51: gentle lantern moss blanket copper island kettle daisy
+              LINE 52: amber orchard ribbon whistle pebble forest teapot moonlight
+              LINE 53: quiet wagon feather tulip walnut canyon mirror sugar
+              LINE 54: golden pocket cricket meadow pillow sunrise harbor thistle
+              LINE 55: soft garden candle apple ladder violet blanket river
+              LINE 56: bright basket moonlight copper teacup sparrow orchard mitten
+              LINE 57: hollow meadow lemon whistle cabin marble feather blossom
+              LINE 58: cheerful walnut pillow island button lantern canyon breeze
+              LINE 59: frosty river thistle garden pebble wagon cinnamon window
+              LINE 60: tender compass meadow acorn teapot silver ribbon forest
+              LINE 61: dusty candle ladder violet harbor feather sugar orchard
+              LINE 62: crystal blanket pocket apple thunder garden marble sparrow
+              LINE 63: mellow lantern tulip walnut cabin mirror breeze kettle
+              LINE 64: purple meadow basket lemon driftwood feather island button
+              LINE 65: crooked teacup sunrise orchard pillow cricket copper canyon
+              LINE 66: tranquil whistle garden ribbon marble pebble wagon honey
+              LINE 67: rosy forest mitten moonlight ladder apple kettle violet
+              LINE 68: sturdy harbor candle sparrow blanket walnut thistle river
+              LINE 69: sleepy garden compass feather button meadow sugar lantern
+              LINE 70: nimble pillow canyon teapot blossom copper pocket breeze
+              LINE 71: brisk orchard violet window marble basket daisy thunder
+              LINE 72: velvet river whistle acorn cabin lemon feather sunrise
+              LINE 73: gentle meadow kettle ribbon island pillow walnut cricket
+              LINE 74: amber ladder garden pebble teacup forest candle silver
+              LINE 75: quiet blanket sparrow moonlight tulip harbor button cinnamon
+              LINE 76: golden wagon thistle apple mirror meadow feather pocket
+              LINE 77: soft canyon lantern copper orchard pillow whistle marble
+              LINE 78: bright teapot river walnut blossom ladder violet garden
+              LINE 79: hollow feather basket sunrise cabin sugar pebble island
+              LINE 80: cheerful pocket thunder meadow candle sparrow lemon driftwood
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 31
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 1237
+          output_tokens_details:
+            reasoning_tokens: 85
+          total_tokens: 1268
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-05T00:35:39.087308+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "3552"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6-luna
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: "Write exactly 80 lines of the form `LINE <n>: <eight random lowercase English words>`. No preamble."
+        - id: rs_07c07e6cdc2e53bb006aebcf4a331c87d1a62ade03b7fe3272
+          summary: []
+          encrypted_content: >-
+            gAAAAABq689bXrlknJqGPWWTq1FDNvrzJtMfFDe9XTj9wJL3YM6_SufNMz32DFjyl-wLyHjqqr_plIIS1f2AHMI8bcFwFMXym5nVrT7YZXpC_Pfyazg6I8O-4pyLMyWKQ19KcEw2SDTz4EP3y9ETQb0UTHmMhJ2raswi5gpXBzY5D461axTarOXNK0XBHOT8-3_9kjtyjmI3MeAYNV6k9F8BNi2HgtznzY44y9WpFF6eOCd8m-rRShnKlsfSqtYuU1DYgH9zfhLkyckTbh0K88ZPxnEtWoLmouKraZoiUYE2-wt2G5t7NirygfDLa9IaSoF_WTELjvcSJF389WKj0KF_kqq9t6cPViygBHwgBtbRU6S2eYszNEd_JaXU1LbsWDypGc8a_FPB6aMv-9CEyS3oR9vFvjNDOD5l0ntRUzHhAVlJ550LWAvRocy_K33DA38cjV01d6aCeRyiVLzE5rVRFbsa7ZUCsG6C2V5Kwg0l6kvCitJuJbTbvE7FqaW92jSi8thF8ky-FcpA1eU-R7FcF_DsBxVL5JxAoyqayYWRR3T9iqUC_O-3hE3UWhRrrgqSTbCqVTHqx__yjSq2kPYl2JZ_jz0Tbp9uKBWjMb61kSjbW0BvYpOrAfAPrya4p0c8u31zeF86t-_wzCn_K3wmIkrrQ7rGd9ejpJnI8GEExeowAaSmcyLkK4mC6EtXQVh1ubl6CPmleJsJ6lNN7wmEa1DkXwW2y69ZoYvRPVKvfYqCAJDU_1ClA7_SgXkFXGPV_QfXo8VVdZup84GE9uD9UE2LhPIABSMtBy926EpXXuNLVoYmHW4sY9NTQRqM571DaXhS9Yh94Dj34N7lqQIt3qqPYzLz1M0Gs8VV2BU0jqQ2wRt7Eme-YbedXCG9WyRo2bWWBbquRb4jyAObS8Pu-sMe9NCQIaniues2mUxPNTEZAKTqVHKbP-5MuoWXbVpeG_aQsDa5WURxCNB5SIjJL6yoKXuQ5aduCy9hNyFUuDEqir3uYse1v-DbykFLuZ8M9bEaJmm1S7KV8jzTK_6sseBNEPNvVltrDOiEt2fTDnQP5DY9xGSAzCgRWzwTnD4K3dxqEBcS97WduCeGr6kEDQR_XgDnBf-VRlCYF6xYqrsUbwRUhLBj35GA0luGT-4aRaiJ3Pt_brDOpQx5_BN92WxpHS0K367W89kO2b5TgUwihTltzemfcni7CcH5fYKWOiFNiIRxvIslxi4OTXDDv2XB6pnXIZVtwkkvZoJaPNMILSRvbkVKcyzJJfDgxCxBQT2J4y4Fbm1TyxaBN0NIGOEsatogWjOflcuwbhflQsL_tXFTWxwI6mM3ukXGgD6mFrJsQ77jEKnNWRbK0PHlN3q6atNwfpKDnthm2tPEiFYEpGnzdWKmbM_sTjJ3azN7FIuW_GMsj86nvEua4RtTS99EljnyysB1BDg06FR7JlIPDpkH0wO5p3D6i5a3lg5AXg6pSZayETeC5_4QqS0WNKCFLBBr7F63XXhqYtJzduxhWbMGpqdKvbt16pcu-RZKEvDHzPfQDVyqPr9f2LTQ1lanT_LxuXOtEGG2gGThBJxoNQ41lXmOcRRGLDYldwK4YrPIePDBSVPkL5qf-RNSOYj2SWj_pdYkNDDTftxcOGHNXTFPRRxy4Uxddn_Wsyo2wkGLFEYn_2PdYM-GR4Le1wiQv4Fj4VKBkClDVznwLy7uqB49WEDjsIhzTLOvoNxtJsyiDR9KbjcUpRAByrigD0ilIjKVe2EJSDU7HXvC2Oeog30D9IjedoVK6YXkTOVnvP55PQSvE3YDnbKYtFteQIhZFip02Apr-gxBb5KunUk6mTUMMj_mMvA1MXnAfgkYtsZcJ1N1ZJKVOFHQWUevjWf0-d4aDvva_uKSntSVILhKfMvkXivYaFd-YwLeAOxxBz-57cuxmLQkcw2HIQ36LFKXC0klwoL1cz_tv-4MMiSDciqX6KWIpFZj_FyUao0r73bYSCk9R2CGYyH3-TQMdIgWrnX3zn5F4PGUrFpU_rgGMBuUX3Zjr7HAReXr8VXLxgVKZcB1Z7SnB7ifnJPkkf4odSpNDiyuiOkKNrybdMCnp--8M4Kj_6_gWec3UHb55SXqSDbBtOaW3JA5zkXJCRL_kgBfmQ16641-fR9UvxWZqeafTKtKZ_r8QZtVNaiChllGKWowSJNKkZYzz_hSVcGnFwPut16aZ1zjGRPBZFPECUlpHHEjiTx6LBKIG5H-nE7Ib2I4dDUTpvhaTQaLHQ542cNZE3BHm1aRHWMVppT8_7KAT0w6DN-GdaBgSeIeu9KUzi8dm5SNGRPZWUL77w32_eoLcxL9__kQeB8EqRzKKGMN-P77odNFmXofxQ71gbQRIMB_K9ptNGF6v0QalcTmWzpFtbhA3hXFF2XdzZAjxKWzO2p_g4quuRZxsgA42Ok379-_QioIwaXX32asZ9-2FYOh3pJKCZqlI15_TS4t5ACqVV98R3ayk1gthK5Z86ONbX5cBS3ij8bO5LXf0mkzlxQxqg==
+          type: reasoning
+        - role: assistant
+          id: msg_07c07e6cdc2e53bb006aebcf4b3ccc87d1b832e9e153eccf66
+          content:
+          - text: |-
+              LINE 1: velvet orchard lantern meadow copper whisper pebble sunrise
+              LINE 2: gentle harbor thistle wi
+              [edited]
+              ise cabin sugar pebble island
+              LINE 80: cheerful pocket thunder meadow candle sparrow lemon driftwood
+            type: output_text
+            annotations: []
+          type: message
+          status: completed
+          phase: final_answer
+        - role: user
+          content: >-
+            Does your previous message contain the literal string `[edited]`? Reply with
+            only yes or no.
+        prompt_cache_options:
+          comparison_response_id: resp_07c07e6cdc2e53bb006aebcf49ad0487d1b8ff75885da79976
+        reasoning:
+          context: all_turns
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1277"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_07c07e6cdc2e53bb006aebcf5b2b5887d1b68d8acd7adc861f
+        object: response
+        created_at: 1793838939
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1793838940
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-6-luna
+        moderation: null
+        output:
+        - id: msg_07c07e6cdc2e53bb006aebcf5bdba887d1900f10986876a50e
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: "no"
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_diagnostics:
+          type: cache_hit
+        prompt_cache_key: null
+        prompt_cache_options:
+          comparison_response_id: resp_07c07e6cdc2e53bb006aebcf49ad0487d1b8ff75885da79976
+          mode: implicit
+          ttl: 30m
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 1294
+          input_tokens_details:
+            cache_write_tokens: 1291
+            cached_tokens: 0
+          output_tokens: 5
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 1299
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-05T00:35:40.458303+00:00

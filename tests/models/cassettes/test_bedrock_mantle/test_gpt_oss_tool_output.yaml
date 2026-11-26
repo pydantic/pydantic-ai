@@ -1,0 +1,129 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://bedrock-mantle.us-east-1.api.aws/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "440"
+      content-type:
+      - application/json
+      host:
+      - bedrock-mantle.us-east-1.api.aws
+    body:
+      type: json
+      content:
+        model: openai.gpt-oss-120b
+        stream: false
+        input:
+        - role: user
+          content: The Eiffel Tower is in which city and country?
+        tool_choice: auto
+        tools:
+        - name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+            additionalProperties: false
+          type: function
+          description: The final response which ends this conversation
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - >-
+        x-amzn-requestid,x-request-id,date,x-amzn-usage-reservation-quota,x-amzn-usage-reservation-remaining-quota,x-amzn-usage-reservation-spillover,x-amzn-gateway-arn,x-amzn-gateway-limit-name,x-amzn-gateway-limit-unit,x-amzn-gateway-limit,x-amzn-gateway-limit-remaining,x-amzn-gateway-limit-used-percent,x-amzn-gateway-limit-refill,x-amzn-gateway-limit-reset-at,retry-after,x-codex-primary-used-percent,x-codex-primary-window-minutes,x-codex-primary-reset-at,anthropic-ratelimit-unified-status,anthropic-ratelimit-unified-reset,anthropic-ratelimit-unified-representative-claim,anthropic-ratelimit-unified-overage-status,anthropic-ratelimit-unified-overage-reset,anthropic-ratelimit-unified-overage-utilization,anthropic-ratelimit-unified-overage-surpassed-threshold
+      connection:
+      - keep-alive
+      content-length:
+      - "1543"
+      content-type:
+      - application/json
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    body:
+      type: json
+      content:
+        background: false
+        created_at: 1794009519.0
+        error: null
+        id: resp_mnsaf5jylawqwo3vl5k6juvfxb3layuroh2f4l42tuqgsq35i5fa
+        incomplete_details: null
+        instructions: null
+        metadata: {}
+        model: openai.gpt-oss-120b
+        object: response
+        output:
+        - content:
+          - text: |-
+              The user asks: "The Eiffel Tower is in which city and country?" The answer is Paris, France.
+
+              We need to output using the function final_result with fields city and country. Use the function.
+            type: reasoning_text
+          id: msg_928e1a69493d3c38
+          status: completed
+          summary: []
+          type: reasoning
+        - arguments: |-
+            {
+              "city": "Paris",
+              "country": "France"
+            }
+          call_id: call_8370a589a84f415a
+          item_id: fc_8c794ea42608274d
+          name: final_result
+          output_index: 1
+          status: completed
+          type: function_call
+        parallel_tool_calls: true
+        service_tier: default
+        status: completed
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tools:
+        - description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+            additionalProperties: false
+          strict: true
+          type: function
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 135
+          input_tokens_details:
+            cached_tokens: 0
+          output_tokens: 76
+          output_tokens_details:
+            reasoning_tokens: 59
+          total_tokens: 211
+  recorded_at: 2026-11-06T23:58:40.978781+00:00

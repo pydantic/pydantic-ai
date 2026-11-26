@@ -1,0 +1,1159 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: session.created
+    event_id: 7643253c-e243-47d8-9d5f-a2d1333b51b4
+    session:
+      id: 930c8526493c41cb8b39dda5d82a75ab
+      object: realtime.session
+      instructions: ''
+      voice: xai_ara
+      modalities:
+      - audio
+      turn_detection:
+        type: null
+      tools: []
+      model: grok-voice-3.0
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.update
+    session:
+      instructions: Reply in a few words.
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: conversation.created
+    event_id: 98f65c10-4623-4d9a-bc79-4708d59077d0
+    conversation:
+      id: 98574458-4de5-4f61-b5a6-60a8c3283f80
+      object: realtime.conversation
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.001
+  data:
+    type: ping
+    event_id: c1c56c35-e60e-4fa2-add1-7ed93b2ea89b
+    timestamp: 1792592892273
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.533
+  data:
+    session:
+      instructions: Reply in a few words.
+      enable_noise_suppression: false
+      turn_detection:
+        type: server_vad
+        create_response: true
+      model: grok-voice-3.0
+      keep_context: false
+      enable_phonetic_spelling: false
+      input_audio_transcription:
+        model: grok-transcribe
+      modalities:
+      - audio
+      input_audio_format: not specified
+      output_audio_format: not specified
+      tool_choice: auto
+      temperature: -1.0
+      max_response_output_tokens: inf
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+    type: session.updated
+    event_id: 4e1ff6be-5e57-45f0-a8ac-19e65898538c
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 0.534
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 0.634
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 0.735
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 0.835
+  data:
+    type: input_audio_buffer.append
+    audio: //8AAP3////+///////9/wAAAAAAAP//AQABAAEAAwAC
+- kind: message
+  direction: sent
+  at: 0.936
+  data:
+    type: input_audio_buffer.append
+    audio: bwdxBnAF5wQBBFIDRQPxAloCZgIiAbEATwBP/4T/Tf8c
+- kind: message
+  direction: received
+  at: 0.943
+  data:
+    type: input_audio_buffer.speech_started
+    event_id: 3c29730b-6b8e-40aa-bee9-50becb55d555
+    item_id: a0ac9f5b-2576-4f51-9369-4ffb10b0c7ba
+    audio_start_ms: 412
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 1.037
+  data:
+    type: input_audio_buffer.append
+    audio: kf8fAM0B5AJzBHAFgAYpCCwJwgoQDJINsA7xD/4QEhJi
+- kind: message
+  direction: sent
+  at: 1.137
+  data:
+    type: input_audio_buffer.append
+    audio: OuJT373d19xD293Z5dgN2TXYWtl82incqtvI2unbNtoS
+- kind: message
+  direction: sent
+  at: 1.238
+  data:
+    type: input_audio_buffer.append
+    audio: 6fCE72buse1x7HHqhemV6f/nnOb45N/kOOQN45Hjt+NI
+- kind: message
+  direction: sent
+  at: 1.339
+  data:
+    type: input_audio_buffer.append
+    audio: dw1kDD4LFAryCKMHgAauBRwF5QSuBJAEdwQRBKADSANp
+- kind: message
+  direction: sent
+  at: 1.439
+  data:
+    type: input_audio_buffer.append
+    audio: dRSdFFkTMBPMELQPsw6QCdAGwwMA/un53/Wd8gnyhPHZ
+- kind: message
+  direction: sent
+  at: 1.54
+  data:
+    type: input_audio_buffer.append
+    audio: Uf9Z/1//Z/9y/3v/fP+H/43/m/+h/63/vv/K/9n/5//v
+- kind: message
+  direction: sent
+  at: 1.64
+  data:
+    type: input_audio_buffer.append
+    audio: sBFmFN8VOxbzFVUVqxRfE70R6w8LDjcMtQrLCbkJ5glC
+- kind: message
+  direction: received
+  at: 1.738
+  data:
+    type: conversation.item.added
+    event_id: 82fab3e8-1fc6-446d-a5b5-5dedb4709947
+    item:
+      id: a0ac9f5b-2576-4f51-9369-4ffb10b0c7ba
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: user
+      content:
+      - type: input_audio
+        transcript: ''
+      replayed: false
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.739
+  data:
+    type: conversation.item.input_audio_transcription.updated
+    event_id: 3cac5544-df42-487b-8c7b-fb6f99e7c51f
+    item_id: a0ac9f5b-2576-4f51-9369-4ffb10b0c7ba
+    transcript: Can you look up
+    content_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.739
+  data:
+    type: conversation.item.input_audio_transcription.completed
+    event_id: 7229102c-3606-4e2b-a320-21a145d078d3
+    item_id: a0ac9f5b-2576-4f51-9369-4ffb10b0c7ba
+    transcript: Can you look up
+    content_index: 0
+    status: in_progress
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 1.741
+  data:
+    type: input_audio_buffer.append
+    audio: /e9B78/uVu7h7Vzt8+y27EPsleso6/fqR+rS6Wfp7eig
+- kind: message
+  direction: sent
+  at: 1.842
+  data:
+    type: input_audio_buffer.append
+    audio: 1xC5EIEQRBDcD28P9A51Du4NYQ3ODDoMowsGC3YK6Alr
+- kind: message
+  direction: sent
+  at: 1.943
+  data:
+    type: input_audio_buffer.append
+    audio: euvI6dXoU+iq6KHpEus87IXtZuwO7CLrmelW6cvnb+cg
+- kind: message
+  direction: sent
+  at: 2.043
+  data:
+    type: input_audio_buffer.append
+    audio: JPRU89nyQvJo8bbwJPBF8Kzw2fAX8YTxsfC67+ft7ust
+- kind: message
+  direction: sent
+  at: 2.144
+  data:
+    type: input_audio_buffer.append
+    audio: gPSw9MT0BPUh9VT1evXA9Vn2ufZE9/r3d/ga+Y75CvqN
+- kind: message
+  direction: sent
+  at: 2.245
+  data:
+    type: input_audio_buffer.append
+    audio: BgAFAAcABQAGAAgABQAFAAcABgAHAAcACAAIAAcACQAF
+- kind: message
+  direction: sent
+  at: 2.346
+  data:
+    type: input_audio_buffer.append
+    audio: 8v1H/tT+pP9lADIBkAGaAYsBDwGZAGgAUwBjAJ8AjgA6
+- kind: message
+  direction: sent
+  at: 2.446
+  data:
+    type: input_audio_buffer.append
+    audio: 6f7j/QL+S/+bAdoDWQbYCDULVA1bD18QVhC0DgYMAAnY
+- kind: message
+  direction: sent
+  at: 2.547
+  data:
+    type: input_audio_buffer.append
+    audio: DgA0/av7oPuh/I/+EwE+Au8CFAL4//j9KPtI+dj4wvjx
+- kind: message
+  direction: sent
+  at: 2.648
+  data:
+    type: input_audio_buffer.append
+    audio: cAyJDFgMaAvECtwJ/wgxCIkHzgZEBr8FigTSAm8Bjv8u
+- kind: message
+  direction: sent
+  at: 2.748
+  data:
+    type: input_audio_buffer.append
+    audio: QPbV9576k/ns9qb5J/iX9j74ofnx+3/6D/mz+s75BflZ
+- kind: message
+  direction: sent
+  at: 2.849
+  data:
+    type: input_audio_buffer.append
+    audio: 8AnYCakJqgkaCnUJ9AgcCP4GYAb4BXgFOQXaBAMEVwML
+- kind: message
+  direction: sent
+  at: 2.949
+  data:
+    type: input_audio_buffer.append
+    audio: 0//P/0r/C/8q/5z/cQBWADcAKgAkAGwA3ACzAKAAhACf
+- kind: message
+  direction: sent
+  at: 3.05
+  data:
+    type: input_audio_buffer.append
+    audio: vvjL+Pr4QPlC+ST5GPli+ZL5P/pt+o36v/rL+gn7PfuZ
+- kind: message
+  direction: sent
+  at: 3.151
+  data:
+    type: input_audio_buffer.append
+    audio: UPWm9Dn0VvPJ8jDy1PFL8RzxX/Ao8BPwae/t7jPuse0/
+- kind: message
+  direction: sent
+  at: 3.251
+  data:
+    type: input_audio_buffer.append
+    audio: aPLz8cfxQ/Eg8bLw4/CB8KLwO/A18KLwEPAa8OzvG/CL
+- kind: message
+  direction: sent
+  at: 3.352
+  data:
+    type: input_audio_buffer.append
+    audio: EOze66jrX+sV68fqf+om6hDqvul76Rzpt+hZ6BvoyeeC
+- kind: message
+  direction: sent
+  at: 3.453
+  data:
+    type: input_audio_buffer.append
+    audio: YwzEDF0NGg98EF0RTxFfEDAPIw7EDZENMA7kDegNOg1R
+- kind: message
+  direction: sent
+  at: 3.553
+  data:
+    type: input_audio_buffer.append
+    audio: fxKEEmQSWhJKEjMSIxL6EeERrxF/EWERMRENEfIQ0hCq
+- kind: message
+  direction: sent
+  at: 3.654
+  data:
+    type: input_audio_buffer.append
+    audio: Nv6+AM8BfQEMAJz+tv4U/5oATwCFABQB4v/i/mb/ff5M
+- kind: message
+  direction: received
+  at: 3.741
+  data:
+    type: conversation.item.input_audio_transcription.updated
+    event_id: 64d837c2-6d9d-4470-bf58-de58391bb0d8
+    item_id: a0ac9f5b-2576-4f51-9369-4ffb10b0c7ba
+    transcript: Can you look up on the web how many
+    content_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.741
+  data:
+    type: conversation.item.input_audio_transcription.completed
+    event_id: 9e734e1b-42c3-4d3e-93f8-35d0274eb487
+    item_id: a0ac9f5b-2576-4f51-9369-4ffb10b0c7ba
+    transcript: Can you look up on the web how many
+    content_index: 0
+    status: in_progress
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 3.756
+  data:
+    type: input_audio_buffer.append
+    audio: G/7i/Yr9Yf08/Qb9yfxd/M/7TvvB+lT6EvrR+a/5bPkc
+- kind: message
+  direction: sent
+  at: 3.856
+  data:
+    type: input_audio_buffer.append
+    audio: 2QHeAKj/rf7J/Tn9J/1W/b79K/5F/n7+Av8g/4n/4f/i
+- kind: message
+  direction: received
+  at: 3.946
+  data:
+    type: conversation.item.input_audio_transcription.updated
+    event_id: db878f63-7409-4102-89fe-0cb366272c57
+    item_id: a0ac9f5b-2576-4f51-9369-4ffb10b0c7ba
+    transcript: Can you look up on the web how many people live in Amsterdam?
+    content_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.947
+  data:
+    type: conversation.item.input_audio_transcription.completed
+    event_id: 6fbcfece-fc1d-4806-a882-a5e6c76504d1
+    item_id: a0ac9f5b-2576-4f51-9369-4ffb10b0c7ba
+    transcript: Can you look up on the web how many people live in Amsterdam?
+    content_index: 0
+    status: in_progress
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 3.957
+  data:
+    type: input_audio_buffer.append
+    audio: ZwZaBjkG9QWWBSMFtARVBBEE6wPWA8kDwQO4A7kDvQPP
+- kind: message
+  direction: sent
+  at: 4.058
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 4.158
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 4.259
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 4.36
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 4.368
+  data:
+    type: input_audio_buffer.speech_stopped
+    event_id: abf1a39a-98db-4685-8a9e-fc26a4d772b6
+    item_id: a0ac9f5b-2576-4f51-9369-4ffb10b0c7ba
+    audio_end_ms: 3834
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 4.461
+  data:
+    type: input_audio_buffer.append
+    audio: GwAYABwAFgAbABcAGgAXABkAGwAWABoAFwAZABgAGAAX
+- kind: message
+  direction: received
+  at: 4.518
+  data:
+    type: conversation.item.input_audio_transcription.completed
+    event_id: 713f6c27-2a20-40cb-adc9-9f273fb0ce77
+    item_id: a0ac9f5b-2576-4f51-9369-4ffb10b0c7ba
+    transcript: Can you look up on the web how many people live in Amsterdam?
+    content_index: 0
+    status: in_progress
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 4.522
+  data:
+    type: response.created
+    event_id: 45366658-54ee-4f6b-be89-5266e159bfc2
+    response:
+      id: 0c6c60f3-8fa4-4b8a-9ddc-f440fc616531
+      object: realtime.response
+      output: []
+      status: in_progress
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 4.561
+  data:
+    type: input_audio_buffer.append
+    audio: /OEH4TLgOd9L3pzdDN3C3LfcrNwJ3WjdIN5S38Xg8+JL
+- kind: message
+  direction: received
+  at: 4.563
+  data:
+    type: input_audio_buffer.speech_started
+    event_id: d57937b0-351b-46dc-9175-11493ca6aeb5
+    item_id: a0ac9f5b-2576-4f51-9369-4ffb10b0c7ba
+    audio_start_ms: 4031
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 4.662
+  data:
+    type: input_audio_buffer.append
+    audio: GBJpEr0RjhBSDocKgAagAhYA6v2I/av8kvxd+4T5U/dd
+- kind: message
+  direction: sent
+  at: 4.763
+  data:
+    type: input_audio_buffer.append
+    audio: mAfk/QoDrAjS6u/47wRwDcn/4+2J/YQL/Qes+uT49gRL
+- kind: message
+  direction: sent
+  at: 4.864
+  data:
+    type: input_audio_buffer.append
+    audio: UtGH0FvSxNLj1uXa0+Gz6i70T/1iBUAJcgtfCj0IVgYN
+- kind: message
+  direction: sent
+  at: 4.965
+  data:
+    type: input_audio_buffer.append
+    audio: FAJxAr4AiAO7AZAEoQJvAaYDUgPuAbsALANAAgsAQgJV
+- kind: message
+  direction: sent
+  at: 5.065
+  data:
+    type: input_audio_buffer.append
+    audio: Sg0sEJ0S/BOnFJkUSxXOFbgW3xfpGJwaDhyTHAodxBtr
+- kind: message
+  direction: sent
+  at: 5.166
+  data:
+    type: input_audio_buffer.append
+    audio: IwYSBxQHrwZlB74GDgaxBVkFLgXsBAYFhQRABL8EuANt
+- kind: message
+  direction: sent
+  at: 5.267
+  data:
+    type: input_audio_buffer.append
+    audio: awFsAUABEwH3ANYAvADCAMgA8gAMATwBaAGkAckB7AHy
+- kind: message
+  direction: received
+  at: 5.312
+  data:
+    type: conversation.item.input_audio_transcription.updated
+    event_id: 41b2d6d4-1af0-4eb5-8d9c-6a5eff31a1b9
+    item_id: a0ac9f5b-2576-4f51-9369-4ffb10b0c7ba
+    transcript: Can you look up on the web how many people live in Amsterdam? What
+      is
+    content_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 5.312
+  data:
+    type: conversation.item.input_audio_transcription.completed
+    event_id: 80e12d37-6082-4aeb-9138-ca0edd450779
+    item_id: a0ac9f5b-2576-4f51-9369-4ffb10b0c7ba
+    transcript: Can you look up on the web how many people live in Amsterdam? What
+      is
+    content_index: 0
+    status: in_progress
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 5.367
+  data:
+    type: input_audio_buffer.append
+    audio: Lvb79rH2Xvjx+Tr9EQM+B5EJnwpHCpAIGgaCAkn+6Pm4
+- kind: message
+  direction: sent
+  at: 5.468
+  data:
+    type: input_audio_buffer.append
+    audio: BOl26PrnA+dj5pbl+uQl5OHjMONu4mPhnOCd4Bngu99e
+- kind: message
+  direction: sent
+  at: 5.569
+  data:
+    type: input_audio_buffer.append
+    audio: CQFNAXQBqAHQAf8BAQIOAgUC6QG/AbEBswHDAeMBAgIk
+- kind: message
+  direction: sent
+  at: 5.669
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 5.77
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 5.87
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 5.971
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 5.987
+  data:
+    type: input_audio_buffer.speech_stopped
+    event_id: ff2c930b-27c9-461e-866f-72d0ace5212b
+    item_id: a0ac9f5b-2576-4f51-9369-4ffb10b0c7ba
+    audio_end_ms: 5454
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 6.072
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 6.173
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 6.274
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 6.308
+  data:
+    type: conversation.item.input_audio_transcription.completed
+    event_id: 88cbb643-a198-4a61-b66a-43be28a2f480
+    item_id: a0ac9f5b-2576-4f51-9369-4ffb10b0c7ba
+    transcript: Can you look up on the web how many people live in Amsterdam? What
+      is my favorite color?
+    content_index: 0
+    status: in_progress
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 6.311
+  data:
+    type: response.created
+    event_id: 830e634c-4433-4062-b6e6-d3b8d24f1660
+    response:
+      id: 39fcae63-7812-4fe0-a88b-a3aa84bf34f6
+      object: realtime.response
+      output: []
+      status: in_progress
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 6.312
+  data:
+    type: conversation.item.input_audio_transcription.updated
+    event_id: 7e258638-624f-4eba-9feb-1c62f78f9b2c
+    item_id: a0ac9f5b-2576-4f51-9369-4ffb10b0c7ba
+    transcript: Can you look up on the web how many people live in Amsterdam? What
+      is my favorite color?
+    content_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 6.313
+  data:
+    type: conversation.item.input_audio_transcription.completed
+    event_id: 02e2d5c6-a1c5-4398-9cbb-6f0c368a91bd
+    item_id: a0ac9f5b-2576-4f51-9369-4ffb10b0c7ba
+    transcript: Can you look up on the web how many people live in Amsterdam? What
+      is my favorite color?
+    content_index: 0
+    status: in_progress
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 6.375
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 6.431
+  data:
+    type: input_audio_buffer.committed
+    event_id: b3838d2a-295c-4484-b091-9658ac5dc2b7
+    item_id: a0ac9f5b-2576-4f51-9369-4ffb10b0c7ba
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 6.431
+  data:
+    type: conversation.item.input_audio_transcription.completed
+    event_id: 4071f3a7-d8cd-4b8e-aa32-ea224d67e2aa
+    item_id: a0ac9f5b-2576-4f51-9369-4ffb10b0c7ba
+    transcript: Can you look up on the web how many people live in Amsterdam? What
+      is my favorite color?
+    content_index: 0
+    status: completed
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 6.432
+  data:
+    type: response.output_item.added
+    event_id: 2b4be813-7d29-4cbf-86ef-981a35b95cad
+    item:
+      id: c283d5e2-d45a-412c-a1f8-ca389df536ce
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      replayed: false
+    response_id: 39fcae63-7812-4fe0-a88b-a3aa84bf34f6
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 6.432
+  data:
+    type: conversation.item.added
+    event_id: 297a3c6f-263d-4b1b-af32-08ad83a28ec1
+    item:
+      id: c283d5e2-d45a-412c-a1f8-ca389df536ce
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      replayed: false
+    previous_item_id: a0ac9f5b-2576-4f51-9369-4ffb10b0c7ba
+- kind: message
+  direction: received
+  at: 6.432
+  data:
+    type: response.content_part.added
+    event_id: 4fb07161-3d02-4d60-a575-8a87effd9391
+    item_id: c283d5e2-d45a-412c-a1f8-ca389df536ce
+    previous_item_id: '0'
+    part:
+      type: audio
+      transcript: ''
+    response_id: 39fcae63-7812-4fe0-a88b-a3aa84bf34f6
+    content_index: 0
+    output_index: 0
+- kind: message
+  direction: sent
+  at: 6.476
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 6.577
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 6.678
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 6.695
+  data:
+    type: response.output_audio.delta
+    event_id: ecf7b1d0-b763-43d9-9889-fa49c2fca007
+    item_id: c283d5e2-d45a-412c-a1f8-ca389df536ce
+    response_id: 39fcae63-7812-4fe0-a88b-a3aa84bf34f6
+    delta: CwASABYAEwALAAMAAAD//wAABQAKAA0ACwAIAAUAAwAB
+    content_index: 0
+    output_index: 0
+    rid: c6fa40f1-6e0a-410e-a23c-0f0f5a724e3b
+    latency: '0.64'
+    audio_duration_ms: 489
+    ts: 1792592898912
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 6.696
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: c6fa40f1-6e0a-410e-a23c-0f0f5a724e3b
+    item_id: c283d5e2-d45a-412c-a1f8-ca389df536ce
+    response_id: 39fcae63-7812-4fe0-a88b-a3aa84bf34f6
+    delta: I can't browse the web, but Amsterdam
+    content_index: 0
+    output_index: 0
+    rid: c6fa40f1-6e0a-410e-a23c-0f0f5a724e3b
+    start_time: 0.0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 6.747
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: eef26c23-a718-4d09-bb96-250a07398eea
+    item_id: c283d5e2-d45a-412c-a1f8-ca389df536ce
+    response_id: 39fcae63-7812-4fe0-a88b-a3aa84bf34f6
+    delta: ' has roughly nine hundred thousand residents.'
+    content_index: 0
+    output_index: 0
+    rid: eef26c23-a718-4d09-bb96-250a07398eea
+    start_time: 1.92
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 6.778
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 6.864
+  data:
+    type: response.output_audio.delta
+    event_id: 097e6b10-6ff0-4c14-8127-d269a89adc76
+    item_id: c283d5e2-d45a-412c-a1f8-ca389df536ce
+    response_id: 39fcae63-7812-4fe0-a88b-a3aa84bf34f6
+    delta: iv+M/5X/pf+p/7T/uv++/8f/xP/C/7//vf++/73/v//E
+    content_index: 0
+    output_index: 0
+    rid: c6fa40f1-6e0a-410e-a23c-0f0f5a724e3b
+    audio_duration_ms: 918
+    ts: 1792592899081
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 6.879
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 6.958
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: face0682-a967-4cf6-a234-0194445ed3e5
+    item_id: c283d5e2-d45a-412c-a1f8-ca389df536ce
+    response_id: 39fcae63-7812-4fe0-a88b-a3aa84bf34f6
+    delta: ' And I don''t know your favorite color.'
+    content_index: 0
+    output_index: 0
+    rid: face0682-a967-4cf6-a234-0194445ed3e5
+    start_time: 4.48
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 6.966
+  data:
+    type: response.output_audio.delta
+    event_id: b303f2a6-e123-40c7-91c1-8553ee845b7b
+    item_id: c283d5e2-d45a-412c-a1f8-ca389df536ce
+    response_id: 39fcae63-7812-4fe0-a88b-a3aa84bf34f6
+    delta: CwAIAAkACAAFAAgABwAIAAgABwAGAAQABwAIAAYABgAI
+    content_index: 0
+    output_index: 0
+    rid: c6fa40f1-6e0a-410e-a23c-0f0f5a724e3b
+    audio_duration_ms: 398
+    ts: 1792592899241
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 6.975
+  data:
+    type: response.output_audio.delta
+    event_id: 966d72f4-e470-49e0-a667-838fc478c3d7
+    item_id: c283d5e2-d45a-412c-a1f8-ca389df536ce
+    response_id: 39fcae63-7812-4fe0-a88b-a3aa84bf34f6
+    delta: nv/O/ysAWgA/AG0AfgAOAUkBNgFkAZEB+QGWAd0B6wG/
+    content_index: 0
+    output_index: 0
+    rid: eef26c23-a718-4d09-bb96-250a07398eea
+    audio_duration_ms: 581
+    ts: 1792592899249
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 6.981
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 7.067
+  data:
+    type: response.output_audio.delta
+    event_id: 6152b4f1-58eb-47ca-8adc-fa1ffeea7854
+    item_id: c283d5e2-d45a-412c-a1f8-ca389df536ce
+    response_id: 39fcae63-7812-4fe0-a88b-a3aa84bf34f6
+    delta: 5/4b/0H/Zf+C/6P/u//G/9n/5f/s//D/7P/h/8f/pv9/
+    content_index: 0
+    output_index: 0
+    rid: eef26c23-a718-4d09-bb96-250a07398eea
+    audio_duration_ms: 1927
+    ts: 1792592899311
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 7.067
+  data:
+    type: response.output_audio.delta
+    event_id: 6e104769-4ef0-4b92-8e39-56e09685e7be
+    item_id: c283d5e2-d45a-412c-a1f8-ca389df536ce
+    response_id: 39fcae63-7812-4fe0-a88b-a3aa84bf34f6
+    delta: Ev/4AF3+cAKd/ccA8AGZ+4MFefqpBFz9Z/+eA+b6DQXS
+    content_index: 0
+    output_index: 0
+    rid: eef26c23-a718-4d09-bb96-250a07398eea
+    audio_duration_ms: 61
+    ts: 1792592899316
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 7.082
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 7.174
+  data:
+    type: response.output_audio.delta
+    event_id: ffd2ad82-294c-48f6-a58b-cca10e7eafbc
+    item_id: c283d5e2-d45a-412c-a1f8-ca389df536ce
+    response_id: 39fcae63-7812-4fe0-a88b-a3aa84bf34f6
+    delta: IgD5/y8AQf+/AL3/6v/7/kcC+f3c/0ECNP1SAXcAsv5e
+    content_index: 0
+    output_index: 0
+    rid: face0682-a967-4cf6-a234-0194445ed3e5
+    audio_duration_ms: 550
+    ts: 1792592899451
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 7.183
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 7.283
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 7.345
+  data:
+    type: response.output_audio.delta
+    event_id: 7a9c4929-b16d-43db-b949-a624d42920c5
+    item_id: c283d5e2-d45a-412c-a1f8-ca389df536ce
+    response_id: 39fcae63-7812-4fe0-a88b-a3aa84bf34f6
+    delta: 0uui69nq4Ol16XvpYOnn6F3od+hK6RrqcOqd6hvrKuxG
+    content_index: 0
+    output_index: 0
+    rid: face0682-a967-4cf6-a234-0194445ed3e5
+    audio_duration_ms: 979
+    ts: 1792592899618
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 7.384
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 7.467
+  data:
+    type: response.output_audio.delta
+    event_id: 60cac1de-96c4-424a-96ce-2f51e3473790
+    item_id: c283d5e2-d45a-412c-a1f8-ca389df536ce
+    response_id: 39fcae63-7812-4fe0-a88b-a3aa84bf34f6
+    delta: igL5AUYB9QARAAL/D//F/6b/jP4p/hMAvwITA8YA3f7c
+    content_index: 0
+    output_index: 0
+    rid: face0682-a967-4cf6-a234-0194445ed3e5
+    audio_duration_ms: 336
+    ts: 1792592899745
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 7.469
+  data:
+    type: response.output_audio.delta
+    event_id: b4a1a406-03e1-4a0b-bfc2-49336c0bbb41
+    item_id: c283d5e2-d45a-412c-a1f8-ca389df536ce
+    response_id: 39fcae63-7812-4fe0-a88b-a3aa84bf34f6
+    delta: 5v/m/+X/5P/k/+L/4//j/+X/5P/k/+T/5P/k/+L/4f/g
+    content_index: 0
+    output_index: 0
+    rid: face0682-a967-4cf6-a234-0194445ed3e5
+    audio_duration_ms: 61
+    ts: 1792592899749
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 7.473
+  data:
+    type: response.output_audio.delta
+    event_id: a81e3f15-0bec-4aa4-9ca9-89dfb63b38c8
+    item_id: c283d5e2-d45a-412c-a1f8-ca389df536ce
+    response_id: 39fcae63-7812-4fe0-a88b-a3aa84bf34f6
+    delta: 9P/2//j/+P/5//z//v/+////AAABAAEAAgAEAAQABAAG
+    content_index: 0
+    output_index: 0
+    rid: face0682-a967-4cf6-a234-0194445ed3e5
+    audio_duration_ms: 80
+    ts: 1792592899750
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 7.473
+  data:
+    type: response.output_audio_transcript.done
+    event_id: 036fa8a3-e6c2-4d6e-a5d3-56f337cb8362
+    item_id: c283d5e2-d45a-412c-a1f8-ca389df536ce
+    transcript: I can't browse the web, but Amsterdam has roughly nine hundred thousand
+      residents. And I don't know your favorite color.
+    response_id: 39fcae63-7812-4fe0-a88b-a3aa84bf34f6
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 7.473
+  data:
+    type: response.content_part.done
+    event_id: e0979258-153f-424d-bb2b-0a28d3698a3c
+    item_id: c283d5e2-d45a-412c-a1f8-ca389df536ce
+    response_id: 39fcae63-7812-4fe0-a88b-a3aa84bf34f6
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 7.473
+  data:
+    type: response.output_audio.done
+    event_id: 4a74caa3-0183-4fbc-b73b-2b94fd165592
+    item_id: c283d5e2-d45a-412c-a1f8-ca389df536ce
+    response_id: 39fcae63-7812-4fe0-a88b-a3aa84bf34f6
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 7.473
+  data:
+    type: response.output_item.done
+    event_id: de3f02de-109b-455e-a69a-7793a4c3064b
+    item:
+      id: c283d5e2-d45a-412c-a1f8-ca389df536ce
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      replayed: false
+    response_id: 39fcae63-7812-4fe0-a88b-a3aa84bf34f6
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 7.473
+  data:
+    type: response.done
+    event_id: 55eeb46c-fee4-4961-bdcf-b3c189bcf59a
+    response:
+      id: 39fcae63-7812-4fe0-a88b-a3aa84bf34f6
+      object: realtime.response
+      output:
+      - id: c283d5e2-d45a-412c-a1f8-ca389df536ce
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: I can't browse the web, but Amsterdam has roughly nine hundred
+            thousand residents. And I don't know your favorite color.
+        replayed: false
+      status: completed
+      status_details: unimplemented
+      usage: {}
+    response_id: 39fcae63-7812-4fe0-a88b-a3aa84bf34f6
+    usage:
+      input_tokens: 283
+      input_token_details:
+        text_tokens: 23
+        audio_tokens: 260
+        grok_tokens: 0
+      output_tokens: 339
+      output_token_details:
+        text_tokens: 23
+        audio_tokens: 316
+        grok_tokens: 0
+      total_tokens: 622
+      output_audio_seconds: 6.32
+      billable_audio_seconds: 7
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 7.486
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 7.586
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 7.687
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 7.788
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 7.888
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 7.989
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 8.089
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 8.19
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 8.291
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 8.391
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 8.492
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 8.592
+  data:
+    type: input_audio_buffer.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA

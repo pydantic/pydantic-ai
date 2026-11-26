@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Any, TypeAlias
+from typing import Any, Self, TypeAlias
 
-from typing_extensions import Self
-
-from .._run_context import AgentDepsT, RunContext
+from .._run_context import AgentDepsT, RunContext, without_tool_name_path
 from ..messages import InstructionPart
+from ..tools import ToolDefinition
 from .abstract import AbstractToolset, ToolsetTool
 
 ToolsetFunc: TypeAlias = Callable[
@@ -31,13 +30,16 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
 
         Args:
             toolset_func: A function that takes the run context and returns a toolset or None.
-            per_run_step: Whether to re-evaluate the toolset for each run step.
+            per_run_step: Whether to re-evaluate the toolset for each run step. Either way, the toolset it
+                returns gets `for_run` before it is entered and `for_run_step` on every step.
             id: An optional unique ID for the toolset. Required for durable execution environments like Temporal.
         """
         self.toolset_func = toolset_func
         self.per_run_step = per_run_step
         self._id = id
         self._toolset: AbstractToolset[AgentDepsT] | None = None
+        self._factory_toolset: AbstractToolset[AgentDepsT] | None = None
+        self._entered_toolset: AbstractToolset[AgentDepsT] | None = None
 
     @property
     def id(self) -> str | None:
@@ -53,7 +55,7 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
 
     async def _evaluate_factory(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Evaluate the toolset factory function."""
-        toolset = self.toolset_func(ctx)
+        toolset = self.toolset_func(without_tool_name_path(ctx))
         if inspect.isawaitable(toolset):
             toolset = await toolset
         return toolset
@@ -70,29 +72,37 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
             id=self._id,
         )
         if not self.per_run_step:
-            new._toolset = await new._evaluate_factory(ctx)
+            new._factory_toolset = await new._evaluate_factory(ctx)
+            if new._factory_toolset is not None:
+                new._toolset = await new._factory_toolset.for_run(ctx)
         return new
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         """If per_run_step, re-evaluate factory and manage transitions in-place.
 
-        Handles the inner toolset lifecycle (exiting old, entering new) and returns self.
+        Prepares each new inner toolset before entry and forwards every step to the active
+        toolset, even when the factory is not re-evaluated. Returns self.
         """
-        if not self.per_run_step:
-            return self
+        if self.per_run_step:
+            factory_toolset = await self._evaluate_factory(ctx)
+            # Compare the factory result, not its per-run replacement: an unchanged factory
+            # result must keep the prepared instance and its entered resources across steps.
+            if factory_toolset is not self._factory_toolset:
+                # Detach first so a failed exit, preparation or entry cannot double-exit the
+                # old toolset or exit a replacement that was never entered.
+                old_toolset = self._entered_toolset
+                self._toolset = None
+                self._entered_toolset = None
+                self._factory_toolset = None
+                if old_toolset is not None:
+                    await old_toolset.__aexit__(None, None, None)
+                if factory_toolset is not None:
+                    new_toolset = await factory_toolset.for_run(ctx)
+                    await self._enter_inner_toolset(new_toolset)
+                    self._factory_toolset = factory_toolset
 
-        new_toolset = await self._evaluate_factory(ctx)
-        if new_toolset is self._toolset:
-            return self
-
-        # Detach the old toolset first so that if either the exit-old or enter-new step
-        # raises, `__aexit__` does not try to exit a toolset that was never entered
-        # (or has already been exited).
-        old_toolset = self._toolset
-        self._toolset = None
-        if old_toolset is not None:
-            await old_toolset.__aexit__(None, None, None)
-        await self._enter_inner_toolset(new_toolset)
+        if self._toolset is not None:
+            self._toolset = await self._toolset.for_run_step(ctx)
         return self
 
     async def __aenter__(self) -> Self:
@@ -104,19 +114,25 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         # `__aenter__`, so `__aexit__` cannot be called on a toolset that was
         # never entered.
         self._toolset = None
+        self._entered_toolset = None
         if toolset is None:
             return
         await toolset.__aenter__()
         self._toolset = toolset
+        # Step preparation can replace the operational toolset without transferring its
+        # entered context (e.g. CombinedToolset's exit stack). Keep that context's owner.
+        self._entered_toolset = toolset
 
     async def __aexit__(self, *args: Any) -> bool | None:
         try:
             result = None
-            if self._toolset is not None:
-                result = await self._toolset.__aexit__(*args)
+            if self._entered_toolset is not None:
+                result = await self._entered_toolset.__aexit__(*args)
             return result
         finally:
             self._toolset = None
+            self._factory_toolset = None
+            self._entered_toolset = None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         if self._toolset is None:
@@ -129,6 +145,13 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         if self._toolset is None:
             return None
         return await self._toolset.get_instructions(ctx)
+
+    async def get_tool_for_tool_def(
+        self, tool_def: ToolDefinition, ctx: RunContext[AgentDepsT]
+    ) -> ToolsetTool[AgentDepsT]:
+        if self._toolset is None:
+            raise KeyError(tool_def.name)
+        return await self._toolset.get_tool_for_tool_def(tool_def, ctx)
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
@@ -154,4 +177,6 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
                 id=self._id,
             )
             new._toolset = self._toolset.visit_and_replace(visitor)
+            new._factory_toolset = self._factory_toolset
+            new._entered_toolset = self._entered_toolset
             return new

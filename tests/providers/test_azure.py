@@ -31,7 +31,6 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.vcr,
-    pytest.mark.anyio,
 ]
 
 
@@ -203,7 +202,10 @@ def test_azure_provider_model_profile(mocker: MockerFixture):
     grok_profile = provider.model_profile('grok-3')
     grok_model_profile_mock.assert_called_with('grok-3')
     assert grok_profile is not None
-    assert grok_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    grok_transformer = grok_profile.get('json_schema_transformer')
+    assert grok_transformer is not None
+    assert issubclass(grok_transformer, OpenAIJsonSchemaTransformer)
+    assert grok_transformer({}).prefer_inlined_defs is True
 
     openai_profile = provider.model_profile('o4-mini')
     openai_model_profile_mock.assert_called_with('o4-mini')
@@ -355,13 +357,13 @@ def test_azure_provider_voice_live_only_construction(monkeypatch: pytest.MonkeyP
     provider = AzureProvider(voice_live_endpoint='https://vl.services.ai.azure.com', voice_live_api_key='vl-key')
     assert provider.voice_live_endpoint == 'https://vl.services.ai.azure.com'
     assert provider.voice_live_api_key == 'vl-key'
-    assert provider.voice_live_api_version == '2026-04-10'
+    assert provider.voice_live_api_version == '2026-07-15'
 
     # Environment only, and without `AZURE_VOICELIVE_API_VERSION` — the default applies.
     monkeypatch.setenv('AZURE_VOICELIVE_ENDPOINT', 'https://vl.services.ai.azure.com')
     monkeypatch.setenv('AZURE_VOICELIVE_API_KEY', 'vl-key')
     provider = AzureProvider()
-    assert provider.voice_live_api_version == '2026-04-10'
+    assert provider.voice_live_api_version == '2026-07-15'
 
 
 def test_azure_provider_voice_live_key_is_not_borrowed_by_the_data_plane(monkeypatch: pytest.MonkeyPatch):
@@ -478,7 +480,7 @@ def test_azure_provider_voice_live_falls_back_to_openai_resource(monkeypatch: py
     provider = AzureProvider()
     assert provider.voice_live_endpoint == 'https://ga.openai.azure.com'
     assert provider.voice_live_api_key == 'ga-key'
-    assert provider.voice_live_api_version == '2026-04-10'
+    assert provider.voice_live_api_version == '2026-07-15'
 
 
 def test_azure_provider_for_realtime_normalizes_bare_endpoint(monkeypatch: pytest.MonkeyPatch):

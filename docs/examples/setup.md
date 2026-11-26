@@ -1,6 +1,10 @@
-# Examples
+---
+description: "Install and run the Pydantic AI examples, from setting model provider environment variables to running each example script with uv or pip."
+---
 
-Here we include some examples of how to use Pydantic AI and what it can do.
+# Pydantic AI examples
+
+Here we include some examples of how to use Pydantic AI and what it can do. For complete open source applications built on Pydantic AI, see [Built with Pydantic AI](../built-with.md).
 
 ## Usage
 

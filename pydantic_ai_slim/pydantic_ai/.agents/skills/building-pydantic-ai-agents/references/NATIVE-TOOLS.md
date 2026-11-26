@@ -22,6 +22,11 @@ For OpenAI web search, use the Responses API model prefix (`openai-responses:`),
 Set `external_web_access=False` on `WebSearch` or `WebSearchTool` to restrict OpenAI Responses web search to cached
 or indexed content.
 
+Restricting settings (`allowed_domains`, `blocked_domains`, `max_uses`, and `external_web_access=False` on web search;
+the first three on web fetch) are not dropped silently. On a model whose native tool can't apply one that is set
+(Gemini applies none), the tool counts as unsupported: a local fallback runs in its place if one is configured, an
+`optional=True` tool is left out, and `UserError` is raised otherwise.
+
 ## Native Tool Defaults
 
 Reach for these when the provider supports them:
@@ -34,6 +39,55 @@ Reach for these when the provider supports them:
 - `MCPServerTool`
 - `FileSearchTool`
 - `AdvisorTool` (Anthropic, OpenRouter; lets a faster executor model consult a stronger advisor model mid-generation)
+
+## Provider-Specific Settings
+
+Put settings shared by providers directly on the native tool. For provider-only options, pass the
+provider's typed settings dictionary in `provider_settings`, keyed by the model class that reads it: `OpenRouterModel`
+reads `openrouter`, even for Claude, and `OpenAIChatModel` with an OpenRouter provider doesn't read it. Like model settings, unknown keys are
+ignored, so use the typed dictionaries to catch typos:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.native_tools import OpenRouterWebSearchToolSettings, WebSearchTool
+
+agent = Agent(
+    'openrouter:openai/gpt-5.2',
+    capabilities=[
+        NativeTool(
+            WebSearchTool(
+                provider_settings={
+                    'openrouter': OpenRouterWebSearchToolSettings(engine='exa')
+                }
+            )
+        )
+    ],
+)
+```
+
+The outer `TypedDict` lists the known keys. Each key maps to its own
+tool-specific `TypedDict`, so autocomplete and type checking apply at both levels. A model adapter
+reads only the options it knows from its own entry, so settings for several models can coexist on one tool.
+
+Anthropic has `response_inclusion` on `WebSearchTool` and `WebFetchTool` (`AnthropicWebSearchToolSettings`,
+`AnthropicWebFetchToolSettings`) and `use_cache` on `WebFetchTool`. `use_cache` selects the `20260318` web fetch
+version; `response_inclusion` selects the `20260318` versions only when code execution may call the tool, since it
+has no effect on direct calls.
+
+Some provider-only options used to be top-level fields and now live in `provider_settings`. The top-level fields
+still work but emit a deprecation warning, so write new code with `provider_settings`, and read the value back from
+there too:
+
+- `WebFetchTool`: `enable_citations` and `max_content_tokens` under `anthropic` (`AnthropicWebFetchToolSettings`)
+- `ImageGenerationTool`: `action`, `background`, `input_fidelity`, `moderation`, `model`, `partial_images` and
+  `quality` under `openai` (`OpenAIImageGenerationToolSettings`)
+- `FileSearchTool`: `instructions` and `retrieval_mode` under `xai` (`XaiFileSearchToolSettings`)
+- `AdvisorTool`: `caching` under `anthropic` (`AnthropicAdvisorToolSettings`)
+
+For example, write `ImageGenerationTool(provider_settings={'openai': {'quality': 'high'}})`, not
+`ImageGenerationTool(quality='high')`. The capabilities' own arguments, such as `ImageGeneration(quality='high')`,
+are not deprecated.
 
 ## Dynamic Native Tool Configuration
 
@@ -58,6 +112,12 @@ agent = Agent(
     deps_type=dict,
 )
 ```
+
+Returning `None` omits the tool for that step. `XSearch` and `ImageGeneration` are the exception when
+`fallback_subagent_model` is set: they route unsupported models to a subagent rather than a local tool, and their
+`native=` factory is resolved a second time when that subagent runs. Once `fallback_subagent_model` is set, returning
+`None` no longer omits anything — the subagent tool stays offered and calling it raises `UserError`.
+Return a configured tool instance, or drop `fallback_subagent_model`.
 
 ## When to Use Native Tools vs Provider-Adaptive Capabilities
 

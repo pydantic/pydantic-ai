@@ -1,0 +1,166 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '495'
+      content-type:
+      - application/json
+      copilot-integration-id:
+      - vscode-chat
+      editor-plugin-version:
+      - copilot-chat/0.26.7
+      editor-version:
+      - vscode/1.95.0
+      host:
+      - api.githubcopilot.com
+      openai-intent:
+      - conversation-panel
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise.
+        role: system
+      - content: What is the weather in Paris?
+        role: user
+      model: claude-haiku-4.5
+      stream: true
+      stream_options:
+        include_usage: true
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get the weather in a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.githubcopilot.com/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"choices":[{"index":0,"delta":{"content":null,"tool_calls":[{"function":{"name":"get_weather"},"id":"toolu_016kCMMwHkP9BEEFZwuKBF8V","index":0,"type":"function"}]}}],"created":1788538002,"id":"msg_011CeigkxwJdSzyj2bwhymMM","model":"claude-haiku-4.5"}
+
+        data: {"choices":[{"index":0,"delta":{"content":null,"tool_calls":[{"function":{"arguments":""},"index":0}]}}],"created":1788538002,"id":"msg_011CeigkxwJdSzyj2bwhymMM","model":"claude-haiku-4.5"}
+
+        data: {"choices":[{"index":0,"delta":{"content":null,"tool_calls":[{"function":{"arguments":"{\"city\": "},"index":0}]}}],"created":1788538002,"id":"msg_011CeigkxwJdSzyj2bwhymMM","model":"claude-haiku-4.5"}
+
+        data: {"choices":[{"index":0,"delta":{"content":null,"tool_calls":[{"function":{"arguments":"\"Paris\"}"},"index":0}]}}],"created":1788538002,"id":"msg_011CeigkxwJdSzyj2bwhymMM","model":"claude-haiku-4.5"}
+
+        data: {"choices":[{"finish_reason":"tool_calls","index":0,"delta":{"content":null}}],"created":1788538002,"id":"msg_011CeigkxwJdSzyj2bwhymMM","usage":{"completion_tokens":54,"prompt_tokens":569,"prompt_tokens_details":{"cached_tokens":0},"total_tokens":623},"model":"claude-haiku-4.5","copilot_usage":{"token_details":[{"batch_size":1000000,"cost_per_batch":100000000000,"model":"claude-haiku-4.5","token_count":569,"token_type":"input"},{"batch_size":1000000,"cost_per_batch":10000000000,"model":"claude-haiku-4.5","token_count":0,"token_type":"cache_read"},{"batch_size":1000000,"cost_per_batch":125000000000,"model":"claude-haiku-4.5","token_count":0,"token_type":"cache_write"},{"batch_size":1000000,"cost_per_batch":500000000000,"model":"claude-haiku-4.5","token_count":54,"token_type":"output"}],"total_nano_aiu":83900000}}
+
+        data: [DONE]
+
+    headers:
+      cache-control:
+      - no-cache
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - text/event-stream
+      strict-transport-security:
+      - max-age=31536000
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '776'
+      content-type:
+      - application/json
+      copilot-integration-id:
+      - vscode-chat
+      editor-plugin-version:
+      - copilot-chat/0.26.7
+      editor-version:
+      - vscode/1.95.0
+      host:
+      - api.githubcopilot.com
+      openai-intent:
+      - conversation-panel
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise.
+        role: system
+      - content: What is the weather in Paris?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city": "Paris"}'
+            name: get_weather
+          id: toolu_016kCMMwHkP9BEEFZwuKBF8V
+          type: function
+      - content: sunny
+        role: tool
+        tool_call_id: toolu_016kCMMwHkP9BEEFZwuKBF8V
+      model: claude-haiku-4.5
+      stream: true
+      stream_options:
+        include_usage: true
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get the weather in a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.githubcopilot.com/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"choices":[{"index":0,"delta":{"content":"The weather in Paris","role":"assistant"}}],"created":1788538003,"id":"msg_011Ceigm3Jjb7ZziTk2pc5SX","model":"claude-haiku-4.5"}
+
+        data: {"choices":[{"index":0,"delta":{"content":" is currently **sunny**.","role":"assistant"}}],"created":1788538003,"id":"msg_011Ceigm3Jjb7ZziTk2pc5SX","model":"claude-haiku-4.5"}
+
+        data: {"choices":[{"finish_reason":"stop","index":0,"delta":{"content":null}}],"created":1788538003,"id":"msg_011Ceigm3Jjb7ZziTk2pc5SX","usage":{"completion_tokens":12,"prompt_tokens":636,"prompt_tokens_details":{"cached_tokens":0},"total_tokens":648},"model":"claude-haiku-4.5","copilot_usage":{"token_details":[{"batch_size":1000000,"cost_per_batch":100000000000,"model":"claude-haiku-4.5","token_count":636,"token_type":"input"},{"batch_size":1000000,"cost_per_batch":10000000000,"model":"claude-haiku-4.5","token_count":0,"token_type":"cache_read"},{"batch_size":1000000,"cost_per_batch":125000000000,"model":"claude-haiku-4.5","token_count":0,"token_type":"cache_write"},{"batch_size":1000000,"cost_per_batch":500000000000,"model":"claude-haiku-4.5","token_count":12,"token_type":"output"}],"total_nano_aiu":69600000}}
+
+        data: [DONE]
+
+    headers:
+      cache-control:
+      - no-cache
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - text/event-stream
+      strict-transport-security:
+      - max-age=31536000
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...

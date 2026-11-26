@@ -1,0 +1,162 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '367'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Search the web for Pydantic AI. Return one source URL.
+        role: user
+      model: gpt-5.6-luna
+      reasoning:
+        context: all_turns
+      stream: false
+      tool_choice: auto
+      tools:
+      - filters:
+          blocked_domains:
+          - ai.pydantic.dev
+        search_context_size: medium
+        type: web_search
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3574'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '5567'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1789367318
+      created_at: 1789367312
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0624e8e30cd3b72d006aa79410bcc487d28266b58fb509ebca
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.6-luna
+      moderation: null
+      object: response
+      output:
+      - content: []
+        encrypted_content: gAAAAABqp5QWJFnMYMHpSE7TkpHex1xP64XH__XUBlnAdNVGnAYTobRHqq3oAklX-QzqSv_Hvd5bKBsKedg7QkItSGgk8Rx7rm95YF9rtLrb8IuYqEc6jHYTY4fZk2B0yYsNYksOaaGsXLV7Pp7u4TVshxrkksBsRwGyFfEfGVMrbUjFv-Pkp4JnAkY-_yD82jYMJj_6Un7vTcRN2ttuyDGy6js4H7jPVei7vGj8nk8Qjpu2kYNQiGY8PGL-ya-zIFzZJ8VqQkLcUasOT13s_fJ25DAwonPvRiBJsYARr-I0a2qdHYNiJkQnCEBky4qCZ12sSBSc6FwVeMRrVMFQELfdAg7yNTebWKHptqdKomyz6ZfKVuH-NIEivEnFzi8ZOQowMbRWkF0OeyQjq325XXNYedm4681b1aaoFJI5mFGjrHBPgeQ9tTMssEMQ6AwNHO1k6wdhQ38j2MoMW1Id_uQMjYVmc8g6dPz2-tdbzoaOFiqFPS3J6ts0rj4AkpQvoLj0lgSkYgrekQJxsTjDRiHi6tApea8srG6MFoXw8zSotD-c_UInUcvScLFElT9BkUNX02CUnJ0gguQzN3j9h2lTuKH2AvI5mmVni4eWDzfNI1XnErjgdRI2xvFpqp36Bak3_b3yv-b125TCSgzu1LY_2SZ3dSGOWvYOkuobncN1_xAnWZaPdCa2bo_3ShhU_Iyez3wEb9iz0NU5I-UjsmdqDEY-fjFXdTXPGmCZGDhXfT1hYT0B8s5obPPHYXPHxy55MKMuAyq2mVvXbxPxh9wIfPHeWecuJmhv_CKYq98_UdxdiZVSc7Uc7JE-GSo9Z5ENI5pu4KYfdJOsEhHOnT7ZAKiKRHBHuFfL0ElnIijpcsRSd31KObEuFWZSH9cuzexUnLEINGRink6X7fWsn8O-d4cOGdtK3BANCcswvWIM7ysvRvuz92m-1JD2H60dCCG3keZT2hh87HgOzz8EBuuQSB4D44Q6QdEmMkbdEoZc4M299WDYsgt7_hCMvYN4qNa6lDsx9uSZLx1CMH62MGTQ4K2tXXSRabga9BR7bPmRRaweTU0Tq0YiH2GO7LVQ3iPQ0IgmKjXOaIk3pMfciOUzlTgwv0cd67UBtIUvEkk6ofJgo0gVKjINcc7iM6_qgBMKXO8KGuniKBh3P9FfIbPZ2IRqO9T74E8aXT3oI-O3DObeBEaxS5ypLY8UMu3Q7mbU4AMBpa8wxXvnkeXzDNvL6DfwGKLpvdGtbDurQUcNllGPcuauy-g=
+        id: rs_0624e8e30cd3b72d006aa79411793487d28151d44e2a0202a1
+        summary: []
+        type: reasoning
+      - action:
+          queries:
+          - Pydantic AI official
+          query: Pydantic AI official
+          type: search
+        id: ws_0624e8e30cd3b72d006aa79411c1b487d2ab773875ee20c281
+        status: completed
+        type: web_search_call
+      - content:
+        - annotations: []
+          logprobs: []
+          text: https://pydantic.dev/docs/ai/overview/
+          type: output_text
+        id: msg_0624e8e30cd3b72d006aa7941585ac87d28d743dcb1838f4f5
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 1
+      tools:
+      - filters:
+          blocked_domains:
+          - ai.pydantic.dev
+        return_token_budget: default
+        search_content_types:
+        - text
+        search_context_size: medium
+        type: web_search
+        user_location:
+          city: null
+          country: US
+          region: null
+          timezone: null
+          type: approximate
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 8652
+        input_tokens_details:
+          cache_write_tokens: 4388
+          cached_tokens: 0
+        output_tokens: 63
+        output_tokens_details:
+          reasoning_tokens: 47
+        total_tokens: 8715
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

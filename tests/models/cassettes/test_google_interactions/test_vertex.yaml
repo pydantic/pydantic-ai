@@ -1,0 +1,288 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "374"
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: Look up the secret phrase.
+          name: get_secret
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: Use get_secret and tell me the secret phrase.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: requires_action
+        usage:
+          total_tokens: 122
+          total_input_tokens: 28
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 28
+          total_output_tokens: 10
+          output_tokens_by_modality:
+          - modality: text
+            tokens: 10
+          total_tool_use_tokens: 0
+          total_thought_tokens: 84
+          initial_input_tokens: 28
+        role: model
+        created: 2026-11-05T15:53:24Z
+        updated: 2026-11-05T15:53:24Z
+        steps:
+        - signature: >-
+            AY89a1+RIB1VuJQ7a6PG4r3IexLI7XxorakA+ZWkwLTpd97ckMfGGyvP30KhYlxPS+QpYqU01feryC15fj3Pmvyl4FM87bMGv7jbg7cbBjqaJxVEuXPVLxFcLCYqvbKNEWLJqjdpDG0rzabrE466ASVn2UWPPR0PUJS3H1TD4JzrbFBuhePf60dmR40Ardeicr+t6mytaEd5TqJtp8lhMJdQmr9Igy3QZO9M5RWyIbRLHvpTb5FHxn6r3hs6mgW++y2bZZmvTfR5mBKoYCsyVyeJBoamr5vtkMMjbtvEpx6mN9sI/2TUkg7oI/rbRZLtB2mtd2tdaiyNTXnL7ZrSBU+XtFlcyb578AZI3V+egPmhD1QOzHmvzlOcpzN116FT+BekPCctoJfk3+MP4/Enkw8VYjW9UtnJmvYb2Lavf1rY4IsMWbvPoC3BQf8qoZgIpFRL6JpER52GZQy9Q1I5Vv3zgl3LNryezXeV5M5K7EhyZ3tmIuJlpKHaavWlBytQwTFFHC4ZaWzp3agX5EoE/aNXn2kd+F0V8pBZq+gtYEjcfF7d8b5t1pXAPtW2eqoJMVa7BnMYXnCbL2BJxPDfjbayIimdL5k=
+          type: thought
+        - id: call_5425784420238078841
+          type: function_call
+          name: get_secret
+          arguments: {}
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-05T15:53:24.318255+00:00
+- request:
+    method: POST
+    uri: >-
+      https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1259"
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: Look up the secret phrase.
+          name: get_secret
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: Use get_secret and tell me the secret phrase.
+        - signature: >-
+            AY89a1+RIB1VuJQ7a6PG4r3IexLI7XxorakA+ZWkwLTpd97ckMfGGyvP30KhYlxPS+QpYqU01feryC15fj3Pmvyl4FM87bMGv7jbg7cbBjqaJxVEuXPVLxFcLCYqvbKNEWLJqjdpDG0rzabrE466ASVn2UWPPR0PUJS3H1TD4JzrbFBuhePf60dmR40Ardeicr+t6mytaEd5TqJtp8lhMJdQmr9Igy3QZO9M5RWyIbRLHvpTb5FHxn6r3hs6mgW++y2bZZmvTfR5mBKoYCsyVyeJBoamr5vtkMMjbtvEpx6mN9sI/2TUkg7oI/rbRZLtB2mtd2tdaiyNTXnL7ZrSBU+XtFlcyb578AZI3V+egPmhD1QOzHmvzlOcpzN116FT+BekPCctoJfk3+MP4/Enkw8VYjW9UtnJmvYb2Lavf1rY4IsMWbvPoC3BQf8qoZgIpFRL6JpER52GZQy9Q1I5Vv3zgl3LNryezXeV5M5K7EhyZ3tmIuJlpKHaavWlBytQwTFFHC4ZaWzp3agX5EoE/aNXn2kd+F0V8pBZq+gtYEjcfF7d8b5t1pXAPtW2eqoJMVa7BnMYXnCbL2BJxPDfjbayIimdL5k=
+          type: thought
+        - arguments: {}
+          id: call_5425784420238078841
+          name: get_secret
+          type: function_call
+        - type: function_result
+          name: get_secret
+          call_id: call_5425784420238078841
+          is_error: false
+          result:
+          - type: text
+            text: emerald tiger
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 155
+          total_input_tokens: 129
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 129
+          total_output_tokens: 8
+          output_tokens_by_modality:
+          - modality: text
+            tokens: 8
+          total_tool_use_tokens: 0
+          total_thought_tokens: 18
+          initial_input_tokens: 129
+        role: model
+        created: 2026-11-05T15:53:25Z
+        updated: 2026-11-05T15:53:25Z
+        steps:
+        - signature: >-
+            AY89a19FfLMCEg7xn+fVfHscSY3Gh7OAv8x/uGXtdQDNNN6PGLFK/QQY0TcBQ1Ix4AsilgpKULJPrkhHiZ32mz2++6o8tmcVg2uZLCWDyckxJBaaiv/IcYjJt5SV5DB5ktgIioZX+HRETU8s3O+hFcGz4SF0T/OILPO0zdP3o8i9mVA+MOovx5A+5J+Z8ENYgiJ79M81VN2Jse3ctXTmj1EadcEKRrLbi1/xHtfk
+          type: thought
+        - content:
+          - text: The secret phrase is "emerald tiger".
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-05T15:53:25.937304+00:00
+- request:
+    method: POST
+    uri: >-
+      https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/interactions
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1725"
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        stream: true
+        tools:
+        - description: Look up the secret phrase.
+          name: get_secret
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: Use get_secret and tell me the secret phrase.
+        - signature: >-
+            AY89a1+RIB1VuJQ7a6PG4r3IexLI7XxorakA+ZWkwLTpd97ckMfGGyvP30KhYlxPS+QpYqU01feryC15fj3Pmvyl4FM87bMGv7jbg7cbBjqaJxVEuXPVLxFcLCYqvbKNEWLJqjdpDG0rzabrE466ASVn2UWPPR0PUJS3H1TD4JzrbFBuhePf60dmR40Ardeicr+t6mytaEd5TqJtp8lhMJdQmr9Igy3QZO9M5RWyIbRLHvpTb5FHxn6r3hs6mgW++y2bZZmvTfR5mBKoYCsyVyeJBoamr5vtkMMjbtvEpx6mN9sI/2TUkg7oI/rbRZLtB2mtd2tdaiyNTXnL7ZrSBU+XtFlcyb578AZI3V+egPmhD1QOzHmvzlOcpzN116FT+BekPCctoJfk3+MP4/Enkw8VYjW9UtnJmvYb2Lavf1rY4IsMWbvPoC3BQf8qoZgIpFRL6JpER52GZQy9Q1I5Vv3zgl3LNryezXeV5M5K7EhyZ3tmIuJlpKHaavWlBytQwTFFHC4ZaWzp3agX5EoE/aNXn2kd+F0V8pBZq+gtYEjcfF7d8b5t1pXAPtW2eqoJMVa7BnMYXnCbL2BJxPDfjbayIimdL5k=
+          type: thought
+        - arguments: {}
+          id: call_5425784420238078841
+          name: get_secret
+          type: function_call
+        - type: function_result
+          name: get_secret
+          call_id: call_5425784420238078841
+          is_error: false
+          result:
+          - type: text
+            text: emerald tiger
+        - signature: >-
+            AY89a19FfLMCEg7xn+fVfHscSY3Gh7OAv8x/uGXtdQDNNN6PGLFK/QQY0TcBQ1Ix4AsilgpKULJPrkhHiZ32mz2++6o8tmcVg2uZLCWDyckxJBaaiv/IcYjJt5SV5DB5ktgIioZX+HRETU8s3O+hFcGz4SF0T/OILPO0zdP3o8i9mVA+MOovx5A+5J+Z8ENYgiJ79M81VN2Jse3ctXTmj1EadcEKRrLbi1/xHtfk
+          type: thought
+        - content:
+          - text: The secret phrase is "emerald tiger".
+            type: text
+          type: model_output
+        - type: user_input
+          content:
+          - type: text
+            text: Repeat the secret phrase.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - text/event-stream
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: text
+      content: |+
+        event: interaction.created
+        data: {"interaction":{"id":"","status":"in_progress","object":"interaction","model":"gemini-3.8-flash"},"event_type":"interaction.created"}
+
+        event: interaction.status_update
+        data: {"interaction_id":"","status":"in_progress","event_type":"interaction.status_update"}
+
+        event: step.start
+        data: {"index":0,"step":{"type":"thought"},"event_type":"step.start"}
+
+        event: step.delta
+        data: {"index":0,"delta":{"signature":"AY89a1+GLEIN3koDRpRHRyS/Fp20EK1mRRiRxTg3afL/4dTooMtrIKv8VHnqSjJb3fe8f7rwA+nLvSyAWsZJI0DRZzR51tmEBhiLNa4qLQ8Bll7BqsTYhFC4KXwO7UEC6cGCaY9/ELS1xZCwKouQDcnX6g2BbOVzp4MYi3q+fskCGDyOr2hpSl3KSkH2k89NNiHpJgHv9JipjDENHCZoBMQe6M7qsoTLht9SigkTs5NPYOLLfk6zr2kUxgWQMcxcaVWOy5pOuzFN/P22UcndjUvOhHefzFYFfHCTZOkm0qw=","type":"thought_signature"},"event_type":"step.delta"}
+
+        event: step.stop
+        data: {"index":0,"event_type":"step.stop"}
+
+        event: step.start
+        data: {"index":1,"step":{"type":"model_output"},"event_type":"step.start"}
+
+        event: step.delta
+        data: {"index":1,"delta":{"text":"The secret phrase is \"emerald tiger\".","type":"text"},"event_type":"step.delta"}
+
+        event: step.stop
+        data: {"index":1,"usage":{"total_tokens":189,"total_input_tokens":160,"input_tokens_by_modality":[{"modality":"text","tokens":160}],"total_output_tokens":8,"output_tokens_by_modality":[{"modality":"text","tokens":8}],"total_tool_use_tokens":0,"total_thought_tokens":21,"initial_input_tokens":160},"event_type":"step.stop"}
+
+        event: interaction.completed
+        data: {"interaction":{"id":"","status":"completed","usage":{"total_tokens":189,"total_input_tokens":160,"input_tokens_by_modality":[{"modality":"text","tokens":160}],"total_output_tokens":8,"output_tokens_by_modality":[{"modality":"text","tokens":8}],"total_tool_use_tokens":0,"total_thought_tokens":21,"initial_input_tokens":160},"object":"interaction","model":"gemini-3.8-flash"},"event_type":"interaction.completed"}
+
+        event: done
+        data: [DONE]
+
+  recorded_at: 2026-11-05T15:53:27.754864+00:00

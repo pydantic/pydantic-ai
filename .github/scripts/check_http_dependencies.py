@@ -39,56 +39,43 @@ openai_extras = {
     'cerebras',
     'openai-realtime',
     'xai-realtime',
+    'elevenlabs-realtime',
 }
 openai_requirements = [requirement for requirement in slim if requirement.name == 'openai']
 assert len(openai_requirements) == len(openai_extras)
 for requirement in openai_requirements:
     assert not requirement.extras
-    assert requirement.specifier.contains('3.0.0')
     assert requirement.marker is not None
     assert str(requirement.marker).removeprefix('extra == ').strip('"') in openai_extras
 
 openai_dependencies = [Requirement(value) for value in requires('openai') or []]
 assert not any(requirement.name == 'httpx' for requirement in openai_dependencies)
-assert any(
-    requirement.name == 'httpx2' and requirement.specifier.contains('2.7') for requirement in openai_dependencies
-)
+assert any(requirement.name == 'httpx2' for requirement in openai_dependencies)
 
 anthropic_requirements = [requirement for requirement in slim if requirement.name == 'anthropic']
 assert len(anthropic_requirements) == 1
-assert anthropic_requirements[0].specifier.contains('1.0.0')
 assert str(anthropic_requirements[0].marker) == 'extra == "anthropic"'
 
 anthropic_dependencies = [Requirement(value) for value in requires('anthropic') or []]
 assert not any(requirement.name == 'httpx' for requirement in anthropic_dependencies)
-assert any(
-    requirement.name == 'httpx2' and requirement.specifier.contains('2.7') for requirement in anthropic_dependencies
-)
+assert any(requirement.name == 'httpx2' for requirement in anthropic_dependencies)
 
 google_extras = {'google', 'google-realtime'}
 google_requirements = [requirement for requirement in slim if requirement.name == 'google-genai']
 assert len(google_requirements) == len(google_extras)
 for requirement in google_requirements:
-    assert requirement.specifier.contains('2.18.0')
     assert requirement.marker is not None
     assert str(requirement.marker).removeprefix('extra == ').strip('"') in google_extras
 
-# Google Gen AI 2.18 accepts injected HTTPX2 clients, but still depends directly on legacy HTTPX.
+# Google Gen AI accepts injected HTTPX2 clients, but still depends directly on legacy HTTPX.
 google_dependencies = [Requirement(value) for value in requires('google-genai') or []]
 assert any(requirement.name == 'httpx' for requirement in google_dependencies)
 
-# `pydantic_ai.mcp` imports legacy HTTPX at module level, and the `mcp` extra never declares it: the
-# module is importable only because `fastmcp-slim[client]` pulls HTTPX in transitively. Assert that
-# transitive dependency still exists, so `mcp.py` losing its HTTP client fails here rather than at import.
+# `pydantic_ai.mcp` imports no HTTP client of its own: FastMCP's client brings legacy HTTPX on FastMCP 3
+# and HTTPX2 on FastMCP 4, and `tests/test_mcp.py` checks the toolset runs without legacy HTTPX.
 fastmcp_requirements = [requirement for requirement in slim if requirement.name == 'fastmcp-slim']
 assert fastmcp_requirements
 assert all(requirement.extras == {'client'} for requirement in fastmcp_requirements)
-
-fastmcp_dependencies = [Requirement(value) for value in requires('fastmcp-slim') or []]
-assert any(
-    requirement.name == 'httpx' and str(requirement.marker) == 'extra == "client"'
-    for requirement in fastmcp_dependencies
-)
 
 root_slim = [requirement for requirement in root if requirement.name == 'pydantic-ai-slim']
 assert root_slim

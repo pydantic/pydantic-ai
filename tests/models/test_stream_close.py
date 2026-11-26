@@ -2,14 +2,23 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Literal, Protocol, TypeVar
 
 import anyio
 import pytest
 
-from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, RequestUsage, TextPart, UserPromptPart
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RequestUsage,
+    TextPart,
+    ThinkingPart,
+    UserPromptPart,
+)
 from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.models import ModelRequestParameters, StreamedResponse
 
@@ -18,11 +27,15 @@ from ..conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
     import xai_sdk.chat as xai_chat
+    from cohere import ContentDeltaV2ChatStreamResponse, V2ChatStreamResponse
+    from google.genai import interactions as gi
     from google.genai.types import GenerateContentResponse
     from huggingface_hub import AsyncInferenceClient, ChatCompletionStreamOutput
     from xai_sdk.proto import chat_pb2
 
+    from pydantic_ai.models.cohere import CohereStreamedResponse
     from pydantic_ai.models.google import GeminiStreamedResponse, GoogleModel
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel, GoogleInteractionsStreamedResponse
     from pydantic_ai.models.huggingface import HuggingFaceModel, HuggingFaceStreamedResponse
     from pydantic_ai.models.xai import XaiModel, XaiStreamedResponse
     from pydantic_ai.providers.google import GoogleProvider
@@ -31,7 +44,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='provider SDKs not installed'),
-    pytest.mark.anyio,
 ]
 
 T = TypeVar('T')
@@ -39,12 +51,50 @@ T = TypeVar('T')
 
 @dataclass(frozen=True)
 class Case:
-    id: Literal['google', 'huggingface', 'xai']
+    id: Literal['google', 'google-interactions', 'huggingface', 'xai']
     model_name: str
     expected_messages: list[ModelMessage]
 
 
 CASES = [
+    Case(
+        id='google-interactions',
+        model_name='gemini-3.8-flash',
+        expected_messages=snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='Reply with exactly: Paris', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ThinkingPart(
+                            content='',
+                            signature=IsStr(),
+                            provider_name='google',
+                            provider_details={
+                                'google_interactions_step_index': 0,
+                                'google_interactions_content_index': 0,
+                            },
+                        ),
+                        TextPart(content='Paris', provider_name='google'),
+                    ],
+                    usage=RequestUsage(cost=Decimal('0.000')),
+                    model_name='gemini-3.8-flash',
+                    model_id='google:gemini-3.8-flash',
+                    timestamp=IsDatetime(),
+                    provider_name='google',
+                    provider_url='https://generativelanguage.googleapis.com/',
+                    canonical_system='google',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='interrupted',
+                ),
+            ]
+        ),
+    ),
     Case(
         id='google',
         model_name='gemini-2.5-flash',
@@ -67,9 +117,11 @@ CASES = [
                         cost=Decimal('0.0000918'),
                     ),
                     model_name='gemini-2.5-flash',
+                    model_id='google:gemini-2.5-flash',
                     timestamp=IsDatetime(),
                     provider_name='google',
                     provider_url='https://generativelanguage.googleapis.com/',
+                    canonical_system='google',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
@@ -95,6 +147,7 @@ CASES = [
                     parts=[TextPart(content='Paris')],
                     usage=RequestUsage(cost=Decimal('0.00')),
                     model_name='meta-llama/llama-3.1-8b-instruct',
+                    model_id='huggingface:meta-llama/Llama-3.1-8B-Instruct',
                     timestamp=IsDatetime(),
                     provider_name='huggingface',
                     provider_url='https://router.huggingface.co/novita',
@@ -124,6 +177,7 @@ CASES = [
                         input_tokens=189, cache_read_tokens=128, output_tokens=1, cost=Decimal('0.0000191')
                     ),
                     model_name='grok-4-fast-non-reasoning',
+                    model_id='xai:grok-4-fast-non-reasoning',
                     timestamp=IsDatetime(),
                     provider_name='xai',
                     provider_url='https://api.x.ai/v1',
@@ -174,25 +228,43 @@ async def _assert_close_cancels_active_pull(
     async with anyio.create_task_group() as task_group:
         task_group.start_soon(pull)
         await pull_started.wait()
-        with anyio.fail_after(1):
+        # The close is synchronized on events; the deadline only turns a regression into a failure instead of
+        # a hang. A tight one fails when a loaded CI runner stalls the event loop.
+        with anyio.fail_after(30):
             await response.close_stream()
             await pull_finished.wait()
 
     assert finalization_started.is_set()
 
 
-@pytest.mark.parametrize('provider', ['google', 'huggingface', 'xai'])
-async def test_provider_close_stream_cancels_active_pull(provider: Literal['google', 'huggingface', 'xai']):
+@pytest.mark.parametrize('provider', ['cohere', 'google', 'google-interactions', 'huggingface', 'xai'])
+async def test_provider_close_stream_cancels_active_pull(
+    provider: Literal['cohere', 'google', 'google-interactions', 'huggingface', 'xai'],
+):
     """Provider shutdown must synchronize with an active pull through `PeekableAsyncStream`."""
     pull_started = anyio.Event()
     finalization_started = anyio.Event()
 
-    if provider == 'google':
+    if provider == 'cohere':
+        first = ContentDeltaV2ChatStreamResponse(index=0)
+        cohere_source: AsyncIterator[V2ChatStreamResponse] = _active_stream(first, pull_started, finalization_started)
+        cohere_stream: PeekableAsyncStream[V2ChatStreamResponse, AsyncIterator[V2ChatStreamResponse]] = (
+            PeekableAsyncStream(cohere_source)
+        )
+        response: StreamedResponse = CohereStreamedResponse(
+            model_request_parameters=ModelRequestParameters(),
+            _model_name='command-r7b-12-2024',
+            _provider_name='cohere',
+            _provider_url='https://api.cohere.com',
+            _response=cohere_stream,
+        )
+        stream: _ClosableStream = cohere_stream
+    elif provider == 'google':
         first = GenerateContentResponse()
         google_stream: PeekableAsyncStream[GenerateContentResponse, AsyncIterator[GenerateContentResponse]] = (
             PeekableAsyncStream(_active_stream(first, pull_started, finalization_started))
         )
-        response: StreamedResponse = GeminiStreamedResponse(
+        response = GeminiStreamedResponse(
             model_request_parameters=ModelRequestParameters(),
             _model_name='gemini-2.0-flash',
             _response=google_stream,
@@ -200,7 +272,20 @@ async def test_provider_close_stream_cancels_active_pull(provider: Literal['goog
             _model_id_namespace='google',
             _provider_url='https://generativelanguage.googleapis.com',
         )
-        stream: _ClosableStream = google_stream
+        stream = google_stream
+    elif provider == 'google-interactions':
+        first = gi.StepStart(index=0, step=gi.ModelOutputStep())
+        interactions_stream: PeekableAsyncStream[gi.InteractionSSEEvent, AsyncIterator[gi.InteractionSSEEvent]] = (
+            PeekableAsyncStream(_active_stream(first, pull_started, finalization_started))
+        )
+        response = GoogleInteractionsStreamedResponse(
+            ModelRequestParameters(),
+            interactions_stream,
+            'gemini-3.8-flash',
+            'google',
+            'https://generativelanguage.googleapis.com',
+        )
+        stream = interactions_stream
     elif provider == 'huggingface':
         first = ChatCompletionStreamOutput(
             choices=[], created=0, id='response-id', model='model', system_fingerprint='fingerprint'
@@ -235,7 +320,7 @@ async def test_provider_close_stream_cancels_active_pull(provider: Literal['goog
             model_request_parameters=ModelRequestParameters(),
             _model_name='grok-4-fast-non-reasoning',
             _response=xai_stream,
-            _timestamp=datetime.now(timezone.utc),
+            _timestamp=datetime.now(UTC),
             _provider=XaiProvider(api_key='xai-api-key'),
         )
         stream = xai_stream
@@ -256,6 +341,8 @@ async def test_cancel_recorded_provider_stream(
     huggingface_client: AsyncInferenceClient | None = None
     if case.id == 'google':
         model = GoogleModel(case.model_name, provider=GoogleProvider(api_key=gemini_api_key))
+    elif case.id == 'google-interactions':
+        model = GoogleInteractionsModel(case.model_name, provider=GoogleProvider(api_key=gemini_api_key))
     elif case.id == 'huggingface':
         provider = HuggingFaceProvider(provider_name='novita', api_key=huggingface_api_key)
         huggingface_client = provider.client

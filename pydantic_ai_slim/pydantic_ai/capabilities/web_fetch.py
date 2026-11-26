@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic_ai._warnings import suppress_provider_field_warnings
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import WebFetchTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
@@ -40,6 +41,13 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
     max_content_tokens: int | None
     """Maximum content length in tokens. Native-only; ignored by local tools."""
 
+    id: str | None = 'web_fetch'
+    """One-off: an agent searches, fetches or generates one way, so the id is fixed.
+
+    Declared here rather than only as an `__init__` default so the class states it where
+    `_declares_default_id` -- and a reader -- can see it.
+    """
+
     def __init__(
         self,
         *,
@@ -52,7 +60,7 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
         max_uses: int | None = None,
         enable_citations: bool | None = None,
         max_content_tokens: int | None = None,
-        id: str | None = None,
+        id: str | None = 'web_fetch',
         defer_loading: bool = False,
         description: str | None = None,
     ) -> None:
@@ -80,7 +88,10 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
             kwargs['enable_citations'] = self.enable_citations
         if self.max_content_tokens is not None:
             kwargs['max_content_tokens'] = self.max_content_tokens
-        return WebFetchTool(**kwargs)
+        # TODO(v3): when `WebFetchTool.enable_citations` and `max_content_tokens` are removed, pass them in
+        # `provider_settings['anthropic']` instead. Doing it before v3 would change what those fields read on the tool.
+        with suppress_provider_field_warnings():
+            return WebFetchTool(**kwargs)
 
     def _native_unique_id(self) -> str:
         return WebFetchTool.kind

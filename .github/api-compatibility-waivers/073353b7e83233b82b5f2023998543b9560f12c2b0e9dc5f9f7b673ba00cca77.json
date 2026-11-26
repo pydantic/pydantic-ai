@@ -1,0 +1,5 @@
+{
+  "against": "v2.62.0",
+  "reason": "`DisplayArguments` was renamed to `DisplayArgs` (`*Args` convention); #11326 classifies it as clai2-internal and renames it without an alias.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11353"
+}

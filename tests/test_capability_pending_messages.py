@@ -5,9 +5,13 @@ Split out of `test_capabilities.py` per #7304.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, AsyncIterator
-from dataclasses import dataclass
-from datetime import datetime, timezone
+import copy
+import pickle
+import threading
+from collections.abc import AsyncIterable, AsyncIterator, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID
 
@@ -16,59 +20,189 @@ import pytest
 from pydantic import BaseModel, TypeAdapter
 
 from pydantic_ai import _agent_graph
-from pydantic_ai._enqueue import PendingMessage
+from pydantic_ai._enqueue import EnqueueGuard, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
     ProcessHistory,
     ToolSearch,
+    WrapModelRequestHandler,
+    on_event,
 )
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.abstract import (
+    AbstractCapability,
+    AgentNode,
+    CapabilityOrdering,
+    NodeResult,
+)
 from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    ModelRetry,
     UserError,
 )
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    CapabilityEvent,
     EnqueuedMessagesEvent,
     ImageUrl,
+    InstructionPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     ModelResponseStreamEvent,
     PartStartEvent,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    _clean_message_history,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.models import (
     ModelRequestContext,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.output import PendingModelResponse
 from pydantic_ai.result import AgentStream
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
+from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
+from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsStr, iter_message_parts
+from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts, try_import
+
+with try_import() as anthropic_imports_successful:
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
-pytestmark = [
-    pytest.mark.anyio,
-]
+pytestmark = []
+
+
+_ENQUEUED_REQUEST_INSTRUCTIONS = 'an enqueued `ModelRequest` carries instructions of its own'
 
 
 # ===== Pending Message Queue Tests =====
 
 
+def test_pending_message_queue_state_and_copy_round_trip():
+    pending = PendingMessage(messages=[ModelRequest(parts=[UserPromptPart(content='queued')])])
+    state = _agent_graph.GraphAgentState(pending_messages=[pending])
+    adapter = TypeAdapter(_agent_graph.GraphAgentState)
+
+    queues = [
+        state.pending_messages,
+        adapter.validate_python(adapter.dump_python(state)).pending_messages,
+        copy.deepcopy(state.pending_messages),
+        pickle.loads(pickle.dumps(state.pending_messages)),
+    ]
+
+    for queue in queues:
+        assert isinstance(queue, PendingMessageQueue)
+        assert queue == [pending]
+
+
+@pytest.mark.parametrize('at_end', [False, True], ids=['between-nodes', 'run-ending'])
+def test_sync_enqueue_does_not_race_pending_message_drain(at_end: bool):
+    """A worker enqueue either survives a mid-run drain or is rejected at run end."""
+    drain_started = threading.Event()
+    enqueue_started = threading.Event()
+    release_drain = threading.Event()
+
+    class BlockingQueue(PendingMessageQueue):
+        def append(self, pending: PendingMessage) -> None:
+            enqueue_started.set()
+            super().append(pending)
+
+        def _pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
+            if priority == 'asap' and not drain_started.is_set():
+                drain_started.set()
+                assert release_drain.wait(timeout=5)
+            return super()._pop_priority(priority)
+
+    queue = BlockingQueue()
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        pending_messages=queue,
+    )
+
+    drain = queue.drain_at_end if at_end else lambda: queue.pop_priority('asap')
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        drain_future = executor.submit(drain)
+        assert drain_started.wait(timeout=5)
+        enqueue_future = executor.submit(ctx.enqueue, 'from sync tool')
+        assert enqueue_started.wait(timeout=5)
+        assert not enqueue_future.done()
+        release_drain.set()
+        drain_future.result(timeout=5)
+        if at_end:
+            with pytest.raises(UserError, match='run has ended'):
+                enqueue_future.result(timeout=5)
+        else:
+            enqueue_future.result(timeout=5)
+
+    assert len(queue) == (0 if at_end else 1)
+
+
+@pytest.mark.parametrize('finish_run', [False, True], ids=['early-exit', 'finished'])
+async def test_agent_run_enqueue_after_run_ends_raises(finish_run: bool):
+    agent = Agent(TestModel())
+
+    async with agent.iter('hello') as agent_run:
+        if finish_run:
+            async for _ in agent_run:
+                pass
+
+    with pytest.raises(UserError, match='run has ended'):
+        agent_run.enqueue('too late')
+
+
+@pytest.mark.parametrize('hook_redirects', [True, False], ids=['hook-redirects', 'drain-redirects'])
+async def test_outermost_hook_can_enqueue_on_end(hook_redirects: bool):
+    """The final drain runs after every hook, so an outermost hook can still enqueue on `End`."""
+
+    class RedirectCapability(AbstractCapability[object]):
+        enqueued = False
+
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(position='outermost', wraps=[AbstractCapability])
+
+        async def after_node_run(
+            self, ctx: RunContext[object], *, node: AgentNode[object], result: NodeResult[object]
+        ) -> NodeResult[object]:
+            if isinstance(result, End) and not self.enqueued:
+                self.enqueued = True
+                ctx.enqueue('after redirect')
+                if hook_redirects:
+                    return _agent_graph.ModelRequestNode(
+                        request=ModelRequest(parts=[UserPromptPart(content='redirect')])
+                    )
+            return result
+
+    agent = Agent(TestModel(), capabilities=[RedirectCapability()])
+    result = await agent.run('hello')
+
+    assert any(
+        isinstance(part, UserPromptPart) and part.content == 'after redirect'
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    )
+
+
 async def test_enqueue_asap_message_from_tool():
-    """`'asap'` messages enqueued from a tool are injected before the next model request."""
+    """`'asap'` messages enqueued from a tool land right after its `ToolReturnPart`, in the same request."""
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if any(isinstance(msg, ModelResponse) for msg in messages):
@@ -102,6 +236,7 @@ async def test_enqueue_asap_message_from_tool():
                 parts=[ToolCallPart(tool_name='inject_msg', args='{}', tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -113,14 +248,9 @@ async def test_enqueue_asap_message_from_tool():
                         content='ok',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
-                    )
+                    ),
+                    UserPromptPart(content='Injected asap message', timestamp=IsDatetime()),
                 ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[UserPromptPart(content='Injected asap message', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -129,6 +259,7 @@ async def test_enqueue_asap_message_from_tool():
                 parts=[TextPart(content='done')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -164,7 +295,25 @@ async def test_enqueue_asap_delivery_event_from_tool():
 
     assert enqueue_id is not None
     delivery_events = [event for event in events if isinstance(event, EnqueuedMessagesEvent)]
-    assert delivery_events == [EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=(result.all_messages()[3],))]
+    tool_request = result.all_messages()[2]
+    assert isinstance(tool_request, ModelRequest)
+    assert delivery_events == [
+        EnqueuedMessagesEvent(
+            enqueue_id=enqueue_id,
+            messages=(
+                ModelRequest(
+                    parts=[tool_request.parts[1]],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ),
+            parts=(tool_request.parts[1],),
+        )
+    ]
+    # `parts` are the very objects in history; `messages` holds them in a request of their own.
+    assert delivery_events[0].parts[0] is tool_request.parts[1]
+    assert delivery_events[0].messages[0] not in result.all_messages()
     # The delivery event precedes the model response that can depend on the delivered message.
     delivery_index = events.index(delivery_events[0])
     done_index = next(
@@ -244,10 +393,33 @@ async def test_multiple_enqueue_delivery_events_keep_order():
                 result = event.result
 
     assert result is not None
-    messages = result.all_messages()
+    tool_request = result.all_messages()[2]
+    assert isinstance(tool_request, ModelRequest)
     assert delivery_events == [
-        EnqueuedMessagesEvent(enqueue_id=enqueue_ids[0], messages=(messages[3],)),
-        EnqueuedMessagesEvent(enqueue_id=enqueue_ids[1], messages=(messages[4],)),
+        EnqueuedMessagesEvent(
+            enqueue_id=enqueue_ids[0],
+            messages=(
+                ModelRequest(
+                    parts=[tool_request.parts[1]],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ),
+            parts=(tool_request.parts[1],),
+        ),
+        EnqueuedMessagesEvent(
+            enqueue_id=enqueue_ids[1],
+            messages=(
+                ModelRequest(
+                    parts=[tool_request.parts[2]],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ),
+            parts=(tool_request.parts[2],),
+        ),
     ]
 
 
@@ -282,7 +454,22 @@ async def test_enqueue_delivery_event_survives_history_processor_rebuild():
 
     assert enqueue_id is not None
     delivery_events = [event for event in events if isinstance(event, EnqueuedMessagesEvent)]
-    assert delivery_events == [EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=(result.all_messages()[3],))]
+    tool_request = result.all_messages()[2]
+    assert isinstance(tool_request, ModelRequest)
+    assert delivery_events == [
+        EnqueuedMessagesEvent(
+            enqueue_id=enqueue_id,
+            messages=(
+                ModelRequest(
+                    parts=[tool_request.parts[1]],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ),
+            parts=(tool_request.parts[1],),
+        )
+    ]
 
 
 async def test_empty_enqueue_emits_no_delivery_event():
@@ -407,12 +594,31 @@ async def test_enqueue_delivery_event_via_run_stream():
     assert output == 'done'
     assert enqueue_id is not None
     delivery_events = [event for event in events if isinstance(event, EnqueuedMessagesEvent)]
-    assert delivery_events == [EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=(result.all_messages()[3],))]
+    tool_request = result.all_messages()[2]
+    assert isinstance(tool_request, ModelRequest)
+    assert delivery_events == [
+        EnqueuedMessagesEvent(
+            enqueue_id=enqueue_id,
+            messages=(
+                ModelRequest(
+                    parts=[tool_request.parts[1]],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ),
+            parts=(tool_request.parts[1],),
+        )
+    ]
 
 
 async def test_with_event_stream_buffer_drains_around_node_stream():
-    """`_with_event_stream_buffer` yields buffered events before, between, and after node events."""
-    buffer: list[AgentStreamEvent] = []
+    """`_with_event_stream_buffer` yields buffered events before and after the node stream.
+
+    It deliberately does not drain between node events: a live node stream yields buffered events
+    itself as they are emitted, and draining here as well could invert emission order.
+    """
+    buffer: list[AgentStreamEvent] = [initial := EnqueuedMessagesEvent(enqueue_id='initial', messages=())]
     during = EnqueuedMessagesEvent(enqueue_id='during', messages=())
     after = EnqueuedMessagesEvent(enqueue_id='after', messages=())
     model_event = PartStartEvent(index=0, part=TextPart(content='done'))
@@ -423,7 +629,7 @@ async def test_with_event_stream_buffer_drains_around_node_stream():
         buffer.append(after)
 
     drained = [event async for event in _agent_graph._with_event_stream_buffer(stream(), buffer)]  # pyright: ignore[reportPrivateUsage]
-    assert drained == [during, model_event, after]
+    assert drained == [initial, model_event, during, after]
 
 
 async def test_agent_stream_events_iter_drains_buffer_before_each_pull():
@@ -525,6 +731,7 @@ async def test_enqueue_when_idle_message_prevents_end():
                 parts=[ToolCallPart(tool_name='inject_follow_up', args='{}', tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -546,6 +753,7 @@ async def test_enqueue_when_idle_message_prevents_end():
                 parts=[TextPart(content='premature end')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -560,6 +768,7 @@ async def test_enqueue_when_idle_message_prevents_end():
                 parts=[TextPart(content='final answer after follow-up')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -628,6 +837,7 @@ async def test_enqueue_when_idle_redirects_after_output_tool_end():
                 parts=[ToolCallPart(tool_name='inject_follow_up', args='{}', tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -655,6 +865,7 @@ async def test_enqueue_when_idle_redirects_after_output_tool_end():
                 ],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -688,6 +899,7 @@ async def test_enqueue_when_idle_redirects_after_output_tool_end():
                 ],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -747,6 +959,7 @@ async def test_enqueue_from_agent_run():
                 parts=[TextPart(content='response 1')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -761,6 +974,7 @@ async def test_enqueue_from_agent_run():
                 parts=[TextPart(content='response 2')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -836,6 +1050,7 @@ async def test_pending_messages_accessible_on_run_context():
                 parts=[ToolCallPart(tool_name='check_queue', args='{}', tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -847,14 +1062,9 @@ async def test_pending_messages_accessible_on_run_context():
                         content='done',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
-                    )
+                    ),
+                    UserPromptPart(content='observed', timestamp=IsDatetime()),
                 ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[UserPromptPart(content='observed', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -863,6 +1073,7 @@ async def test_pending_messages_accessible_on_run_context():
                 parts=[TextPart(content='done')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -966,6 +1177,7 @@ async def test_enqueue_accepts_multimodal_user_content():
     assert len(injected) == 1
 
 
+@pytest.mark.moves_cache_prefix(reason=_ENQUEUED_REQUEST_INSTRUCTIONS)
 async def test_enqueue_accepts_model_request_passthrough():
     """A full `ModelRequest` is enqueued verbatim, preserving `instructions`/`metadata`.
 
@@ -991,7 +1203,7 @@ async def test_enqueue_accepts_model_request_passthrough():
         instructions='do this carefully',
         metadata={'origin': 'webhook-42'},
     )
-    preset_timestamp = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    preset_timestamp = datetime(2024, 1, 1, tzinfo=UTC)
     prestamped = ModelRequest(
         parts=[UserPromptPart(content='already stamped')],
         instructions='preserve me',
@@ -1060,14 +1272,10 @@ def test_enqueue_without_live_queue_raises():
         ctx.enqueue('this has nowhere to go')
 
 
-async def test_enqueue_parts_style_calls_produce_one_request_per_call():
-    """Each `enqueue` call produces its own `ModelRequest` in history.
+async def test_enqueue_parts_style_calls_keep_their_own_parts():
+    """Each `enqueue` call keeps its own part: two calls from one tool aren't coalesced into one prompt.
 
-    Each `enqueue` call pre-packages its content into a `ModelRequest` at enqueue time,
-    so two calls produce two `PendingMessage`s with two separate `ModelRequest`s. The
-    history reflects per-call structure; wire-level `_clean_message_history` still merges
-    adjacent compatible `ModelRequest`s so the model sees one turn. Producers wanting a
-    single message should pass a single `ModelRequest(parts=[...])` themselves.
+    Both land in the tool's request, after its return, in the order they were enqueued.
     """
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1096,17 +1304,27 @@ async def test_enqueue_parts_style_calls_produce_one_request_per_call():
         if isinstance(msg, ModelRequest)
         and any(isinstance(p, UserPromptPart) and p.content in ('first hint', 'second hint') for p in msg.parts)
     ]
-    assert len(drained) == 2, 'expected one ModelRequest per enqueue call'
+    assert [[type(p).__name__ for p in msg.parts] for msg in drained] == [
+        ['ToolReturnPart', 'UserPromptPart', 'UserPromptPart']
+    ]
     assert [p.content for p in iter_message_parts(drained, ModelRequest, UserPromptPart)] == [
         'first hint',
         'second hint',
     ]
 
 
+@pytest.mark.moves_cache_prefix(reason=_ENQUEUED_REQUEST_INSTRUCTIONS)
 async def test_enqueue_passthrough_stays_separate_from_parts_style():
-    """A passthrough `ModelRequest` stays its own message even when surrounded by parts-style enqueues."""
+    """A passthrough `ModelRequest` stays its own message, and nothing enqueued after it moves ahead of it.
+
+    It may carry its own `instructions` or other message-level fields, so it's never put into the tool's
+    request. Content enqueued before it goes into the tool's request; content enqueued after it follows it as
+    its own message, so the model gets all three in enqueue order.
+    """
+    received: list[list[ModelMessage]] = []
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.append(messages)
         if any(isinstance(msg, ModelResponse) for msg in messages):
             return ModelResponse(
                 parts=[TextPart(content='done')],
@@ -1128,28 +1346,426 @@ async def test_enqueue_passthrough_stays_separate_from_parts_style():
         ctx.enqueue('after')
         return 'ok'
 
+    def contents(messages: Sequence[ModelMessage]) -> list[list[str]]:
+        return [
+            [
+                f'return:{p.content}' if isinstance(p, ToolReturnPart) else str(p.content)
+                for p in message.parts
+                if isinstance(p, ToolReturnPart | UserPromptPart)
+            ]
+            for message in messages
+            if isinstance(message, ModelRequest)
+        ]
+
     result = await agent.run('Hello')
-    # Three drained requests: synthesized(["before"]), passthrough, synthesized(["after"]).
-    drained = [
-        msg
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        and any(isinstance(p, UserPromptPart) and p.content in ('before', 'passthrough', 'after') for p in msg.parts)
-    ]
-    assert len(drained) == 3
-    contents = [
-        next(
-            p.content
-            for p in r.parts
-            if isinstance(p, UserPromptPart) and p.content in ('before', 'passthrough', 'after')
-        )
-        for r in drained
-    ]
-    assert contents == ['before', 'passthrough', 'after']
+    assert contents(result.all_messages()[2:]) == [['return:ok', 'before'], ['passthrough'], ['after']]
+    passthrough = result.all_messages()[3]
+    assert isinstance(passthrough, ModelRequest)
     # Passthrough preserved its instructions.
-    assert drained[1].instructions == 'careful'
-    assert drained[0].instructions is None
-    assert drained[2].instructions is None
+    assert passthrough.instructions == 'careful'
+    assert contents(received[-1])[-1] == ['return:ok', 'before', 'passthrough', 'after']
+
+
+async def test_parallel_tool_enqueues_land_after_their_own_returns():
+    """Content enqueued by parallel tool calls lands after its own call's return, in enqueue order per call.
+
+    The calls interleave their enqueues (`a1`, `b1`, `a2`) and their returns are stored in call order
+    (`tool_b` first), so `b1` goes in ahead of `tool_a`'s content and must not push `a2` ahead of `a1`.
+    `tool_c` enqueues nothing and asks for a retry, so its result gets nothing after it. The model still
+    gets every tool result ahead of the enqueued content, as providers require.
+    """
+    model_requests: list[ModelRequest] = []
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        assert isinstance(messages[-1], ModelRequest)
+        model_requests.append(messages[-1])
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            yield 'done'
+            return
+        yield {
+            0: DeltaToolCall(name='tool_b', json_args='{}', tool_call_id='call-b'),
+            1: DeltaToolCall(name='tool_a', json_args='{}', tool_call_id='call-a'),
+            2: DeltaToolCall(name='tool_c', json_args='{}', tool_call_id='call-c'),
+        }
+
+    agent = Agent(FunctionModel(stream_function=stream_fn))
+    a1_enqueued, b1_enqueued = anyio.Event(), anyio.Event()
+
+    @agent.tool
+    async def tool_a(ctx: RunContext[object]) -> str:
+        ctx.enqueue('a1')
+        a1_enqueued.set()
+        await b1_enqueued.wait()
+        ctx.enqueue('a2')
+        return 'a'
+
+    @agent.tool
+    async def tool_b(ctx: RunContext[object]) -> str:
+        await a1_enqueued.wait()
+        ctx.enqueue('b1')
+        b1_enqueued.set()
+        return 'b'
+
+    @agent.tool_plain
+    def tool_c() -> str:
+        raise ModelRetry('try again')
+
+    events: list[AgentStreamEvent] = []
+
+    async def event_stream_handler(_: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events.append(event)
+
+    result = await agent.run('Hello', event_stream_handler=event_stream_handler)
+
+    def describe(request: ModelMessage) -> list[str]:
+        assert isinstance(request, ModelRequest)
+        return [
+            f'{part.part_kind}:{part.tool_name}'
+            if isinstance(part, ToolReturnPart)
+            else f'{part.part_kind}:{part.content}'
+            for part in request.parts
+            if isinstance(part, ToolReturnPart | UserPromptPart)
+        ]
+
+    assert describe(result.all_messages()[2]) == snapshot(
+        [
+            'tool-return:tool_b',
+            'user-prompt:b1',
+            'tool-return:tool_a',
+            'user-prompt:a1',
+            'user-prompt:a2',
+            'tool-return:tool_c',
+        ]
+    )
+    # One event per `enqueue` call, in the order the content lands in history.
+    assert [
+        [part.content for part in event.parts if isinstance(part, UserPromptPart)]
+        for event in events
+        if isinstance(event, EnqueuedMessagesEvent)
+    ] == [['b1'], ['a1'], ['a2']]
+    assert describe(model_requests[-1]) == snapshot(
+        [
+            'tool-return:tool_b',
+            'tool-return:tool_a',
+            'tool-return:tool_c',
+            'user-prompt:b1',
+            'user-prompt:a1',
+            'user-prompt:a2',
+        ]
+    )
+
+
+async def test_enqueue_from_tool_is_its_own_request_when_the_request_was_rebuilt():
+    """When a wrapper has replaced the request's messages with copies, the tool's request isn't there to add to.
+
+    The enqueued content is then added as its own request, so the model still sees it and history keeps it.
+    """
+    received: list[list[ModelMessage]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='inject_msg', args='{}', tool_call_id='call-1')])
+
+    @dataclass
+    class CopyMessages(AbstractCapability[Any]):
+        async def wrap_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            handler: WrapModelRequestHandler,
+        ) -> ModelResponse:
+            request_context.messages = copy.deepcopy(request_context.messages)
+            return await handler(request_context)
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[CopyMessages()])
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[object]) -> str:
+        ctx.enqueue('Injected asap message')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    assert [[part.part_kind for part in message.parts] for message in result.all_messages()[2:4]] == [
+        ['tool-return'],
+        ['user-prompt'],
+    ]
+    assert [part.part_kind for part in received[-1][-1].parts] == ['tool-return', 'user-prompt']
+
+
+@pytest.mark.vcr
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_parallel_tool_enqueues_reach_anthropic(allow_model_requests: None, anthropic_api_key: str):
+    """Anthropic accepts the request after parallel tool calls that each enqueue content.
+
+    It requires every tool result to lead the message answering the calls, and in history each call's
+    content sits between the results.
+    """
+    model = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(model)
+
+    @agent.tool
+    def get_weather(ctx: RunContext[object], city: str) -> str:
+        ctx.enqueue(f'The {city} reading came from a backup station.')
+        return f'Sunny in {city}'
+
+    result = await agent.run(
+        'Call get_weather for Paris and for London in parallel, then summarize both in one short sentence.'
+    )
+    tool_request = result.all_messages()[2]
+    assert isinstance(tool_request, ModelRequest)
+    assert [type(part).__name__ for part in tool_request.parts] == snapshot(
+        ['ToolReturnPart', 'UserPromptPart', 'ToolReturnPart', 'UserPromptPart']
+    )
+    assert result.output == snapshot(
+        'Both Paris and London are reported as sunny, but both readings came from backup weather stations, so they may be less reliable than primary-station data.'
+    )
+
+
+async def test_late_enqueue_from_an_earlier_call_with_a_reused_id_is_its_own_request():
+    """Content an earlier call enqueues late isn't put next to a later call's return that reuses its id.
+
+    The model calls `tool_a` with `call_0` twice, in two steps, and each call's own content follows its return.
+    The first call also starts a task that enqueues while the second call runs, so that content still carries
+    `call_0`, but it doesn't belong to the second return.
+    """
+    model_calls = 0
+    second_call_started, late_enqueued = anyio.Event(), anyio.Event()
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal model_calls
+        model_calls += 1
+        if model_calls <= 2:
+            return ModelResponse(parts=[ToolCallPart('tool_a', {'call': model_calls}, tool_call_id='call_0')])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    async with anyio.create_task_group() as task_group:
+
+        @agent.tool
+        async def tool_a(ctx: RunContext[object], call: int) -> str:
+            ctx.enqueue(f'from call {call}')
+            if call == 1:
+
+                async def report_later() -> None:
+                    await second_call_started.wait()
+                    ctx.enqueue('late from the first call')
+                    late_enqueued.set()
+
+                task_group.start_soon(report_later)
+            else:
+                second_call_started.set()
+                await late_enqueued.wait()
+            return f'result {call}'
+
+        result = await agent.run('Hello')
+        assert [
+            [part.content for part in message.parts if isinstance(part, ToolReturnPart | UserPromptPart)]
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+        ] == [
+            ['Hello'],
+            ['result 1', 'from call 1'],
+            ['result 2', 'from call 2'],
+            ['late from the first call'],
+        ]
+
+
+async def test_tool_call_content_delivered_in_two_drains_keeps_enqueue_order():
+    """Content a call enqueues after the first delivery of the step still lands after what that delivery put in.
+
+    A task the tool started enqueues `b` while a `before_model_request` hook runs, between the delivery ahead of
+    the hooks and the one after them.
+    """
+    first_delivered, b_enqueued = anyio.Event(), anyio.Event()
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='inject_msg', args='{}', tool_call_id='call-1')])
+
+    @dataclass
+    class WaitForLateContent(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            if any(isinstance(part, ToolReturnPart) for part in ctx.messages[-1].parts):
+                first_delivered.set()
+                await b_enqueued.wait()
+            return request_context
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[WaitForLateContent()])
+
+    async with anyio.create_task_group() as task_group:
+
+        @agent.tool
+        async def inject_msg(ctx: RunContext[object]) -> str:
+            ctx.enqueue('a')
+
+            async def enqueue_later() -> None:
+                await first_delivered.wait()
+                ctx.enqueue('b')
+                b_enqueued.set()
+
+            task_group.start_soon(enqueue_later)
+            return 'ok'
+
+        result = await agent.run('Hello')
+        tool_request = result.all_messages()[2]
+        assert isinstance(tool_request, ModelRequest)
+        assert [part.content for part in tool_request.parts if isinstance(part, ToolReturnPart | UserPromptPart)] == [
+            'ok',
+            'a',
+            'b',
+        ]
+
+
+@pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
+async def test_request_with_tool_call_content_records_what_was_sent():
+    """The request tool-call content went into is the step's request: what's recorded on it lands in history.
+
+    A `before_model_request` hook adds an instruction part each step, and the instructions sent are recorded on
+    the step's request, which the content was put into by a copy.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='inject_msg', args='{}', tool_call_id='call-1')])
+
+    @dataclass
+    class StepInstructions(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            parameters = request_context.model_request_parameters
+            request_context.model_request_parameters = replace(
+                parameters,
+                instruction_parts=[*(parameters.instruction_parts or []), InstructionPart(f'step {ctx.run_step}')],
+            )
+            return request_context
+
+    agent = Agent(FunctionModel(model_fn), instructions='base', capabilities=[StepInstructions()])
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[object]) -> str:
+        ctx.enqueue('side effect')
+        return 'ok'
+
+    nodes: list[_agent_graph.ModelRequestNode[Any, Any]] = []
+    async with agent.iter('Hello') as run:
+        async for node in run:
+            if isinstance(node, _agent_graph.ModelRequestNode):
+                nodes.append(node)
+    assert run.result is not None
+    history = run.result.all_messages()
+    assert [any(node.request is message for message in history) for node in nodes] == [True, True]
+    tool_request = history[2]
+    assert isinstance(tool_request, ModelRequest)
+    assert [part.part_kind for part in tool_request.parts] == ['tool-return', 'user-prompt']
+    assert tool_request.instructions == 'base\n\nstep 2'
+
+
+async def test_directly_built_pending_message_with_several_messages_is_delivered_whole():
+    """A `PendingMessage` built by hand, holding more than one request's worth, is added as its own messages."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='inject_msg', args='{}', tool_call_id='call-1')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[object]) -> str:
+        assert ctx.pending_messages is not None and ctx.tool_call_id is not None
+        ctx.pending_messages.append(
+            PendingMessage(
+                messages=[
+                    ModelResponse(parts=[TextPart(content='synthetic')]),
+                    ModelRequest(parts=[UserPromptPart(content='follow-up')]),
+                ],
+                _tool_call=(ctx.tool_call_id, ctx.run_step),
+            )
+        )
+        return 'ok'
+
+    result = await agent.run('Hello')
+    assert [message.kind for message in result.all_messages()[2:5]] == ['request', 'response', 'request']
+
+
+async def test_enqueue_from_tool_renders_like_its_own_request():
+    """The model gets the same bytes as when the enqueued content was its own request after the tool's."""
+    received: list[list[ModelMessage]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='inject_msg', args='{}', tool_call_id='call-1')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[object]) -> str:
+        ctx.enqueue('first hint')
+        ctx.enqueue('second hint')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    *before, tool_request, _ = result.all_messages()
+    assert isinstance(tool_request, ModelRequest)
+    tool_return, *enqueued = tool_request.parts
+    own_request = [*before, replace(tool_request, parts=[tool_return]), replace(tool_request, parts=enqueued)]
+    expected = _clean_message_history(own_request, repair_last_response=True)
+    # Merging two requests drops their `run_id` / `conversation_id`, which are never sent to the model.
+    sent = [*received[-1][:-1], replace(received[-1][-1], run_id=None, conversation_id=None)]
+    assert ModelMessagesTypeAdapter.dump_json(sent) == ModelMessagesTypeAdapter.dump_json(expected)
+
+
+@pytest.mark.parametrize(
+    'parts',
+    [
+        pytest.param([UserPromptPart('Then this.'), ToolReturnPart('tool_a', 'a', 'call-a')], id='prompt-first'),
+        pytest.param([ToolReturnPart('tool_a', 'a', 'call-a'), UserPromptPart('Then this.')], id='prompt-last'),
+        pytest.param(
+            [
+                RetryFeedbackPart('Try again.', retry=RetryInfo(cause='model_retry')),
+                ToolReturnPart('tool_a', 'a', 'call-a'),
+            ],
+            id='plain-retry-first',
+        ),
+        pytest.param(
+            [
+                ToolReturnPart('tool_a', 'a', 'call-a'),
+                ToolAvailabilityDeltaPart(tools_added=['tool_c']),
+                ToolReturnPart('tool_b', 'b', 'call-b'),
+            ],
+            id='delta-between-results',
+        ),
+    ],
+)
+def test_requests_without_parts_between_tool_results_are_sent_unchanged(parts: list[ModelRequestPart]):
+    """Only parts sitting between a request's tool results move; any other request goes out exactly as stored.
+
+    A unit test because it pins the wire shape of histories that enqueue doesn't produce, such as persisted ones.
+    """
+    calls = [
+        ToolCallPart(part.tool_name, {}, tool_call_id=part.tool_call_id)
+        for part in parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Hello')]),
+        ModelResponse(parts=calls),
+        ModelRequest(parts=parts),
+    ]
+    cleaned = _clean_message_history(history)
+    assert ModelMessagesTypeAdapter.dump_json(cleaned) == ModelMessagesTypeAdapter.dump_json(history)
 
 
 async def test_enqueue_system_prompt_part():
@@ -1219,7 +1835,9 @@ async def test_enqueue_tool_availability_delta_part():
         for msg in result.all_messages()
         if isinstance(msg, ModelRequest) and any(isinstance(p, ToolAvailabilityDeltaPart) for p in msg.parts)
     )
-    assert [type(part).__name__ for part in injected.parts] == snapshot(['ToolAvailabilityDeltaPart', 'UserPromptPart'])
+    assert [type(part).__name__ for part in injected.parts] == snapshot(
+        ['ToolReturnPart', 'ToolAvailabilityDeltaPart', 'UserPromptPart']
+    )
 
 
 async def test_enqueue_interleaved_response_and_request():
@@ -1270,6 +1888,7 @@ async def test_enqueue_interleaved_response_and_request():
                 parts=[ToolCallPart(tool_name='inject_exchange', args='{}', tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1291,6 +1910,7 @@ async def test_enqueue_interleaved_response_and_request():
                 parts=[TextPart(content='done')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1312,6 +1932,7 @@ async def test_enqueue_interleaved_response_and_request():
                 parts=[TextPart(content='done')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1393,7 +2014,7 @@ async def test_enqueue_asap_with_rich_message_history_tail():
     The history keeps the un-merged view (drain's request is a separate `ModelRequest`
     after the rich tail) so `all_messages()` reflects per-call structure. On the wire,
     `_clean_message_history` merges the two adjacent `ModelRequest`s and sorts
-    `ToolReturnPart`/`RetryPromptPart` first — non-tool parts keep arrival order, so the
+    `ToolReturnPart`s first — non-tool parts keep arrival order, so the
     enqueued content lands at the *end* of the merged turn (not interleaved between
     existing parts). Captures the `messages` arg `FunctionModel` actually received to
     validate the wire-level merge through the public path.
@@ -1446,17 +2067,20 @@ async def test_enqueue_asap_with_rich_message_history_tail():
                     UserPromptPart(content='follow-up question', timestamp=IsDatetime()),
                 ],
                 timestamp=IsDatetime(),
+                run_id=(run_id := IsSameStr()),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='injected after rich tail', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
+                run_id=run_id,
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='done')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1551,6 +2175,7 @@ async def test_enqueue_asap_drains_at_end_if_arrived_during_final_step():
                 parts=[TextPart(content='would-have-ended')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1565,12 +2190,603 @@ async def test_enqueue_asap_drains_at_end_if_arrived_during_final_step():
                 parts=[TextPart(content='final after late asap')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
         ]
     )
+
+
+async def test_enqueue_at_deferred_tool_pause_is_recorded_without_another_model_request():
+    """Content left in the queue when a run pauses for deferred tools goes into the history and the pause stands.
+
+    A redirect would give the model a turn while the deferred call is unanswered.
+    """
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(parts=[ToolCallPart(tool_name='lookup'), ToolCallPart(tool_name='gated')])
+
+    @dataclass
+    class LateContentCap(AbstractCapability[Any]):
+        async def after_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            response: ModelResponse,
+        ) -> ModelResponse:
+            ctx.enqueue('late content')
+            return response
+
+    agent = Agent(FunctionModel(model_fn), output_type=[str, DeferredToolRequests], capabilities=[LateContentCap()])
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'found'
+
+    @agent.tool_plain(requires_approval=True)
+    def gated() -> str:
+        # Never approved in this test.
+        return 'approved'  # pragma: no cover
+
+    result = await agent.run('Hello')
+
+    assert isinstance(result.output, DeferredToolRequests)
+    assert call_count == 1
+    assert result.all_messages()[-1] == snapshot(
+        ModelRequest(
+            parts=[UserPromptPart(content='late content', timestamp=IsDatetime())],
+            timestamp=IsDatetime(),
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+            metadata={'__pydantic_ai__': {'deferred_pause': True}},
+        )
+    )
+
+
+@pytest.mark.parametrize('priority', ['asap', 'when_idle'])
+@pytest.mark.parametrize('case', ['all_calls_deferred', 'queued_response'])
+async def test_enqueue_at_deferred_tool_pause_keeps_the_pause(case: str, priority: PendingMessagePriority):
+    """Queued content never turns a deferred-tool pause into another model request (#7537).
+
+    After a step whose calls all deferred, a queued request is recorded after the paused response. A queued
+    `ModelResponse` would read as the paused response, so it stays queued and readable instead.
+    """
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        calls = [ToolCallPart(tool_name='gated')]
+        if case == 'queued_response':
+            calls.insert(0, ToolCallPart(tool_name='lookup'))
+        return ModelResponse(parts=calls)
+
+    @dataclass
+    class LateContentCap(AbstractCapability[object]):
+        async def after_model_request(
+            self,
+            ctx: RunContext[object],
+            *,
+            request_context: ModelRequestContext,
+            response: ModelResponse,
+        ) -> ModelResponse:
+            if case == 'queued_response':
+                ctx.enqueue(
+                    ModelResponse(parts=[TextPart(content='synthetic turn')]), 'late content', priority=priority
+                )
+            else:
+                ctx.enqueue('late content', priority=priority)
+            return response
+
+    agent = Agent(FunctionModel(model_fn), output_type=[str, DeferredToolRequests], capabilities=[LateContentCap()])
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'found'
+
+    @agent.tool_plain(requires_approval=True)
+    def gated() -> str:
+        # Never approved in this test.
+        return 'approved'  # pragma: no cover
+
+    async with agent.iter('Hello') as run:
+        async for _ in run:
+            pass
+        with pytest.raises(UserError, match='the agent run has ended'):
+            run.enqueue('after the pause')
+
+    assert run.result is not None
+    assert isinstance(run.result.output, DeferredToolRequests)
+    assert call_count == 1
+    queued = [message for pending in run.pending_messages for message in pending.messages]
+    if case == 'queued_response':
+        assert run.result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='lookup', tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='gated', tool_call_id=IsStr()),
+                    ],
+                    usage=RequestUsage(input_tokens=51, output_tokens=4),
+                    model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='lookup',
+                            content='found',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'deferred_pause': True}},
+                ),
+            ]
+        )
+        assert queued == snapshot(
+            [
+                ModelResponse(parts=[TextPart(content='synthetic turn')], timestamp=IsDatetime()),
+                ModelRequest(parts=[UserPromptPart(content='late content', timestamp=IsDatetime())]),
+            ]
+        )
+    else:
+        assert run.result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='gated', tool_call_id=IsStr())],
+                    usage=RequestUsage(input_tokens=51, output_tokens=2),
+                    model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[UserPromptPart(content='late content', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'deferred_pause': True}},
+                ),
+            ]
+        )
+        assert queued == []
+
+
+@pytest.mark.parametrize('priority', ['asap', 'when_idle'])
+async def test_enqueue_at_pending_model_response_pause_keeps_the_pause(priority: PendingMessagePriority):
+    """Queued content never turns a `PendingModelResponse` pause into another model request (#7537).
+
+    Continuing would abandon the provider's job; the content stays queued and readable instead.
+    """
+    call_count = 0
+
+    class _SuspendingFunctionModel(FunctionModel):
+        def continuation_delay(self, response: ModelResponse) -> float | None:
+            return 1.0 if response.state == 'suspended' else None
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(parts=[TextPart(content='working')], state='suspended', provider_response_id='job-1')
+
+    @dataclass
+    class LateContentCap(AbstractCapability[object]):
+        async def after_model_request(
+            self,
+            ctx: RunContext[object],
+            *,
+            request_context: ModelRequestContext,
+            response: ModelResponse,
+        ) -> ModelResponse:
+            ctx.enqueue('late content', priority=priority)
+            return response
+
+    agent = Agent(
+        _SuspendingFunctionModel(model_fn),
+        output_type=[str, PendingModelResponse],
+        capabilities=[LateContentCap()],
+    )
+
+    async with agent.iter('Hello') as run:
+        async for _ in run:
+            pass
+        with pytest.raises(UserError, match='the agent run has ended'):
+            run.enqueue('after the pause')
+
+    assert run.result is not None
+    assert isinstance(run.result.output, PendingModelResponse)
+    assert call_count == 1
+    last = run.result.all_messages()[-1]
+    assert isinstance(last, ModelResponse)
+    assert last.state == 'suspended'
+    assert [message for pending in run.pending_messages for message in pending.messages] == [
+        ModelRequest(parts=[UserPromptPart(content='late content', timestamp=IsDatetime())]),
+    ]
+
+
+@pytest.mark.parametrize('source', ['own', 'other_run'])
+async def test_content_recorded_at_a_deferred_pause_keeps_the_pause_on_a_plain_resume(source: str):
+    """Content recorded at a pause is marked as part of it, whichever run ID it carries, so a plain resume pauses again."""
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(parts=[ToolCallPart(tool_name='gated', tool_call_id='call-gated')])
+
+    agent = Agent(FunctionModel(model_fn), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def gated(ctx: RunContext[object]) -> str:
+        if source == 'own':
+            ctx.enqueue('noted at the pause')
+        else:
+            ctx.enqueue(ModelRequest(parts=[UserPromptPart('a report')], run_id='source-run'))
+        raise ApprovalRequired
+
+    paused = await agent.run('Hello')
+    assert isinstance(paused.output, DeferredToolRequests)
+    recorded = paused.all_messages()[-1]
+    assert isinstance(recorded, ModelRequest)
+    assert recorded.run_id == (paused.run_id if source == 'own' else 'source-run')
+    assert recorded.metadata == {'__pydantic_ai__': {'deferred_pause': True}}
+
+    resumed = await agent.run(message_history=paused.all_messages())
+    assert isinstance(resumed.output, DeferredToolRequests)
+    assert [call.tool_call_id for call in resumed.output.approvals] == ['call-gated']
+    assert call_count == 1
+
+
+@pytest.mark.parametrize('driver', ['run', 'run_with_handler', 'run_stream_events', 'run_stream'])
+async def test_content_recorded_at_a_deferred_pause_is_reported_once_to_listeners_and_streams(driver: str):
+    """Recording content at a pause happens after the step's event stream closed, and its event still gets out.
+
+    A capability that tracks what it queued, such as `SubAgents`, learns it was delivered from the event.
+    """
+
+    @dataclass
+    class Listener(AbstractCapability[object]):
+        seen: list[str]
+
+        @on_event(EnqueuedMessagesEvent)
+        async def delivered(self, ctx: RunContext[object], event: EnqueuedMessagesEvent) -> None:
+            self.seen.append(event.enqueue_id)
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {0: DeltaToolCall(name='gated', json_args='{}', tool_call_id='call-gated')}
+
+    listener = Listener(seen=[])
+    agent = Agent(
+        FunctionModel(stream_function=stream_fn), output_type=[str, DeferredToolRequests], capabilities=[listener]
+    )
+    enqueue_ids: list[str | None] = []
+
+    @agent.tool
+    def gated(ctx: RunContext[object]) -> str:
+        enqueue_ids.append(ctx.enqueue('noted at the pause'))
+        raise ApprovalRequired
+
+    streamed: list[str] = []
+
+    async def handler(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+        streamed.extend([event.enqueue_id async for event in events if isinstance(event, EnqueuedMessagesEvent)])
+
+    if driver == 'run':
+        await agent.run('Hello')
+    elif driver == 'run_with_handler':
+        await agent.run('Hello', event_stream_handler=handler)
+    elif driver == 'run_stream_events':
+        async with agent.run_stream_events('Hello') as events:
+            streamed.extend([event.enqueue_id async for event in events if isinstance(event, EnqueuedMessagesEvent)])
+    else:
+        async with agent.run_stream('Hello', event_stream_handler=handler) as result:
+            assert isinstance(await result.get_output(), DeferredToolRequests)
+
+    assert listener.seen == enqueue_ids
+    assert streamed == ([] if driver == 'run' else enqueue_ids)
+
+
+async def test_content_recorded_at_a_deferred_pause_reaches_listeners_when_the_handler_stops_early():
+    """Listeners see every event recorded at a pause before the run's stream handler sees the first.
+
+    `SubAgents` acknowledges a recorded report on its event, so a handler that fails partway must not leave the
+    later reports unacknowledged: they are already in the history, and resuming would queue them again.
+    """
+
+    @dataclass
+    class Listener(AbstractCapability[object]):
+        seen: list[str]
+
+        @on_event(EnqueuedMessagesEvent)
+        async def delivered(self, ctx: RunContext[object], event: EnqueuedMessagesEvent) -> None:
+            self.seen.append(event.enqueue_id)
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {0: DeltaToolCall(name='gated', json_args='{}', tool_call_id='call-gated')}
+
+    listener = Listener(seen=[])
+    agent = Agent(
+        FunctionModel(stream_function=stream_fn), output_type=[str, DeferredToolRequests], capabilities=[listener]
+    )
+    enqueue_ids: list[str | None] = []
+
+    @agent.tool
+    def gated(ctx: RunContext[object]) -> str:
+        enqueue_ids.append(ctx.enqueue('first note'))
+        enqueue_ids.append(ctx.enqueue('second note'))
+        raise ApprovalRequired
+
+    class HandlerStopped(Exception):
+        pass
+
+    async def handler(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in events:
+            if isinstance(event, EnqueuedMessagesEvent):
+                raise HandlerStopped
+
+    with pytest.raises(HandlerStopped):
+        await agent.run('Hello', event_stream_handler=handler)
+
+    assert len(enqueue_ids) == 2
+    assert listener.seen == enqueue_ids
+
+
+@pytest.mark.parametrize('pauses', [False, True], ids=['ends', 'pauses_with_nothing_queued'])
+async def test_run_that_records_nothing_at_its_end_leaves_events_emitted_after_its_last_stream_buffered(pauses: bool):
+    """Only a pause that recorded queued content delivers the events emitted after the run's last node stream.
+
+    Delivery there exists for that content. An event a capability emits once the final node has finished, at a
+    normal end or a pause with nothing queued, stays buffered, as it always has, instead of reaching the handler
+    in an extra call.
+    """
+
+    @dataclass(kw_only=True)
+    class Finished(CapabilityEvent, namespace='pending_messages_test'):
+        pass
+
+    @dataclass
+    class EmitAtEnd(AbstractCapability[object]):
+        async def after_node_run(
+            self, ctx: RunContext[object], *, node: AgentNode[object], result: NodeResult[object]
+        ) -> NodeResult[object]:
+            if isinstance(result, End):
+                await ctx.emit(Finished())
+            return result
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if pauses:
+            yield {0: DeltaToolCall(name='gated', json_args='{}', tool_call_id='call-gated')}
+        else:
+            yield 'done'
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_fn), output_type=[str, DeferredToolRequests], capabilities=[EmitAtEnd()]
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def gated() -> str:
+        return 'ran'  # pragma: no cover
+
+    seen: list[AgentStreamEvent] = []
+
+    async def handler(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+        seen.extend([event async for event in events])
+
+    result = await agent.run('Hello', event_stream_handler=handler)
+
+    assert isinstance(result.output, DeferredToolRequests) if pauses else result.output == 'done'
+    assert seen
+    assert not any(isinstance(event, Finished) for event in seen)
+
+
+async def test_run_stream_that_ends_normally_keeps_its_messages_as_copied():
+    """Only a deferred pause carries what the run's end adds to the history into the streamed result.
+
+    A capability that appends in `after_node_run` at a normal end stays out of `all_messages()`, as it always has.
+    """
+    late = ModelRequest(parts=[UserPromptPart(content='added after the end')])
+
+    @dataclass
+    class AppendAtEnd(AbstractCapability[object]):
+        async def after_node_run(
+            self, ctx: RunContext[object], *, node: AgentNode[object], result: NodeResult[object]
+        ) -> NodeResult[object]:
+            if isinstance(result, End):
+                ctx.messages.append(late)
+            return result
+
+    agent = Agent(TestModel(), capabilities=[AppendAtEnd()])
+
+    async with agent.run_stream('Hello') as result:
+        assert await result.get_output() == 'success (no tool calls)'
+
+    assert late not in result.all_messages()
+
+
+async def test_content_recorded_when_run_stream_finds_a_deferred_result_reaches_the_handler():
+    """`run_stream()` ends the run itself once the stream finds a deferred result, and the run's last events get out.
+
+    The model streams a call that needs approval, so `run_stream()` runs the step's other calls and ends the run.
+    Content one of them queued is recorded at the pause, and its event reaches the handler as well as listeners.
+    """
+
+    @dataclass
+    class Listener(AbstractCapability[object]):
+        seen: list[str]
+
+        @on_event(EnqueuedMessagesEvent)
+        async def delivered(self, ctx: RunContext[object], event: EnqueuedMessagesEvent) -> None:
+            self.seen.append(event.enqueue_id)
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {0: DeltaToolCall(name='note', json_args='{}', tool_call_id='call-note')}
+        yield {1: DeltaToolCall(name='gated', json_args='{}', tool_call_id='call-gated')}
+
+    listener = Listener(seen=[])
+    agent = Agent(
+        FunctionModel(stream_function=stream_fn), output_type=[str, DeferredToolRequests], capabilities=[listener]
+    )
+    enqueue_ids: list[str | None] = []
+
+    @agent.tool
+    def note(ctx: RunContext[object]) -> str:
+        enqueue_ids.append(ctx.enqueue('noted at the pause'))
+        return 'noted'
+
+    @agent.tool_plain(requires_approval=True)
+    def gated() -> str:  # pragma: no cover
+        return 'done'
+
+    streamed: list[str] = []
+
+    async def handler(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+        streamed.extend([event.enqueue_id async for event in events if isinstance(event, EnqueuedMessagesEvent)])
+
+    async with agent.run_stream('Hello', event_stream_handler=handler) as result:
+        assert isinstance(await result.get_output(), DeferredToolRequests)
+
+    assert len(enqueue_ids) == 1
+    assert listener.seen == enqueue_ids
+    assert streamed == enqueue_ids
+    # The streamed result's history carries the recorded content, after the step's results, marked as the pause.
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='note', args='{}', tool_call_id='call-note'),
+                    ToolCallPart(tool_name='gated', args='{}', tool_call_id='call-gated'),
+                ],
+                usage=RequestUsage(input_tokens=50, output_tokens=2),
+                model_name='function::stream_fn',
+                model_id='function:function::stream_fn',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='note', content='noted', tool_call_id='call-note', timestamp=IsDatetime())
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='noted at the pause', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
+            ),
+        ]
+    )
+
+
+async def test_interrupted_request_queued_at_a_deferred_pause_stays_queued():
+    """A queued interrupted request would close the paused calls on resume, so it isn't recorded."""
+    interrupted = ModelRequest(parts=[UserPromptPart('half done')], state='interrupted')
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart(tool_name='gated')])
+
+    agent = Agent(FunctionModel(model_fn), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def gated(ctx: RunContext[object]) -> str:
+        ctx.enqueue(interrupted)
+        raise ApprovalRequired
+
+    async with agent.iter('Hello') as run:
+        async for _ in run:
+            pass
+
+    assert run.result is not None
+    assert isinstance(run.result.output, DeferredToolRequests)
+    assert run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='gated', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+    assert [message for pending in run.pending_messages for message in pending.messages] == [interrupted]
+
+
+async def test_asap_content_queued_before_resuming_a_suspended_response_waits_for_the_next_request():
+    """Content can't go into the request that resumes a suspended response, so it's delivered in the next one."""
+    received: list[list[ModelMessage]] = []
+
+    class _SuspendingFunctionModel(FunctionModel):
+        def continuation_delay(self, response: ModelResponse) -> float | None:
+            return 0.0 if response.state == 'suspended' else None
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        if len(received) == 1:
+            return ModelResponse(parts=[TextPart(content='working')], state='suspended', provider_response_id='job-1')
+        return ModelResponse(parts=[TextPart(content='finished')])
+
+    agent = Agent(_SuspendingFunctionModel(model_fn), output_type=[str, PendingModelResponse])
+    paused = await agent.run('Hello')
+    assert isinstance(paused.output, PendingModelResponse)
+
+    async with agent.iter(message_history=paused.all_messages()) as run:
+        run.enqueue('left over', priority='asap')
+        async for _ in run:
+            pass
+
+    assert run.result is not None
+    assert run.result.output == 'finished'
+    *_, completed, delivered, last = run.result.all_messages()
+    assert isinstance(completed, ModelResponse) and completed.state == 'complete'
+    assert isinstance(delivered, ModelRequest)
+    assert [part.content for part in delivered.parts if isinstance(part, UserPromptPart)] == ['left over']
+    assert isinstance(last, ModelResponse)
 
 
 async def test_enqueue_when_idle_drains_after_leftover_asap():
@@ -1707,3 +2923,382 @@ async def test_enqueue_priorities_stay_separate_when_both_drain_at_end_of_run():
     )
     # Each priority bucket got its own ModelRequest (not merged into one).
     assert all(len([p for p in r.parts if isinstance(p, UserPromptPart)]) == 1 for r in drained)
+
+
+async def test_agent_run_dequeue_removes_only_that_message():
+    """`dequeue` removes the named message and keeps the others in order; a second call finds nothing."""
+    agent = Agent(TestModel())
+
+    async with agent.iter('Hello') as agent_run:
+        first = agent_run.enqueue('first', priority='when_idle')
+        second = agent_run.enqueue('second', priority='when_idle')
+        third = agent_run.enqueue('third', priority='when_idle')
+        assert first is not None and second is not None and third is not None
+
+        assert agent_run.dequeue(second) is True
+        assert [pending.enqueue_id for pending in agent_run.pending_messages] == [first, third]
+        assert agent_run.dequeue(second) is False
+        assert agent_run.dequeue('never-queued') is False
+        assert agent_run.set_enqueue_priority(second, 'asap') is False
+
+
+async def test_new_priority_keeps_the_message_in_place():
+    """A promoted message is delivered ahead of `'asap'` messages queued after it, as it keeps its place."""
+    agent = Agent(TestModel())
+
+    async with agent.iter('Hello') as agent_run:
+        promoted = agent_run.enqueue('queued first', priority='when_idle')
+        assert promoted is not None
+        assert agent_run.enqueue('queued second') is not None
+        assert agent_run.set_enqueue_priority(promoted, 'asap') is True
+        async for _ in agent_run:
+            pass
+
+    assert agent_run.result is not None
+    delivered = [
+        part.content
+        for message in agent_run.result.all_messages()
+        for part in message.parts
+        if isinstance(part, UserPromptPart) and part.content != 'Hello'
+    ]
+    assert delivered == ['queued first', 'queued second']
+
+
+async def test_dequeued_message_never_reaches_the_model():
+    """A dequeued `when_idle` message isn't delivered, so it no longer keeps the run from ending."""
+    seen: list[list[ModelMessage]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(list(messages))
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    async with agent.iter('Hello') as agent_run:
+        enqueue_id = agent_run.enqueue('Never mind', priority='when_idle')
+        assert enqueue_id is not None
+        assert agent_run.dequeue(enqueue_id) is True
+        async for _ in agent_run:
+            pass
+
+    assert agent_run.result is not None
+    assert len(seen) == 1
+    assert not any(
+        isinstance(part, UserPromptPart) and part.content == 'Never mind'
+        for message in agent_run.result.all_messages()
+        for part in message.parts
+    )
+
+
+async def test_set_enqueue_priority_promotes_when_idle_message_to_the_next_request():
+    """A `when_idle` message promoted to `'asap'` mid-run goes into the next request, under its original id.
+
+    Left at `when_idle`, it would wait for the run to end and redirect it into a third request.
+    """
+    call_count = 0
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            yield {0: DeltaToolCall(name='work', json_args='{}', tool_call_id='call-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_fn))
+
+    @agent.tool_plain
+    def work() -> str:
+        return 'worked'
+
+    events: list[AgentStreamEvent] = []
+    async with agent.iter('Hello') as agent_run:
+        enqueue_id = agent_run.enqueue('Send this now', priority='when_idle')
+        assert enqueue_id is not None
+        promoted = False
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            if Agent.is_call_tools_node(node) and not promoted:
+                # The user pressed "send now" while the agent was working.
+                assert agent_run.set_enqueue_priority(enqueue_id, 'asap') is True
+                promoted = True
+            if Agent.is_model_request_node(node):
+                async with node.stream(agent_run.ctx) as stream:
+                    events.extend([event async for event in stream])
+            node = await agent_run.next(node)
+
+    assert agent_run.result is not None
+    assert call_count == 2
+    messages = agent_run.result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='work', args='{}', tool_call_id='call-1')],
+                usage=RequestUsage(output_tokens=1, input_tokens=50),
+                model_name='function::stream_fn',
+                model_id='function:function::stream_fn',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='work', content='worked', tool_call_id='call-1', timestamp=IsDatetime())
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Send this now', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(output_tokens=1, input_tokens=50),
+                model_name='function::stream_fn',
+                model_id='function:function::stream_fn',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+    delivered = [event for event in events if isinstance(event, EnqueuedMessagesEvent)]
+    assert [event.enqueue_id for event in delivered] == [enqueue_id]
+
+
+async def test_run_context_dequeue_and_demote_from_a_tool():
+    """From a tool, `ctx.dequeue` drops a message and `ctx.set_enqueue_priority` demotes one.
+
+    Demoted content no longer goes next to the tool's return: it's delivered as its own request when the
+    run would otherwise end, like content enqueued with `when_idle` in the first place.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('work', {}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart(content=f'done {len(messages)}')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def work(ctx: RunContext[object]) -> str:
+        dropped = ctx.enqueue('dropped')
+        demoted = ctx.enqueue('later, please')
+        assert dropped is not None and demoted is not None
+        assert ctx.dequeue(dropped) is True
+        assert ctx.set_enqueue_priority(demoted, 'when_idle') is True
+        return 'worked'
+
+    result = await agent.run('Hello')
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='work', args={}, tool_call_id='call-1')],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='work', content='worked', tool_call_id='call-1', timestamp=IsDatetime())
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done 3')],
+                usage=RequestUsage(input_tokens=52, output_tokens=4),
+                model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='later, please', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done 5')],
+                usage=RequestUsage(input_tokens=54, output_tokens=6),
+                model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_tool_content_promoted_back_goes_next_to_the_tool_result():
+    """Tool content demoted, then promoted back before the next request, still goes next to the tool's result."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('work', {}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def work(ctx: RunContext[object]) -> str:
+        note = ctx.enqueue('note')
+        assert note is not None
+        assert ctx.set_enqueue_priority(note, 'when_idle') is True
+        assert ctx.set_enqueue_priority(note, 'asap') is True
+        return 'worked'
+
+    result = await agent.run('Hello')
+
+    tool_request = result.all_messages()[2]
+    assert isinstance(tool_request, ModelRequest)
+    assert tool_request.parts == snapshot(
+        [
+            ToolReturnPart(tool_name='work', content='worked', tool_call_id='call-1', timestamp=IsDatetime()),
+            UserPromptPart(content='note', timestamp=IsDatetime()),
+        ]
+    )
+    assert len(result.all_messages()) == 4
+
+
+@pytest.mark.parametrize('end', ['delivered', 'run-ended', 'early-exit'])
+async def test_dequeue_and_set_enqueue_priority_return_false_once_no_longer_queued(end: str):
+    """Both return `False` for a delivered message, and after the run ends, instead of raising like `enqueue`.
+
+    A run left early keeps undelivered messages in its closed queue; they can't be delivered any more either.
+    """
+    agent = Agent(TestModel())
+
+    async with agent.iter('Hello') as agent_run:
+        enqueue_id = agent_run.enqueue('steer', priority='when_idle' if end == 'early-exit' else 'asap')
+        assert enqueue_id is not None
+        if end == 'early-exit':
+            pass
+        elif end == 'delivered':
+            node = agent_run.next_node
+            while not isinstance(node, End) and not Agent.is_call_tools_node(node):
+                node = await agent_run.next(node)
+            assert Agent.is_call_tools_node(node)  # the message went out with the first request
+            assert agent_run.pending_messages == []
+        else:
+            async for _ in agent_run:
+                pass
+
+    assert agent_run.dequeue(enqueue_id) is False
+    assert agent_run.set_enqueue_priority(enqueue_id, 'when_idle') is False
+
+
+@pytest.mark.parametrize('method', ['dequeue', 'set_enqueue_priority'])
+def test_queue_change_does_not_race_pending_message_drain(method: str):
+    """A change from a worker thread waits for a drain in progress, then finds the message delivered.
+
+    A unit test: the window between a drain taking the lock and a worker's call can't be held open
+    through the public API.
+    """
+    drain_started = threading.Event()
+    change_started = threading.Event()
+    release_drain = threading.Event()
+
+    class BlockingQueue(PendingMessageQueue):
+        def dequeue(self, enqueue_id: str) -> bool:
+            change_started.set()
+            return super().dequeue(enqueue_id)
+
+        def set_enqueue_priority(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
+            change_started.set()
+            return super().set_enqueue_priority(enqueue_id, priority)
+
+        def _pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
+            drain_started.set()
+            assert release_drain.wait(timeout=5)
+            return super()._pop_priority(priority)
+
+    queue = BlockingQueue()
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), pending_messages=queue)
+    enqueue_id = ctx.enqueue('steer')
+    assert enqueue_id is not None
+
+    def change() -> bool:
+        return ctx.dequeue(enqueue_id) if method == 'dequeue' else ctx.set_enqueue_priority(enqueue_id, 'when_idle')
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        drain_future = executor.submit(queue.pop_priority, 'asap')
+        assert drain_started.wait(timeout=5)
+        change_future = executor.submit(change)
+        assert change_started.wait(timeout=5)
+        assert not change_future.done()
+        release_drain.set()
+        assert [pending.enqueue_id for pending in drain_future.result(timeout=5)] == [enqueue_id]
+        assert change_future.result(timeout=5) is False
+
+
+def test_run_context_queue_changes_work_on_a_hand_built_context():
+    """A tool unit-tested with a hand-built `RunContext(pending_messages=[])` can dequeue and change priority, as it can enqueue.
+
+    A unit test: this is the context users build by hand to test a tool outside a run.
+    """
+    pending_messages: list[PendingMessage] = []
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), pending_messages=pending_messages)
+    kept = ctx.enqueue('kept')
+    dropped = ctx.enqueue('dropped')
+    assert kept is not None and dropped is not None
+
+    assert ctx.dequeue(dropped) is True
+    assert ctx.dequeue(dropped) is False
+    assert ctx.set_enqueue_priority(kept, 'when_idle') is True
+    assert ctx.set_enqueue_priority(dropped, 'asap') is False
+    assert [(pending.enqueue_id, pending.priority) for pending in pending_messages] == [(kept, 'when_idle')]
+
+
+@pytest.mark.parametrize('method', ['dequeue', 'set_enqueue_priority'])
+@pytest.mark.parametrize(
+    'pending_messages, match',
+    [
+        (None, r'^`{method}` is only available during an agent run'),
+        (
+            EnqueueGuard('activity', 'workflow'),
+            r'^`ctx\.{method}\(\)` is not supported inside a durable activity.*change to the queued message would be lost',
+        ),
+    ],
+    ids=['no-queue', 'durable-unit'],
+)
+def test_run_context_queue_changes_need_a_live_queue(
+    method: str, pending_messages: list[PendingMessage] | None, match: str
+):
+    """Without a queue there's nothing to change, and inside a durable unit a change would be lost on replay.
+
+    A unit test: the durable-unit path is also covered end to end in the Prefect, Temporal and DBOS
+    suites; a context without a queue is only built by hand.
+    """
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), pending_messages=pending_messages)
+
+    # The error names the method that was called.
+    with pytest.raises(UserError, match=match.format(method=method)):
+        if method == 'dequeue':
+            ctx.dequeue('some-id')
+        else:
+            ctx.set_enqueue_priority('some-id', 'asap')

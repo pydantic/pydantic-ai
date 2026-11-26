@@ -36,6 +36,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     ProcessEventStream,
 )
+from pydantic_ai.messages import CapabilityEvent
 from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
@@ -60,7 +61,8 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
 
-# On 3.14 pytest skips at collection before importing this module, so the branch is unmeasured there.
+# Nothing imports this module on 3.14: the test modules carry the same gate and skip first, and the
+# conftest fixture that imports it is never requested once nothing is collected.
 if sys.version_info >= (3, 14):  # pragma: lax no cover
     pytest.skip(
         'temporalio sandbox is incompatible with Python 3.14: '
@@ -204,13 +206,16 @@ class Response:
     answers: list[Answer]
 
 
+complex_mcp_transport = StdioTransport(command='python', args=['-m', 'tests.mcp_server'])
+
+
 complex_agent = Agent(
     model,
     deps_type=Deps,
     output_type=Response,
     toolsets=[
         FunctionToolset[Deps](tools=[get_country], id='country'),
-        MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp', init_timeout=20),
+        MCPToolset(complex_mcp_transport, id='mcp', init_timeout=20),
         ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
     ],
     tools=[get_weather],
@@ -513,3 +518,30 @@ def _workflow_failure_cause(exc: WorkflowFailureError) -> ApplicationError:
 
 def _scheduled_activity_count(history: WorkflowHistory) -> int:
     return len([e for e in history.events if e.HasField('activity_task_scheduled_event_attributes')])
+
+
+def scheduled_activity_types(history: WorkflowHistory) -> list[str]:
+    return [
+        event.activity_task_scheduled_event_attributes.activity_type.name
+        for event in history.events
+        if event.HasField('activity_task_scheduled_event_attributes')
+    ]
+
+
+@dataclass(kw_only=True)
+class DurableCheckpointEvent(CapabilityEvent, namespace='durability_test', name='checkpoint'):
+    """A capability event for the durability tests.
+
+    Defined here rather than in the test module so the worker sandbox, which re-executes the test
+    module, doesn't re-register a second copy of the class under the same tag. See
+    `test_durability_capability_event_reaches_event_stream_handler_activity`.
+    """
+
+    label: str
+
+
+@dataclass(kw_only=True)
+class DurableUnserializableEvent(CapabilityEvent, namespace='durability_test', name='unserializable'):
+    """A capability event whose payload can't cross an activity boundary."""
+
+    blob: Any

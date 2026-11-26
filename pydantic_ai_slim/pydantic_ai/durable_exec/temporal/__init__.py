@@ -9,11 +9,13 @@ except ImportError as _import_error:
     ) from _import_error
 
 import warnings
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
-from typing import Any
+from importlib.util import find_spec
+from typing import Any, cast
 
 from pydantic.errors import PydanticUserError
+from temporalio import workflow
 from temporalio.contrib.pydantic import PydanticPayloadConverter
 from temporalio.converter import DataConverter, DefaultPayloadConverter
 from temporalio.plugin import SimplePlugin
@@ -22,10 +24,20 @@ from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
 from pydantic_graph.exceptions import UnsupportedEventLoopError
 
+from ..._event_registry import set_replay_isolation_guard
 from ...agent.abstract import AbstractAgent
-from ...exceptions import AgentRunError, UserError
+from ...exceptions import AgentRunError, FallbackExceptionGroup, UserError
+from ...workspaces import WorkspaceError
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
-from ._durability import TemporalDurability
+from ._durability import ContinueAsNewHandler, TemporalDurability, worker_registrations
+from ._event_stream import (
+    AgentEventStream,
+    DurableAgentRunEvents,
+    WorkflowStreamTopic,
+    stream_agent_events,
+    workflow_stream_event_handler,
+)
+from ._external_events import fail_external_event, resolve_external_event
 from ._logfire import LogfirePlugin
 from ._operation_names import TemporalOperationNamer
 from ._payload_converter import PydanticAIPayloadConverter
@@ -36,6 +48,7 @@ from ._workflow import PydanticAIWorkflow
 __all__ = [
     'TemporalAgent',
     'TemporalDurability',
+    'ContinueAsNewHandler',
     'PydanticAIPlugin',
     'LogfirePlugin',
     'AgentPlugin',
@@ -44,11 +57,18 @@ __all__ = [
     'TemporalOperationNamer',
     'PydanticAIWorkflow',
     'PydanticAIPayloadConverter',
+    'AgentEventStream',
+    'WorkflowStreamTopic',
+    'DurableAgentRunEvents',
+    'workflow_stream_event_handler',
+    'stream_agent_events',
+    'resolve_external_event',
+    'fail_external_event',
 ]
 
 # We need eagerly import the anyio backends or it will happens inside workflow code and temporal has issues
 # Note: It's difficult to add a test that covers this because pytest presumably does these imports itself
-# when you have a @pytest.mark.anyio somewhere.
+# when running async tests via the anyio pytest plugin.
 # I suppose we could add a test that runs a python script in a separate process, but I have not done that...
 import anyio._backends._asyncio  # pyright: ignore[reportUnusedImport]  #noqa: F401
 
@@ -88,13 +108,39 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
     if not isinstance(runner, SandboxedWorkflowRunner):
         return runner
 
+    # The sandbox re-executes application modules while `pydantic_ai` is passed through, so an event
+    # class defined in a workflow module is redefined against the host's registry on every validation
+    # cycle. Telling the registry to keep the host's class means workflow and activity code both hold
+    # the class they imported, and `isinstance` works on either side of the boundary.
+    #
+    # Installed here rather than at import: this runs on the host while a worker that will actually
+    # sandbox workflows is being configured, which is the only situation the guard is for, and always
+    # before the first sandboxed module is executed. Importing this module, or a test that touches
+    # Temporal without running a sandboxed worker, then leaves the registry alone.
+    set_replay_isolation_guard(workflow.unsafe.in_sandbox)
+
+    # Harness file-tool orchestration runs workflow-side for pre-write vetoes; importing it
+    # again inside Temporal's restricted sandbox would fail on import-time filesystem calls.
+    # Harness CodeMode imports `opentelemetry.context` via `_monty_exec` on first use; passing
+    # harness through alone leaves that dependency sandbox-local and triggers a late-import error.
+    # `PromptInjectionDefender` verdicts cross the activity boundary as `stackone_defender` dataclasses,
+    # which only decode in workflow code when their module is the host's.
+    harness_modules = (
+        ('pydantic_ai_harness', 'opentelemetry', 'stackone_defender')
+        if find_spec('pydantic_ai_harness') is not None
+        else ()
+    )
     return replace(
         runner,
         restrictions=runner.restrictions.with_passthrough_modules(
+            *harness_modules,
             'pydantic_ai',
             'pydantic_graph',
             'pydantic',
             'pydantic_core',
+            # Pydantic imports `annotated_types` lazily, on the first schema with constraints; decoding
+            # a workspace result in workflow code can be that first use, after initial workflow load.
+            'annotated_types',
             'pydantic_monty',
             'logfire',
             'rich',
@@ -113,6 +159,11 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             # sandbox. Safe to pass through: the call only happens once at module init.
             'fastmcp',
             'mcp',
+            # `fastmcp_tasks` builds a `pydantic_settings` object at import time, which reads dotenv
+            # files and so calls `Path.expanduser` too. `MCPToolset` imports it on the MCP SDK v2
+            # path, so a toolset constructed inside a workflow reaches it. Same reasoning as above:
+            # the call happens once at module init.
+            'fastmcp_tasks',
             # The `anthropic` SDK (>=0.99.0) calls `Path.home()` during client construction to
             # resolve its credentials/profile config directory (`~/.config/anthropic`) — restricted
             # by the workflow sandbox. This trips when a model is constructed inside the workflow,
@@ -162,22 +213,37 @@ class PydanticAIPlugin(SimplePlugin):
             # continuation ceilings raised by the workflow-side continuation loop: they
             # must fail the workflow (preserving the exception type for the caller)
             # rather than fail the workflow *task*, which Temporal would retry forever.
+            # `FallbackExceptionGroup` is the same kind of failure: the `ModelFallback` capability
+            # attempts its models from workflow code, and raises it there when every one failed.
+            # It's an `ExceptionGroup`, not an `AgentRunError`, so it's listed on its own.
             # `UnsupportedEventLoopError` is raised by `pydantic_graph`'s sync entry points
             # (e.g. `Graph.run_sync()`), which don't go through the `pydantic_ai` wrapper that
             # would otherwise turn it into a `UserError`; without it those would hang the same way.
+            # `WorkspaceError` covers a workspace that is gone or refused a call, re-raised in
+            # workflow code by `DurableWorkspace`; no redeploy can fix it. Builtin errors a workspace
+            # call re-raises (`FileNotFoundError` and the like) are left to Temporal's default, like
+            # any other exception in workflow code: the task retries until a code fix is deployed.
             workflow_failure_exception_types=[
                 UserError,
                 PydanticUserError,
                 AgentRunError,
+                FallbackExceptionGroup,
                 UnsupportedEventLoopError,
+                WorkspaceError,
             ],
         )
 
     def configure_worker(self, config: WorkerConfig) -> WorkerConfig:
         config = super().configure_worker(config)
 
-        workflows = list(config.get('workflows', []))  # type: ignore[reportUnknownMemberType]
-        activities = list(config.get('activities', []))  # type: ignore[reportUnknownMemberType]
+        workflows = list(config.get('workflows', []))  # pyright: ignore[reportUnknownMemberType]
+        activities = list(
+            cast(
+                Sequence[Callable[..., object]],
+                config.get('activities', []),  # pyright: ignore[reportUnknownMemberType]
+            )
+        )
+        child_workflows: list[type] = []
 
         for workflow_class in workflows:
             agents = getattr(workflow_class, '__pydantic_ai_agents__', None)
@@ -188,27 +254,34 @@ class PydanticAIPlugin(SimplePlugin):
                     f'__pydantic_ai_agents__ must be a Sequence of TemporalAgent instances, got {type(agents)}'
                 )
             for agent in agents:  # type: ignore[reportUnknownVariableType]
-                if isinstance(agent, TemporalAgent):  # pyright: ignore[reportDeprecated]
-                    # Deprecated path: `TemporalAgent` is being phased out in favor of
-                    # `capabilities=[TemporalDurability(...)]` on a regular `Agent`. Kept
-                    # working so existing workers keep loading without changes.
-                    activities.extend(agent.temporal_activities)  # type: ignore[reportUnknownMemberType]
-                elif isinstance(agent, AbstractAgent):
-                    durability = TemporalDurability.from_agent(agent)  # type: ignore[reportUnknownArgumentType]
-                    if durability is None:
-                        raise UserError(
-                            f'Agent {agent.name!r} listed in `__pydantic_ai_agents__` has no '
-                            '`TemporalDurability` capability; add one to `capabilities=[...]`.'
-                        )
-                    activities.extend(durability.temporal_activities)  # type: ignore[reportUnknownMemberType]
-                else:
-                    raise TypeError(  # pragma: no cover
-                        f'__pydantic_ai_agents__ items must be TemporalAgent or AbstractAgent, got {type(agent)}'  # type: ignore[reportUnknownVariableType]
-                    )
+                agent_activities, agent_workflows = _listed_agent_registrations(agent)  # type: ignore[reportUnknownArgumentType]
+                activities.extend(agent_activities)
+                child_workflows.extend(agent_workflows)
 
         config['activities'] = activities
+        config['workflows'] = [*workflows, *child_workflows]
 
-        return config
+        return _dedupe_registrations(config)
+
+
+def _listed_agent_registrations(agent: object) -> tuple[list[Callable[..., Any]], list[type]]:
+    """The activities and child workflows a worker registers for an agent listed in `__pydantic_ai_agents__`."""
+    if isinstance(agent, TemporalAgent):  # pyright: ignore[reportDeprecated]
+        # Deprecated path: `TemporalAgent` is being phased out in favor of
+        # `capabilities=[TemporalDurability(...)]` on a regular `Agent`. Kept
+        # working so existing workers keep loading without changes.
+        return agent.temporal_activities, []
+    if isinstance(agent, AbstractAgent):
+        durability = TemporalDurability.from_agent(agent)  # type: ignore[reportUnknownArgumentType]
+        if durability is None:
+            raise UserError(
+                f'Agent {agent.name!r} listed in `__pydantic_ai_agents__` has no '
+                '`TemporalDurability` capability; add one to `capabilities=[...]`.'
+            )
+        return worker_registrations(durability)
+    raise TypeError(  # pragma: no cover
+        f'__pydantic_ai_agents__ items must be TemporalAgent or AbstractAgent, got {type(agent)}'
+    )
 
 
 class AgentPlugin(SimplePlugin):
@@ -218,10 +291,18 @@ class AgentPlugin(SimplePlugin):
     [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]
     capability (whose chain is walked to find the bound capability), or the
     deprecated [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent]
-    wrapper, and registers the agent's activities on the worker.
+    wrapper, and registers the agent's activities on the worker, along with the child
+    workflows of any tools configured to run as one.
+
+    Args:
+        agent: The agent whose activities and child workflows to register.
+        register_workflows: Whether to register the agent's child workflows. Pass `False` on a
+            worker that only runs activities to register only the agent's activities; the worker
+            that runs your workflows must then register the child workflows.
     """
 
-    def __init__(self, agent: AbstractAgent[Any, Any]):
+    def __init__(self, agent: AbstractAgent[Any, Any], *, register_workflows: bool = True):
+        workflows: list[type] = []
         if isinstance(agent, TemporalAgent):  # pyright: ignore[reportDeprecated]
             activities = agent.temporal_activities
         else:
@@ -231,8 +312,21 @@ class AgentPlugin(SimplePlugin):
                     f'Agent {agent.name!r} has no `TemporalDurability` capability; '
                     'add one to `capabilities=[...]` before constructing the plugin.'
                 )
-            activities = durability.temporal_activities
+            activities, workflows = worker_registrations(durability, include_workflows=register_workflows)
         super().__init__(  # type: ignore[reportUnknownMemberType]
             name='AgentPlugin',
             activities=activities,
+            workflows=workflows,
         )
+
+    def configure_worker(self, config: WorkerConfig) -> WorkerConfig:
+        return _dedupe_registrations(super().configure_worker(config))
+
+
+def _dedupe_registrations(config: WorkerConfig) -> WorkerConfig:
+    # An agent can be listed on several workflows, or also registered via `AgentPlugin`, contributing the same
+    # activity callables and child workflow classes more than once; Temporal rejects duplicate names, so keep each
+    # registration once.
+    config['activities'] = list(dict.fromkeys(config.get('activities', [])))  # type: ignore[reportUnknownMemberType]
+    config['workflows'] = list(dict.fromkeys(config.get('workflows', [])))  # type: ignore[reportUnknownMemberType]
+    return config

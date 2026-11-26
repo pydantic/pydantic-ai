@@ -13,12 +13,13 @@ event-emitting logic.
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Hashable, Iterator
+from collections.abc import Hashable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
+    Citation,
     ModelResponsePart,
     ModelResponseStreamEvent,
     NativeToolCallPart,
@@ -32,17 +33,64 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolPartKind,
+    ToolUIVisibility,
 )
 
+from ._special_tokens import StreamRestorer
 from ._utils import generate_tool_call_id as _generate_tool_call_id
 
 if TYPE_CHECKING:
     from .models import ModelRequestParameters
+    from .tools import ToolDefinition
 
 VendorId = Hashable
 """
 Type alias for a vendor identifier, which can be any hashable type (e.g., a string, UUID, etc.)
 """
+
+
+def tool_def_ui_visibility(tool_def: ToolDefinition, *, approved: bool = False) -> ToolUIVisibility | None:
+    """The `ui_visibility` a call to `tool_def` is stamped with, or `None` when the tool sets none.
+
+    A tool's own [`ui_visibility`][pydantic_ai.tools.ToolDefinition.ui_visibility], except that an external tool's
+    result comes from the client and an output tool's arguments are the run's answer, so both are `'public'`, and a
+    `'private'` call that needs approval, or that the user `approved`, is `'redacted'`, since the user can't approve a
+    call they can't see.
+    """
+    if (visibility := tool_def.ui_visibility) is None:
+        return None
+    if tool_def.kind in ('external', 'output'):
+        return 'public'
+    if visibility == 'private' and (approved or tool_def.kind == 'unapproved'):
+        return 'redacted'
+    return visibility
+
+
+def ui_visibility_stamps(model_request_parameters: ModelRequestParameters) -> dict[str, ToolUIVisibility]:
+    """The `ui_visibility` a call to each function or output tool is stamped with, for the tools that set one."""
+    return {
+        name: visibility
+        for name, tool_def in model_request_parameters.tool_defs.items()
+        if (visibility := tool_def_ui_visibility(tool_def)) is not None
+    }
+
+
+def stamp_and_type_call_part(
+    part: ToolCallPart,
+    tool_kind_by_name: Mapping[str, ToolPartKind],
+    ui_visibility_by_name: Mapping[str, ToolUIVisibility],
+) -> ToolCallPart:
+    """Stamp a call with its tool's `ui_visibility`, and promote a base part to its typed subclass via `tool_kind`.
+
+    Safe no-op for unknown tool names (model hallucinations) and for tool defs
+    without a `ui_visibility` or `tool_kind`.
+    """
+    if part.ui_visibility is None and (visibility := ui_visibility_by_name.get(part.tool_name)) is not None:
+        part = replace(part, ui_visibility=visibility)
+    if part.tool_kind is None and (tool_kind := tool_kind_by_name.get(part.tool_name)) is not None:
+        part = ToolCallPart.narrow_type(part, tool_kind=tool_kind)
+    return part
+
 
 ManagedPart = ModelResponsePart | ToolCallPartDelta
 """
@@ -65,8 +113,12 @@ class ModelResponsePartsManager:
     """Active request context. The manager promotes streamed tool call parts to their typed
     subclasses based on `ToolDefinition.tool_kind` from `function_tools` — so
     `isinstance(part, ToolSearchCallPart)` is true from the first `PartStartEvent` rather
-    than only after a post-stream pass.
+    than only after a post-stream pass — and stamps them with their tool's `ui_visibility`, so a
+    UI adapter can hide a call from its first event.
     """
+
+    special_token_restorer: StreamRestorer | None = field(default=None, init=False, repr=False, compare=False)
+    """Removes the joiner from the special tokens in the response, for a model whose requests have them."""
 
     _parts: list[ManagedPart] = field(default_factory=list[ManagedPart], init=False)
     """A list of parts (text or tool calls) that make up the current state of the model's response."""
@@ -78,11 +130,16 @@ class ModelResponsePartsManager:
     """Unmaterialized string deltas, keyed by part index."""
     _tool_kind_by_name: dict[str, ToolPartKind] = field(default_factory=dict[str, ToolPartKind], init=False, repr=False)
     """Cached `{tool_name: tool_kind}` built from `function_tools` at construction time."""
+    _ui_visibility_by_name: dict[str, ToolUIVisibility] = field(
+        default_factory=dict[str, ToolUIVisibility], init=False, repr=False
+    )
+    """Cached `ui_visibility_stamps(model_request_parameters)`, built at construction time."""
 
     def __post_init__(self) -> None:
         self._tool_kind_by_name = {
             td.name: td.tool_kind for td in self.model_request_parameters.function_tools if td.tool_kind is not None
         }
+        self._ui_visibility_by_name = ui_visibility_stamps(self.model_request_parameters)
 
     def __repr__(self) -> str:
         return (
@@ -108,21 +165,17 @@ class ModelResponsePartsManager:
             )
         return NotImplemented
 
-    def _tool_kind_for(self, tool_name: str) -> ToolPartKind | None:
-        return self._tool_kind_by_name.get(tool_name)
+    def _stamp_and_type(self, part: ToolCallPart) -> ToolCallPart:
+        """Stamp a call with its tool's `ui_visibility`, and promote a base part to its typed subclass via `tool_kind`."""
+        return stamp_and_type_call_part(part, self._tool_kind_by_name, self._ui_visibility_by_name)
 
-    def _typed_call_part(self, part: ToolCallPart) -> ToolCallPart:
-        """Promote a base `ToolCallPart` to a typed subclass via `ToolDefinition.tool_kind`.
-
-        Safe no-op for unknown tool names (model hallucinations) and for tool defs
-        without a `tool_kind`.
-        """
-        if part.tool_kind is not None:
-            return part
-        kind = self._tool_kind_for(part.tool_name)
-        if kind is None:
-            return part
-        return ToolCallPart.narrow_type(part, tool_kind=kind)
+    def _stamp_and_type_after_delta(self, part: ToolCallPart, delta: ToolCallPartDelta) -> ToolCallPart:
+        """`_stamp_and_type` for a call that `delta` just changed."""
+        if delta.tool_name_delta:
+            # A name streamed in pieces can first match another tool, whose stamp the grown name mustn't keep:
+            # stamp it again from the tool it names now.
+            part = replace(part, ui_visibility=None)
+        return self._stamp_and_type(part)
 
     def get_parts(self) -> list[ModelResponsePart]:
         """Return only model response parts that are complete (i.e., not ToolCallPartDelta's).
@@ -133,7 +186,14 @@ class ModelResponsePartsManager:
         for part_index in tuple(self._string_buffers):
             if not isinstance(self._parts[part_index], ToolCallPartDelta):
                 self._materialize_and_cache_part(part_index)
-        return [p for p in self._parts if not isinstance(p, ToolCallPartDelta)]
+        restorer = self.special_token_restorer
+        if restorer is None:
+            return [p for p in self._parts if not isinstance(p, ToolCallPartDelta)]
+        return [
+            restorer.restore_part_so_far(index, p)
+            for index, p in enumerate(self._parts)
+            if not isinstance(p, ToolCallPartDelta)
+        ]
 
     def get_part_by_vendor_id(self, vendor_id: VendorId) -> ManagedPart | None:
         """Return a part by its vendor ID.
@@ -157,6 +217,7 @@ class ModelResponsePartsManager:
         id: str | None = None,
         provider_name: str | None = None,
         provider_details: dict[str, Any] | None = None,
+        citations: list[Citation] | None = None,
         thinking_tags: tuple[str, str] | None = None,
         ignore_leading_whitespace: bool = False,
     ) -> Iterator[ModelResponseStreamEvent]:
@@ -174,6 +235,7 @@ class ModelResponsePartsManager:
             id: An optional id for the text part.
             provider_name: An optional provider name for the text part.
             provider_details: An optional dictionary of provider-specific details for the text part.
+            citations: Citations to attach to the text part.
             thinking_tags: If provided, will handle content between the thinking tags as thinking parts.
             ignore_leading_whitespace: If True, will ignore leading whitespace in the content.
 
@@ -223,7 +285,13 @@ class ModelResponsePartsManager:
                 return
 
             # There is no existing text part that should be updated, so create a new one
-            part = TextPart(content=content, id=id, provider_name=provider_name, provider_details=provider_details)
+            part = TextPart(
+                content=content,
+                id=id,
+                provider_name=provider_name,
+                provider_details=provider_details,
+                citations=citations,
+            )
             new_part_index = self._append_part(part, vendor_part_id)
             yield PartStartEvent(index=new_part_index, part=part)
         else:
@@ -234,14 +302,10 @@ class ModelResponsePartsManager:
                 content_delta=content,
                 provider_name=self._resolve_provider_name(existing_text_part, provider_name),
                 provider_details=provider_details,
-            )
-            apply_metadata = (
-                part_delta.provider_name is not None
-                or part_delta.provider_details is not None
-                or existing_text_part.provider_details == {}
+                citations_delta=citations,
             )
             updated_part = self._apply_metadata_or_copy_provider_details(
-                existing_text_part, part_delta, apply_metadata=apply_metadata
+                existing_text_part, part_delta, apply_metadata=_text_delta_needs_apply(existing_text_part, part_delta)
             )
             if content:
                 self._buffer_string_delta(part_index, existing_text_part.content, content)
@@ -373,6 +437,9 @@ class ModelResponsePartsManager:
         If `vendor_part_id` is None, updates the latest matching ToolCallPart (or ToolCallPartDelta)
         if any. Otherwise, a new part (or delta) may be created.
 
+        A streamed response's `_get_event_iterator` can use `handle_tool_call_delta_events` instead, which yields
+        the event, so there is no `None` to check.
+
         Args:
             vendor_part_id: The ID the vendor uses for this tool call.
                 If None, the latest matching tool call may be updated.
@@ -425,7 +492,7 @@ class ModelResponsePartsManager:
             )
             part = delta.as_part() or delta
             if isinstance(part, ToolCallPart):
-                part = self._typed_call_part(part)
+                part = self._stamp_and_type(part)
             new_part_index = self._append_part(part, vendor_part_id)
             # Only emit a PartStartEvent if we have enough information to produce a full ToolCallPart
             if isinstance(part, ToolCallPart | NativeToolCallPart):
@@ -445,7 +512,7 @@ class ModelResponsePartsManager:
             try:
                 updated_part = self._apply_tool_call_delta(part_index, existing_part, delta)
                 if isinstance(updated_part, ToolCallPart):
-                    updated_part = self._typed_call_part(updated_part)
+                    updated_part = self._stamp_and_type_after_delta(updated_part, delta)
             except Exception:
                 self._parts[part_index] = existing_part
                 if buffer is None:
@@ -464,6 +531,50 @@ class ModelResponsePartsManager:
                     if updated_part.tool_call_id and not delta.tool_call_id:
                         delta = replace(delta, tool_call_id=updated_part.tool_call_id)
                     return PartDeltaEvent(index=part_index, delta=delta)
+
+    def handle_tool_call_delta_events(
+        self,
+        *,
+        vendor_part_id: Hashable | None,
+        tool_name: str | None = None,
+        args: str | dict[str, Any] | None = None,
+        tool_call_id: str | None = None,
+        provider_name: str | None = None,
+        provider_details: dict[str, Any] | None = None,
+    ) -> Iterator[ModelResponseStreamEvent]:
+        """Handle or update a tool call like `handle_tool_call_delta`, yielding its event instead of returning it.
+
+        A streamed response forwards these events the way it forwards those of `handle_text_delta` and
+        `handle_thinking_delta`, with no `None` check.
+
+        Args:
+            vendor_part_id: The ID the vendor uses for this tool call.
+                If None, the latest matching tool call may be updated.
+            tool_name: The name of the tool. If None, the manager does not enforce
+                a name match when `vendor_part_id` is None.
+            args: Arguments for the tool call, either as a string, a dictionary of key-value pairs, or None.
+            tool_call_id: An optional string representing an identifier for this tool call.
+            provider_name: An optional provider name for the tool call part.
+            provider_details: An optional dictionary of provider-specific details for the tool call part.
+
+        Yields:
+            A `PartStartEvent` if a new ToolCallPart or NativeToolCallPart was created, or a `PartDeltaEvent` if an
+            existing part was updated. Yields nothing while the part is still incomplete.
+
+        Raises:
+            UnexpectedModelBehavior: If attempting to apply a tool call delta to a part that is not
+                a ToolCallPart, NativeToolCallPart, or ToolCallPartDelta.
+        """
+        event = self.handle_tool_call_delta(
+            vendor_part_id=vendor_part_id,
+            tool_name=tool_name,
+            args=args,
+            tool_call_id=tool_call_id,
+            provider_name=provider_name,
+            provider_details=provider_details,
+        )
+        if event is not None:
+            yield event
 
     def handle_tool_call_part(
         self,
@@ -502,7 +613,7 @@ class ModelResponsePartsManager:
             provider_name=provider_name,
             provider_details=provider_details,
         )
-        new_part = self._typed_call_part(new_part)
+        new_part = self._stamp_and_type(new_part)
         if vendor_part_id is None:
             # vendor_part_id is None, so we unconditionally append a new ToolCallPart to the end of the list
             new_part_index = self._append_part(new_part)
@@ -695,7 +806,7 @@ class ModelResponsePartsManager:
             assert not isinstance(part.args, dict), 'Cannot materialize string arguments onto dictionary arguments'
             materialized = replace(part, args=value)
             if isinstance(materialized, ToolCallPart):
-                materialized = self._typed_call_part(materialized)
+                materialized = self._stamp_and_type(materialized)
             return materialized
         raise AssertionError(f'Cannot materialize string deltas for {part!r}')  # pragma: no cover
 
@@ -782,9 +893,35 @@ class ModelResponsePartsManager:
     def apply_event(self, event: ModelResponseStreamEvent) -> None:
         """Apply a replayed stream event to the managed parts, so `get_parts()` reflects it."""
         if isinstance(event, PartStartEvent):
-            self.handle_part(vendor_part_id=event.index, part=event.part)
+            # A shallow copy, so assigning to the event part's fields doesn't change the managed part.
+            self.handle_part(vendor_part_id=event.index, part=replace(event.part))
         elif isinstance(event, PartDeltaEvent):
+            part_index = self._vendor_id_to_part_index.get(event.index)
+            part = self._parts[part_index] if part_index is not None else None
+            delta = event.delta
+            if part_index is not None and type(part) is TextPart and type(delta) is TextPartDelta:
+                # Keep replay snapshots independent while buffering their text.
+                updated_part = self._apply_metadata_or_copy_provider_details(
+                    part, delta, apply_metadata=_text_delta_needs_apply(part, delta)
+                )
+                self._buffer_string_delta(part_index, part.content, delta.content_delta)
+                self._parts[part_index] = updated_part
+                return
+
             part = self.get_part_by_vendor_id(event.index)
             assert part is not None
             assert not isinstance(part, ToolCallPartDelta)
             self.handle_part(vendor_part_id=event.index, part=event.delta.apply(part))
+
+
+def _text_delta_needs_apply(part: TextPart, delta: TextPartDelta) -> bool:
+    """Whether `delta` must be applied to `part`, rather than only buffering its content.
+
+    That's when the delta carries metadata, or when `part.provider_details` is `{}`, which applying turns into `None`.
+    """
+    return (
+        delta.provider_name is not None
+        or delta.provider_details is not None
+        or delta.citations_delta is not None
+        or part.provider_details == {}
+    )

@@ -1,0 +1,199 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.groq.com/openai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "407"
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content: "Search the web: what is the latest stable version of Python?"
+        model: openai/gpt-oss-20b
+        "n": 1
+        stream: false
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: search_the_web
+            description: Search the web for `query`.
+            parameters:
+              additionalProperties: false
+              properties:
+                query:
+                  type: string
+              required:
+              - query
+              type: object
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    body:
+      type: json
+      content:
+        id: chatcmpl-beca263e-73dd-4c93-be04-76fa47651479
+        object: chat.completion
+        created: 1793744183
+        model: openai/gpt-oss-20b
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            reasoning: We need to search the web. We'll use the search tool.
+            tool_calls:
+            - id: fc_8198cfa1-ab92-4f82-9113-28d23933c987
+              type: function
+              function:
+                name: search_the_web
+                arguments: "{\"query\":\"latest stable version of Python\"}"
+          logprobs: null
+          finish_reason: tool_calls
+        usage:
+          queue_time: 0.244451064
+          prompt_tokens: 140
+          prompt_time: 0.007797777
+          completion_tokens: 42
+          completion_time: 0.04477831
+          total_tokens: 182
+          total_time: 0.052576087
+          completion_tokens_details:
+            reasoning_tokens: 14
+        usage_breakdown: null
+        system_fingerprint: fp_ce54c53bd5
+        x_groq:
+          id: req_01m6hqr8awe659031zqgz1cbg0
+          seed: 1524713715
+        service_tier: on_demand
+  recorded_at: 2026-11-03T22:16:24.088923+00:00
+- request:
+    method: POST
+    uri: https://api.groq.com/openai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "858"
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content: "Search the web: what is the latest stable version of Python?"
+        - role: assistant
+          content: |-
+            <think>
+            We need to search the web. We'll use the search tool.
+            </think>
+          tool_calls:
+          - id: fc_8198cfa1-ab92-4f82-9113-28d23933c987
+            type: function
+            function:
+              name: search_the_web
+              arguments: "{\"query\":\"latest stable version of Python\"}"
+        - role: tool
+          tool_call_id: fc_8198cfa1-ab92-4f82-9113-28d23933c987
+          content: Python 3.14.0, released on 2025-10-07, is the latest stable version of Python.
+        model: openai/gpt-oss-20b
+        "n": 1
+        stream: false
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: search_the_web
+            description: Search the web for `query`.
+            parameters:
+              additionalProperties: false
+              properties:
+                query:
+                  type: string
+              required:
+              - query
+              type: object
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    body:
+      type: json
+      content:
+        id: chatcmpl-0b72bd72-1e87-4144-a6bf-f18d2bb0fafa
+        object: chat.completion
+        created: 1793744185
+        model: openai/gpt-oss-20b
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: >-
+              The most recent stable release of Python is **Python 3.14.0**, which was
+              released on **October 7, 2025**.
+            reasoning: "We got answer: Python 3.14.0 released 2025-10-07. The question: \"Search the web: what is the latest stable version of Python?\" We can give that. Also we might mention that it's Python 3.14.0."
+          logprobs: null
+          finish_reason: stop
+        usage:
+          queue_time: 0.826716016
+          prompt_tokens: 197
+          prompt_time: 0.011120673
+          completion_tokens: 97
+          completion_time: 0.102355461
+          total_tokens: 294
+          total_time: 0.113476134
+          completion_tokens_details:
+            reasoning_tokens: 57
+        usage_breakdown: null
+        system_fingerprint: fp_ed70b23331
+        x_groq:
+          id: req_01m6hqr95hew987p25sfs3yk8b
+          seed: 2021154692
+        service_tier: on_demand
+  recorded_at: 2026-11-03T22:16:25.504820+00:00

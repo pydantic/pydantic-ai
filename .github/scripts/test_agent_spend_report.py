@@ -236,7 +236,7 @@ def test_alerts_ignore_a_manual_dispatch_that_skips_by_design():
 
 
 def test_alerts_ignore_a_pr_workflow_that_skips_by_design():
-    """`ui-security-review` only reviews UI-touching PRs; skipping the rest is correct.
+    """A PR workflow can skip an ineligible PR by design.
 
     The static guard covers the broken-job-graph case at review time, so alerting here
     would be weekly false noise.
@@ -293,6 +293,17 @@ def test_format_report_leads_with_alerts_and_totals():
     assert 'Needs attention' in report
     assert 'Agentic workflow spend — last 7d' in report
     assert '6,000' in report
+
+
+def test_format_report_counts_failed_runs_per_workflow():
+    """Failed runs report here rather than as an `[aw]` issue per run."""
+    records = [_record('r.lock.yml', conclusion='failure'), _record('r.lock.yml'), _record('r.lock.yml')]
+
+    report = format_report(summarize(records), days=7, sampled=3, total=3)
+
+    header, row = report.split('```\n', 1)[1].splitlines()[:2]
+    assert header.split() == ['workflow', 'runs', 'failed', 'agent', 'empty', 'out', 'tok']
+    assert row.split()[:3] == ['r.lock.yml', '3', '1']
 
 
 def test_format_report_discloses_partial_sampling():

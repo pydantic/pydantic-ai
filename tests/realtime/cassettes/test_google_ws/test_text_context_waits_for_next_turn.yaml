@@ -1,0 +1,177 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  data:
+    setup:
+      model: models/gemini-2.5-flash-native-audio-preview-09-2025
+      generationConfig:
+        responseModalities:
+        - AUDIO
+      systemInstruction:
+        parts:
+        - text: Answer in one short sentence.
+        role: user
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  data:
+    setupComplete: {}
+- kind: message
+  direction: sent
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: The visitor is called Ada.
+        role: user
+      turnComplete: false
+- kind: message
+  direction: sent
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: What is the visitor called?
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - text: '**Identifying the Visitor''s Name**
+
+
+            I''ve successfully identified the visitor''s name as "Ada" based on the
+            provided information. My task is now complete.
+
+
+
+            '
+          thought: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: The visitor is
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: ' Ada.'
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: FgAVABUAEgATABEADwAQAAwADQAIAAoACgAJAAcABgAF
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: oB4/HW8cShmXFPsRVw6wCzoLNwm7CC4GMwPBACv+ZvxC
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: BQJpBPoFAAdzBz8HnQYBBtEFdwW1BFIDkwCg/R/67faK
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: NwEoAXkBKQHQACIArP6g/GL6Sfhs94j30Pem+Nv5K/t+
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: Ef5d/hf/x/98AO8AFgGMAfoBWwLJAq0CwgH3AHAA4P+7
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: WQBQAEcAQgBAADYAIQANAPj/7f/f/+v/AQAIAPv/7v/q
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: AwAFAAUACAAIAAcABgAIAAUAAgAIAAMABwAIAAcACQAK
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: BQD//wEAAwAFAAYABQAFAAYABwACAAUABQAFAAoABwAI
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: AAD///7////9//3//v/+/wEA+f/9//z//P/8//z//P/9
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: +//8//v//f/+//3/+f/6//7//P8EAAAA+v//////AQAA
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      turnComplete: true
+    usageMetadata:
+      promptTokenCount: 1136
+      responseTokenCount: 37
+      totalTokenCount: 1173
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 1136
+      responseTokensDetails:
+      - modality: AUDIO
+        tokenCount: 37
+      thoughtsTokenCount: 49

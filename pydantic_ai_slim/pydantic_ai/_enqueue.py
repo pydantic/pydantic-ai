@@ -6,28 +6,52 @@ state for the pending message queue, not part of the wire-serializable message h
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal, TypeAlias
+import threading
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING, Any, Literal, SupportsIndex, TypeAlias
 
+from ._appended_messages import append_to_history
+from ._capability_parts import operator_voice_lookalike
+from ._framing import resembles_frame
+from ._utils import fill_run_metadata
 from ._uuid import uuid7
 from .exceptions import UserError
 from .messages import (
+    Authority,
+    CapabilityLoadDeltaPart,
+    CapabilityPart,
+    CapabilitySource,
+    CompactionPart,
+    EnqueuedMessagesEvent,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
-    RetryPromptPart,
+    ModelSettingsDeltaPart,
+    OperatorText,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
+    TextContent,
     ToolAvailabilityDeltaPart,
     ToolReturnPart,
     ToolSearchReturnPart,
     UserPromptPart,
+    _CapabilityContentPart,  # pyright: ignore[reportPrivateUsage]
+    _CapabilityInstructionPart,  # pyright: ignore[reportPrivateUsage]
+    _lower_authority,  # pyright: ignore[reportPrivateUsage]
+    _retry_feedback_text,  # pyright: ignore[reportPrivateUsage]
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
 
 if TYPE_CHECKING:
+    from ._run_context import RunContext
     from .messages import UserContent
+    from .models import ModelRequestContext
 
 
 PendingMessagePriority: TypeAlias = Literal['asap', 'when_idle']
@@ -40,6 +64,9 @@ PendingMessagePriority: TypeAlias = Literal['asap', 'when_idle']
 - `'when_idle'`: Delivered only when the agent would otherwise terminate, after
     any `'asap'` messages. Doesn't interrupt in-flight work.
 """
+
+QueueChangeMethod: TypeAlias = Literal['dequeue', 'set_enqueue_priority']
+"""The methods that change a queued message, named in their errors."""
 
 
 EnqueueContent: TypeAlias = 'UserContent | ModelRequestPart | ModelMessage'
@@ -104,10 +131,17 @@ def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessag
                 SystemPromptPart,
                 UserPromptPart,
                 ToolReturnPart,
-                RetryPromptPart,
+                RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
+                RetryFeedbackPart,
                 ToolSearchReturnPart,
                 ToolAvailabilityDeltaPart,
+                CapabilityLoadDeltaPart,
+                ModelSettingsDeltaPart,
+                InstructionDeltaPart,
+                InstructionBaselinePart,
                 SpeechPart,
+                CompactionPart,
+                CapabilityPart,
             ),
         ):
             flush_content()
@@ -115,7 +149,153 @@ def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessag
         else:
             content.append(item)
     flush_request()
+    _check_operator_voice(messages)
     return messages
+
+
+def _check_operator_voice(messages: Sequence[ModelMessage]) -> None:
+    """Raise if a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] would say something that looks like a framework frame in the application's voice."""
+    for message in messages:
+        if not isinstance(message, ModelRequest):
+            continue
+        for part in message.parts:
+            if isinstance(part, CapabilityPart) and operator_voice_lookalike(part):
+                raise UserError(
+                    f"Capability part {part.kind!r} speaks in the application's voice, but its content contains "
+                    'something that looks like a framework frame (such as a `<system` tag), which is usually data '
+                    'interpolated into it. Put that data in a `DataCapabilityPart` kind.'
+                )
+
+
+def stamp_capability_parts(
+    messages: Sequence[ModelMessage], capability_id: str, ceiling: Authority
+) -> list[ModelMessage]:
+    """`messages` with every [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] attributed to the capability that enqueued it.
+
+    A part with no `capability_id` yet gets `capability_id`, and a part whose source has more authority than the
+    capability's `ceiling` gets a [`CapabilitySource`][pydantic_ai.messages.CapabilitySource] with that authority
+    instead, so the history says who wrote it and with how much authority.
+
+    Prompt parts that would speak with more authority than `ceiling` become capability parts at it: a
+    `SystemPromptPart` below `'operator'`, and a `UserPromptPart` below `'user'`. Enqueued content never gains
+    authority on its way to the model.
+
+    A `ModelResponse`, or a request with `instructions`, from a capability below `'operator'` raises `UserError`.
+    Requests and parts are copied, never changed in place: a capability can enqueue a request it took from the run's
+    history, which must stay as it was.
+    """
+    return [
+        _request_within_ceiling(message, capability_id, ceiling)
+        if isinstance(message, ModelRequest)
+        else _response_within_ceiling(message, capability_id, ceiling)
+        for message in messages
+    ]
+
+
+def _request_within_ceiling(message: ModelRequest, capability_id: str, ceiling: Authority) -> ModelRequest:
+    """A copy of `message` with each part as a capability at `ceiling` may send it, and attributed to the capability."""
+    if ceiling != 'operator' and message.instructions is not None:
+        raise UserError(
+            f'Capability {capability_id!r} has {ceiling!r} authority, so it cannot enqueue a `ModelRequest` with '
+            "`instructions`, which the model reads in the application's voice. Send what it says as a "
+            '`CapabilityPart` instead.'
+        )
+    return replace(
+        message,
+        parts=[
+            _stamped(part, capability_id, ceiling) if isinstance(part, CapabilityPart) else part
+            for part in (within_ceiling(part, capability_id, ceiling) for part in message.parts)
+        ],
+    )
+
+
+def _response_within_ceiling(message: ModelResponse, capability_id: str, ceiling: Authority) -> ModelResponse:
+    """`message`, which only a capability with operator authority can enqueue: the model reads it as its own turn."""
+    if ceiling != 'operator':
+        raise UserError(
+            f'Capability {capability_id!r} has {ceiling!r} authority, so it cannot enqueue a `ModelResponse`, which '
+            "the model reads as its own turn. Only a capability with operator authority can write the model's turns."
+        )
+    return message
+
+
+def within_ceiling(part: ModelRequestPart, capability_id: str, ceiling: Authority) -> ModelRequestPart:
+    """`part` as a capability below operator authority may send it, or `UserError` if it can't send it at all.
+
+    An allowlist, so a part type added later is refused until it's decided how it reads below the application's voice: a
+    capability part is lowered when it's stamped, a system prompt becomes an instruction at `ceiling`, user text at
+    `'none'` becomes data, retry feedback becomes the capability's own text (user text at `'user'`, data at `'none'`),
+    and a plain tool return is tool output whatever its sender. Anything else is refused, such as the framework's
+    records of the run's own state, which the model reads in the application's voice, a summary standing in for earlier
+    history, a typed tool return the framework acts on, and speech below `'user'`.
+    """
+    if ceiling == 'operator':
+        return part
+    source = CapabilitySource(capability_id, authority=ceiling)
+    match part:
+        case RetryFeedbackPart():
+            # Feedback says the application's validation failed, which only the application can say: below it, it's
+            # the capability's own text, the user's at `'user'` and data at `'none'`.
+            text = _retry_feedback_text(part)
+            if ceiling == 'none':
+                return _CapabilityContentPart(content=text, source=source, timestamp=part.timestamp)
+            return UserPromptPart(content=text, timestamp=part.timestamp)
+        # TODO(v3): remove RetryPromptPart
+        case RetryPromptPart(tool_name=None):  # pyright: ignore[reportDeprecated]
+            return within_ceiling(_translate_legacy_retry_part(part), capability_id, ceiling)
+        # A legacy retry bound to a tool call is that call's result: tool output.
+        case CapabilityPart() | RetryPromptPart():  # pyright: ignore[reportDeprecated]
+            return part
+        case SystemPromptPart():
+            return _CapabilityInstructionPart(
+                content=OperatorText(part.content),
+                source=source,
+                scope=part.scope,
+                metadata=part.metadata,
+                timestamp=part.timestamp,
+            )
+        case UserPromptPart():
+            if ceiling == 'none':
+                return _CapabilityContentPart(content=part.content, source=source, timestamp=part.timestamp)
+            return part
+        case SpeechPart() if ceiling == 'user':
+            return part
+        case ToolReturnPart() if type(part) is ToolReturnPart:
+            return part
+        case _:
+            raise UserError(
+                f'Capability {capability_id!r} has {ceiling!r} authority, so it cannot enqueue '
+                f'`{type(part).__name__}`, which only a capability with operator authority can send.'
+            )
+
+
+def _stamped(part: CapabilityPart, capability_id: str, ceiling: Authority) -> CapabilityPart:
+    """A copy of `part` attributed to the capability `capability_id`, with its source lowered to `ceiling`."""
+    source = part.source
+    if _lower_authority(source.authority, ceiling) != source.authority:
+        source = CapabilitySource(capability_id, authority=ceiling)
+    return replace(part, capability_id=part.capability_id or capability_id, source=source)
+
+
+def hand_built_capability_speech(messages: Sequence[ModelMessage]) -> str | None:
+    """What in `messages` a capability built by hand that a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] should say, or `None`.
+
+    That's a bare `SystemPromptPart`, or user-channel text with something that looks like a framework frame (a
+    `<system` or `<pyai:context` tag).
+    """
+    for message in messages:
+        if not isinstance(message, ModelRequest):
+            continue
+        for part in message.parts:
+            if isinstance(part, SystemPromptPart):
+                return 'a bare `SystemPromptPart`'
+            if isinstance(part, UserPromptPart) and any(
+                resembles_frame(item if isinstance(item, str) else item.content)
+                for item in ([part.content] if isinstance(part.content, str) else part.content)
+                if isinstance(item, str | TextContent)
+            ):
+                return 'user text containing what looks like a framework frame (such as a `<system` tag)'
+    return None
 
 
 @dataclass
@@ -144,11 +324,28 @@ class PendingMessage:
     [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] emitted when the messages
     are delivered, and returned by [`enqueue`][pydantic_ai.tools.RunContext.enqueue]."""
 
+    _tool_call: tuple[str, int] | None = field(default=None, repr=False, compare=False)
+    """The `tool_call_id` and run step of the tool call whose result this content goes next to, if any.
+
+    Set by `from_content` for parts enqueued with `priority='asap'` during a tool call (from the tool or a
+    capability hook wrapping it). Only `asap` delivery reads it, so content demoted to `when_idle` is
+    delivered as its own request, and goes next to the result again if promoted back before the request
+    carrying that result is sent. The step matters because a model may reuse a `tool_call_id` later, and
+    content an earlier call enqueues late (say, from a task it started) mustn't go next to the later return.
+    """
+
     @classmethod
-    def from_content(cls, *content: EnqueueContent, priority: PendingMessagePriority = 'asap') -> PendingMessage | None:
+    def from_content(
+        cls,
+        *content: EnqueueContent,
+        priority: PendingMessagePriority = 'asap',
+        _tool_call: tuple[str, int] | None = None,
+    ) -> PendingMessage | None:
         """Build a `PendingMessage` from `enqueue` arguments, or `None` when there's nothing to send.
 
         Returns `None` for an empty call (enqueueing nothing is a no-op rather than an error).
+        `_tool_call` is the `tool_call_id` and run step of the tool call being executed, if any. It's kept
+        only for content made of parts, which can go next to that call's result.
 
         Raises:
             UserError: If the assembled messages don't end in a
@@ -163,4 +360,328 @@ class PendingMessage:
                 'Enqueued content must end with a `ModelRequest` (or user content / `ModelRequestPart` '
                 'items that form one), so the agent has a request to respond to.'
             )
-        return cls(messages=messages, priority=priority)
+        if priority != 'asap' or any(isinstance(item, ModelRequest | ModelResponse) for item in content):
+            _tool_call = None
+        return cls(messages=messages, priority=priority, _tool_call=_tool_call)
+
+
+CapabilityLoadRecord: TypeAlias = CapabilityLoadDeltaPart | ToolAvailabilityDeltaPart
+"""A part recording a capability load from code: the load itself, or the reveal of the capability's tools."""
+
+
+class PendingMessageQueue(list[PendingMessage]):
+    """A run's pending messages with thread-safe append and drain operations."""
+
+    def __init__(
+        self, messages: Iterable[PendingMessage] = (), capability_loads: Iterable[CapabilityLoadRecord] = ()
+    ) -> None:
+        super().__init__(messages)
+        # Kept apart from the list items: a capability load rides along with the next model request
+        # but must never make the run continue, and code that checks whether messages are pending
+        # (e.g. to decide whether the run will continue) must not see it.
+        self._capability_loads: list[CapabilityLoadRecord] = list(capability_loads)
+        self._closed = False
+        self._lock = threading.Lock()
+        # The request tool-call content was last put into, as `(request it replaced first, current copy)`, and
+        # the last part put next to each call's return in it, so a later delivery in the same step puts that
+        # call's content after it.
+        self._spliced_request: tuple[ModelRequest, ModelRequest] | None = None
+        self._last_delivered_for_call: dict[str, ModelRequestPart] = {}
+
+    def __reduce_ex__(
+        self, protocol: SupportsIndex
+    ) -> tuple[type[PendingMessageQueue], tuple[list[PendingMessage], list[CapabilityLoadRecord]]]:
+        return PendingMessageQueue, (list(self), list(self._capability_loads))
+
+    def append(self, pending: PendingMessage) -> None:
+        with self._lock:
+            if self._closed:
+                raise UserError('`enqueue` is not available because the agent run has ended.')
+            super().append(pending)
+
+    def pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
+        with self._lock:
+            return self._pop_priority(priority)
+
+    def dequeue(self, enqueue_id: str) -> bool:
+        """Remove the queued message `enqueue_id`, or return `False` if it isn't queued (any more).
+
+        A closed queue can hold messages a run left early didn't deliver; they're out of reach too.
+        """
+        with self._lock:
+            return not self._closed and remove_pending(self, enqueue_id)
+
+    def set_enqueue_priority(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
+        """Give the queued message `enqueue_id` a new priority, keeping its place, or return `False` if it isn't queued."""
+        with self._lock:
+            return not self._closed and set_pending_priority(self, enqueue_id, priority)
+
+    def append_capability_load(self, capability_id: str, records: Sequence[CapabilityLoadRecord]) -> bool:
+        """Queue the records of a load of `capability_id`, delivered together with the next model request.
+
+        Returns `False`, queueing nothing, if a load of `capability_id` is already queued. The check and the append
+        happen under one lock, so parallel tool calls in worker threads can't both queue the same load.
+        """
+        with self._lock:
+            if self._closed:
+                raise UserError('`ctx.load_capability()` is not available because the agent run has ended.')
+            if any(
+                isinstance(record, CapabilityLoadDeltaPart) and capability_id in record.loaded
+                for record in self._capability_loads
+            ):
+                return False
+            self._capability_loads.extend(records)
+            return True
+
+    def pop_capability_loads(self) -> list[CapabilityLoadRecord]:
+        with self._lock:
+            loads, self._capability_loads = self._capability_loads, []
+            return loads
+
+    def drain_at_end(self) -> tuple[list[PendingMessage], list[PendingMessage]]:
+        """Drain both priorities, or atomically close a queue with nothing that continues the run.
+
+        Queued capability loads stay queued for the request the drained messages continue the run with,
+        or are dropped with the run: a load alone never continues it.
+        """
+        with self._lock:
+            asap = self._pop_priority('asap')
+            when_idle = self._pop_priority('when_idle')
+            if not asap and not when_idle:
+                self._capability_loads.clear()
+                self._closed = True
+            return asap, when_idle
+
+    def drain_at_pause(self) -> list[PendingMessage] | None:
+        """Close the queue for a deferred-tool pause and drain it, or leave its messages queued if one can't be recorded.
+
+        When the run resumes, a recorded `ModelResponse` would read as the paused response, and an interrupted
+        `ModelRequest` as the run stopping partway, which closes out the paused calls.
+        """
+        with self._lock:
+            self._closed = True
+            if any(
+                isinstance(message, ModelResponse) or message.state != 'complete'
+                for pending in self
+                for message in pending.messages
+            ):
+                return None
+            return [*self._pop_priority('asap'), *self._pop_priority('when_idle')]
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+
+    def request_in_history(self, request: ModelRequest) -> ModelRequest:
+        """The copy in history of `request`, if tool-call content was put into it, else `request` itself."""
+        if self._spliced_request is not None and self._spliced_request[0] is request:
+            return self._spliced_request[1]
+        return request
+
+    def _pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
+        selected = [pending for pending in self if pending.priority == priority]
+        self[:] = [pending for pending in self if pending.priority != priority]
+        return selected
+
+
+def remove_pending(messages: list[PendingMessage], enqueue_id: str) -> bool:
+    """Remove the message `enqueue_id` from `messages`, returning whether it was there. The caller handles locking."""
+    for index, pending in enumerate(messages):
+        if pending.enqueue_id == enqueue_id:
+            del messages[index]
+            return True
+    return False
+
+
+def set_pending_priority(messages: list[PendingMessage], enqueue_id: str, priority: PendingMessagePriority) -> bool:
+    """Give the message `enqueue_id` in `messages` a new priority, returning whether it was there. The caller handles locking."""
+    for pending in messages:
+        if pending.enqueue_id == enqueue_id:
+            pending.priority = priority
+            return True
+    return False
+
+
+class EnqueueGuard(list[PendingMessage]):
+    """Replaces `ctx.pending_messages` inside a durable unit, where enqueueing can't be supported.
+
+    A durable unit's recorded output is replayed on recovery (DBOS), cache hit (Prefect), or
+    across the activity boundary (Temporal) without re-running the code, so messages enqueued
+    inside it would be silently dropped; enqueueing raises an explanatory `UserError` instead.
+    `RunContext.dequeue` and `RunContext.set_enqueue_priority` raise `change_error` for the same reason.
+    """
+
+    def __init__(self, unit_noun: str, container_noun: str):
+        """`unit_noun` is the engine's durable unit (`'activity'`/`'step'`/`'task'`) and `container_noun` its durable container (`'workflow'`/`'flow'`), so every engine raises the same explanation in its own vocabulary."""
+        super().__init__()
+        self._unit_noun = unit_noun
+        self._container_noun = container_noun
+
+    def append(self, pending: PendingMessage) -> None:
+        raise self._error('enqueue', 'the enqueued messages would be dropped', 'Enqueue messages')
+
+    def change_error(self, method: QueueChangeMethod) -> UserError:
+        """The error for `ctx.<method>()`, a change to a queued message, inside the durable unit."""
+        return self._error(method, 'the change to the queued message would be lost', 'Change queued messages')
+
+    def _error(self, method: str, consequence: str, advice: str) -> UserError:
+        return UserError(
+            f'`ctx.{method}()` is not supported inside a durable {self._unit_noun}: the durable runtime replays '
+            f"the {self._unit_noun}'s recorded result without re-running your code, so {consequence}. "
+            f'{advice} from {self._container_noun}-level code instead.'
+        )
+
+
+def stamped_messages(
+    pending: PendingMessage,
+    *,
+    fallback_run_id: str | None,
+    fallback_conversation_id: str | None,
+) -> list[ModelMessage]:
+    """Stamp a pending message's messages' `timestamp` / `run_id` / `conversation_id` where unset.
+
+    Each [`PendingMessage`][pydantic_ai._enqueue.PendingMessage] carries one or more built
+    [`ModelMessage`][pydantic_ai.messages.ModelMessage]s (assembled at enqueue time by
+    [`PendingMessage.from_content`][pydantic_ai._enqueue.PendingMessage.from_content]); this only
+    fills in framework-tracked metadata that the producer left unset, so producer-supplied values
+    are preserved.
+    """
+    messages: list[ModelMessage] = []
+    for message in pending.messages:
+        fill_run_metadata(message, run_id=fallback_run_id, conversation_id=fallback_conversation_id)
+        messages.append(message)
+    return messages
+
+
+def run_queue(ctx: RunContext[Any]) -> PendingMessageQueue:
+    """The run's pending-message queue.
+
+    Graph runs always carry the thread-safe queue. Other `RunContext` producers (durable-exec guards,
+    synthetic contexts) never reach the code that drains it.
+    """
+    queue = ctx.pending_messages
+    assert isinstance(queue, PendingMessageQueue)
+    return queue
+
+
+def _splice_anchor(target: ModelRequest, tool_call_id: str, queue: PendingMessageQueue) -> ModelRequestPart:
+    """The part in `target` that content for `tool_call_id` goes right after."""
+    delivered = queue._last_delivered_for_call.get(tool_call_id)  # pyright: ignore[reportPrivateUsage]
+    if delivered is not None and any(part is delivered for part in target.parts):
+        return delivered
+    return next(part for part in target.parts if isinstance(part, ToolReturnPart) and part.tool_call_id == tool_call_id)
+
+
+def resumes_suspended_response(request_context: ModelRequestContext) -> bool:
+    """Whether the request re-sends a history ending in a suspended response, to resume it.
+
+    `'asap'` content can't be delivered into such a request: there's nowhere to put it, so it waits for the next one.
+    """
+    messages = request_context.messages
+    return bool(messages) and isinstance(last := messages[-1], ModelResponse) and last.state == 'suspended'
+
+
+def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+    """Deliver the queued `'asap'` messages into the request being prepared.
+
+    Content tied to a tool call (see `PendingMessage._tool_call`) goes into the request that carries that call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart],
+    right after it, when that request ends the history: several deliveries for the same call keep their
+    enqueue order, whatever other calls' content arrives in between. Everything else is appended as its own
+    messages, and so is anything drained after it, so content never lands ahead of what was enqueued first.
+    Either way it lands in both `request_context.messages` (so the model sees it this step) and `ctx.messages`
+    (so it persists in the agent's message history). The request the content went into is replaced by a copy,
+    which `PendingMessageQueue.request_in_history` finds.
+
+    One [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] is emitted per drained
+    [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in the order the content lands in history,
+    describing it exactly as delivered. A UI adapter streams them in that order and its client loads them
+    back in that order, so the client's history renders like the server's.
+    """
+    drained = run_queue(ctx).pop_priority('asap')
+    if not drained:
+        return request_context
+
+    # Only the request about to be sent, so content arriving later (say, from a task the tool started)
+    # never rewrites history the model has already seen. It's replaced rather than mutated, since
+    # instrumentation caches each message's serialized form, so it must be in both lists to be found again.
+    target = ctx.messages[-1] if ctx.messages else None
+    answered_calls: set[str] = set()
+    if isinstance(target, ModelRequest) and any(message is target for message in request_context.messages):
+        answered_calls = {part.tool_call_id for part in target.parts if isinstance(part, ToolReturnPart)}
+
+    spliced, appended = _split_drained(ctx, drained, answered_calls)
+
+    events: list[EnqueuedMessagesEvent] = []
+    if spliced:
+        assert isinstance(target, ModelRequest)
+        events = _splice_into(ctx, request_context, target, spliced)
+    for enqueue_id, messages in appended:
+        request_context.messages = [*request_context.messages, *messages]
+        append_to_history(ctx, *messages)
+        events.append(EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=tuple(messages)))
+    for event in events:
+        ctx._emit_event(event)  # pyright: ignore[reportPrivateUsage]
+    return request_context
+
+
+def _split_drained(
+    ctx: RunContext[object], drained: list[PendingMessage], answered_calls: set[str]
+) -> tuple[dict[str, list[tuple[str, ModelRequest]]], list[tuple[str, list[ModelMessage]]]]:
+    """Split `drained` into the requests spliced after the tool returns they belong to, by call, and the rest."""
+    spliced: dict[str, list[tuple[str, ModelRequest]]] = {}
+    appended: list[tuple[str, list[ModelMessage]]] = []
+    for pending in drained:
+        messages = stamped_messages(pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id)
+        tool_call = pending._tool_call  # pyright: ignore[reportPrivateUsage]
+        if (
+            tool_call is not None
+            and tool_call[0] in answered_calls
+            # The calls `target` answers ran in the step before this one, so an older call reused the id.
+            and tool_call[1] >= ctx.run_step - 1
+            # Content that came after something added as its own message stays after it.
+            and not appended
+            # `from_content` only keeps the call for content made of parts, which is one request.
+            and len(messages) == 1
+            and isinstance(request := messages[0], ModelRequest)
+        ):
+            spliced.setdefault(tool_call[0], []).append((pending.enqueue_id, request))
+        else:
+            appended.append((pending.enqueue_id, messages))
+    return spliced, appended
+
+
+def _splice_into(
+    ctx: RunContext[object],
+    request_context: ModelRequestContext,
+    target: ModelRequest,
+    spliced: dict[str, list[tuple[str, ModelRequest]]],
+) -> list[EnqueuedMessagesEvent]:
+    """Splice each call's content into `target` after its return, and say what landed, in `target`'s part order."""
+    events: list[EnqueuedMessagesEvent] = []
+    queue = run_queue(ctx)
+    previous = queue._spliced_request  # pyright: ignore[reportPrivateUsage]
+    if previous is not None and previous[1] is target:
+        original = previous[0]
+    else:
+        original = target
+        queue._last_delivered_for_call.clear()  # pyright: ignore[reportPrivateUsage]
+    # Each call's content goes after its return, or after what an earlier delivery in this step put there.
+    anchors = {id(_splice_anchor(target, call_id, queue)): call_id for call_id in spliced}
+    parts: list[ModelRequestPart] = []
+    for part in target.parts:
+        parts.append(part)
+        call_id = anchors.get(id(part))
+        if call_id is None:
+            continue
+        for enqueue_id, request in spliced.pop(call_id, ()):
+            parts.extend(request.parts)
+            queue._last_delivered_for_call[call_id] = request.parts[-1]  # pyright: ignore[reportPrivateUsage]
+            events.append(EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=(request,), parts=tuple(request.parts)))
+    spliced_target = replace(target, parts=parts)
+    queue._spliced_request = (original, spliced_target)  # pyright: ignore[reportPrivateUsage]
+    ctx.messages[-1] = spliced_target
+    ctx._appended_messages.replace(target, spliced_target)  # pyright: ignore[reportPrivateUsage]
+    request_context.messages = [
+        spliced_target if message is target else message for message in request_context.messages
+    ]
+    return events

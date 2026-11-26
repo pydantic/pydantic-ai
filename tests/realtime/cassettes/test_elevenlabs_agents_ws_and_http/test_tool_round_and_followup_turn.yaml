@@ -1,0 +1,228 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: conversation_initiation_client_data
+    source_info:
+      source: unknown
+      version: pydantic-ai/<version>
+    conversation_config_override:
+      agent:
+        prompt:
+          prompt: Answer in one short sentence. Use the get_weather tool for any weather
+            question.
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    conversation_initiation_metadata_event:
+      conversation_id: conv_3801m5djqwhxe8vrkn7r0fnn1ygs
+      agent_output_audio_format: pcm_16000
+      user_input_audio_format: pcm_16000
+      persistent_session_token: null
+    type: conversation_initiation_metadata
+- kind: message
+  direction: sent
+  at: 0.001
+  data:
+    type: user_message
+    text: What is the weather in Berlin?
+    id: pydantic_ai_input_0
+- kind: message
+  direction: received
+  at: 0.896
+  data:
+    client_tool_call:
+      tool_name: get_weather
+      tool_call_id: get_weather_0e5a97ebe44647179ec5eb745a63ed58
+      parameters:
+        city: Berlin
+      event_id: 1
+      expects_response: true
+    type: client_tool_call
+- kind: message
+  direction: sent
+  at: 0.897
+  data:
+    type: client_tool_result
+    tool_call_id: get_weather_0e5a97ebe44647179ec5eb745a63ed58
+    result: It is sunny and 21 degrees in Berlin.
+    is_error: false
+- kind: message
+  direction: received
+  at: 0.944
+  data:
+    agent_tool_response:
+      tool_name: get_weather
+      tool_call_id: get_weather_0e5a97ebe44647179ec5eb745a63ed58
+      tool_type: client
+      is_error: false
+      is_blocked: false
+      event_id: 1
+      is_called: true
+      status: success
+    type: agent_tool_response
+- kind: message
+  direction: received
+  at: 1.592
+  data:
+    audio_event:
+      audio_base_64: AgAHAAcAAgAAAAEAAgAAAAEAAQABAAAA/v8CAAIABAAD
+      event_id: 1
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 1.673
+  data:
+    audio_event:
+      audio_base_64: 9vNY85fy8vH68VvyOfIf8jH0ffa09tv2Afj/+Fz5S/qx
+      event_id: 1
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 1.675
+  data:
+    agent_response_event:
+      agent_response: It is sunny and twenty-one degrees Celsius in Berlin.
+      event_id: 1
+      response_id: 9b968136-b6d4-4113-a22f-90653208c89f
+      in_response_to_ids:
+      - pydantic_ai_input_0
+      response_type: text
+      attachments: []
+    type: agent_response
+- kind: message
+  direction: received
+  at: 1.675
+  data:
+    context_usage_event:
+      event_id: 1
+      model: gemini-2.5-flash
+      context_tokens: 429
+      context_limit_tokens: 1048576
+    type: context_usage
+- kind: message
+  direction: sent
+  at: 1.676
+  data:
+    type: user_message
+    text: Thanks, that is all.
+    id: pydantic_ai_input_2
+- kind: message
+  direction: received
+  at: 1.723
+  data:
+    interruption_event:
+      event_id: 2
+    type: interruption
+- kind: message
+  direction: received
+  at: 1.723
+  data:
+    agent_response_correction_event:
+      original_agent_response: It is sunny and twenty-one degrees Celsius in Berlin.
+      corrected_agent_response: '...'
+      event_id: 1
+      response_id: 9b968136-b6d4-4113-a22f-90653208c89f
+    type: agent_response_correction
+- kind: message
+  direction: received
+  at: 1.752
+  data:
+    ping_event:
+      event_id: 2
+      ping_ms: null
+    type: ping
+- kind: message
+  direction: sent
+  at: 1.752
+  data:
+    type: pong
+    event_id: 2
+- kind: message
+  direction: received
+  at: 2.631
+  data:
+    audio_event:
+      audio_base_64: AAACAAIA///+//z//f/9//z/+v/8//v//f/+//3//f/8
+      event_id: 2
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 2.706
+  data:
+    audio_event:
+      audio_base_64: MgEGAxkC2PuI9Wb0HPff+F74XvkT/bD/Kf5t/Kv9GACD
+      event_id: 2
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 2.71
+  data:
+    agent_response_event:
+      agent_response: You're welcome, let me know if you need anything else.
+      event_id: 2
+      response_id: ad0041fa-a1e3-4179-b5a3-b787c4c17644
+      in_response_to_ids:
+      - pydantic_ai_input_2
+      response_type: text
+      attachments: []
+    type: agent_response
+- kind: message
+  direction: received
+  at: 2.712
+  data:
+    context_usage_event:
+      event_id: 2
+      model: gemini-2.5-flash
+      context_tokens: 436
+      context_limit_tokens: 1048576
+    type: context_usage
+- kind: message
+  direction: received
+  at: 3.452
+  data:
+    ping_event:
+      event_id: 3
+      ping_ms: 47
+    type: ping
+- kind: message
+  direction: sent
+  at: 3.453
+  data:
+    type: pong
+    event_id: 3
+- kind: message
+  direction: received
+  at: 5.152
+  data:
+    ping_event:
+      event_id: 4
+      ping_ms: 47
+    type: ping
+- kind: message
+  direction: sent
+  at: 5.152
+  data:
+    type: pong
+    event_id: 4
+- kind: message
+  direction: received
+  at: 6.853
+  data:
+    ping_event:
+      event_id: 5
+      ping_ms: 47
+    type: ping
+- kind: message
+  direction: sent
+  at: 6.853
+  data:
+    type: pong
+    event_id: 5

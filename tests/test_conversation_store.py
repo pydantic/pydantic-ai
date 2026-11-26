@@ -1,0 +1,2898 @@
+"""Tests for `ConversationStore` and the conversations runs hand it, including those of failed runs.
+
+These are unit-style tests rather than VCR tests: what's under test is how Pydantic AI records, saves and loads
+a conversation, and what a failed or cancelled run's error carries, not how a provider responds, so `TestModel`
+and `FunctionModel` drive the runs.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import copy
+import dataclasses
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from typing import Any
+from unittest.mock import Mock
+
+import pytest
+from pydantic import TypeAdapter
+
+from pydantic_ai import (
+    Agent,
+    AgentRunResult,
+    Conversation,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RunContext,
+    TextPart,
+    ToolCallPart,
+    UserPromptPart,
+    capture_run_conversation,
+    messages as _messages,
+)
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.capabilities import AbstractCapability, ProcessHistory
+from pydantic_ai.conversation import ConversationTypeAdapter
+from pydantic_ai.conversation_store import (
+    ConversationConflict,
+    ConversationEntry,
+    ConversationRecord,
+    ConversationStore,
+    InMemoryConversationStore,
+)
+from pydantic_ai.exceptions import ApprovalRequired, ModelRetry, RunCancelled, UsageLimitExceeded, UserError
+from pydantic_ai.messages import ModelSettingsDeltaPart, SystemPromptPart, ToolReturnPart, repair_messages
+from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
+from pydantic_ai.toolsets import ExternalToolset
+from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_graph import End
+
+from ._inline_snapshot import snapshot
+from .conftest import conversation_view
+from .function_model_prefix import COMPACTION_REWRITES_HISTORY
+
+pytestmark = pytest.mark.anyio
+
+
+def _entry_count(store: InMemoryConversationStore) -> int:
+    return len(store._entries)  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_saved_conversation_loads_whole() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel())
+    conversation = (await agent.run('Hello')).conversation
+
+    await store.save(conversation)
+    loaded = await store.load(conversation.conversation_id)
+
+    assert loaded == conversation
+    assert conversation.revision is not None
+    assert await store.load('unknown') is None
+
+
+async def test_continuing_a_conversation_stores_only_its_new_messages() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel())
+    first = (await agent.run('Hello')).conversation
+    await store.save(first)
+
+    second = (await agent.run('Again', conversation=first)).conversation
+    await store.save(second)
+
+    assert second.revision not in (None, first.revision)
+    assert _entry_count(store) == len(second.messages)
+    assert await store.load(first.conversation_id) == second
+
+
+async def test_the_store_keeps_its_own_copy_of_each_message() -> None:
+    store = InMemoryConversationStore()
+    request = ModelRequest(parts=[UserPromptPart('one')])
+    conversation = Conversation(messages=[request])
+    await store.save(conversation)
+
+    request.run_id = 'changed after saving'
+    loaded = await store.load(conversation.conversation_id)
+    assert loaded is not None
+    loaded.messages[0].run_id = 'changed after loading'
+
+    reloaded = await store.load(conversation.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages[0].run_id is None
+
+
+async def test_a_rewritten_history_branches_off_the_last_shared_message() -> None:
+    store = InMemoryConversationStore()
+    messages = [
+        ModelRequest(parts=[UserPromptPart('one')]),
+        ModelResponse(parts=[TextPart('two')]),
+        ModelRequest(parts=[UserPromptPart('three')]),
+    ]
+    conversation = Conversation(messages=messages)
+    await store.save(conversation)
+    compacted = Conversation(
+        messages=[messages[0], ModelResponse(parts=[TextPart('summary')])],
+        conversation_id=conversation.conversation_id,
+        revision=conversation.revision,
+    )
+
+    await store.save(compacted)
+
+    assert await store.load(conversation.conversation_id) == compacted
+    # The first message is shared; the rewritten one is a new entry beside the two it replaced.
+    assert _entry_count(store) == 4
+
+
+async def test_a_paused_conversation_keeps_what_it_is_waiting_on_and_its_scope() -> None:
+    store = InMemoryConversationStore()
+    requests = DeferredToolRequests(metadata={'call': {'reason': 'approval'}})
+    conversation = Conversation(deferred_tool_requests=requests)
+
+    await store.save(conversation, scope='user-1')
+    first = await store.read_record(conversation.conversation_id)
+    await store.save(conversation)
+    second = await store.read_record(conversation.conversation_id)
+
+    assert first is not None and second is not None
+    assert (first.scope, second.scope) == ('user-1', 'user-1')
+    assert first.revision != second.revision == conversation.revision
+    loaded = await store.load(conversation.conversation_id)
+    assert loaded is not None
+    assert loaded.deferred_tool_requests == requests
+
+
+async def test_a_save_from_a_stale_copy_conflicts() -> None:
+    store = InMemoryConversationStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(conversation)
+    mine = await store.load(conversation.conversation_id)
+    theirs = await store.load(conversation.conversation_id)
+    assert mine is not None and theirs is not None
+    mine.messages.append(ModelResponse(parts=[TextPart('mine')]))
+    theirs.messages.append(ModelResponse(parts=[TextPart('theirs')]))
+    await store.save(mine)
+
+    with pytest.raises(ConversationConflict, match='was saved or deleted since it was loaded') as conflict:
+        await store.save(theirs)
+
+    assert conflict.value.conversation_id == conversation.conversation_id
+    assert await store.load(conversation.conversation_id) == mine
+    assert _entry_count(store) == 2
+
+
+async def test_a_new_conversation_under_a_taken_id_or_one_deleted_since_loading_conflicts() -> None:
+    store = InMemoryConversationStore()
+    taken = Conversation(conversation_id='taken')
+    await store.save(taken)
+
+    with pytest.raises(ConversationConflict):
+        await store.save(Conversation(conversation_id='taken'))
+    await store.delete('taken')
+    with pytest.raises(ConversationConflict):
+        await store.save(taken)
+
+
+async def test_a_record_written_over_a_stale_revision_conflicts() -> None:
+    store = InMemoryConversationStore()
+    conversation = Conversation()
+    await store.save(conversation)
+    stale = await store.read_record(conversation.conversation_id)
+    assert stale is not None
+    await store.save(conversation)
+
+    with pytest.raises(ConversationConflict):
+        await store.write_record(stale, expected_revision=stale.revision)
+
+
+async def test_a_fork_shares_the_history_it_keeps() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel())
+    original = (await agent.run('Hello')).conversation
+    await store.save(original, scope='user-1')
+    stored_entries = _entry_count(store)
+
+    whole = await store.fork(original.conversation_id, new_conversation_id='whole')
+    first_only = await store.fork(original.conversation_id, at=1, scope='user-2')
+
+    assert whole.messages == original.messages
+    assert whole.usage == original.usage
+    assert whole.conversation_id == 'whole'
+    assert first_only.messages == original.messages[:1]
+    assert first_only.conversation_id != original.conversation_id
+    assert _entry_count(store) == stored_entries
+    record = await store.read_record(first_only.conversation_id)
+    assert record is not None
+    assert record.scope == 'user-2'
+    assert record.forked_from == original.conversation_id
+    assert record.forked_at == (await store.read_history(record.head_id))[-1].id
+    assert (await store.fork(original.conversation_id, at=0)).messages == []
+
+    assert first_only.revision == record.revision
+    continued = (await agent.run('Again', conversation=first_only)).conversation
+    await store.save(continued)
+    assert await store.load(first_only.conversation_id) == continued
+    assert await store.load(original.conversation_id) == original
+    saved = await store.read_record(first_only.conversation_id)
+    assert saved is not None
+    assert (saved.forked_from, saved.forked_at) == (record.forked_from, record.forked_at)
+
+
+async def test_forking_a_missing_conversation_or_past_its_end_raises() -> None:
+    store = InMemoryConversationStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(conversation)
+
+    with pytest.raises(UserError, match="Conversation 'unknown' is not in the store"):
+        await store.fork('unknown')
+    with pytest.raises(UserError, match='`at` must be between 0 and 1'):
+        await store.fork(conversation.conversation_id, at=2)
+
+
+async def test_conversations_list_newest_first_by_scope() -> None:
+    store = InMemoryConversationStore()
+    first = Conversation()
+    second = Conversation()
+    other = Conversation()
+    await store.save(first, scope='user-1')
+    await store.save(other, scope='user-2')
+    await store.save(second, scope='user-1')
+
+    listed = await store.list_conversations(scope='user-1')
+
+    assert [record.conversation_id for record in listed] == [second.conversation_id, first.conversation_id]
+    assert len(await store.list_conversations()) == 3
+    assert [record.conversation_id for record in await store.list_conversations(limit=1)] == [second.conversation_id]
+    with pytest.raises(UserError, match='`limit` must not be negative'):
+        await store.list_conversations(limit=-1)
+
+
+async def test_deleting_a_conversation_keeps_the_entries_a_fork_still_uses() -> None:
+    store = InMemoryConversationStore()
+    messages = [ModelRequest(parts=[UserPromptPart('one')]), ModelResponse(parts=[TextPart('two')])]
+    original = Conversation(messages=messages)
+    await store.save(original)
+    fork = await store.fork(original.conversation_id, at=1)
+
+    await store.delete(original.conversation_id)
+
+    assert await store.load(original.conversation_id) is None
+    assert await store.load(fork.conversation_id) == fork
+    assert _entry_count(store) == 1
+    await store.delete(fork.conversation_id)
+    assert _entry_count(store) == 0
+
+
+async def test_a_saved_request_a_run_sends_is_not_stored_again() -> None:
+    store = InMemoryConversationStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('queued')])])
+    await store.save(conversation)
+    loaded = await store.load(conversation.conversation_id)
+    assert loaded is not None
+
+    continued = (await Agent(TestModel()).run(conversation=loaded)).conversation
+    await store.save(continued)
+
+    # The run fills in the request's `run_id`, but the save appends only what the run added.
+    assert continued.messages[0] != conversation.messages[0]
+    assert _entry_count(store) == 2
+    reloaded = await store.load(conversation.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages == [conversation.messages[0], continued.messages[1]]
+
+
+async def test_a_saved_conversation_carries_its_revision_into_the_next_run() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel())
+    conversation = (await agent.run('Hello')).conversation
+    await store.save(conversation)
+
+    result = await agent.run('Again', conversation=conversation)
+    conversation = result.conversation
+    await store.save(conversation)
+
+    record = await store.read_record(conversation.conversation_id)
+    assert record is not None
+    assert conversation.revision == record.revision
+    # Each access builds a new conversation, so changing one doesn't change the next.
+    assert result.conversation is not conversation
+    assert result.conversation.revision != conversation.revision
+
+
+async def test_a_whole_fork_keeps_what_a_paused_conversation_is_waiting_on() -> None:
+    store = InMemoryConversationStore()
+    requests = DeferredToolRequests(metadata={'call': {'reason': 'approval'}})
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])], deferred_tool_requests=requests)
+    await store.save(conversation)
+
+    whole = await store.fork(conversation.conversation_id)
+    partial = await store.fork(conversation.conversation_id, at=0)
+
+    assert whole.deferred_tool_requests == requests
+    loaded = await store.load(whole.conversation_id)
+    assert loaded is not None
+    assert loaded.deferred_tool_requests == requests
+    assert partial.deferred_tool_requests is None
+
+
+async def test_the_store_keeps_its_own_copy_of_each_record() -> None:
+    store = InMemoryConversationStore()
+    conversation = Conversation(deferred_tool_requests=DeferredToolRequests(metadata={'call': {}}))
+    await store.save(conversation, scope='user-1')
+
+    conversation.usage.requests = 99
+    assert conversation.deferred_tool_requests is not None
+    conversation.deferred_tool_requests.metadata['call']['changed'] = True
+    (listed,) = await store.list_conversations()
+    listed.usage.requests = 42
+
+    loaded = await store.load(conversation.conversation_id)
+    assert loaded is not None
+    assert loaded.usage.requests == 0
+    assert loaded.deferred_tool_requests == DeferredToolRequests(metadata={'call': {}})
+
+
+class _RacingStore(InMemoryConversationStore):
+    """Runs `race` the first time a history is read, as another writer acting between a store's two reads would."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.race: Callable[[], Awaitable[None]] | None = None
+
+    async def read_history(self, head_id: str | None, *, limit: int | None = None) -> list[ConversationEntry]:
+        race, self.race = self.race, None
+        if race is not None:
+            await race()
+        return await super().read_history(head_id, limit=limit)
+
+
+async def test_a_conversation_deleted_while_it_is_read_loads_as_missing_and_conflicts_on_save() -> None:
+    store = _RacingStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(conversation)
+
+    store.race = lambda: store.delete(conversation.conversation_id)
+    assert await store.load(conversation.conversation_id) is None
+
+    await store.save(other := Conversation(messages=[ModelRequest(parts=[UserPromptPart('two')])]))
+    # Without a known `new_message_index`, the save reads the stored history to compare with it.
+    other.new_message_index = None
+    store.race = lambda: store.delete(other.conversation_id)
+    with pytest.raises(ConversationConflict):
+        await store.save(other)
+
+
+async def test_a_conversation_replaced_while_it_is_read_loads_as_replaced() -> None:
+    store = _RacingStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(conversation)
+    rewritten = Conversation(
+        messages=[ModelRequest(parts=[UserPromptPart('rewritten')])], conversation_id=conversation.conversation_id
+    )
+
+    async def replace_it() -> None:
+        # Deleting collects the history being read; a rewrite would keep it as a branch.
+        await store.delete(conversation.conversation_id)
+        await store.save(rewritten)
+
+    store.race = replace_it
+    assert await store.load(conversation.conversation_id) == rewritten
+
+
+async def test_forking_a_conversation_deleted_while_it_is_read_raises_that_it_is_gone() -> None:
+    store = _RacingStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(conversation)
+
+    store.race = lambda: store.delete(conversation.conversation_id)
+    with pytest.raises(UserError, match='is not in the store'):
+        await store.fork(conversation.conversation_id)
+
+
+async def test_a_fork_of_a_history_released_before_it_is_written_conflicts() -> None:
+    class _DeleteBeforeWrite(InMemoryConversationStore):
+        source: str | None = None
+
+        async def write_record(
+            self,
+            record: ConversationRecord,
+            *,
+            new_entries: Sequence[ConversationEntry] = (),
+            expected_revision: str | None,
+        ) -> None:
+            if self.source is not None:
+                source, self.source = self.source, None
+                await self.delete(source)
+            await super().write_record(record, new_entries=new_entries, expected_revision=expected_revision)
+
+    store = _DeleteBeforeWrite()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(conversation)
+
+    store.source = conversation.conversation_id
+    with pytest.raises(ConversationConflict):
+        await store.fork(conversation.conversation_id, new_conversation_id='fork')
+    assert await store.load('fork') is None
+
+
+async def test_saving_the_same_conversation_twice_at_once_conflicts() -> None:
+    class _SaveWhileReading(InMemoryConversationStore):
+        race: Callable[[], Awaitable[None]] | None = None
+
+        async def read_record(self, conversation_id: str) -> ConversationRecord | None:
+            race, self.race = self.race, None
+            if race is not None:
+                await race()
+            return await super().read_record(conversation_id)
+
+    store = _SaveWhileReading()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(conversation)
+    conversation.messages.append(ModelResponse(parts=[TextPart('two')]))
+
+    async def save_it_too() -> None:
+        await store.save(conversation)
+
+    store.race = save_it_too
+    with pytest.raises(ConversationConflict):
+        await store.save(conversation)
+
+
+async def test_a_fork_keeps_an_empty_conversation_id_it_is_given() -> None:
+    store = InMemoryConversationStore()
+    conversation = Conversation()
+    await store.save(conversation)
+
+    fork = await store.fork(conversation.conversation_id, new_conversation_id='')
+
+    assert fork.conversation_id == ''
+
+
+async def test_a_history_missing_an_entry_of_an_unchanged_record_fails_to_load() -> None:
+    store = InMemoryConversationStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    (entry,) = await store.save(conversation)
+    del store._entries[entry.id]  # pyright: ignore[reportPrivateUsage]
+
+    with pytest.raises(KeyError):
+        await store.load(conversation.conversation_id)
+
+
+async def test_a_copy_loaded_before_a_delete_cant_be_saved_over_a_conversation_created_again() -> None:
+    store = InMemoryConversationStore()
+    original = Conversation(conversation_id='reused', messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(original)
+    stale = await store.load('reused')
+    assert stale is not None
+    await store.delete('reused')
+    recreated = Conversation(conversation_id='reused', messages=[ModelRequest(parts=[UserPromptPart('two')])])
+    await store.save(recreated)
+
+    stale.messages.append(ModelResponse(parts=[TextPart('stale')]))
+    with pytest.raises(ConversationConflict):
+        await store.save(stale)
+    assert await store.load('reused') == recreated
+
+
+async def _stored_conversation(store: InMemoryConversationStore, turns: int) -> Conversation:
+    agent = Agent(TestModel())
+    conversation = (await agent.run('turn 0')).conversation
+    for turn in range(1, turns):
+        conversation = (await agent.run(f'turn {turn}', conversation=conversation)).conversation
+    await store.save(conversation)
+    return conversation
+
+
+async def test_a_run_that_trims_its_history_still_appends_to_the_stored_conversation() -> None:
+    """A capability that bounds what the model sees doesn't shrink the stored conversation."""
+    store = InMemoryConversationStore()
+    stored = await _stored_conversation(store, turns=4)
+    loaded = await store.load(stored.conversation_id)
+    assert loaded is not None
+    trimming = Agent(TestModel(), capabilities=[ProcessHistory(lambda messages: messages[-2:])])
+
+    result = await trimming.run('turn 4', conversation=loaded)
+    assert len(result.all_messages()) < len(stored.messages)
+    await store.save(result.conversation)
+
+    reloaded = await store.load(stored.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages == [*stored.messages, *result.new_messages()]
+
+
+async def test_a_conversation_loaded_as_a_window_appends_to_the_whole_one() -> None:
+    store = InMemoryConversationStore()
+    stored = await _stored_conversation(store, turns=3)
+
+    window = await store.load(stored.conversation_id, limit=2)
+    assert window is not None
+    assert window.messages == stored.messages[-2:]
+    result = await Agent(TestModel()).run('turn 3', conversation=window)
+    await store.save(result.conversation)
+
+    reloaded = await store.load(stored.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages == [*stored.messages, *result.new_messages()]
+
+
+async def test_messages_added_to_a_loaded_conversation_are_saved_with_the_next_run() -> None:
+    store = InMemoryConversationStore()
+    stored = await _stored_conversation(store, turns=2)
+    loaded = await store.load(stored.conversation_id)
+    assert loaded is not None
+    turn = ModelRequest(parts=[UserPromptPart('a new turn')])
+    loaded.messages.append(turn)
+
+    result = await Agent(TestModel()).run(conversation=loaded)
+    conversation = result.conversation
+    assert conversation.new_message_index == len(stored.messages)
+    await store.save(conversation)
+
+    reloaded = await store.load(stored.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages[: len(stored.messages)] == stored.messages
+    assert reloaded.messages[len(stored.messages)].parts == turn.parts
+    assert len(reloaded.messages) == len(stored.messages) + 2
+
+
+async def test_messages_added_to_a_loaded_conversation_are_saved_with_the_parts_the_run_adds_to_them() -> None:
+    """A part the run adds to an unsaved request, like a recorded settings change, doesn't make the save compare the whole history.
+
+    Here the history is trimmed too, so comparing it would replace the stored conversation with the trimmed one.
+    """
+    store = InMemoryConversationStore()
+    stored = await _stored_conversation(store, turns=2)
+    loaded = await store.load(stored.conversation_id)
+    assert loaded is not None
+    loaded.messages.append(ModelRequest(parts=[UserPromptPart('a new turn')]))
+    trimming = Agent(TestModel(), capabilities=[ProcessHistory(lambda messages: messages[-1:])])
+
+    result = await trimming.run(conversation=loaded, model_settings={'thinking': 'low'})
+    assert result.conversation.new_message_index == len(stored.messages)
+    turn = result.all_messages()[0]
+    assert isinstance(turn, ModelRequest)
+    assert [type(part) for part in turn.parts] == [UserPromptPart, ModelSettingsDeltaPart]
+    await store.save(result.conversation)
+
+    reloaded = await store.load(stored.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages == [*stored.messages, turn, *result.new_messages()]
+    record = await store.read_record(stored.conversation_id)
+    assert record is not None and record.branches == []
+
+
+async def test_unsaved_messages_the_run_merges_fall_back_to_comparing_with_the_stored_history() -> None:
+    """Without knowing which stored messages the changed unsaved ones follow, the save compares the whole history."""
+    store = InMemoryConversationStore()
+    stored = await _stored_conversation(store, turns=2)
+    loaded = await store.load(stored.conversation_id)
+    assert loaded is not None
+    # The run merges the two requests into one, as it sends them.
+    loaded.messages += [ModelRequest(parts=[UserPromptPart('one')]), ModelRequest(parts=[UserPromptPart('two')])]
+
+    result = await Agent(TestModel()).run(conversation=loaded)
+    conversation = result.conversation
+    assert conversation.new_message_index is None
+    await store.save(conversation)
+
+    reloaded = await store.load(stored.conversation_id)
+    assert reloaded is not None
+    assert conversation_view(reloaded.messages[len(stored.messages) :]) == snapshot(
+        ['user-prompt: one', 'user-prompt: two', 'text: success (no tool calls)']
+    )
+    record = await store.read_record(stored.conversation_id)
+    assert record is not None and record.branches == []
+
+
+async def test_unsaved_messages_a_capability_drops_are_still_saved() -> None:
+    store = InMemoryConversationStore()
+    stored = await _stored_conversation(store, turns=2)
+    loaded = await store.load(stored.conversation_id)
+    assert loaded is not None
+    loaded.messages.append(ModelRequest(parts=[UserPromptPart('dropped by the capability')]))
+    dropping = Agent(TestModel(), capabilities=[ProcessHistory(lambda messages: messages[:-1])])
+
+    result = await dropping.run('and this', conversation=loaded)
+    conversation = result.conversation
+    assert conversation.new_message_index == len(stored.messages)
+    await store.save(conversation)
+
+    reloaded = await store.load(stored.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages[: len(stored.messages)] == stored.messages
+    assert conversation_view(reloaded.messages[len(stored.messages) :]) == snapshot(
+        ['user-prompt: dropped by the capability', 'user-prompt: and this', 'text: success (no tool calls)']
+    )
+
+
+@dataclasses.dataclass
+class _LookUp:
+    """A model that calls `lookup` `calls` times, then gives its `final` response."""
+
+    calls: int = 0
+    made: int = 0
+    final: ModelResponse = dataclasses.field(default_factory=lambda: ModelResponse(parts=[TextPart('done')]))
+
+    def __call__(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if not self.calls:
+            return copy.deepcopy(self.final)
+        self.calls -= 1
+        self.made += 1
+        return ModelResponse(parts=[ToolCallPart('lookup', {'n': self.made}, tool_call_id=f'call-{self.made}')])
+
+
+def _keep_first_and_last_four(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return messages if len(messages) <= 5 else [messages[0], *messages[-4:]]
+
+
+def _trimming_agent(model: _LookUp) -> Agent[None, str]:
+    """An agent whose capability shows the model only the first message and the last four, before every request."""
+    agent = Agent(FunctionModel(model), capabilities=[ProcessHistory(_keep_first_and_last_four)])
+
+    @agent.tool_plain
+    def lookup(n: int) -> str:
+        return f'fact {n}'
+
+    return agent
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+@pytest.mark.parametrize('output_type', [str, int])
+async def test_a_streamed_run_ending_on_its_streamed_response_keeps_what_a_capability_trims(
+    output_type: type[Any],
+) -> None:
+    """`run_stream()` builds the settled result from its own copy of the history, which still gets the full history."""
+    agent = Agent(TestModel(), output_type=output_type, capabilities=[ProcessHistory(lambda messages: messages[-1:])])
+    conversation = (await agent.run('one')).conversation
+    expected = (await agent.run('two', conversation=conversation)).conversation.messages
+
+    async with agent.run_stream('two', conversation=conversation) as stream:
+        await stream.get_output()
+
+    assert len(stream.all_messages()) < len(expected)
+    assert conversation_view(stream.result.conversation.messages) == conversation_view(expected)
+
+
+class _AppendsToTheFirstRequest(AbstractCapability[None]):
+    """Adds a message to history the deprecated way: appending to `request_context.messages` in `before_model_request`."""
+
+    async def before_model_request(
+        self, ctx: RunContext[None], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if ctx.run_step == 1:
+            request_context.messages.append(ModelRequest(parts=[UserPromptPart('hook marker')]))
+        return request_context
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_message_a_hook_appends_the_deprecated_way_is_kept_when_a_capability_trims_it_later() -> None:
+    model = _LookUp(calls=3)
+    agent = Agent(
+        FunctionModel(model),
+        deps_type=type(None),
+        capabilities=[ProcessHistory(_keep_first_and_last_four), _AppendsToTheFirstRequest()],
+    )
+
+    @agent.tool_plain
+    def lookup(n: int) -> str:
+        return f'fact {n}'
+
+    with pytest.warns(PydanticAIDeprecationWarning):
+        result = await agent.run('hello')
+
+    assert 'user-prompt: hook marker' not in conversation_view(result.all_messages())
+    assert conversation_view(result.conversation.messages) == snapshot(
+        [
+            'user-prompt: hello',
+            'user-prompt: hook marker',
+            'call call-1',
+            'return call-1: fact 1',
+            'call call-2',
+            'return call-2: fact 2',
+            'call call-3',
+            'return call-3: fact 3',
+            'text: done',
+        ]
+    )
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_run_whose_capability_trims_its_history_mid_run_saves_every_message_it_added() -> None:
+    """The store keeps what a capability drops from the history during the run, as it does what it drops before it."""
+    store = InMemoryConversationStore()
+    model = _LookUp()
+    agent = _trimming_agent(model)
+    for prompt, model.calls in [('first', 0), ('second', 0), ('third', 3)]:
+        conversation = await store.load('trimmed') or Conversation(conversation_id='trimmed')
+        result = await agent.run(prompt, conversation=conversation)
+        await store.save(result)
+
+    assert len(result.all_messages()) == 6
+    stored = await store.load('trimmed')
+    assert stored is not None
+    assert conversation_view(stored.messages) == snapshot(
+        [
+            'user-prompt: first',
+            'text: done',
+            'user-prompt: second',
+            'text: done',
+            'user-prompt: third',
+            'call call-1',
+            'return call-1: fact 1',
+            'call call-2',
+            'return call-2: fact 2',
+            'call call-3',
+            'return call-3: fact 3',
+            'text: done',
+        ]
+    )
+    assert [type(message) for message in stored.messages] == [ModelRequest, ModelResponse] * 6
+    record = await store.read_record('trimmed')
+    assert record is not None and record.branches == []
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_failed_run_whose_capability_trims_its_history_mid_run_saves_every_message_it_added() -> None:
+    """A failed run's `error.conversation` keeps what a capability dropped, as a finished run's `conversation` does."""
+    store = InMemoryConversationStore()
+    model = _LookUp()
+    agent = _trimming_agent(model)
+    for prompt in ['first', 'second']:
+        conversation = await store.load('trimmed') or Conversation(conversation_id='trimmed')
+        await store.save(await agent.run(prompt, conversation=conversation))
+
+    loaded = await store.load('trimmed')
+    assert loaded is not None
+    model.calls = 3
+    # Allows the three requests that call the tool, so the run fails on the one after the last result.
+    limits = UsageLimits(request_limit=loaded.usage.requests + 3)
+    with pytest.raises(UsageLimitExceeded) as exc_info:
+        await agent.run('third', conversation=loaded, usage_limits=limits)
+    failed = exc_info.value.conversation
+    assert failed is not None
+    await store.save(failed)
+
+    stored = await store.load('trimmed')
+    assert stored is not None
+    assert conversation_view(stored.messages) == snapshot(
+        [
+            'user-prompt: first',
+            'text: done',
+            'user-prompt: second',
+            'text: done',
+            'user-prompt: third',
+            'call call-1',
+            'return call-1: fact 1',
+            'call call-2',
+            'return call-2: fact 2',
+            'call call-3',
+            'return call-3: fact 3',
+        ]
+    )
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_new_conversation_trimmed_in_its_first_run_is_saved_whole() -> None:
+    store = InMemoryConversationStore()
+    result = await _trimming_agent(_LookUp(calls=3)).run('look it up')
+    conversation = result.conversation
+    assert len(result.all_messages()) == 6
+    assert len(conversation.messages) == 8
+
+    await store.save(conversation)
+    stored = await store.load(result.conversation_id)
+    assert stored is not None
+    assert stored.messages == conversation.messages
+    assert conversation_view(stored.messages) == snapshot(
+        [
+            'user-prompt: look it up',
+            'call call-1',
+            'return call-1: fact 1',
+            'call call-2',
+            'return call-2: fact 2',
+            'call call-3',
+            'return call-3: fact 3',
+            'text: done',
+        ]
+    )
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_trimmed_conversation_carried_in_memory_continues_like_one_loaded_from_the_store() -> None:
+    store = InMemoryConversationStore()
+    model = _LookUp(calls=3)
+    agent = _trimming_agent(model)
+    first = (await agent.run('look it up')).conversation
+    await store.save(first)
+    loaded = await store.load(first.conversation_id)
+    assert loaded is not None
+    assert loaded.messages == first.messages
+
+    model.calls, model.made = 2, 3
+    carried = await agent.run('and again', conversation=first)
+    model.calls, model.made = 2, 3
+    reloaded = await agent.run('and again', conversation=loaded)
+
+    assert conversation_view(carried.conversation.messages) == conversation_view(reloaded.conversation.messages)
+    assert conversation_view(carried.all_messages()) == conversation_view(reloaded.all_messages())
+    await store.save(carried)
+    stored = await store.load(first.conversation_id)
+    assert stored is not None
+    assert stored.messages == carried.conversation.messages
+    assert len(stored.messages) == len(first.messages) + 6
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_trimmed_conversation_keeps_the_content_enqueued_during_the_run() -> None:
+    """Enqueued content the run puts into a request or adds as its own messages is kept with the rest."""
+    model = _LookUp(calls=3)
+    agent = Agent(FunctionModel(model), capabilities=[ProcessHistory(_keep_first_and_last_four)])
+
+    @agent.tool
+    def lookup(ctx: RunContext[object], n: int) -> str:
+        ctx.enqueue(f'note {n}')
+        ctx.enqueue(ModelRequest(parts=[UserPromptPart(f'aside {n}')]))
+        if n == 3:
+            ctx.enqueue(
+                ModelRequest(parts=[UserPromptPart('later')]),
+                ModelRequest(parts=[UserPromptPart('last')]),
+                priority='when_idle',
+            )
+        return f'fact {n}'
+
+    result = await agent.run('look it up')
+
+    assert len(result.all_messages()) == 6
+    assert conversation_view(result.conversation.messages) == snapshot(
+        [
+            'user-prompt: look it up',
+            'call call-1',
+            'return call-1: fact 1',
+            'user-prompt: note 1',
+            'user-prompt: aside 1',
+            'call call-2',
+            'return call-2: fact 2',
+            'user-prompt: note 2',
+            'user-prompt: aside 2',
+            'call call-3',
+            'return call-3: fact 3',
+            'user-prompt: note 3',
+            'user-prompt: aside 3',
+            'text: done',
+            'user-prompt: later',
+            'user-prompt: last',
+            'text: done',
+        ]
+    )
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_trimmed_conversation_that_pauses_for_a_tool_keeps_what_the_run_added_last() -> None:
+    """The returns of the tools that ran next to the one the run pauses for, and content enqueued by them, are kept."""
+    final = ModelResponse(
+        parts=[
+            ToolCallPart('lookup', {'n': 0}, tool_call_id='call-0'),
+            ToolCallPart('approve', {}, tool_call_id='approve'),
+        ]
+    )
+    agent = Agent(
+        FunctionModel(_LookUp(calls=3, final=final)),
+        output_type=[str, DeferredToolRequests],
+        capabilities=[ProcessHistory(_keep_first_and_last_four)],
+    )
+
+    @agent.tool
+    def lookup(ctx: RunContext[object], n: int) -> str:
+        if not n:
+            ctx.enqueue('note 0', priority='when_idle')
+        return f'fact {n}'
+
+    @agent.tool_plain(requires_approval=True)
+    def approve() -> str:
+        return 'approved'  # pragma: no cover
+
+    result = await agent.run('look it up')
+
+    assert isinstance(result.output, DeferredToolRequests)
+    assert conversation_view(result.conversation.messages) == snapshot(
+        [
+            'user-prompt: look it up',
+            'call call-1',
+            'return call-1: fact 1',
+            'call call-2',
+            'return call-2: fact 2',
+            'call call-3',
+            'return call-3: fact 3',
+            'call call-0',
+            'call approve',
+            'return call-0: fact 0',
+            'user-prompt: note 0',
+        ]
+    )
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_resuming_a_suspended_response_in_a_trimmed_history_keeps_the_history_before_it() -> None:
+    store = InMemoryConversationStore()
+    stored = await _stored_conversation(store, turns=2)
+    loaded = await store.load(stored.conversation_id)
+    assert loaded is not None
+    loaded.messages += [
+        ModelRequest(parts=[UserPromptPart('go on')]),
+        ModelResponse(parts=[TextPart('paused ')], state='suspended'),
+    ]
+    agent = Agent(
+        FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')])),
+        capabilities=[ProcessHistory(lambda messages: messages[-2:])],
+    )
+
+    result = await agent.run(conversation=loaded)
+
+    assert len(result.all_messages()) == 2
+    await store.save(result)
+    reloaded = await store.load(stored.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages[: len(stored.messages)] == stored.messages
+    assert conversation_view(reloaded.messages[len(stored.messages) :]) == snapshot(
+        ['user-prompt: go on', 'text: paused ', 'text: done']
+    )
+
+
+async def test_a_run_that_keeps_its_whole_history_carries_it_as_is() -> None:
+    """With nothing dropped or rewritten, the conversation holds the history itself.
+
+    That includes the messages a capability adds and the copies it makes of messages to add parts to them.
+    """
+    reminder = ModelRequest(parts=[UserPromptPart('a reminder')])
+
+    def remind(messages: list[ModelMessage]) -> list[ModelMessage]:
+        if any(message is reminder for message in messages):
+            return messages
+        head = messages[0]
+        assert isinstance(head, ModelRequest)
+        briefed = dataclasses.replace(head, parts=[SystemPromptPart('Be brief.'), *head.parts])
+        return [briefed, *messages[1:-1], reminder, messages[-1]]
+
+    agent = Agent(FunctionModel(_LookUp(calls=2)), capabilities=[ProcessHistory(remind)])
+
+    @agent.tool_plain
+    def lookup(n: int) -> str:
+        return f'fact {n}'
+
+    first = await Agent(TestModel()).run('hello')
+    result = await agent.run('look it up', message_history=first.all_messages())
+
+    assert any(message is reminder for message in result.all_messages())
+    assert result.all_messages()[0] is not first.all_messages()[0]
+    messages = result.conversation.messages
+    assert len(messages) == len(result.all_messages())
+    assert all(message is kept for message, kept in zip(messages, result.all_messages()))
+    assert 'conversation_messages' not in TypeAdapter(AgentRunResult[str]).dump_python(result)
+
+
+@dataclasses.dataclass
+class _NoteAtStep(AbstractCapability[Any]):
+    """Adds a note to the history and the request at a step, as a capability can."""
+
+    step: int
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if ctx.run_step == self.step:
+            note = ModelRequest(parts=[UserPromptPart('a note')])
+            request_context.messages = [*request_context.messages, note]
+            ctx.messages.append(note)
+        return request_context
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_message_a_capability_adds_to_a_trimmed_history_is_kept_where_it_was_added() -> None:
+    agent = Agent(
+        FunctionModel(_LookUp(calls=3)), capabilities=[ProcessHistory(_keep_first_and_last_four), _NoteAtStep(3)]
+    )
+
+    @agent.tool_plain
+    def lookup(n: int) -> str:
+        return f'fact {n}'
+
+    result = await agent.run('look it up')
+
+    assert len(result.all_messages()) == 6
+    assert conversation_view(result.conversation.messages) == snapshot(
+        [
+            'user-prompt: look it up',
+            'call call-1',
+            'return call-1: fact 1',
+            'call call-2',
+            'return call-2: fact 2',
+            'user-prompt: a note',
+            'call call-3',
+            'return call-3: fact 3',
+            'text: done',
+        ]
+    )
+
+
+def _summarize(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Puts a summary in place of all but the last two messages of a history longer than six."""
+    if len(messages) <= 6:
+        return messages
+    return [ModelRequest(parts=[UserPromptPart(f'summary of {len(messages) - 2}')]), *messages[-2:]]
+
+
+def _summarizing_agent(model: _LookUp) -> Agent[None, str]:
+    agent = Agent(FunctionModel(model), capabilities=[ProcessHistory(_summarize)])
+
+    @agent.tool_plain
+    def lookup(n: int) -> str:
+        return f'fact {n}'
+
+    return agent
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_summary_a_capability_puts_in_place_of_messages_is_stored_after_them() -> None:
+    store = InMemoryConversationStore()
+    result = await _summarizing_agent(_LookUp(calls=3)).run('look it up')
+
+    assert conversation_view(result.all_messages()) == snapshot(
+        ['user-prompt: summary of 5', 'call call-3', 'return call-3: fact 3', 'text: done']
+    )
+    await store.save(result)
+    stored = await store.load(result.conversation_id)
+    assert stored is not None
+    assert conversation_view(stored.messages) == snapshot(
+        [
+            'user-prompt: look it up',
+            'call call-1',
+            'return call-1: fact 1',
+            'call call-2',
+            'return call-2: fact 2',
+            'user-prompt: summary of 5',
+            'call call-3',
+            'return call-3: fact 3',
+            'text: done',
+        ]
+    )
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_summarized_conversation_carried_in_memory_is_summarized_again_like_one_loaded_from_the_store() -> None:
+    """The full history, summaries included, goes on to the next run, whose capability summarizes it again."""
+    store = InMemoryConversationStore()
+    model = _LookUp(calls=3)
+    agent = _summarizing_agent(model)
+    first = (await agent.run('look it up')).conversation
+    await store.save(first)
+    loaded = await store.load(first.conversation_id)
+    assert loaded is not None
+
+    model.calls, model.made = 1, 3
+    carried = await agent.run('and again', conversation=first)
+    model.calls, model.made = 1, 3
+    reloaded = await agent.run('and again', conversation=loaded)
+
+    assert conversation_view(carried.all_messages()) == snapshot(
+        [
+            'user-prompt: summary of 7',
+            'text: done',
+            'user-prompt: and again',
+            'call call-4',
+            'return call-4: fact 4',
+            'text: done',
+        ]
+    )
+    assert conversation_view(carried.conversation.messages) == snapshot(
+        [
+            'user-prompt: look it up',
+            'call call-1',
+            'return call-1: fact 1',
+            'call call-2',
+            'return call-2: fact 2',
+            'user-prompt: summary of 5',
+            'call call-3',
+            'return call-3: fact 3',
+            'user-prompt: summary of 7',
+            'text: done',
+            'user-prompt: and again',
+            'call call-4',
+            'return call-4: fact 4',
+            'text: done',
+        ]
+    )
+    assert conversation_view(reloaded.conversation.messages) == conversation_view(carried.conversation.messages)
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_messages_a_capability_rewrites_or_moves_are_kept_once_as_the_run_added_them() -> None:
+    """A rewritten copy, which keeps its message's timestamp and run, stands for it, and a moved message is kept where it was."""
+
+    def rewrite(messages: list[ModelMessage]) -> list[ModelMessage]:
+        if len(messages) != 3:
+            return messages
+        first_call, prompt, first_return = messages[1], messages[0], messages[2]
+        assert isinstance(first_return, ModelRequest)
+        return [first_call, prompt, dataclasses.replace(first_return, parts=[UserPromptPart('[cleared]')])]
+
+    agent = Agent(FunctionModel(_LookUp(calls=2)), capabilities=[ProcessHistory(rewrite)])
+
+    @agent.tool_plain
+    def lookup(n: int) -> str:
+        return f'fact {n}'
+
+    result = await agent.run('look it up')
+
+    assert conversation_view(result.all_messages()) == snapshot(
+        [
+            'call call-1',
+            'user-prompt: look it up',
+            'user-prompt: [cleared]',
+            'call call-2',
+            'return call-2: fact 2',
+            'text: done',
+        ]
+    )
+    assert conversation_view(result.conversation.messages) == snapshot(
+        [
+            'user-prompt: look it up',
+            'call call-1',
+            'return call-1: fact 1',
+            'call call-2',
+            'return call-2: fact 2',
+            'text: done',
+        ]
+    )
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_request_a_capability_adds_to_in_a_trimmed_history_is_kept_as_the_history_holds_it() -> None:
+    """A copy that only adds to a request stands for it as the history holds it, also when other messages are dropped."""
+
+    def trim_and_annotate(messages: list[ModelMessage]) -> list[ModelMessage]:
+        if len(messages) < 3:
+            return messages
+        last = messages[-1]
+        assert isinstance(last, ModelRequest)
+        return [*messages[1:-1], dataclasses.replace(last, parts=[*last.parts, UserPromptPart('[annotated]')])]
+
+    agent = Agent(FunctionModel(_LookUp(calls=1)), capabilities=[ProcessHistory(trim_and_annotate)])
+
+    @agent.tool_plain
+    def lookup(n: int) -> str:
+        return f'fact {n}'
+
+    result = await agent.run('look it up')
+
+    assert conversation_view(result.all_messages()) == snapshot(
+        ['call call-1', 'return call-1: fact 1', 'user-prompt: [annotated]', 'text: done']
+    )
+    assert conversation_view(result.conversation.messages) == snapshot(
+        ['user-prompt: look it up', 'call call-1', 'return call-1: fact 1', 'user-prompt: [annotated]', 'text: done']
+    )
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_tool_result_a_capability_clears_in_place_is_kept_as_it_was_returned() -> None:
+    def clear(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [
+            dataclasses.replace(message, parts=[UserPromptPart('[cleared]')])
+            if isinstance(message, ModelRequest) and message is not messages[0] and message is not messages[-1]
+            else message
+            for message in messages
+        ]
+
+    agent = Agent(FunctionModel(_LookUp(calls=2)), capabilities=[ProcessHistory(clear)])
+
+    @agent.tool_plain
+    def lookup(n: int) -> str:
+        return f'fact {n}'
+
+    result = await agent.run('look it up')
+
+    assert len(result.all_messages()) == len(result.conversation.messages)
+    assert 'user-prompt: [cleared]' in conversation_view(result.all_messages())
+    assert conversation_view(result.conversation.messages) == snapshot(
+        [
+            'user-prompt: look it up',
+            'call call-1',
+            'return call-1: fact 1',
+            'call call-2',
+            'return call-2: fact 2',
+            'text: done',
+        ]
+    )
+
+
+async def test_an_edit_to_a_run_s_history_after_it_reaches_its_conversation() -> None:
+    """Without a capability rewriting it during the run, the conversation is the history, as edited after the run."""
+    dropped = await Agent(TestModel()).run('hello')
+    dropped.all_messages().pop()
+    assert conversation_view(dropped.conversation.messages) == ['user-prompt: hello']
+
+    summarized = await Agent(TestModel()).run('hello')
+    summarized.all_messages()[1:] = [ModelRequest(parts=[UserPromptPart('summary')])]
+    assert conversation_view(summarized.conversation.messages) == ['user-prompt: hello', 'user-prompt: summary']
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_an_edit_to_a_trimmed_run_s_history_after_it_doesn_t_reach_its_conversation() -> None:
+    """The conversation of a run a capability trimmed is the full history as it was when the run ended."""
+    result = await _trimming_agent(_LookUp(calls=3)).run('look it up')
+    whole = conversation_view(result.conversation.messages)
+
+    result.all_messages()[-1:] = [ModelRequest(parts=[UserPromptPart('later')])]
+
+    assert len(whole) > len(conversation_view(result.all_messages()))
+    assert conversation_view(result.conversation.messages) == whole
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_streamed_run_whose_capability_trims_its_history_and_that_pauses_keeps_every_message_it_added() -> None:
+    """A streamed run that a tool pauses ends with the run's own result, which holds the full history."""
+    calls: list[int] = []
+
+    async def stream_look_up(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        calls.append(len(calls) + 1)
+        yield {0: DeltaToolCall(name='lookup', json_args=f'{{"n": {len(calls)}}}', tool_call_id=f'call-{len(calls)}')}
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_look_up),
+        output_type=[str, DeferredToolRequests],
+        capabilities=[ProcessHistory(_keep_first_and_last_four)],
+    )
+
+    @agent.tool_plain
+    def lookup(n: int) -> str:
+        if n == 4:
+            raise ApprovalRequired()
+        return f'fact {n}'
+
+    async with agent.run_stream('look it up') as stream:
+        assert isinstance(await stream.get_output(), DeferredToolRequests)
+    result = stream.result
+
+    assert len(result.all_messages()) < len(result.conversation.messages)
+    assert conversation_view(result.conversation.messages) == snapshot(
+        [
+            'user-prompt: look it up',
+            'call call-1',
+            'return call-1: fact 1',
+            'call call-2',
+            'return call-2: fact 2',
+            'call call-3',
+            'return call-3: fact 3',
+            'call call-4',
+        ]
+    )
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_streamed_run_that_trims_its_history_keeps_content_queued_at_its_deferred_pause_once() -> None:
+    """Content queued at the pause is in both the run's record and the stream's copy, and is kept once, in order."""
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {0: DeltaToolCall(name='note', json_args='{}', tool_call_id='call-note')}
+        yield {1: DeltaToolCall(name='gated', json_args='{}', tool_call_id='call-gated')}
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_fn),
+        output_type=[str, DeferredToolRequests],
+        capabilities=[ProcessHistory(lambda messages: messages[-1:])],
+    )
+
+    @agent.tool
+    def note(ctx: RunContext[object]) -> str:
+        ctx.enqueue('noted at the pause')
+        return 'noted'
+
+    @agent.tool_plain(requires_approval=True)
+    def gated() -> str:  # pragma: no cover
+        return 'done'
+
+    earlier = (await Agent(TestModel()).run('earlier')).conversation
+    async with agent.run_stream('Hello', conversation=earlier) as stream:
+        assert isinstance(await stream.get_output(), DeferredToolRequests)
+
+    assert conversation_view(stream.result.conversation.messages) == snapshot(
+        [
+            'user-prompt: earlier',
+            'text: success (no tool calls)',
+            'user-prompt: Hello',
+            'call call-note',
+            'call call-gated',
+            'return call-note: noted',
+            'user-prompt: noted at the pause',
+        ]
+    )
+
+
+@dataclasses.dataclass
+class _RewriteAtEnd(AbstractCapability[Any]):
+    """Rewrites the history once the run's last node ran, after the run's last append."""
+
+    rewrite: Callable[[list[ModelMessage]], list[ModelMessage]]
+
+    async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+        ended = isinstance(result, End)
+        if ended:
+            ctx.messages[:] = self.rewrite(ctx.messages)
+        return result
+
+
+async def test_the_last_messages_a_capability_drops_as_the_run_ends_are_kept() -> None:
+    result = await Agent(TestModel(), capabilities=[_RewriteAtEnd(lambda messages: messages[:-1])]).run('hello')
+
+    assert conversation_view(result.all_messages()) == ['user-prompt: hello']
+    assert conversation_view(result.conversation.messages) == snapshot(
+        ['user-prompt: hello', 'text: success (no tool calls)']
+    )
+
+
+async def test_a_summary_a_capability_puts_in_place_of_the_last_messages_as_the_run_ends_is_kept_after_them() -> None:
+    summary = ModelRequest(parts=[UserPromptPart('summary')])
+    agent = Agent(TestModel(), capabilities=[_RewriteAtEnd(lambda messages: [messages[0], summary])])
+    result = await agent.run('hello')
+
+    assert conversation_view(result.conversation.messages) == snapshot(
+        ['user-prompt: hello', 'text: success (no tool calls)', 'user-prompt: summary']
+    )
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_request_scoped_request_a_retried_step_removes_from_the_given_history_moves_where_the_run_s_own_start() -> (
+    None
+):
+    @dataclasses.dataclass
+    class RetryOnError(AbstractCapability[Any]):
+        async def on_model_request_error(
+            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            raise ModelRetry('try again')
+
+    attempts: list[int] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        attempts.append(len(messages))
+        if len(attempts) == 1:
+            raise RuntimeError('provider down')
+        return ModelResponse(parts=[TextPart('done')])
+
+    first = await Agent(TestModel()).run('hello')
+    history = [*first.all_messages(), ModelRequest(parts=[SystemPromptPart('Be brief.', scope='request')])]
+    agent = Agent(FunctionModel(respond), capabilities=[RetryOnError(), ProcessHistory(lambda messages: messages[-2:])])
+
+    result = await agent.run('and now', message_history=history)
+
+    dumped = TypeAdapter(AgentRunResult[str]).dump_python(result)
+    assert dumped['conversation_run_start'] == len(first.all_messages())
+    assert conversation_view(result.conversation.messages) == snapshot(
+        ['user-prompt: hello', 'text: success (no tool calls)', 'user-prompt: and now', 'text: done']
+    )
+
+
+async def test_a_run_result_keeps_where_its_conversation_s_unsaved_messages_start_across_serialization() -> None:
+    store = InMemoryConversationStore()
+    stored = await _stored_conversation(store, turns=2)
+    loaded = await store.load(stored.conversation_id)
+    assert loaded is not None
+    loaded.messages.append(ModelRequest(parts=[UserPromptPart('a new turn')]))
+    result = await Agent(TestModel()).run(conversation=loaded)
+
+    adapter: TypeAdapter[AgentRunResult[str]] = TypeAdapter(AgentRunResult[str])
+    restored = adapter.validate_json(adapter.dump_json(result))
+
+    assert restored.conversation.new_message_index == result.conversation.new_message_index == len(stored.messages)
+    plain = await Agent(TestModel()).run('hi')
+    assert 'conversation_unsaved' not in adapter.dump_python(plain)
+
+
+async def test_branching_a_conversation_continues_from_an_earlier_message_and_keeps_the_rest() -> None:
+    store = InMemoryConversationStore()
+    stored = await _stored_conversation(store, turns=2)
+    loaded = await store.load(stored.conversation_id)
+    assert loaded is not None
+
+    branched = await store.branch(stored.conversation_id, at=2, expected_revision=loaded.revision)
+    assert branched.messages == stored.messages[:2]
+    assert _entry_count(store) == 4
+    result = await Agent(TestModel()).run('a different second turn', conversation=branched)
+    await store.save(result.conversation)
+
+    reloaded = await store.load(stored.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages == [*stored.messages[:2], *result.new_messages()]
+    assert _entry_count(store) == 6
+    with pytest.raises(ConversationConflict):
+        await store.branch(stored.conversation_id, at=1, expected_revision=loaded.revision)
+
+
+async def test_branching_keeps_what_a_paused_conversation_waits_on_only_when_nothing_is_dropped() -> None:
+    store = InMemoryConversationStore()
+    requests = DeferredToolRequests(metadata={'call': {}})
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])], deferred_tool_requests=requests)
+    await store.save(conversation)
+
+    whole = await store.branch(conversation.conversation_id, at=1, expected_revision=conversation.revision)
+    assert whole.deferred_tool_requests == requests
+    partial = await store.branch(conversation.conversation_id, at=0, expected_revision=whole.revision)
+    assert partial.deferred_tool_requests is None
+    assert partial.messages == []
+
+
+async def test_branching_a_missing_conversation_or_past_its_end_raises() -> None:
+    store = InMemoryConversationStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(conversation)
+
+    with pytest.raises(UserError, match="Conversation 'unknown' is not in the store"):
+        await store.branch('unknown', at=0, expected_revision=None)
+    with pytest.raises(UserError, match='`at` must be between 0 and 1'):
+        await store.branch(conversation.conversation_id, at=2, expected_revision=conversation.revision)
+
+
+async def test_branching_a_conversation_deleted_while_it_is_read_raises_that_it_is_gone() -> None:
+    store = _RacingStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(conversation)
+
+    store.race = lambda: store.delete(conversation.conversation_id)
+    with pytest.raises(UserError, match='is not in the store'):
+        await store.branch(conversation.conversation_id, at=0, expected_revision=conversation.revision)
+
+
+async def test_loading_with_a_negative_limit_raises() -> None:
+    with pytest.raises(UserError, match='`limit` must not be negative'):
+        await InMemoryConversationStore().load('any', limit=-1)
+
+
+async def test_a_save_returns_the_entries_it_stored_and_they_load_with_their_ids() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel())
+    result = await agent.run('one')
+    conversation = result.conversation
+
+    first = await store.save(conversation)
+    assert [entry.message for entry in first] == conversation.messages
+    result = await agent.run('two', conversation=conversation)
+    conversation = result.conversation
+    second = await store.save(conversation)
+    assert [entry.message for entry in second] == result.new_messages()
+    assert second[0].parent_id == first[-1].id
+    assert await store.save(conversation) == []
+
+    entries = await store.load_entries(conversation.conversation_id)
+    assert entries is not None
+    assert [entry.id for entry in entries] == [entry.id for entry in [*first, *second]]
+    window = await store.load_entries(conversation.conversation_id, limit=1)
+    assert window is not None
+    assert [entry.id for entry in window] == [second[-1].id]
+    assert await store.load_entries('unknown') is None
+
+
+@pytest.mark.parametrize('edit', ['delete', 'insert', 'replace', 'replace_earlier', 'truncate'])
+async def test_a_loaded_conversation_edited_before_its_stored_end_is_compared_instead(edit: str) -> None:
+    """Once the messages before `new_message_index` change, it no longer marks the stored end, so nothing is dropped."""
+    store = InMemoryConversationStore()
+    first, second = ModelRequest(parts=[UserPromptPart('one')]), ModelResponse(parts=[TextPart('two')])
+    await store.save(Conversation(messages=[first, second], conversation_id='c'))
+    loaded = await store.load('c')
+    assert loaded is not None
+    if edit == 'delete':
+        del loaded.messages[0]
+    elif edit == 'insert':
+        loaded.messages.insert(0, ModelRequest(parts=[UserPromptPart('zero')]))
+    elif edit == 'replace':
+        loaded.messages[1] = ModelResponse(parts=[TextPart('two, edited')])
+    elif edit == 'replace_earlier':
+        loaded.messages[0] = ModelRequest(parts=[UserPromptPart('one, edited')])
+    else:
+        del loaded.messages[1]
+    if edit != 'truncate':
+        loaded.messages.append(ModelRequest(parts=[UserPromptPart('three')]))
+
+    await store.save(loaded)
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert reloaded.messages == loaded.messages
+
+
+async def test_a_run_from_a_loaded_conversation_edited_before_its_stored_end_saves_the_edit() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel())
+    saved = (await agent.run('one')).conversation
+    await store.save(saved)
+    loaded = await store.load(saved.conversation_id)
+    assert loaded is not None
+    loaded.messages[0] = ModelRequest(parts=[UserPromptPart('one, edited')])
+
+    result = await agent.run('two', conversation=loaded)
+    adapter: TypeAdapter[AgentRunResult[str]] = TypeAdapter(AgentRunResult[str])
+    await store.save(adapter.validate_json(adapter.dump_json(result)))
+
+    reloaded = await store.load(saved.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages == result.all_messages()
+
+
+async def test_messages_added_to_a_conversation_while_it_is_saved_are_saved_next_time() -> None:
+    store = _WriteRacingStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    added = ModelResponse(parts=[TextPart('two')])
+
+    async def add() -> None:
+        conversation.messages.append(added)
+
+    store.race = add
+    await store.save(conversation)
+    assert [entry.message for entry in await store.save(conversation)] == [added]
+
+    reloaded = await store.load(conversation.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages == conversation.messages
+
+
+class _WriteRacingStore(InMemoryConversationStore):
+    """Runs `race` once, right after a record is written."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.race: Callable[[], Awaitable[None]] | None = None
+
+    async def write_record(
+        self,
+        record: ConversationRecord,
+        *,
+        new_entries: Sequence[ConversationEntry] = (),
+        expected_revision: str | None,
+    ) -> None:
+        await super().write_record(record, new_entries=new_entries, expected_revision=expected_revision)
+        race, self.race = self.race, None
+        if race is not None:
+            await race()
+
+
+async def test_a_window_carried_into_a_run_with_instructions_appends_to_the_whole_conversation() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel(), instructions='Be helpful')
+    first = await agent.run('one')
+    second = await agent.run('two', conversation=first.conversation)
+    await store.save(second)
+    window = await store.load(second.conversation.conversation_id, limit=2)
+    assert window is not None
+    window.messages.append(ModelRequest(parts=[UserPromptPart('three')]))
+
+    third = await agent.run(conversation=window)
+    await store.save(third)
+
+    reloaded = await store.load(window.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages == [*second.all_messages(), *third.all_messages()[-2:]]
+
+
+async def _no_history_read() -> None:
+    raise AssertionError('the history was read')  # pragma: no cover
+
+
+async def test_a_serialized_window_appends_to_the_whole_conversation() -> None:
+    store = _RacingStore()
+    agent = Agent(TestModel())
+    second = await agent.run('two', conversation=(await agent.run('one')).conversation)
+    await store.save(second)
+    window = await store.load(second.conversation.conversation_id, limit=2)
+    assert window is not None
+    revived = ConversationTypeAdapter.validate_json(ConversationTypeAdapter.dump_json(window))
+
+    third = await agent.run('three', conversation=revived)
+    adapter: TypeAdapter[AgentRunResult[str]] = TypeAdapter(AgentRunResult[str])
+    await store.save(adapter_result := adapter.validate_json(adapter.dump_json(third)))
+    # Saved, the result's conversation is known to match the store, so continuing it reads no history.
+    continued = adapter_result.conversation
+    continued.messages.append(ModelRequest(parts=[UserPromptPart('four')]))
+    store.race = _no_history_read
+    await store.save(continued)
+    store.race = None
+
+    reloaded = await store.load(window.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages == [*second.all_messages(), *third.new_messages(), continued.messages[-1]]
+    record = await store.read_record(window.conversation_id)
+    assert record is not None
+    assert record.branches == []
+
+
+@pytest.mark.parametrize('edited', [0, 1])
+async def test_an_edited_serialized_window_branches_inside_the_window(edited: int) -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel())
+    second = await agent.run('two', conversation=(await agent.run('one')).conversation)
+    await store.save(second)
+    window = await store.load(second.conversation.conversation_id, limit=2)
+    assert window is not None
+    revived = ConversationTypeAdapter.validate_json(ConversationTypeAdapter.dump_json(window))
+    revived.messages[edited] = ModelResponse(parts=[TextPart('edited')])
+
+    await store.save(revived)
+
+    reloaded = await store.load(window.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages == [*second.all_messages()[:2], *revived.messages]
+
+
+@dataclasses.dataclass
+class _Answer:
+    text: str
+
+
+def _round_trip(conversation: Conversation) -> Conversation:
+    return ConversationTypeAdapter.validate_json(ConversationTypeAdapter.dump_json(conversation))
+
+
+async def test_a_conversation_serialized_between_output_tool_turns_appends_each_turn() -> None:
+    """A run merges the stored output tool result with its new prompt, so the save compares the stored messages as the run cleaned them."""
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel(), output_type=_Answer)
+    added: list[ModelMessage] = []
+    for turn in range(4):
+        loaded = await store.load('c') or Conversation(conversation_id='c')
+        result = await agent.run(f'turn {turn}', conversation=_round_trip(loaded))
+        await store.save(_round_trip(result.conversation))
+        added.extend(result.new_messages())
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert reloaded.messages == added
+    record = await store.read_record('c')
+    assert record is not None
+    assert record.branches == []
+
+
+class _HistoryReadsStore(InMemoryConversationStore):
+    """Records the `limit` of each history it reads."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.limits: list[int | None] = []
+
+    async def read_history(self, head_id: str | None, *, limit: int | None = None) -> list[ConversationEntry]:
+        self.limits.append(limit)
+        return await super().read_history(head_id, limit=limit)
+
+
+async def _stored_output_tool_turns(store: InMemoryConversationStore) -> Conversation:
+    """Three output tool turns saved in-process, so the store keeps each turn's messages as the run added them."""
+    agent = Agent(TestModel(), output_type=_Answer)
+    conversation = Conversation(conversation_id='c')
+    for turn in range(3):
+        result = await agent.run(f'turn {turn}', conversation=conversation)
+        await store.save(result)
+        conversation = result.conversation
+    stored = await store.load('c')
+    assert stored is not None
+    return stored
+
+
+async def test_a_serialized_window_of_output_tool_turns_appends_to_the_whole_conversation() -> None:
+    store = _HistoryReadsStore()
+    stored = await _stored_output_tool_turns(store)
+    window = await store.load('c', limit=5)
+    assert window is not None
+    result = await Agent(TestModel(), output_type=_Answer).run('turn 3', conversation=_round_trip(window))
+    revived = _round_trip(result.conversation)
+    # The run merged two of the 5 messages it was given.
+    assert revived.new_message_index == 4
+    store.limits.clear()
+
+    await store.save(revived)
+    reads = list(store.limits)
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert reloaded.messages == [*stored.messages, *result.new_messages()]
+    record = await store.read_record('c')
+    assert record is not None
+    assert record.branches == []
+    # The save reads stored messages back only until, cleaned the same way, they're as many as the
+    # run was sent: the one entry before the 4 it compared, not the whole history.
+    assert reads == [4, 1]
+
+
+def _carried(conversation: Conversation) -> Conversation:
+    return conversation
+
+
+def _prompt(turn: int) -> ModelRequest:
+    return ModelRequest(parts=[UserPromptPart(f'turn {turn}')], metadata={'turn': turn})
+
+
+@pytest.mark.parametrize('carry', [_carried, _round_trip], ids=['in-process', 'serialized'])
+async def test_a_prompt_appended_after_an_output_tool_turn_is_stored_once_with_the_tool_result_before_it(
+    carry: Callable[[Conversation], Conversation],
+) -> None:
+    """The run merges the stored output tool result into the appended prompt it sends, and the store gets each once.
+
+    See https://github.com/pydantic/pydantic-ai/issues/13276.
+    """
+    store = _HistoryReadsStore()
+    agent = Agent(TestModel(), output_type=_Answer)
+    results: list[AgentRunResult[_Answer]] = []
+    for turn in range(3):
+        loaded = carry(await store.load('c') or Conversation(conversation_id='c'))
+        loaded.messages.append(_prompt(turn))
+        results.append(result := await agent.run(conversation=loaded))
+        store.limits.clear()
+        await store.save(carry(result.conversation))
+        if carry is _carried:
+            # A marked save appends without reading the stored history.
+            assert store.limits == []
+
+    # What the model was sent, and `all_messages()`, still merge the two.
+    assert conversation_view(results[-1].all_messages()[-4:-2]) == snapshot(
+        [
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+            'user-prompt: turn 2',
+        ]
+    )
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert conversation_view(reloaded.messages) == snapshot(
+        [
+            'user-prompt: turn 0',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+            'user-prompt: turn 1',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+            'user-prompt: turn 2',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+        ]
+    )
+    assert [message.metadata for message in reloaded.messages if isinstance(message, ModelRequest)] == snapshot(
+        [{'turn': 0}, None, {'turn': 1}, None, {'turn': 2}, None]
+    )
+    record = await store.read_record('c')
+    assert record is not None and record.branches == []
+
+
+@pytest.mark.parametrize('carry', [_carried, _round_trip], ids=['in-process', 'serialized'])
+async def test_prompts_appended_after_an_output_tool_turn_are_stored_once_each_with_what_the_run_filled_in(
+    carry: Callable[[Conversation], Conversation],
+) -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel(), output_type=_Answer, instructions='Answer briefly.')
+    await store.save(await agent.run('turn 0', conversation=Conversation(conversation_id='c')))
+    loaded = await store.load('c')
+    assert loaded is not None
+    loaded = carry(loaded)
+    loaded.messages += [_prompt(1), _prompt(2)]
+
+    result = await agent.run(conversation=loaded)
+    await store.save(carry(result.conversation))
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert conversation_view(reloaded.messages) == snapshot(
+        [
+            'user-prompt: turn 0',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+            'user-prompt: turn 1',
+            'user-prompt: turn 2',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+        ]
+    )
+    appended = reloaded.messages[3:5]
+    assert [
+        (message.metadata, message.instructions, message.conversation_id, message.run_id)
+        for message in appended
+        if isinstance(message, ModelRequest)
+    ] == [
+        ({'turn': 1}, 'Answer briefly.', 'c', result.run_id),
+        ({'turn': 2}, 'Answer briefly.', 'c', result.run_id),
+    ]
+    record = await store.read_record('c')
+    assert record is not None and record.branches == []
+
+
+async def test_a_serialized_result_keeps_the_stored_tool_result_apart_from_the_appended_prompt() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel(), output_type=_Answer)
+    await store.save(await agent.run('turn 0', conversation=Conversation(conversation_id='c')))
+    loaded = await store.load('c')
+    assert loaded is not None
+    loaded.messages.append(_prompt(1))
+    result = await agent.run(conversation=loaded)
+    adapter: TypeAdapter[AgentRunResult[_Answer]] = TypeAdapter(AgentRunResult[_Answer])
+
+    revived = adapter.validate_json(adapter.dump_json(result)).conversation
+
+    assert 'conversation_merged_tail' in adapter.dump_python(result)
+    assert revived.messages == result.conversation.messages
+    assert revived.new_message_index == result.conversation.new_message_index == len(loaded.messages) - 1
+
+
+async def test_an_edited_tool_result_before_an_appended_prompt_still_branches() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel(), output_type=_Answer)
+    await store.save(await agent.run('turn 0', conversation=Conversation(conversation_id='c')))
+    loaded = await store.load('c')
+    assert loaded is not None
+    stored_return = loaded.messages[-1]
+    tool_return = stored_return.parts[0]
+    assert isinstance(stored_return, ModelRequest) and isinstance(tool_return, ToolReturnPart)
+    loaded.messages[-1] = dataclasses.replace(stored_return, parts=[dataclasses.replace(tool_return, content='edited')])
+    loaded.messages.append(_prompt(1))
+
+    await store.save(await agent.run(conversation=loaded))
+
+    record = await store.read_record('c')
+    assert record is not None and len(record.branches) == 1
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert conversation_view(reloaded.messages) == snapshot(
+        [
+            'user-prompt: turn 0',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: edited',
+            'user-prompt: turn 1',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+        ]
+    )
+
+
+async def test_a_prompt_appended_after_stored_requests_that_merge_is_stored_once() -> None:
+    """A prompt saved without a run follows the output tool result, so the run merges the stored requests too."""
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel(), output_type=_Answer)
+    await store.save(await agent.run('turn 0', conversation=Conversation(conversation_id='c')))
+    loaded = await store.load('c')
+    assert loaded is not None
+    loaded.messages.append(_prompt(1))
+    await store.save(loaded)
+    loaded.messages.append(_prompt(2))
+
+    await store.save(await agent.run(conversation=loaded))
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert conversation_view(reloaded.messages) == snapshot(
+        [
+            'user-prompt: turn 0',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+            'user-prompt: turn 1',
+            'user-prompt: turn 2',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+        ]
+    )
+    record = await store.read_record('c')
+    assert record is not None and record.branches == []
+
+
+@pytest.mark.parametrize(
+    'metadata',
+    [None, {'__pydantic_ai__': {'ui_message_id': 't1'}}],
+    ids=['no-metadata', 'ui-message-id'],
+)
+async def test_a_tool_result_appended_after_a_server_and_an_external_tool_call_is_stored_once(
+    metadata: dict[str, Any] | None,
+) -> None:
+    """The run merges the stored server tool result into the appended external one it sends, and the store gets each once.
+
+    A UI adapter gives the appended request the `ui_message_id` metadata.
+    See https://github.com/pydantic/pydantic-ai/issues/13547.
+    """
+    requests: list[list[ModelMessage]] = []
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        requests.append(messages)
+        if len(requests) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('lookup', {}, tool_call_id='srv-1'),
+                    ToolCallPart('pick_file', {}, tool_call_id='front-1'),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model),
+        toolsets=[ExternalToolset([ToolDefinition(name='pick_file')])],
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'server value'
+
+    store = InMemoryConversationStore()
+    await store.save(await agent.run('go', conversation=Conversation(conversation_id='c')))
+    loaded = await store.load('c')
+    assert loaded is not None
+    loaded.messages.append(
+        ModelRequest(parts=[ToolReturnPart('pick_file', 'a.txt', tool_call_id='front-1')], metadata=metadata)
+    )
+
+    await store.save(await agent.run(conversation=loaded))
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert conversation_view(reloaded.messages) == snapshot(
+        [
+            'user-prompt: go',
+            'call srv-1',
+            'call front-1',
+            'return srv-1: server value',
+            'return front-1: a.txt',
+            'text: done',
+        ]
+    )
+    record = await store.read_record('c')
+    assert record is not None and record.branches == []
+
+    await agent.run('and now?', conversation=reloaded)
+
+    assert conversation_view(requests[-1]) == snapshot(
+        [
+            'user-prompt: go',
+            'call srv-1',
+            'call front-1',
+            'return srv-1: server value',
+            'return front-1: a.txt',
+            'text: done',
+            'user-prompt: and now?',
+        ]
+    )
+
+
+@pytest.mark.moves_cache_prefix(reason='The appended request has other instructions than the stored one.')
+async def test_a_prompt_with_other_instructions_appended_after_an_output_tool_turn_is_stored_as_is() -> None:
+    """Requests with different instructions aren't merged, so there's nothing to take apart."""
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel(), output_type=_Answer)
+    messages = (await agent.run('turn 0')).all_messages()
+    messages[-1] = dataclasses.replace(messages[-1], instructions='Answer briefly.')
+    await store.save(Conversation(messages=messages, conversation_id='c'))
+    loaded = await store.load('c')
+    assert loaded is not None
+    loaded.messages.append(ModelRequest(parts=[UserPromptPart('turn 1')], instructions='Answer at length.'))
+
+    result = await agent.run(conversation=loaded)
+    await store.save(result)
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert reloaded.messages == result.conversation.messages
+    assert conversation_view(reloaded.messages) == snapshot(
+        [
+            'user-prompt: turn 0',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+            'user-prompt: turn 1',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+        ]
+    )
+
+
+async def test_a_prompt_appended_to_a_window_starting_at_an_output_tool_result_is_stored_once() -> None:
+    """The window's first message answers a call it doesn't hold, so the run drops it rather than merging it."""
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel(), output_type=_Answer)
+    await store.save(await agent.run('turn 0', conversation=Conversation(conversation_id='c')))
+    window = await store.load('c', limit=1)
+    assert window is not None
+    window.messages.append(_prompt(1))
+
+    await store.save(await agent.run(conversation=window))
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert conversation_view(reloaded.messages) == snapshot(
+        [
+            'user-prompt: turn 0',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+            'user-prompt: turn 1',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+        ]
+    )
+    record = await store.read_record('c')
+    assert record is not None and record.branches == []
+
+
+async def test_a_merged_request_a_capability_edits_in_place_is_saved_as_the_run_sent_it() -> None:
+    """Which of its parts the store already has isn't known any more, so the conversation keeps it whole."""
+
+    def redact(messages: list[ModelMessage]) -> list[ModelMessage]:
+        for message in messages:
+            if isinstance(message, ModelRequest):
+                message.parts = [
+                    dataclasses.replace(part, content='redacted') if isinstance(part, ToolReturnPart) else part
+                    for part in message.parts
+                ]
+        return messages
+
+    store = InMemoryConversationStore()
+    await store.save(
+        await Agent(TestModel(), output_type=_Answer).run('turn 0', conversation=Conversation(conversation_id='c'))
+    )
+    loaded = await store.load('c')
+    assert loaded is not None
+    loaded.messages.append(_prompt(1))
+    agent = Agent(TestModel(), output_type=_Answer, capabilities=[ProcessHistory(redact)])
+
+    conversation = (await agent.run(conversation=loaded)).conversation
+
+    assert conversation_view(conversation.messages[len(loaded.messages) - 2 :]) == snapshot(
+        [
+            'return pyd_ai_tool_call_id__final_result: redacted',
+            'user-prompt: turn 1',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+        ]
+    )
+
+
+def _look_up_then_answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Calls the `look_up` tool, and once it returned, the output tool."""
+    if any(isinstance(part, ToolReturnPart) and part.tool_name == 'look_up' for part in messages[-1].parts):
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'text': 'found'})])
+    return ModelResponse(parts=[ToolCallPart('look_up', {})])
+
+
+async def test_a_serialized_window_starting_inside_a_tool_call_turn_appends_to_the_whole_conversation() -> None:
+    """Reading back two entries can add two cleaned messages: a tool call restores the result the shorter history dropped as orphaned."""
+    agent = Agent(FunctionModel(_look_up_then_answer), output_type=_Answer)
+
+    @agent.tool_plain
+    def look_up() -> str:
+        return 'found'
+
+    store = _HistoryReadsStore()
+    conversation = Conversation(conversation_id='c')
+    for turn in range(4):
+        result = await agent.run(f'turn {turn}', conversation=conversation)
+        await store.save(result)
+        conversation = result.conversation
+    stored = await store.load('c')
+    assert stored is not None
+    window = await store.load('c', limit=9)
+    assert window is not None
+    result = await agent.run('turn 4', conversation=_round_trip(window))
+    revived = _round_trip(result.conversation)
+    assert revived.new_message_index == 8
+    store.limits.clear()
+
+    await store.save(revived)
+    reads = list(store.limits)
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert reloaded.messages == [*stored.messages, *result.new_messages()]
+    record = await store.read_record('c')
+    assert record is not None
+    assert record.branches == []
+    # The last 8 entries clean to 6 messages and the last 10 to 9, so the history the run was sent
+    # starts in between, at the last 9.
+    assert reads == [8, 2]
+
+
+@pytest.mark.parametrize(('edited', 'reads', 'cleanings'), [(False, [1, 1, 2, 4, 8], 10), (True, [1], 1)])
+async def test_a_serialized_window_of_requests_that_merge_is_read_back_only_until_it_cleans_to_as_many_parts(
+    edited: bool, reads: list[int], cleanings: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Requests in a row clean to one, so each entry read back adds a part but no message: the save reads twice as many each time until they clean to as many parts as the run was sent, however long the row."""
+    store = _HistoryReadsStore()
+    requests: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(f'request {i}')]) for i in range(2000)]
+    await store.save(Conversation(messages=requests, conversation_id='c'))
+    window = await store.load('c', limit=10)
+    assert window is not None
+    sent = repair_messages(window.messages, repair_last_response=False)
+    if edited:
+        sent = [ModelRequest(parts=[UserPromptPart('edited')])]
+    turn = ModelRequest(parts=[UserPromptPart('new')])
+    serialized = Conversation(
+        messages=[*sent, turn], conversation_id='c', revision=window.revision, new_message_index=len(sent)
+    )
+    repair = Mock(wraps=_messages.repair_messages)
+    monkeypatch.setattr(_messages, 'repair_messages', repair)
+    store.limits.clear()
+
+    await store.save(serialized)
+
+    assert store.limits == reads
+    assert repair.call_count == cleanings
+    record = await store.read_record('c')
+    assert record is not None
+    assert len(record.branches) == edited
+
+
+async def test_a_serialized_window_edited_to_hold_more_parts_is_read_back_only_until_it_cleans_to_more_messages() -> (
+    None
+):
+    store = _HistoryReadsStore()
+    agent = Agent(TestModel())
+    second = await agent.run('two', conversation=(await agent.run('one')).conversation)
+    await store.save(second)
+    window = await store.load(second.conversation.conversation_id, limit=2)
+    assert window is not None
+    revived = _round_trip(window)
+    revived.messages[0] = ModelRequest(parts=[UserPromptPart('two'), UserPromptPart('and'), UserPromptPart('more')])
+    store.limits.clear()
+
+    await store.save(revived)
+
+    assert store.limits == [2, 1]
+    reloaded = await store.load(window.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages == [*second.all_messages()[:2], *revived.messages]
+
+
+class _NoEarlierHistoryStore(InMemoryConversationStore):
+    """Once `head_id` is set, returns no entries for a history that ends anywhere else, which `read_history`'s contract rules out."""
+
+    head_id: str | None = None
+
+    async def read_history(self, head_id: str | None, *, limit: int | None = None) -> list[ConversationEntry]:
+        if self.head_id is not None and head_id != self.head_id:
+            return []
+        return await super().read_history(head_id, limit=limit)
+
+
+async def test_a_store_that_reads_no_earlier_history_branches_as_without_reading_back() -> None:
+    store = _NoEarlierHistoryStore()
+    stored = await _stored_output_tool_turns(store)
+    window = await store.load('c', limit=5)
+    assert window is not None
+    result = await Agent(TestModel(), output_type=_Answer).run('turn 3', conversation=_round_trip(window))
+    record = await store.read_record('c')
+    assert record is not None
+    store.head_id = record.head_id
+
+    await store.save(_round_trip(result.conversation))
+
+    store.head_id = None
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert reloaded.messages == [*stored.messages[:-4], *result.all_messages()]
+    record = await store.read_record('c')
+    assert record is not None
+    assert len(record.branches) == 1
+
+
+async def test_a_serialized_window_whose_run_closed_out_a_tool_call_appends_to_the_whole_conversation() -> None:
+    """A run sends a result for a stored tool call nothing answered, so it was sent more messages than the stored ones it came from."""
+    store = InMemoryConversationStore()
+    stored: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('turn 0')]),
+        ModelResponse(parts=[TextPart('answer 0')]),
+        ModelRequest(parts=[UserPromptPart('turn 1')]),
+        ModelResponse(parts=[ToolCallPart('look_up', {}, tool_call_id='unanswered')]),
+        ModelResponse(parts=[TextPart('answer 1')]),
+    ]
+    await store.save(Conversation(messages=stored, conversation_id='c'))
+    window = await store.load('c', limit=3)
+    assert window is not None
+    result = await Agent(TestModel()).run('turn 2', conversation=_round_trip(window))
+    revived = _round_trip(result.conversation)
+    assert revived.new_message_index == 4
+
+    await store.save(revived)
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert reloaded.messages == [*stored, *result.new_messages()]
+    record = await store.read_record('c')
+    assert record is not None
+    assert record.branches == []
+
+
+def _output_tool_turns(turns: int) -> list[ModelMessage]:
+    """`turns` output tool turns as an in-process save stores them, each tool result in a request of its own."""
+    messages: list[ModelMessage] = []
+    for turn in range(turns):
+        messages += [
+            ModelRequest(parts=[UserPromptPart(f'turn {turn}')]),
+            ModelResponse(parts=[ToolCallPart('final_result', {'text': 'a'}, tool_call_id=f'call {turn}')]),
+            ModelRequest(
+                parts=[ToolReturnPart('final_result', 'Final result processed.', tool_call_id=f'call {turn}')]
+            ),
+        ]
+    return messages
+
+
+@pytest.mark.parametrize(('edited', 'cleanings'), [(False, 3), (True, 5)])
+async def test_a_long_serialized_conversation_is_compared_cleaning_few_of_the_histories_it_could_have_been_sent(
+    edited: bool, cleanings: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cleaning a history takes time in its length, so the save cleans only a logarithmic number of the stored histories that end at its last message."""
+    store = InMemoryConversationStore()
+    stored = _output_tool_turns(200)
+    await store.save(Conversation(messages=stored, conversation_id='c'))
+    loaded = await store.load('c')
+    assert loaded is not None
+    sent = repair_messages(loaded.messages, repair_last_response=False)
+    if edited:
+        sent[len(sent) // 2] = ModelResponse(parts=[TextPart('edited')])
+    turn = ModelRequest(parts=[UserPromptPart('turn 200')])
+    serialized = Conversation(
+        messages=[*sent, turn], conversation_id='c', revision=loaded.revision, new_message_index=len(sent)
+    )
+    repair = Mock(wraps=_messages.repair_messages)
+    monkeypatch.setattr(_messages, 'repair_messages', repair)
+
+    await store.save(serialized)
+
+    assert repair.call_count == cleanings
+    record = await store.read_record('c')
+    assert record is not None
+    assert len(record.branches) == edited
+
+
+async def test_a_serialized_window_whose_conversation_is_deleted_while_more_of_it_is_read_conflicts() -> None:
+    store = _RacingStore()
+    await _stored_output_tool_turns(store)
+    window = await store.load('c', limit=5)
+    assert window is not None
+    result = await Agent(TestModel(), output_type=_Answer).run('turn 3', conversation=_round_trip(window))
+
+    async def delete_on_the_next_read() -> None:
+        store.race = lambda: store.delete('c')
+
+    # The save's first history read is the window it compares; the delete lands on the next one,
+    # which reads further back.
+    store.race = delete_on_the_next_read
+    with pytest.raises(ConversationConflict):
+        await store.save(_round_trip(result.conversation))
+
+
+async def test_a_conversation_copied_after_loading_is_compared_instead() -> None:
+    store = InMemoryConversationStore()
+    await store.save(Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])], conversation_id='c'))
+    loaded = await store.load('c')
+    assert loaded is not None
+    copied = dataclasses.replace(loaded, messages=[*loaded.messages[1:], ModelRequest(parts=[UserPromptPart('two')])])
+
+    await store.save(copied)
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert reloaded.messages == copied.messages
+
+
+async def test_a_conversation_can_branch_back_to_a_branch_it_left() -> None:
+    store = InMemoryConversationStore()
+    stored = await _stored_conversation(store, turns=2)
+    original = await store.load_entries(stored.conversation_id)
+    assert original is not None
+
+    branched = await store.branch(stored.conversation_id, at=2, expected_revision=stored.revision)
+    edited = (await Agent(TestModel()).run('an edited second turn', conversation=branched)).conversation
+    edited_tip = (await store.save(edited))[-1].id
+    record = await store.read_record(stored.conversation_id)
+    assert record is not None
+    assert record.branches == [original[-1].id]
+
+    back = await store.branch(stored.conversation_id, from_entry=original[-1].id, expected_revision=edited.revision)
+
+    assert back.messages == stored.messages
+    record = await store.read_record(stored.conversation_id)
+    assert record is not None
+    assert (record.head_id, record.branches) == (original[-1].id, [edited_tip])
+
+
+async def test_branching_needs_exactly_one_known_point() -> None:
+    store = InMemoryConversationStore()
+    stored = await _stored_conversation(store, turns=1)
+
+    with pytest.raises(UserError, match='exactly one of `at` and `from_entry`'):
+        await store.branch(stored.conversation_id, expected_revision=stored.revision)
+    with pytest.raises(UserError, match='exactly one of `at` and `from_entry`'):
+        await store.branch(stored.conversation_id, at=0, from_entry='x', expected_revision=stored.revision)
+    with pytest.raises(UserError, match="Entry 'unknown' is not in the history"):
+        await store.branch(stored.conversation_id, from_entry='unknown', expected_revision=stored.revision)
+
+
+async def test_a_fork_can_start_from_a_branch_the_conversation_left() -> None:
+    store = InMemoryConversationStore()
+    stored = await _stored_conversation(store, turns=2)
+    original = await store.load_entries(stored.conversation_id)
+    assert original is not None
+    await store.branch(stored.conversation_id, at=0, expected_revision=stored.revision)
+
+    fork = await store.fork(stored.conversation_id, from_entry=original[1].id)
+
+    assert fork.messages == stored.messages[:2]
+    assert fork.usage == RunUsage()
+
+
+async def test_a_save_that_rewrites_the_history_records_the_branch_it_left() -> None:
+    store = InMemoryConversationStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    (entry,) = await store.save(conversation)
+    conversation.messages = [ModelRequest(parts=[UserPromptPart('rewritten')])]
+    conversation.new_message_index = None
+
+    await store.save(conversation)
+
+    record = await store.read_record(conversation.conversation_id)
+    assert record is not None
+    assert record.branches == [entry.id]
+    await store.save(other := Conversation(messages=[ModelRequest(parts=[UserPromptPart('other')])]))
+    await store.delete(other.conversation_id)
+    # Deleting another conversation collects its entries, but keeps the branch this one left.
+    assert _entry_count(store) == 2
+
+
+async def test_a_scope_keeps_a_conversation_to_its_owner() -> None:
+    store = InMemoryConversationStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(conversation, scope='alice')
+    conversation_id = conversation.conversation_id
+
+    assert await store.load(conversation_id, scope='bob') is None
+    assert await store.load_entries(conversation_id, scope='bob') is None
+    assert await store.load(conversation_id, scope='alice') is not None
+    with pytest.raises(UserError, match='is not in the store'):
+        await store.branch(conversation_id, at=0, expected_revision=conversation.revision, scope='bob')
+    with pytest.raises(UserError, match='is not in the store'):
+        await store.fork(conversation_id, source_scope='bob')
+    with pytest.raises(ConversationConflict):
+        await store.save(conversation, scope='bob')
+    await store.delete(conversation_id, scope='bob')
+    assert await store.load(conversation_id) is not None
+    await store.delete(conversation_id, scope='alice')
+    assert await store.load(conversation_id) is None
+
+
+async def test_saving_a_result_lets_its_conversation_continue_and_save_again() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel())
+    result = await agent.run('one')
+    await store.save(result)
+
+    result = await agent.run('two', conversation=result.conversation)
+    await store.save(result)
+    assert await store.save(result) == []
+
+    loaded = await store.load(result.conversation_id)
+    assert loaded is not None
+    assert loaded.messages == result.all_messages()
+    adapter: TypeAdapter[AgentRunResult[str]] = TypeAdapter(AgentRunResult[str])
+    restored = adapter.validate_json(adapter.dump_json(result))
+    assert restored.conversation.revision == loaded.revision
+    assert restored.conversation.new_message_index == len(loaded.messages)
+
+
+async def test_a_conversation_replaced_under_another_scope_while_it_is_deleted_is_kept() -> None:
+    store = _RecordRacingStore()
+    await store.save(Conversation(conversation_id='c'), scope='alice')
+
+    async def replace() -> None:
+        await store.delete('c')
+        await store.save(Conversation(conversation_id='c'), scope='bob')
+
+    store.race = replace
+    await store.delete('c', scope='alice')
+
+    record = await store.read_record('c')
+    assert record is not None
+    assert record.scope == 'bob'
+
+
+class _RecordRacingStore(InMemoryConversationStore):
+    """Runs `race` once, right after a record is read."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.race: Callable[[], Awaitable[None]] | None = None
+
+    async def read_record(self, conversation_id: str) -> ConversationRecord | None:
+        record = await super().read_record(conversation_id)
+        race, self.race = self.race, None
+        if race is not None:
+            await race()
+        return record
+
+
+async def test_a_conversation_s_title_and_metadata_change_only_through_update() -> None:
+    store = InMemoryConversationStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(conversation, scope='user-1')
+
+    metadata = {'pinned': True}
+    updated = await store.update(conversation.conversation_id, title='Greetings', metadata=metadata)
+    assert (updated.title, updated.metadata, updated.revision) == ('Greetings', {'pinned': True}, conversation.revision)
+    # The store keeps its own copy, so changing the dict passed in doesn't change the stored one.
+    metadata['pinned'] = False
+
+    # The update didn't change the revision, so the conversation saves on, and the save keeps both.
+    conversation.messages.append(ModelResponse(parts=[TextPart('two')]))
+    await store.save(conversation)
+    saved = await store.read_record(conversation.conversation_id)
+    assert saved is not None
+    assert (saved.title, saved.metadata) == ('Greetings', {'pinned': True})
+    cleared = await store.update(conversation.conversation_id, metadata=None, scope='user-1')
+    assert (cleared.title, cleared.metadata) == ('Greetings', None)
+
+    [listed] = await store.list_conversations(scope='user-1')
+    assert (listed.title, listed.metadata, listed.revision) == ('Greetings', None, conversation.revision)
+    fork = await store.fork(conversation.conversation_id)
+    forked = await store.read_record(fork.conversation_id)
+    assert forked is not None
+    assert (forked.title, forked.metadata) == (None, None)
+
+
+async def test_a_save_that_read_the_record_before_an_update_keeps_it() -> None:
+    store = _RecordRacingStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(conversation)
+    conversation.messages.append(ModelResponse(parts=[TextPart('two')]))
+
+    async def retitle() -> None:
+        await store.update(conversation.conversation_id, title='Greetings')
+
+    store.race = retitle
+    await store.save(conversation)
+
+    record = await store.read_record(conversation.conversation_id)
+    assert record is not None
+    assert (record.title, record.revision) == ('Greetings', conversation.revision)
+
+
+async def test_an_update_racing_a_save_applies_to_the_saved_conversation() -> None:
+    store = _RecordRacingStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(conversation)
+
+    async def save() -> None:
+        await store.save(conversation)
+
+    store.race = save
+    updated = await store.update(conversation.conversation_id, title='Greetings')
+
+    assert (updated.title, updated.revision) == ('Greetings', conversation.revision)
+
+
+async def test_an_update_keeps_a_field_another_update_changed_since_it_read_the_record() -> None:
+    store = _RecordRacingStore()
+    conversation = Conversation()
+    await store.save(conversation)
+
+    async def pin() -> None:
+        await store.update(conversation.conversation_id, metadata={'pinned': True})
+
+    store.race = pin
+    await store.update(conversation.conversation_id, title='Greetings')
+
+    record = await store.read_record(conversation.conversation_id)
+    assert record is not None
+    assert (record.title, record.metadata) == ('Greetings', {'pinned': True})
+
+
+async def test_an_update_with_expected_title_never_replaces_a_title_set_since() -> None:
+    store = InMemoryConversationStore()
+    conversation = Conversation()
+    await store.save(conversation)
+    conversation_id = conversation.conversation_id
+
+    # A titling agent titles it while it has no title.
+    titled = await store.update(conversation_id, title='Login page 500 error', expected_title=None)
+    assert titled.title == 'Login page 500 error'
+
+    # The user renames it, and the agent's next title is refused rather than written over theirs.
+    await store.update(conversation_id, title='Prod outage')
+    with pytest.raises(
+        ConversationConflict, match="is titled 'Prod outage', not None, so it was not updated"
+    ) as conflict:
+        await store.update(conversation_id, title='Debugging auth', expected_title=None)
+    assert conflict.value.conversation_id == conversation_id
+    record = await store.read_record(conversation_id)
+    assert record is not None
+    assert record.title == 'Prod outage'
+
+    # Naming the title it has now applies the update.
+    retitled = await store.update(conversation_id, title='Prod outage, fixed', expected_title='Prod outage')
+    assert retitled.title == 'Prod outage, fixed'
+
+
+async def test_an_update_with_expected_title_keeps_a_rename_made_after_it_read_the_record() -> None:
+    store = _RecordRacingStore()
+    conversation = Conversation()
+    await store.save(conversation)
+
+    async def rename() -> None:
+        await store.update(conversation.conversation_id, title='Prod outage')
+
+    store.race = rename
+    with pytest.raises(ConversationConflict, match="is titled 'Prod outage'"):
+        await store.update(conversation.conversation_id, title='Login page 500 error', expected_title=None)
+
+    record = await store.read_record(conversation.conversation_id)
+    assert record is not None
+    assert record.title == 'Prod outage'
+
+
+async def test_write_details_writes_only_while_every_expected_value_is_stored() -> None:
+    """`write_details` is the primitive backends copy, so it checks every key in `expected`, not just the title."""
+    store = InMemoryConversationStore()
+    conversation = Conversation()
+    await store.save(conversation)
+    conversation_id = conversation.conversation_id
+    assert conversation.revision is not None
+    await store.update(conversation_id, metadata={'model': 'a'})
+
+    with pytest.raises(ConversationConflict):
+        await store.write_details(
+            conversation_id,
+            {'metadata': {'model': 'c'}},
+            expected_revision=conversation.revision,
+            expected={'metadata': {'model': 'b'}},
+        )
+    record = await store.read_record(conversation_id)
+    assert record is not None
+    assert record.metadata == {'model': 'a'}
+
+    written = await store.write_details(
+        conversation_id,
+        {'metadata': {'model': 'c'}},
+        expected_revision=conversation.revision,
+        expected={'metadata': {'model': 'a'}},
+    )
+    assert written.metadata == {'model': 'c'}
+
+
+async def test_updating_a_conversation_the_store_does_not_have_or_another_scope_s_raises() -> None:
+    store = InMemoryConversationStore()
+    conversation = Conversation()
+    await store.save(conversation, scope='alice')
+
+    with pytest.raises(UserError, match='is not in the store'):
+        await store.update('unknown', title='Greetings')
+    with pytest.raises(UserError, match='is not in the store'):
+        await store.update(conversation.conversation_id, title='Greetings', scope='bob')
+
+
+async def test_a_backend_without_write_details_says_it_can_t_update() -> None:
+    class _OlderStore(InMemoryConversationStore):
+        write_details = ConversationStore.write_details
+
+    store = _OlderStore()
+    conversation = Conversation()
+    await store.save(conversation)
+
+    with pytest.raises(NotImplementedError, match="_OlderStore doesn't implement `write_details`"):
+        await store.update(conversation.conversation_id, title='Greetings')
+    # An update that changes nothing doesn't need it.
+    unchanged = await store.update(conversation.conversation_id)
+    assert (unchanged.title, unchanged.revision) == (None, conversation.revision)
+
+
+async def test_a_save_keeps_a_title_on_a_backend_that_stores_records_as_given() -> None:
+    class _WholeRecordStore(InMemoryConversationStore):
+        """Writes each record as given, as a backend without `write_details` does."""
+
+        async def write_record(
+            self,
+            record: ConversationRecord,
+            *,
+            new_entries: Sequence[ConversationEntry] = (),
+            expected_revision: str | None,
+        ) -> None:
+            await super().write_record(record, new_entries=new_entries, expected_revision=expected_revision)
+            self._records[record.conversation_id] = record
+
+    store = _WholeRecordStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(conversation)
+    record = await store.read_record(conversation.conversation_id)
+    assert record is not None
+    await store.write_record(
+        dataclasses.replace(record, title='Set elsewhere', metadata={'pinned': True}), expected_revision=record.revision
+    )
+
+    await store.save(conversation)
+
+    saved = await store.read_record(conversation.conversation_id)
+    assert saved is not None
+    assert (saved.title, saved.metadata) == ('Set elsewhere', {'pinned': True})
+
+
+def _call_look_up(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('look_up')])
+
+
+async def _loaded(store: InMemoryConversationStore, turns: int) -> Conversation:
+    stored = await _stored_conversation(store, turns=turns)
+    loaded = await store.load(stored.conversation_id)
+    assert loaded is not None
+    return loaded
+
+
+async def test_a_run_that_hits_a_usage_limit_can_still_store_what_it_did() -> None:
+    store = InMemoryConversationStore()
+    loaded = await _loaded(store, turns=1)
+    agent = Agent(FunctionModel(_call_look_up))
+
+    @agent.tool_plain
+    def look_up() -> str:
+        return 'found'
+
+    # The conversation's usage carries into the run, so this allows one more request: the one calling the tool.
+    limits = UsageLimits(request_limit=loaded.usage.requests + 1)
+    with pytest.raises(UsageLimitExceeded) as exc_info:
+        await agent.run('Look it up', conversation=loaded, usage_limits=limits)
+    failed = exc_info.value.conversation
+    assert failed is not None
+    assert failed.conversation_id == loaded.conversation_id
+
+    added = await store.save(failed)
+
+    # The new turn: the prompt, the response calling the tool, and the request with its return.
+    assert [entry.message for entry in added] == failed.messages[len(loaded.messages) :]
+    assert len(added) == 3
+    reloaded = await store.load(loaded.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages == failed.messages
+
+
+async def test_a_failed_run_s_error_gets_its_conversation_once_it_leaves_the_run() -> None:
+    """Caught inside the run, the error has no conversation yet: the run sets it as the error leaves the run."""
+    agent = Agent(FunctionModel(_call_look_up))
+
+    @agent.tool_plain
+    def look_up() -> str:
+        return 'found'
+
+    messages: list[ModelMessage] = []
+    with pytest.raises(UsageLimitExceeded) as exc_info:
+        async with agent.iter('Look it up', usage_limits=UsageLimits(request_limit=1)) as run:
+            try:
+                async for _ in run:
+                    pass
+            except UsageLimitExceeded as error:
+                assert error.conversation is None
+                messages = run.all_messages()
+                raise
+
+    failed = exc_info.value.conversation
+    assert failed is not None
+    assert failed.messages == messages != []
+
+
+async def test_a_run_whose_tool_raises_can_still_store_what_it_did() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def look_up() -> str:
+        raise ValueError('the database is down')
+
+    with capture_run_conversation() as captured:
+        assert captured.conversation is None
+        with pytest.raises(ValueError, match='the database is down'):
+            await agent.run('Look it up')
+    failed = captured.conversation
+    assert failed is not None
+
+    added = await store.save(failed)
+
+    # Later reads return the saved conversation, so it can be saved again without a conflict.
+    assert captured.conversation is failed
+    # The prompt, the response calling the tool, and the request its return would have gone in, cut short.
+    assert [entry.message for entry in added] == failed.messages
+    last = added[-1].message
+    assert isinstance(last, ModelRequest)
+    assert last.state == 'interrupted'
+
+
+async def test_a_conversation_read_while_the_run_goes_on_is_not_kept() -> None:
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def look_up() -> str:
+        raise ValueError('the database is down')
+
+    snapshots: list[Conversation | None] = []
+    with capture_run_conversation() as captured:
+        with pytest.raises(ValueError, match='the database is down'):
+            async with agent.iter('Look it up') as run:
+                async for _ in run:
+                    snapshots.append(captured.conversation)
+    failed = captured.conversation
+    assert failed is not None
+
+    # Each read during the run was a snapshot of it so far, and none of them was kept.
+    assert [len(snapshot.messages) for snapshot in snapshots if snapshot is not None] == [0, 0, 2]
+    assert len(failed.messages) == 3
+    assert captured.conversation is failed
+
+
+async def test_capture_run_conversation_keeps_the_first_run_and_leaves_an_inner_context_s_run_to_it() -> None:
+    agent = Agent(TestModel())
+
+    with capture_run_conversation() as outer:
+        first = await agent.run('First', conversation_id='first')
+        with capture_run_conversation() as inner:
+            await agent.run('Inner', conversation_id='inner')
+        await agent.run('Second', conversation_id='second')
+
+    assert outer.conversation is not None and inner.conversation is not None
+    assert outer.conversation.conversation_id == 'first'
+    assert outer.conversation.messages == first.all_messages()
+    assert inner.conversation.conversation_id == 'inner'
+
+
+class _FailsBeforeTheRun(AbstractCapability[None]):
+    async def before_run(self, ctx: RunContext[None]) -> None:
+        raise RuntimeError('the hook failed')
+
+
+async def test_a_resumed_run_that_fails_before_adding_a_message_leaves_the_calls_waiting() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel(), deps_type=type(None))
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file() -> str:
+        return 'deleted'  # pragma: no cover
+
+    paused = await agent.run('Delete it', output_type=[str, DeferredToolRequests])
+    assert isinstance(paused.output, DeferredToolRequests)
+    await store.save(paused)
+    loaded = await store.load(paused.conversation_id)
+    assert loaded is not None and loaded.deferred_tool_requests is not None
+    [call] = loaded.deferred_tool_requests.approvals
+
+    with capture_run_conversation() as captured:
+        with pytest.raises(RuntimeError, match='the hook failed'):
+            await agent.run(
+                conversation=loaded,
+                output_type=[str, DeferredToolRequests],
+                deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: True}),
+                capabilities=[_FailsBeforeTheRun()],
+            )
+    failed = captured.conversation
+    assert failed is not None
+    assert failed.deferred_tool_requests == loaded.deferred_tool_requests
+    # A copy, so changing it doesn't change the conversation the run was given.
+    assert failed.deferred_tool_requests is not loaded.deferred_tool_requests
+
+    await store.save(failed)
+    reloaded = await store.load(paused.conversation_id)
+    assert reloaded is not None
+    assert reloaded.deferred_tool_requests == loaded.deferred_tool_requests
+
+
+async def test_a_resumed_run_that_fails_after_running_the_approved_calls_leaves_none_waiting() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel(), deps_type=type(None))
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file() -> str:
+        return 'deleted'
+
+    paused = await agent.run('Delete it', output_type=[str, DeferredToolRequests])
+    await store.save(paused)
+    loaded = await store.load(paused.conversation_id)
+    assert loaded is not None and loaded.deferred_tool_requests is not None
+    [call] = loaded.deferred_tool_requests.approvals
+
+    with pytest.raises(UsageLimitExceeded) as exc_info:
+        await agent.run(
+            conversation=loaded,
+            output_type=[str, DeferredToolRequests],
+            deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: True}),
+            usage_limits=UsageLimits(request_limit=0),
+        )
+    failed = exc_info.value.conversation
+    assert failed is not None
+    # The approved call ran, so its result is in the history and nothing is left to approve.
+    returns = [part for message in failed.messages for part in message.parts if isinstance(part, ToolReturnPart)]
+    assert [(part.tool_call_id, part.content) for part in returns] == [(call.tool_call_id, 'deleted')]
+    assert failed.deferred_tool_requests is None
+
+    await store.save(failed)
+    reloaded = await store.load(paused.conversation_id)
+    assert reloaded is not None
+    assert reloaded.deferred_tool_requests is None
+    assert reloaded.messages == failed.messages
+
+
+async def test_an_externally_cancelled_event_stream_carries_its_conversation() -> None:
+    started = asyncio.Event()
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    async def wait() -> str:
+        started.set()
+        await asyncio.Event().wait()
+        return 'done'  # pragma: no cover
+
+    async def consume() -> None:
+        async with agent.run_stream_events('Wait') as events:
+            async for _ in events:
+                pass
+
+    task = asyncio.create_task(consume())
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError) as exc_info:
+        await task
+
+    cancelled = RunCancelled.from_cancellation(exc_info.value)
+    assert cancelled is not None and cancelled.conversation is not None
+    assert cancelled.conversation.messages == cancelled.all_messages()
+
+
+async def test_a_cancelled_run_carries_its_conversation() -> None:
+    agent = Agent(TestModel())
+
+    @agent.tool
+    def stop(ctx: RunContext) -> str:
+        ctx.cancel()
+        return 'stopped'
+
+    with pytest.raises(RunCancelled) as exc_info:
+        await agent.run('Stop')
+
+    failed = exc_info.value.conversation
+    assert failed is not None
+    assert failed.messages == exc_info.value.all_messages()
+
+
+async def test_a_nested_run_s_error_carries_the_outer_run_s_conversation() -> None:
+    inner = Agent(TestModel())
+    outer = Agent(TestModel())
+
+    @inner.tool_plain
+    def look_up() -> str:
+        return 'found'
+
+    @outer.tool_plain
+    async def delegate() -> str:
+        return (await inner.run('Look it up', usage_limits=UsageLimits(request_limit=1))).output
+
+    with pytest.raises(UsageLimitExceeded) as exc_info:
+        await outer.run('Delegate', conversation_id='outer')
+
+    failed = exc_info.value.conversation
+    assert failed is not None
+    assert failed.conversation_id == 'outer'
+
+
+async def test_a_nested_run_s_cancellation_keeps_its_own_conversation_as_the_cause() -> None:
+    inner = Agent(TestModel(), deps_type=type(None))
+
+    @inner.tool
+    async def stop(ctx: RunContext[None]) -> str:
+        ctx.cancel()
+        # The cancellation is delivered at the next await.
+        await asyncio.Event().wait()
+        return 'unreachable'  # pragma: no cover
+
+    class _Delegates(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            await inner.run('Stop', conversation_id='inner')
+
+    outer = Agent(TestModel(), deps_type=type(None), capabilities=[_Delegates()])
+
+    with pytest.raises(RunCancelled) as exc_info:
+        await outer.run('Delegate', conversation_id='outer')
+
+    cancelled = exc_info.value
+    assert cancelled.conversation is not None and cancelled.conversation.conversation_id == 'outer'
+    nested = cancelled.__cause__
+    assert isinstance(nested, RunCancelled)
+    assert nested.conversation is not None and nested.conversation.conversation_id == 'inner'
+    assert nested.conversation.messages == nested.all_messages()

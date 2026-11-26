@@ -1,6 +1,7 @@
 from typing import Any, TypeAlias
 
 from pydantic_ai._history_processor import HistoryProcessor
+from pydantic_ai._instructions import AgentInstructions, SourcedInstruction
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.native_tools._tool_search import (
     ToolSearchFunc as ToolSearchFunc,
@@ -10,7 +11,9 @@ from pydantic_ai.native_tools._tool_search import (
 )
 from pydantic_ai.output import OutputContext
 
+from ..toolsets._tool_search import keywords_search
 from ._dynamic import CapabilityFunc, DynamicCapability
+from ._on_event import on_event
 from ._tool_search import ToolSearch
 from .abstract import (
     AbstractCapability,
@@ -34,16 +37,22 @@ from .abstract import (
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
 )
+from .batch_model_requests import BatchModelRequests
+from .caching import Caching
 from .capability import Capability
+from .citations import Citations
 from .combined import CombinedCapability
 from .content_filter import RaiseContentFilterError
 from .deferred_tool_handler import HandleDeferredToolCalls
 from .durable_operation import durable_operation
+from .file_understanding import FileUnderstanding
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
 from .include_return_schemas import IncludeToolReturnSchemas
 from .instrumentation import Instrumentation
-from .mcp import MCP
+from .local_workspace import LocalWorkspace
+from .mcp import MCP, MCPAuthorizationTokenFunc
+from .model_fallback import ModelFallback
 from .native_or_local import NativeOrLocalTool
 from .native_tool import NativeTool
 from .prefix_tools import PrefixTools
@@ -51,7 +60,9 @@ from .prepare_tools import PrepareOutputTools, PrepareTools
 from .process_event_stream import ProcessEventStream
 from .process_history import ProcessHistory
 from .reinject_system_prompt import ReinjectSystemPrompt
+from .request_input import RequestInput  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RequestInput
 from .resolve_model_id import ModelIdResolver, ResolveModelId
+from .retry_on_model_errors import TRANSIENT_MODEL_ERRORS, RetryOnModelErrors
 from .select_model import SelectModel
 from .set_tool_metadata import SetToolMetadata
 from .thinking import Thinking
@@ -59,6 +70,7 @@ from .thread_executor import UseThreadExecutor
 from .toolset import Toolset
 from .web_fetch import WebFetch
 from .web_search import WebSearch
+from .windows_workspace import WindowsWorkspace
 from .wrapper import WrapperCapability
 from .x_search import XSearch
 
@@ -74,21 +86,29 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
         NativeTool,
+        BatchModelRequests,
+        Caching,
+        Citations,
         RaiseContentFilterError,
+        FileUnderstanding,
         ImageGeneration,
         IncludeToolReturnSchemas,
         Instrumentation,
+        LocalWorkspace,
         MCP,
+        ModelFallback,
         PrefixTools,
         PrepareTools,
         ProcessHistory,
         ReinjectSystemPrompt,
+        RetryOnModelErrors,
         SetToolMetadata,
         Thinking,
         ToolSearch,
         Toolset,
         WebFetch,
         WebSearch,
+        WindowsWorkspace,
         XSearch,
     )
     if (name := cls.get_serialization_name()) is not None
@@ -101,6 +121,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
 __all__ = [
     'AbstractCapability',
     'AgentCapability',
+    'AgentInstructions',
     'AgentModel',
     'AgentNode',
     'CapabilityDescription',
@@ -123,14 +144,22 @@ __all__ = [
     'WrapOutputValidateHandler',
     'WrapOutputProcessHandler',
     'NativeTool',
+    'on_event',
     'NativeOrLocalTool',
     'RaiseContentFilterError',
+    'BatchModelRequests',
+    'Caching',
     'Capability',
+    'Citations',
     'CAPABILITY_TYPES',
+    'TRANSIENT_MODEL_ERRORS',
+    'FileUnderstanding',
     'ImageGeneration',
     'Instrumentation',
     'IncludeToolReturnSchemas',
+    'LocalWorkspace',
     'MCP',
+    'MCPAuthorizationTokenFunc',
     'PrefixTools',
     'PrepareOutputTools',
     'PrepareTools',
@@ -138,23 +167,29 @@ __all__ = [
     'ProcessHistory',
     'ReinjectSystemPrompt',
     'ResolveModelId',
+    'RetryOnModelErrors',
+    'ModelFallback',
     'SelectModel',
     'SetToolMetadata',
+    'SourcedInstruction',
     'Thinking',
     'ToolSearch',
     'ToolSearchFunc',
     'ToolSearchLocalStrategy',
     'ToolSearchNativeStrategy',
     'ToolSearchStrategy',
+    'keywords_search',
     'Toolset',
     'UseThreadExecutor',
     'WebFetch',
     'WebSearch',
+    'WindowsWorkspace',
     'WrapperCapability',
     'XSearch',
     'CombinedCapability',
     'DynamicCapability',
     'durable_operation',
+    'RequestInput',
     'HandleDeferredToolCalls',
     'HistoryProcessor',
     'HookTimeoutError',

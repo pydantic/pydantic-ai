@@ -37,17 +37,20 @@ from __future__ import annotations
 
 import inspect
 import re
-from collections.abc import Sequence
+from collections import Counter
+from collections.abc import Iterator, Sequence
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from functools import cache
-from typing import Annotated, Any
+from heapq import nsmallest
+from typing import Annotated, Any, assert_never
 
 from pydantic import Field, TypeAdapter, ValidationError
-from typing_extensions import TypedDict, assert_never
+from typing_extensions import TypedDict
 
+from .._deferred_capabilities import CAPABILITY_LOAD_KIND
 from .._run_context import AgentDepsT, RunContext
-from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
+from .._tool_search import _NO_MATCHES_MESSAGE, TOOL_SEARCH_KIND  # pyright: ignore[reportPrivateUsage]
 from ..exceptions import ModelRetry, UserError
 from ..messages import (
     ModelMessage,
@@ -66,7 +69,12 @@ from ..native_tools._tool_search import (
     ToolSearchReturnContent,
     ToolSearchTool,
 )
-from ..tools import Tool, ToolDefinition
+from ..tools import (
+    Tool,
+    ToolDefinition,
+    ToolSelector,
+    matches_tool_selector,
+)
 from ._capability_owned import is_gated_by_deferred_capability
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
@@ -75,6 +83,9 @@ _SEARCH_TOOLS_NAME = TOOL_SEARCH_FUNCTION_TOOL_NAME
 _TOOL_SEARCH_BUILTIN_ID = ToolSearchTool.kind
 
 _LEGACY_DISCOVERED_TOOLS_METADATA_KEY = 'discovered_tools'
+
+# The framework's own discovery tools; `ToolSearch(tools=...)` never defers them.
+_FRAMEWORK_TOOL_KINDS = frozenset({TOOL_SEARCH_KIND.id, CAPABILITY_LOAD_KIND.id})
 
 
 class _LegacyDiscoveryMetadata(TypedDict):
@@ -106,15 +117,12 @@ def _tokenize(text: str) -> set[str]:
     return set(_SEARCH_TOKEN_RE.findall(text.lower()))
 
 
-def keywords_search_fn(_ctx: RunContext[Any], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
-    """Built-in keyword-overlap search algorithm exposed as a [`ToolSearchFunc`][pydantic_ai.capabilities.ToolSearchFunc].
+def keywords_search(ctx: RunContext[Any], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
+    """Rank tools by how many of the query words appear in their name or description.
 
-    Score each tool by how many query keywords appear in its name or description, then
-    return matching names ordered by descending score. Used both as the default
-    algorithm when `ToolSearch` was constructed without an explicit strategy AND as
-    the explicit `strategy='keywords'` choice — the difference is that the explicit
-    choice routes through the same dispatch path as a user-supplied callable, which
-    enables client-executed-native wire on supporting providers (cache benefit).
+    Matching is case-insensitive and word by word. Returns the names of the tools that match at least one
+    word, best match first. This is the [`ToolSearchFunc`][pydantic_ai.capabilities.ToolSearchFunc] behind
+    `ToolSearch(strategy='keywords')`, so a custom search function can wrap it or fall back to it.
     """
     terms = _tokenize(' '.join(queries))
     if not terms:
@@ -235,28 +243,38 @@ def _discovered_tool_names_in_order(messages: Sequence[ModelMessage]) -> tuple[s
     discovered: dict[str, None] = {}
     for msg in messages:
         if isinstance(msg, ModelRequest):
-            for part in msg.parts:
-                if isinstance(part, ToolAvailabilityDeltaPart):
-                    discovered.update(dict.fromkeys(part.tools_added))
-                elif isinstance(part, ToolSearchReturnPart):
-                    discovered.update(dict.fromkeys(match['name'] for match in part.discovered_tools))
-                elif isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:
-                    # Legacy histories carry discoveries on `metadata['discovered_tools']`
-                    # rather than typed content. Narrowing tool_name + metadata shape avoids
-                    # surfacing a user-defined `search_tools` whose metadata has no legacy
-                    # shape.
-                    try:
-                        validated = _LEGACY_METADATA_TA.validate_python(part.metadata)
-                    except ValidationError:
-                        continue
-                    discovered.update(dict.fromkeys(validated['discovered_tools']))
+            discovered.update(dict.fromkeys(_request_discoveries(msg)))
         elif isinstance(msg, ModelResponse):
-            for part in msg.parts:
-                if isinstance(part, NativeToolSearchReturnPart):
-                    discovered.update(dict.fromkeys(match['name'] for match in part.discovered_tools))
+            discovered.update(dict.fromkeys(_response_discoveries(msg)))
         else:
             assert_never(msg)
     return tuple(discovered)
+
+
+def _request_discoveries(request: ModelRequest) -> Iterator[str]:
+    """The tool names a request's parts record as discovered, in order."""
+    for part in request.parts:
+        if isinstance(part, ToolAvailabilityDeltaPart):
+            yield from part.tools_added
+        elif isinstance(part, ToolSearchReturnPart):
+            yield from (match['name'] for match in part.discovered_tools)
+        elif isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:
+            # Legacy histories carry discoveries on `metadata['discovered_tools']`
+            # rather than typed content. Narrowing tool_name + metadata shape avoids
+            # surfacing a user-defined `search_tools` whose metadata has no legacy
+            # shape.
+            try:
+                validated = _LEGACY_METADATA_TA.validate_python(part.metadata)
+            except ValidationError:
+                continue
+            yield from validated['discovered_tools']
+
+
+def _response_discoveries(response: ModelResponse) -> Iterator[str]:
+    """The tool names a response's native tool search returned, in order."""
+    for part in response.parts:
+        if isinstance(part, NativeToolSearchReturnPart):
+            yield from (match['name'] for match in part.discovered_tools)
 
 
 @dataclass(kw_only=True)
@@ -311,6 +329,10 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     parameter_description: str | None = None
     """Custom description for the `queries` parameter shown to the model."""
 
+    tools: ToolSelector[AgentDepsT] | None = field(default=None, kw_only=True)
+    """Which tools to defer in addition to those marked `defer_loading`; see
+    [`ToolSearch.tools`][pydantic_ai.capabilities.ToolSearch.tools]."""
+
     enable_fallback: bool = True
     """When False, the local `search_tools` function tool is not emitted — used when the
     capability commits to a named-native strategy that has no local equivalent (e.g.
@@ -331,6 +353,13 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     a retry.
     """
 
+    _keyword_corpus: tuple[tuple[str, str | None], ...] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+    _keyword_postings: dict[str, list[int]] = field(
+        default_factory=dict[str, list[int]], init=False, repr=False, compare=False
+    )
+
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
 
@@ -339,6 +368,13 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         for name, tool in all_tools.items():
             if tool.tool_def.defer_loading:
                 deferred[name] = tool
+            elif (
+                self.tools is not None
+                and tool.tool_def.kind != 'output'
+                and tool.tool_def.tool_kind not in _FRAMEWORK_TOOL_KINDS
+                and await matches_tool_selector(self.tools, ctx, tool.tool_def)
+            ):
+                deferred[name] = replace(tool, tool_def=replace(tool.tool_def, defer_loading=True))
             else:
                 visible[name] = tool
 
@@ -416,7 +452,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             name=_SEARCH_TOOLS_NAME,
             description=self.tool_description or _DEFAULT_TOOL_DESCRIPTION,
             parameters_json_schema=schema,
-            tool_kind='tool-search',
+            tool_kind=TOOL_SEARCH_KIND,
             unless_native=unless_native,
         )
 
@@ -470,25 +506,32 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         if not terms:
             raise ModelRetry('Please provide at least one non-empty search query.')
 
-        scored_matches: list[tuple[bool, int, ToolSearchMatch]] = []
-        for tool_def in search_tool.corpus:
-            tool_terms = self._search_terms(tool_def.name, tool_def.description)
-            score = len(terms & tool_terms)
-            if score == 0:
-                continue
-            scored_matches.append(
-                (tool_def.name not in search_tool.discovered_tool_names, score, {'name': tool_def.name})
-            )
+        corpus = tuple((tool.name, tool.description) for tool in search_tool.corpus)
+        if corpus != self._keyword_corpus:
+            postings: dict[str, list[int]] = {}
+            for index, (name, description) in enumerate(corpus):
+                for term in self._search_terms(name, description):
+                    postings.setdefault(term, []).append(index)
+            self._keyword_corpus = corpus
+            self._keyword_postings = postings
 
-        if not scored_matches:
+        scores: Counter[int] = Counter()
+        for term in terms:
+            scores.update(self._keyword_postings.get(term, ()))
+        if not scores:
             return self._empty_return()
 
         # Undiscovered-first is the PRIMARY key, relevance the tiebreak: an already-discovered
         # tool must never displace an undiscovered match when `max_results` trims — it only
-        # fills whatever slots are left over.
-        scored_matches.sort(key=lambda item: (item[0], item[1]), reverse=True)
-        matches = [match for _, _, match in scored_matches[: self.max_results]]
-        return self._build_return(matches)
+        # fills whatever slots are left over. Corpus order breaks remaining ties.
+        # A negative `max_results` keeps its slice semantics (drop that many from the end), so it
+        # ranks every match before slicing.
+        indices = nsmallest(
+            len(scores) if self.max_results < 0 else self.max_results,
+            scores,
+            key=lambda index: (corpus[index][0] in search_tool.discovered_tool_names, -scores[index], index),
+        )[: self.max_results]
+        return self._build_return([{'name': corpus[index][0]} for index in indices])
 
     async def _run_search_fn(
         self,

@@ -14,6 +14,7 @@ The module includes:
 from __future__ import annotations
 
 import warnings
+from contextlib import suppress
 from types import TracebackType
 
 import httpx2
@@ -45,13 +46,15 @@ except ImportError as _import_error:
     ) from _import_error
 
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any
 
 from typing_extensions import TypedDict
 
+from ._http import DEFAULT_HTTP_LIMITS
 from ._warnings import PydanticAIDeprecationWarning
+from .exceptions import _parse_retry_after_ms  # pyright: ignore[reportPrivateUsage]
 
 if TYPE_CHECKING:
     from tenacity.asyncio.retry import RetryBaseT
@@ -156,11 +159,14 @@ class HTTPX2TenacityTransport(httpx2.BaseTransport):
         config: The arguments to use for the tenacity `retry` decorator, including retry conditions,
             wait strategy, stop conditions, etc. See the tenacity docs for more info.
         wrapped: The underlying transport to wrap and add retry functionality to.
-            Defaults to a new `httpx2.HTTPTransport`.
-        validate_response: Optional callable that takes a Response and can raise an exception
-            to be handled by the controller if the response should trigger a retry.
-            Common use case is to raise exceptions for certain HTTP status codes.
-            If None, no response validation is performed.
+            Defaults to a new `httpx2.HTTPTransport` with the connection pool limits of the clients
+            Pydantic AI creates: 1000 connections, of which up to 100 are kept alive while idle.
+        validate_response: Optional synchronous callable that takes a `Response` and raises an exception
+            if the response should be rejected (for example, `lambda r: r.raise_for_status()`).
+            Runs before the response body is read. When it raises for a 4xx or 5xx status, the transport reads
+            the body before closing the response, so tenacity's `retry` predicate and callers inspecting
+            `httpx2.HTTPStatusError.response` can read it. When it raises for a 2xx or 3xx status, the response
+            is closed without reading its body. If `None`, no response validation is performed.
 
     Example:
         ```python
@@ -189,7 +195,7 @@ class HTTPX2TenacityTransport(httpx2.BaseTransport):
         validate_response: Callable[[httpx2.Response], object] | None = None,
     ):
         self.config = config
-        self.wrapped = wrapped or httpx2.HTTPTransport()
+        self.wrapped = wrapped or httpx2.HTTPTransport(limits=DEFAULT_HTTP_LIMITS)
         self.validate_response = validate_response
 
     def handle_request(self, request: httpx2.Request) -> httpx2.Response:
@@ -214,6 +220,13 @@ class HTTPX2TenacityTransport(httpx2.BaseTransport):
                 try:
                     self.validate_response(response)
                 except Exception:
+                    # Read an error status's body, so the re-raised exception carries it and the connection returns
+                    # to the pool. Whatever the wrapped transport's stream raises, a failed read must not replace the
+                    # exception the retry predicate decides on; the response is closed whether or not the read
+                    # completed.
+                    if response.is_error:
+                        with suppress(Exception):
+                            response.read()
                     response.close()
                     raise
             return response
@@ -255,17 +268,21 @@ class AsyncHTTPX2TenacityTransport(httpx2.AsyncBaseTransport):
         config: The arguments to use for the tenacity `retry` decorator, including retry conditions,
             wait strategy, stop conditions, etc. See the tenacity docs for more info.
         wrapped: The underlying async transport to wrap and add retry functionality to.
-            Defaults to a new `httpx2.AsyncHTTPTransport`.
-        validate_response: Optional callable that takes a Response and can raise an exception
-            to be handled by the controller if the response should trigger a retry.
-            Common use case is to raise exceptions for certain HTTP status codes.
-            If None, no response validation is performed.
+            Defaults to a new `httpx2.AsyncHTTPTransport` with the connection pool limits of the clients
+            Pydantic AI creates: 1000 connections, of which up to 100 are kept alive while idle.
+        validate_response: Optional synchronous callable that takes a `Response` and raises an exception
+            if the response should be rejected (for example, `lambda r: r.raise_for_status()`).
+            Runs before the response body is read. When it raises for a 4xx or 5xx status, the transport reads
+            the body before closing the response, so tenacity's `retry` predicate and callers inspecting
+            `httpx2.HTTPStatusError.response` can read it. When it raises for a 2xx or 3xx status, the response
+            is closed without reading its body. If `None`, no response validation is performed.
 
     Example:
         ```python
-        from httpx2 import AsyncClient, HTTPStatusError
+        from httpx2 import HTTPStatusError
         from tenacity import retry_if_exception_type, stop_after_attempt
 
+        from pydantic_ai.models import create_async_httpx2_client
         from pydantic_ai.retries import (
             AsyncHTTPX2TenacityTransport,
             RetryConfig,
@@ -281,7 +298,7 @@ class AsyncHTTPX2TenacityTransport(httpx2.AsyncBaseTransport):
             ),
             validate_response=lambda r: r.raise_for_status()
         )
-        client = AsyncClient(transport=transport)
+        client = create_async_httpx2_client(transport=transport)
         ```
     """
 
@@ -292,7 +309,7 @@ class AsyncHTTPX2TenacityTransport(httpx2.AsyncBaseTransport):
         validate_response: Callable[[httpx2.Response], object] | None = None,
     ):
         self.config = config
-        self.wrapped = wrapped or httpx2.AsyncHTTPTransport()
+        self.wrapped = wrapped or httpx2.AsyncHTTPTransport(limits=DEFAULT_HTTP_LIMITS)
         self.validate_response = validate_response
 
     async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
@@ -317,6 +334,16 @@ class AsyncHTTPX2TenacityTransport(httpx2.AsyncBaseTransport):
                 try:
                     self.validate_response(response)
                 except Exception:
+                    # Read an error status's body, so the re-raised exception carries it and the connection returns
+                    # to the pool. Whatever the wrapped transport's stream raises, a failed read must not replace the
+                    # exception the retry predicate decides on; the response is closed whether or not the read
+                    # completed.
+                    if response.is_error:
+                        # A cancelled read skips the close below: httpx2 closes the response as the read unwinds,
+                        # and the default `httpx2.AsyncHTTPTransport` closes its connection under a cancellation
+                        # shield. A wrapped transport whose stream's `aclose()` awaits unshielded can stay open.
+                        with suppress(Exception):
+                            await response.aread()
                     await response.aclose()
                     raise
             return response
@@ -524,6 +551,9 @@ def wait_retry_after(
     - An integer representing seconds to wait
     - An HTTP date string representing when to retry
 
+    A `retry-after-ms` header (a number of milliseconds), as OpenAI and Anthropic send it,
+    takes precedence over Retry-After, like in their SDKs.
+
     Args:
         fallback_strategy: Wait strategy to use when no Retry-After header is present
                           or parsing fails. Defaults to exponential backoff with max 60s.
@@ -535,9 +565,10 @@ def wait_retry_after(
 
     Example:
         ```python
-        from httpx2 import AsyncClient, HTTPStatusError
+        from httpx2 import HTTPStatusError
         from tenacity import retry_if_exception_type, stop_after_attempt
 
+        from pydantic_ai.models import create_async_httpx2_client
         from pydantic_ai.retries import (
             AsyncHTTPX2TenacityTransport,
             RetryConfig,
@@ -553,7 +584,7 @@ def wait_retry_after(
             ),
             validate_response=lambda r: r.raise_for_status()
         )
-        client = AsyncClient(transport=transport)
+        client = create_async_httpx2_client(transport=transport)
         ```
     """
     if fallback_strategy is None:
@@ -563,6 +594,9 @@ def wait_retry_after(
         exc = state.outcome.exception() if state.outcome else None
         # TODO(v3): remove the legacy `httpx` `HTTPStatusError` arm, leaving only `httpx2.HTTPStatusError`.
         if isinstance(exc, HTTPStatusError | httpx2.HTTPStatusError):
+            # Like the OpenAI and Anthropic SDKs, prefer their more precise `retry-after-ms` over `Retry-After`.
+            if (retry_after_ms := _parse_retry_after_ms(exc.response.headers)) is not None:
+                return min(retry_after_ms, max_wait)
             retry_after = exc.response.headers.get('retry-after')
             if retry_after:
                 try:
@@ -577,13 +611,13 @@ def wait_retry_after(
                         assert isinstance(retry_time, datetime)
                         # asctime-date format (RFC 9110 §5.6.7) carries no timezone; treat as UTC.
                         if retry_time.tzinfo is None:
-                            retry_time = retry_time.replace(tzinfo=timezone.utc)
-                        now = datetime.now(timezone.utc)
+                            retry_time = retry_time.replace(tzinfo=UTC)
+                        now = datetime.now(UTC)
                         wait_seconds = (retry_time - now).total_seconds()
 
                         if wait_seconds > 0:
                             return min(wait_seconds, max_wait)
-                    except (ValueError, TypeError, AssertionError):
+                    except (ValueError, TypeError, AssertionError, OverflowError):
                         # If date parsing fails, fall back to fallback strategy
                         pass
 

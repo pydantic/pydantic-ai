@@ -9,8 +9,11 @@ def test_privileged_dispatcher_never_executes_pull_request_code() -> None:
     """The secret-bearing public workflow must remain a dispatcher only."""
     workflow = WORKFLOW.read_text(encoding='utf-8')
 
-    assert 'pull_request_target:' in workflow
-    assert "github.event.label.name == 'trigger:docs'" in workflow
+    assert 'pull_request:' in workflow
+    assert 'pull_request_target' not in workflow
+    assert 'github.event.pull_request.head.repo.full_name == github.repository' in workflow
+    assert "github.event.label.name == 'trigger:docs-preview'" in workflow
+    assert 'issues/${PR_NUMBER}/labels/trigger:docs-preview' in workflow
     assert 'docs-navigation-${{ github.event.pull_request.number }}-${{ github.event.label.name }}' in workflow
     assert 'timeout-minutes: 5' in workflow
     assert 'actions/checkout@' not in workflow
@@ -23,7 +26,7 @@ def test_privileged_dispatcher_never_executes_pull_request_code() -> None:
     assert '-f "client_payload[source_sha]=${HEAD_SHA}"' in workflow
 
 
-def test_public_comments_describe_data_only_navigation_validation() -> None:
+def test_public_comments_describe_navigation_and_previews() -> None:
     """Public comments should describe the check without exposing private runs."""
     workflow = WORKFLOW.read_text(encoding='utf-8')
 
@@ -31,6 +34,9 @@ def test_public_comments_describe_data_only_navigation_validation() -> None:
     assert 'Docs Navigation Check — queued' in workflow
     assert 'Navigation validation for commit' in workflow
     assert 'has been queued' in workflow
+    assert 'a rendered preview is requested' in workflow
+    assert 'posts separate result comments' in workflow
+    assert 'This comment will be updated' not in workflow
     assert 'preview URL' not in workflow
     assert '--paginate --slurp' in workflow
     assert 'startswith("## Docs Preview")' in workflow

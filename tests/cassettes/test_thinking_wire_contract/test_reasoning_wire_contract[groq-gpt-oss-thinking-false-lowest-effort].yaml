@@ -1,0 +1,77 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.groq.com/openai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "187"
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content: What is 2+2? Reply with just the number.
+        model: openai/gpt-oss-120b
+        "n": 1
+        reasoning_format: hidden
+        stream: false
+        reasoning_effort: low
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    body:
+      type: json
+      content:
+        id: chatcmpl-ddfeecc7-eea7-4798-943a-70dab9b05db3
+        object: chat.completion
+        created: 1792687474
+        model: openai/gpt-oss-120b
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: "4"
+          logprobs: null
+          finish_reason: stop
+        usage:
+          queue_time: 0.175524757
+          prompt_tokens: 84
+          prompt_time: 0.013699733
+          completion_tokens: 17
+          completion_time: 0.035496735
+          total_tokens: 101
+          total_time: 0.049196468
+          completion_tokens_details:
+            reasoning_tokens: 7
+        usage_breakdown: null
+        system_fingerprint: fp_4727af4560
+        x_groq:
+          id: req_01m5j8022aeewtzzqkc6an8ka5
+          seed: 446947607
+        service_tier: on_demand
+  recorded_at: 2026-10-22T16:44:35.038415+00:00

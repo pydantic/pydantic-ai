@@ -4,11 +4,14 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Generic, Literal, Protocol, TypeVar, cast
 
+# Re-exported from here, where `durable_exec` has always exposed them.
+from .._run_context import durable_unit_scope as durable_unit_scope, in_durable_unit as in_durable_unit
 from ._operation import (
     DurableOperation,
     DurableOperationConfig,
     DurableOperationId,
     OperationConfigRole,
+    ParameterTransports,
     resolve_tool_operation_config,
 )
 from ._operation_names import DurableOperationNamer, JournalOperationNamer
@@ -23,6 +26,12 @@ ResultT_bound = TypeVar('ResultT_bound')
 
 
 class BoundDurableOperation(Generic[ParamsT_bound, WireT_bound, ResultT_bound], Protocol):
+    """The caller a backend returns for one bound [`DurableOperation`][pydantic_ai.durable_exec.DurableOperation].
+
+    Calling it runs the operation in a durable unit when the run is inside the engine's durable
+    container, passing per-call `config` (such as a per-tool override) when there is one.
+    """
+
     @property
     @abstractmethod
     def operation(self) -> DurableOperation[ParamsT_bound, WireT_bound, ResultT_bound]: ...
@@ -41,6 +50,9 @@ class DurableOperationBackend(ABC, Generic[ConfigT]):
     `RegisteredOperationBackend`. See
     [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
     """
+
+    parameter_transports: ParameterTransports = ParameterTransports()
+    """How each operation's parameters cross into a durable unit; unchanged unless the engine overrides it."""
 
     @abstractmethod
     def bind(
@@ -106,7 +118,8 @@ class CallableOperationBackend(DurableOperationBackend[ConfigT]):
             cache_key = operation.cache_identity.project(params)
 
             async def body() -> object:
-                return operation.result_codec.dump(await operation.handler(params))
+                with durable_unit_scope():
+                    return operation.result_codec.dump(await operation.handler(params))
 
             payload = await self.execute(
                 operation_id=operation.operation_id,
@@ -212,10 +225,18 @@ class RegisteredOperationBackend(DurableOperationBackend[ConfigT]):
     [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
     """
 
-    def __init__(self, *, namer: DurableOperationNamer, config: DurableOperationConfig[ConfigT]) -> None:
+    def __init__(
+        self,
+        *,
+        namer: DurableOperationNamer,
+        config: DurableOperationConfig[ConfigT],
+        parameter_transports: ParameterTransports | None = None,
+    ) -> None:
         self._namer = namer
         self._config = config
         self._registrations: list[Callable[..., object]] = []
+        if parameter_transports is not None:
+            self.parameter_transports = parameter_transports
 
     def bind(
         self, operation: DurableOperation[ParamsT, WireT, ResultT]

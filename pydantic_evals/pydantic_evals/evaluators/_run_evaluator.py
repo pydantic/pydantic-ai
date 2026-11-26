@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import traceback
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import (
     ConfigDict,
@@ -20,7 +20,9 @@ from .evaluator import (
     EvaluationScalar,
     Evaluator,
     EvaluatorFailure,
+    EvaluatorFunc,
     EvaluatorOutput,
+    FunctionEvaluator,
 )
 
 if TYPE_CHECKING:
@@ -30,6 +32,21 @@ if TYPE_CHECKING:
 InputsT = TypeVar('InputsT', default=Any, contravariant=True)
 OutputT = TypeVar('OutputT', default=Any, contravariant=True)
 MetadataT = TypeVar('MetadataT', default=Any, contravariant=True)
+
+
+def as_evaluator(
+    evaluator: Evaluator[InputsT, OutputT, MetadataT] | EvaluatorFunc[InputsT, OutputT, MetadataT],
+) -> Evaluator[InputsT, OutputT, MetadataT]:
+    """Wrap a plain evaluator function in a `FunctionEvaluator`, leaving `Evaluator` instances as they are."""
+    if isinstance(evaluator, Evaluator):
+        # Pyright also narrows the function arm to an `Evaluator` subclass that's callable, with unknown
+        # type parameters, but either way the value is an `Evaluator[InputsT, OutputT, MetadataT]`.
+        return cast(Evaluator[InputsT, OutputT, MetadataT], evaluator)
+    if isinstance(evaluator, type):
+        raise TypeError(f'Expected an evaluator instance or function, got the class {evaluator.__name__!r}.')
+    if not callable(evaluator):
+        raise TypeError(f'Expected an evaluator instance or function, got {evaluator!r}.')
+    return FunctionEvaluator(evaluator)
 
 
 async def run_evaluator(

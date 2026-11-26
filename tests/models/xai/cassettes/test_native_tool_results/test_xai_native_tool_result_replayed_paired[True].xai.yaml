@@ -1,0 +1,841 @@
+version: 1
+interactions:
+- request_stream:
+    json:
+      messages:
+      - content:
+        - text: Open python.org/downloads and tell me the latest Python release. One
+            line.
+        role: ROLE_USER
+      model: grok-4-fast-reasoning
+      tools:
+      - web_search:
+          enable_image_understanding: false
+          enable_image_search: false
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+      use_encrypted_content: true
+    raw: !!binary |
+      ClAKTApKT3BlbiBweXRob24ub3JnL2Rvd25sb2FkcyBhbmQgdGVsbCBtZSB0aGUgbGF0ZXN0IFB5
+      dGhvbiByZWxlYXNlLiBPbmUgbGluZS4QARIVZ3Jvay00LWZhc3QtcmVhc29uaW5nigEGGgQYACgA
+      kgECCAHAAQE=
+  response_stream:
+    chunks_json:
+    - chunk:
+        id: 0c596749-5234-974b-a0e2-c70a30e2c6fc
+        outputs:
+        - delta:
+            role: ROLE_ASSISTANT
+            reasoning_content: Checking python.org/downloads
+        created: '2026-11-17T21:46:26.324021443Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          prompt_tokens: 729
+          prompt_text_tokens: 729
+          reasoning_tokens: 45
+          cached_prompt_text_tokens: 128
+          cost_in_usd_ticks: '8893500'
+    - chunk:
+        id: 0c596749-5234-974b-a0e2-c70a30e2c6fc
+        outputs:
+        - delta:
+            role: ROLE_ASSISTANT
+            reasoning_content: ' for the latest Python'
+        created: '2026-11-17T21:46:26.324021443Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          prompt_tokens: 729
+          prompt_text_tokens: 729
+          reasoning_tokens: 54
+          cached_prompt_text_tokens: 128
+          cost_in_usd_ticks: '9118500'
+    - chunk:
+        id: 0c596749-5234-974b-a0e2-c70a30e2c6fc
+        outputs:
+        - delta:
+            role: ROLE_ASSISTANT
+            reasoning_content: ' release.'
+        created: '2026-11-17T21:46:26.324021443Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          prompt_tokens: 729
+          prompt_text_tokens: 729
+          reasoning_tokens: 57
+          cached_prompt_text_tokens: 128
+          cost_in_usd_ticks: '9193500'
+    - chunk:
+        id: 0c596749-5234-974b-a0e2-c70a30e2c6fc
+        outputs:
+        - delta:
+            role: ROLE_ASSISTANT
+            tool_calls:
+            - id: call-110c6317-d8e9-422e-9946-989a04a9995d-0
+              type: TOOL_CALL_TYPE_WEB_SEARCH_TOOL
+              function:
+                name: open_page
+                arguments: '{"url":"https://www.python.org/downloads/"}'
+            encrypted_content: OR5cqE9meh3GpoNSXZBnB+PIn5348jsGbiY2YHobZm4pHyfQd3aEc0/zQiwRNh08N/Y4Ru3vrTt3gCybSj3h2tLInoWxqKgpFeUe5vwV9MAT4drUVQwylR/vn61am70jpCP768x+eSuwWJmqBlsJFl9scvq3mHxIDzi4Du/oJ4VoWwiCHc80CfIkQADoDZhXthy1l/Tm62bMCZLnYVmlOGo6CzYabMBLu3wVBQpGIpDBSKOR2Om98ssKWTPXkdT7YzgZ5OJvQtSoIupQH5rqic4fTgw1OP0EoTtQ2s7w7/VaDQUPxhk
+        created: '2026-11-17T21:46:26.324021443Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 16
+          prompt_tokens: 729
+          prompt_text_tokens: 729
+          reasoning_tokens: 62
+          cached_prompt_text_tokens: 128
+          cost_in_usd_ticks: '9718500'
+    - chunk:
+        id: 0c596749-5234-974b-a0e2-c70a30e2c6fc
+        outputs:
+        - delta:
+            role: ROLE_TOOL
+            tool_calls:
+            - id: call-110c6317-d8e9-422e-9946-989a04a9995d-0
+              type: TOOL_CALL_TYPE_WEB_SEARCH_TOOL
+              status: TOOL_CALL_STATUS_COMPLETED
+              function:
+                name: open_page
+                arguments: '{"url":"https://www.python.org/downloads/"}'
+            encrypted_content: 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
+            citations:
+            - web_citation:
+                url: https://www.python.org/downloads/
+          index: 1
+        created: '2026-11-17T21:46:26.324021443Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 16
+          prompt_tokens: 729
+          prompt_text_tokens: 729
+          reasoning_tokens: 62
+          cached_prompt_text_tokens: 128
+          cost_in_usd_ticks: '9718500'
+    - chunk:
+        id: 0c596749-5234-974b-a0e2-c70a30e2c6fc
+        outputs:
+        - delta:
+            content: Python
+            role: ROLE_ASSISTANT
+            encrypted_content: 4vnGC9cbb75MghyTUWIKI8QzCG6akFrB/3wxuIOk88ZljGeW3OQ3kovhry6OGB03NNnaq2V3zrpCOTI7Tx4a101yXGqQPYvURCxzFjVrhT7+/oES3AQV8GfsxY2UZwNnf5EjNa85Gsx3zQtYfQH3Z8++pP2V3sQuNUWMgdn1pQHNFL5twynJ8heABaZPhd9QkBybk8Zn0AvP7xVkY2ufPqAcTFnGMmzbkIeOWtFF1W7kdC/8P7yW4iNpn/dBPBxGVECwlIBRGXOo1/J4Wz7ShhgqzdyXth9pv4elqSDa3qru3GBZPy5zJL/zfWprusEZ1foWBGQko9HalbRsjoqalLbMM7dauq3iXlgnccaEu2rIlh0aoq3WdWz+RGKkMoiQizTeBw
+          index: 2
+        created: '2026-11-17T21:46:26.324021443Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 17
+          prompt_tokens: 6442
+          prompt_text_tokens: 6442
+          reasoning_tokens: 158
+          cached_prompt_text_tokens: 768
+          cost_in_usd_ticks: '76836000'
+    - chunk:
+        id: 0c596749-5234-974b-a0e2-c70a30e2c6fc
+        outputs:
+        - delta:
+            content: ' '
+            role: ROLE_ASSISTANT
+          index: 2
+        created: '2026-11-17T21:46:26.324021443Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 18
+          prompt_tokens: 6442
+          prompt_text_tokens: 6442
+          reasoning_tokens: 158
+          cached_prompt_text_tokens: 768
+          cost_in_usd_ticks: '76861000'
+    - chunk:
+        id: 0c596749-5234-974b-a0e2-c70a30e2c6fc
+        outputs:
+        - delta:
+            content: '3'
+            role: ROLE_ASSISTANT
+          index: 2
+        created: '2026-11-17T21:46:26.324021443Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 19
+          prompt_tokens: 6442
+          prompt_text_tokens: 6442
+          reasoning_tokens: 158
+          cached_prompt_text_tokens: 768
+          cost_in_usd_ticks: '76886000'
+    - chunk:
+        id: 0c596749-5234-974b-a0e2-c70a30e2c6fc
+        outputs:
+        - delta:
+            content: .
+            role: ROLE_ASSISTANT
+          index: 2
+        created: '2026-11-17T21:46:26.324021443Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 20
+          prompt_tokens: 6442
+          prompt_text_tokens: 6442
+          reasoning_tokens: 158
+          cached_prompt_text_tokens: 768
+          cost_in_usd_ticks: '76911000'
+    - chunk:
+        id: 0c596749-5234-974b-a0e2-c70a30e2c6fc
+        outputs:
+        - delta:
+            content: '15'
+            role: ROLE_ASSISTANT
+          index: 2
+        created: '2026-11-17T21:46:26.324021443Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 21
+          prompt_tokens: 6442
+          prompt_text_tokens: 6442
+          reasoning_tokens: 158
+          cached_prompt_text_tokens: 768
+          cost_in_usd_ticks: '76936000'
+    - chunk:
+        id: 0c596749-5234-974b-a0e2-c70a30e2c6fc
+        outputs:
+        - delta:
+            content: .
+            role: ROLE_ASSISTANT
+          index: 2
+        created: '2026-11-17T21:46:26.324021443Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 22
+          prompt_tokens: 6442
+          prompt_text_tokens: 6442
+          reasoning_tokens: 158
+          cached_prompt_text_tokens: 768
+          cost_in_usd_ticks: '76961000'
+    - chunk:
+        id: 0c596749-5234-974b-a0e2-c70a30e2c6fc
+        outputs:
+        - delta:
+            content: '2'
+            role: ROLE_ASSISTANT
+          index: 2
+        created: '2026-11-17T21:46:26.324021443Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 23
+          prompt_tokens: 6442
+          prompt_text_tokens: 6442
+          reasoning_tokens: 158
+          cached_prompt_text_tokens: 768
+          cost_in_usd_ticks: '76986000'
+    - chunk:
+        id: 0c596749-5234-974b-a0e2-c70a30e2c6fc
+        outputs:
+        - delta:
+            content: ' ('
+            role: ROLE_ASSISTANT
+          index: 2
+        created: '2026-11-17T21:46:26.324021443Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 24
+          prompt_tokens: 6442
+          prompt_text_tokens: 6442
+          reasoning_tokens: 158
+          cached_prompt_text_tokens: 768
+          cost_in_usd_ticks: '77011000'
+    - chunk:
+        id: 0c596749-5234-974b-a0e2-c70a30e2c6fc
+        outputs:
+        - delta:
+            content: latest
+            role: ROLE_ASSISTANT
+          index: 2
+        created: '2026-11-17T21:46:26.324021443Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 25
+          prompt_tokens: 6442
+          prompt_text_tokens: 6442
+          reasoning_tokens: 158
+          cached_prompt_text_tokens: 768
+          cost_in_usd_ticks: '77036000'
+    - chunk:
+        id: 0c596749-5234-974b-a0e2-c70a30e2c6fc
+        outputs:
+        - delta:
+            content: ' as'
+            role: ROLE_ASSISTANT
+          index: 2
+        created: '2026-11-17T21:46:26.324021443Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 26
+          prompt_tokens: 6442
+          prompt_text_tokens: 6442
+          reasoning_tokens: 158
+          cached_prompt_text_tokens: 768
+          cost_in_usd_ticks: '77061000'
+    - chunk:
+        id: 0c596749-5234-974b-a0e2-c70a30e2c6fc
+        outputs:
+        - delta:
+            content: ' of'
+            role: ROLE_ASSISTANT
+          index: 2
+        created: '2026-11-17T21:46:26.324021443Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 27
+          prompt_tokens: 6442
+          prompt_text_tokens: 6442
+          reasoning_tokens: 158
+          cached_prompt_text_tokens: 768
+          cost_in_usd_ticks: '77086000'
+    - chunk:
+        id: 0c596749-5234-974b-a0e2-c70a30e2c6fc
+        outputs:
+        - delta:
+            content: ' Nov'
+            role: ROLE_ASSISTANT
+          index: 2
+        created: '2026-11-17T21:46:26.324021443Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 28
+          prompt_tokens: 6442
+          prompt_text_tokens: 6442
+          reasoning_tokens: 158
+          cached_prompt_text_tokens: 768
+          cost_in_usd_ticks: '77111000'
+    - chunk:
+        id: 0c596749-5234-974b-a0e2-c70a30e2c6fc
+        outputs:
+        - delta:
+            content: ' '
+            role: ROLE_ASSISTANT
+          index: 2
+        created: '2026-11-17T21:46:26.324021443Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 29
+          prompt_tokens: 6442
+          prompt_text_tokens: 6442
+          reasoning_tokens: 158
+          cached_prompt_text_tokens: 768
+          cost_in_usd_ticks: '77136000'
+    - chunk:
+        id: 0c596749-5234-974b-a0e2-c70a30e2c6fc
+        outputs:
+        - delta:
+            content: '202'
+            role: ROLE_ASSISTANT
+          index: 2
+        created: '2026-11-17T21:46:26.324021443Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 30
+          prompt_tokens: 6442
+          prompt_text_tokens: 6442
+          reasoning_tokens: 158
+          cached_prompt_text_tokens: 768
+          cost_in_usd_ticks: '77161000'
+    - chunk:
+        id: 0c596749-5234-974b-a0e2-c70a30e2c6fc
+        outputs:
+        - delta:
+            content: '6'
+            role: ROLE_ASSISTANT
+          index: 2
+        created: '2026-11-17T21:46:26.324021443Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 31
+          prompt_tokens: 6442
+          prompt_text_tokens: 6442
+          reasoning_tokens: 158
+          cached_prompt_text_tokens: 768
+          cost_in_usd_ticks: '77186000'
+    - chunk:
+        id: 0c596749-5234-974b-a0e2-c70a30e2c6fc
+        outputs:
+        - delta:
+            content: )
+            role: ROLE_ASSISTANT
+          index: 2
+        created: '2026-11-17T21:46:26.324021443Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 32
+          prompt_tokens: 6442
+          prompt_text_tokens: 6442
+          reasoning_tokens: 158
+          cached_prompt_text_tokens: 768
+          cost_in_usd_ticks: '77211000'
+    - chunk:
+        id: 0c596749-5234-974b-a0e2-c70a30e2c6fc
+        outputs:
+        - delta:
+            role: ROLE_ASSISTANT
+          finish_reason: REASON_STOP
+          index: 2
+        created: '2026-11-17T21:46:26.324021443Z'
+        model: grok-4.3
+        system_fingerprint: fp_eb3c003fc66c14ed
+        usage:
+          completion_tokens: 32
+          prompt_tokens: 6442
+          total_tokens: 6632
+          prompt_text_tokens: 6442
+          reasoning_tokens: 158
+          cached_prompt_text_tokens: 768
+          server_side_tools_used:
+          - SERVER_SIDE_TOOL_WEB_SEARCH
+          cost_in_usd_ticks: '127211000'
+        citations:
+        - https://www.python.org/downloads/
+    chunks_raw:
+    - !!binary |
+      CiQwYzU5Njc0OS01MjM0LTk3NGItYTBlMi1jNzBhMzBlMmM2ZmMSJQojEAIiHUNoZWNraW5nIHB5
+      dGhvbi5vcmcvZG93bmxvYWRzOAEaDAiylvPXBhDD2cCaASIIZ3Jvay00LjMqE2ZwX2ViM2MwMDNm
+      YzY2YzE0ZWQyFxDZBSDZBTAtOIABWLzongSQAdkFmAEt
+    - !!binary |
+      CiQwYzU5Njc0OS01MjM0LTk3NGItYTBlMi1jNzBhMzBlMmM2ZmMSHgocEAIiFiBmb3IgdGhlIGxh
+      dGVzdCBQeXRob244ARoMCLKW89cGEMPZwJoBIghncm9rLTQuMyoTZnBfZWIzYzAwM2ZjNjZjMTRl
+      ZDIXENkFINkFMDY4gAFYpMasBJAB2QWYATY=
+    - !!binary |
+      CiQwYzU5Njc0OS01MjM0LTk3NGItYTBlMi1jNzBhMzBlMmM2ZmMSEQoPEAIiCSByZWxlYXNlLjgB
+      GgwIspbz1wYQw9nAmgEiCGdyb2stNC4zKhNmcF9lYjNjMDAzZmM2NmMxNGVkMhcQ2QUg2QUwOTiA
+      AVickLEEkAHZBZgBOQ==
+    - !!binary |
+      CiQwYzU5Njc0OS01MjM0LTk3NGItYTBlMi1jNzBhMzBlMmM2ZmMSqAMKpQMQAhppCitjYWxsLTEx
+      MGM2MzE3LWQ4ZTktNDIyZS05OTQ2LTk4OWEwNGE5OTk1ZC0wEAJSOAoJb3Blbl9wYWdlEit7InVy
+      bCI6Imh0dHBzOi8vd3d3LnB5dGhvbi5vcmcvZG93bmxvYWRzLyJ9KrMCT1I1Y3FFOW1laDNHcG9O
+      U1haQm5CK1BJbjUzNDhqc0diaVkyWUhvYlptNHBIeWZRZDNhRWMwL3pRaXdSTmgwOE4vWTRSdTN2
+      clR0M2dDeWJTajNoMnRMSW5vV3hxS2dwRmVVZTV2d1Y5TUFUNGRyVVZRd3lsUi92bjYxYW03MGpw
+      Q1A3Njh4K2VTdXdXSm1xQmxzSkZsOXNjdnEzbUh4SUR6aTREdS9vSjRWb1d3aUNIYzgwQ2ZJa1FB
+      RG9EWmhYdGh5MWwvVG02MmJNQ1pMbllWbWxPR282Q3pZYWJNQkx1M3dWQlFwR0lwREJTS09SMk9t
+      OThzc0tXVFBYa2RUN1l6Z1o1T0p2UXRTb0l1cFFINXJxaWM0ZlRndzFPUDBFb1R0UTJzN3c3L1Zh
+      RFFVUHhoazgBGgwIspbz1wYQw9nAmgEiCGdyb2stNC4zKhNmcF9lYjNjMDAzZmM2NmMxNGVkMhkI
+      EBDZBSDZBTA+OIABWOSV0QSQAdkFmAFR
+    - !!binary |
+      CiQwYzU5Njc0OS01MjM0LTk3NGItYTBlMi1jNzBhMzBlMmM2ZmMSnRwKmBwQBRprCitjYWxsLTEx
+      MGM2MzE3LWQ4ZTktNDIyZS05OTQ2LTk4OWEwNGE5OTk1ZC0wEAIYAVI4CglvcGVuX3BhZ2USK3si
+      dXJsIjoiaHR0cHM6Ly93d3cucHl0aG9uLm9yZy9kb3dubG9hZHMvIn0q8xpPVmtLMVhpRmNDNDZp
+      dnJNRUVFOUF2c0poQndad3dqTkpIWnRaYTNYWDFEa2V3ZCtKYzAwME1OejJTSXVjVTl5bDh2bHlF
+      d3VRcTNkUnNnT0Z2NkNKaWpJQS9CNXRTSjljWi9CeGRHTTJmWlFqVWV3REl5anBJWStSenJZYjEy
+      WGpKR1JGc2w1Nk1taHFZR1o2OUdnLzk1MURFKzY0TGloUGluV3V3WEttVVJ6VS9RM0R1OThvVzg4
+      MGlNdVNiZzErM3liU2VJKzdOVmdLRFdKRG5KbXJiL2FGWE9hRUpJWkRldjZFaTQvczRDYWIzcUdt
+      UmR0bFpjL0FrRTBEcUp4NndmRVRmNFJKUHNCcG1yYU1xTkZSWDRYcTQ5cDVaQWtyam5heDNjNTJJ
+      VytHeGdNbWcxcmVNZnRKNVJBaWtMaVFUM1ZocXNsYmVGRkhHc05DTHF1RmNsQ3V4WlJSZTBxZ3RE
+      RmpSK2N2YUVPNlVVRXF6cmVacllkTk9aUFhuTDVjVXhkeEtxVG9iaUt0STZxc2Yxd3R5SHRPN2pR
+      RmJDYWMycHBPRFdQVEFiVWxCMlhERzh1bUgvSHpzSllRMktpclNrRGx6L1grWU1JZEdRdy8waFFT
+      cm5hUm8wSWszZTduWDFOeEhkMTRZQzhIUSszOW1sS2dKOWtMT1ZISS9NSHRsSDVnWWo4V2VtYzND
+      VTVjWU1NalBqV0tBYjF3QmdnaXJPRjBESU5lOWpCWldBRFhzczdNdHl1ZWVQZGxCVHh1bGpkdGtT
+      cXhsRVkwQnFEVnJxZHR2amlFcWY4aFVSV3M0dlY0RTNtMVhQRUZEKzNDaFJKTjJvem1lL0RCcTEr
+      a1ZuUWMvSnc4OGhIYm1jK2VNTXNpR2toOUdZQkUrbk12MDltcFphdzFOaEZyeTRoQXdqbWxnUHV1
+      WGdJNzZOWHVqN1hiNFVoSnA2di9mTmZuY00rMkxjai9zREpVN3NtSllrejRmWVFvMWFBM2FxUHdv
+      Uzk4dFAxVmpEdXlFeTc1ZENRTUZvVER6SFVpbEFlZXNHNGV3Q2NuQndOTXNVUTlRU1pnYkRxdVZ1
+      U1I0MyttV0J4c1hMWEpZSkFrdXVDODNETzY0UUE2OUxMTG1GRHR2UjM1c1ZoMEVTU3MxVGdPQ1NI
+      YkxJd0FFSWFHelByS25lU3M3SDNaWEZOS28vZmwxSjUralFDc09PSnlvTGNPb0FmQklRMUd5b25h
+      bFZmanFHdmlGVHpXMEcralgvNklvZVBYdm5CdUt4WEV3MjcwTzhRZnh3M3BQaTAyYkllYWJKQmpv
+      RnhacXMyTUFrd2NtRmIwVjRtb3VUOGRyQlpDcGphZkplN0tmcDlDWVM1V1pJNSsyUnQzMUFCMG5J
+      Zk1lTEtHSFlzcCtvZkdkbDdJZW8waG1xTzhLaGIzSWNGVUI0RWs5UjJITWlyZ1NoWFhjb2xaRGxB
+      S2ZLNmVQaWw3ZkRWL2xKUFRYS3NqSk9DTTNYaUd1QzRqMnhYamNzdG5qa0xNSDdaMnpCRVhEK2dQ
+      ajRST2NmWVNLNERkb3dqKzNlaEVpa1dSc0VlTzFxSGx3RVI1dVkvS0RtdlIyVk5zWG1ZYnYrdlZL
+      eXF5aVdQbmtoZUc5THVGOVZqVWRTdDhzMHhRM2FUem9VenFWOEQwaHB2YW5CSm1QaUNpaVdYT1V6
+      a3R5V1grTFlGZlFTSGJKVVl1dy9oY1dQMWJJdHYxb25MMXN4YlI0M25EOXRnbVR1RW9mZk45cTdW
+      SFpPdmtrdlBFMmU3QWIrRHRybnlQRHozS2pYTlptaHlHdkFoa2JaSGtqNU9vbGV6NXUvUGVCQlE2
+      MUh1YTlVZ013QXFUcjVSVW10MUdINnV3SGM1Tkt2RDFDVVUxQWhRbEoyMEtEMmMzOGNoRGQvcWZH
+      dmZyM0VCYzF3SnJhazlDNitqaFpRSjdndVVLeE1ZMGE5Zk5na1Vnc2t1SWFpMm1tNWpxTFlkRjFo
+      YmtQaTdwTTBiaFdUSHAzMnhQcDdkQy9wc1RZaU9VTEd5ZlhpWXVZaG1oTytUbnc3YXduK3ZNUlA0
+      cHoyQnZrZ0xhYzdaQklDd0duYms1TGl1dXdQMXUxNUQ0Tlp2UXJnZFc0WHdIQkFSNysrTDJFYlkx
+      RDEzNEpIYWplOHRlSFFyaFBDVzJlRG9QdERBNUl4TkEyZWVReEg1S2xzS0lXRmNBc241cWtLa3Ay
+      T2h5OHFnZmRld0VSQVZSM3pDWXg0b2hqNGxmOXZJb1A3aXp5bk9WNC9EKzFON3E3WTVyU3VuYnhS
+      bVlsaDBJYU9BRzFiV1RwbE95Wm11QUtqWnNHQlc1Wm1Xd0xCSVV5Rnh2RWp2WlZPazNJOXRpMDhF
+      TmVqWVNuejRucVRpYlRoYkdFL2h4a2VxZFRRK2thNlVDUHVnSXU4N04rK2RlMHBYY2pRVzBJWXdB
+      WnJ5SGxLeUNtaHVwdUpyTXRiWVlYSEdObENEUEZqOUdKOTZQU3V4UG56L29GaHl6TDhKZTBPZy9v
+      WGU0aWZtZVhnYnVyNWZZWHd2VFIvei9vUThJNHRNTWNhek9PY0ZsMkFhbFhsQjJoek9lYkhjZms4
+      dEgyRjRnU2JRd0o4WTZrVHk4TUUvNVFYL1FXYXBRbGRHb09GR1ZOZHhjdWoxdzRTS0xtRVdKMElP
+      ZXE1YXVRQlBYWWVzUVQ1WittaHd4ZVZtMWgzTktyVFVHYlNsZEFLWmNDV2c2ZnExMTlaRU4wbmp2
+      TzZwN1g3eE5FTUxkeWFrUE5Hb2R0cE4rY1k0bE1vQXZEVE8vb3czNEhybVh6eGo1cUM4Ry9nc0dB
+      QVIvSlVBOE9YQVFQVzJUdUhtZVdoVW5uR1EwdElaOXBCdEViM1BRdk1WSGxsREkwVHIvczZUelRO
+      ajB3Rmt5MDBmTC9vbFdYUFNZUmZOM3VLMFVXOC9iT3Z5YVl4ZGJHbzRrU0VsVUx5SnZHRUxITFBM
+      dzRMWkZJR1J1VW12MUhPMXd1TkQ0NTlvRUM0L3p2STVmdHNJalJyM2lSaG9sUjdkSm5Bakxva1M2
+      Y1Z1RjhwRzR6dldNc05vRzRXcXl4aTdJZzBIdmU5T2x6SDFDWlBNZGwyaTh2QlBBcVV3SWcyM3BU
+      QnVHYmdCUVZPdWtPMDhwK0ZPTk1zWkxEcGUzYkpCeFpUY0lQQ1U1NXdRTFhDWnI3OGhvb294VHdB
+      V0pCSjBNaFZXc1J3ZXgyUXdzRHFuZklZSWN6eFhpNXNRU1ZXQnUwdFgxbnVORjFNU2M1UHVUemM2
+      dmVxL1YyS1FRK0MzYU8xZEhWM1dQUnR4SzRCZ2FmOSszY3Rkc3RKMmRpSFNrN3NHakxEdzc3TjMy
+      U1BoZFI2NCtXWCsxU01Qay8yelU0Tk9oMGEwWFUyOHpKckdzSndxN3RZbWhlZnZRNkxyamNVR1RN
+      TzVSSzZnb0o2aTNadWd5RVVtUWRLNmU5dXZ4dVZjU1N4NDU5SmE4R1VWMzY3UnVkMEoxS0NKbFJX
+      cC92dHYzZWRPemVXOFpTc1Jta2JSZ1dZbXJXcWgvWk1YVVVGa3lBOVB0NUZid2JFZGRZcFhURnor
+      MUg5SEltaThFT3Vkb0tYTzVJdkdMWDlBS3Q5YkVqQkFleHd1NHNra28yQWtzVStHSzVJRWkzc2U5
+      RWtEUW02WWd2bENrNU85bUkyRUJFWSt4czhIVjVnV1pWUlBvVmRQMWxuZEJxVFl5VUtOMmdWV2RE
+      RUErbHZPa0FnR05JeEtleUExVW5nV0JyaCt5VVNoSXJ2dVJDSWFIRDZQdTV6SmlXUDBnb1haQk9y
+      bGF3a1ZNeDk5eGMzTjJOSFBMRThuQ1Y5dVpGSVBiMkFjczVJcFlJSXVYUlNNK09YU2dFQjZpZHRC
+      RWFwTlZVR0E1S3pxZWN2anIvNUM3REpNd0VUQXVVL1NWSnNQL3cwT1lqdnBsbzkyeERjVkZwL3Np
+      NGd0aE55Y2t3YnhHNUZWMDRRTHFxRjR3eUhZY2pTS3BOblcwUEVjNlhBOGIzN1Bwd2hRQkR1a1Jp
+      N3FwdGxhOERyTHBZbXBZWnZKMHN6NWQyNFZsYVFTTWJWQlFUNXhxVTNCY256Y081d21oUzRoMDRB
+      VHlEbTgyM3hZd280QkN0cEgySW5RZEhhckdMT2NFSW14RWJTM1Z2aG9ScWpMaFNxNFlBUVRCZENK
+      OUhlQ2Rub0pGdEx2UXJZVnpBUjFLV0JCUjI4ZnhsejhEcVZEemxPSk4vUFIvYnZURWdmQlIxSzVZ
+      NFZVOEpCME9hZHdrTmsza0JyQURJaWhtemxrSitDTjMyR2phV2RpZVdQc0xiWW44THJ0OW5udlpD
+      U3BFR1pKVS9od05YYzVoa2pkYVBjQUZkNkFXYTIzbUt1UUdBVHZtQ3RnTkRDYzN6Y3BONllUTDZM
+      UW5TRThsbFg3MHQ2blp4NzYrbklsSlFQdDhMK1pwOHJMck5oMzEvK3p5emVYUUJiY1ZWZ2lwa0cv
+      cXdERnlQUnJ2eVoyUW5FSmJyNHFZYkorYWI0M2pyRndkZFZUdjhxdmNiS0FLN2RUcWQyK2xQR1Jm
+      RGJIVmwrVnJRbzIvGiMKIWh0dHBzOi8vd3d3LnB5dGhvbi5vcmcvZG93bmxvYWRzLzoIaW50ZXJu
+      ZXQ4ASABGgwIspbz1wYQw9nAmgEiCGdyb2stNC4zKhNmcF9lYjNjMDAzZmM2NmMxNGVkMhkIEBDZ
+      BSDZBTA+OIABWOSV0QSQAdkFmAFR
+    - !!binary |
+      CiQwYzU5Njc0OS01MjM0LTk3NGItYTBlMi1jNzBhMzBlMmM2ZmMSmgMKlQMKBlB5dGhvbhACKoYD
+      NHZuR0M5Y2JiNzVNZ2h5VFVXSUtJOFF6Q0c2YWtGckIvM3d4dUlPazg4WmxqR2VXM09RM2tvdmhy
+      eTZPR0IwM05ObmFxMlYzenJwQ09USTdUeDRhMTAxeVhHcVFQWXZVUkN4ekZqVnJoVDcrL29FUzNB
+      UVY4R2ZzeFkyVVp3Tm5mNUVqTmE4NUdzeDN6UXRZZlFIM1o4KytwUDJWM3NRdU5VV01nZG4xcFFI
+      TkZMNXR3eW5KOGhlQUJhWlBoZDlRa0J5Yms4Wm4wQXZQN3hWa1kydWZQcUFjVEZuR01temJrSWVP
+      V3RGRjFXN2tkQy84UDd5VzRpTnBuL2RCUEJ4R1ZFQ3dsSUJSR1hPbzEvSjRXejdTaGhncXpkeVh0
+      aDlwdjRlbHFTRGEzcXJ1M0dCWlB5NXpKTC96ZldwcnVzRVoxZm9XQkdRa285SGFsYlJzam9xYWxM
+      Yk1NN2RhdXEzaVhsZ25jY2FFdTJySWxoMGFvcTNXZFd6K1JHS2tNb2lRaXpUZUJ3OAEgAhoMCLKW
+      89cGEMPZwJoBIghncm9rLTQuMyoTZnBfZWIzYzAwM2ZjNjZjMTRlZDIaCBEQqjIgqjIwngE4gAZY
+      oNnRJJAB0SyYAWE=
+    - !!binary |
+      CiQwYzU5Njc0OS01MjM0LTk3NGItYTBlMi1jNzBhMzBlMmM2ZmMSCwoHCgEgEAI4ASACGgwIspbz
+      1wYQw9nAmgEiCGdyb2stNC4zKhNmcF9lYjNjMDAzZmM2NmMxNGVkMhoIEhCqMiCqMjCeATiABljI
+      nNMkkAHRLJgBYg==
+    - !!binary |
+      CiQwYzU5Njc0OS01MjM0LTk3NGItYTBlMi1jNzBhMzBlMmM2ZmMSCwoHCgEzEAI4ASACGgwIspbz
+      1wYQw9nAmgEiCGdyb2stNC4zKhNmcF9lYjNjMDAzZmM2NmMxNGVkMhoIExCqMiCqMjCeATiABljw
+      39QkkAHRLJgBYw==
+    - !!binary |
+      CiQwYzU5Njc0OS01MjM0LTk3NGItYTBlMi1jNzBhMzBlMmM2ZmMSCwoHCgEuEAI4ASACGgwIspbz
+      1wYQw9nAmgEiCGdyb2stNC4zKhNmcF9lYjNjMDAzZmM2NmMxNGVkMhoIFBCqMiCqMjCeATiABliY
+      o9YkkAHRLJgBZA==
+    - !!binary |
+      CiQwYzU5Njc0OS01MjM0LTk3NGItYTBlMi1jNzBhMzBlMmM2ZmMSDAoICgIxNRACOAEgAhoMCLKW
+      89cGEMPZwJoBIghncm9rLTQuMyoTZnBfZWIzYzAwM2ZjNjZjMTRlZDIaCBUQqjIgqjIwngE4gAZY
+      wObXJJAB0SyYAWU=
+    - !!binary |
+      CiQwYzU5Njc0OS01MjM0LTk3NGItYTBlMi1jNzBhMzBlMmM2ZmMSCwoHCgEuEAI4ASACGgwIspbz
+      1wYQw9nAmgEiCGdyb2stNC4zKhNmcF9lYjNjMDAzZmM2NmMxNGVkMhoIFhCqMiCqMjCeATiABljo
+      qdkkkAHRLJgBZg==
+    - !!binary |
+      CiQwYzU5Njc0OS01MjM0LTk3NGItYTBlMi1jNzBhMzBlMmM2ZmMSCwoHCgEyEAI4ASACGgwIspbz
+      1wYQw9nAmgEiCGdyb2stNC4zKhNmcF9lYjNjMDAzZmM2NmMxNGVkMhoIFxCqMiCqMjCeATiABliQ
+      7dokkAHRLJgBZw==
+    - !!binary |
+      CiQwYzU5Njc0OS01MjM0LTk3NGItYTBlMi1jNzBhMzBlMmM2ZmMSDAoICgIgKBACOAEgAhoMCLKW
+      89cGEMPZwJoBIghncm9rLTQuMyoTZnBfZWIzYzAwM2ZjNjZjMTRlZDIaCBgQqjIgqjIwngE4gAZY
+      uLDcJJAB0SyYAWg=
+    - !!binary |
+      CiQwYzU5Njc0OS01MjM0LTk3NGItYTBlMi1jNzBhMzBlMmM2ZmMSEAoMCgZsYXRlc3QQAjgBIAIa
+      DAiylvPXBhDD2cCaASIIZ3Jvay00LjMqE2ZwX2ViM2MwMDNmYzY2YzE0ZWQyGggZEKoyIKoyMJ4B
+      OIAGWODz3SSQAdEsmAFp
+    - !!binary |
+      CiQwYzU5Njc0OS01MjM0LTk3NGItYTBlMi1jNzBhMzBlMmM2ZmMSDQoJCgMgYXMQAjgBIAIaDAiy
+      lvPXBhDD2cCaASIIZ3Jvay00LjMqE2ZwX2ViM2MwMDNmYzY2YzE0ZWQyGggaEKoyIKoyMJ4BOIAG
+      WIi33ySQAdEsmAFq
+    - !!binary |
+      CiQwYzU5Njc0OS01MjM0LTk3NGItYTBlMi1jNzBhMzBlMmM2ZmMSDQoJCgMgb2YQAjgBIAIaDAiy
+      lvPXBhDD2cCaASIIZ3Jvay00LjMqE2ZwX2ViM2MwMDNmYzY2YzE0ZWQyGggbEKoyIKoyMJ4BOIAG
+      WLD64CSQAdEsmAFr
+    - !!binary |
+      CiQwYzU5Njc0OS01MjM0LTk3NGItYTBlMi1jNzBhMzBlMmM2ZmMSDgoKCgQgTm92EAI4ASACGgwI
+      spbz1wYQw9nAmgEiCGdyb2stNC4zKhNmcF9lYjNjMDAzZmM2NmMxNGVkMhoIHBCqMiCqMjCeATiA
+      BljYveIkkAHRLJgBbA==
+    - !!binary |
+      CiQwYzU5Njc0OS01MjM0LTk3NGItYTBlMi1jNzBhMzBlMmM2ZmMSCwoHCgEgEAI4ASACGgwIspbz
+      1wYQw9nAmgEiCGdyb2stNC4zKhNmcF9lYjNjMDAzZmM2NmMxNGVkMhoIHRCqMiCqMjCeATiABliA
+      geQkkAHRLJgBbQ==
+    - !!binary |
+      CiQwYzU5Njc0OS01MjM0LTk3NGItYTBlMi1jNzBhMzBlMmM2ZmMSDQoJCgMyMDIQAjgBIAIaDAiy
+      lvPXBhDD2cCaASIIZ3Jvay00LjMqE2ZwX2ViM2MwMDNmYzY2YzE0ZWQyGggeEKoyIKoyMJ4BOIAG
+      WKjE5SSQAdEsmAFu
+    - !!binary |
+      CiQwYzU5Njc0OS01MjM0LTk3NGItYTBlMi1jNzBhMzBlMmM2ZmMSCwoHCgE2EAI4ASACGgwIspbz
+      1wYQw9nAmgEiCGdyb2stNC4zKhNmcF9lYjNjMDAzZmM2NmMxNGVkMhoIHxCqMiCqMjCeATiABljQ
+      h+ckkAHRLJgBbw==
+    - !!binary |
+      CiQwYzU5Njc0OS01MjM0LTk3NGItYTBlMi1jNzBhMzBlMmM2ZmMSCwoHCgEpEAI4ASACGgwIspbz
+      1wYQw9nAmgEiCGdyb2stNC4zKhNmcF9lYjNjMDAzZmM2NmMxNGVkMhoIIBCqMiCqMjCeATiABlj4
+      yugkkAHRLJgBcA==
+    - !!binary |
+      CiQwYzU5Njc0OS01MjM0LTk3NGItYTBlMi1jNzBhMzBlMmM2ZmMSCgoEEAI4ARgDIAIaDAiylvPX
+      BhDD2cCaASIIZ3Jvay00LjMqE2ZwX2ViM2MwMDNmYzY2YzE0ZWQyIAggEKoyGOgzIKoyMJ4BOIAG
+      SgEBWPir1DyQAdEsmAF3OiFodHRwczovL3d3dy5weXRob24ub3JnL2Rvd25sb2Fkcy9yLQohaHR0
+      cHM6Ly93d3cucHl0aG9uLm9yZy9kb3dubG9hZHMvEghpbnRlcm5ldA==
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: Open python.org/downloads and tell me the latest Python release. One
+            line.
+        role: ROLE_USER
+      - content:
+        - text: ''
+        role: ROLE_ASSISTANT
+        tool_calls:
+        - id: call-110c6317-d8e9-422e-9946-989a04a9995d-0
+          type: TOOL_CALL_TYPE_WEB_SEARCH_TOOL
+          status: TOOL_CALL_STATUS_COMPLETED
+          function:
+            name: open_page
+            arguments: '{"url":"https://www.python.org/downloads/"}'
+        reasoning_content: Checking python.org/downloads for the latest Python release.
+        encrypted_content: OR5cqE9meh3GpoNSXZBnB+PIn5348jsGbiY2YHobZm4pHyfQd3aEc0/zQiwRNh08N/Y4Ru3vrTt3gCybSj3h2tLInoWxqKgpFeUe5vwV9MAT4drUVQwylR/vn61am70jpCP768x+eSuwWJmqBlsJFl9scvq3mHxIDzi4Du/oJ4VoWwiCHc80CfIkQADoDZhXthy1l/Tm62bMCZLnYVmlOGo6CzYabMBLu3wVBQpGIpDBSKOR2Om98ssKWTPXkdT7YzgZ5OJvQtSoIupQH5rqic4fTgw1OP0EoTtQ2s7w7/VaDQUPxhk
+      - content:
+        - text: ''
+        role: ROLE_TOOL
+        tool_calls:
+        - id: call-110c6317-d8e9-422e-9946-989a04a9995d-0
+          type: TOOL_CALL_TYPE_WEB_SEARCH_TOOL
+          status: TOOL_CALL_STATUS_COMPLETED
+          function:
+            name: open_page
+            arguments: '{"url":"https://www.python.org/downloads/"}'
+        encrypted_content: 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
+        tool_call_id: call-110c6317-d8e9-422e-9946-989a04a9995d-0
+      - content:
+        - text: ''
+        role: ROLE_ASSISTANT
+        encrypted_content: 4vnGC9cbb75MghyTUWIKI8QzCG6akFrB/3wxuIOk88ZljGeW3OQ3kovhry6OGB03NNnaq2V3zrpCOTI7Tx4a101yXGqQPYvURCxzFjVrhT7+/oES3AQV8GfsxY2UZwNnf5EjNa85Gsx3zQtYfQH3Z8++pP2V3sQuNUWMgdn1pQHNFL5twynJ8heABaZPhd9QkBybk8Zn0AvP7xVkY2ufPqAcTFnGMmzbkIeOWtFF1W7kdC/8P7yW4iNpn/dBPBxGVECwlIBRGXOo1/J4Wz7ShhgqzdyXth9pv4elqSDa3qru3GBZPy5zJL/zfWprusEZ1foWBGQko9HalbRsjoqalLbMM7dauq3iXlgnccaEu2rIlh0aoq3WdWz+RGKkMoiQizTeBw
+      - content:
+        - text: Python 3.15.2 (latest as of Nov 2026)
+        role: ROLE_ASSISTANT
+      - content:
+        - text: Without searching or opening anything again, list the first three
+            rows of the release table on that page (version and release date), exactly
+            as the page showed them.
+        role: ROLE_USER
+      model: grok-4-fast-reasoning
+      tools:
+      - web_search:
+          enable_image_understanding: false
+          enable_image_search: false
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+      use_encrypted_content: true
+    raw: !!binary |
+      ClAKTApKT3BlbiBweXRob24ub3JnL2Rvd25sb2FkcyBhbmQgdGVsbCBtZSB0aGUgbGF0ZXN0IFB5
+      dGhvbiByZWxlYXNlLiBPbmUgbGluZS4QAQrnAwoCCgAQAiJrCitjYWxsLTExMGM2MzE3LWQ4ZTkt
+      NDIyZS05OTQ2LTk4OWEwNGE5OTk1ZC0wEAIYAVI4CglvcGVuX3BhZ2USK3sidXJsIjoiaHR0cHM6
+      Ly93d3cucHl0aG9uLm9yZy9kb3dubG9hZHMvIn0qPENoZWNraW5nIHB5dGhvbi5vcmcvZG93bmxv
+      YWRzIGZvciB0aGUgbGF0ZXN0IFB5dGhvbiByZWxlYXNlLjKzAk9SNWNxRTltZWgzR3BvTlNYWkJu
+      QitQSW41MzQ4anNHYmlZMllIb2JabTRwSHlmUWQzYUVjMC96UWl3Uk5oMDhOL1k0UnUzdnJUdDNn
+      Q3liU2ozaDJ0TElub1d4cUtncEZlVWU1dndWOU1BVDRkclVWUXd5bFIvdm42MWFtNzBqcENQNzY4
+      eCtlU3V3V0ptcUJsc0pGbDlzY3ZxM21IeElEemk0RHUvb0o0Vm9Xd2lDSGM4MENmSWtRQURvRFpo
+      WHRoeTFsL1RtNjJiTUNaTG5ZVm1sT0dvNkN6WWFiTUJMdTN3VkJRcEdJcERCU0tPUjJPbTk4c3NL
+      V1RQWGtkVDdZemdaNU9KdlF0U29JdXBRSDVycWljNGZUZ3cxT1AwRW9UdFEyczd3Ny9WYURRVVB4
+      aGsKlhwKAgoAEAUiaworY2FsbC0xMTBjNjMxNy1kOGU5LTQyMmUtOTk0Ni05ODlhMDRhOTk5NWQt
+      MBACGAFSOAoJb3Blbl9wYWdlEit7InVybCI6Imh0dHBzOi8vd3d3LnB5dGhvbi5vcmcvZG93bmxv
+      YWRzLyJ9MvMaT1ZrSzFYaUZjQzQ2aXZyTUVFRTlBdnNKaEJ3Wnd3ak5KSFp0WmEzWFgxRGtld2Qr
+      SmMwMDBNTnoyU0l1Y1U5eWw4dmx5RXd1UXEzZFJzZ09GdjZDSmlqSUEvQjV0U0o5Y1ovQnhkR00y
+      ZlpRalVld0RJeWpwSVkrUnpyWWIxMlhqSkdSRnNsNTZNbWhxWUdaNjlHZy85NTFERSs2NExpaFBp
+      bld1d1hLbVVSelUvUTNEdTk4b1c4ODBpTXVTYmcxKzN5YlNlSSs3TlZnS0RXSkRuSm1yYi9hRlhP
+      YUVKSVpEZXY2RWk0L3M0Q2FiM3FHbVJkdGxaYy9Ba0UwRHFKeDZ3ZkVUZjRSSlBzQnBtcmFNcU5G
+      Ulg0WHE0OXA1WkFrcmpuYXgzYzUySVcrR3hnTW1nMXJlTWZ0SjVSQWlrTGlRVDNWaHFzbGJlRkZI
+      R3NOQ0xxdUZjbEN1eFpSUmUwcWd0REZqUitjdmFFTzZVVUVxenJlWnJZZE5PWlBYbkw1Y1V4ZHhL
+      cVRvYmlLdEk2cXNmMXd0eUh0TzdqUUZiQ2FjMnBwT0RXUFRBYlVsQjJYREc4dW1IL0h6c0pZUTJL
+      aXJTa0Rsei9YK1lNSWRHUXcvMGhRU3JuYVJvMElrM2U3blgxTnhIZDE0WUM4SFErMzltbEtnSjlr
+      TE9WSEkvTUh0bEg1Z1lqOFdlbWMzQ1U1Y1lNTWpQaldLQWIxd0JnZ2lyT0YwRElOZTlqQlpXQURY
+      c3M3TXR5dWVlUGRsQlR4dWxqZHRrU3F4bEVZMEJxRFZycWR0dmppRXFmOGhVUldzNHZWNEUzbTFY
+      UEVGRCszQ2hSSk4yb3ptZS9EQnExK2tWblFjL0p3ODhoSGJtYytlTU1zaUdraDlHWUJFK25NdjA5
+      bXBaYXcxTmhGcnk0aEF3am1sZ1B1dVhnSTc2Tlh1ajdYYjRVaEpwNnYvZk5mbmNNKzJMY2ovc0RK
+      VTdzbUpZa3o0ZllRbzFhQTNhcVB3b1M5OHRQMVZqRHV5RXk3NWRDUU1Gb1REekhVaWxBZWVzRzRl
+      d0NjbkJ3Tk1zVVE5UVNaZ2JEcXVWdVNSNDMrbVdCeHNYTFhKWUpBa3V1QzgzRE82NFFBNjlMTExt
+      RkR0dlIzNXNWaDBFU1NzMVRnT0NTSGJMSXdBRUlhR3pQcktuZVNzN0gzWlhGTktvL2ZsMUo1K2pR
+      Q3NPT0p5b0xjT29BZkJJUTFHeW9uYWxWZmpxR3ZpRlR6VzBHK2pYLzZJb2VQWHZuQnVLeFhFdzI3
+      ME84UWZ4dzNwUGkwMmJJZWFiSkJqb0Z4WnFzMk1Ba3djbUZiMFY0bW91VDhkckJaQ3BqYWZKZTdL
+      ZnA5Q1lTNVdaSTUrMlJ0MzFBQjBuSWZNZUxLR0hZc3Arb2ZHZGw3SWVvMGhtcU84S2hiM0ljRlVC
+      NEVrOVIySE1pcmdTaFhYY29sWkRsQUtmSzZlUGlsN2ZEVi9sSlBUWEtzakpPQ00zWGlHdUM0ajJ4
+      WGpjc3RuamtMTUg3WjJ6QkVYRCtnUGo0Uk9jZllTSzREZG93aiszZWhFaWtXUnNFZU8xcUhsd0VS
+      NXVZL0tEbXZSMlZOc1htWWJ2K3ZWS3lxeWlXUG5raGVHOUx1RjlWalVkU3Q4czB4UTNhVHpvVXpx
+      VjhEMGhwdmFuQkptUGlDaWlXWE9Vemt0eVdYK0xZRmZRU0hiSlVZdXcvaGNXUDFiSXR2MW9uTDFz
+      eGJSNDNuRDl0Z21UdUVvZmZOOXE3VkhaT3Zra3ZQRTJlN0FiK0R0cm55UER6M0tqWE5abWh5R3ZB
+      aGtiWkhrajVPb2xlejV1L1BlQkJRNjFIdWE5VWdNd0FxVHI1UlVtdDFHSDZ1d0hjNU5LdkQxQ1VV
+      MUFoUWxKMjBLRDJjMzhjaERkL3FmR3ZmcjNFQmMxd0pyYWs5QzYramhaUUo3Z3VVS3hNWTBhOWZO
+      Z2tVZ3NrdUlhaTJtbTVqcUxZZEYxaGJrUGk3cE0wYmhXVEhwMzJ4UHA3ZEMvcHNUWWlPVUxHeWZY
+      aVl1WWhtaE8rVG53N2F3bit2TVJQNHB6MkJ2a2dMYWM3WkJJQ3dHbmJrNUxpdXV3UDF1MTVENE5a
+      dlFyZ2RXNFh3SEJBUjcrK0wyRWJZMUQxMzRKSGFqZTh0ZUhRcmhQQ1cyZURvUHREQTVJeE5BMmVl
+      UXhINUtsc0tJV0ZjQXNuNXFrS2twMk9oeThxZ2ZkZXdFUkFWUjN6Q1l4NG9oajRsZjl2SW9QN2l6
+      eW5PVjQvRCsxTjdxN1k1clN1bmJ4Um1ZbGgwSWFPQUcxYldUcGxPeVptdUFLalpzR0JXNVptV3dM
+      QklVeUZ4dkVqdlpWT2szSTl0aTA4RU5lallTbno0bnFUaWJUaGJHRS9oeGtlcWRUUStrYTZVQ1B1
+      Z0l1ODdOKytkZTBwWGNqUVcwSVl3QVpyeUhsS3lDbWh1cHVKck10YllZWEhHTmxDRFBGajlHSjk2
+      UFN1eFBuei9vRmh5ekw4SmUwT2cvb1hlNGlmbWVYZ2J1cjVmWVh3dlRSL3ovb1E4STR0TU1jYXpP
+      T2NGbDJBYWxYbEIyaHpPZWJIY2ZrOHRIMkY0Z1NiUXdKOFk2a1R5OE1FLzVRWC9RV2FwUWxkR29P
+      RkdWTmR4Y3VqMXc0U0tMbUVXSjBJT2VxNWF1UUJQWFllc1FUNVorbWh3eGVWbTFoM05LclRVR2JT
+      bGRBS1pjQ1dnNmZxMTE5WkVOMG5qdk82cDdYN3hORU1MZHlha1BOR29kdHBOK2NZNGxNb0F2RFRP
+      L293MzRIcm1YenhqNXFDOEcvZ3NHQUFSL0pVQThPWEFRUFcyVHVIbWVXaFVubkdRMHRJWjlwQnRF
+      YjNQUXZNVkhsbERJMFRyL3M2VHpUTmowd0ZreTAwZkwvb2xXWFBTWVJmTjN1SzBVVzgvYk92eWFZ
+      eGRiR280a1NFbFVMeUp2R0VMSExQTHc0TFpGSUdSdVVtdjFITzF3dU5ENDU5b0VDNC96dkk1ZnRz
+      SWpScjNpUmhvbFI3ZEpuQWpMb2tTNmNWdUY4cEc0enZXTXNOb0c0V3F5eGk3SWcwSHZlOU9sekgx
+      Q1pQTWRsMmk4dkJQQXFVd0lnMjNwVEJ1R2JnQlFWT3VrTzA4cCtGT05Nc1pMRHBlM2JKQnhaVGNJ
+      UENVNTV3UUxYQ1pyNzhob29veFR3QVdKQkowTWhWV3NSd2V4MlF3c0RxbmZJWUljenhYaTVzUVNW
+      V0J1MHRYMW51TkYxTVNjNVB1VHpjNnZlcS9WMktRUStDM2FPMWRIVjNXUFJ0eEs0QmdhZjkrM2N0
+      ZHN0SjJkaUhTazdzR2pMRHc3N04zMlNQaGRSNjQrV1grMVNNUGsvMnpVNE5PaDBhMFhVMjh6SnJH
+      c0p3cTd0WW1oZWZ2UTZMcmpjVUdUTU81Uks2Z29KNmkzWnVneUVVbVFkSzZlOXV2eHVWY1NTeDQ1
+      OUphOEdVVjM2N1J1ZDBKMUtDSmxSV3AvdnR2M2VkT3plVzhaU3NSbWtiUmdXWW1yV3FoL1pNWFVV
+      Rmt5QTlQdDVGYndiRWRkWXBYVEZ6KzFIOUhJbWk4RU91ZG9LWE81SXZHTFg5QUt0OWJFakJBZXh3
+      dTRza2tvMkFrc1UrR0s1SUVpM3NlOUVrRFFtNllndmxDazVPOW1JMkVCRVkreHM4SFY1Z1daVlJQ
+      b1ZkUDFsbmRCcVRZeVVLTjJnVldkREVBK2x2T2tBZ0dOSXhLZXlBMVVuZ1dCcmgreVVTaElydnVS
+      Q0lhSEQ2UHU1ekppV1AwZ29YWkJPcmxhd2tWTXg5OXhjM04yTkhQTEU4bkNWOXVaRklQYjJBY3M1
+      SXBZSUl1WFJTTStPWFNnRUI2aWR0QkVhcE5WVUdBNUt6cWVjdmpyLzVDN0RKTXdFVEF1VS9TVkpz
+      UC93ME9ZanZwbG85MnhEY1ZGcC9zaTRndGhOeWNrd2J4RzVGVjA0UUxxcUY0d3lIWWNqU0twTm5X
+      MFBFYzZYQThiMzdQcHdoUUJEdWtSaTdxcHRsYThEckxwWW1wWVp2SjBzejVkMjRWbGFRU01iVkJR
+      VDV4cVUzQmNuemNPNXdtaFM0aDA0QVR5RG04MjN4WXdvNEJDdHBIMkluUWRIYXJHTE9jRUlteEVi
+      UzNWdmhvUnFqTGhTcTRZQVFUQmRDSjlIZUNkbm9KRnRMdlFyWVZ6QVIxS1dCQlIyOGZ4bHo4RHFW
+      RHpsT0pOL1BSL2J2VEVnZkJSMUs1WTRWVThKQjBPYWR3a05rM2tCckFESWlobXpsa0orQ04zMkdq
+      YVdkaWVXUHNMYlluOExydDlubnZaQ1NwRUdaSlUvaHdOWGM1aGtqZGFQY0FGZDZBV2EyM21LdVFH
+      QVR2bUN0Z05EQ2MzemNwTjZZVEw2TFFuU0U4bGxYNzB0Nm5aeDc2K25JbEpRUHQ4TCtacDhyTHJO
+      aDMxLyt6eXplWFFCYmNWVmdpcGtHL3F3REZ5UFJydnlaMlFuRUpicjRxWWJKK2FiNDNqckZ3ZGRW
+      VHY4cXZjYktBSzdkVHFkMitsUEdSZkRiSFZsK1ZyUW86K2NhbGwtMTEwYzYzMTctZDhlOS00MjJl
+      LTk5NDYtOTg5YTA0YTk5OTVkLTAKjwMKAgoAEAIyhgM0dm5HQzljYmI3NU1naHlUVVdJS0k4UXpD
+      RzZha0ZyQi8zd3h1SU9rODhabGpHZVczT1Eza292aHJ5Nk9HQjAzTk5uYXEyVjN6cnBDT1RJN1R4
+      NGExMDF5WEdxUVBZdlVSQ3h6RmpWcmhUNysvb0VTM0FRVjhHZnN4WTJVWndObmY1RWpOYTg1R3N4
+      M3pRdFlmUUgzWjgrK3BQMlYzc1F1TlVXTWdkbjFwUUhORkw1dHd5bko4aGVBQmFaUGhkOVFrQnli
+      azhabjBBdlA3eFZrWTJ1ZlBxQWNURm5HTW16YmtJZU9XdEZGMVc3a2RDLzhQN3lXNGlOcG4vZEJQ
+      QnhHVkVDd2xJQlJHWE9vMS9KNFd6N1NoaGdxemR5WHRoOXB2NGVscVNEYTNxcnUzR0JaUHk1ekpM
+      L3pmV3BydXNFWjFmb1dCR1FrbzlIYWxiUnNqb3FhbExiTU03ZGF1cTNpWGxnbmNjYUV1MnJJbGgw
+      YW9xM1dkV3orUkdLa01vaVFpelRlQncKKwonCiVQeXRob24gMy4xNS4yIChsYXRlc3QgYXMgb2Yg
+      Tm92IDIwMjYpEAIKrQEKqAEKpQFXaXRob3V0IHNlYXJjaGluZyBvciBvcGVuaW5nIGFueXRoaW5n
+      IGFnYWluLCBsaXN0IHRoZSBmaXJzdCB0aHJlZSByb3dzIG9mIHRoZSByZWxlYXNlIHRhYmxlIG9u
+      IHRoYXQgcGFnZSAodmVyc2lvbiBhbmQgcmVsZWFzZSBkYXRlKSwgZXhhY3RseSBhcyB0aGUgcGFn
+      ZSBzaG93ZWQgdGhlbS4QARIVZ3Jvay00LWZhc3QtcmVhc29uaW5nigEGGgQYACgAkgECCAHAAQE=
+  response_sample:
+    json:
+      id: a029a8d9-1214-4129-b003-1d69b808e3d1
+      outputs:
+      - finish_reason: REASON_STOP
+        message:
+          content: '1. [Python 3.15.2](/downloads/release/python-3152/) Oct. 25, 2026
+            [Download](/downloads/release/python-3152/) [Release notes](https://docs.python.org/release/3.15.2/whatsnew/changelog.html)
+
+            2. [Python 3.15.1](/downloads/release/python-3151/) Oct. 21, 2026 [Download](/downloads/release/python-3151/)
+            [Release notes](https://docs.python.org/release/3.15.1/whatsnew/changelog.html)
+
+            3. [Python 3.15.0](/downloads/release/python-3150/) Oct. 9, 2026 [Download](/downloads/release/python-3150/)
+            [Release notes](https://docs.python.org/release/3.15.0/whatsnew/changelog.html)'
+          role: ROLE_ASSISTANT
+          reasoning_content: 'The user wants the first three rows of the release table
+            exactly as shown on the page, without searching or opening anything again.
+
+
+            The first three rows are:
+
+
+            - Python 3.15.2, Oct. 25, 2026
+
+            - Python 3.15.1, Oct. 21, 2026
+
+            - Python 3.15.0, Oct.
+
+
+            The third row is Python 3.15.0, Oct. 9, 2026.'
+          encrypted_content: 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
+      created: '2026-11-17T21:46:29.213555322Z'
+      model: grok-4.3
+      system_fingerprint: fp_eb3c003fc66c14ed
+      usage:
+        completion_tokens: 177
+        prompt_tokens: 5869
+        total_tokens: 6672
+        prompt_text_tokens: 5869
+        reasoning_tokens: 626
+        cached_prompt_text_tokens: 5632
+        cost_in_usd_ticks: '34301500'
+      settings:
+        parallel_tool_calls: true
+        reasoning_effort: EFFORT_LOW
+        temperature: 0.7
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - web_search:
+            enable_image_understanding: false
+            enable_image_search: false
+        top_p: 0.95
+        use_encrypted_content: true
+    raw: !!binary |
+      CiRhMDI5YThkOS0xMjE0LTQxMjktYjAwMy0xZDY5YjgwOGUzZDES6B0IAxrjHQq4BDEuIFtQeXRo
+      b24gMy4xNS4yXSgvZG93bmxvYWRzL3JlbGVhc2UvcHl0aG9uLTMxNTIvKSBPY3QuIDI1LCAyMDI2
+      IFtEb3dubG9hZF0oL2Rvd25sb2Fkcy9yZWxlYXNlL3B5dGhvbi0zMTUyLykgW1JlbGVhc2Ugbm90
+      ZXNdKGh0dHBzOi8vZG9jcy5weXRob24ub3JnL3JlbGVhc2UvMy4xNS4yL3doYXRzbmV3L2NoYW5n
+      ZWxvZy5odG1sKQoyLiBbUHl0aG9uIDMuMTUuMV0oL2Rvd25sb2Fkcy9yZWxlYXNlL3B5dGhvbi0z
+      MTUxLykgT2N0LiAyMSwgMjAyNiBbRG93bmxvYWRdKC9kb3dubG9hZHMvcmVsZWFzZS9weXRob24t
+      MzE1MS8pIFtSZWxlYXNlIG5vdGVzXShodHRwczovL2RvY3MucHl0aG9uLm9yZy9yZWxlYXNlLzMu
+      MTUuMS93aGF0c25ldy9jaGFuZ2Vsb2cuaHRtbCkKMy4gW1B5dGhvbiAzLjE1LjBdKC9kb3dubG9h
+      ZHMvcmVsZWFzZS9weXRob24tMzE1MC8pIE9jdC4gOSwgMjAyNiBbRG93bmxvYWRdKC9kb3dubG9h
+      ZHMvcmVsZWFzZS9weXRob24tMzE1MC8pIFtSZWxlYXNlIG5vdGVzXShodHRwczovL2RvY3MucHl0
+      aG9uLm9yZy9yZWxlYXNlLzMuMTUuMC93aGF0c25ldy9jaGFuZ2Vsb2cuaHRtbCkQAiKiAlRoZSB1
+      c2VyIHdhbnRzIHRoZSBmaXJzdCB0aHJlZSByb3dzIG9mIHRoZSByZWxlYXNlIHRhYmxlIGV4YWN0
+      bHkgYXMgc2hvd24gb24gdGhlIHBhZ2UsIHdpdGhvdXQgc2VhcmNoaW5nIG9yIG9wZW5pbmcgYW55
+      dGhpbmcgYWdhaW4uCgpUaGUgZmlyc3QgdGhyZWUgcm93cyBhcmU6CgotIFB5dGhvbiAzLjE1LjIs
+      IE9jdC4gMjUsIDIwMjYKLSBQeXRob24gMy4xNS4xLCBPY3QuIDIxLCAyMDI2Ci0gUHl0aG9uIDMu
+      MTUuMCwgT2N0LgoKVGhlIHRoaXJkIHJvdyBpcyBQeXRob24gMy4xNS4wLCBPY3QuIDksIDIwMjYu
+      KvwWVFJhZXZDdkJXVGxUMXVUcjk3VlJnM1kyOXlRUURITTYvaWdkR2tJNlpqa29FZ21jVEdRRVoz
+      OTEvSWVOU2JTQkVKVUQydjh2Sy8xdXN6bUt3KzVFT0JVWkZxYjZTN1NVa1dxU2trMGZtbVZsRklJ
+      eWFlS1FzeHNNSmw4OVR1UDJZQVU2Vm9ZS1F0cklGM1ZQRC9rNEJCbFZKcjlRanVnQ2hCeXEwVXlw
+      NlM0b2tzYncrRjVlRzhLdlJUVlo1MWlpc01IbzhQVDNmOEpzUkp5RXIvbnNyaXI5bjB6VVZ0Znpy
+      Y1JjRTJ2Y2tFME83TmZqNTd2bExGK2tSOEdDTmg4ZzVnQzJtR1RxUS93WXNOM3JzbjFCMFIvQzVn
+      OStuSVR2Ukl1Y2ZXZjVvSE1uM1hqd213aVlYRVV6T0N0cGl4cWxXVHBQVHBISjhCZjdzT1ZpVE83
+      L0dFS0tueitFaWdQcUV5dVZaQ2NmYkhqeDBZai80UHRhbjNXZFpGOWpEd0NiaHJscUZFVXJPYlhi
+      UXRVdzlpbVhLemNCT1YwbUFISXNnMEJuL1NZU2swSExVK2RhWFJzTUV0NTNGRklZSWxBN2pza29I
+      VDN5cHpGN1VsdEVoVWgxZnZJZ3NNdlZFaXRPZXlzdFNvRkFzTUNUL1VjaUJmb01UM2tiSUwyN3ZG
+      N0RvMVpwWkU3MFhTWExlQVVVVmU2N0h0UzRkcXo4N1FDdzFNc1VvNTFtdE82QTRPRWRaenJ5c1dY
+      NkFzeWkrdnB4R1owVFJ0WjJ5TEZSaFF0VndNbVV3RXlxdFRpYjNqcUowZ1hNK0Mzd0tWREd2Z1hw
+      UjFzeUFpbGhVNXRoemdsM3o3elhBbjhpSVJGbHZTWG1GQmdTY2NyV0dEVmtUNUNQM0ZjVlBYc1Zi
+      YlhDaDFQRFpaQmlybW5ZMGRCTWZiVm5YRGl1VEFjMWNqd2h3MnhNV3NMSTUxUXEzRlhvYUFEUWI1
+      elUzb09YN1JDVHlXVTNJRzNJajBGMEJtd3Rid1R4S3pCSjlaZjhCNm5tcndoYWhpdmw2d3dZZFF2
+      OTV0WWxmMVJpNkVxNlMxdE0wTVFtVWs3cVZmMWN4aTF1NUkxcHdyVFN6UkMyQUtMM0Fob1JIUDdM
+      djNqZkVTUkpuN2daSHE4d2ZhaWh4cEpYcWRmdUJ5T2poWWtKelJHUms4dGcyN0hmM2RiZkYvVk9q
+      MHRxbWpGTjhqT0hJV042c1BqcGZNYmJpSjRRYzByWXpsdVFWMUtSV0VvRnJFMVFBeG02TnVGU01h
+      R0UwcDExdnJmMTlXUThuZHdEN203QmdlVUFQUVF6Zi9hTUNNd0hSL2NlbHU4a1RBT1JZUE5CekJn
+      NDU1NVBzSVN6WXp2bExxTm0vTWRoMnN4aHZVYklaOUJWMkhBVFFOWnRTZVVUeGpUZWRBV2YxZ1I2
+      QXhkaVRHNWV2SW9CUmcrcTdjOThWTWl2RUZvVng3SkIvMVJnR05TenVUMnNuNDc0TFduRDNIU3Ax
+      amR0U3NYNXI4WXZFSVg3MDkyTHhiUGhpcEVMVWYyYnpLRTBZYTJWVzhkV2ZzWXljM1RMenhzdzE5
+      RkwweitNeHR3L1NjQVhNT1RWY3MrdEtoczFNQVBxTHdveWlONkgrc0VITG9uTEFYa243cmZwU0hV
+      RHk2enJmWkRzcUJRWnhxb3Y1Z3I5NGhVVkMrTTdlK0pzVDBYcUczK0ZDR0JyTW8zS1dCNHoyKzAx
+      Yk9wdFhXN0haSWVzd2JNWktTaTE0T0lCNmlCS3ZqS1FGL3FPbVF1c0c3eHdtOEkvNFdYbGRzU3BO
+      NXpXRDNIRnZYcDA0ajE1SERRdDBKM1ZTUEkzRHNZZ29OS3ZWZHNadlEyT1poRGNYUEtISnpLRm5D
+      cy9WS3Z5TDY1dVRQYnlNd2J4YVRoZkVvMmIrTE9PVm8yd1RxQ2k4cHNZMXdtWHhjZDRkVXlTcTdK
+      QnN6ZitWeXYyOWVkY0p1V2kxRm1ZakFsVGhGOUVqRHVFV00zMGJnNUd2c0pGeEJYY280MVh2MWNj
+      WWxEd0l4K1RZdEpGY005aEdTZmh4VE1qWmZVbjF3emNpc2V6a3hMclBXdUNVanhMQjVpekh6TFJi
+      UEFkZXNxNTNxNXVRRWE5TllhUmdyRFkyVk0vVDcxcGNNR2xKeXZCY1pDcEpJUzc3T3pVSDUvRkVp
+      Y2JuNldYVkpOZEpVQUp1OWtmWWpHWVhxa3BvZXVLV2grOUNiNXlocVcvbS9QWVAzZUNLcURTaHpD
+      VlRJcmlZdlF2ek5FbE01ck5zbk8wNHVHREdNcWowSThnaUtVT2x2ZFFpMmgvcnlIdTFUNUMxVG90
+      QWNGQlA1QXIvU1hjR0Q2cWtxVFh3dVB3c3NCakk5NDVRY2UxMGpCL3YwZzVOOTRMN1Y0SUxFZWtu
+      WFNueStyeU95bTJ1Q3lhS2tCZlVleVVtYmlDelhSMFJZYjJiTXpPSmdmVXRBWW81SFgyZEZsdWpa
+      MmIwTnlyQ3huZHFQdWxsRnZpWm1xTHVzaHE5L1QyN1cwdEFXM3BQTlBPY0JWMGtKbXJIVC9NRUpi
+      MVdxWlAzeGE0eDdTU1lYekVmYmEwcHU3c1lpa0tmQzFZSVdyY0FEY1FrdUpVQzlEVDdpbGxHMU5C
+      ZzZkTWVkWm9hZWdIUlMzdHhIa1Nmejd1NUxIVWNLOWl4VGhsZnMveWZyQ25nd05qLzhJZlNaV29t
+      Y3R4VDF0c2wyd05ldjROS1VKQTFITTBWQWlPd3FkOExaZGw5eFdubG1XaFV4NHVPQnFpWDZEaUhp
+      d3g2TXpvTmMrT3ErWWFKTlY4MTVkenRjR1Q5RElLa3ZncGV5eEd6TlVhcFJYaWZIMVpEV0pKUTQy
+      WmsrQjAyU2IvbHhaV2lJYTIxZUpFbHQ5RzBUVG4xd21RQ0s4Znhrb1hUOVZqMzlFUTdVNzFzU2VD
+      amh1UkRNMm91djNKLzltU0lYVFNSNzU3bFJrS05RTzZ1OGRNcVFQckFkSkwxMjgzelRlOTgxREM2
+      K0hCOEpuR2piQUdBOXF4TjlBRzB2MDU2ZUxJNEVPSHBFcnYrTTdPQmhGbjVxc1NtS0dOU3gvdXRC
+      QVV0WnIwbjY1Ri96czZJd0t3bTUvcUplTkt5cWV1VWNMUFpXajBxbGx3VGJsUGdtQkFvK0NuRTBE
+      M01XYm53QnR5aDg5ZVBoRks3Q3JUVVlVL0FWZ2JSTVE5L2hBSDJkVEU5eWtpMm5oSndRbWJJTjVp
+      U2locnJTUjFxdS9udU9IbFhqK0NrNldXeVVLYmlTbUVaQ1M1Zkw2UHhSQWhnYUlBckNnbzdXUlhn
+      Zk4yNnhOUThEVy90OS96RHoxek12QXY0T0xsdk40a3N6V09jZXJDYnJBemZDUktkd2wxRTdlTG9w
+      Mkp0elA3MC81VFNrRmRqVmFSZE1OWnEyQk9DSkxDMWlKRVQ1cXFnR2NneWRxUVk0T2sycmRPcWRW
+      UEw4K3NiczBPcmptVVlrYmw4TVpyR21rVHpiZTRHTDNPQWZ4aTdSZlFnV016MnBxd0VESEhuaWdt
+      Z2JtWDI5ZnNiVWF0RDI5eEF6TUgxRjIydkNpdzRuSDhZSitiek0rSFNtUUhrRDc2WnMwYXVBQWdt
+      VjMrR090MkNoYnljNTJCTXFEelJ2MmhlNUI4WFRxREx4RlR3QU5OTUg3SFdRRHhnbDlHSTJBNWdq
+      YkdxTDVMVm4vYTY1U3pRSmp5ZzRmSEx4dk1EUUtOZHB2ZnBBcDY0WDNNQy9zWTdJRzJBanVGdW02
+      REhPWSsyVS84RHdTUG1iRk54eklqWjhaUWFwUW5XWU03eUFkMDUwY0F2a3hkcEQ5V0s2YmhqQ1hi
+      eUF0Q29zUi9veURVbG1SUStmVEVWRmNEbUhRWGJ1Ujc3UThEOAEqCwi1lvPXBhD6sOplMghncm9r
+      LTQuMzoTZnBfZWIzYzAwM2ZjNjZjMTRlZEofCLEBEO0tGJA0IO0tMPIEOIAsWLzMrRCQAe0tmAGr
+      BlogEAEgAS0zMzM/OgIIAUIGGgQYACgATTMzcz9oAXoCCAE=

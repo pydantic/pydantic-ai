@@ -1,3 +1,7 @@
+---
+description: "Use Claude, GPT, Llama, Mistral and other models through Snowflake Cortex with Pydantic AI, so your data stays inside your Snowflake account's perimeter."
+---
+
 # Snowflake Cortex
 
 ## Install

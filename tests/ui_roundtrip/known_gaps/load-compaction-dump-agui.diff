@@ -1,0 +1,8 @@
+--- expected
++++ actual
+@@ -17,5 +16,0 @@
+-    {
+-     "kind": "compaction",
+-     "content": "Summary so far.",
+-     "provider_name": "anthropic"
+-    },

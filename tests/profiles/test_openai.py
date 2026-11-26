@@ -2,8 +2,9 @@
 
 Tests verify model profile detection for different OpenAI models, particularly the full desired
 reasoning-flag matrix per model version: `openai_supports_reasoning`,
-`openai_reasoning_enabled_by_default`, `openai_supports_reasoning_effort_none`,
-`openai_supports_minimal_reasoning_effort`, and `openai_responses_supports_reasoning_mode`.
+`thinking_enabled_by_default`, `openai_supports_reasoning_effort_none`,
+`openai_supports_minimal_reasoning_effort`, `openai_reasoning_efforts`,
+`openai_responses_supports_max_reasoning_effort`, and `openai_responses_supports_reasoning_mode`.
 """
 
 from __future__ import annotations as _annotations
@@ -26,6 +27,9 @@ with try_import() as imports_successful:
         openai_model_profile,
         validate_openai_profile,
     )
+    from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_codex import OpenAICodexProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -47,25 +51,69 @@ class ReasoningCase:
     supports_minimal_reasoning_effort: bool = True
     """The model accepts `reasoning.effort='minimal'`."""
 
+    supports_max_reasoning_effort: bool = False
+    """The Responses API accepts `reasoning.effort='max'` (verified live on 2026-10-21)."""
+
     supports_context: bool = False
     """The Responses API accepts `reasoning.context='all_turns'`."""
+
+    efforts: tuple[str, ...] | None = None
+    """The `reasoning.effort` values the model accepts, where they're pinned."""
+    chat_function_tools_require_reasoning_off: bool = False
+    """Chat Completions rejects function tools while reasoning is on (verified live, 2026-11)."""
 
 
 # The `enabled_by_default` and `can_be_disabled` cells were verified against the live Responses API
 # (2026-07): "enabled by default" = sampling params rejected with no `reasoning.effort` set;
-# "can be disabled" = `effort='none'` accepted.
+# "can be disabled" = `effort='none'` accepted. The `efforts` of models that always reason were verified the same way
+# (2026-10): every other value is rejected with a 400 that lists the supported ones. The retired GPT-5.x chat
+# variants are pinned to the fixed `medium` effort they accepted.
 REASONING_CASES = [
     # o-series: always reasons, no off switch
-    ReasoningCase(model='o1', enabled_by_default=True),
-    ReasoningCase(model='o1-mini', enabled_by_default=True),
-    ReasoningCase(model='o3', enabled_by_default=True),
-    ReasoningCase(model='o3-mini', enabled_by_default=True),
-    ReasoningCase(model='o4-mini', enabled_by_default=True),
+    ReasoningCase(
+        model='o1', enabled_by_default=True, efforts=('low', 'medium', 'high'), supports_minimal_reasoning_effort=False
+    ),
+    ReasoningCase(
+        model='o1-mini',
+        enabled_by_default=True,
+        efforts=('low', 'medium', 'high'),
+        supports_minimal_reasoning_effort=False,
+    ),
+    ReasoningCase(
+        model='o1-preview-2024-09-12',
+        enabled_by_default=True,
+        efforts=('low', 'medium', 'high'),
+        supports_minimal_reasoning_effort=False,
+    ),
+    ReasoningCase(
+        model='o3', enabled_by_default=True, efforts=('low', 'medium', 'high'), supports_minimal_reasoning_effort=False
+    ),
+    ReasoningCase(
+        model='o3-mini',
+        enabled_by_default=True,
+        efforts=('low', 'medium', 'high'),
+        supports_minimal_reasoning_effort=False,
+    ),
+    ReasoningCase(
+        model='o4-mini',
+        enabled_by_default=True,
+        efforts=('low', 'medium', 'high'),
+        supports_minimal_reasoning_effort=False,
+    ),
+    ReasoningCase(
+        model='o4-mini-2025-04-16',
+        enabled_by_default=True,
+        efforts=('low', 'medium', 'high'),
+        supports_minimal_reasoning_effort=False,
+    ),
     # gpt-5 (not 5.x): always reasons, no off switch
-    ReasoningCase(model='gpt-5', enabled_by_default=True),
-    ReasoningCase(model='gpt-5-pro', enabled_by_default=True),
+    ReasoningCase(model='gpt-5', enabled_by_default=True, efforts=('minimal', 'low', 'medium', 'high')),
+    ReasoningCase(
+        model='gpt-5-pro', enabled_by_default=True, efforts=('high',), supports_minimal_reasoning_effort=False
+    ),
+    # Retired (404), so its efforts aren't pinned.
     ReasoningCase(model='gpt-5-codex', enabled_by_default=True),
-    ReasoningCase(model='gpt-5-turbo', enabled_by_default=True),
+    ReasoningCase(model='gpt-5-turbo', enabled_by_default=True, efforts=('minimal', 'low', 'medium', 'high')),
     # gpt-5.1..5.4 mainline: reasoning off by default, opt-in via effort
     ReasoningCase(model='gpt-5.1', can_be_disabled=True),
     ReasoningCase(model='gpt-5.1-turbo', can_be_disabled=True),
@@ -82,13 +130,45 @@ REASONING_CASES = [
     # -pro and gpt-5.1 codex variants: always reason, no `effort='none'`
     ReasoningCase(model='gpt-5.1-codex', enabled_by_default=True),
     ReasoningCase(model='gpt-5.1-codex-max', enabled_by_default=True),
-    ReasoningCase(model='gpt-5.2-pro', enabled_by_default=True),
-    ReasoningCase(model='gpt-5.4-pro', enabled_by_default=True, supports_context=True),
-    ReasoningCase(model='gpt-5.5-pro', enabled_by_default=True, supports_context=True),
+    ReasoningCase(
+        model='gpt-5.2-pro',
+        enabled_by_default=True,
+        efforts=('medium', 'high', 'xhigh'),
+        supports_minimal_reasoning_effort=False,
+    ),
+    ReasoningCase(
+        model='gpt-5.4-pro',
+        enabled_by_default=True,
+        supports_context=True,
+        efforts=('medium', 'high', 'xhigh'),
+        supports_minimal_reasoning_effort=False,
+    ),
+    ReasoningCase(
+        model='gpt-5.5-pro',
+        enabled_by_default=True,
+        supports_context=True,
+        efforts=('medium', 'high', 'xhigh'),
+        supports_minimal_reasoning_effort=False,
+    ),
     # gpt-5.1+ chat variants: always reason at a fixed 'medium' effort (sampling params rejected)
-    ReasoningCase(model='gpt-5.1-chat-latest', enabled_by_default=True),
-    ReasoningCase(model='gpt-5.2-chat-latest', enabled_by_default=True),
-    ReasoningCase(model='gpt-5.3-chat-latest', enabled_by_default=True),
+    ReasoningCase(
+        model='gpt-5.1-chat-latest',
+        enabled_by_default=True,
+        efforts=('medium',),
+        supports_minimal_reasoning_effort=False,
+    ),
+    ReasoningCase(
+        model='gpt-5.2-chat-latest',
+        enabled_by_default=True,
+        efforts=('medium',),
+        supports_minimal_reasoning_effort=False,
+    ),
+    ReasoningCase(
+        model='gpt-5.3-chat-latest',
+        enabled_by_default=True,
+        efforts=('medium',),
+        supports_minimal_reasoning_effort=False,
+    ),
     # gpt-5.5: reasons by default AND can be turned off, like gpt-5.6 but without `reasoning.mode`
     ReasoningCase(model='gpt-5.5', enabled_by_default=True, can_be_disabled=True, supports_context=True),
     # gpt-5.6: reasons by default AND can be turned off; the only family with `reasoning.mode`, and
@@ -101,6 +181,7 @@ REASONING_CASES = [
         can_be_disabled=True,
         supports_mode=True,
         supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
         supports_context=True,
     ),
     ReasoningCase(
@@ -109,6 +190,7 @@ REASONING_CASES = [
         can_be_disabled=True,
         supports_mode=True,
         supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
         supports_context=True,
     ),
     ReasoningCase(
@@ -117,13 +199,89 @@ REASONING_CASES = [
         can_be_disabled=True,
         supports_mode=True,
         supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
         supports_context=True,
+    ),
+    # gpt-6-astra, gpt-6.1-sol, gpt-6.2-sol and gpt-6.2-astra: reason by default with no `effort='none'`;
+    # carry over `reasoning.mode` and `reasoning.context='all_turns'` from GPT-5.6.
+    ReasoningCase(
+        model='gpt-6-astra',
+        enabled_by_default=True,
+        supports_mode=True,
+        supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
+        supports_context=True,
+        efforts=('low', 'medium', 'high', 'xhigh', 'max'),
+        chat_function_tools_require_reasoning_off=True,
+    ),
+    ReasoningCase(
+        model='gpt-6.1-sol',
+        enabled_by_default=True,
+        supports_mode=True,
+        supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
+        supports_context=True,
+        efforts=('low', 'medium', 'high', 'xhigh', 'max'),
+        chat_function_tools_require_reasoning_off=True,
+    ),
+    ReasoningCase(
+        model='gpt-6.2-sol',
+        enabled_by_default=True,
+        supports_mode=True,
+        supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
+        supports_context=True,
+        efforts=('low', 'medium', 'high', 'xhigh', 'max'),
+        chat_function_tools_require_reasoning_off=True,
+    ),
+    ReasoningCase(
+        model='gpt-6.2-astra',
+        enabled_by_default=True,
+        supports_mode=True,
+        supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
+        supports_context=True,
+        efforts=('low', 'medium', 'high', 'xhigh', 'max'),
+        chat_function_tools_require_reasoning_off=True,
+    ),
+    ReasoningCase(
+        model='gpt-6-sol',
+        enabled_by_default=True,
+        can_be_disabled=True,
+        supports_mode=True,
+        supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
+        supports_context=True,
+        chat_function_tools_require_reasoning_off=True,
+    ),
+    ReasoningCase(
+        model='gpt-6-luna',
+        enabled_by_default=True,
+        can_be_disabled=True,
+        supports_mode=True,
+        supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
+        supports_context=True,
+        chat_function_tools_require_reasoning_off=True,
+    ),
+    ReasoningCase(
+        model='gpt-6.1-terra',
+        enabled_by_default=True,
+        can_be_disabled=True,
+        supports_mode=True,
+        supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
+        supports_context=True,
+        chat_function_tools_require_reasoning_off=True,
     ),
     # no reasoning
     ReasoningCase(model='gpt-5-chat'),
     ReasoningCase(model='gpt-4o'),
     ReasoningCase(model='gpt-4o-mini'),
     ReasoningCase(model='gpt-4o-2024-08-06'),
+    # Gateway prefixes beginning with "o" are not OpenAI o-series model names.
+    ReasoningCase(model='openrouter/moonshotai/kimi-k2'),
+    ReasoningCase(model='openai/gpt-4o'),
 ]
 
 
@@ -135,13 +293,134 @@ def test_reasoning_matrix(case: ReasoningCase):
     profile = openai_model_profile(case.model)
     assert isinstance(profile, dict)
     assert profile.get('openai_supports_reasoning', False) is supports_reasoning
-    assert profile.get('openai_reasoning_enabled_by_default', False) is case.enabled_by_default
+    assert profile.get('thinking_enabled_by_default', False) is case.enabled_by_default
     assert profile.get('openai_supports_reasoning_effort_none', False) is case.can_be_disabled
     assert profile.get('openai_supports_minimal_reasoning_effort', True) is case.supports_minimal_reasoning_effort
+    # Set by `OpenAIProvider`, not the shared profile, which OpenAI-compatible endpoints reuse unverified.
+    assert profile.get('openai_responses_supports_max_reasoning_effort', False) is False
+    provider_profile = OpenAIProvider.model_profile(case.model)
+    assert isinstance(provider_profile, dict)
+    assert provider_profile.get('openai_responses_supports_max_reasoning_effort') is case.supports_max_reasoning_effort
+    # OpenAI's Chat Completions API rejects `max` on every model.
+    assert profile.get('openai_chat_supports_max_reasoning_effort', False) is False
     assert profile.get('openai_responses_supports_reasoning_mode', False) is case.supports_mode
     assert profile.get('openai_responses_supports_reasoning_context', False) is case.supports_context
     assert profile.get('supports_thinking', False) is supports_reasoning
     assert profile.get('thinking_always_enabled', False) is (case.enabled_by_default and not case.can_be_disabled)
+    assert profile.get('openai_reasoning_efforts') == (None if case.efforts is None else frozenset(case.efforts))
+
+    # OpenAI-only, verified live on the GPT-6 families; gateways reuse the shared profile unverified.
+    assert profile.get('openai_chat_function_tools_require_reasoning_off', False) is False
+    assert (
+        provider_profile.get('openai_chat_function_tools_require_reasoning_off', False)
+        is case.chat_function_tools_require_reasoning_off
+    )
+
+
+def test_openai_compatible_endpoints_fall_back_from_max_effort():
+    """`max` is verified only on OpenAI's own Responses API, so an endpoint reusing the OpenAI profile sends `xhigh`."""
+    profile = AzureProvider.model_profile('gpt-5.6-sol')
+    assert isinstance(profile, dict)
+    assert profile.get('openai_responses_supports_max_reasoning_effort', False) is False
+
+
+@pytest.mark.parametrize('model_name', ['gpt-5-search-api', 'gpt-5-search-api-2025-10-14'])
+def test_search_api_has_no_reasoning_effort_only_on_openai_provider(model_name: str):
+    """OpenAI's API rejects any `reasoning_effort` on these models, so `OpenAIProvider` pins no accepted effort.
+
+    Reasoning stays always on, which keeps sampling parameters dropped, as the model rejects `temperature` too. The
+    shared profile keeps the `'gpt-5'` efforts, as the hosts that reuse it aren't verified.
+    """
+    provider_profile = OpenAIProvider.model_profile(model_name)
+    assert isinstance(provider_profile, dict)
+    assert provider_profile.get('openai_reasoning_efforts') == frozenset()
+    assert provider_profile.get('thinking_always_enabled') is True
+    shared_profile = openai_model_profile(model_name)
+    assert isinstance(shared_profile, dict)
+    assert shared_profile.get('openai_reasoning_efforts') == frozenset(('minimal', 'low', 'medium', 'high'))
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'delegates'),
+    [
+        ('gpt-6.1-terra', True),
+        ('gpt-5.5', True),
+        ('gpt-4o', True),
+        ('gpt-oss-120b', False),
+        ('o3', False),
+        ('claude-opus-5-5', False),
+    ],
+)
+def test_delegates_unprompted(model_name: str, delegates: bool):
+    """Only OpenAI's GPT models delegate unprompted, not gpt-oss or other models served through the OpenAI API.
+
+    The flags behind `Coder`'s `'max'` guidance go to the same models.
+    """
+    profile = OpenAIProvider.model_profile(model_name)
+    assert isinstance(profile, dict)
+    assert profile.get('delegates_unprompted', False) is delegates
+    assert profile.get('reinterprets_malformed_inputs', False) is delegates
+    assert profile.get('omits_handoff_evidence', False) is delegates
+    assert profile.get('ignores_stated_runtime_constraints', False) is delegates
+
+
+@pytest.mark.parametrize(
+    'key', ['openai_chat_streaming_repeats_usage_totals', 'openai_chat_completion_tokens_omit_reasoning']
+)
+@pytest.mark.parametrize(
+    'model_name,expected',
+    [('gemini-3.1-flash-lite', True), ('google/gemini-3.1-flash-lite', False), ('gpt-5-mini', False)],
+)
+def test_gemini_usage_flags_only_on_openai_provider_gemini_names(key: str, model_name: str, expected: bool):
+    """The shared profile stays off, as the hosts that reuse it aren't verified to report usage the way Gemini does."""
+    provider_profile = OpenAIProvider.model_profile(model_name)
+    assert isinstance(provider_profile, dict)
+    assert provider_profile.get(key, False) is expected
+    shared_profile = openai_model_profile(model_name)
+    assert isinstance(shared_profile, dict)
+    assert shared_profile.get(key, False) is False
+
+
+@pytest.mark.parametrize(
+    'model_name,expected',
+    [
+        # OpenAI's API rejects `minimal` with a 400 (verified live on both APIs, 2026-11).
+        ('gpt-5.1', False),
+        ('gpt-5.1-2025-11-13', False),
+        ('gpt-5.2', False),
+        ('gpt-5.3-codex', False),
+        ('gpt-5.4', False),
+        ('gpt-5.4-mini', False),
+        ('gpt-5.4-nano', False),
+        ('gpt-5.5', False),
+        ('gpt-5.5-2026-04-23', False),
+        # Covered by the prefix only: no key reaches them.
+        ('gpt-5.3-codex-spark', False),
+        ('gpt-5.5-cyber-preview', False),
+        # The original GPT-5 family accepts `minimal`.
+        ('gpt-5', True),
+        ('gpt-5-mini', True),
+        ('gpt-5-nano', True),
+    ],
+)
+def test_minimal_reasoning_effort_off_only_on_openai_provider_gpt_5_1_to_5_5(model_name: str, expected: bool):
+    """The shared profile stays on, as OpenRouter accepts `minimal` for these models (verified live, 2026-11).
+
+    `OpenAICodexProvider` keeps it on too: the Codex backend is unverified, and its dialect profile restates the
+    shared one over `OpenAIProvider`'s.
+
+    Not a VCR test: the claim is the resolved flag per provider and model id, which no single recorded request
+    exposes. `test_openai_responses_gpt_5_4_minimal_thinking_uses_low_effort` records the request it changes.
+    """
+    provider_profile = OpenAIProvider.model_profile(model_name)
+    assert isinstance(provider_profile, dict)
+    assert provider_profile.get('openai_supports_minimal_reasoning_effort') is expected
+    shared_profile = openai_model_profile(model_name)
+    assert isinstance(shared_profile, dict)
+    assert shared_profile.get('openai_supports_minimal_reasoning_effort') is True
+    codex_profile = OpenAICodexProvider.model_profile(model_name)
+    assert isinstance(codex_profile, dict)
+    assert codex_profile.get('openai_supports_minimal_reasoning_effort') is True
 
 
 class TestEncryptedReasoningContent:
@@ -259,3 +538,77 @@ def test_json_schema_transformer_removes_unsupported_regex_lookarounds():
             'additionalProperties': False,
         }
     )
+
+
+class _Address(BaseModel):
+    street: str
+    city: str
+
+
+class _Person(BaseModel):
+    name: str
+    home: _Address
+    work: _Address | None
+
+
+class _OrgUnit(BaseModel):
+    name: str
+    subunits: list[_OrgUnit]
+
+
+def test_gpt_oss_schema_transformer_inlines_defs():
+    """gpt-oss schemas have their `$defs` inlined, and are otherwise transformed as for any OpenAI model.
+
+    gpt-oss doesn't see a tool schema's `$defs` on any host, so it guesses the shape of each field that refers to
+    one. This is a unit test because the strictness the transformer infers, and the recursive definition it has to
+    keep, never reach a recording: `test_groq.py::test_gpt_oss_tool_output_inlines_defs` covers the request.
+    """
+    transformer = openai_model_profile('gpt-oss-120b').get('json_schema_transformer')
+    assert transformer is not None and transformer is not OpenAIJsonSchemaTransformer
+    assert openai_model_profile('gpt-5.5').get('json_schema_transformer') is OpenAIJsonSchemaTransformer
+
+    for strict in (None, True):
+        inlined = transformer(_Person.model_json_schema(), strict=strict)
+        reference = OpenAIJsonSchemaTransformer(_Person.model_json_schema(), strict=strict)
+        assert inlined.walk() == snapshot(
+            {
+                'properties': {
+                    'name': {'type': 'string'},
+                    'home': {
+                        'properties': {'street': {'type': 'string'}, 'city': {'type': 'string'}},
+                        'required': ['street', 'city'],
+                        'type': 'object',
+                        'additionalProperties': False,
+                    },
+                    'work': {
+                        'anyOf': [
+                            {
+                                'properties': {'street': {'type': 'string'}, 'city': {'type': 'string'}},
+                                'required': ['street', 'city'],
+                                'type': 'object',
+                                'additionalProperties': False,
+                            },
+                            {'type': 'null'},
+                        ]
+                    },
+                },
+                'required': ['name', 'home', 'work'],
+                'type': 'object',
+                'additionalProperties': False,
+            }
+        )
+        reference.walk()
+        assert inlined.is_strict_compatible is reference.is_strict_compatible is True
+
+    # A recursive definition can't be inlined, so it stays under `$defs`, as without inlining.
+    recursive = _OrgUnit.model_json_schema()
+    assert transformer(recursive).walk() == OpenAIJsonSchemaTransformer(recursive).walk()
+
+    # The inliner doesn't walk under a `type` list, so a schema with a `$ref` there keeps its `$defs` rather than
+    # sending a `$ref` to a definition that was dropped.
+    nullable_object: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'x': {'type': ['object', 'null'], 'properties': {'v': {'$ref': '#/$defs/Value'}}}},
+        '$defs': {'Value': {'type': 'object', 'properties': {'a': {'type': 'string'}}}},
+    }
+    assert transformer(nullable_object).walk() == OpenAIJsonSchemaTransformer(nullable_object).walk()

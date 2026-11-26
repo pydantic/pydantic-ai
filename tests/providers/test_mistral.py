@@ -73,7 +73,7 @@ async def test_mistral_provider_deprecates_legacy_httpx_client() -> None:
 
 
 async def test_mistral_provider_pass_mistral_client() -> None:
-    async with httpx.AsyncClient() as http_client:
+    async with httpx2.AsyncClient() as http_client:
         mistral_client = Mistral(api_key='api-key', async_client=http_client)
         provider = MistralProvider(mistral_client=mistral_client)
         assert provider.client is mistral_client

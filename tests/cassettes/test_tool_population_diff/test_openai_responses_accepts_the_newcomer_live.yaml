@@ -1,0 +1,536 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "427"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: >-
+            Call the `unlock` tool. Once it has returned, call the `later` tool. Then reply
+            with just "done".
+        model: gpt-5.6
+        reasoning:
+          context: all_turns
+        stream: false
+        tool_choice: auto
+        tools:
+        - name: unlock
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+          description: null
+          strict: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1800"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_052b1a0a546858fc006ac2c6b52b5887d18b242139fa5ef5d6
+        object: response
+        created_at: 1791149749
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1791149750
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.6-sol
+        moderation: null
+        output:
+        - id: rs_052b1a0a546858fc006ac2c6b656f087d18613a9c8442ba518
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABqwsa2PyD5H4sqJfb004YRzjphIMH3aoCOyPBylC9Nh2ik5CpKqrKznKnJmfAr1L91fbSLgyFnsTy2u4b_3tNWTAYeMV0agg2AHFbt_kLOGaw5sDmkqmo24rUUzU7OdxqJcR4xnRud41bVs4B4mYcwDXD99MR5YuUUU5HM2tp-anWLsv-rH9XrPfrCTA0C8MhXVJjJKQV0LhWqTQAemYN7yEbeGrZw3I7JLBIsFdn5LB08j2OybPgy9PYNDhBKeQWJX97OQ55SmRVA8DQSB45GwvQAXWcw5OSros4ufxkqZtOkkm-IRw1thF5erS_yCpRtAAFWExFrUetpzuSO-8Fq8CvlzhEGDFR8n-ZupxC63FKZh9KOI5MLG9xWN49u9nMgFVv3rBwRcIpcETjM4bmQ9c94TeDIkg9G8mpUpTqBErbgXIqaAGFDmZPbyc9Gz5CPb2p2orPDG-MNBtTmwUoWw7zz_VuS-kvS889XV0B-3Np9exgp6DO7oEzv4iw5cce1AfHuFd0WaE9gTnV8pK_AGHqktEjjMNA0SMflZ17lU4ShJxIzYcwSpSYqiVwnCelQqdsIP6xOCp-8sUvDS8rLWIYBWmUc1uw2fPCEP4wsF37orL_qkz6ijdXZxHA9Jy8cGko1g7-CUsWGQMJMt1fWb6BZ5ywY_RCCt1AMt4zVi6e2JdfQ5MdhB5z-a9j9TTefh65OOm62A8ilZseebHz2pdOSfXJgS4INKi8aRXMKRe7GqjijEBEjBp5MdMOB-d6QQnWXgWLsZj_Alm--9DXOLcE5VmVKKEx9XtcMk8cplxxNCuKJiTdQBnUX_On7ffOpuRQ8-vh0WrZYl5No1uR2PT7TGg3d5oOI8heoMKimwJlb6-735UHwq9lZm120llcx7zjSjc96nQGtLEPimjuEvDPPlF-JIOIsKJLK2j8vP6TSHeOYstKTiVO87uJI2ljuGLyHmhlHw3tP-1jRchbwr4oJjmTsBqqH9wERyoagKQBestvhz85VrC7x_FFl2C72wgEDhWg3RqwcmZrUBzf7-qCLgVyh1FDDj2JwjvTnD3yLBLphnsdVTwmvaSstxXtGgZtzOelmMlQcbp3LqCZp7guJgjFIBGx4Id8LUXGzLAVV3KJmcH3LSKjSsw6DClpwGgp3h_4Yh4UBa3aHVT6jud9a5qWQCd9uOYBmW0zFI0hTywXGKHFsPpFcS3DxZgVu3b01vn46XheTNh9YEgsiLqSITyUxJP2np2gEvCLuhGyMNiQ_Ukc8t7KXe254QCzSAniU1pzNYtHvdVC_wttviZy6aQP0pHhiVkneOlxCDrunFks=
+          summary: []
+        - id: fc_052b1a0a546858fc006ac2c6b6aea887d18264b7e0ede3889b
+          type: function_call
+          status: completed
+          arguments: "{}"
+          call_id: call_yOpxm7URWnjM8lJ57wlFhPqD
+          name: unlock
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: null
+          name: unlock
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          strict: false
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 54
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 41
+          output_tokens_details:
+            reasoning_tokens: 26
+          total_tokens: 95
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-04T21:35:51.002943+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "2338"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: >-
+            Call the `unlock` tool. Once it has returned, call the `later` tool. Then reply
+            with just "done".
+        - id: rs_052b1a0a546858fc006ac2c6b656f087d18613a9c8442ba518
+          summary: []
+          encrypted_content: >-
+            gAAAAABqwsa2PyD5H4sqJfb004YRzjphIMH3aoCOyPBylC9Nh2ik5CpKqrKznKnJmfAr1L91fbSLgyFnsTy2u4b_3tNWTAYeMV0agg2AHFbt_kLOGaw5sDmkqmo24rUUzU7OdxqJcR4xnRud41bVs4B4mYcwDXD99MR5YuUUU5HM2tp-anWLsv-rH9XrPfrCTA0C8MhXVJjJKQV0LhWqTQAemYN7yEbeGrZw3I7JLBIsFdn5LB08j2OybPgy9PYNDhBKeQWJX97OQ55SmRVA8DQSB45GwvQAXWcw5OSros4ufxkqZtOkkm-IRw1thF5erS_yCpRtAAFWExFrUetpzuSO-8Fq8CvlzhEGDFR8n-ZupxC63FKZh9KOI5MLG9xWN49u9nMgFVv3rBwRcIpcETjM4bmQ9c94TeDIkg9G8mpUpTqBErbgXIqaAGFDmZPbyc9Gz5CPb2p2orPDG-MNBtTmwUoWw7zz_VuS-kvS889XV0B-3Np9exgp6DO7oEzv4iw5cce1AfHuFd0WaE9gTnV8pK_AGHqktEjjMNA0SMflZ17lU4ShJxIzYcwSpSYqiVwnCelQqdsIP6xOCp-8sUvDS8rLWIYBWmUc1uw2fPCEP4wsF37orL_qkz6ijdXZxHA9Jy8cGko1g7-CUsWGQMJMt1fWb6BZ5ywY_RCCt1AMt4zVi6e2JdfQ5MdhB5z-a9j9TTefh65OOm62A8ilZseebHz2pdOSfXJgS4INKi8aRXMKRe7GqjijEBEjBp5MdMOB-d6QQnWXgWLsZj_Alm--9DXOLcE5VmVKKEx9XtcMk8cplxxNCuKJiTdQBnUX_On7ffOpuRQ8-vh0WrZYl5No1uR2PT7TGg3d5oOI8heoMKimwJlb6-735UHwq9lZm120llcx7zjSjc96nQGtLEPimjuEvDPPlF-JIOIsKJLK2j8vP6TSHeOYstKTiVO87uJI2ljuGLyHmhlHw3tP-1jRchbwr4oJjmTsBqqH9wERyoagKQBestvhz85VrC7x_FFl2C72wgEDhWg3RqwcmZrUBzf7-qCLgVyh1FDDj2JwjvTnD3yLBLphnsdVTwmvaSstxXtGgZtzOelmMlQcbp3LqCZp7guJgjFIBGx4Id8LUXGzLAVV3KJmcH3LSKjSsw6DClpwGgp3h_4Yh4UBa3aHVT6jud9a5qWQCd9uOYBmW0zFI0hTywXGKHFsPpFcS3DxZgVu3b01vn46XheTNh9YEgsiLqSITyUxJP2np2gEvCLuhGyMNiQ_Ukc8t7KXe254QCzSAniU1pzNYtHvdVC_wttviZy6aQP0pHhiVkneOlxCDrunFks=
+          type: reasoning
+        - name: unlock
+          arguments: "{}"
+          call_id: call_yOpxm7URWnjM8lJ57wlFhPqD
+          type: function_call
+          id: fc_052b1a0a546858fc006ac2c6b6aea887d18264b7e0ede3889b
+        - type: function_call_output
+          call_id: call_yOpxm7URWnjM8lJ57wlFhPqD
+          output: unlocked
+        - type: additional_tools
+          role: developer
+          tools:
+          - name: later
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+            type: function
+            description: null
+            strict: false
+        model: gpt-5.6
+        reasoning:
+          context: all_turns
+        stream: false
+        tool_choice: auto
+        tools:
+        - name: unlock
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+          description: null
+          strict: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "2415"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_052b1a0a546858fc006ac2c6b731d087d1bfc97e1e0513d077
+        object: response
+        created_at: 1791149751
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1791149753
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.6-sol
+        moderation: null
+        output:
+        - id: rs_052b1a0a546858fc006ac2c6b935d887d18bf3199312e218c2
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABqwsa5JJHhOUQjhOR0n6PN3foZKBi79VmOEfxhjUXA6IMhGsh_HAYHOO58hkNNHtvORo6uyod6nS6WHoSE6FFZF5ZC9fcG3MxWFiX-s_3RDGJecPlGnsXt3XdMojCBIyv1GiaXO6pO-joZQttYV_hY3k8vUAPeHZ8CdFxAUySvuwwEwG6VTOc1GPrlG0fTY6WKf5LrUJlg7QbXMj4MidPWN0_TiEKA5GQXmqwhwICNAwFEZ0VrMmDIGnurF4KHClIQTHHGMsyfm74FBllh20eegzFBLqYbkY4GpOrv4tUCsIfDBm1Vqr1LTnj6OV_9SFlvPfQdt71BjtyOqbYqmmbbnt5AuwKG_Fn9_lpdpleFYHBurM84a1JDRfNGnRJFwIQpN2gSGjjQoA3DF6r2Y8H6NGph_eegXPUf_MvDdUV-waFlFhFjh-jth93KOeB0HD2mMvuHlcFBzjVsxtAlWSQg9qz3hjpZh-pPE_PGK3mT8c4bE-QPQnb2zPalXAsjaH0IRp7LlZyxLjfcWudSxJ004Z9mfh8cl_qZHor0LZePRn2_WxJI0xk5M7A2OLeRXUontwYLmuUgPIeHsQ12tPPb-26fmhvyI2opcsTI98oSeRXC-qNcjfY4tH-NqKX57dbY1dGxXOdFp-2TDqcP9pvLJVElnUvIR3XcztY8LkABaSqb7AM6IGRJ09kzY4rahj-8d4pLA0Tq6HdM8aPqXqZ8APFgsmVEtZ9hBZDV-M_x5sLx08FaV5wzcTnpkQOFp-SVGAYRXU1_VTjetsRXl4TBYzVxb3RdvbP4sjzXBbrwBBRRZg_t673L2hxSnoR9fXjmyw1ZeXnZ1aYzwuydKrxjM-7BicrJYtCfjIlhgEbRVPFGQ1o13qlQ3P9E8-mCcwk3jzqsqczKj_ZMYf-EECLWLkI-AouJQsbelc_qJRS_rMgyYnx4HtRtMJv-OIePqkydmz1AFVMxyXqpt7Rfoc7tPWswUlcrm-PzzF-v5L8VI9ZJl56wRqJRq7MXcgvrHqETuVfGLV8aXws4ufo5z78j19-onYX1NnLRwThAVhkk-Y6_8Pj5Vc0eh0qaVjnZn5CSL4WxcCCjXRDuuUBTa15g92zZFM4Ymapx4JCSnxx6HxWSFwhLTS79xI4erdAaw0VfPms2PhaE8QGDVczRbSsMhlcCgIY5RfcYXk8PWppL7JsKdRQ=
+          summary: []
+        - id: fc_052b1a0a546858fc006ac2c6b956f087d1b7fafc6bc1a90877
+          type: function_call
+          status: completed
+          arguments: "{}"
+          call_id: call_Nj332JVSx4p95Rj32wHQr9Jj
+          name: later
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: null
+          name: unlock
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          strict: false
+        - type: function
+          description: null
+          name: later
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          strict: false
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 211
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 24
+          output_tokens_details:
+            reasoning_tokens: 8
+          total_tokens: 235
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-04T21:35:53.640493+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "3939"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: >-
+            Call the `unlock` tool. Once it has returned, call the `later` tool. Then reply
+            with just "done".
+        - id: rs_052b1a0a546858fc006ac2c6b656f087d18613a9c8442ba518
+          summary: []
+          encrypted_content: >-
+            gAAAAABqwsa2PyD5H4sqJfb004YRzjphIMH3aoCOyPBylC9Nh2ik5CpKqrKznKnJmfAr1L91fbSLgyFnsTy2u4b_3tNWTAYeMV0agg2AHFbt_kLOGaw5sDmkqmo24rUUzU7OdxqJcR4xnRud41bVs4B4mYcwDXD99MR5YuUUU5HM2tp-anWLsv-rH9XrPfrCTA0C8MhXVJjJKQV0LhWqTQAemYN7yEbeGrZw3I7JLBIsFdn5LB08j2OybPgy9PYNDhBKeQWJX97OQ55SmRVA8DQSB45GwvQAXWcw5OSros4ufxkqZtOkkm-IRw1thF5erS_yCpRtAAFWExFrUetpzuSO-8Fq8CvlzhEGDFR8n-ZupxC63FKZh9KOI5MLG9xWN49u9nMgFVv3rBwRcIpcETjM4bmQ9c94TeDIkg9G8mpUpTqBErbgXIqaAGFDmZPbyc9Gz5CPb2p2orPDG-MNBtTmwUoWw7zz_VuS-kvS889XV0B-3Np9exgp6DO7oEzv4iw5cce1AfHuFd0WaE9gTnV8pK_AGHqktEjjMNA0SMflZ17lU4ShJxIzYcwSpSYqiVwnCelQqdsIP6xOCp-8sUvDS8rLWIYBWmUc1uw2fPCEP4wsF37orL_qkz6ijdXZxHA9Jy8cGko1g7-CUsWGQMJMt1fWb6BZ5ywY_RCCt1AMt4zVi6e2JdfQ5MdhB5z-a9j9TTefh65OOm62A8ilZseebHz2pdOSfXJgS4INKi8aRXMKRe7GqjijEBEjBp5MdMOB-d6QQnWXgWLsZj_Alm--9DXOLcE5VmVKKEx9XtcMk8cplxxNCuKJiTdQBnUX_On7ffOpuRQ8-vh0WrZYl5No1uR2PT7TGg3d5oOI8heoMKimwJlb6-735UHwq9lZm120llcx7zjSjc96nQGtLEPimjuEvDPPlF-JIOIsKJLK2j8vP6TSHeOYstKTiVO87uJI2ljuGLyHmhlHw3tP-1jRchbwr4oJjmTsBqqH9wERyoagKQBestvhz85VrC7x_FFl2C72wgEDhWg3RqwcmZrUBzf7-qCLgVyh1FDDj2JwjvTnD3yLBLphnsdVTwmvaSstxXtGgZtzOelmMlQcbp3LqCZp7guJgjFIBGx4Id8LUXGzLAVV3KJmcH3LSKjSsw6DClpwGgp3h_4Yh4UBa3aHVT6jud9a5qWQCd9uOYBmW0zFI0hTywXGKHFsPpFcS3DxZgVu3b01vn46XheTNh9YEgsiLqSITyUxJP2np2gEvCLuhGyMNiQ_Ukc8t7KXe254QCzSAniU1pzNYtHvdVC_wttviZy6aQP0pHhiVkneOlxCDrunFks=
+          type: reasoning
+        - name: unlock
+          arguments: "{}"
+          call_id: call_yOpxm7URWnjM8lJ57wlFhPqD
+          type: function_call
+          id: fc_052b1a0a546858fc006ac2c6b6aea887d18264b7e0ede3889b
+        - type: function_call_output
+          call_id: call_yOpxm7URWnjM8lJ57wlFhPqD
+          output: unlocked
+        - type: additional_tools
+          role: developer
+          tools:
+          - name: later
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+            type: function
+            description: null
+            strict: false
+        - id: rs_052b1a0a546858fc006ac2c6b935d887d18bf3199312e218c2
+          summary: []
+          encrypted_content: >-
+            gAAAAABqwsa5JJHhOUQjhOR0n6PN3foZKBi79VmOEfxhjUXA6IMhGsh_HAYHOO58hkNNHtvORo6uyod6nS6WHoSE6FFZF5ZC9fcG3MxWFiX-s_3RDGJecPlGnsXt3XdMojCBIyv1GiaXO6pO-joZQttYV_hY3k8vUAPeHZ8CdFxAUySvuwwEwG6VTOc1GPrlG0fTY6WKf5LrUJlg7QbXMj4MidPWN0_TiEKA5GQXmqwhwICNAwFEZ0VrMmDIGnurF4KHClIQTHHGMsyfm74FBllh20eegzFBLqYbkY4GpOrv4tUCsIfDBm1Vqr1LTnj6OV_9SFlvPfQdt71BjtyOqbYqmmbbnt5AuwKG_Fn9_lpdpleFYHBurM84a1JDRfNGnRJFwIQpN2gSGjjQoA3DF6r2Y8H6NGph_eegXPUf_MvDdUV-waFlFhFjh-jth93KOeB0HD2mMvuHlcFBzjVsxtAlWSQg9qz3hjpZh-pPE_PGK3mT8c4bE-QPQnb2zPalXAsjaH0IRp7LlZyxLjfcWudSxJ004Z9mfh8cl_qZHor0LZePRn2_WxJI0xk5M7A2OLeRXUontwYLmuUgPIeHsQ12tPPb-26fmhvyI2opcsTI98oSeRXC-qNcjfY4tH-NqKX57dbY1dGxXOdFp-2TDqcP9pvLJVElnUvIR3XcztY8LkABaSqb7AM6IGRJ09kzY4rahj-8d4pLA0Tq6HdM8aPqXqZ8APFgsmVEtZ9hBZDV-M_x5sLx08FaV5wzcTnpkQOFp-SVGAYRXU1_VTjetsRXl4TBYzVxb3RdvbP4sjzXBbrwBBRRZg_t673L2hxSnoR9fXjmyw1ZeXnZ1aYzwuydKrxjM-7BicrJYtCfjIlhgEbRVPFGQ1o13qlQ3P9E8-mCcwk3jzqsqczKj_ZMYf-EECLWLkI-AouJQsbelc_qJRS_rMgyYnx4HtRtMJv-OIePqkydmz1AFVMxyXqpt7Rfoc7tPWswUlcrm-PzzF-v5L8VI9ZJl56wRqJRq7MXcgvrHqETuVfGLV8aXws4ufo5z78j19-onYX1NnLRwThAVhkk-Y6_8Pj5Vc0eh0qaVjnZn5CSL4WxcCCjXRDuuUBTa15g92zZFM4Ymapx4JCSnxx6HxWSFwhLTS79xI4erdAaw0VfPms2PhaE8QGDVczRbSsMhlcCgIY5RfcYXk8PWppL7JsKdRQ=
+          type: reasoning
+        - name: later
+          arguments: "{}"
+          call_id: call_Nj332JVSx4p95Rj32wHQr9Jj
+          type: function_call
+          id: fc_052b1a0a546858fc006ac2c6b956f087d1b7fafc6bc1a90877
+          namespace: later
+        - type: function_call_output
+          call_id: call_Nj332JVSx4p95Rj32wHQr9Jj
+          output: later ran
+        model: gpt-5.6
+        reasoning:
+          context: all_turns
+        stream: false
+        tool_choice: auto
+        tools:
+        - name: unlock
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+          description: null
+          strict: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1032"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_052b1a0a546858fc006ac2c6b9c3b487d186a3de021019e8ce
+        object: response
+        created_at: 1791149753
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1791149754
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.6-sol
+        moderation: null
+        output:
+        - id: msg_052b1a0a546858fc006ac2c6ba745c87d1b1db9ddb91e88ee4
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: done
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: null
+          name: unlock
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          strict: false
+        - type: function
+          description: null
+          name: later
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          strict: false
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 248
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 5
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 253
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-04T21:35:54.824825+00:00

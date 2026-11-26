@@ -1,0 +1,166 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/publishers/google/models/gemini-3.7-flash:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "297"
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: In one sentence, which animals appear and roughly when?
+          - fileData:
+              file_uri: https://www.youtube.com/watch?v=lCdaVNyHtjU
+              mime_type: video/mp4
+            mediaProcessing: AGENTIC
+          role: user
+        generationConfig:
+          responseModalities:
+          - TEXT
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            role: model
+            parts:
+            - thoughtSignature: >-
+                CAIStAQBjz1rXzs0qJW9KXx6d+1YgZvki2gTUSoKyrLd7WCeFTYOGDOBdiLw3oOSYjFdAY4fAKEEOWM+V2BNPHzNOB6TzvY31wvr+K4ADW9k9HvAxsZHMAIyCG4jHfZG7BCK2ZVYukQSh9yjd494KWa+rJz/Axo6OxD4f27ZGU2lW615NRnkQLVEMRwfifPDbg9XeVVvR0tJK5XG9cKlu3cv7MnIUUqJYz7lhC88cscZ3nU7b8GAh1H4ipiKdv3tNEmzs7cJaxj5aGoOeBD5vYff203TLAW/wr4dOs0CGWjF3kAsdnTvVKqOXsKIFY7NTH2+cDw6hcton95Jygrg6bzlAgrk9HmIdhi9L4vxARlRnIkryrK4uvnoc7aPhroCckoIpwN/qgAuhXDrGpX+2mCk6tMKEZFqfjFS1CTBBHejiVEDIad/tBMMns5uQm/6pIejxXUYgfQSmotiWoLBCwwVPRSZykqKsn262QGPANaLPXKM3uRHYv9hZdDOv7vzNbL5rqFJfK0aa2OdTz3v/6WfVaY6/fn7KNOBRde+SxCG5FgNanumCxJG5U9AnE6FKYBLaRFHoPpOewye3+ah9236bU83jfrEAilgWYpeZBlpAMNI2lwvuv9lD4pgL50xYJri9ujuj20dZkjdPMElCSY6g/eqt8ZzLFMSiiWpliz6P4EgtBimNLt4rbKjVPRhVCtsd6GQqsI3PzN3Mv76BOdWk89CSjzvQD3oWlRDIOy4kd0p5uOPGAs=
+            - thoughtSignature: >-
+                CAISjAMBjz1rX2I6Ru7oyzbipSoOU/IjROOi35c/ipP8JFZFIq/Dr5Hy5VTbgn4T+YywpkVMIKFP/lq5mu/MNNvcSWSMX4DrvrhuhBSZNCdQbgt4FuJJBGI+MX07xFhEiLY0/rgKkg9drw3inicgIRNoXX6ee7sz/NTImPOraRuDS6q0Yq88iVtYT8pbYgxj807dq8aYYUR26Y6JV4B1rABopnKPsMi/kJlkSd7N738dAvQbzXRzmR4olhT6CADy9pT3W39rxnNdpt7HMtwZitjiaNigOLwWzUXD2q8+BgrxmGDNH1uQYzBvV8qkxnbTiYmUQuAyFJhpPJwQKSaimtVyVBtmxJAT/rOMILRLiYeyulz6IT6KKwE3umUAvkk6KFB/qCChSJlvyP1LSwg2VEMjEC1RYKqh8GUZ87foRMUKFtW9556dpQwweOW/3K5eIHqmWRJwHgwUmAH5TICwYLdpy+LuT0sLdx9UT9e/Su1+9yyTcYqgYYw8H1DD+u9SkcSv8pwp549AaoKta8GgpJQ=
+            - text: >-
+                No animals appear in this video, as it is entirely a screen recording of a code
+                editor and AI assistant interface.
+              thoughtSignature: >-
+                AY89a1+9EfmjDIhwcRGDOfLnx2lcmtf3/VTjiR0T8x30H0+1ibUn2y+4AMIkiU4KNf+0wLB3c8FqOJ6i0nbHnvzsAVE+UIfzJZbU2TBWQGeYA0MSVptImJIWYc45bVwXq6AIZCiZ9XT1vyE5g+jLxh+b/vqoKtSTjr15AHRMczPt7ilpI3sS41CK1ywhmiRmwj/fz45xJJuBgDTR6BuWD9BtV9h0+BYnnUwx/i4dvA1HGYcYdRQZDpw8wlDOjzPHVqH7myhnqjgXkbvd82Gze4FlItz2J/VH/Ba0cWEqG0LhU5PiQxRDJX7SrnCnNHAipNQsIKxoMUMR3BtfkO2eXofTYvW9WUMPMpn1cP4IweeQOSQ6x06F1sUOi84wbsUlaxkRh17WpW02OvRTR3PBH9Z1oJ7CDgiMpLB/6+a9eKfjAHDWYhX2qQqW6WsMIjCqfVVNrRKr0jbLRf3lpU5P8MUbA97BPcc8ofQ37iJ3C5LKxi4lbk8AqkcLC6AC0cVAFYqAtbYqi39oLx8mHByEJIZuJwehFq96vlzxr/4/0FWDozr2anuKILx8j4FgozNNdJpzY7ECZORHMJh0nTYHAhb41Vzvmh0z2oeOUA+K5WKUulpcLNVcCFgRf74OqWSm5aK2gJcg9Au2oGXpcEjeWdixjlu0TECulfc8SaVYkJxznqeek0mi5Z19A23yA+596RFq8b3xuipZb27zMYJs8r6ZnCMDp9BLlido+EzKB6LZomNviHG2RbjUgYevrb6G/YFrWJMDR6Ht0/IMsF4HLfiDpuDU6sqs+xuIEqPyKGN7/z9SY1yBWTr5NZgZWU3U0m5RFzuWbVAdt9n5sWBiqg==
+          finishReason: STOP
+        usageMetadata:
+          promptTokenCount: 261
+          candidatesTokenCount: 46
+          totalTokenCount: 2583
+          trafficType: ON_DEMAND
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 261
+          candidatesTokensDetails:
+          - modality: TEXT
+            tokenCount: 46
+          toolUsePromptTokensDetails:
+          - modality: VIDEO
+            tokenCount: 1800
+          - modality: TEXT
+            tokenCount: 307
+          toolUsePromptTokenCount: 2107
+          thoughtsTokenCount: 169
+        modelVersion: gemini-3.7-flash
+        createTime: 2026-10-13T19:09:06.821588Z
+        responseId: 0oHOatSSMvy4u7APto6sqA8
+  recorded_at: 2026-10-13T19:09:21.947767+00:00
+- request:
+    method: POST
+    uri: >-
+      https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/publishers/google/models/gemini-3.7-flash:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1425"
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: In one sentence, which animals appear and roughly when?
+          - fileData:
+              file_uri: https://www.youtube.com/watch?v=lCdaVNyHtjU
+              mime_type: video/mp4
+            mediaProcessing: AGENTIC
+          role: user
+        - parts:
+          - text: >-
+              No animals appear in this video, as it is entirely a screen recording of a code
+              editor and AI assistant interface.
+            thoughtSignature: >-
+              AY89a1-9EfmjDIhwcRGDOfLnx2lcmtf3_VTjiR0T8x30H0-1ibUn2y-4AMIkiU4KNf-0wLB3c8FqOJ6i0nbHnvzsAVE-UIfzJZbU2TBWQGeYA0MSVptImJIWYc45bVwXq6AIZCiZ9XT1vyE5g-jLxh-b_vqoKtSTjr15AHRMczPt7ilpI3sS41CK1ywhmiRmwj_fz45xJJuBgDTR6BuWD9BtV9h0-BYnnUwx_i4dvA1HGYcYdRQZDpw8wlDOjzPHVqH7myhnqjgXkbvd82Gze4FlItz2J_VH_Ba0cWEqG0LhU5PiQxRDJX7SrnCnNHAipNQsIKxoMUMR3BtfkO2eXofTYvW9WUMPMpn1cP4IweeQOSQ6x06F1sUOi84wbsUlaxkRh17WpW02OvRTR3PBH9Z1oJ7CDgiMpLB_6-a9eKfjAHDWYhX2qQqW6WsMIjCqfVVNrRKr0jbLRf3lpU5P8MUbA97BPcc8ofQ37iJ3C5LKxi4lbk8AqkcLC6AC0cVAFYqAtbYqi39oLx8mHByEJIZuJwehFq96vlzxr_4_0FWDozr2anuKILx8j4FgozNNdJpzY7ECZORHMJh0nTYHAhb41Vzvmh0z2oeOUA-K5WKUulpcLNVcCFgRf74OqWSm5aK2gJcg9Au2oGXpcEjeWdixjlu0TECulfc8SaVYkJxznqeek0mi5Z19A23yA-596RFq8b3xuipZb27zMYJs8r6ZnCMDp9BLlido-EzKB6LZomNviHG2RbjUgYevrb6G_YFrWJMDR6Ht0_IMsF4HLfiDpuDU6sqs-xuIEqPyKGN7_z9SY1yBWTr5NZgZWU3U0m5RFzuWbVAdt9n5sWBiqg==
+          role: model
+        - parts:
+          - text: What filename is open in the active editor tab?
+          role: user
+        generationConfig:
+          responseModalities:
+          - TEXT
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            role: model
+            parts:
+            - text: The file open in the active editor tab is **`BrowserRouter.tsx`**.
+              thoughtSignature: >-
+                AY89a18AgQ0i5GM0yUd5NphzErK5rdRkwVFr4Cr1MXIEJq3qltV2RLBC8p4Xlu7TjfzBEjjFsXb0zGxjt2UTP7+PZCwU+kY5mYCtKPlNmP50IjYyKF8NJhZA7fsM7Fnht3ZC13EJbzsB4tzh3hPV9m75NSPHD9J7Amywo1TPmcPuynSAVohmawFRY8TMPLoI489Rm+w5k4z5cq1kBqh7c7mw0FSJ/yBO3F0cXlVPokX3F5i/m8ESEzgN7fpIcCPww0MXjDo9M0+XdixxKOnMkeIygsfn/As0nNM4P2DpvQWj84jsy3r6KhcTqrZihu07kDj45qOKMvI+OCU9pj6I
+          finishReason: STOP
+        usageMetadata:
+          promptTokenCount: 437
+          candidatesTokenCount: 16
+          totalTokenCount: 493
+          trafficType: ON_DEMAND
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 437
+          candidatesTokensDetails:
+          - modality: TEXT
+            tokenCount: 16
+          thoughtsTokenCount: 40
+        modelVersion: gemini-3.7-flash
+        createTime: 2026-10-13T19:09:22.182035Z
+        responseId: 4oHOapOOC5jlwtQP79_BoQ0
+  recorded_at: 2026-10-13T19:09:24.468608+00:00
