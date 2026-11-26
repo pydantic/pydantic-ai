@@ -11,6 +11,7 @@ import pydantic
 from temporalio import activity, workflow
 from temporalio.client import Client, WorkflowHandle
 from temporalio.contrib.workflow_streams import (
+    TopicHandle,
     WorkflowStream,
     WorkflowStreamClient,
     WorkflowStreamItem,
@@ -292,40 +293,53 @@ def workflow_stream_event_handler(
             async for _ in stream:
                 pass
             return
-
-        # Pin publishing to the run that scheduled this activity. `from_within_activity()` builds its
-        # handle from the workflow ID alone, which resolves to the *latest* execution: if this run is
-        # cancelled while its activities are still shutting down and the workflow ID is then reused,
-        # trailing events would land in the new execution's stream.
-        info = activity.info()
-        if info.workflow_id is None or info.workflow_run_id is None:
-            raise UserError(
-                'A Workflow Stream event handler can only publish from an activity scheduled by a workflow. '
-                'This activity was started directly on the client, so it has no workflow stream to publish to.'
-            )
-        temporal_client = activity.client()
-        activity_handle = temporal_client.get_workflow_handle(info.workflow_id, run_id=info.workflow_run_id)
-        client = WorkflowStreamClient(activity_handle, client=temporal_client, batch_interval=topic.batch_interval)
-        topic_handle = client.topic(topic.name)
-
-        async def publishing(events: AsyncIterable[AgentStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
-            async for event in events:
-                if topic.events is None or topic.events(event):
-                    topic_handle.publish(event)
-                yield event
-
-        async with client:  # background flusher; flushes what's left on exit
-            published = publishing(stream)
-            try:
-                if handler is not None:
-                    await handler(run_context, published)
-            finally:
-                # Keep publishing whatever a handler that returned early left behind: the topic's
-                # subscribers are not that handler's business.
-                async for _ in published:
-                    pass
+        await _publish_from_activity(topic, run_context, stream, handler)
 
     return publishing_handler
+
+
+async def _publish_from_activity(
+    topic: WorkflowStreamTopic,
+    run_context: RunContext[AgentDepsT],
+    stream: AsyncIterable[AgentStreamEvent],
+    handler: EventStreamHandler[AgentDepsT] | None,
+) -> None:
+    """Publish an activity's events to the workflow run that scheduled it, passing them on to `handler`."""
+    # Pin publishing to the run that scheduled this activity. `from_within_activity()` builds its
+    # handle from the workflow ID alone, which resolves to the *latest* execution: if this run is
+    # cancelled while its activities are still shutting down and the workflow ID is then reused,
+    # trailing events would land in the new execution's stream.
+    info = activity.info()
+    if info.workflow_id is None or info.workflow_run_id is None:
+        raise UserError(
+            'A Workflow Stream event handler can only publish from an activity scheduled by a workflow. '
+            'This activity was started directly on the client, so it has no workflow stream to publish to.'
+        )
+    temporal_client = activity.client()
+    activity_handle = temporal_client.get_workflow_handle(info.workflow_id, run_id=info.workflow_run_id)
+    client = WorkflowStreamClient(activity_handle, client=temporal_client, batch_interval=topic.batch_interval)
+    topic_handle = client.topic(topic.name)
+
+    async with client:  # background flusher; flushes what's left on exit
+        published = _publishing(stream, topic, topic_handle)
+        try:
+            if handler is not None:
+                await handler(run_context, published)
+        finally:
+            # Keep publishing whatever a handler that returned early left behind: the topic's
+            # subscribers are not that handler's business.
+            async for _ in published:
+                pass
+
+
+async def _publishing(
+    events: AsyncIterable[AgentStreamEvent], topic: WorkflowStreamTopic, topic_handle: TopicHandle[Any]
+) -> AsyncIterator[AgentStreamEvent]:
+    """Yield each event, publishing it first when the topic selects it."""
+    async for event in events:
+        if topic.events is None or topic.events(event):
+            topic_handle.publish(event)
+        yield event
 
 
 class DurableAgentRunEvents(Generic[OutputDataT], AsyncIterator['NativeEvent']):

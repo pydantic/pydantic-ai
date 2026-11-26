@@ -77,11 +77,15 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import (
     CUSTOM_EVENT_TYPES,
+    AgentInstructionSource,
     CapabilityEvent,
+    CapabilityInstructionSource,
     CustomEvent,
+    InstructionDeltaPart,
     InstructionId,
     InstructionPart,
     ModelRequestAttempt,
+    RunInstructionSource,
     ThinkingPart,
     ToolsetInstructionSource,
     UnknownCustomEvent,
@@ -1190,6 +1194,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'validation_context',  # arbitrary user object with no serialization contract
         'model_settings',  # only set for model requests, which receive it as their own typed activity param
         '_mcp_tool_defs_cache',  # run-local cache read/written in workflow code; never needed inside an activity
+        '_appended_messages',  # run-local record of the history appended to in workflow code; never needed inside an activity
         '_event_stream_buffer',  # live run event buffer, unreachable from an activity (`emit` raises there)
         '_pending_immediate_dispatches',  # live workflow-side event deduplication state
         '_event_stream_replacements',  # live workflow-side legacy-replacement state applied at stream position
@@ -1318,6 +1323,90 @@ async def test_payload_converter_rebuilds_adapter_when_an_event_class_registers_
         assert decoded.done == 1
     finally:
         CUSTOM_EVENT_TYPES.pop('temporal_late_registration', None)
+
+
+_INSTRUCTION_IDS = [
+    InstructionId(AgentInstructionSource()),
+    InstructionId(AgentInstructionSource(), name='persona'),
+    InstructionId(RunInstructionSource(), name='task'),
+    InstructionId(ToolsetInstructionSource('memory')),
+    InstructionId(ToolsetInstructionSource('memory'), name='usage'),
+    InstructionId(CapabilityInstructionSource('memory')),
+    InstructionId(CapabilityInstructionSource('memory'), name='usage'),
+]
+
+
+def test_payload_converter_round_trips_instruction_ids() -> None:
+    """Every instruction source keeps its type through the payload converter (#14492).
+
+    The converter writes an id as an object rather than its string, so the source's `kind` is what tells a
+    capability from a toolset with the same `id`, and a run from the agent.
+    """
+    converter = PydanticAIPayloadConverter()
+    request = ModelRequest(parts=[InstructionDeltaPart(id=id, content='x') for id in _INSTRUCTION_IDS])
+
+    [decoded] = converter.from_payloads(converter.to_payloads([request]), [ModelRequest])
+
+    assert [part.id for part in decoded.parts] == _INSTRUCTION_IDS
+    assert [str(part.id) for part in decoded.parts] == snapshot(
+        [
+            'agent',
+            'agent:persona',
+            'run:task',
+            'toolset:memory',
+            'toolset:memory:usage',
+            'capability:memory',
+            'capability:memory:usage',
+        ]
+    )
+
+
+def test_payload_converter_decodes_instruction_ids_without_kind() -> None:
+    """A payload written before instruction sources carried a `kind` decodes as it always has.
+
+    Those payloads can be in recorded workflow histories, and replay has to rebuild the values the workflow
+    first ran with. The source's fields alone can't tell a capability from a toolset or a run from the agent,
+    so an id-bearing source reads as a toolset and an empty one as the agent.
+    """
+    payload = temporalio.api.common.v1.Payload(
+        metadata={'encoding': b'json/plain'},
+        data=(
+            b'{"parts":['
+            b'{"id":{"source":{},"name":null},"content":"x","part_kind":"instruction-delta"},'
+            b'{"id":{"source":{},"name":"task"},"content":"x","part_kind":"instruction-delta"},'
+            b'{"id":{"source":{"id":"memory"},"name":null},"content":"x","part_kind":"instruction-delta"},'
+            b'{"id":{"source":{"id":"memory"},"name":"usage"},"content":"x","part_kind":"instruction-delta"},'
+            b'{"id":"capability:memory","content":"x","part_kind":"instruction-delta"}'
+            b'],"kind":"request"}'
+        ),
+    )
+
+    [decoded] = PydanticAIPayloadConverter().from_payloads([payload], [ModelRequest])
+
+    assert [part.id for part in decoded.parts] == [
+        InstructionId(AgentInstructionSource()),
+        InstructionId(AgentInstructionSource(), name='task'),
+        InstructionId(ToolsetInstructionSource('memory')),
+        InstructionId(ToolsetInstructionSource('memory'), name='usage'),
+        InstructionId(CapabilityInstructionSource('memory')),
+    ]
+
+
+def test_payload_converter_reads_an_unknown_instruction_source_kind_as_unaddressable() -> None:
+    """A source `kind` from a newer version leaves the id unaddressable, as an unknown string namespace does."""
+    payload = temporalio.api.common.v1.Payload(
+        metadata={'encoding': b'json/plain'},
+        data=(
+            b'{"parts":['
+            b'{"id":{"source":{"id":"x","kind":"workspace"},"name":null},"content":"x","part_kind":"instruction-delta"},'
+            b'{"id":{"source":{"id":"memory","kind":"capability"},"name":null},"content":"x","part_kind":"instruction-delta"}'
+            b'],"kind":"request"}'
+        ),
+    )
+
+    [decoded] = PydanticAIPayloadConverter().from_payloads([payload], [ModelRequest])
+
+    assert [part.id for part in decoded.parts] == [None, InstructionId(CapabilityInstructionSource('memory'))]
 
 
 async def test_unknown_custom_event_recovers_across_workers() -> None:
@@ -1903,6 +1992,35 @@ def test_temporal_model_context_window_follows_active_model():
         # An unregistered model ID resolves through profile inference, not the wrapped default's window.
         assert temporal_model.context_window == infer_model_profile('openai:gpt-5').get('context_window')
         assert temporal_model.context_window not in (None, 100)
+
+
+class _OutsidePrefixTestModel(TestModel):
+    @property
+    def _rewrite_instructions_outside_prefix(self) -> bool:
+        return True
+
+
+def test_temporal_model_rewrite_instructions_outside_prefix_follows_active_model():
+    """The instruction window rule comes from the active model, so a run moved off a default that reads dynamic
+    instructions outside the cached prefix keeps the shared rule.
+
+    A raw model string has no model to ask, so it keeps the shared rule, as `Model` does.
+    """
+    temporal_model = TemporalModel(
+        _OutsidePrefixTestModel(model_name='default-model'),
+        activity_name_prefix='test__rewrite_instructions_outside_prefix',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        models={'alt': TestModel(model_name='alt-model')},
+    )
+
+    assert temporal_model._rewrite_instructions_outside_prefix  # pyright: ignore[reportPrivateUsage]
+
+    with temporal_model.using_model('alt'):
+        assert not temporal_model._rewrite_instructions_outside_prefix  # pyright: ignore[reportPrivateUsage]
+
+    with temporal_model.using_model('openai-responses:gpt-6.2-sol'):
+        assert not temporal_model._rewrite_instructions_outside_prefix  # pyright: ignore[reportPrivateUsage]
 
 
 def test_temporal_model_model_id_follows_active_model():

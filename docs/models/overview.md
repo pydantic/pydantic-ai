@@ -19,7 +19,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [Pydantic AI Gateway](../gateway.md) | Gateway | `gateway/<provider>:` |
 | [OpenAI](openai.md) | Model developer | `openai:`, `openai-chat:`, `openai-responses:` |
 | [Anthropic](anthropic.md) | Model developer | `anthropic:` |
-| [Google / Gemini API](google.md) | Model developer | `google:` |
+| [Google / Gemini API](google.md) | Model developer | `google:`, `google-interactions:` |
 | [AWS Bedrock](bedrock.md) | Cloud platform | `bedrock:`, `bedrock-mantle:`; Anthropic client |
 | [Google Cloud / Vertex AI](google-cloud.md) | Cloud platform | `google-cloud:`; Anthropic client |
 | [Microsoft Azure / Foundry](azure.md) | Cloud platform | `azure:`, `azure-responses:`; Anthropic client |
@@ -131,9 +131,9 @@ The profile also carries the model's [`context_window`][pydantic_ai.profiles.Mod
 
 ## Deprecated models {#deprecated-models}
 
-When a provider has deprecated or retired a model, each request to it emits a [`DeprecatedModelWarning`][pydantic_ai.exceptions.DeprecatedModelWarning] naming the model, its retirement date and the replacement the provider recommends, with a link to the provider's announcement. Creating the model doesn't warn. Python's [warning filters](https://docs.python.org/3/library/warnings.html#the-warnings-filter) decide how often it's shown: with the default filters, `run_sync` and other code that enters `warnings.catch_warnings()` reset the record of warnings already shown, so a model can warn again on a later request. The warning is a `UserWarning`, so Python shows it by default.
+When a provider has deprecated or retired a model, each request to it emits a [`DeprecatedModelWarning`][pydantic_ai.exceptions.DeprecatedModelWarning] naming the model, its retirement date, the model the provider routes its requests to from then, if any ([`rerouted_to`][pydantic_ai.profiles.ModelDeprecation.rerouted_to]), and the replacement the provider recommends, with a link to the provider's announcement. Creating the model doesn't warn. Python's [warning filters](https://docs.python.org/3/library/warnings.html#the-warnings-filter) decide how often it's shown: with the default filters, `run_sync` and other code that enters `warnings.catch_warnings()` reset the record of warnings already shown, so a model can warn again on a later request. The warning is a `UserWarning`, so Python shows it by default.
 
-The deprecation comes from the model's profile, whose [`deprecation`][pydantic_ai.profiles.ModelProfile.deprecation] holds a [`ModelDeprecation`][pydantic_ai.profiles.ModelDeprecation]. Pydantic AI sets it for models on the [Anthropic](anthropic.md) and [OpenAI](openai.md) APIs, from those providers' deprecation pages, including when you reach them through the [Pydantic AI Gateway](../gateway.md). Anthropic's dates also apply to the platforms it operates: Microsoft Foundry, Claude Platform on AWS and Claude Models on Google Cloud (Anthropic managed). The deprecation isn't set where another platform serves the same model on a schedule of its own: Amazon Bedrock, Google Cloud's Vertex AI, Azure, OpenRouter and the Codex backend. A Gateway [endpoint](../gateway.md#gateway-endpoints) that fails over to one of those platforms still gets the Anthropic or OpenAI date.
+The deprecation comes from the model's profile, whose [`deprecation`][pydantic_ai.profiles.ModelProfile.deprecation] holds a [`ModelDeprecation`][pydantic_ai.profiles.ModelDeprecation]. Pydantic AI sets it for models on the [Anthropic](anthropic.md) and [OpenAI](openai.md) APIs, from those providers' deprecation pages, including when you reach them through the [Pydantic AI Gateway](../gateway.md). Anthropic's dates also apply to the platforms it operates: Microsoft Foundry, Claude Platform on AWS and Claude Models on Google Cloud (Anthropic managed). For [Google](google.md#gemini-25-retirement), it's set for `gemini-2.5-pro` and `gemini-2.5-flash`, with the dates of the API the client reaches: the Gemini API's, or Google Cloud's, which the Gateway's Google route also reaches. The deprecation isn't set where another platform serves the same model on a schedule of its own: Amazon Bedrock, Google Cloud's Vertex AI for Claude models, Azure, OpenRouter and the Codex backend. A Gateway [endpoint](../gateway.md#gateway-endpoints) that fails over to one of those platforms still gets the Anthropic or OpenAI date.
 
 To turn the warning into an error, use a [warnings filter](https://docs.python.org/3/library/warnings.html#the-warnings-filter). To stop it for one model, set the profile's `deprecation` to `None`; to warn about a model you serve elsewhere, set it to a `ModelDeprecation` of your own:
 
@@ -417,6 +417,17 @@ print(should_retry(ModelHTTPError.for_category(ModelRateLimitError, status_code=
 [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] are all a
 `ModelRequestRejectedError`, so `should_retry` skips them too. Under [Temporal](../durable_execution/temporal.md#activity-retries), the activity
 doesn't retry them either, as they're in `non_retryable_model_errors` by default.
+
+Match model errors by type, with `except` or `isinstance`, or by a `ModelHTTPError`'s `status_code`, not by
+comparing the class name, as in `type(error).__name__ == 'ModelHTTPError'`. A later version may raise an error as a
+more specific category, which `except ModelHTTPError` still catches but a name comparison doesn't. A Temporal retry
+policy's `non_retryable_error_types` can only match names, so it sees every categorized error as `ModelHTTPError` or
+`ModelAPIError`; see [Activity Retries](../durable_execution/temporal.md#activity-retries).
+
+!!! tip "Logging error class names to Logfire"
+    Logfire's [default scrubbing](https://pydantic.dev/docs/logfire/instrument/python/scrubbing/) redacts any value
+    you log whose text matches a pattern like `auth`, so a class name like `ModelAuthenticationError` logged as an
+    attribute shows up as `[Scrubbed due to 'Auth']`. The `exception.type` on Pydantic AI's own spans isn't scrubbed.
 
 ### HTTP errors {#handling-http-errors}
 
