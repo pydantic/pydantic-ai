@@ -350,37 +350,42 @@ class Instrumentation(AbstractCapability[Any]):
                 return result
             finally:
                 _otel_detach(token)
-                if span.is_recording():
-                    # A lazy sandbox may acquire its ref only after the span starts.
-                    if (workspace_ref := ctx.workspace.ref) is not None:
-                        span.set_attribute('pydantic_ai.workspace.provider', workspace_ref.provider)
-                        span.set_attribute('pydantic_ai.workspace.id', workspace_ref.id)
-                    # Get current messages and metadata from the result (which holds the up-to-date state).
-                    # ctx.messages/ctx.metadata may be stale because the run state is mutated during execution.
-                    if result is not None:
-                        message_history = result.all_messages()
-                        metadata = result.metadata
-                    else:
-                        # On error, use the last messages seen during model requests.
-                        message_history = self._last_messages or ctx.messages
-                        metadata = ctx.metadata
-                    span.set_attributes(self._run_span_end_attributes(ctx, message_history, metadata))
-                    if result is not None:
-                        # One O(history) pass per run: turn any silent staleness the per-request
-                        # fragment cache may have recorded into a loud signal. Skipped when the run
-                        # errored: with warnings configured as errors, warning here in the `finally`
-                        # would displace the propagating run exception.
-                        if self._message_json_cache and has_stale_message_json(
-                            settings, message_history, self._message_json_cache
-                        ):
-                            warnings.warn(
-                                'In-place mutation of messages already in the history was detected during this run: '
-                                "the `gen_ai.input.messages` attribute recorded on the run's model request spans may "
-                                'not match the messages actually sent to the model. Mutating history messages in '
-                                'place is not supported; build new message or part objects instead, e.g. via a '
-                                'history processor.',
-                                MessageHistoryMutatedWarning,
-                            )
+                self._finish_run_span(span, ctx, result)
+
+    def _finish_run_span(self, span: Span, ctx: RunContext[Any], result: AgentRunResult[Any] | None) -> None:
+        """Record the end of the run on its span, from `wrap_run`'s `finally`; `result` is `None` when the run errored."""
+        if not span.is_recording():
+            return
+        # A lazy sandbox may acquire its ref only after the span starts.
+        if (workspace_ref := ctx.workspace.ref) is not None:
+            span.set_attribute('pydantic_ai.workspace.provider', workspace_ref.provider)
+            span.set_attribute('pydantic_ai.workspace.id', workspace_ref.id)
+        # Get current messages and metadata from the result (which holds the up-to-date state).
+        # ctx.messages/ctx.metadata may be stale because the run state is mutated during execution.
+        if result is not None:
+            message_history = result.all_messages()
+            metadata = result.metadata
+        else:
+            # On error, use the last messages seen during model requests.
+            message_history = self._last_messages or ctx.messages
+            metadata = ctx.metadata
+        span.set_attributes(self._run_span_end_attributes(ctx, message_history, metadata))
+        if result is not None:
+            # One O(history) pass per run: turn any silent staleness the per-request
+            # fragment cache may have recorded into a loud signal. Skipped when the run
+            # errored: with warnings configured as errors, warning here in the `finally`
+            # would displace the propagating run exception.
+            if self._message_json_cache and has_stale_message_json(
+                self.settings, message_history, self._message_json_cache
+            ):
+                warnings.warn(
+                    'In-place mutation of messages already in the history was detected during this run: '
+                    "the `gen_ai.input.messages` attribute recorded on the run's model request spans may "
+                    'not match the messages actually sent to the model. Mutating history messages in '
+                    'place is not supported; build new message or part objects instead, e.g. via a '
+                    'history processor.',
+                    MessageHistoryMutatedWarning,
+                )
 
     def _run_span_end_attributes(
         self,
@@ -695,31 +700,10 @@ class Instrumentation(AbstractCapability[Any]):
             try:
                 result = await action()
             except (CallDeferred, ApprovalRequired) as exc:
-                if not handle_tool_control_flow:
-                    _record_exception(span, exc, include_content=include_content)
-                    span.set_status(StatusCode.ERROR)
-                    raise
-                # Deferrals are control flow, not errors: capture the deferral name (and
-                # metadata when available) as span attributes, and only mark the span
-                # ERROR for older instrumentation versions that expected that shape.
-                span.set_attribute(names.tool_deferral_name_attr, type(exc).__name__)
-                if include_content and span.is_recording() and exc.metadata is not None:
-                    redacted_metadata = redact_binary_content(exc.metadata, settings)
-                    try:
-                        metadata_str = to_json(redacted_metadata).decode()
-                    except (TypeError, ValueError):
-                        metadata_str = repr(redacted_metadata)
-                    span.set_attribute(names.tool_deferral_metadata_attr, metadata_str)
-                if settings.version < 5:
-                    _record_exception(span, exc, include_content=include_content)
-                    span.set_status(StatusCode.ERROR)
+                self._record_deferral(span, exc, handle_tool_control_flow=handle_tool_control_flow)
                 raise
             except SkipToolExecution as e:
-                if include_content and span.is_recording():
-                    span.set_attribute(
-                        names.tool_result_attr,
-                        e.result if isinstance(e.result, str) else serialize_result(e.result),
-                    )
+                self._record_tool_result(span, e.result, serialize_result)
                 raise
             except ToolRetryError as e:
                 _record_retry(span, names, e, run_context)
@@ -748,13 +732,43 @@ class Instrumentation(AbstractCapability[Any]):
                 span.set_status(StatusCode.ERROR)
                 raise
 
-            if include_content and span.is_recording():
-                span.set_attribute(
-                    names.tool_result_attr,
-                    result if isinstance(result, str) else serialize_result(result),
-                )
+            self._record_tool_result(span, result, serialize_result)
 
         return result
+
+    def _record_deferral(
+        self, span: Span, exc: CallDeferred | ApprovalRequired, *, handle_tool_control_flow: bool
+    ) -> None:
+        """Record a deferral that `_run_tool_span` re-raises: as an error unless `handle_tool_control_flow` is True."""
+        settings = self.settings
+        names = self._instrumentation_names
+        include_content = settings.include_content
+        if not handle_tool_control_flow:
+            _record_exception(span, exc, include_content=include_content)
+            span.set_status(StatusCode.ERROR)
+            return
+        # Deferrals are control flow, not errors: capture the deferral name (and
+        # metadata when available) as span attributes, and only mark the span
+        # ERROR for older instrumentation versions that expected that shape.
+        span.set_attribute(names.tool_deferral_name_attr, type(exc).__name__)
+        if include_content and span.is_recording() and exc.metadata is not None:
+            redacted_metadata = redact_binary_content(exc.metadata, settings)
+            try:
+                metadata_str = to_json(redacted_metadata).decode()
+            except (TypeError, ValueError):
+                metadata_str = repr(redacted_metadata)
+            span.set_attribute(names.tool_deferral_metadata_attr, metadata_str)
+        if settings.version < 5:
+            _record_exception(span, exc, include_content=include_content)
+            span.set_status(StatusCode.ERROR)
+
+    def _record_tool_result(self, span: Span, result: Any, serialize_result: Callable[[Any], str]) -> None:
+        """Record a tool or output function's result, or a `SkipToolExecution` replacement, on its span."""
+        if self.settings.include_content and span.is_recording():
+            span.set_attribute(
+                self._instrumentation_names.tool_result_attr,
+                result if isinstance(result, str) else serialize_result(result),
+            )
 
     async def wrap_tool_execute(
         self,
