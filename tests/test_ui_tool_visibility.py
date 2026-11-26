@@ -7,9 +7,9 @@ returns, which no provider response changes, so there is nothing for a cassette 
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import pytest
 
@@ -17,13 +17,17 @@ from pydantic_ai import Agent, AgentRunResult, ToolOutput
 from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools, WrapModelRequestHandler
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, SkipModelRequest, ToolFailed
 from pydantic_ai.messages import (
+    AgentStreamEvent,
     CustomEvent as PydanticAICustomEvent,
+    FunctionToolCallEvent,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
+    PartEndEvent,
+    PartStartEvent,
     TextPart,
     ToolCallPart,
     ToolReturn,
@@ -31,11 +35,23 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, BuiltinToolCallsReturns, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai.tools import DeferredToolRequests, RunContext, Tool, ToolDefinition, ToolUIVisibility
+from pydantic_ai.run import AgentRunResultEvent
+from pydantic_ai.tools import (
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+    Tool,
+    ToolDefinition,
+    ToolDenied,
+    ToolUIVisibility,
+)
 from pydantic_ai.toolsets import ExternalToolset, FunctionToolset
 
 from ._inline_snapshot import snapshot
 from .conftest import legacy_retry_prompt_part, try_import
+
+if TYPE_CHECKING:
+    from pydantic_ai.mcp import MCPAppToolResult
 
 with try_import() as imports_successful:
     from ag_ui.core import CustomEvent, RunAgentInput, UserMessage
@@ -144,13 +160,49 @@ async def run_adapter(
             chunk async for chunk in vercel_adapter.encode_stream(vercel_adapter.run_stream(on_complete=keep_history))
         ]
 
-    events = [
+    return Run(protocol, sse_events(wire), messages)
+
+
+def sse_events(wire: Sequence[str]) -> list[dict[str, Any]]:
+    """The events an SSE wire carries, decoded."""
+    return [
         json.loads(data)
         for chunk in wire
         for line in chunk.splitlines()
         if line.startswith('data: ') and (data := line.removeprefix('data: ')) != '[DONE]'
     ]
-    return Run(protocol, events, messages)
+
+
+async def resume(
+    protocol: ProtocolName, agent: Agent[None, Any], history: list[ModelMessage], results: DeferredToolResults
+) -> Run:
+    """Resume a paused run from its stored history through the protocol's event stream, as an endpoint holding it does.
+
+    The history goes through `ModelMessagesTypeAdapter` first, as a conversation store keeps it.
+    """
+    stored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(history))
+    messages: list[ModelMessage] = []
+
+    async def keep_history(result: AgentRunResult[Any]) -> None:
+        messages.extend(result.all_messages())
+
+    async with agent.run_stream_events(message_history=stored, deferred_tool_results=results) as events:
+        wire = await encode_standalone(protocol, events, on_complete=keep_history)
+    return Run(protocol, sse_events(wire), messages)
+
+
+async def encode_standalone(
+    protocol: ProtocolName,
+    events: AsyncIterator[AgentStreamEvent | AgentRunResultEvent[Any]],
+    *,
+    on_complete: Callable[[AgentRunResult[Any]], Awaitable[None]] | None = None,
+) -> list[str]:
+    """`events` as the protocol's event stream encodes them, with no adapter around it."""
+    if protocol == 'ag_ui':
+        ag_ui_stream = AGUIEventStream[None, Any]()
+        return [ag_ui_stream.encode_event(e) async for e in ag_ui_stream.transform_stream(events, on_complete)]
+    vercel_stream = VercelAIEventStream[None, Any](sdk_version=6)
+    return [vercel_stream.encode_event(e) async for e in vercel_stream.transform_stream(events, on_complete)]
 
 
 def dump(
@@ -336,6 +388,30 @@ async def test_external_and_output_tools_stay_public(protocol: ProtocolName):
     ]
 
 
+EXPECTED_APPROVAL_EVENTS: dict[ProtocolName, Any] = {
+    'ag_ui': snapshot(
+        [
+            {'type': 'TOOL_CALL_START', 'toolCallId': 'call_0', 'toolCallName': 'refund'},
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'call_0', 'delta': '{"order_id": "o_1"}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': 'call_0'},
+        ]
+    ),
+    'vercel_ai': snapshot(
+        [
+            {'type': 'tool-input-start', 'toolCallId': 'call_0', 'toolName': 'refund'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call_0', 'inputTextDelta': '{"order_id": "o_1"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'call_0',
+                'toolName': 'refund',
+                'input': {'order_id': 'o_1'},
+            },
+            {'type': 'tool-approval-request', 'toolCallId': 'call_0'},
+        ]
+    ),
+}
+
+
 @pytest.mark.parametrize('protocol', PROTOCOLS)
 async def test_approval_required_private_tool_is_shown_redacted(protocol: ProtocolName):
     """The user can't approve a call they can't see, so a `'private'` tool that needs approval is `'redacted'`."""
@@ -347,9 +423,30 @@ async def test_approval_required_private_tool_is_shown_redacted(protocol: Protoc
 
     run = await run_adapter(protocol, agent)
 
-    assert 'refund' in run.wire
+    assert run.tool_events() == EXPECTED_APPROVAL_EVENTS[protocol]
     assert stamps(run.messages) == [('tool-call', 'refund', 'redacted')]
     assert 'refund' in dump(protocol, run.messages)
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_denied_redacted_tool_sends_the_placeholder_for_the_denial(protocol: ProtocolName):
+    """A denial message is the call's result, so a `'redacted'` tool's denial goes out as the placeholder.
+
+    Vercel AI's denied chunk carries no text, so only AG-UI sends the placeholder.
+    """
+    denial = f'Refunds above {SECRET} need a manager.'
+    agent = Agent(calling(('refund', '{"order_id": "o_1"}')), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True, ui_visibility='redacted')
+    def refund(order_id: str) -> str:
+        return 'Refunded.'  # pragma: no cover
+
+    paused = await run_adapter(protocol, agent)
+    run = await resume(protocol, agent, paused.messages, DeferredToolResults(approvals={'call_0': ToolDenied(denial)}))
+
+    assert SECRET not in run.wire
+    assert ('[REDACTED]' in run.wire) == (protocol == 'ag_ui')
+    assert SECRET not in dump(protocol, run.messages)
 
 
 DEFERRALS: dict[str, Callable[[], CallDeferred | ApprovalRequired]] = {
@@ -375,6 +472,24 @@ async def test_private_tool_that_defers_at_runtime_is_shown_redacted(protocol: P
     # The response in history holds a `'redacted'` copy of the call; the part that was streamed is left as it was.
     assert stamps(run.messages) == [('tool-call', 'escalate', 'redacted')]
     assert 'escalate' in dump(protocol, run.messages)
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_private_tool_deferred_at_runtime_resumes_redacted(protocol: ProtocolName):
+    """The result of a `'private'` call that deferred follows the call's `'redacted'` stamp when the run resumes."""
+    agent = Agent(calling(('escalate', '{"order_id": "o_1"}')), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(ui_visibility='private')
+    def escalate(order_id: str) -> str:
+        raise CallDeferred()
+
+    paused = await run_adapter(protocol, agent)
+    run = await resume(protocol, agent, paused.messages, DeferredToolResults(calls={'call_0': SECRET}))
+
+    assert stamps(run.messages) == [('tool-call', 'escalate', 'redacted'), ('tool-return', 'escalate', 'redacted')]
+    assert SECRET not in run.wire
+    assert '[REDACTED]' in run.wire
+    assert SECRET not in dump(protocol, run.messages)
 
 
 EXPECTED_DEFERRED_EVENTS: dict[tuple[ProtocolName, str], Any] = {
@@ -443,7 +558,7 @@ EXPECTED_DEFERRED_EVENTS: dict[tuple[ProtocolName, str], Any] = {
 async def test_redacted_tool_drops_the_mcp_app_and_keeps_metadata_events(protocol: ProtocolName):
     """The MCP Apps record holds the full result, so it goes; events the tool put in its metadata are its own channel."""
     agent = Agent(calling(('forecast', '{"city": "Paris"}'), ('notify', '{}')))
-    app: dict[str, Any] = {
+    app: MCPAppToolResult = {
         'resource_uri': 'ui://weather/forecast',
         'tool_input': {'city': 'Paris'},
         'result': {'content': [{'type': 'text', 'text': SECRET}]},
@@ -637,6 +752,7 @@ async def test_enqueued_tool_exchange_follows_the_stream_default(protocol: Proto
 
     assert ENQUEUED_RECORDS[protocol] in run.wire
     assert 'Escalated.' not in run.wire
+    assert 'lookup_notes' not in run.wire
     assert SECRET not in run.wire
 
 
@@ -882,6 +998,60 @@ def test_dump_projects_a_legacy_retry_as_its_calls_result(protocol: ProtocolName
     ]
 
     assert SECRET not in dump(protocol, messages)
+    assert ('[REDACTED]' in dump(protocol, messages)) == (ui_visibility == 'redacted')
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+def test_redacted_native_return_drops_the_provider_details(protocol: ProtocolName):
+    """The provider's details on a native tool's return can hold its result, so a `'redacted'` return drops them.
+
+    A unit test: no shipped provider puts result data there, so no recording can show it.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Search the docs.'),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    'web_search', {'query': 'margins'}, tool_call_id='native_0', provider_name='function'
+                ),
+                NativeToolReturnPart(
+                    'web_search',
+                    'Found the margins page.',
+                    tool_call_id='native_0',
+                    provider_name='function',
+                    provider_details={'raw_result': SECRET},
+                    ui_visibility='redacted',
+                ),
+                TextPart('Found it.'),
+            ]
+        ),
+    ]
+
+    assert SECRET not in dump(protocol, messages)
+    assert '[REDACTED]' in dump(protocol, messages)
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_error_closeout_hides_a_call_whose_id_a_private_call_reused(protocol: ProtocolName):
+    """A `'private'` call that reuses a pending call's `tool_call_id` takes over the id, so the closeout is hidden too.
+
+    A unit test of the stream: no model in the test suite repeats a `tool_call_id`, so the events are built by hand.
+    """
+    public = ToolCallPart('lookup_order', {}, tool_call_id='dup')
+    private = ToolCallPart('lookup_margin', {}, tool_call_id='dup', ui_visibility='private')
+
+    async def events() -> AsyncIterator[AgentStreamEvent]:
+        yield PartStartEvent(index=0, part=public)
+        yield PartEndEvent(index=0, part=public)
+        yield FunctionToolCallEvent(public)
+        yield PartStartEvent(index=1, part=private)
+        raise RuntimeError('The model provider is down.')
+
+    wire = ''.join(await encode_standalone(protocol, events()))
+
+    assert 'The model provider is down.' in wire
+    assert 'lookup_margin' not in wire
+    assert 'interrupted' not in wire
 
 
 def test_unknown_visibility_raises_rather_than_sends_the_result():

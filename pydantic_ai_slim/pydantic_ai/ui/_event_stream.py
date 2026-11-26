@@ -66,6 +66,7 @@ from ..tools import AgentDepsT
 from ._utils import (
     client_response_part,
     client_tool_return,
+    return_ui_visibility,
     ui_visibility_of,
     warn_client_held_history_with_hidden_tools,
 )
@@ -399,7 +400,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
     def _record_tool_call(self, event: ToolCallEvent) -> None:
         tool_call_id = event.part.tool_call_id
-        if self._ui_visibility(event.part) == 'private':
+        if ui_visibility_of(event.part, call_visibility=None, default=self.default_ui_visibility) == 'private':
             # The client was sent nothing for the call, so the error path has nothing to close.
             return
         kind: Literal['function', 'output'] = 'output' if isinstance(event, OutputToolCallEvent) else 'function'
@@ -475,7 +476,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 pass
         return part
 
-    def _interrupted_tool_result(
+    async def _interrupted_tool_result(
         self, tool_call_id: str, kind: Literal['function', 'output'], tool_name: str, *, cancelled: bool
     ) -> AsyncIterator[EventT]:
         """Handle the synthetic result that closes a pending tool call the stream's error interrupted."""
@@ -488,14 +489,22 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             content=INTERRUPTED_TOOL_RETURN_CONTENT if cancelled else 'Tool execution was interrupted by an error.',
             outcome='interrupted' if cancelled else 'failed',
         )
-        # Only calls the client was sent are pending, so the closing result is never hidden.
-        client_part = client_tool_return(error_part, self._ui_visibility(error_part))
-        assert client_part is not None
+        client_part = client_tool_return(
+            error_part, return_ui_visibility(error_part, self._call_ui_visibilities, self.default_ui_visibility)
+        )
+        if client_part is None:
+            # Only calls the client was sent are pending, but a `'private'` call that reuses a pending call's
+            # `tool_call_id` takes over that id's visibility, so its closing result is hidden too.
+            return
         if client_part is not error_part:
             self._warn_once_on_hidden_tools()
-        if kind == 'output':
-            return self.handle_output_tool_result(OutputToolResultEvent(client_part))
-        return self.handle_function_tool_result(FunctionToolResultEvent(client_part))
+        handler = (
+            self.handle_output_tool_result(OutputToolResultEvent(client_part))
+            if kind == 'output'
+            else self.handle_function_tool_result(FunctionToolResultEvent(client_part))
+        )
+        async for e in handler:
+            yield e
 
     async def _closing_events(
         self, exc: Exception, cancelled: RunCancelled | None, on_cancel: OnCancelFunc[EventT] | None
@@ -600,17 +609,6 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             self._warns_on_hidden_tools = False
             warn_client_held_history_with_hidden_tools(stacklevel=3)
 
-    def _ui_visibility(
-        self, part: ToolCallPart | NativeToolCallPart | ToolReturnPart | NativeToolReturnPart
-    ) -> ToolUIVisibility:
-        """What the client is sent for `part`: its stamp, else its call's, else `default_ui_visibility`."""
-        call_visibility = (
-            self._call_ui_visibilities.get(part.tool_call_id)
-            if isinstance(part, (ToolReturnPart, NativeToolReturnPart))
-            else None
-        )
-        return ui_visibility_of(part, call_visibility=call_visibility, default=self.default_ui_visibility)
-
     def _client_event(self, event: NativeEvent) -> NativeEvent | None:
         """`event` as the client is to be sent it, by the `ui_visibility` of the tool part it carries; `None` for nothing."""
         match event:
@@ -619,14 +617,14 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case PartDeltaEvent() | PartEndEvent():
                 return None if event.index in self._hidden_part_indices else event
             case FunctionToolCallEvent() | OutputToolCallEvent():
-                call = event.part
-                visibility = self._call_ui_visibilities[call.tool_call_id] = self._ui_visibility(call)
-                if visibility == 'private':
-                    self._hidden_calls[call.tool_call_id] = call
+                if client_response_part(event.part, self._call_ui_visibilities, self.default_ui_visibility) is None:
+                    self._hidden_calls[event.part.tool_call_id] = event.part
                     return None
                 return event
             case FunctionToolResultEvent() | OutputToolResultEvent():
-                part = client_tool_return(event.part, self._ui_visibility(event.part))
+                part = client_tool_return(
+                    event.part, return_ui_visibility(event.part, self._call_ui_visibilities, self.default_ui_visibility)
+                )
                 if part is None:
                     return None
                 return event if part is event.part else replace(event, part=part)
