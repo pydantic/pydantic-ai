@@ -654,11 +654,15 @@ paste of existing image paths creates attachments as described in
 Up/down move through multiline drafts, then recall queued messages and saved
 prompt history. Queued messages come first, newest first, because they are
 your most recent input; Up then continues into history, skipping the copies of
-queued messages that history already holds. Enter on a recalled queued message
-rewrites it in place, keeping its position in the queue, and the queue row
-shows `(editing)` meanwhile. Clearing the draft and pressing Enter removes the
-message from the queue. If the run takes the message before you press Enter,
-the edit is queued as a new follow-up. With nothing queued, Up/down only walk
+queued messages that history already holds. A recalled queued message leaves the
+queue while you edit it, so it does not run when the turn ends; the messages around
+it still do. Its queue row shows `(editing)` at the place it keeps, and the input
+box shows `Enter to save · Esc to stop editing · Clear it to remove`. Enter puts the
+edited message back in its place. Esc puts it back unchanged; it does not interrupt
+the turn, so a second Esc does. To remove the message, clear the draft and press
+Enter, Esc, or Ctrl+C. Each of these, and Alt+Enter, restores the draft you had
+before pressing Up. If the turn ends and nothing else is queued, the message
+stays in the input as an unsent draft. With nothing queued, Up/down only walk
 history.
 While you walk history, Up/down stay on history even when a recalled slash
 command shows completion suggestions. Press Tab to pick a suggestion; Up/down
@@ -1292,7 +1296,8 @@ is still submitted and saved in input history. Move the cursor inside a folded
 paste to reveal it for editing; recalled history shows the full text.
 While a turn or command runs, the rule above the draft shows how long it has run
 and that Esc interrupts it; with a draft or a queued message it also shows the
-queue and steer keys, which keep their place first on a narrow terminal.
+queue and steer keys, which keep their place first on a narrow terminal. While you
+edit a queued message, it shows the keys that finish the edit instead.
 A turn that finishes ends with a muted `Done in 12s` row; an interrupted one with
 `Interrupted. Type what to do instead.`
 Each submitted prompt is echoed into the transcript after a `>` marker in the theme's
@@ -1344,11 +1349,12 @@ previews, with queued slash commands labeled `Command:`. Previews are shown in
 execution order and disappear as each submission starts. Long or multiline messages
 have a single-line preview; large queues show a `+N more queued` summary to leave
 room for the editor. The original message text is unchanged. The footer also shows
-the number waiting when the `queued` footer field is visible. This is a read-only preview, not a queue editor. Control bytes in completion-derived
+the number waiting when the `queued` footer field is visible. Press Up to edit one (see Up/down above). Control bytes in completion-derived
 text are escaped in previews and prompt echoes; the submitted text is unchanged.
 
 Messages and slash commands run in submission order, after the current turn and its cleanup
-finish. They do not interrupt or steer the active turn. Bare settings menus such as
+finish, whether it ends or you interrupt it. They do not interrupt or
+steer the active turn. Bare settings menus such as
 `/set` are the exception: they open during the turn (see "Settings and commands"). An unsubmitted draft stays
 in the editor as turns finish. Queued messages are not saved as conversation turns
 until execution starts, and are discarded on exit or `/reload`.
@@ -1508,6 +1514,12 @@ example with `export WT_SESSION=1` in the shell you start Pax from.
 ### Interrupting a turn
 
 Press Esc or Ctrl+C to cancel the active agent turn without discarding your draft.
+Queued messages, slash commands, and `!` shell commands stay queued and run next, in
+the order you queued them. While you edit a queued message, the first Esc stops
+editing instead of interrupting. Ctrl+C interrupts and ends the edit as Esc does:
+the message goes back to its place unchanged, since only Enter saves an edit, or is
+removed if you cleared it. Up finds your edit in history, and the draft you had
+before pressing Up comes back.
 Tool cleanup finishes before the next queued message starts. Esc does not request
 exit, even when pressed repeatedly. Arrow keys and Alt+key shortcuts keep their
 editing behavior. The active full-screen interface retains control of Esc rather
@@ -3145,8 +3157,8 @@ Run `/sandbox PROVIDER` (`local smol`, `local boxlite`, `e2b`, `boxd`, `daytona`
 `sprites`, or `kubernetes`) in a new conversation, before its first prompt. `local smol` and `local boxlite` run a
 microVM on this machine, with SmolVM or BoxLite; `/sandbox local` alone asks which, and says what each still needs.
 The others are cloud sandboxes. Pax copies this checkout (the branch, its unpushed commits, and
-uncommitted files) into a new sandbox, and every command and file edit of the conversation runs
-there, `!` lines included. `/resume` and `/fork` reopen it, and `/sandbox delete` deletes it. `/sandbox` alone says where
+uncommitted files) into a new sandbox, saying which step it is on, and every command and file edit of the
+conversation runs there, `!` lines included. `/resume` and `/fork` reopen it, and `/sandbox delete` deletes it. `/sandbox` alone says where
 the conversation runs. To work on this machine again, run `/new`.
 
 A sandbox stays until you run `/sandbox delete`, even when you leave its conversation. If Pax stops
@@ -3155,7 +3167,10 @@ it. A fork or copy of the conversation uses the same sandbox, and stops working 
 
 `git` and `gh` in the sandbox act as your `gh` login, so the agent can push and open pull requests.
 Each sandbox gets the token `gh` has when you run `/sandbox`, and loses it when the sandbox is deleted.
-Without a `gh` login, the sandbox has no GitHub access, and its copy has no `origin` remote.
+The copy downloads older versions of files from GitHub when a command first reads them, so `git log -p`,
+`git blame`, `git diff` against an older commit, or checking out another branch also need that token, and
+fail once it stops working. Without a `gh` login, the sandbox has no GitHub access, and its copy has no
+`origin` remote; it gets the whole history from this machine instead, and needs nothing from GitHub.
 
 | Provider | Install extra | Keys | Where your GitHub token is | Who can read it |
 |---|---|---|---|---|
