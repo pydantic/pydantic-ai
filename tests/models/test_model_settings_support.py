@@ -555,7 +555,8 @@ bedrock_probe = botocore_probe(
 async def huggingface_probe(settings: ModelSettings, shape: RequestShape = PLAIN_REQUEST) -> ProbeResult:
     """Probe HuggingFace at the SDK call — its provider rejects `http_client` outright."""
     recorder = MockHuggingFace(completions=[ProbeAborted()])
-    # A Qwen 3.5 id, whose profile allows native output, so the request-feature probes see what HF sends.
+    # A Qwen 3.5 id, whose profile sets `supports_json_schema_output`, so `test_request_feature_support.py` sees what HF
+    # does with native output. The settings checks here run against this profile too.
     model = HuggingFaceModel(
         'Qwen/Qwen3.5-397B-A17B',
         provider=HuggingFaceProvider(api_key=PROBE_KEY, hf_client=cast(AsyncInferenceClient, recorder)),

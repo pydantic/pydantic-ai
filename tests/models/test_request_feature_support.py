@@ -6,7 +6,8 @@ sends a minimal request with the feature and the same request without it, and co
 
 - **sent:** the payload moved. A fallback that renders the feature as text, such as instructions moved into a user
   message, also moves the payload and counts as sent.
-- **raises:** the request raised a `UserError` before reaching the wire.
+- **raises:** the request raised before reaching the wire. The table pins the exception's class name, not its message,
+  since some adapters raise `NotImplementedError` or `RuntimeError` rather than `UserError`.
 - **dropped:** the payload didn't move and nothing was raised: the feature was silently ignored.
 
 `EXPECTED` lists every pair whose outcome isn't `sent`, so a class that starts dropping a feature, or stops, fails the
@@ -287,7 +288,7 @@ async def _outcome(case: Case, feature: Feature) -> tuple[Outcome, str]:
 
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id, marks=case.marks) for case in FEATURE_CASES])
 async def test_request_features_are_sent_or_raise(case: Case, allow_model_requests: None):
-    """Each request feature moves the payload or raises a `UserError`; any other outcome is listed in `EXPECTED`."""
+    """Each request feature moves the payload, or its other outcome is listed in `EXPECTED`."""
     observed = {feature.id: await _outcome(case, feature) for feature in FEATURES}
     not_sent = {feature: outcome for feature, (outcome, _) in observed.items() if outcome != 'sent'}
     assert not_sent == EXPECTED.get(case.id, {}), '\n'.join(
