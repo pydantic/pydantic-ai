@@ -185,6 +185,6 @@ async def serve_monty_relay(
         # grpclib cancels a stream's handler when the client closes the connection, and that cancel can land
         # before the handler's `finally` has killed or reaped its worker.
         for worker in relay.workers:
-            with suppress(ProcessLookupError):  # its handler already reaped it
+            with suppress(ProcessLookupError):  # its transport closed after the worker exited
                 worker.kill()
             await worker.wait()
