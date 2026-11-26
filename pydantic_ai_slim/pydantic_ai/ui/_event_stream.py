@@ -169,7 +169,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     _hidden_calls: dict[str, ToolCallPart] = field(default_factory=dict[str, ToolCallPart], init=False)
     """`'private'` tool calls the client was sent nothing for, by `tool_call_id`, in case one defers."""
     _warns_on_hidden_tools: bool = field(default=False, init=False)
-    """Whether to warn the first time a tool part is projected as non-public; set by an adapter run with client-held history."""
+    """Whether to warn the first time a non-public tool part is hidden or redacted; set by an adapter run with client-held history."""
 
     _turn: Literal['request', 'response'] | None = None
 
@@ -571,7 +571,12 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         if isinstance(event, DeferredToolRequestsEvent):
             async for e in self._show_deferred_hidden_calls(event):
                 yield e
-        if (client_event := self._client_event(event)) is None:
+        client_event = self._client_event(event)
+        if client_event is not event and self._warns_on_hidden_tools:
+            # The event changed, so a non-public tool part was hidden or redacted.
+            self._warns_on_hidden_tools = False
+            warn_client_held_history_with_hidden_tools(stacklevel=2)
+        if client_event is None:
             return
         if (handler := self._dispatch_event(client_event)) is None:
             return
@@ -587,11 +592,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             if isinstance(part, ToolReturnPart | NativeToolReturnPart)
             else None
         )
-        visibility = ui_visibility_of(part, call_visibility=call_visibility, default=self.default_ui_visibility)
-        if visibility != 'public' and self._warns_on_hidden_tools:
-            self._warns_on_hidden_tools = False
-            warn_client_held_history_with_hidden_tools(stacklevel=2)
-        return visibility
+        return ui_visibility_of(part, call_visibility=call_visibility, default=self.default_ui_visibility)
 
     def _client_event(self, event: NativeEvent) -> NativeEvent | None:
         """`event` as the client is to be sent it, by the `ui_visibility` of the tool part it carries; `None` for nothing."""
@@ -607,13 +608,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     self._hidden_calls[call.tool_call_id] = call
                     return None
                 return event
-            case FunctionToolResultEvent():
-                part = client_tool_return(event.part, self._ui_visibility(event.part))
-                if part is None:
-                    return None
-                # The user content after a redacted result is the tool's output too.
-                return event if part is event.part else replace(event, part=part, content=None)
-            case OutputToolResultEvent():
+            case FunctionToolResultEvent() | OutputToolResultEvent():
                 part = client_tool_return(event.part, self._ui_visibility(event.part))
                 if part is None:
                     return None

@@ -432,6 +432,29 @@ async def test_redacted_tool_drops_the_mcp_app_and_keeps_metadata_events(protoco
 
 
 @pytest.mark.parametrize('protocol', PROTOCOLS)
+@pytest.mark.parametrize('ui_visibility', ['redacted', 'private'])
+async def test_tool_return_content_is_a_user_message_visibility_does_not_cover(
+    protocol: ProtocolName, ui_visibility: ToolUIVisibility
+):
+    """`ui_visibility` covers the call and its return value; `ToolReturn.content` is a separate user message.
+
+    The model gets it as one, and `dump_messages` sends it as one, so data the client must not see belongs in the
+    return value. See https://github.com/pydantic/pydantic-ai/issues/6662#issuecomment-5443082639.
+    """
+    agent = Agent(calling(('lookup_order', '{"order_id": "o_1"}')))
+
+    @agent.tool_plain(ui_visibility=ui_visibility)
+    def lookup_order(order_id: str) -> ToolReturn:
+        return ToolReturn(return_value=SECRET, content='Order o_1 is on its way.')
+
+    run = await run_adapter(protocol, agent)
+
+    assert SECRET not in run.wire
+    assert SECRET not in dump(protocol, run.messages)
+    assert 'Order o_1 is on its way.' in dump(protocol, run.messages)
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
 async def test_tool_parts_without_a_definition_follow_the_adapter_default(protocol: ProtocolName):
     """A call to an unknown tool, and a native tool's parts, have no definition to take a setting from."""
 

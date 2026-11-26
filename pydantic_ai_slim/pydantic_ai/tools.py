@@ -831,6 +831,9 @@ class ToolDefinition:
     arguments are the run's answer. An `'unapproved'` tool set to `'private'` is shown as `'redacted'`, so the user
     can see the call they're asked to approve; so is a `'private'` tool that defers its call at runtime.
 
+    It covers the call and its return value. Content sent with [`ToolReturn.content`][pydantic_ai.messages.ToolReturn]
+    is a separate user message, which `dump_messages` sends to the client as one.
+
     Not sent to the model.
     """
 
