@@ -81,8 +81,9 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
     """Whether to add the server's instructions to the agent's instructions.
 
     On by default. The server writes this text, and the model receives it with the same authority
-    as instructions you write yourself, so set this to `False` for servers you don't trust, such as
-    ones your end users supply.
+    as instructions you write yourself. For a server you don't trust, such as one your end users supply,
+    lower the capability with [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority],
+    which sends the instructions as framed data at that authority instead, or set this to `False` to leave them out.
 
     Applies to the local toolset the capability builds from `url=` or a non-toolset `local=` input.
     A pre-built [`MCPToolset`][pydantic_ai.mcp.MCPToolset] passed as `local=` keeps its own

@@ -21,6 +21,7 @@ from pydantic_ai_pax.runtime.imported_sessions import ImportSource
 from pydantic_ai_pax.runtime.process import ClaiProcess
 from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_ai_pax.runtime.session_workspace import SessionWorkspace, workspace_directory
+from pydantic_ai_pax.runtime.workspace_trust import undecided_notice
 
 WEB = 'web'
 LAUNCHER_HOST = '127.0.0.1'
@@ -41,7 +42,7 @@ async def run_web(
     token: str | None = None,
     restart: WebHandoff | None = None,
 ) -> None:
-    """Load the stock plugins and `web`, start the web UI, and run turns the browser enters until Ctrl-C.
+    """Load the stock plugins and `web`, start the web UI, and run turns the browser enters until Ctrl+C.
 
     `console` gets the transcript as plain text. Nothing saved changes: `web` loads for this launch only.
     `resume`, `session_id`, and `fork_session` work as for `chat`, except that `resume` needs an ID.
@@ -73,6 +74,8 @@ async def run_web(
         workspace=workspace,
         store=store,
     )
+    if (notice := undecided_notice(shell.session.trust)) is not None:
+        console.print(notice, markup=False)
     with open(os.devnull, 'w', encoding='utf-8') as sink:
         # Sessions opened from the browser log nothing: their output would interleave with this one's.
         shell.process.live.build = lambda directory: _web_session(
@@ -121,7 +124,7 @@ def _web_session(
         headless=True,
         workspace=workspace,
         process=process,
-        # Ctrl-C reaches the session Pax started with, which ends Pax; the others are interrupted from the browser.
+        # Ctrl+C reaches the session Pax started with, which ends Pax; the others are interrupted from the browser.
         signals=process is None,
         settings_for=settings_for,
     )
@@ -182,7 +185,7 @@ async def _serve_web(
                     url = await web.start()
                     # A launcher keeps its token, so the address it reads leaves the token out.
                     console.print(f'Web UI running at {url if token is None else url.partition("?")[0]}', markup=False)
-                console.print('Prompts entered in the browser run here. Press Ctrl-C to quit.', markup=False)
+                console.print('Prompts entered in the browser run here. Press Ctrl+C to quit.', markup=False)
                 reason = await shell.run()
         except get_cancelled_exc_class():
             reason = 'exit'

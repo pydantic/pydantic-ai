@@ -45,12 +45,15 @@ class BoxdProvider:
     title: str = 'boxd'
     working_dir: str = '/home/boxd/workspace'
     token_in_sandbox: bool = False
+    desktop_at_create: bool = False
+    desktop_link_seconds: int | None = None
     _clients: 'WeakKeyDictionary[SandboxBackend, boxd.AsyncBoxd]' = field(
         default_factory=WeakKeyDictionary['SandboxBackend', 'boxd.AsyncBoxd'], init=False, compare=False, repr=False
     )
     """The client made for each backend: `BoxdSandboxBackend` leaves a client it was given open, so `close` closes it."""
 
-    def missing(self) -> str | None:
+    def missing(self, *, desktop: bool = False) -> str | None:
+        del desktop
         if find_spec('boxd') is None:
             return "boxd support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[boxd]'."
         if saved_key(KEY_NAME) is None:
@@ -62,7 +65,9 @@ class BoxdProvider:
 
         return boxd.AsyncBoxd(api_key=saved_key(KEY_NAME))
 
-    async def create(self, *, github: GitHubCredential | None) -> tuple[WorkspaceRef, SandboxBackend]:
+    async def create(
+        self, *, github: GitHubCredential | None, desktop: bool = False
+    ) -> tuple[WorkspaceRef, SandboxBackend]:
         client = self._client()
         secret = None
         backend = None
@@ -73,7 +78,7 @@ class BoxdProvider:
                 await client.secrets.set(
                     secret, github.token, scope=_SCOPE, domains=list(GITHUB_HOSTS), replace_in=['headers']
                 )
-            backend = self._backend(client, secrets=None if secret is None else [secret])
+            backend = self._backend(client, secrets=None if secret is None else [secret], desktop=desktop)
             machine = await backend.get_sandbox()
             if github is not None and secret is not None:
                 stand_in = (await backend.run(['printenv', secret])).stdout.strip()
@@ -93,21 +98,34 @@ class BoxdProvider:
             raise
         return WorkspaceRef(provider=self.name, id=machine.id), backend
 
-    def _backend(self, client: 'boxd.AsyncBoxd', *, secrets: list[str] | None = None) -> 'BoxdSandboxBackend':
+    def _backend(
+        self, client: 'boxd.AsyncBoxd', *, secrets: list[str] | None = None, desktop: bool = False
+    ) -> 'BoxdSandboxBackend':
         from pydantic_ai_harness.boxd_sandbox import BoxdSandboxBackend
 
         # The backend sets `env` on each command it runs, not on the machine, so each reopen passes it again.
-        backend = BoxdSandboxBackend(client=client, working_dir=self.working_dir, env=SANDBOX_ENV, secrets=secrets)
+        backend = BoxdSandboxBackend(
+            client=client, working_dir=self.working_dir, env=SANDBOX_ENV, secrets=secrets, desktop=desktop
+        )
         self._clients[backend] = client
         return backend
 
-    def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
+    def reopen(self, ref: WorkspaceRef, *, desktop: bool = False) -> SandboxBackend:
         from pydantic_ai_harness.boxd_sandbox import BoxdSandboxBackend
 
         client = self._client()
-        backend = BoxdSandboxBackend(client=client, ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV)
+        backend = BoxdSandboxBackend(
+            client=client, ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV, desktop=desktop
+        )
         self._clients[backend] = client
         return backend
+
+    async def desktop_url(self, backend: SandboxBackend) -> str | None:
+        """The machine's Desktop view in boxd's console, which opens only in a browser signed in to its owner's boxd."""
+        from pydantic_ai_harness.boxd_sandbox import BoxdSandboxBackend
+
+        assert isinstance(backend, BoxdSandboxBackend)
+        return (await backend.get_sandbox()).access.desktop_url or None
 
     async def close(self, backend: SandboxBackend) -> None:
         if (client := self._clients.pop(backend, None)) is not None:

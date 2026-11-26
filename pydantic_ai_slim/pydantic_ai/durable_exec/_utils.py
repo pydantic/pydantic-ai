@@ -50,15 +50,20 @@ __all__ = [
 ]
 
 
-def agent_instrumentation_settings(agent: AbstractAgent[Any, Any]) -> InstrumentationSettings | None:
+def agent_instrumentation_settings(
+    agent: AbstractAgent[Any, Any], *, model_instrumentation: InstrumentationSettings | None = None
+) -> InstrumentationSettings | None:
     """The instrumentation the agent's runs resolve, for a durable unit that has the agent but not the run.
 
-    An `Instrumentation` capability on the agent wins, as it does in the run, over `Agent.instrument_all()` and
-    `agent.instrument`. What a single run adds, such as an `Instrumentation` passed to `run()`, isn't visible here.
+    In the run's order: an `Instrumentation` capability on the agent wins, then `model_instrumentation` (those of the
+    `InstrumentedModel` the unit runs, when it knows it), then `Agent.instrument_all()` and `agent.instrument`.
+    What a single run adds, such as an `Instrumentation` passed to `run()`, isn't visible here.
     """
     explicit = [leaf for leaf in leaf_capabilities(agent.root_capability) if isinstance(leaf, Instrumentation)]
     if explicit:
         return explicit[-1].settings
+    if model_instrumentation is not None:
+        return model_instrumentation
     return agent._resolve_instrumentation_settings() if isinstance(agent, Agent) else None  # pyright: ignore[reportPrivateUsage]
 
 

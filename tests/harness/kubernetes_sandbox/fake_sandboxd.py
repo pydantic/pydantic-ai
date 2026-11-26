@@ -16,9 +16,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import shlex
 import signal
 import uuid
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, TypeGuard
@@ -31,11 +32,16 @@ from google.protobuf.message import Message
 from k8s_agent_sandbox.async_connector import AsyncSandboxConnector
 from k8s_agent_sandbox.commands.async_command_executor import AsyncCommandExecutor
 
+from ..computer_use._fake_x_display import FakeDisplay
+
 _GRACE = 0.3
 """How long output pipes may stay open after the command exits (sandboxd waits about 5 seconds)."""
 
 _MAX_ARG_STRLEN = 32 * 4096
 """Linux's limit on one `execve` argument or environment string, with its NUL; macOS has none."""
+
+DisplayHandler = Callable[[str, float | None], tuple[str, str, int]]
+"""Answers an X display command with its stdout, stderr and exit code."""
 
 
 def _messages() -> dict[str, type[Message]]:
@@ -108,8 +114,10 @@ def _is_start_request(message: Message) -> TypeGuard[_StartRequest]:
 class FakeSandboxd:
     """A sandboxd `ProcessService` serving host processes in `root`."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, display: DisplayHandler | None = None) -> None:
         self.root = root
+        self.display = display
+        """Answers the X display's commands, as a pod whose image has them does; every other command still runs."""
         self.server: grpc.aio.Server | None = None
         self.target = ''
         self._processes: dict[int, _Process] = {}
@@ -157,6 +165,17 @@ class FakeSandboxd:
         if any(len(string.encode()) >= _MAX_ARG_STRLEN for string in strings):
             # As on Linux, whatever the host: `execve` fails with E2BIG, which sandboxd reports as INTERNAL.
             await context.abort(grpc.StatusCode.INTERNAL, 'start process: fork/exec /bin/sh: argument list too long')
+        if self.display is not None and FakeDisplay.answers(command[-1]):
+            # The backend sends `/bin/sh -c 'set -- <argv>\n<exec script>'`; the display sees the argv it quoted,
+            # which for the display's own commands holds no newline.
+            line = shlex.join(shlex.split(command[-1].partition('\n')[0].removeprefix('set -- ')))
+            assert call_env.get('DISPLAY') == ':1'
+            stdout, stderr, exit_code = self.display(line, None)
+            command = [
+                '/bin/sh',
+                '-c',
+                f'printf %s {shlex.quote(stdout)}; printf %s {shlex.quote(stderr)} >&2; exit {exit_code}',
+            ]
         process = _Process.spawn(command, cwd=self.root, env={**os.environ, **call_env})
         self._next_id += 1
         process_id = self._next_id
@@ -354,6 +373,8 @@ class FakeCluster:
         self.delete_error: Exception | None = None
         self.delete_gate: anyio.Event | None = None
         """When set, deleting a claim waits for the gate, as an API server that does not answer."""
+        self.display: DisplayHandler | None = None
+        """Answers the X display's commands in every claim made after it is set."""
 
     def root(self, namespace: str, claim_name: str) -> Path:
         return (self.base / namespace / claim_name).resolve()
@@ -395,7 +416,7 @@ class FakeClient:
             raise SandboxWarmPoolNotFoundError(f"SandboxWarmPool '{warmpool}' not found in namespace '{namespace}'")
         root = self.cluster.root(namespace, claim_name)
         root.mkdir(parents=True)
-        sandboxd = FakeSandboxd(root)
+        sandboxd = FakeSandboxd(root, self.cluster.display)
         await sandboxd.start()
         self.cluster.claims[namespace, claim_name] = sandboxd
         self.cluster.created.append((warmpool, namespace, kwargs))
