@@ -412,7 +412,7 @@ crosses in its serialized form. For such a call, the task input also carries the
 task run validates those, as the run did, so the tool gets the values it would get outside Render. Those arguments
 count toward the task size limit below.
 
-A call crosses as its JSON alone when validating the tool's arguments can run code outside Pydantic, such as a
+A call crosses as its JSON alone when validating the tool's arguments can run your own code, such as a
 validator function, a `default_factory` other than a builtin type, or a `model_post_init`, or when a hook or
 wrapper toolset changed the arguments after validation. The tool then gets those losses: a field that crosses under
 a name the schema doesn't read fails when it's required and takes its default otherwise, and a `SecretStr` arrives
