@@ -7,7 +7,7 @@ import shlex
 import shutil
 import subprocess
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pr_gates
@@ -1150,9 +1150,9 @@ def test_findings_on_every_head_and_size_need_an_answer(size: review_gates.Size)
 @pytest.mark.parametrize(
     ('posted', 'resolved', 'passes'),
     [
-        (review_gates.RESOLVED_THREADS_STARTED_BEFORE.replace(hour=1), True, False),
-        (review_gates.RESOLVED_THREADS_STARTED_BEFORE.replace(day=18), True, True),
-        (review_gates.RESOLVED_THREADS_STARTED_BEFORE.replace(day=18), False, False),
+        (review_gates.RESOLVED_THREADS_STARTED_BEFORE + timedelta(hours=1), True, False),
+        (review_gates.RESOLVED_THREADS_STARTED_BEFORE - timedelta(days=1), True, True),
+        (review_gates.RESOLVED_THREADS_STARTED_BEFORE - timedelta(days=1), False, False),
     ],
 )
 def test_only_threads_resolved_before_the_cutoff_need_no_answer(posted: datetime, resolved: bool, passes: bool):
@@ -1181,7 +1181,7 @@ def test_only_write_access_answers_an_unregistered_bot_thread():
     )
     github.comments.append(reply('Declined: noise.', MAINTAINER, id=42))
     assert verdicts(github)['dispositions'] == pr_gates.Verdict(summary=['1 review bot findings.', *unregistered])
-    github.comments = [finding(stranger, posted=review_gates.RESOLVED_THREADS_STARTED_BEFORE.replace(day=18))]
+    github.comments = [finding(stranger, posted=review_gates.RESOLVED_THREADS_STARTED_BEFORE - timedelta(days=1))]
     github.resolved = {40}
     assert not verdicts(github)['dispositions'].failures
 
