@@ -258,6 +258,7 @@ import importlib.abc
 import importlib.util
 import inspect
 import io
+import itertools
 import json
 import os
 import random
@@ -668,9 +669,10 @@ class RefactorCapture:
         self._tool_calls: list[tuple[dict[str, object], tuple[str | None, int], str]] = []
         # Each span record with its span's number, and the number of each span started since the records were last
         # written, by span ID, in the order they started, which `write` records the spans in: concurrent tool calls
-        # end theirs in any order.
+        # end theirs in any order. `next` on a count is atomic, so spans started on two threads at once get two numbers.
         self._spans: list[tuple[int, dict[str, object]]] = []
         self._span_numbers: dict[int, int] = {}
+        self._span_count = itertools.count()
         # Per stream, by `id`: the stream, the iterator `__aiter__` first returned and the recording that wraps it, all
         # held weakly, as the stream is, and the stream's record with its events. The stream's own reference tells a
         # reused `id` apart.
@@ -969,6 +971,7 @@ class RefactorCapture:
         self._tool_calls.clear()
         self._spans.clear()
         self._span_numbers.clear()
+        self._span_count = itertools.count()
         self._iterators.clear()
         self._temporal_runs.clear()
         self._dbos_workflows.clear()
@@ -1832,7 +1835,7 @@ class RefactorCapture:
 
         @functools.wraps(original_start)
         def recording_start(span: SdkSpan, *args: object, **kwargs: object) -> None:
-            self._span_numbers.setdefault(span.get_span_context().span_id, len(self._span_numbers))
+            self._span_number(span.get_span_context().span_id)
             original_start(span, *args, **kwargs)
 
         @functools.wraps(original_end)
@@ -1841,11 +1844,17 @@ class RefactorCapture:
             ended = span.end_time is not None
             original_end(span, *args, **kwargs)
             if not ended:
-                number = self._span_numbers.setdefault(span.get_span_context().span_id, len(self._span_numbers))
+                number = self._span_number(span.get_span_context().span_id)
                 self._spans.append((number, self._span_record(span, number)))
 
         self._monkeypatch.setattr(SdkSpan, 'start', recording_start)
         self._monkeypatch.setattr(SdkSpan, 'end', recording_end)
+
+    def _span_number(self, span_id: int) -> int:
+        """The number of the span `span_id`, which it takes from the count the first time."""
+        if span_id not in self._span_numbers:
+            self._span_numbers[span_id] = next(self._span_count)
+        return self._span_numbers[span_id]
 
     def _span_record(self, span: ReadableSpan, number: int) -> dict[str, object]:
         """A record of `span`, which has ended, numbered `number`, with its parent named by its number."""

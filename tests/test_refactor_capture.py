@@ -922,6 +922,22 @@ def test_run_event_streams():
     asyncio.run(run())
 
 
+def test_enqueued_message():
+    agent = Agent(FunctionModel(stream_function=call_then_answer))
+
+    @agent.tool(name='echo')
+    def echo(ctx: RunContext) -> str:
+        ctx.enqueue('follow up')
+        return 'echoed'
+
+    async def run():
+        async with agent.run_stream_events('echo') as events:
+            async for _ in events:
+                pass
+
+    asyncio.run(run())
+
+
 def test_run_event_stream_fails():
     agent = Agent(FunctionModel(stream_function=call_then_answer), capabilities=[ProcessEventStream(fail_after_the_first)])
     with pytest.raises(RuntimeError):
@@ -2555,13 +2571,14 @@ def test_capture_records_run_event_streams_agent_stream_calls_and_spans(run: Run
 
     The events are the ones `ProcessEventStream` passes on, without the `PartEndEvent`s it drops, in one record per
     node stream: the stream of the capability it is, inside the root's, isn't recorded again. A processor that fails
-    leaves the error in its stream's record. A call on a capability with a run context that has no root capability,
-    as a test makes to call it directly, is recorded too. A call's record has its arguments, defaults filled in, and what it yields,
-    returns or raises: `stream_output` validates each partial output, and swallows the error of one that's invalid. The
-    spans are in the order they started, each parent named by its number, or as `external` when no span started for
-    it; an exception event leaves out its stack trace, and a span ended twice is recorded once.
+    leaves the error in its stream's record. A message a tool enqueues adds the `EnqueuedMessagesEvent` its delivery
+    emits. A call on a capability with a run context that has no root capability, as a test makes to call it directly,
+    is recorded too. A call's record has its arguments, defaults filled in, and what it yields, returns or raises:
+    `stream_output` validates each partial output, and swallows the error of one that's invalid. The spans are in the
+    order they started, each parent named by its number, or as `external` when no span started for it; an exception
+    event leaves out its stack trace, and a span ended twice is recorded once.
     """
-    run(tmp_path, agent_runs=True).assert_outcomes(passed=8)
+    run(tmp_path, agent_runs=True).assert_outcomes(passed=9)
 
     records = [json.loads(line) for line in (tmp_path / 'main.jsonl').read_text().splitlines()]
     assert [
@@ -2574,6 +2591,14 @@ def test_capture_records_run_event_streams_agent_stream_calls_and_spans(run: Run
             ('test_run_event_streams', ['function_tool_call', 'function_tool_result'], None),
             ('test_run_event_streams', ['part_start', 'final_result', 'part_delta'], None),
             ('test_run_event_streams', [], None),
+            ('test_enqueued_message', ['part_start', 'part_end'], None),
+            ('test_enqueued_message', ['function_tool_call', 'function_tool_result'], None),
+            (
+                'test_enqueued_message',
+                ['enqueued_messages', 'part_start', 'final_result', 'part_delta', 'part_end'],
+                None,
+            ),
+            ('test_enqueued_message', [], None),
             ('test_run_event_stream_fails', ['part_start'], 'RuntimeError: processor failed'),
             ('test_run_event_stream_called_directly', ['part_start'], None),
             ('test_agent_stream_calls', ['part_start', 'part_end'], None),
@@ -2762,7 +2787,7 @@ def test_capture_records_an_unreadable_error_message_as_unrecorded(run: RunCaptu
     message recorded as `unrecorded`, with the class of the error `__str__` raised, instead of the capture raising that
     error into the test.
     """
-    run(tmp_path, agent_runs=True).assert_outcomes(passed=8)
+    run(tmp_path, agent_runs=True).assert_outcomes(passed=9)
 
     records = [json.loads(line) for line in (tmp_path / 'main.jsonl').read_text().splitlines()]
     assert [
@@ -2788,7 +2813,7 @@ def test_capture_records_only_the_tool_metadata_json_can_write(run: RunCapture, 
     """A request record keeps each tool metadata value `json` can write, and records a model as `unrecorded`, with its
     class, without serializing it: the test that counts its serializer's calls passes.
     """
-    run(tmp_path, agent_runs=True).assert_outcomes(passed=8)
+    run(tmp_path, agent_runs=True).assert_outcomes(passed=9)
 
     records = [json.loads(line) for line in (tmp_path / 'main.jsonl').read_text().splitlines()]
     assert [
