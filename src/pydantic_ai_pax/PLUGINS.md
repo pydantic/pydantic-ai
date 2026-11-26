@@ -1492,7 +1492,11 @@ replacement approver should show it in full too. A replacement for this plugin t
 `approval_handler` with its own approver; without one, held calls are denied. In the live composer, approvals wait without taking
 focus and require explicit F2 focus before a choice authorizes a call. Generic
 send, steering, queue actions, custom text, and remembered question routing never
-approve tools.
+approve tools. Each held command is printed once its own approval's choices are the
+ones shown, so concurrent approvals never leave one command printed above another's
+choices. A question or approval of a session the terminal does not show waits until
+the terminal shows that session: nothing reads keys or prints a picker for it
+meanwhile, and the browser can still answer it while the `web` plugin is loaded.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for
@@ -3199,6 +3203,21 @@ never lands in the middle of a paragraph.
 messages, so a renderer for those also draws resumed turns. Events that only
 streamed, such as `FileWrittenEvent`, are not saved and are not sent again.
 
+### Ask in the composer: `await self.host.ask_in_composer(request)`
+
+A plugin that answers `ask_user` questions or held calls itself, such as a replacement
+for the built-in `ask_user`, asks in the session's composer with
+`await self.host.ask_in_composer(request)`. The request waits above the draft without
+taking its focus; F2 focuses it. Pass `approval=True` for a held call, which only a
+choice made with that focus answers, and `preamble` for text printed in the transcript
+just before the request appears, such as the held command. A session the terminal does
+not show keeps the request until the terminal shows it, so race it with another way to
+answer, as the `web` plugin does, and cancel the call once that one answers. It returns
+`None` when no composer serves the session, as on a host built outside the shell or
+before the editor opens: ask in a picker of your own then.
+`TerminalAnswerer(full_screen=..., console=..., composer=self.host.ask_in_composer)`
+does all of this.
+
 ### Take the whole screen mid-run: `async with self.host.full_screen()`
 
 A widget opened from inside a tool call, including the inline `ask_user` picker,
@@ -4169,7 +4188,8 @@ What changes for a process-scoped plugin:
   `on_conversation_changed`, `on_command_end`, `on_task_progress`, and the rest reach it
   each time any session fires them. `self.host.live.current()` names that session.
 - **The host follows the session being handled.** `self.host.session_id`, `workspace`,
-  `tasks`, `plugins`, `setting`, `send_input`, `submit_prompt`, and `interrupt` act on
+  `tasks`, `plugins`, `setting`, `send_input`, `submit_prompt`, `interrupt`, and
+  `ask_in_composer` act on
   `host.live.current()`: the session whose moment, command, or agent run is being
   handled. A task started meanwhile, such as a server started from a command, keeps
   that session. Outside one, they act on the session that loaded the plugin, or the

@@ -1,11 +1,10 @@
 """Non-modal questions and explicitly focused approvals on the composer's sole key reader."""
 
 import asyncio
-from collections.abc import Awaitable, Callable
-from contextvars import ContextVar
+from collections.abc import Callable
 
 import anyio
-from rich.console import Console
+from rich.console import RenderableType
 from termflow.tui.layout import truncate
 
 from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserResponse
@@ -16,9 +15,6 @@ from pydantic_ai_pax.ui.prompt.image_input import MARKER
 from pydantic_ai_pax.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_ai_pax.ui.prompt.question_input import Paste
 from pydantic_ai_pax.ui.rendering.tool_output import terminal_text
-
-ComposerAnswerer = Callable[[AskUserRequest, Console, bool], Awaitable[AskUserResponse | None]]
-composer_answerer: ContextVar[ComposerAnswerer | None] = ContextVar('pax_composer_answerer', default=None)
 
 
 class PromptQuestions:
@@ -34,8 +30,11 @@ class PromptQuestions:
         paint: Callable[[], None],
         preference: Callable[[], QuestionSubmit],
         remember: Callable[[QuestionSubmit], object],
+        show: Callable[[RenderableType], object],
     ) -> None:
+        """`show` prints a request's preamble in the transcript."""
         self.paint = paint
+        self.show = show
         self.preference = preference
         self.remember = remember
         self.menu: QuestionMenu | None = None
@@ -50,9 +49,17 @@ class PromptQuestions:
         self._answer: tuple[str, ...] | str | None = None
         self._lock = anyio.Lock()
 
-    async def ask(self, request: AskUserRequest, *, approval: bool = False) -> AskUserResponse:
-        """Serialize batches without taking composer focus; release all state on cancellation."""
+    async def ask(
+        self, request: AskUserRequest, *, approval: bool = False, preamble: RenderableType | None = None
+    ) -> AskUserResponse:
+        """Serialize batches without taking composer focus; release all state on cancellation.
+
+        `preamble`, such as the held command an approval runs, is shown once the request's turn comes, so what is
+        printed last is always what the choices answer.
+        """
         async with self._lock:
+            if preamble is not None:
+                self.show(preamble)
             self.approval = approval
             answers: list[AskUserAnswer] = []
             child = DelegationTasks.child_id()

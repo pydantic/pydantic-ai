@@ -24,11 +24,10 @@ from pydantic_ai_harness.ask_user import (
 )
 from pydantic_ai_harness.permissions import Approver, PermissionDecision, PermissionRequest
 from pydantic_ai_harness.sub_agents import DelegationTasks
-from pydantic_ai_pax.plugins import FullScreen, Plugin
+from pydantic_ai_pax.plugins import ComposerAnswerer, FullScreen, Plugin
 from pydantic_ai_pax.runtime.permissions import approval_handler, approval_question, decision, shown_in_full
 from pydantic_ai_pax.ui.menus.menu_worker import run_worker
 from pydantic_ai_pax.ui.menus.question_menu import QuestionMenu
-from pydantic_ai_pax.ui.prompt.prompt_questions import composer_answerer
 from pydantic_ai_pax.ui.prompt.question_input import QuestionKey, question_input
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.rendering import prompt_line
@@ -44,17 +43,23 @@ class TerminalAnswerer:
         full_screen: FullScreen,
         console: Console | None = None,
         runner: Callable[[QuestionMenu], tuple[str, ...] | str | None] | None = None,
+        composer: ComposerAnswerer | None = None,
     ) -> None:
-        """Use the shell handoff for exclusive input ownership, not an alternate screen."""
+        """Use the shell handoff for exclusive input ownership, not an alternate screen.
+
+        With `composer`, usually `host.ask_in_composer`, a request goes to the session's composer instead, and to
+        the picker only when no composer serves the session.
+        """
         self._full_screen = full_screen
         self._console = console if console is not None else Console()
         self._runner = runner
+        self._composer = composer
         self._terminal = anyio.Lock(fast_acquire=True)
 
     async def __call__(self, request: AskUserRequest, /) -> AskUserResponse:
         """Answer every question or decline the entire request."""
-        if self._runner is None and (answerer := composer_answerer.get()) is not None:
-            response = await answerer(request, self._console, False)
+        if self._runner is None and self._composer is not None:
+            response = await self._composer(request, approval=False, preamble=None)
             if response is not None:
                 return response
         return await self._ask(request)
@@ -72,10 +77,8 @@ class TerminalAnswerer:
         )
         if held is not None:
             held.append(terminal_text(request.subject, keep='\t\n'))
-        if self._runner is None and (answerer := composer_answerer.get()) is not None:
-            if held is not None:
-                self._console.print(held)
-            response = await answerer(approval_question(request), self._console, True)
+        if self._runner is None and self._composer is not None:
+            response = await self._composer(approval_question(request), approval=True, preamble=held)
             if response is not None:
                 return response
         return await self._ask(approval_question(request), held=held)
@@ -179,7 +182,9 @@ class AskUserPlugin(Plugin):
         # The picker needs a terminal; a session without one, such as one the browser runs, gets no question tool.
         if not self.host.console.is_terminal:
             return ()
-        answerer = TerminalAnswerer(full_screen=self.host.full_screen, console=self.host.console)
+        answerer = TerminalAnswerer(
+            full_screen=self.host.full_screen, console=self.host.console, composer=self.host.ask_in_composer
+        )
         return (AskUser(answerer=answerer), approval_handler(terminal_approver(answerer)))
 
     def render(self, event: AgentStreamEvent) -> RenderableType | None:

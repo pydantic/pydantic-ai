@@ -2324,7 +2324,9 @@ When the task is ambiguous, the model can call `ask_user_question` instead of
 guessing. A pending question appears above the composer without taking focus.
 Keep typing with your cursor, undo history, draft, and attachments intact.
 Press F2 to review its numbered choices; F2 or Esc returns to the composer.
-Ctrl-C while focused declines the request.
+Ctrl-C while focused declines the request. A question from a session the terminal
+does not show, such as one the browser opened, waits until you show that session
+there with `/resume`; the web UI can answer it meanwhile.
 
 Sending composer text while a question waits offers **Answer this question** (`a`)
 or **Queue follow-up** (`q`), naming the answer target. Enter does not choose for
@@ -2373,7 +2375,8 @@ shows how to put a different one, a web form for instance, in its place.
 
 A held call waits for your answer: the inline picker in the terminal, or an approval card in the web UI,
 showing the command or the file change; the terminal prints the command (or a path too long for the
-picker) in full above it. In the terminal, F2 explicitly focuses the approval before
+picker) in full above it. A call held in a session the terminal does not show waits
+until the terminal shows it, or the web UI answers it. In the terminal, F2 explicitly focuses the approval before
 an option can authorize the call. Generic send, steering, queued text and the remembered
 question preference never approve a tool. A custom text answer always denies it. **Approve** runs it once, **Approve for this session** also runs the
 same tool on the same command (or the same file) without asking for the rest of the conversation, and **Deny** tells

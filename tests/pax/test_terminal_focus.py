@@ -20,8 +20,10 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent, ModelMessage, UserContent, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness.ask_user import AskUserAnswer
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_ai_pax import chat
+from pydantic_ai_pax.builtin_plugins.web import WebPlugin
 from pydantic_ai_pax.config import PluginSettings, Settings
 from pydantic_ai_pax.config.project_settings import ProjectSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
@@ -37,14 +39,19 @@ from pydantic_ai_pax.ui.prompt.terminal import NOWHERE, Terminal
 from tests.pax.dialog_script import ScriptedDialogs
 from tests.pax.menu_script import Script, pick
 from tests.pax.surface_terminal import SurfaceTerminal
-from tests.pax.test_live_runtimes import Fleet, Recorder, blocked, until
+from tests.pax.test_input_ergonomics import question_request
+from tests.pax.test_live_runtimes import RECORDER, Fleet, Recorder, blocked, until
+from tests.pax.test_permissions import COMMAND, removing_agent
+from tests.pax.test_web_sessions import WEB
 
 
 class Desk(Fleet):
     """A terminal Pax: the session it started with, shown in a terminal, beside sessions the browser opens."""
 
-    def __init__(self, root: Path, *, agent: Agent[None, str] | None = None) -> None:
-        super().__init__(root)
+    def __init__(
+        self, root: Path, *, agent: Agent[None, str] | None = None, builtin: tuple[PluginSettings, ...] = (RECORDER,)
+    ) -> None:
+        super().__init__(root, builtin=builtin)
         self.screen = SurfaceTerminal(width=100, height=30)
         self.home = create_shell(
             agent or Agent(TestModel()),
@@ -468,6 +475,59 @@ async def test_a_session_shown_mid_answer_streams_the_rest_in_the_terminal(tmp_p
     assert 'half a line' in desk.shown() and 'late words' in desk.shown()
     assert 'early words' not in desk.shown(), 'streamed while hidden'
     await home.close('exit')
+
+
+async def settle(check: Callable[[], bool]) -> None:
+    """Let every task run until `check` holds."""
+    while not check():
+        await anyio.wait_all_tasks_blocked()
+
+
+async def test_a_session_shown_before_its_editor_opens_leaves_questions_to_the_picker(tmp_path: Path) -> None:
+    home = Desk(tmp_path).home
+    assert home.terminal is not None and home.editor is None
+    assert await home.ask_in_composer(question_request(), approval=False, preamble=None) is None
+
+
+@pytest.mark.parametrize('answered_in', ['browser', 'terminal'])
+async def test_a_hidden_sessions_approval_waits_to_be_shown_while_the_browser_can_answer(
+    tmp_path: Path, answered_in: str
+) -> None:
+    """The approval a session asks while the terminal shows another is neither declined nor read from unseen keys."""
+    ran: list[str] = []
+    desk = Desk(tmp_path, agent=removing_agent(tmp_path, ran), builtin=(RECORDER, WEB))
+    home, terminal = desk.home, desk.terminal
+
+    async def body() -> None:
+        (web,) = [entry.loaded.plugin for entry in home.loader.entries() if entry.loaded and entry.name == 'web']
+        assert isinstance(web, WebPlugin)
+        answerer = web.service.answerer
+        b = await desk.live.new(workspace=desk.folder('b'))
+        other = desk.runtimes[b.id]
+        home.send_input('/permissions auto')
+        home.send_input(f'/resume {b.conversation.conversation_id}')
+        await until(desk.live, lambda: terminal.shown is other and home.idle)
+        home.send_input('clean up')
+        await settle(lambda: bool(answerer.questions) or home.idle)
+        assert answerer.questions, 'the browser card stays open'
+        assert terminal.editor is not None and terminal.editor.questions is other.questions
+        assert other.questions.menu is None, 'the session shown is not asked'
+        if answered_in == 'browser':
+            (card,) = answerer.questions
+            question = answerer.request(card.id).questions[0]
+            answerer.reply(card.id, [AskUserAnswer(header=question.header, selected=(question.options[0].label,))])
+        else:
+            b.send_input(f'/resume {home.session.conversation_id}')
+            await settle(lambda: terminal.shown is home and home.questions.menu is not None)
+            assert f'run_command waits for approval to run:\n{COMMAND}' in desk.shown(), 'printed once shown'
+            terminal.editor.feed('f2')
+            await anyio.lowlevel.checkpoint()
+            terminal.editor.feed('enter')
+        await until(desk.live, lambda: home.idle)
+        assert ran == [COMMAND]
+        (b if answered_in == 'browser' else home.live_session).send_input('/exit')
+
+    assert await desk.run(body) == 'exit'
 
 
 async def test_queued_images_stay_with_their_prompt_as_the_terminal_moves(

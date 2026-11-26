@@ -1,7 +1,7 @@
 """Input requirements exercised through the composer, decoder and shared settings store."""
 
-import io
 from collections.abc import AsyncIterator
+from functools import partial
 from pathlib import Path
 
 import anyio
@@ -10,7 +10,7 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.key_binding import KeyPress
 from prompt_toolkit.keys import Keys
 from pydantic import ValidationError
-from rich.console import Console
+from rich.console import RenderableType
 from rich.text import Text
 
 from pydantic_ai import Agent
@@ -29,6 +29,7 @@ from pydantic_ai_pax.cli.command_context import CommandContext
 from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.config.input_bindings import BusyDelivery, InputBindings, KeyboardLabels, QuestionSubmit
 from pydantic_ai_pax.config.settings_store import SettingsStore
+from pydantic_ai_pax.plugins import ComposerAnswerer
 from pydantic_ai_pax.plugins.menus import CloseMenu
 from pydantic_ai_pax.runtime.permissions import decision
 from pydantic_ai_pax.runtime.process import ClaiProcess
@@ -36,7 +37,9 @@ from pydantic_ai_pax.runtime.session import Session
 from pydantic_ai_pax.ui.menus import dialogs
 from pydantic_ai_pax.ui.menus.input_menu import input_menu
 from pydantic_ai_pax.ui.prompt.input_setup import KeyTest
+from pydantic_ai_pax.ui.prompt.live_prompt import LivePrompt
 from pydantic_ai_pax.ui.prompt.prompt_keys import PromptKeys
+from pydantic_ai_pax.ui.prompt.prompt_questions import PromptQuestions
 from tests.conftest import no_leaked_tasks
 from tests.pax.dialog_script import Back, Pick, ScriptedDialogs
 from tests.pax.menu_script import Script, pick
@@ -44,6 +47,15 @@ from tests.pax.test_live_prompt import editor
 from tests.pax.test_permissions import request as permission_request
 from tests.pax.test_session_runtime import runtime_over
 from tests.pax.test_steering import running
+
+
+def composer(live: LivePrompt) -> ComposerAnswerer:
+    """The composer of the session `live` shows, as `SessionRuntime.ask_in_composer` reaches it once shown."""
+
+    async def ask(request: AskUserRequest, /, *, approval: bool, preamble: RenderableType | None) -> AskUserResponse:
+        return await live.questions.ask(request, approval=approval, preamble=preamble)
+
+    return ask
 
 
 class Steered(list[str]):
@@ -265,7 +277,7 @@ async def test_question_arrival_keeps_composer_and_explicit_route_moves_draft_on
         preference: list[QuestionSubmit] = ['ask']
         live.questions.preference = lambda: preference[-1]
         live.questions.remember = preference.append
-        answerer = TerminalAnswerer(full_screen=live.suspended, console=live.console)
+        answerer = TerminalAnswerer(full_screen=live.suspended, console=live.console, composer=composer(live))
 
         async def ask() -> None:
             responses.append(await answerer(question_request()))
@@ -413,7 +425,7 @@ async def test_focused_question_uses_remapped_send_and_ctrl_j_only_inserts_newli
 async def test_approval_requires_explicit_focus_regardless_of_question_preference(preference: QuestionSubmit) -> None:
     async with editor() as (live, _, _):
         live.questions.preference = lambda: preference
-        answerer = TerminalAnswerer(full_screen=live.suspended, console=live.console)
+        answerer = TerminalAnswerer(full_screen=live.suspended, console=live.console, composer=composer(live))
         responses: list[AskUserResponse] = []
 
         async def ask() -> None:
@@ -493,7 +505,7 @@ async def test_visible_queue_remove_and_steer_cannot_execute_a_finished_entry() 
 
 async def test_explicit_focused_approval_still_authorizes_only_its_current_call() -> None:
     async with editor() as (live, _, _):
-        answerer = TerminalAnswerer(full_screen=live.suspended, console=live.console)
+        answerer = TerminalAnswerer(full_screen=live.suspended, console=live.console, composer=composer(live))
         responses: list[AskUserResponse] = []
 
         async def ask() -> None:
@@ -511,22 +523,20 @@ async def test_explicit_focused_approval_still_authorizes_only_its_current_call(
         assert not decision(responses[0]).remember
 
 
-async def test_composer_declines_a_hidden_sessions_questions_and_leaves_a_closed_editors_to_the_picker() -> None:
-    async with editor() as (live, _, _):
-        # A session the terminal does not show prints to its own console, never to the editor's.
-        hidden = TerminalAnswerer(full_screen=live.suspended, console=Console(file=io.StringIO()))
-        responses: list[AskUserResponse] = []
-
-        async def ask() -> None:
-            responses.append(await hidden(question_request()))
-            responses.append(await hidden.ask_approval(permission_request()))
-
-        async with anyio.create_task_group() as tasks:
-            tasks.start_soon(ask)
-            await anyio.wait_all_tasks_blocked()
-            assert live.questions.menu is None
-            assert responses == [AskUserResponse(cancelled=True)] * 2
-    assert await live.ask_question(question_request(), live.console) is None
+async def test_each_approval_shows_its_command_only_once_its_choices_are_the_ones_answered() -> None:
+    shown: list[RenderableType] = []
+    questions = PromptQuestions(
+        paint=lambda: None, preference=lambda: 'ask', remember=lambda _: None, show=shown.append
+    )
+    async with anyio.create_task_group() as tasks:
+        tasks.start_soon(partial(questions.ask, question_request(), approval=True, preamble='rm -rf first'))
+        tasks.start_soon(partial(questions.ask, question_request(), approval=True, preamble='rm -rf second'))
+        await anyio.wait_all_tasks_blocked()
+        assert shown == ['rm -rf first'], 'the second command waits until the first approval is answered'
+        questions.submit(('Approve',))
+        await anyio.wait_all_tasks_blocked()
+        assert shown == ['rm -rf first', 'rm -rf second']
+        questions.submit(None)
 
 
 async def test_cancelled_question_keeps_images_and_queue_action_draft_inventory() -> None:
@@ -883,7 +893,7 @@ async def test_checkpoint_delivery_and_remembered_answer_never_approve_waiting_t
             live.steer = steered = Steered()
             responses: list[AskUserResponse] = []
 
-            answerer = TerminalAnswerer(full_screen=live.suspended, console=live.console)
+            answerer = TerminalAnswerer(full_screen=live.suspended, console=live.console, composer=composer(live))
 
             async def ask() -> None:
                 responses.append(await answerer.ask_approval(permission_request()))
@@ -1108,7 +1118,7 @@ async def test_image_answer_notice_clears_for_new_routing_or_question(boundary: 
 
 async def test_queue_edit_save_cannot_confirm_a_previously_focused_approval() -> None:
     async with editor() as (live, _, _):
-        answerer = TerminalAnswerer(full_screen=live.suspended, console=live.console)
+        answerer = TerminalAnswerer(full_screen=live.suspended, console=live.console, composer=composer(live))
         responses: list[AskUserResponse] = []
 
         async def ask() -> None:
@@ -1175,7 +1185,7 @@ async def test_mixed_checkpoint_choice_remains_explicit_between_turns() -> None:
 
 async def test_short_terminal_never_chooses_an_unseen_approval() -> None:
     async with editor() as (live, _, _):
-        answerer = TerminalAnswerer(full_screen=live.suspended, console=live.console)
+        answerer = TerminalAnswerer(full_screen=live.suspended, console=live.console, composer=composer(live))
         responses: list[AskUserResponse] = []
 
         async def ask() -> None:

@@ -93,8 +93,11 @@ class WebPlugin(Plugin[WebSettings]):
         """This launch's port, replacing the saved one, as `pax --web --port` sets it."""
         self.listen: str | None = None
         """This launch's address, replacing the saved one: loopback for a launcher's `pax --web --token-file`."""
+        # The composer it asks in follows the session asking, as the host does; the picker is the loading session's.
         terminal = (
-            TerminalAnswerer(full_screen=host.full_screen, console=host.console) if host.console.is_terminal else None
+            TerminalAnswerer(full_screen=host.full_screen, console=host.console, composer=host.ask_in_composer)
+            if host.console.is_terminal
+            else None
         )
         self.service = WebService(host=host, terminal=terminal)
         self.server: WebServer | None = None

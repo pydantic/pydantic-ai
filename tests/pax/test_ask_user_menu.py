@@ -117,7 +117,10 @@ def test_shift_tab_cycles_back_through_the_choices(question: Question) -> None:
 async def test_shift_tab_through_the_terminal(question_pipe: PipeInput) -> None:
     # Shift+Tab wraps from `Refactor` to `Other`, then moves up to `Patch`.
     question_pipe.send_text('\x1b[Z\x1b[Z\r')
-    response = await TerminalAnswerer(full_screen=ScreenLog(), console=Console(file=io.StringIO()))(
+    console = Console(file=io.StringIO())
+    # A host with no composer, as outside the shell, leaves the question to the picker.
+    host = PluginHost(name='ask_user', console=console, settings={})
+    response = await TerminalAnswerer(full_screen=ScreenLog(), console=console, composer=host.ask_in_composer)(
         AskUserRequest(questions=(APPROACH,))
     )
     assert response.answers == (AskUserAnswer(header='Approach', selected=('Patch',)),)

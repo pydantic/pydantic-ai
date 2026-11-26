@@ -26,6 +26,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.providers import infer_provider_class
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
 from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_ai_harness.step_persistence.conversations import ConversationOrder, ConversationSummary, SavedConversation
 from pydantic_ai_harness.sub_agents import DelegationOutcome
@@ -912,6 +913,14 @@ async def bare_screen() -> AsyncGenerator[None]:
     yield
 
 
+class ComposerAnswerer(Protocol):
+    """Put a question to a session's terminal composer; see `PluginHost.ask_in_composer`."""
+
+    async def __call__(
+        self, request: AskUserRequest, /, *, approval: bool, preamble: RenderableType | None
+    ) -> AskUserResponse | None: ...
+
+
 class PluginHost(Generic[DepsT]):
     """What Pax gives a plugin to talk to: the terminal, the conversation, and its saved settings.
 
@@ -945,6 +954,7 @@ class PluginHost(Generic[DepsT]):
         default_model_name: Callable[[], Awaitable[str | None]] | None = None,
         resolve_model: Callable[[str], Awaitable[Model | str]] | None = None,
         model_settings: Callable[[str], ModelSettings | None] | None = None,
+        composer: ComposerAnswerer | None = None,
     ) -> None:
         """`settings` is the raw JSON from `plugins add`; validate it with `settings(Model)`.
 
@@ -957,7 +967,7 @@ class PluginHost(Generic[DepsT]):
         is what `/plugins` manages; `tasks` returns what `/tasks` shows, and `workspace` the session's
         directory, each read each time, as the properties of the same names are. `live` is given to a
         process-scoped plugin's host only. `default_model` resolves the model a new session starts with,
-        and `default_model_name` names it without building it.
+        and `default_model_name` names it without building it. `composer` answers `ask_in_composer`.
 
         The shell passes its own `conversation` and `status`; a host built elsewhere gets a
         `Transcript` and a detached status row, so a plugin needs no special case for either.
@@ -994,14 +1004,15 @@ class PluginHost(Generic[DepsT]):
         self._default_model_name = default_model_name
         self._resolve_model = resolve_model
         self._model_settings = model_settings
+        self._composer = composer
         self.live = live
         """Every live session of this Pax, for a plugin with `scope = 'process'`; `None` for any other.
 
         Such a plugin is built once for the whole process. Its host's `session_id`, `workspace`, `tasks`,
-        `plugins`, `setting`, `send_input`, `submit_prompt`, and `interrupt` follow `live.current()`, the
-        session whose moment, command, or run is being handled, else the session that loaded it (once
-        that one has closed, the oldest live session). Its other attributes, such as `conversation` and
-        `status`, always name the session that loaded it.
+        `plugins`, `setting`, `send_input`, `submit_prompt`, `interrupt`, and `ask_in_composer` follow
+        `live.current()`, the session whose moment, command, or run is being handled, else the session that
+        loaded it (once that one has closed, the oldest live session). Its other attributes, such as
+        `conversation` and `status`, always name the session that loaded it.
         """
 
     async def resolve_model(self, name: str) -> Model | str:
@@ -1099,6 +1110,24 @@ class PluginHost(Generic[DepsT]):
         if self._setting is None:
             raise KeyError(key)
         return self._setting(key)
+
+    async def ask_in_composer(
+        self, request: AskUserRequest, /, *, approval: bool = False, preamble: RenderableType | None = None
+    ) -> AskUserResponse | None:
+        """Ask `request` in the session's terminal composer: it waits above the draft until it is answered.
+
+        It never takes the composer's focus: F2 does. With `approval`, the request asks whether a held tool call
+        may run, so only a choice made with that focus answers it; text sent from the composer never does.
+        `preamble` is printed in the session's transcript first, as `TerminalAnswerer` prints a held command.
+
+        A session the terminal does not show keeps the request until it is shown, never answered unseen, so race
+        it with another way to answer, as the web UI does, and cancel the call once that one answers. `None`
+        when no composer serves the session, as on a host built without one or before the editor opens: ask in a
+        picker of your own then.
+        """
+        if self._composer is None:
+            return None
+        return await self._composer(request, approval=approval, preamble=preamble)
 
     def interrupt(self) -> bool:
         """Cancel the running turn or command, as Esc does; `False` when nothing was running.

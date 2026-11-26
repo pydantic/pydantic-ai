@@ -17,7 +17,6 @@ from termflow.ansi.utils import visible_length
 from termflow.tui.completion import CompleteEvent, Completion, Document
 from termflow.tui.layout import truncate
 
-from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
 from pydantic_ai_pax.commands import Commands, expand_bare_command, is_command_input
 from pydantic_ai_pax.config.input_bindings import (
     BusyDelivery,
@@ -34,7 +33,7 @@ from pydantic_ai_pax.ui.prompt.interrupts import Interrupts
 from pydantic_ai_pax.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_ai_pax.ui.prompt.prompt_completion import CompletionWorker
 from pydantic_ai_pax.ui.prompt.prompt_keys import PromptKeys, ctrl_enter_steers
-from pydantic_ai_pax.ui.prompt.prompt_questions import PromptQuestions, composer_answerer
+from pydantic_ai_pax.ui.prompt.prompt_questions import PromptQuestions
 from pydantic_ai_pax.ui.prompt.prompt_queue import QueuedPrompt, can_steer, input_kind
 from pydantic_ai_pax.ui.prompt.prompt_resize import resize_notifications
 from pydantic_ai_pax.ui.prompt.prompt_selection import LINK_END, LINK_START, hyperlink
@@ -130,7 +129,9 @@ class LivePrompt:
         self.remember_busy_delivery = remember_busy_delivery
         self.key_test: KeyTest | None = None
         # A shell's `SessionRuntime.bind` replaces this with the shown session's questions and preference.
-        self.questions = PromptQuestions(paint=self.paint, preference=lambda: 'ask', remember=lambda _: None)
+        self.questions = PromptQuestions(
+            paint=self.paint, preference=lambda: 'ask', remember=lambda _: None, show=self.console.print
+        )
         self.queue_in_toolbar = queue_in_toolbar
         self.ctrl_enter_steers = ctrl_enter_steers()
         """Whether Ctrl+Enter (and Ctrl+J, which older terminals send for it) steers, as Alt+Enter does.
@@ -182,17 +183,6 @@ class LivePrompt:
         self._animated_at = -math.inf
         self._painted_at = -math.inf
         self._painted_size: ConsoleDimensions | None = None
-
-    async def ask_question(
-        self, request: AskUserRequest, console: Console, approval: bool = False
-    ) -> AskUserResponse | None:
-        """Serve only the terminal's currently shown session; standalone callers keep their picker."""
-        if not self._opened:
-            return None
-        if console.file is not self.output:
-            # A hidden session must never start a competing terminal reader.
-            return AskUserResponse(cancelled=True)
-        return await self.questions.ask(request, approval=approval)
 
     @property
     def queued_messages(self) -> tuple[str, ...]:
@@ -1339,7 +1329,6 @@ class LivePrompt:
             loop.call_soon_threadsafe(self.paint)
 
         original = self.console.file
-        token = composer_answerer.set(self.ask_question)
         self._opened = True
         self.console.file = self.output
         try:
@@ -1355,7 +1344,6 @@ class LivePrompt:
                     finally:
                         tasks.cancel_scope.cancel()
         finally:
-            composer_answerer.reset(token)
             self._opened = False
             self.keys.stop()
             self._completion_worker.close()

@@ -18,11 +18,19 @@ from functools import partial
 from pathlib import Path
 from typing import Generic, TypeVar, cast
 
-from anyio import CancelScope, Lock, create_memory_object_stream, create_task_group, get_cancelled_exc_class, to_thread
+from anyio import (
+    CancelScope,
+    Event,
+    Lock,
+    create_memory_object_stream,
+    create_task_group,
+    get_cancelled_exc_class,
+    to_thread,
+)
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from prompt_toolkit import PromptSession
 from pydantic import ValidationError
-from rich.console import Console
+from rich.console import Console, RenderableType
 
 from pydantic_ai import AgentRunResult, AgentStreamEvent
 from pydantic_ai._context_size import context_tokens
@@ -31,6 +39,7 @@ from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserPromptPart
 from pydantic_ai.models import Model, infer_model_profile
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_ai_harness.sub_agents import DelegationTask, TaskQuestionAskedEvent
 from pydantic_ai_pax.cli.command_context import CommandContext, CommandProvider
@@ -550,6 +559,12 @@ def create_shell(
         )
     )
     screen = Screen()
+
+    async def ask_in_composer(
+        request: AskUserRequest, /, *, approval: bool, preamble: RenderableType | None
+    ) -> AskUserResponse | None:
+        return await shell.ask_in_composer(request, approval=approval, preamble=preamble)
+
     status = Status(fields=lambda: context.settings.footer_fields)
     _attach_trust(session, trust, process=process, status=status, commands=commands)
     status.restore_text_age(session.messages)
@@ -576,6 +591,7 @@ def create_shell(
         default_model_name=partial(_default_model_name, store=store, fallback=agent.model),
         resolve_model=models.resolve,
         model_settings=context.model_settings,
+        composer=ask_in_composer,
         inputs=lambda: shell,
         forks=lambda: shell.forks.listing(),
     )
@@ -793,6 +809,9 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     editor: LivePrompt | None = None
     """The terminal's editor, while the terminal shows this session and its console is a terminal."""
     questions: PromptQuestions = field(init=False)
+    """The questions and approvals asked in this session's composer, shown while the terminal shows it."""
+    _editor_bound: Event = field(init=False, repr=False)
+    """Set while an editor reads for this session, so a request asked while hidden waits for it."""
     forks: Forks[DepsT, OutputT] = field(init=False)
     tasks: Tasks = field(init=False)
     permissions: tuple[AgentCapability[DepsT], ...] = field(init=False)
@@ -961,7 +980,9 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             paint=lambda: self.editor.paint() if self.editor is not None else None,
             preference=lambda: self.context.settings.question_submit,
             remember=lambda preference: self.context.set_setting(['input.question_submit', preference]),
+            show=self.console.print,
         )
+        self._editor_bound = Event()
         self._question_status = QuestionStatus(self.live_session)
         # Stable capability identity keeps the stock agent bound across turns and layout edits.
         self._footer_activity = FooterActivity(status=self.status, run_id=lambda: self.session.summary.run_id)
@@ -1039,6 +1060,20 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 partial(child.repl_states.copy, source=self.session.summary.id, target=child.summary.id)
             )
         return child
+
+    async def ask_in_composer(
+        self, request: AskUserRequest, /, *, approval: bool = False, preamble: RenderableType | None = None
+    ) -> AskUserResponse | None:
+        """Ask in the composer of the terminal showing this session; `None` while it shows it with no editor open.
+
+        While the terminal shows another session, the request waits to be shown, printing nothing and reading no
+        keys meanwhile: a browser racing it can still answer it.
+        """
+        if self.terminal is not None and self.editor is None:
+            return None
+        while self.editor is None:
+            await self._editor_bound.wait()
+        return await self.questions.ask(request, approval=approval, preamble=preamble)
 
     def test_input_key(self) -> None:
         """Capture only after an explicit action; the editor remains the sole input reader."""
@@ -1267,11 +1302,14 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         self.tasks.wake = editor.wake if editor is not None else None
         if editor is not None:
             editor.questions = self.questions
+            self._editor_bound.set()
             # Input a plugin entered while the editor read for another session, or did not exist yet.
             for entry in self._inbox.take():
                 editor.submit(entry)
             if self.tasks.waiting(self.session.summary.id):
                 editor.wake()
+        elif self._editor_bound.is_set():
+            self._editor_bound = Event()
         if self._reading is not None:
             self._reading.cancel()
 
