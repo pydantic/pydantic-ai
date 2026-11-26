@@ -1060,6 +1060,48 @@ async def test_a_summary_a_capability_puts_in_place_of_messages_is_stored_after_
 
 
 @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_summary_in_place_of_loaded_messages_is_saved_after_the_ones_the_store_has() -> None:
+    """The store only adds after the messages it has, so a summary of some of them goes after all of them."""
+    store = InMemoryConversationStore()
+    looked_up = Agent(FunctionModel(_LookUp(calls=2)))
+
+    @looked_up.tool_plain
+    def lookup(n: int) -> str:
+        return f'fact {n}'
+
+    await store.save(await looked_up.run('look it up', conversation=Conversation(conversation_id='c')))
+    loaded = await store.load('c')
+    assert loaded is not None
+
+    result = await _summarizing_agent(_LookUp()).run('and again', conversation=loaded)
+
+    assert conversation_view(result.all_messages()) == snapshot(
+        ['user-prompt: summary of 5', 'text: done', 'user-prompt: and again', 'text: done']
+    )
+    expected = snapshot(
+        [
+            'user-prompt: look it up',
+            'call call-1',
+            'return call-1: fact 1',
+            'call call-2',
+            'return call-2: fact 2',
+            'text: done',
+            'user-prompt: summary of 5',
+            'user-prompt: and again',
+            'text: done',
+        ]
+    )
+    assert conversation_view(result.conversation.messages) == expected
+    await store.save(result)
+    stored = await store.load('c')
+    assert stored is not None
+    assert conversation_view(stored.messages) == expected
+    record = await store.read_record('c')
+    assert record is not None
+    assert record.branches == []
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
 async def test_a_summarized_conversation_carried_in_memory_is_summarized_again_like_one_loaded_from_the_store() -> None:
     """The full history, summaries included, goes on to the next run, whose capability summarizes it again."""
     store = InMemoryConversationStore()
@@ -1095,8 +1137,8 @@ async def test_a_summarized_conversation_carried_in_memory_is_summarized_again_l
             'user-prompt: summary of 5',
             'call call-3',
             'return call-3: fact 3',
-            'user-prompt: summary of 7',
             'text: done',
+            'user-prompt: summary of 7',
             'user-prompt: and again',
             'call call-4',
             'return call-4: fact 4',
