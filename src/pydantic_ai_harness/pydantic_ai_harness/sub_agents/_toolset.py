@@ -17,7 +17,6 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 import anyio
 
 from pydantic_ai import AgentStreamEvent, CapabilityEvent, capture_run_messages
-from pydantic_ai._telemetry import current_span, record_decision, set_content_attribute
 from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, HookTimeoutError
 from pydantic_ai.durable_exec import BaseDurabilityCapability, DurableRunContext
@@ -44,6 +43,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.telemetry import current_span, set_content_attribute
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolRequests,
@@ -83,7 +83,6 @@ from pydantic_ai_harness.sub_agents._control import (
     run_remote,
     task_group,
     validate_agent_name,
-    veto_reason_content,
 )
 from pydantic_ai_harness.sub_agents._deferred import (
     DeferredStateStore,
@@ -1461,13 +1460,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             if _emits_events(ctx):
                 await ctx.emit(event)
             if event.vetoed:
-                # The model chose this name, so it is content.
-                record_decision(
-                    ctx,
-                    'sub_agents vetoed',
-                    attributes={'sub_agents.event': event.kind},
-                    content={'sub_agents.agent_name': event.agent_name, **veto_reason_content(event)},
-                )
+                # No configured names: the model chose this one, so it is content.
+                TaskTelemetry(ctx=ctx).vetoed(event)
                 return _vetoed_reply('The sub-agent was not created', event)
             spec = DynamicAgentSpec(
                 name=name, description=event.description, instructions=event.instructions, model=model

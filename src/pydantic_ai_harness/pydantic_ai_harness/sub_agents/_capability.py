@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any, Literal
 import anyio
 
 from pydantic_ai._instructions import SourcedInstruction, append_on_change_by_default
-from pydantic_ai._telemetry import open_span
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.agent import Agent, AgentRunResult, EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, WrapRunHandler, durable_operation
@@ -21,6 +20,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputContext
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.telemetry import open_span
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, RunContext
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend

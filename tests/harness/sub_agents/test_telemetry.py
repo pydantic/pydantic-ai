@@ -86,7 +86,7 @@ class TestSubAgentsTelemetry:
     @pytest.mark.parametrize(
         ('sub_agent', 'outcome', 'model'),
         [
-            (SubAgent(Agent(TestModel(), name='worker')), 'ok', 'test:test'),
+            # A plain `ok` is covered by the first delegation in the `max_calls` test.
             (
                 SubAgent(Agent(FunctionModel(slow), name='worker'), timeout_seconds=0.01),
                 'timeout',

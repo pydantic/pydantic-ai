@@ -25,11 +25,11 @@ from opentelemetry import propagate
 from opentelemetry.util.types import AttributeValue
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai._telemetry import record_decision
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import RunCancelled
 from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.telemetry import record_decision
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AgentToolset, FunctionToolset
 from pydantic_ai.usage import RunUsage
@@ -117,14 +117,14 @@ class TaskTelemetry:
             content={**name_content, **(content or {})},
         )
 
-    def vetoed(self, event: ParentMessageEvent) -> None:
-        """Record that a listener vetoed `event`."""
+    def vetoed(self, event: ParentMessageEvent | AgentCreatedEvent) -> None:
+        """Record that a listener vetoed `event`, with its reason as content: it can quote what was vetoed."""
         self.decision(
             'vetoed',
             agent_name=event.agent_name,
-            task_id=event.task_id,
+            task_id=event.task_id if isinstance(event, ParentMessageEvent) else None,
             attributes={'sub_agents.event': event.kind},
-            content=veto_reason_content(event),
+            content={} if event.veto_reason is None else {'sub_agents.veto_reason': event.veto_reason},
         )
 
     def backgrounded(self, event: TaskBackgroundedEvent) -> None:
@@ -135,11 +135,6 @@ class TaskTelemetry:
             task_id=event.task_id,
             attributes={'sub_agents.reason': event.reason},
         )
-
-
-def veto_reason_content(event: ParentMessageEvent | AgentCreatedEvent) -> dict[str, str]:
-    """A listener's reason for vetoing `event`, as content: it can quote what was vetoed. Empty without a reason."""
-    return {} if event.veto_reason is None else {'sub_agents.veto_reason': event.veto_reason}
 
 
 def run_owned(owner: DelegationTasks) -> bool:
