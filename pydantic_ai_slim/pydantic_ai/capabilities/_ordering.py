@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from graphlib import CycleError, TopologicalSorter
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -87,8 +87,8 @@ def _add_position_edges(
     n: int,
     orderings: list[CapabilityOrdering | None],
 ) -> None:
-    outermost = {i for i, o in enumerate(orderings) if o and o.position == 'outermost'}
-    innermost = {i for i, o in enumerate(orderings) if o and o.position == 'innermost'}
+    outermost = _tier_members(orderings, 'outermost')
+    innermost = _tier_members(orderings, 'innermost')
 
     # Outermost tier: each member must come before all non-members.
     for oi in outermost:
@@ -103,6 +103,10 @@ def _add_position_edges(
                 ts.add(ii, j)  # ii depends on j (j comes first)
 
 
+def _tier_members(orderings: list[CapabilityOrdering | None], position: CapabilityPosition) -> set[int]:
+    return {i for i, o in enumerate(orderings) if o and o.position == position}
+
+
 def _add_relative_edges(
     ts: TopologicalSorter[int],
     n: int,
@@ -114,15 +118,22 @@ def _add_relative_edges(
         if not ordering:
             continue
         # wraps=[X] → I come before X
-        for ref in ordering.wraps:
-            for j in range(n):
-                if i != j and _ref_matches(ref, leaf_types[j], cap_leaves[j]):
-                    ts.add(j, i)  # j depends on i (i comes first)
+        for j in _matched_indices(ordering.wraps, i, n, leaf_types, cap_leaves):
+            ts.add(j, i)  # j depends on i (i comes first)
         # wrapped_by=[X] → X comes before me
-        for ref in ordering.wrapped_by:
-            for j in range(n):
-                if i != j and _ref_matches(ref, leaf_types[j], cap_leaves[j]):
-                    ts.add(i, j)  # i depends on j (j comes first)
+        for j in _matched_indices(ordering.wrapped_by, i, n, leaf_types, cap_leaves):
+            ts.add(i, j)  # i depends on j (j comes first)
+
+
+def _matched_indices(
+    refs: Sequence[CapabilityRef],
+    i: int,
+    n: int,
+    leaf_types: list[set[type]],
+    cap_leaves: list[list[AbstractCapability[Any]]],
+) -> Iterator[int]:
+    """The index of every capability other than `i` that each of `refs` matches, ref by ref."""
+    return (j for ref in refs for j in range(n) if i != j and _ref_matches(ref, leaf_types[j], cap_leaves[j]))
 
 
 def _ref_matches(

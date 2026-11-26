@@ -43,7 +43,7 @@ from pydantic_ai_pax.builtin_plugins.web.protocol import (
     usage_info,
 )
 from pydantic_ai_pax.builtin_plugins.workspaces import configured
-from pydantic_ai_pax.config.settings_store import state_dir
+from pydantic_ai_pax.paths import state_dir
 from pydantic_ai_pax.plugins import TurnOutcome
 from pydantic_ai_pax.runtime.strict_schemas import NON_STRICT_SCHEMAS
 
