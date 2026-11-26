@@ -96,6 +96,7 @@ zai = ["pydantic-ai-slim[zai]=={{ major }}.{{ minor }}.{{ patch }}{% if distance
 snowflake = ["pydantic-ai-slim[snowflake]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 crusoe = ["pydantic-ai-slim[crusoe]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 cerebras = ["pydantic-ai-slim[cerebras]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+claude-agent = ["pydantic-ai-slim[claude-agent]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 typesafe = ["pydantic-ai-slim[typesafe]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 huggingface = ["pydantic-ai-slim[huggingface]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 # END provider extras

@@ -195,7 +195,8 @@ def opened_paths() -> Iterator[list[str]]:
     opened: list[str] = []
     active = True
 
-    def hook(event: str, args: tuple[Any, ...]) -> None:  # pragma: no cover (coverage doesn't trace audit hooks)
+    # Coverage doesn't trace audit hooks.
+    def hook(event: str, args: tuple[Any, ...]) -> None:  # pragma: no cover
         if active and event == 'open' and isinstance(args[0], (str, bytes, Path)):
             opened.append(str(args[0]))
 
@@ -274,10 +275,10 @@ def test_the_source_never_reaches_for_a_credential():
                 # `ClaudeCodeSessions.open` opens a session, not a file.
                 sessions_open = isinstance(node, ast.Attribute) and ast.unparse(node) == 'self.sessions.open'
                 if name.split('.')[-1] in FORBIDDEN_NAMES and not sessions_open:
-                    found.append(f'{module.__name__}:{node.lineno} name {name!r}')  # pragma: no cover (a violation)
+                    # Only a violation gets here.
+                    found.append(f'{module.__name__}:{node.lineno} name {name!r}')  # pragma: no cover
             elif isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstrings:
                 if node.value not in blanked and any(text in node.value.lower() for text in FORBIDDEN_TEXT):
-                    found.append(
-                        f'{module.__name__}:{node.lineno} string {node.value!r}'
-                    )  # pragma: no cover (a violation)
+                    # Only a violation gets here.
+                    found.append(f'{module.__name__}:{node.lineno} string {node.value!r}')  # pragma: no cover
     assert found == []

@@ -9,12 +9,14 @@ with and sent.
 from __future__ import annotations
 
 import asyncio
+import warnings
 from dataclasses import dataclass, replace
 
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, BinaryImage, ImageUrl, ModelRetry, ToolReturn
+from pydantic_ai import Agent, BinaryImage, ImageUrl, ModelRetry, Tool, ToolReturn
+from pydantic_ai._genai_prices import lookup_context_window
 from pydantic_ai.direct import model_request
 from pydantic_ai.exceptions import (
     ModelAPIError,
@@ -327,7 +329,9 @@ async def test_not_signed_in():
     )
 
 
-async def test_subscription_limit():
+async def test_subscription_limit(monkeypatch: pytest.MonkeyPatch):
+    """The plan's reset time becomes `Retry-After`, and the Anthropic client is told not to retry."""
+    monkeypatch.setattr(_claude_agent_sessions.time, 'time', lambda: 4_000_000_000 - 3600.5)
     model, _ = claude_agent(
         FakeResponse(error='rate_limit', error_text="You've hit your limit", rate_limit_resets_at=4_000_000_000)
     )
@@ -336,6 +340,8 @@ async def test_subscription_limit():
         await Agent(model).run('Hello')
 
     assert exc_info.value.status_code == 429
+    assert exc_info.value.retry_after == 3601
+    assert exc_info.value.headers is not None and exc_info.value.headers['x-should-retry'] == 'false'
 
 
 async def test_count_tokens_is_not_supported():
@@ -634,6 +640,24 @@ async def test_a_thinking_config_claude_code_cant_take():
     assert fake.sessions == []
 
 
+async def test_a_tool_schema_with_a_remote_reference_is_refused():
+    """The Agent SDK validates arguments with `jsonschema`, which would fetch the reference from this process."""
+    model, fake = claude_agent()
+    schema = {'type': 'object', 'properties': {'city': {'$ref': 'http://127.0.0.1:9/city.json'}}}
+
+    def lookup(city: str) -> str:
+        return city  # pragma: no cover
+
+    agent = Agent(model, tools=[Tool.from_schema(lookup, name='lookup', description='', json_schema=schema)])
+
+    with pytest.raises(ModelHTTPError, match="Claude Code can't serve this request") as exc_info:
+        await agent.run('Hi')
+
+    assert exc_info.value.status_code == 400
+    assert 'http://127.0.0.1:9/city.json' in str(exc_info.value.body)
+    assert fake.sessions == []
+
+
 async def test_anthropic_settings_claude_code_doesnt_send_are_reported():
     model, _ = claude_agent(FakeResponse([text('Hi.')]))
     settings = AnthropicModelSettings(anthropic_effort='low', anthropic_metadata={'user_id': 'u'})
@@ -642,11 +666,14 @@ async def test_anthropic_settings_claude_code_doesnt_send_are_reported():
         await Agent(model, model_settings=settings).run('Hello')
 
 
-async def test_the_cache_setting_is_reported():
+async def test_tuning_settings_are_ignored_silently():
+    """Claude Code always caches, and drops tuning knobs like `anthropic_cache_messages` without changing a guarantee."""
     model, _ = claude_agent(FakeResponse([text('Hi.')]))
+    settings = AnthropicModelSettings(cache=True, anthropic_cache_messages=True, anthropic_service_tier='auto')
 
-    with pytest.warns(UnsupportedSettingWarning, match='`cache` setting is not supported'):
-        await Agent(model, model_settings={'cache': True}).run('Hello')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UnsupportedSettingWarning)
+        await Agent(model, model_settings=settings).run('Hello')
 
 
 async def test_a_failed_request_is_retried():
@@ -841,3 +868,12 @@ async def test_an_empty_tool_result_continues_the_session():
     assert session.tool_results == snapshot(
         [{'tool_use_id': 'toolu_1', 'content': [{'type': 'text', 'text': ''}], 'isError': False}]
     )
+
+
+def test_the_context_window_is_the_claude_apis():
+    """Claude Code serves the Claude API's models, so compaction gets the same context window as on `anthropic:`."""
+    window = lookup_context_window('claude-haiku-4-5', provider_name='anthropic')
+
+    assert window is not None
+    assert ClaudeAgentModel('claude-haiku-4-5').context_window == window
+    assert ClaudeAgentModel('claude-not-a-model').context_window is None
