@@ -3302,6 +3302,9 @@ def test_args_as_dict_rejects_non_dict_json_under_optimization():
     `compile(..., optimize=1)` strips `assert` statements as `-O` does, so the method is compiled that way in process.
     An `-O` interpreter would find no `-O` bytecode cached and compile everything it imports from source.
     """
+    # The premise: this raises if `optimize=1` ever stops stripping `assert` statements.
+    exec(compile('assert False', '<assert probe compiled with optimize=1>', 'exec', optimize=1))
+
     source = textwrap.dedent(inspect.getsource(ToolCallPart.args_as_dict))
     code = compile(source, '<args_as_dict compiled with optimize=1>', 'exec', optimize=1)
     namespace: dict[str, Callable[..., object]] = {}
