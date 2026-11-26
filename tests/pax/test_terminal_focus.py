@@ -351,6 +351,29 @@ async def test_line_mode_terminal_follows_the_session_shown(tmp_path: Path) -> N
     await desk.home.close('exit')
 
 
+async def test_a_line_mode_terminal_has_no_composer_for_a_hidden_session_to_wait_for(tmp_path: Path) -> None:
+    desk = Desk(tmp_path)
+    terminal = Terminal[None, str](
+        console=Console(file=io.StringIO()), transcript=TranscriptBuffer(), history=InMemoryHistory()
+    )
+    answers: list[AskUserResponse | None] = []
+    async with desk.live.serving():
+        b = desk.runtimes[(await desk.live.new(workspace=desk.folder('b'))).id]
+        terminal.attach(desk.home)
+        terminal.attach(b)
+        assert desk.home.terminal is None and desk.live.focused == b.live_session.id
+
+        async def ask() -> None:
+            answers.append(await desk.home.ask_in_composer(question_request(), approval=False, preamble=None))
+
+        async with anyio.create_task_group() as group:
+            group.start_soon(ask)
+            await anyio.wait_all_tasks_blocked()
+            group.cancel_scope.cancel()
+    assert answers == [None], 'a line prompt never opens an editor, so nothing would ever show the request'
+    await desk.home.close('exit')
+
+
 async def test_the_terminal_raises_what_its_session_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     desk = Desk(tmp_path)
 
@@ -606,7 +629,7 @@ async def test_an_approval_whose_turn_comes_while_hidden_prints_its_command_once
 
 async def test_a_pax_without_a_terminal_has_no_composer_to_ask_in(tmp_path: Path) -> None:
     runtime = Fleet(tmp_path).build(None)
-    assert runtime.terminal is None and runtime.process.live.focused is None
+    assert runtime.terminal is None and not runtime.process.live.composer
     answers: list[AskUserResponse | None] = []
 
     async def ask() -> None:

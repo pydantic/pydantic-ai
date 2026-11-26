@@ -813,7 +813,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     _editor_bound: Event = field(init=False, repr=False)
     """Set while an editor reads for this session, so a request asked while hidden waits for it."""
     _redrawing: bool = field(default=False, init=False, repr=False)
-    """Whether the terminal redraws this session to show it, which `redrawn` holds requests for."""
+    """Whether the terminal redraws this session to show it; see `redrawn`."""
     forks: Forks[DepsT, OutputT] = field(init=False)
     tasks: Tasks = field(init=False)
     permissions: tuple[AgentCapability[DepsT], ...] = field(init=False)
@@ -1072,8 +1072,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         While the terminal shows another session, the request waits to be shown, printing nothing and reading no
         keys meanwhile: a browser racing it can still answer it.
         """
-        if self.editor is None and (self.terminal is not None or self.process.live.focused is None):
-            # Shown before its editor opens, or in a Pax no terminal shows any session in, as `-p` or `pax --web`.
+        if self.editor is None and (self.terminal is not None or not self.process.live.composer):
+            # Shown before its editor opens, or in a Pax whose terminal, if any, never opens one.
             return None
         while self.editor is None:
             await self._editor_bound.wait()
@@ -1081,9 +1081,10 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     @contextmanager
     def redrawn(self) -> Generator[None]:
-        """Hold this session's composer requests while the terminal redraws it to show it, then show the active one.
+        """Defer held-command prints while the terminal redraws this session to show it, then print the active one's.
 
-        The redraw prints the history on a clear screen, which drops a held command printed before it.
+        The redraw prints the history on a clear screen, which drops a held command printed before it. A request
+        asked meanwhile takes the composer at once; one asked while the session was hidden wakes once the redraw ends.
         """
         self._redrawing = True
         try:
@@ -1299,6 +1300,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         self.interrupts.focus(signals=terminal is not None)
         if terminal is not None:
             self.process.live.focused = self.live_session.id
+            self.process.live.composer = not terminal.lines
         self.bind(terminal.editor if terminal is not None else None)
         # Both now hold every image; each keeps those its own texts use, so none counts twice against the limit.
         self._retain_images()
