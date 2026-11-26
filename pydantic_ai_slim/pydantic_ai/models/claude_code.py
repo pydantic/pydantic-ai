@@ -121,6 +121,13 @@ class ClaudeCodeModel(AnthropicModel):
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> None:
         super()._warn_unsupported_settings(model_settings, model_request_parameters)
+        if model_settings and model_settings.get('cache'):
+            warnings.warn(
+                f'The `cache` setting is not supported by model {self.model_id!r} and will be ignored: '
+                'Claude Code places its own cache breakpoints.',
+                UnsupportedSettingWarning,
+                stacklevel=3,
+            )
         for name in sorted(set(model_settings or {}) - _HONORED_ANTHROPIC_SETTINGS):
             if name.startswith('anthropic_'):
                 warnings.warn(

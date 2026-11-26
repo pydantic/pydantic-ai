@@ -639,6 +639,13 @@ async def test_anthropic_settings_claude_code_doesnt_send_are_reported():
         await Agent(model, model_settings=settings).run('Hello')
 
 
+async def test_the_cache_setting_is_reported():
+    model, _ = claude_code(FakeResponse([text('Hi.')]))
+
+    with pytest.warns(UnsupportedSettingWarning, match='`cache` setting is not supported'):
+        await Agent(model, model_settings={'cache': True}).run('Hello')
+
+
 async def test_a_failed_request_is_retried():
     """Claude Code is set not to retry, so Pydantic AI retries a request that failed, in a new session."""
     model, fake = claude_code(FakeResponse(error='server_error', error_text='Overloaded'), FakeResponse([text('Hi.')]))
