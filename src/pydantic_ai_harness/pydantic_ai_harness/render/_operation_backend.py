@@ -33,6 +33,7 @@ from ._protocol import (
     OperationRequest,
     OperationResult,
     RenderProtocolError,
+    UnsupportedInChildTaskError,
     apply_effects,
     control_flow_error,
     make_request,
@@ -221,7 +222,7 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
             try:
                 with self._runtime.activate(context):
                     value = await operation.handler(params)
-            except RenderProtocolError as exc:
+            except (RenderProtocolError, UnsupportedInChildTaskError) as exc:
                 return permanent_error('invalid-result', exc)
             except Exception as exc:
                 try:
