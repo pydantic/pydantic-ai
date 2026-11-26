@@ -104,13 +104,6 @@ class ConversationStoreContract:
         assert await backend.count_entries() == len(second.messages)
         assert await store.load('unknown') is None
 
-    async def test_a_message_two_conversations_share_is_stored_once(self, backend: Backend) -> None:
-        shared = _prompt('the same')
-        await backend.store.save(Conversation(messages=[shared]))
-        await backend.store.save(Conversation(messages=[shared]))
-
-        assert (await backend.count_entries(), await backend.count_messages()) == (2, 1)
-
     async def test_a_record_written_over_a_stale_revision_conflicts(self, backend: Backend) -> None:
         store = backend.store
         conversation = Conversation(messages=[_prompt('one')])
@@ -128,15 +121,21 @@ class ConversationStoreContract:
     async def test_a_title_set_since_a_save_read_the_conversation_survives_the_save(self, backend: Backend) -> None:
         store = backend.store
         conversation = Conversation(messages=[_prompt('one')])
-        await store.save(conversation)
+        read = await _saved(store, conversation)
 
         await store.update(conversation.conversation_id, title='Trip', expected_title=None)
         updated = await store.update(conversation.conversation_id, metadata={'days': 3, 'from': 'Oslo'})
         assert updated == await store.read_record(conversation.conversation_id)
-        conversation.messages.append(ModelResponse(parts=[TextPart('two')]))
-        saved = await _saved(store, conversation)
+        entry = ConversationEntry(parent_id=read.head_id, message=ModelResponse(parts=[TextPart('two')]))
+        await store.write_record(
+            dataclasses.replace(read, head_id=entry.id, revision='new'),
+            new_entries=[entry],
+            expected_revision=read.revision,
+        )
+        saved = await store.read_record(conversation.conversation_id)
+        assert saved is not None
 
-        assert (saved.title, saved.metadata) == ('Trip', {'days': 3, 'from': 'Oslo'})
+        assert (saved.head_id, saved.title, saved.metadata) == (entry.id, 'Trip', {'days': 3, 'from': 'Oslo'})
         with pytest.raises(ConversationConflict):
             await store.write_details(conversation.conversation_id, {'title': 'Oslo'}, expected_revision='stale')
         with pytest.raises(ConversationConflict):
@@ -191,11 +190,12 @@ class ConversationStoreContract:
         else:
             assert (await backend.count_entries(), await backend.count_messages()) == (2, 2)
 
-    async def test_deleting_keeps_a_message_another_entry_holds(self, backend: Backend) -> None:
+    async def test_a_shared_message_is_stored_once_and_kept_while_an_entry_holds_it(self, backend: Backend) -> None:
         shared = _prompt('the same')
         first = Conversation(messages=[shared])
         await backend.store.save(first)
         await backend.store.save(Conversation(messages=[shared]))
+        assert (await backend.count_entries(), await backend.count_messages()) == (2, 1)
 
         await backend.store.delete(first.conversation_id)
 

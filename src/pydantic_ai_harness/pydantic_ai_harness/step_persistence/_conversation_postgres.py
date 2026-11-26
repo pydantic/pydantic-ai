@@ -203,13 +203,6 @@ class PostgresConversationStore(ConversationStore):
             # A concurrent delete released one of them.
             raise ConversationConflict(record.conversation_id)
         await self._lock_histories(connection, set(roots.values()))
-        # A delete in another history may be releasing one of these messages. It locks them in this order,
-        # so locking them in the same order before the insert waits for it, rather than deadlocking with it,
-        # and the insert then writes again any message it removed.
-        await connection.fetch(
-            f'SELECT 1 FROM {self._messages} WHERE sha256 = ANY($1::text[]) ORDER BY sha256 FOR KEY SHARE',
-            sorted({sha256 for sha256, _ in messages}),
-        )
         await self._insert_messages(connection, dict(messages))
         entries: list[tuple[str, str | None, str, str, str]] = []
         for entry, (sha256, _) in zip(new_entries, messages, strict=True):
@@ -262,13 +255,20 @@ class PostgresConversationStore(ConversationStore):
             )
 
     async def _insert_messages(self, connection: PostgresConnection, messages: dict[str, str]) -> None:
-        """Insert the messages `{table}_conv_messages` lacks, in key order so concurrent saves can't deadlock."""
+        """Insert the messages `{table}_conv_messages` lacks, and lock every one of them until the save commits.
+
+        A delete in another history may be releasing a message this save shares, and only locks it to delete it.
+        Upserting takes the row lock whether the message was stored already or not, so the delete either waits for
+        this save, and then sees its entry, or finishes first, and the insert stores the message again. Both lock in
+        key order, so they can't deadlock.
+        """
         rows = sorted(messages.items())
         for start in range(0, len(rows), _MESSAGES_PER_INSERT):
             batch = rows[start : start + _MESSAGES_PER_INSERT]
             values = ', '.join(f'(${2 * i + 1}, ${2 * i + 2})' for i in range(len(batch)))
             await connection.execute(
-                f'INSERT INTO {self._messages} (sha256, message) VALUES {values} ON CONFLICT (sha256) DO NOTHING',
+                f'INSERT INTO {self._messages} (sha256, message) VALUES {values} '
+                'ON CONFLICT (sha256) DO UPDATE SET sha256 = EXCLUDED.sha256',
                 *(value for row in batch for value in row),
             )
 

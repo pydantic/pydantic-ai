@@ -234,12 +234,19 @@ class SqliteConversationStore(ConversationStore):
                     'INSERT OR IGNORE INTO conversation_messages (sha256, message) VALUES (?, ?)', messages
                 )
                 new_ids = {entry.id for entry in entries}
-                parents = sorted({entry.parent_id for entry in entries if entry.parent_id not in (None, *new_ids)})
+                referenced = sorted(
+                    {
+                        entry_id
+                        for entry_id in (*(entry.parent_id for entry in entries), record.head_id)
+                        if entry_id is not None and entry_id not in new_ids
+                    }
+                )
                 (stored,) = conn.execute(
-                    f'SELECT count(*) FROM conversation_entries WHERE id IN ({", ".join("?" * len(parents))})', parents
+                    f'SELECT count(*) FROM conversation_entries WHERE id IN ({", ".join("?" * len(referenced))})',
+                    referenced,
                 ).fetchone()
-                if stored < len(parents):
-                    # A delete released an entry the new ones continue from.
+                if stored < len(referenced):
+                    # A concurrent delete or rewrite released an entry the new ones continue from, or a fork's head.
                     raise ConversationConflict(record.conversation_id)
                 conn.executemany(
                     'INSERT INTO conversation_entries (id, parent_id, kind, sha256) VALUES (?, ?, ?, ?)',
@@ -248,14 +255,6 @@ class SqliteConversationStore(ConversationStore):
                         for entry, (sha256, _) in zip(entries, messages, strict=True)
                     ],
                 )
-                # A fork points into another conversation's history, which a concurrent delete or
-                # rewrite of that conversation can release before this write.
-                if (
-                    record.head_id is not None
-                    and conn.execute('SELECT 1 FROM conversation_entries WHERE id = ?', (record.head_id,)).fetchone()
-                    is None
-                ):
-                    raise ConversationConflict(record.conversation_id)
                 conn.execute(
                     'INSERT INTO conversation_records '
                     '(conversation_id, revision, head_id, scope, updated_at, record, title, metadata) '
