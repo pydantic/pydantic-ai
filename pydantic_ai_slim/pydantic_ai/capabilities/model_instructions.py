@@ -4,7 +4,7 @@ import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, replace
 from fnmatch import fnmatchcase
-from typing import TypeAlias
+from typing import Literal, TypeAlias
 
 from pydantic_ai._instructions import AgentInstructions, SourcedInstruction
 from pydantic_ai._system_prompt import SystemPromptRunner
@@ -24,12 +24,15 @@ ModelInstructionsFunc: TypeAlias = (
 )
 """A sync or async function returning the instructions for the model handling a request, or `None` for none."""
 
-_ON_CHANGE: InstructionChangePolicy = 'append'
-"""How a change of the block is delivered when a conversation moves to another model.
-
-When both models have text, appending the change kept the models' account of the conversation accurate and resisted
-a user's lookalike `<system>` block better than rewriting, which followed the new text no better.
-"""
+_ON_CHANGE: dict[Literal['tuning', 'rule'], InstructionChangePolicy] = {
+    # The new model gets what a fresh run on it would: an appended change, or a withdrawal, of wording meant only to
+    # get the same behavior reads as a nudge the other way.
+    'tuning': 'rewrite',
+    # The history records when the behavior changed: appended, models tracked the change and resisted a user's
+    # `<system>` lookalike better than with a rewrite, which they followed no better.
+    'rule': 'append',
+}
+"""How a change of the block is delivered when a conversation moves to another model, per `kind`."""
 
 _BLOCK_NAME = 'text'
 """The name of the block, so its id is `capability:<id>:text`."""
@@ -59,9 +62,7 @@ class ModelInstructions(AbstractCapability[AgentDepsT]):
     request, and may be sync or async. Its block is dynamic, as it can read anything in the context; a mapping's
     depends only on the model, so it's cached with the literal instructions.
 
-    When a conversation moves to another model, the change is appended with
-    [`on_change='append'`][pydantic_ai.messages.InstructionPart.on_change], so the new model sees the earlier text
-    in the prefix, followed by its own.
+    What happens when a conversation moves to another model depends on [`kind`][pydantic_ai.capabilities.ModelInstructions.kind].
 
     On a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], which picks its model inside the model call,
     no text is sent and a warning is emitted.
@@ -71,6 +72,21 @@ class ModelInstructions(AbstractCapability[AgentDepsT]):
     """Text per model pattern, or a function returning the text for a request."""
 
     _: KW_ONLY
+
+    kind: Literal['tuning', 'rule'] = 'tuning'
+    """Whether the text tunes models to the same behavior, or sets a rule that differs between them.
+
+    - `'tuning'` (the default): wording that gets a model to do what the others already do, like a line against
+      unrequested delegation for models that tend to delegate:
+      `ModelInstructions({'gpt-6*': "Don't spawn sub-agents unless the user asks."})`. When a conversation moves to
+      another model, the block is rewritten
+      ([`on_change='rewrite'`][pydantic_ai.messages.InstructionPart.on_change]), so the new model gets what a fresh
+      run on it would.
+    - `'rule'`: the models should behave differently, like
+      `ModelInstructions({'mistral-*': 'Answer in French.'}, kind='rule')`. The change is appended
+      ([`on_change='append'`][pydantic_ai.messages.InstructionPart.on_change]), so the conversation keeps a record of
+      when the rule changed; a model no pattern matches gets the rule's withdrawal.
+    """
 
     id: str | None = 'model_instructions'
     """The id the block is addressed by, as `capability:<id>:text`.
@@ -94,7 +110,7 @@ class ModelInstructions(AbstractCapability[AgentDepsT]):
             await self._text(ctx) or '',
             name=_BLOCK_NAME,
             # Without an id the block isn't addressable, so its changes can't be appended.
-            on_change=_ON_CHANGE if self.id is not None else 'rewrite',
+            on_change=_ON_CHANGE[self.kind] if self.id is not None else 'rewrite',
         )
 
     async def _text(self, ctx: RunContext[AgentDepsT]) -> str | None:
@@ -116,10 +132,11 @@ class ModelInstructions(AbstractCapability[AgentDepsT]):
         assert isinstance(first, ModelInstructions)
         for other in capabilities[1:]:
             assert isinstance(other, ModelInstructions)
-            if other.instructions != first.instructions:
+            if disagree := [name for name in ('instructions', 'kind') if getattr(other, name) != getattr(first, name)]:
+                names = ', '.join(repr(name) for name in disagree)
                 raise UserError(
                     f'Capability id {first.id!r} is used by multiple `ModelInstructions` capabilities that disagree '
-                    "on 'instructions'. Give each its own `id`, or make them agree."
+                    f'on {names}. Give each its own `id`, or make them agree.'
                 )
         return first
 
