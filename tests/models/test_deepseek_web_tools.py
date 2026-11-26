@@ -145,6 +145,14 @@ async def test_deepseek_web_fetch_history(
                 assert 'Thinking before reading' not in thinking_filtered_history
                 assert 'Thinking after reading' not in thinking_filtered_history
                 assert 'recorded-page-signature' in thinking_filtered_history
+            assert is_str_dict(call.args) and is_str_dict(result_part.content)
+            url = call.args.pop('url')
+            await Agent(model).run('Continue.', message_history=history)
+            assert 'server_tool_calls' not in json.dumps(requests[-1]['messages'])
+            call.args['url'] = url
+            del result_part.content['page']
+            await Agent(model).run('Continue.', message_history=history)
+            assert 'recorded-page-signature' not in json.dumps(requests[-1]['messages'])
             response.parts = [part for part in response.parts if part is not call and part is not result_part]
             await Agent(model, model_settings={'thinking': False}).run('What was the UUID?', message_history=history)
             filtered_history = json.dumps(requests[-1]['messages'])

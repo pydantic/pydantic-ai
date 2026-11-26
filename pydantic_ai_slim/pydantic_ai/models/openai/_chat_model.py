@@ -1314,10 +1314,16 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         param: chat.ChatCompletionAssistantMessageParam | None,
         wire_steps: object,
     ) -> chat.ChatCompletionAssistantMessageParam | None:
-        retained, thinking_by_step = self._retained_deepseek_parts(message)
+        calls, results, thinking_by_step = self._retained_deepseek_parts(message)
         steps: list[ChatWebStep] = []
         for step in chat_web_steps.validate_python(wire_steps):
-            step.calls = [call for call in step.calls if (call.id, call.tool_name) in retained]
+            # A history processor may edit a part while retaining its ID. Only replay intact tool calls.
+            step.calls = [
+                call
+                for call in step.calls
+                if (calls.get((call.id, call.tool_name)), results.get((call.id, call.tool_name)))
+                == (call.action, call.result_content())
+            ]
             if not step.calls:
                 continue
             if step.reasoning_content is not None:
@@ -1337,16 +1343,17 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
     def _retained_deepseek_parts(
         self, message: ModelResponse
-    ) -> tuple[set[tuple[str, str]], dict[int | None, list[str]]]:
-        calls: set[tuple[str, str]] = set()
-        returns: set[tuple[str, str]] = set()
+    ) -> tuple[dict[tuple[str, str], object], dict[tuple[str, str], object], dict[int | None, list[str]]]:
+        calls: dict[tuple[str, str], object] = {}
+        returns: dict[tuple[str, str], object] = {}
         thinking_by_step: dict[int | None, list[str]] = {}
         for part in message.parts:
             if not self.accepts_stateless_artifacts(message, part):
                 continue
-            if isinstance(part, NativeToolCallPart | NativeToolReturnPart):
-                keys = calls if isinstance(part, NativeToolCallPart) else returns
-                keys.add((part.tool_call_id, part.tool_name))
+            if isinstance(part, NativeToolCallPart):
+                calls[(part.tool_call_id, part.tool_name)] = part.args_as_dict()
+            elif isinstance(part, NativeToolReturnPart):
+                returns[(part.tool_call_id, part.tool_name)] = part.content
             elif (
                 isinstance(part, ThinkingPart)
                 and message.finish_reason != 'content_filter'
@@ -1355,7 +1362,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 # DeepSeek clears step reasoning from the terminal content-filter response.
                 index = (part.provider_details or {}).get(CHAT_STEP_KEY)
                 thinking_by_step.setdefault(index, []).append(part.content)
-        return calls & returns, thinking_by_step
+        return calls, returns, thinking_by_step
 
     def _map_carried_thinking(self, message: ModelResponse) -> chat.ChatCompletionUserMessageParam | None:
         """Build the user message that carries this `ModelResponse`'s reasoning ahead of its assistant message.

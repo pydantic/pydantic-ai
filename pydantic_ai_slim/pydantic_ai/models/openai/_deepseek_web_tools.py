@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Literal, cast
 
 from openai.types import chat, responses
-from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter
+from pydantic import BaseModel, JsonValue, TypeAdapter
 
 from ..._utils import is_str_dict
 from ...messages import NativeToolCallPart, NativeToolReturnPart
@@ -110,8 +110,6 @@ def web_tool_replay(call: NativeToolCallPart, result: NativeToolReturnPart) -> r
 
 
 class ChatWebCall(BaseModel):
-    model_config = ConfigDict(extra='allow')
-
     id: str
     index: int
     type: DeepSeekWebToolName
@@ -132,19 +130,20 @@ class ChatWebCall(BaseModel):
             tool_name=self.tool_name, tool_call_id=self.id, args=self.action, provider_name=provider
         )
 
+    def result_content(self) -> dict[str, JsonValue]:
+        return self.model_dump(include={'status', 'sources', 'page', 'error'}, exclude_none=True)
+
     def return_part(self, provider: str) -> NativeToolReturnPart:
         return NativeToolReturnPart(
             tool_name=self.tool_name,
             tool_call_id=self.id,
-            content=self.model_dump(include={'status', 'sources', 'page', 'error'}, exclude_none=True),
+            content=self.result_content(),
             outcome='failed' if self.status == 'failed' else 'success',
             provider_name=provider,
         )
 
 
 class ChatWebStep(BaseModel):
-    model_config = ConfigDict(extra='allow')
-
     index: int
     reasoning_content: str | None = None
     calls: list[ChatWebCall]
