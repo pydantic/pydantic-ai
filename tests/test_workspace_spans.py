@@ -1,4 +1,8 @@
-"""Spans for workspace operations, and for the shell commands behind file operations on command-only backends."""
+"""Spans for workspace operations, and for the shell commands behind file operations on command-only backends.
+
+These are unit tests, not VCR tests: what they check is span attributes and the `INVALID_SPAN` branches,
+which no provider response can show, so the runs use `TestModel`.
+"""
 
 from __future__ import annotations
 
@@ -69,6 +73,7 @@ def file_agent(capabilities: Sequence[AbstractCapability[object]] = ()) -> Agent
         with pytest.raises(FileNotFoundError):
             await ctx.workspace.stat('missing.txt')
         result = await ctx.workspace.run(['sh', '-c', 'exit 3'])
+        await ctx.workspace.run('exit 4', shell=True)
         return f'{text} {result.exit_code}'
 
     return agent
@@ -85,12 +90,14 @@ async def test_operations_are_traced(tmp_path: Path, include_content: bool, inst
         {'name': 'workspace exists', 'status': 'UNSET', 'file.path': '<root>/missing.txt'},
         {'name': 'workspace stat', 'status': 'UNSET', 'file.path': '<root>/missing.txt'},
         {'name': 'workspace run', 'status': 'UNSET', 'process.command_args': ('sh', '-c', 'exit 3'), 'process.exit.code': 3},
+        {'name': 'workspace run', 'status': 'UNSET', 'process.command_line': 'exit 4', 'process.exit.code': 4},
     ]), False: snapshot([
         {'name': 'workspace write_bytes', 'status': 'UNSET', 'file.size': 5},
         {'name': 'workspace read_bytes', 'status': 'UNSET', 'file.size': 5},
         {'name': 'workspace exists', 'status': 'UNSET'},
         {'name': 'workspace stat', 'status': 'UNSET'},
         {'name': 'workspace run', 'status': 'UNSET', 'process.exit.code': 3},
+        {'name': 'workspace run', 'status': 'UNSET', 'process.exit.code': 4},
     ])}  # fmt: skip
     assert workspace_spans(exporter, tmp_path) == expected[include_content]
     # Every operation names the workspace, with or without content.
