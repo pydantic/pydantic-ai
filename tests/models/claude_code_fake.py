@@ -233,7 +233,8 @@ class FakeSession(Transport):
         self.tool_names = [tool['name'] for tool in listed['result']['tools']]
         self._send(self._init())
         while True:
-            if not self.script.responses:  # pragma: no cover (a test that sends more requests than it scripted)
+            # Only a test that sends more requests than it scripted gets here.
+            if not self.script.responses:  # pragma: no cover
                 self._outbox.put_nowait(AssertionError('no scripted response left'))
                 return
             response = self.script.responses.pop(0)

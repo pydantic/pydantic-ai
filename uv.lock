@@ -7668,6 +7668,9 @@ boxd = [
 cerebras = [
     { name = "pydantic-ai-slim", extra = ["cerebras"] },
 ]
+claude-agent = [
+    { name = "pydantic-ai-slim", extra = ["claude-agent"] },
+]
 cohere = [
     { name = "pydantic-ai-slim", extra = ["cohere"] },
 ]
@@ -7758,6 +7761,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["bedrock"], marker = "extra == 'bedrock'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["bedrock-mantle"], marker = "extra == 'bedrock-mantle'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["cerebras"], marker = "extra == 'cerebras'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["claude-agent"], marker = "extra == 'claude-agent'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["cohere"], marker = "extra == 'cohere'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["crusoe"], marker = "extra == 'crusoe'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["google"], marker = "extra == 'google'", editable = "pydantic_ai_slim" },
@@ -7779,7 +7783,7 @@ requires-dist = [
     { name = "uvicorn", specifier = ">=0.38.0" },
     { name = "websockets", specifier = ">=15.0" },
 ]
-provides-extras = ["all", "anthropic", "bedrock", "bedrock-mantle", "boxd", "cerebras", "cohere", "crusoe", "daytona", "e2b", "google", "groq", "huggingface", "kubernetes", "local", "mistral", "modal", "openai", "openrouter", "opensandbox", "render", "snowflake", "sprites", "typesafe", "xai", "zai"]
+provides-extras = ["all", "anthropic", "bedrock", "bedrock-mantle", "boxd", "cerebras", "claude-agent", "cohere", "crusoe", "daytona", "e2b", "google", "groq", "huggingface", "kubernetes", "local", "mistral", "modal", "openai", "openrouter", "opensandbox", "render", "snowflake", "sprites", "typesafe", "xai", "zai"]
 
 [[package]]
 name = "pydantic-ai-slim"

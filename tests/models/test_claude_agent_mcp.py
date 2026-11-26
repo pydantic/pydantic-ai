@@ -6,6 +6,7 @@ is a subprocess's, not HTTP that a cassette could record.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -38,8 +39,9 @@ pytestmark = [
 ]
 
 SERVERS = ['claude.ai Docs', 'claude.ai Gmail']
-ALL = ClaudeAgentModelSettings(claude_agent_inherit_mcp_servers=True)
-DOCS = ClaudeAgentModelSettings(claude_agent_inherit_mcp_servers=['claude.ai Docs'])
+# Literals, so the module imports without `claude-agent-sdk` and its tests are skipped.
+ALL: ClaudeAgentModelSettings = {'claude_agent_inherit_mcp_servers': True}
+DOCS: ClaudeAgentModelSettings = {'claude_agent_inherit_mcp_servers': ['claude.ai Docs']}
 
 
 @pytest.fixture(autouse=True)
@@ -173,7 +175,7 @@ async def test_the_servers_are_found_once_after_they_load():
 
 
 async def test_servers_that_never_finish_loading(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(_claude_agent_sessions, '_MCP_STATUS_WAIT', 0.05)
+    monkeypatch.setattr(_claude_agent_sessions, '_MCP_STATUS_WAIT', 0)
     model, fake = claude_agent(FakeResponse([text('One.')]), pending_polls=10**9)
 
     result = await Agent(model, model_settings=ALL).run('Hi')
@@ -244,6 +246,18 @@ async def test_a_call_beside_one_of_ours():
         if isinstance(message, ModelResponse)
     ] == snapshot([['builtin-tool-call', 'tool-call'], ['builtin-tool-return', 'text']])
     assert again.output == 'Again.'
+    returned = result.all_messages()[3]
+    assert isinstance(returned, ModelResponse) and isinstance(returned.parts[0], NativeToolReturnPart)
+    # Claude Code's own tool results reach the model as text; other content gets a note.
+    assert returned.parts[0].content == snapshot(
+        {
+            'content': [
+                {'citations': None, 'text': 'Docs.', 'type': 'text'},
+                {'citations': None, 'text': '[image content]', 'type': 'text'},
+            ],
+            'is_error': False,
+        }
+    )
     assert frame_shape(fake.sessions[-1]) == snapshot(
         [
             ('user', ['text'], False),
@@ -254,3 +268,38 @@ async def test_a_call_beside_one_of_ours():
             ('user', ['text'], True),
         ]
     )
+
+
+async def test_tool_choice_none_brings_no_servers():
+    """A request that allows no tool call can't reach the user's own servers either, nor reuse a process that can."""
+    model, fake = claude_agent(FakeResponse([text('One.')]))
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_city() -> str:
+        return 'Lisbon'  # pragma: no cover
+
+    await agent.run('Hi', model_settings={**ALL, 'tool_choice': 'none'})
+
+    assert fake.discoveries == []
+    [session] = fake.sessions
+    assert (session.options.strict_mcp_config, session.options.disallowed_tools) == (True, [])
+
+
+async def test_an_edited_tool_result_starts_a_new_process():
+    """A history whose Claude Code tool result was redacted isn't continued by the process that saw the original."""
+    model, fake = claude_agent(guide_call(), FakeResponse([text('It covers docs.')]), FakeResponse([text('Ok.')]))
+    fake.external_results['guide'] = 'Secret notes.'
+    agent = Agent(model, model_settings=ALL)
+
+    async with agent:
+        first = await agent.run('What does the guide cover?')
+        history = first.all_messages()
+        response = history[-1]
+        returned = response.parts[1] if isinstance(response, ModelResponse) else None
+        assert isinstance(response, ModelResponse) and isinstance(returned, NativeToolReturnPart)
+        redacted = replace(returned, content={'content': [{'type': 'text', 'text': '[redacted]'}], 'is_error': False})
+        history[-1] = replace(response, parts=[response.parts[0], redacted, *response.parts[2:]])
+        await agent.run('Thanks.', message_history=history)
+
+    assert len(fake.sessions) == 2
