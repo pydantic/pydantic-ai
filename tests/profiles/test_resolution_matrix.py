@@ -3092,7 +3092,8 @@ def test_vllm_qwen_hf_namespace():
 def test_vllm_gemma_video_is_up_to_the_model_class():
     """Gemma reads video, but neither OpenAI API has a video part, so the model class turns the flag off.
 
-    The provider profile keeps the family's answer; OpenRouter, which maps `video_url`, keeps it too.
+    The provider profile keeps the family's answer. OpenRouter maps `video_url`, but its model list has no video for
+    Gemma 3, and the list beats the family's profile on OpenRouter routes.
     """
     family = VLLMProvider.model_profile('google/gemma-3-27b-it')
     assert family is not None and family.get('supports_video_input') is True
@@ -3104,7 +3105,7 @@ def test_vllm_gemma_video_is_up_to_the_model_class():
         'chat': chat.profile.get('supports_video_input'),
         'responses': responses.profile.get('supports_video_input'),
         'openrouter': openrouter.profile.get('supports_video_input'),
-    } == snapshot({'chat': False, 'responses': False, 'openrouter': True})
+    } == snapshot({'chat': False, 'responses': False, 'openrouter': False})
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
