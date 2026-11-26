@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from pydantic_ai import Agent, DeferredToolRequests
+from pydantic_ai import Agent, DeferredToolRequests, Tool
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, LocalWorkspace
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -20,7 +20,9 @@ from pydantic_ai_harness.permissions import (
     PermissionRequest,
     PermissionRule,
     Permissions,
+    RememberedApproval,
     approval_ask,
+    ask_permissions,
     permission_requests,
 )
 from pydantic_ai_harness.permissions._protected import command_locations, matches, write_locations
@@ -99,7 +101,7 @@ class TestProtectedPaths:
             tmp_path, (tool, {'path': path, 'content': 'x'} if tool == 'write_file' else {'path': path})
         )
         [asked] = person.asked
-        assert asked.protected and asked.action == 'write' and asked.subject == path
+        assert asked.person_only and asked.action == 'write' and asked.subject == path
         assert asked.reason == 'This file write changes a protected path, so only a person can approve it.'
         assert not (tmp_path / path).exists()
 
@@ -134,7 +136,7 @@ class TestProtectedPaths:
             mode='read-only',
             rules=[PermissionRule('allow', tools=['write_file'])],
         )
-        assert [asked.protected for asked in person.asked] == [True]
+        assert [asked.person_only for asked in person.asked] == [True]
 
     async def test_a_deny_rule_still_refuses_a_protected_write(self, tmp_path: Path) -> None:
         (tmp_path / '.pax').mkdir()
@@ -160,7 +162,7 @@ class TestProtectedPaths:
     async def test_auto_asks_before_a_command_naming_a_protected_path(self, tmp_path: Path, command: str) -> None:
         person = await _run(tmp_path, ('run_command', {'command': command}))
         [asked] = person.asked
-        assert asked.protected and asked.action == 'command' and asked.subject == command
+        assert asked.person_only and asked.action == 'command' and asked.subject == command
         assert asked.reason == 'This command may change a protected path, so only a person can approve it.'
         assert not (tmp_path / '.pax').exists()
 
@@ -169,7 +171,7 @@ class TestProtectedPaths:
         person = await _run(
             tmp_path, *(('run_command', {'command': c}) for c in commands), protected_commands=['settings set']
         )
-        assert [(asked.subject, asked.protected) for asked in person.asked] == [(commands[0], True)]
+        assert [(asked.subject, asked.person_only) for asked in person.asked] == [(commands[0], True)]
 
     async def test_a_reviewer_never_approves_a_protected_call(self, tmp_path: Path) -> None:
         """A reviewer that says every call is safe approves the `git push`, but the protected write goes to the person."""
@@ -193,11 +195,92 @@ class TestProtectedPaths:
         )
         result = await agent.run('go')
         assert isinstance(result.output, DeferredToolRequests)
-        assert [request.protected for request in permission_requests(result.output)] == [True]
+        assert [request.person_only for request in permission_requests(result.output)] == [True]
 
     def test_from_spec_takes_the_protected_fields(self) -> None:
         permissions = Permissions[None].from_spec('auto', protected_paths=['.pax/*'], protected_commands=['pax config'])
         assert (permissions.protected_paths, permissions.protected_commands) == (['.pax/*'], ['pax config'])
+
+
+class _DBOSDurability(AbstractCapability[None]):
+    in_durable_context = True
+
+
+_DBOSDurability.__module__ = 'pydantic_ai.durable_exec.dbos'
+
+
+class _Remembering:
+    """Approves every request for the rest of the conversation, keeping what it was asked."""
+
+    def __init__(self) -> None:
+        self.asked: list[PermissionRequest] = []
+
+    async def __call__(self, request: PermissionRequest) -> PermissionDecision:
+        self.asked.append(request)
+        return PermissionDecision(approved=True, remember=True)
+
+
+class TestProtectedApprovalsAreNotRemembered:
+    async def test_each_protected_write_asks_again(self, tmp_path: Path) -> None:
+        (tmp_path / '.pax').mkdir()
+        write = ('write_file', {'path': '.pax/settings.json', 'content': 'x'})
+        other = ('write_file', {'path': 'notes.md', 'content': 'x'})
+        person = _Remembering()
+        remembered: set[RememberedApproval] = set()
+        agent = Agent[None, str](
+            _calls(write, write, other, other),
+            deps_type=type(None),
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                FileSystem(),
+                Permissions('read-only', protected_paths=PROTECTED, remembered=remembered),
+                HandleDeferredToolCalls[None](approval_ask(person)),
+            ],
+        )
+        await agent.run('go', conversation_id='c')
+        assert [asked.subject for asked in person.asked] == ['.pax/settings.json', '.pax/settings.json', 'notes.md']
+        assert remembered == {RememberedApproval('c', 'write_file', 'notes.md')}
+
+    async def test_an_approval_remembered_before_does_not_cover_a_protected_write(self, tmp_path: Path) -> None:
+        """Such as one remembered while the path was not protected, in a `remembered` set the caller keeps."""
+        (tmp_path / '.pax').mkdir()
+        person = _Remembering()
+        remembered = {RememberedApproval('c', 'write_file', '.pax/settings.json')}
+        agent = Agent[None, str](
+            _calls(('write_file', {'path': '.pax/settings.json', 'content': 'x'})),
+            deps_type=type(None),
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                FileSystem(),
+                Permissions('auto', protected_paths=PROTECTED, remembered=remembered),
+                HandleDeferredToolCalls[None](approval_ask(person)),
+            ],
+        )
+        await agent.run('go', conversation_id='c')
+        assert [asked.subject for asked in person.asked] == ['.pax/settings.json']
+
+    async def test_inside_durable_execution_no_approval_is_kept_in_history(self) -> None:
+        def run_command(command: str) -> str:
+            return 'ran'
+
+        command = ('run_command', {'command': 'echo x > .pax/settings.json'})
+        person = _Remembering()
+        agent = Agent[None, str](
+            _calls(command, command),
+            deps_type=type(None),
+            tools=[Tool(run_command, metadata={'code_arg_language': 'shell', 'code_arg_name': 'command'})],
+            capabilities=[
+                _DBOSDurability(),
+                Permissions('auto', protected_paths=PROTECTED),
+                HandleDeferredToolCalls[None](handler=lambda ctx, requests: ask_permissions(requests, person)),
+            ],
+        )
+        result = await agent.run('go', conversation_id='c')
+        assert len(person.asked) == 2
+        returns = [
+            part for message in result.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)
+        ]
+        assert [part.metadata for part in returns] == [None, None]
 
 
 class TestMatching:

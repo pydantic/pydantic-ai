@@ -36,7 +36,7 @@ from .._judge import (
     reported_confidence,
     tool_call_prompt,
 )
-from ..permissions._capability import protected_request
+from ..permissions._capability import person_only_request
 
 _REVIEWER_INSTRUCTIONS = """{question}
 
@@ -215,7 +215,7 @@ class ApprovalReviewer(AbstractCapability[AgentDepsT]):
         """
         approved: dict[str, bool | DeferredToolApprovalResult] = {}
         for call in requests.approvals:
-            if protected_request(requests.metadata.get(call.tool_call_id)) or not await self._selects(ctx, call):
+            if person_only_request(requests.metadata.get(call.tool_call_id)) or not await self._selects(ctx, call):
                 continue
             review = await self._review_call(ctx, call)
             if self.on_review is not None:

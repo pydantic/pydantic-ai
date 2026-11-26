@@ -434,7 +434,8 @@ A denied call returns a `ToolReturnPart` with `outcome='denied'`, even when it w
 `protected_paths` (globs) and `protected_commands` (command words) mark what only a person may approve a change to,
 such as the agent's own settings: outside `'full'`, a file write to a matching path, a command naming one in a word
 (unless it only runs reading programs such as `cat`), or a matching command always asks, whatever the rules allow,
-and `ApprovalReviewer` never reviews it. A deny rule still refuses it. It is checked best effort, by the command's
+and the request is `person_only`: `ApprovalReviewer` never reviews it and `remember=True` doesn't cover later calls.
+A deny rule still refuses it. It is checked best effort, by the command's
 text.
 
 ```python {test="skip"}

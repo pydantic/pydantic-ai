@@ -153,7 +153,7 @@ and [project settings](https://github.com/pydantic/pydantic-ai/blob/main/src/pyd
 in the reference.
 
 Under `/permissions auto` or `read-only`, the agent asks you before it changes your Pax folder, a
-project's `.pax/` folder, or a repository's `.git/hooks/`, by a file edit or a shell command that names
+project's `.pax/` folder, or a repository's `.git/hooks/` or `.git/config`, by a file edit or a shell command that names
 them, and before it runs `pax config set` or `pax plugins enable`. This is a best-effort check, not a
 sandbox: see [permissions](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#permissions)
 in the reference.

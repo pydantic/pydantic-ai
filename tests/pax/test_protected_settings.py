@@ -16,6 +16,9 @@ from pydantic_ai_harness.permissions import PermissionDecision, PermissionReques
 from pydantic_ai_pax.builtin_plugins.web.live import BrowserAnswerer
 from pydantic_ai_pax.config import PermissionMode
 from pydantic_ai_pax.runtime.permissions import (
+    APPROVE,
+    APPROVE_SESSION,
+    DENY,
     PROTECTED,
     UNANSWERED,
     approval_handler,
@@ -101,6 +104,7 @@ def write(path: str) -> tuple[str, Mapping[str, object]]:
         pytest.param('.pax/settings.json', id='project-folder'),
         pytest.param('sub/.clai/settings.json', id='legacy-project-folder'),
         pytest.param('.git/hooks/pre-commit', id='git-hooks'),
+        pytest.param('.git/config', id='git-config'),
         pytest.param('db/config.db-wal', id='database-elsewhere'),
         pytest.param('db/plugins/mine.py', id='plugins-next-to-database-elsewhere'),
     ],
@@ -109,7 +113,7 @@ async def test_auto_asks_before_a_write_to_paxs_settings(tmp_path: Path, config_
     (tmp_path / path).parent.mkdir(parents=True)
     person = await run(tmp_path, write(path), database=tmp_path / 'db' / 'config.db')
     [asked] = person.asked
-    assert asked.protected and asked.subject == path
+    assert asked.person_only and asked.subject == path
     assert approval_question(asked).questions[0].question == f'{PROTECTED} Write {path}?'
     assert not (tmp_path / path).exists()
 
@@ -139,7 +143,7 @@ async def test_auto_asks_before_a_command_that_changes_paxs_settings(
     (tmp_path / '.pax').mkdir()
     person = await run(tmp_path, ('run_command', {'command': command}))
     [asked] = person.asked
-    assert asked.protected and asked.subject == command
+    assert asked.person_only and asked.subject == command
     assert approval_question(asked).questions[0].question == f'{PROTECTED} Run this command?\n{command}'
     assert RAN == []
 
@@ -182,13 +186,21 @@ async def test_a_session_no_one_can_be_asked_in_denies_a_change_to_paxs_settings
     assert not (tmp_path / 'plugins' / 'mine.py').exists()
 
 
-async def test_the_browser_card_gives_the_same_reason(tmp_path: Path, config_home: Path) -> None:
+@pytest.mark.parametrize(('path', 'choices'), [('.pax/settings.json', [APPROVE, DENY]), ('notes.md', None)])
+async def test_a_change_to_paxs_settings_offers_no_approval_for_the_session(
+    tmp_path: Path, config_home: Path, path: str, choices: list[str] | None
+) -> None:
+    """In the terminal question and the web card alike, so a session approval never covers a later change."""
     (tmp_path / '.pax').mkdir()
-    [held] = (await run(tmp_path, write('.pax/settings.json'))).asked
+    [held] = (await run(tmp_path, write(path), mode='read-only')).asked
+    choices = choices or [APPROVE, APPROVE_SESSION, DENY]
+    assert [option.label for option in approval_question(held).questions[0].options] == choices
     answerer = BrowserAnswerer(publish=lambda message, _: None, terminal=None)
     async with anyio.create_task_group() as group:
         group.start_soon(answerer.approve, held)
         await anyio.wait_all_tasks_blocked()
         [questions] = answerer.questions
-        assert questions.approval is not None and questions.approval.reason == PROTECTED
+        assert [option.label for option in questions.questions[0].options] == choices
+        assert questions.approval is not None
+        assert (questions.approval.reason == PROTECTED) is held.person_only
         answerer.reply(questions.id, None)

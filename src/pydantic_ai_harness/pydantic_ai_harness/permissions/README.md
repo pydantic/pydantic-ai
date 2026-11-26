@@ -149,7 +149,7 @@ permissions = Permissions(
 
 - A **file write** to a matching path asks. The path is matched as resolved against the working directory and, where the workspace can follow symlinks, as where it leads. A relative glob also matches the end of a path, so `.git/hooks/*` covers every repository's hooks.
 - A **command** asks when one of its words names a matching path, a redirection target or an `--option=value` value included, with quotes removed and `~` and environment variables expanded as in this process. A command made only of programs that read the files they name (`cat`, `grep`, `head`, `ls`, and a few more), without redirection, still runs. A command matching one of `protected_commands`, by the same word matching as an ask rule's `command`, asks too.
-- A rule's allow does not let such a call run, and a rule's deny still refuses it. The held request's `PermissionRequest.protected` is `True`, and an [`ApprovalReviewer`](https://pydantic.dev/docs/ai/harness/approval-reviewer/) never reviews it, so only a person can approve it.
+- A rule's allow does not let such a call run, and a rule's deny still refuses it. The held request's `PermissionRequest.person_only` is `True`, and an [`ApprovalReviewer`](https://pydantic.dev/docs/ai/harness/approval-reviewer/) never reviews it. A `PermissionDecision(remember=True)` doesn't cover later calls either, so a person approves each one.
 
 The check is best effort, by the command's text: a path a command builds at run time, as `cd .git && ...` or a script the agent wrote does, is not seen. It keeps an agent from changing these paths without a person noticing, and is not a sandbox: use [one](https://pydantic.dev/docs/ai/core-concepts/workspace/) when the agent must not reach a path.
 

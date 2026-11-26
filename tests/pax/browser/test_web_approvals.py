@@ -16,17 +16,21 @@ from pydantic_ai.messages import ModelMessage, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_pax.builtin_plugins.web.app import create_app
 from pydantic_ai_pax.builtin_plugins.web.server import WebServer
+from pydantic_ai_pax.runtime.permissions import PROTECTED
 from tests.pax.test_web import TOKEN
 from tests.pax.test_web_sessions import Fleet
 
 COMMAND = 'mkdir -p kept && rm -rf doomed'
+PROTECTED_COMMAND = 'echo x > .pax/settings.json'
+"""A command that changes Pax's own settings, which the model runs for a prompt that mentions them."""
 
 
 async def remove(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-    """Run `COMMAND` for each prompt, then report what the tool returned."""
+    """Run `COMMAND`, or `PROTECTED_COMMAND` for a prompt about settings, then report what the tool returned."""
     last = messages[-1].parts[-1]
     if isinstance(last, UserPromptPart):
-        arguments = json.dumps({'command': COMMAND})
+        protected = isinstance(last.content, str) and 'settings' in last.content
+        arguments = json.dumps({'command': PROTECTED_COMMAND if protected else COMMAND})
         yield {0: DeltaToolCall(name='run_command', json_args=arguments, tool_call_id=f'call{len(messages)}')}
     else:
         assert isinstance(last, ToolReturnPart)
@@ -133,6 +137,7 @@ async def test_auto_mode_holds_rm_rf_for_approval(page: Page, approvals: Approva
     await expect(card).to_be_visible()
     await expect(card.locator('.approval-subject')).to_have_text(COMMAND)
     await expect(card).to_contain_text('run_command')
+    await expect(card.get_by_role('button', name='Approve for this session', exact=True)).to_be_visible()
     # While the turn waits, a composer narrowed by the Monty panel keeps the Interrupt button round and the turn meter
     # on one line inside it.
     await page.set_viewport_size({'width': 1000, 'height': 800})
@@ -166,3 +171,24 @@ async def test_auto_mode_holds_rm_rf_for_approval(page: Page, approvals: Approva
     await expect(page.get_by_text(f'Tool said: ran {COMMAND}')).to_be_visible()
     assert not doomed.exists()
     assert (approvals.folder / 'kept').is_dir()
+
+
+async def test_a_change_to_paxs_settings_offers_no_approval_for_the_session(page: Page, approvals: Approvals) -> None:
+    (approvals.folder / '.pax').mkdir(parents=True, exist_ok=True)
+    await page.goto(f'{approvals.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Approvals', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Approvals')
+    mode = page.get_by_label('Permissions')
+    await mode.select_option('auto')
+    await expect(mode).to_have_value('auto')
+
+    await send(page, approvals, 'Change the settings')
+    card = page.locator('.approval-card')
+    await expect(card).to_be_visible()
+    await expect(card.locator('.approval-subject')).to_have_text(PROTECTED_COMMAND)
+    await expect(card.locator('.approval-reason')).to_have_text(PROTECTED)
+    buttons = card.locator('.question-actions button')
+    await expect(buttons).to_have_text(['Deny', 'Approve'])
+    await card.get_by_role('button', name='Deny', exact=True).click()
+    await expect(card).to_have_count(0)
+    assert not (approvals.folder / '.pax' / 'settings.json').exists()

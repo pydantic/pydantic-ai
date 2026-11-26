@@ -11,14 +11,19 @@ interface Props {
   onError: (message: string) => void
 }
 
-/** A tool call the session's permission mode holds: approve it once or for the session, or deny it with a reason. */
+/** A tool call the session's permission mode holds: approve it once or for the session, or deny it with a reason.
+ * A change to Pax's own settings offers no approval for the session. */
 export function ApprovalCard({ request, approval, asker, answer, onError }: Props) {
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
   const question = request.questions[0]
   const header = question?.header ?? ''
-  // The server's question offers approve, approve for this session, and deny, in that order.
-  const [approve = '', approveSession = '', deny = ''] = (question?.options ?? []).map((option) => option.label)
+  // The server's question offers approve, approve for this session (left out for a change to Pax's own
+  // settings), and deny, in that order.
+  const labels = (question?.options ?? []).map((option) => option.label)
+  const approve = labels[0] ?? ''
+  const approveSession = labels.length > 2 ? (labels[1] ?? null) : null
+  const deny = labels[labels.length - 1] ?? ''
 
   const decide = async (label: string) => {
     setBusy(true)
@@ -58,9 +63,11 @@ export function ApprovalCard({ request, approval, asker, answer, onError }: Prop
         <button className="ghost" onClick={() => void decide(deny)} disabled={busy}>
           {deny}
         </button>
-        <button className="ghost" onClick={() => void decide(approveSession)} disabled={busy}>
-          {approveSession}
-        </button>
+        {approveSession !== null && (
+          <button className="ghost" onClick={() => void decide(approveSession)} disabled={busy}>
+            {approveSession}
+          </button>
+        )}
         <button className="primary" onClick={() => void decide(approve)} disabled={busy}>
           {approve}
         </button>

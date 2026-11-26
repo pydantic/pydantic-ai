@@ -97,7 +97,8 @@ def protected_paths(database: Path | None = None) -> tuple[str, ...]:
 
     The user's Pax folder (its settings database, credential files, and plugins folder) under its name and its
     name before the rename, the settings `database` with its plugins folder when it is elsewhere, every
-    project's `.pax/` and `.clai/` folders, and every repository's `.git/hooks/`, each as written and resolved.
+    project's `.pax/` and `.clai/` folders, and every repository's `.git/hooks/` and `.git/config`, each as written
+    and resolved.
     """
     folder = config_dir()
     directories = [folder, folder.with_name(LEGACY_DIRECTORY_NAME)]
@@ -112,6 +113,8 @@ def protected_paths(database: Path | None = None) -> tuple[str, ...]:
         patterns += [f'{form}*' for form in _spellings(database)]
     for name in (PROJECT_DIR.name, LEGACY_PROJECT_DIR.name, '.git/hooks'):
         patterns += [name, f'{name}/*']
+    # `core.hooksPath` in a repository's config can point its hooks at any folder, around `.git/hooks/`.
+    patterns.append('.git/config')
     return tuple(dict.fromkeys(patterns))
 
 
@@ -224,7 +227,11 @@ def _is_approval_handler(capability: AbstractCapability[AgentDepsT]) -> bool:
 
 
 def approval_question(request: PermissionRequest) -> AskUserRequest:
-    """`request` as a question: approve once, approve for the session, or deny; a typed answer denies with it."""
+    """`request` as a question: approve once, approve for the session, or deny; a typed answer denies with it.
+
+    A change to Pax's own settings (`request.person_only`) is approved one call at a time, so it offers no
+    approval for the session.
+    """
     text = _question_text(request)
     if len(text) > _QUESTION_LENGTH:
         text = text[: _QUESTION_LENGTH - 1] + '…'
@@ -237,7 +244,15 @@ def approval_question(request: PermissionRequest) -> AskUserRequest:
                 question=text,
                 options=(
                     QuestionOption(label=APPROVE, description='Run it this once.'),
-                    QuestionOption(label=APPROVE_SESSION, description=f'Run it on this {noun} without asking again.'),
+                    *(
+                        ()
+                        if request.person_only
+                        else (
+                            QuestionOption(
+                                label=APPROVE_SESSION, description=f'Run it on this {noun} without asking again.'
+                            ),
+                        )
+                    ),
                     QuestionOption(
                         label=DENY, description='Do not run it. Type a reason instead to send it to the model.'
                     ),
@@ -254,7 +269,7 @@ def shown_in_full(request: PermissionRequest) -> bool:
 
 def approval_reason(request: PermissionRequest) -> str:
     """Why `request` asks, as the terminal and the web UI show it: `PROTECTED` for a change to Pax's own settings."""
-    return PROTECTED if request.protected else request.reason
+    return PROTECTED if request.person_only else request.reason
 
 
 def _question_text(request: PermissionRequest) -> str:
