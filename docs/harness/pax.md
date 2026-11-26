@@ -38,8 +38,7 @@ loads that agent on its own without Pax's plugins.
 - **Everything is a plugin, the coding agent included.** Add tools, commands and menus without
   forking anything, or swap any piece out. Sandboxes and workspaces are plugins too.
 - **Any model, any account.** Switch models mid-conversation, sign in to several accounts, and
-  let a fallback chain move on when a model errors, refuses, or cuts its answer off at the
-  token limit.
+  let a fallback chain move on to the next model when one fails with an error.
 - **Run it in a sandbox.** `/sandbox` starts a conversation inside a micro-VM on your machine or
   a hosted sandbox, with the same file and shell tools either way.
 - **Fewer model turns with code mode.** The model calls many tools from one Python snippet
@@ -374,6 +373,10 @@ the next when it hits a rate or usage limit.
 A fallback chain tries several models in order, such as Codex first and Claude after it.
 Make one in the `/model` picker with **New fallback chain...**, then select it like any
 other model. It shows up as `chain:NAME`.
+
+Pax streams every turn in a session, so a chain moves on when a model fails with an error,
+while a refusal or an answer cut off at the token limit arrives as it is: a stream's finish
+reason is only known once it has been streamed.
 
 In a session a chain runs through `SelectionFallback`, a [`ModelFallback`](../capabilities/model-fallback.md)
 subclass, so a task you delegate falls back too. Outside a session, where a plugin resolves the
