@@ -1361,9 +1361,14 @@ def test_a_head_no_run_of_the_pr_shows_fails_closed():
 
 
 def test_the_lock_covers_the_compliance_tests_and_itself():
-    assert {'tests/models/test_claude_agent_compliance.py', '.github/scripts/compliance_lock.py'} <= (
-        compliance_lock.LOCKED_PATHS
-    )
+    assert compliance_lock.LOCKED_PATHS == {
+        'tests/models/test_claude_agent_compliance.py',
+        'tests/models/claude_code_fake.py',
+        '.github/scripts/compliance_lock.py',
+    }
+    owners = (Path(__file__).parents[1] / 'CODEOWNERS').read_text()
+    for path in compliance_lock.LOCKED_PATHS:
+        assert f'/{path} ' in owners, path
     for path in compliance_lock.LOCKED_PATHS:
         assert (Path(__file__).parents[2] / path).is_file(), path
 

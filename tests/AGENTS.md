@@ -347,7 +347,7 @@ Select one or two test nodes that reach each changed line, not whole files. The 
 
 ## Compliance-locked tests
 
-`tests/models/test_claude_agent_compliance.py` pins what keeps `ClaudeAgentModel` within Anthropic's terms, and `.github/scripts/compliance_lock.py` locks it: `Gate: compliance lock` fails a PR that changes it until a maintainer adds `compliance:approved` after the last push. When a change makes one of its tests fail, change the code, not the test, or hand the failure to a maintainer. Never apply the label yourself.
+`tests/models/test_claude_agent_compliance.py` pins what keeps `ClaudeAgentModel` within Anthropic's terms, and changing it, or another file `.github/scripts/compliance_lock.py` lists, needs a maintainer's approval (see [`Gate: compliance lock`](../.github/workflows/AGENTS.md#pr-metadata-gates-enforce-the-merge-bar)). When a change makes one of its tests fail, change the code, not the test, or hand the failure to a maintainer. Never apply `compliance:approved` yourself.
 
 ## Dependency floors
 

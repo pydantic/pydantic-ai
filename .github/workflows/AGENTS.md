@@ -605,13 +605,15 @@ starts none of them.
 
 # Code owners review dependency, CI config and durable runtime changes
 
-`.github/CODEOWNERS` owns three scopes:
+`.github/CODEOWNERS` owns four scopes:
 
 - **Dependency and build config**, owned by `@DouweM`, `@adtyavrdhn`, `@mpfaffenberger` and
   `@dsfaccini`: every `pyproject.toml` and `uv.lock`, `.pre-commit-config.yaml` and `Makefile`.
 - **Everything under `.github/`**, owned by `@dsfaccini` only: workflows, actions, scripts and the
-  rest of the directory. `CODEOWNERS` itself is the exception: `@DouweM` and `@adtyavrdhn` own it
-  too, so the durable runtime owners see every ownership change.
+  rest of the directory. `CODEOWNERS` itself is an exception: `@DouweM` and `@adtyavrdhn` own it
+  too, so the durable runtime owners see every ownership change. `scripts/compliance_lock.py` is the other.
+- **The compliance-locked files** that `.github/scripts/compliance_lock.py` lists, owned by all four maintainers;
+  `Gate: compliance lock` gates them.
 - **The durable runtime and its deep harness integrations**, owned by `@DouweM` and `@adtyavrdhn`
   only: the runtime under `pydantic_ai_slim/pydantic_ai/durable_exec/`, every harness durable
   engine (a `BaseDurabilityCapability` subclass), the harness's shared durable helper, and the
