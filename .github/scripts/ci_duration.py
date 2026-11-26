@@ -28,9 +28,9 @@ MIN_BASELINE_SAMPLES = 10
 # Must stay above the number of tracked jobs so a full run renders every row: `no_baseline` sorts
 # into the truncated tail with `normal`, and every newly-minted signature starts there. Today's
 # `ci.yml` matrices give 4 pythons x (5 installs + 2 all-extras shards + 2 lowest-versions
-# shards) + 4 x 2 durable-exec + 3.11's third all-extras shard + 3.15's 5 installs, 2 all-extras
-# shards, and locked durable-exec leg = 53.
-REPORT_ROW_LIMIT = 60
+# shards) + 4 x 2 durable-exec + 4 x 2 harness-temporal + 3.11's third all-extras shard + 3.15's
+# 5 installs, 2 all-extras shards, and locked durable-exec and harness-temporal legs = 62.
+REPORT_ROW_LIMIT = 70
 WARNING_MIN_SECONDS = 60
 SLOW_THRESHOLD_MULTIPLIER = 1.25
 FAST_THRESHOLD_MULTIPLIER = 0.75
@@ -441,7 +441,9 @@ def step_to_json(step: StepRecord) -> JsonObject:
 
 
 def parse_job_matrix(job_name: str) -> tuple[str | None, str | None]:
-    match = re.fullmatch(r'test(?: durable-exec)? on (?P<python>[^ ]+) \((?P<extra>[^)]+)\)', job_name)
+    match = re.fullmatch(
+        r'test(?: durable-exec| harness-temporal)? on (?P<python>[^ ]+) \((?P<extra>[^)]+)\)', job_name
+    )
     if match:
         return match.group('python'), match.group('extra')
     match = re.fullmatch(r'test examples on (?P<python>[^ ]+)', job_name)
@@ -458,13 +460,15 @@ def parse_job_family(job_name: str) -> str:
     # folding a different suite under the `test` label mislabels it in all three.
     if job_name.startswith('test durable-exec on '):
         return 'test-durable-exec'
+    if job_name.startswith('test harness-temporal on '):
+        return 'test-harness-temporal'
     if job_name.startswith('test examples on '):
         return 'test-examples'
     return job_name
 
 
 def is_tracked_test_job(job: JobRecord) -> bool:
-    return job.job_family in {'test', 'test-durable-exec'}
+    return job.job_family in {'test', 'test-durable-exec', 'test-harness-temporal'}
 
 
 def parse_runner_class(runner_group_name: str | None, runner_name: str | None, labels: list[JsonValue] | None) -> str:

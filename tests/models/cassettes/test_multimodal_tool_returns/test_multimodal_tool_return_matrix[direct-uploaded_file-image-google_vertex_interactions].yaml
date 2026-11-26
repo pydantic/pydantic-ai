@@ -1,0 +1,190 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "385"
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: >-
+              Use the get_file tool now to retrieve a image file, then describe what you
+              received.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: requires_action
+        usage:
+          total_tokens: 118
+          total_input_tokens: 29
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 29
+          total_output_tokens: 10
+          output_tokens_by_modality:
+          - modality: text
+            tokens: 10
+          total_tool_use_tokens: 0
+          total_thought_tokens: 79
+          initial_input_tokens: 29
+        role: model
+        created: 2026-11-06T12:24:04Z
+        updated: 2026-11-06T12:24:04Z
+        steps:
+        - signature: >-
+            AY89a1/fzQyYuMUU2O4Ol3S5PO0q0Yt15CGbl+fcXk6GXeq2bSieOzwFBSWE+aL+D2fGFLDtq7+DCay2RQp5i+gJ+4HA+SQjEbeJAvIZvQJJ4767tHOcqkATnucAKeA/dRdo50Z3z1+xXcP7gD0qE6tyyyydgntUDpH80BM0+d8E55JhTuQRNupUlFJO5bvBL9DjFYjqCDfDhhlkmz3rix0H3PvLdUCk2YaTi7W53DHTXUyl5l0nx90gjzxpm0lHnlV9OlgYA+Y3ZUhnI+rNTJ6oiiE783xvvP9DKJFLAIXND6RVbomTvmK3Ow32ednjLAnuc/a25kt6sRsJutxc2tc2QGRV7r05LmwGjJm6FOIXHPrGuoB1h/90Drjfgl2pfni1j3FqDFmeHUqRL+OqM/YB1n+tmIP7vi2J84a47Pam20ja9/1Ue/RbW0ZYHOZMOHVQC1S9M9on0OYCN64HzgSPiQva0Um0DpTW8AajVr49Kg8Si2d6fhefIALPjoUITNRBUokq6yYeX2k2pAVDaaGFVgtRYw==
+          type: thought
+        - id: call_1246843
+          type: function_call
+          name: get_file
+          arguments: {}
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T12:24:04.343538+00:00
+- request:
+    method: POST
+    uri: >-
+      https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1244"
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: >-
+              Use the get_file tool now to retrieve a image file, then describe what you
+              received.
+        - signature: >-
+            AY89a1/fzQyYuMUU2O4Ol3S5PO0q0Yt15CGbl+fcXk6GXeq2bSieOzwFBSWE+aL+D2fGFLDtq7+DCay2RQp5i+gJ+4HA+SQjEbeJAvIZvQJJ4767tHOcqkATnucAKeA/dRdo50Z3z1+xXcP7gD0qE6tyyyydgntUDpH80BM0+d8E55JhTuQRNupUlFJO5bvBL9DjFYjqCDfDhhlkmz3rix0H3PvLdUCk2YaTi7W53DHTXUyl5l0nx90gjzxpm0lHnlV9OlgYA+Y3ZUhnI+rNTJ6oiiE783xvvP9DKJFLAIXND6RVbomTvmK3Ow32ednjLAnuc/a25kt6sRsJutxc2tc2QGRV7r05LmwGjJm6FOIXHPrGuoB1h/90Drjfgl2pfni1j3FqDFmeHUqRL+OqM/YB1n+tmIP7vi2J84a47Pam20ja9/1Ue/RbW0ZYHOZMOHVQC1S9M9on0OYCN64HzgSPiQva0Um0DpTW8AajVr49Kg8Si2d6fhefIALPjoUITNRBUokq6yYeX2k2pAVDaaGFVgtRYw==
+          type: thought
+        - id: call_1246843
+          name: get_file
+          type: function_call
+          arguments: {}
+        - type: function_result
+          name: get_file
+          call_id: call_1246843
+          is_error: false
+          result:
+          - mime_type: image/jpeg
+            type: image
+            uri: gs://pydantic-ai-test-files-vertex/test-files/kiwi.jpg
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 1412
+          total_input_tokens: 1213
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 125
+          - modality: image
+            tokens: 1088
+          total_output_tokens: 100
+          output_tokens_by_modality:
+          - modality: text
+            tokens: 100
+          total_tool_use_tokens: 0
+          total_thought_tokens: 99
+          initial_input_tokens: 1213
+        role: model
+        created: 2026-11-06T12:24:08Z
+        updated: 2026-11-06T12:24:08Z
+        steps:
+        - signature: >-
+            AY89a19AYvkh7vwOC/iQ+JIsUHcAXvh+4axhb0rfFUA7kFTQ6OrDQMBq49LuUC47dcRySq6AxC36qIxVDgmBcljcTQYFftu/Dcdd7nmHTE2wc1+MYwcvprXmZxE9NOGO1C7nNJPEYnz6EH+3FY3AfnlK52QyReXjXZYHq4Hb3MgliVMBXx105zPDEspOF9emROls8X+qd/2SJVSUG1UHMrCwZ6gwqIsnjy7qnwOxqZqPNR0CBC0Hv+hooGBlmPULDtmBVhN57Ma0QopdKTsf6Natftp1wMx5x6oPSfIyASq7ZKMgxK3vq5K8fhvPm4YqP6LQXsXaWm6c1RP/KFdt+DiRdLvESin1ZOnQCzJGPjbjtWEStYKA8znMFsfWA2kMxgsEne6B+EysX0Mc/DHRHDPc6Hrbq+KejYBksz8QI4LWse2QqRdQs3FQRWXcBRCljVRKnDrLhFDYIN6B8+y+XuECN+QS1Chsda8GzNvd8+Y2UbgJsPk3PGiRDaQMsm4y1cF8zXxMB/OJqqZZeHB5Dfji525syJkpXAiUr59egoWufr9Ltz79h3KLlZkmqyi603H/dmbptbBoZ96EuWOQYpicfgSEge+VR5BnPuijrpUYvIP8niaOCZ3psdyxYMxXLOr/qJYVU8I50BSOugxMRJ0=
+          type: thought
+        - content:
+          - text: |-
+              The image received is a detailed cross-section of a ripe green **kiwifruit** (kiwi) set against a solid white background:
+
+              - **Flesh:** Vibrant, translucent bright-green pulp with delicate radial streaks extending outwards.
+              - **Center & Seeds:** A creamy, pale yellowish-white core encircled by a ring of small, dark brown-to-black seeds.
+              - **Exterior:** The outer edge displays the thin, fuzzy brown skin cut cleanly along the rim.
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T12:24:08.875274+00:00

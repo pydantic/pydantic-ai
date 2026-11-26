@@ -193,7 +193,15 @@ makes the wait durable on an engine that supports it:
 - On [AWS Lambda durable functions](https://pydantic.dev/docs/ai/harness/aws-lambda/#approvals), the answerer runs in a step that records its response, so
   a replay doesn't ask again. Since it runs in a step, it must return quickly: a person who may take a
   while should answer through a resume token, below.
-- On Temporal, DBOS, Prefect and other durable engines without support for waiting, the engine refuses
+- On [Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#waiting-for-approvals-and-answers), the answerer runs in a
+  local activity that records its response, so a replay doesn't ask again, and the workflow waits for
+  an answer sent through a resume token without holding a worker. The same rule applies: return quickly.
+  The tool runs in an activity, which can't emit events yet
+  ([#7971](https://github.com/pydantic/pydantic-ai/issues/7971)), so `AskUserRequestedEvent` isn't emitted;
+  `AskUserAnsweredEvent` is. Import the module that defines the agent under
+  `workflow.unsafe.imports_passed_through()`, or the answerer is the workflow sandbox's copy, with its
+  own copies of the clients it uses ([details](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#waiting-for-approvals-and-answers)).
+- On DBOS, Prefect and other durable engines without support for waiting, the engine refuses
   the wait with a `UserError`. A wait in process would not be recorded: a replay would ask the user
   again, could get a different answer than the one the run already acted on and diverge from the
   engine's history, and a restart would lose the wait.
@@ -202,7 +210,8 @@ An answerer with three required positional parameters, satisfying `TokenAnswerer
 resume token. It can answer right away as the other forms do, or hand the token on, for example in a
 Slack message, and return `None`. The answer then arrives when your code resolves the token with the
 JSON form of an `AskUserResponse`: with `resolve_external_event` from `pydantic_ai.external_events` in
-process, or through the engine's API, such as AWS Lambda's `SendDurableExecutionCallbackSuccess`.
+process, or through the engine's API, such as `resolve_external_event(client, token, payload)` from
+`pydantic_ai.durable_exec.temporal` or AWS Lambda's `SendDurableExecutionCallbackSuccess`.
 
 ```python
 from pydantic import TypeAdapter
@@ -372,8 +381,9 @@ attachments included, appear in the following model request's tool result and us
 
 ## Specs
 
-`Agent.from_spec` cannot construct `AskUser`: the answerer is a live object a spec has no way
-to name.
+A spec can set `answerer`, and with it `timeout`, only to `null`, which pauses the run as
+[Pausing the run until the user answers](#pausing-the-run-until-the-user-answers) describes: an answerer is a live object
+a spec has no way to name, and `timeout` bounds the answerer.
 
 ## API
 

@@ -33,6 +33,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/keys` | Manage saved API keys |
 | `/permissions [full\|auto\|read-only]` | Show or set what runs without asking |
 | `/project [approve NAME...\|all \| revoke NAME...\|all]` | Review what `.clai/settings.json` sets, and approve or revoke its keys for this repository |
+| `/trust [yes\|no]` | Show whether you trust this session's folder, or trust it or not; see [Folder trust](#folder-trust) |
 | `/set [KEY [VALUE]]` | Change a setting; no arguments opens the menu (alias `/settings`) |
 | `/config show\|get\|set\|reset` | Read or write saved settings; writes apply on restart |
 | `/system_prompt` | View the system prompt and edit your own instructions |
@@ -51,6 +52,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/tasks` | Inspect and control delegated tasks |
 | `/commit [MESSAGE]` | Commit every change in the session's directory; the model drafts the message when none is given |
 | `/sandbox [local smol\|local boxlite\|e2b\|boxd\|daytona\|opensandbox\|modal\|render\|sprites\|kubernetes\|delete]` | Start a new conversation in a sandbox: `local smol` (SmolVM) and `local boxlite` (BoxLite) run a VM on this machine, the others are cloud sandboxes; `/sandbox local` asks which engine, and no argument says where this one runs. See [Sandboxes](#sandboxes-sandbox) |
+| `/computer-use [on\|off]` | Let the model see and control the sandbox's desktop. See [Computer use](#computer-use-computer-use) |
 | `/push [confirm]` | `git push -u origin BRANCH`; `confirm` is needed on the default branch |
 | `/pr [confirm\|TITLE]` | Show a pull request the model drafts; `confirm`, or a `TITLE` of your own, pushes the branch and opens it with `gh` |
 | `/update [now]` | Show whether a newer Pax is out on `updates.channel`, with **Update…** to install it; `/update now` installs at once and restarts |
@@ -77,6 +79,7 @@ Plugins add their own commands, such as `/notion login` or `/google_workspace`. 
 | `-w`, `--worktree [NAME]` | Start in a Git worktree; see [Git worktrees](#git-worktrees) |
 | `--update`, `pax update` | Install the newest Pax from `updates.channel`, print how it went, and exit; see [Updating](#updating) |
 | `--request-limit N` | The full prompt's model-request budget |
+| `--version` | Print the installed Pax version, plus the commit for a `main` install, and exit |
 | `--database PATH` | Use another settings database (and session folder) |
 | `pax config show\|get\|set\|reset` | Read or write saved settings from your shell. A change that could let the agent do more, such as a wider `run.permissions`, is refused: make it with `/config` in a session, since the agent can run `pax` too |
 | `pax plugins list` | List saved plugin declarations from your shell; add, enable, disable, and remove them with `/plugins` in a session |
@@ -127,7 +130,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `NO_COLOR` | Also skips the splash |
 | `CLAI_BLEEDING_URL` | Where the `main` update channel looks for builds; see [Updating](#updating) |
 | `PYTHON_DOTENV_DISABLED` | `1` turns off `.env` loading; see [Environment variables](#environment-variables) |
-| `XDG_CONFIG_HOME` | Moves Pax's folder to `$XDG_CONFIG_HOME/pydantic-clai2/` (default `~/.config/pydantic-clai2/`) |
+| `XDG_CONFIG_HOME` | Moves Pax's folder to `$XDG_CONFIG_HOME/pydantic-ai-pax/` (default `~/.config/pydantic-ai-pax/`) |
 | `VISUAL`, `EDITOR` | The editor `/system_prompt` and other text fields open |
 | `LOGFIRE_TOKEN` | A Logfire write token for the `observability` plugin; see [Telemetry](#telemetry-and-references) |
 | `GITHUB_COPILOT_API_KEY`, `GITHUB_COPILOT_API_TOKEN`, `COPILOT_GITHUB_TOKEN` | A Copilot token when you have not run `/login github-copilot` |
@@ -138,11 +141,12 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 
 ### Files
 
-Paths are under `$XDG_CONFIG_HOME/pydantic-clai2/`, or `~/.config/pydantic-clai2/` by default.
+Paths are under `$XDG_CONFIG_HOME/pydantic-ai-pax/`, or `~/.config/pydantic-ai-pax/` by default. State that is not a
+preference, such as workspaces, is under `$XDG_STATE_HOME/pydantic-ai-pax/` (default `~/.local/state/pydantic-ai-pax/`).
 
 | Path | Holds |
 |---|---|
-| `config.db` | Settings, saved models and their settings, and plugin declarations |
+| `config.db` | Settings, saved models and their settings, plugin declarations, and which folders you trust |
 | `sessions.db`, `sessions.repl/` | Saved conversations, and code mode's sandbox state per session |
 | `input-history` | Prompts you typed, for Up/Down recall (plaintext) |
 | `credentials-*.enc` | Encrypted sign-ins and saved keys; the key that decrypts them is in your OS keyring |
@@ -202,6 +206,68 @@ Pax's environment minus LLM provider API keys. To keep the file tools inside the
 launch directory, set **Unrestricted filesystem** to `false` in
 `/plugins configure coder`. Shell commands are not restricted either way.
 
+### Folder trust
+
+Pax treats every folder as untrusted until you say otherwise, as Claude Code does. The
+first time the interactive shell starts in a folder, before any plugin loads or turn runs,
+it asks **Do you trust the files in this folder?** It names what the answer covers and lists
+what it found there: instruction files (`AGENTS.md`, `CLAUDE.md`), skill folders
+(`.agents/skills`, `.claude/skills`), and agent folders (`.agents/agents`, `.claude/agents`,
+`.codex/agents`), from the folder up to the repository root. Only names are checked, never
+contents.
+
+- **Yes, I trust this folder**: the folder's files are yours. Their text reaches the model
+  as your own instructions.
+- **No, keep it untrusted** (the default):
+  the agent still reads, edits, and runs code there, as before. Pax gives the folder's files
+  no authority (`authority='none'` on its `LocalWorkspace`), so capabilities that check it send
+  their text as the repository's data, not as yours. Use it to look at a repository someone
+  else wrote. Dismissing the prompt with <kbd>Esc</kbd> or <kbd>Ctrl</kbd>+<kbd>C</kbd> keeps
+  the folder untrusted for this session without saving the answer, so Pax asks again next time.
+
+Trust is not a sandbox, and it does not approve anything else in the folder. Project settings
+still wait for `/project approve`, project plugins and hooks for `/plugins enable`, and project
+MCP files for `/mcp trust`, whatever the answer. The question lists the ones it found. Settings a
+project file may apply at once, such as `display.*` or a stricter `run.permissions`, still apply.
+
+`/trust` shows the decision and what it covers; `/trust yes` and `/trust no` change it. A change
+applies from the next prompt. What the model has already read stays in the conversation, so
+`/clear` starts a new one when you want a clean break. The status row shows `trusted`, or
+`untrusted` in the warning colour, beside the `workspace` directory.
+
+Where the decision is kept:
+
+- It is kept in `config.db`, in your settings, never in the repository, so a repository cannot
+  trust itself: `.clai/settings.json` has no key for it, and `pax config` cannot set it. Pax reads
+  nothing the folder holds to decide whether to ask.
+- Inside a Git repository, it covers the whole repository: every subfolder and every linked
+  worktree share the main checkout's decision. A repository nested inside it, such as a
+  submodule or a clone, is asked about on its own. A folder whose `.git` file points at another
+  repository counts as that repository's worktree only if that repository's worktree metadata
+  points back to it.
+- Outside a repository, it is kept for the folder you started in and covers its subfolders; the
+  nearest folder with a decision wins.
+- In your home folder or the filesystem root, the answer holds for that session only, even if it
+  sits inside a repository or worktree, so Pax asks again next time, and a decision there never
+  covers the folders below.
+
+`pax -p`, `pax --web`, and sessions the web UI opens never ask: they use the decision you made
+before, and a folder you never decided about stays untrusted. `pax -p` says so on stderr and
+`pax --web` in its terminal. `/trust yes` in the web UI trusts the folder of that session. A
+session that moves to another folder (`/workspace`, or `/resume` of a session saved in another
+folder) takes that folder's decision.
+
+Which capabilities change their output for an untrusted folder depends on their support for
+workspace authority. Today `repo_context` keeps the walk-up `AGENTS.md` files out of the
+instructions: it names the folder's own file there for the model to read with its file tools,
+sends the ones above it as the repository's data, and marks the ones it surfaces as the agent
+works in a subfolder. Agent Skills, your own skill
+folders included, stay out of the skill catalog: the model lists them with `list_skills` and
+reads one with `load_skill`, as tool output. The read-only Review specialist keeps the authority
+for the directory it is sent to. Agent folders do not check it yet, and load as before in both
+cases. A `/sandbox` conversation works in the sandbox's own workspace, which does not take the
+decision yet.
+
 ### Startup
 
 `pax --help` parses arguments without loading the agent or plugins. Interactive
@@ -251,7 +317,7 @@ the folder that holds `clai2-bleeding.json`. A fork that runs the `Pax bleeding`
 workflow publishes its own:
 
 ```bash
-CLAI_BLEEDING_URL=https://github.com/<you>/pydantic-ai/releases/download/clai2-bleeding clai2
+CLAI_BLEEDING_URL=https://github.com/<you>/pydantic-ai/releases/download/clai2-bleeding pax
 ```
 
 To try a local checkout, build the same files and serve them over HTTP:
@@ -259,7 +325,7 @@ To try a local checkout, build the same files and serve them over HTTP:
 ```bash
 src/pydantic_ai_pax/scripts/build_bleeding.sh /tmp/clai2-bleeding
 python -m http.server --directory /tmp/clai2-bleeding 8000 &
-CLAI_BLEEDING_URL=http://localhost:8000 clai2
+CLAI_BLEEDING_URL=http://localhost:8000 pax
 ```
 
 When a newer build exists, the status row shows `update <version or commit>: /update`.
@@ -340,8 +406,8 @@ values. Keep `.env` files containing credentials out of version control.
 
 ### Settings and commands
 
-Preferences live in `$XDG_CONFIG_HOME/pydantic-clai2/config.db`, falling back to
-`~/.config/pydantic-clai2/config.db`. Use `--database PATH` to select another database.
+Preferences live in `$XDG_CONFIG_HOME/pydantic-ai-pax/config.db`, falling back to
+`~/.config/pydantic-ai-pax/config.db`. Use `--database PATH` to select another database.
 A repository can add its own layer with a `.clai/settings.json` file; see
 [Project settings](#project-settings). Conversation messages and Pax's
 Codex tokens are not written to the settings database. Plugin settings are arbitrary
@@ -586,11 +652,15 @@ paste of existing image paths creates attachments as described in
 Up/down move through multiline drafts, then recall queued messages and saved
 prompt history. Queued messages come first, newest first, because they are
 your most recent input; Up then continues into history, skipping the copies of
-queued messages that history already holds. Enter on a recalled queued message
-rewrites it in place, keeping its position in the queue, and the queue row
-shows `(editing)` meanwhile. Clearing the draft and pressing Enter removes the
-message from the queue. If the run takes the message before you press Enter,
-the edit is queued as a new follow-up. With nothing queued, Up/down only walk
+queued messages that history already holds. A recalled queued message leaves the
+queue while you edit it, so it does not run when the turn ends; the messages around
+it still do. Its queue row shows `(editing)` at the place it keeps, and the input
+box shows `Enter to save · Esc to stop editing · Clear it to remove`. Enter puts the
+edited message back in its place. Esc puts it back unchanged; it does not interrupt
+the turn, so a second Esc does. To remove the message, clear the draft and press
+Enter, Esc, or Ctrl+C. Each of these, and Alt+Enter, restores the draft you had
+before pressing Up. If the turn ends and nothing else is queued, the message
+stays in the input as an unsent draft. With nothing queued, Up/down only walk
 history.
 While you walk history, Up/down stay on history even when a recalled slash
 command shows completion suggestions. Press Tab to pick a suggestion; Up/down
@@ -610,15 +680,15 @@ pressed Enter. A queued message that cannot steer stays queued and is not
 skipped over. While running with a draft or a queued message, the input box
 shows both shortcuts. If Option+Enter queues like Enter, see
 [Option keys on macOS](#option-keys-on-macos).
-Shift-Enter inserts a newline when the terminal reports it separately from Enter.
-Ctrl-J inserts a newline in the editor (it steers on Windows, see
+Shift+Enter inserts a newline when the terminal reports it separately from Enter.
+Ctrl+J inserts a newline in the editor (it steers on Windows, see
 [Windows Terminal](#windows-terminal)); plain Enter submits. Some terminals, including
-GNOME Terminal/VTE on Ubuntu, send the same input for Shift-Enter and Enter.
-Use Ctrl-J there, or a terminal that supports modified-key reporting, such as
+GNOME Terminal/VTE on Ubuntu, send the same input for Shift+Enter and Enter.
+Use Ctrl+J there, or a terminal that supports modified-key reporting, such as
 Kitty or xterm. Pax enables xterm and Kitty keyboard reporting only while the
 editor is active and releases it for menus and on exit.
-Ctrl-R searches history; Enter accepts a search
-result without submitting it. Ctrl-D exits when the draft is empty. Ctrl-C at
+Ctrl+R searches history; Enter accepts a search
+result without submitting it. Ctrl+D exits when the draft is empty. Ctrl+C at
 input clears the line; during a run it cancels the turn and returns to input. No cancelled run is automatically retried.
 
 ## Models and accounts
@@ -675,18 +745,21 @@ the model-aware request and thinking controls described below. They are
 saved per model and passed to every run with that model. Unsupported settings
 may be ignored or rejected by the provider; select only settings your provider supports. `/model NAME` sets the model without the menu.
 
-Pax installs the SDKs for OpenAI and Anthropic. Selecting a model whose provider SDK is
-missing from the Python Pax runs on fails right away, naming the install command, instead
-of on the next prompt. TypeSafe's Jev needs the `typesafe` extra:
+Pax installs the SDKs for OpenAI, Anthropic, and Google. Every other model provider
+has a Pax extra of the same name as its `pydantic-ai-slim` extra, such as `bedrock`,
+`groq`, `mistral`, or `typesafe` (TypeSafe's Jev), and `all` installs every provider
+and every `/sandbox` provider but `local`. Selecting a model whose provider SDK is
+missing from the Python Pax runs on fails right away, naming the extra to install,
+instead of on the next prompt:
 
 ```bash
-pip install "pydantic-ai-pax[typesafe]"
+uv tool install "pydantic-ai-pax[bedrock]"
 ```
 
 From a pydantic-ai checkout, run Pax with the extra instead:
 
 ```bash
-uv run --package pydantic-ai-pax --extra typesafe pax
+uv run --package pydantic-ai-pax --extra bedrock pax
 ```
 
 #### Model settings and custom parameters
@@ -700,7 +773,7 @@ from the model's next request, even in a running turn. Space cycles fields with
 multiple declared choices in order and wraps to the first; an unset or unlisted
 value starts at the first choice. Action and submenu rows, free-text fields, and
 single-choice fields do not cycle. `r` resets a field. This field list is not
-searchable. Esc, Ctrl-C, or **Save & close** goes back. Enter opens a picker for
+searchable. Esc, Ctrl+C, or **Save & close** goes back. Enter opens a picker for
 fixed choices; numeric fields accept typed values, and empty input resets.
 
 Pax enables prompt caching by default for every model, with the unified `Prompt Caching`
@@ -923,7 +996,7 @@ address bar and paste it at the prompt Pax shows under the login link; the bare
 before exchanging the code. Whichever arrives first, the callback or the paste,
 completes the login.
 
-Tokens are encrypted into `0600` files in `$XDG_CONFIG_HOME/pydantic-clai2/`
+Tokens are encrypted into `0600` files in `$XDG_CONFIG_HOME/pydantic-ai-pax/`
 (`credentials-ACCOUNT.enc`), not stored in SQLite or `~/.codex/auth.json`. The key
 that decrypts them is the only entry Pax keeps in the configured Python `keyring`
 backend (service `pydantic-clai2`, account `encryption-key`). Pax reads that entry
@@ -944,7 +1017,7 @@ When no usable keyring backend exists (keyring raises `NoKeyringError`,
 `InitError`, `RuntimeError`, or `PasswordSetError`, `kwallet.DBusKeyring`
 cannot open a wallet, or the backend does not retain the key, typical on a headless
 Linux box, over SSH, or on KDE / Steam Deck with KWallet disabled or unconfigured), credentials go to a
-`0600` file in `$XDG_CONFIG_HOME/pydantic-clai2/` (`~/.config/pydantic-clai2/` by
+`0600` file in `$XDG_CONFIG_HOME/pydantic-ai-pax/` (`~/.config/pydantic-ai-pax/` by
 default) instead, named for the account: Codex uses `credentials-openai-codex.json`,
 and the GitHub Copilot, vllm and openrouter connections use their own files. Like keyring entries,
 these files are per user, so `--database PATH` does not move them; `/login` says so in its
@@ -987,7 +1060,7 @@ until it is released.
 Login prints a code and `https://github.com/login/device`, then starts polling.
 Open that link on this or another device and approve only the code shown by your
 own Pax session. Pax does not launch a browser, so a text browser cannot block
-login or take over your SSH terminal. Ctrl-C stops polling; GitHub controls the
+login or take over your SSH terminal. Ctrl+C stops polling; GitHub controls the
 code's expiry. No localhost callback or pasted token is needed.
 
 GitHub authorization alone does not establish Copilot access. Login and the model
@@ -1124,7 +1197,7 @@ A `vllm` model retries each failed request up to 5 times, with exponential backo
 
 ### openrouter connection
 
-Open `/model add`, choose `openrouter`, then choose **Sign in with browser** or **Enter API key**. Browser sign-in opens OpenRouter's [PKCE authorization flow](https://openrouter.ai/docs/use-cases/oauth-pkce) and receives an authorization code on a temporary loopback listener. Pax exchanges the code for a user-controlled API key over HTTPS. If the browser cannot reach Pax (for example over SSH), paste the final callback URL or authorization code into the terminal. If no browser opens, open the printed authorization URL manually. Login times out after five minutes; Ctrl-C cancels it. You can revoke the generated key on OpenRouter.
+Open `/model add`, choose `openrouter`, then choose **Sign in with browser** or **Enter API key**. Browser sign-in opens OpenRouter's [PKCE authorization flow](https://openrouter.ai/docs/use-cases/oauth-pkce) and receives an authorization code on a temporary loopback listener. Pax exchanges the code for a user-controlled API key over HTTPS. If the browser cannot reach Pax (for example over SSH), paste the final callback URL or authorization code into the terminal. If no browser opens, open the printed authorization URL manually. Login times out after five minutes; Ctrl+C cancels it. You can revoke the generated key on OpenRouter.
 
 Manual entry still accepts a key from https://openrouter.ai/keys in a masked prompt. After either method, select a model from the live catalog. Pax validates the key with `/api/v1/key` before fetching `/api/v1/models`. Cancelling before model selection leaves the saved connection unchanged.
 
@@ -1136,7 +1209,7 @@ Open `/keys` to browse and manage saved API keys in a full-screen menu.
 Use `a` to add, Enter to replace a value, `r` to rename, and `d` to delete with
 confirmation. Press `/` to search key names; Enter keeps the matches, and Esc
 clears the search. Values are masked and are not shown in previews. Changes save
-immediately; Esc or Ctrl-C closes the menu. Errors appear inside the menu.
+immediately; Esc or Ctrl+C closes the menu. Errors appear inside the menu.
 In the web UI, `/keys` opens the Settings window's **Keys & accounts** section,
 which lists the names, says what uses each, and asks the same steps as dialogs; a
 value goes from the page to Pax, never back.
@@ -1144,7 +1217,7 @@ value goes from the page to Pax, never back.
 The compatibility command `/set api_key` prompts for a name and masked API key. Names are trimmed
 and uppercased automatically, so `my_vllm_key` becomes `MY_VLLM_KEY`. Use letters,
 numbers, and underscores, starting with a letter or underscore. Saving an existing
-name asks before replacing it. Ctrl-C or Ctrl-D cancels without saving. Do not put
+name asks before replacing it. Ctrl+C or Ctrl+D cancels without saving. Do not put
 the secret on the command line.
 
 Consumers store a key's name, not its value, and look it up each time they
@@ -1224,14 +1297,17 @@ is still submitted and saved in input history. Move the cursor inside a folded
 paste to reveal it for editing; recalled history shows the full text.
 While a turn or command runs, the rule above the draft shows how long it has run
 and that Esc interrupts it; with a draft or a queued message it also shows the
-queue and steer keys, which keep their place first on a narrow terminal.
+queue and steer keys, which keep their place first on a narrow terminal. While you
+edit a queued message, it shows the keys that finish the edit instead.
 A turn that finishes ends with a muted `Done in 12s` row; an interrupted one with
 `Interrupted. Type what to do instead.`
 Each submitted prompt is echoed into the transcript after a `>` marker in the theme's
 accent colour, with the prompt text in bold and every row after its first (wrapped or
 its own line) indented under the text. This keeps your prompts apart from answers.
 Steering messages, commands entered during a turn, and prompts restored by `/resume`
-look the same.
+look the same. An answer you type to a question gets the same marker and bold text,
+without the indent. Under a bundled palette, on a terminal that advertises 24-bit
+colour, all of these also sit on a grey background; see [Themes](#themes).
 Completion suggestions
 appear below the draft, between the top and bottom rules. The rows carry no
 side borders, so they cannot drift out of alignment.
@@ -1260,7 +1336,11 @@ the full output of commands in place (see [How tool calls look](#how-tool-calls-
 Claude Code: the transcript is forgotten, but the conversation, your draft, and
 queued messages stay. During a turn, the response still streaming keeps showing.
 Use `/clear` to start a new conversation instead. Drag with the mouse to select
-text; releasing the button copies it to the clipboard and the footer says so.
+text, double-click to select a word, or triple-click to select a line; a line the panel
+wrapped counts as one, and its copy has no line break where it wrapped. Dragging after a
+double- or triple-click extends the selection by words or lines. Releasing the button
+copies the selection to the clipboard and the footer says so. A click on a URL opens it,
+and a double-click on one selects instead of opening it again.
 Locally Pax copies with `pbcopy` on macOS, PowerShell on Windows, and `wl-copy`,
 `xclip`, or `xsel` on Linux. Over SSH, or without one of those, it asks the
 terminal to copy with OSC 52, which some terminals need enabling first (iTerm2:
@@ -1274,11 +1354,12 @@ previews, with queued slash commands labeled `Command:`. Previews are shown in
 execution order and disappear as each submission starts. Long or multiline messages
 have a single-line preview; large queues show a `+N more queued` summary to leave
 room for the editor. The original message text is unchanged. The footer also shows
-the number waiting when the `queued` footer field is visible. This is a read-only preview, not a queue editor. Control bytes in completion-derived
+the number waiting when the `queued` footer field is visible. Press Up to edit one (see Up/down above). Control bytes in completion-derived
 text are escaped in previews and prompt echoes; the submitted text is unchanged.
 
 Messages and slash commands run in submission order, after the current turn and its cleanup
-finish. They do not interrupt or steer the active turn. Bare settings menus such as
+finish, whether it ends or you interrupt it. They do not interrupt or
+steer the active turn. Bare settings menus such as
 `/set` are the exception: they open during the turn (see "Settings and commands"). An unsubmitted draft stays
 in the editor as turns finish. Queued messages are not saved as conversation turns
 until execution starts, and are discarded on exit or `/reload`.
@@ -1289,8 +1370,8 @@ Small terminals omit the border to leave room for output.
 
 ### Pasting images
 
-Copy a screenshot or image, then press **Ctrl-V** in Pax to attach it. If your
-terminal intercepts Ctrl-V, use **Alt-V** (or press Esc, then V). On macOS, Cmd-V
+Copy a screenshot or image, then press **Ctrl+V** in Pax to attach it. If your
+terminal intercepts Ctrl+V, use **Alt+V** (or press Esc, then V). On macOS, Cmd+V
 is the terminal's text paste, not Pax's clipboard-image shortcut.
 
 You can also paste or drag local image file paths into the prompt. This requires
@@ -1332,7 +1413,7 @@ if you recall an expired marker. If submission is rejected because no model is
 selected, the most recently rejected prompt keeps its attachments for retry. Unsubmitted images are discarded on exit or reload.
 
 In the [web UI](../PLUGINS.md#web-this-session-in-your-browser), from `/web` or `pax --web`,
-paste an image into the composer with your browser's usual paste (Cmd-V or Ctrl-V), or drop image
+paste an image into the composer with your browser's usual paste (Cmd+V or Ctrl+V), or drop image
 files on it. Each shows as a thumbnail above your text; hover one and click its **×** to remove it.
 Text copied together with a picture of itself, as from a spreadsheet, pastes as text. The page
 scales an image larger than 1568 pixels on its longest side down to that, about as far as models
@@ -1359,8 +1440,8 @@ your draft as a separate message.
 
 Submitted prompts and slash commands persist across restarts for Up/Down recall,
 including multiline input. They are stored as plaintext in `input-history` next
-to `config.db`: `$XDG_CONFIG_HOME/pydantic-clai2/input-history`, or
-`~/.config/pydantic-clai2/input-history` by default. On POSIX the file is restricted
+to `config.db`: `$XDG_CONFIG_HOME/pydantic-ai-pax/input-history`, or
+`~/.config/pydantic-ai-pax/input-history` by default. On POSIX the file is restricted
 to its owner (mode 0600). Avoid entering secrets in the prompt: input history is
 not encrypted. Delete this file while Pax is closed to clear saved input.
 `/clear` (alias `/new`), or bare `clear`, starts a new saved conversation, without
@@ -1369,7 +1450,7 @@ banner. Model responses and tool results are not saved to this file.
 
 ### Word deletion
 
-Option+Backspace (Alt+Backspace) deletes the word before the cursor, like Ctrl-W,
+Option+Backspace (Alt+Backspace) deletes the word before the cursor, like Ctrl+W,
 including trailing whitespace. Spaces, tabs, and newlines separate words. Text
 after the cursor is preserved. Your terminal must send Option as Alt/Meta for
 this shortcut; legacy and modified-key encodings are supported.
@@ -1416,8 +1497,8 @@ still queues the message like Enter, the terminal is sending a plain Enter:
 - tmux: tmux forwards Alt+Enter, but does not pass Pax's request on to the
   outer terminal. Set that terminal to send Option as Alt, for example iTerm2's
   Settings > Profiles > Keys > Left Option key: Esc+. Herdr needs no setup.
-- For Shift-Enter (newline) inside tmux, add `set -g extended-keys on` to
-  `~/.tmux.conf`. Without it, tmux sends Shift-Enter as Enter.
+- For Shift+Enter (newline) inside tmux, add `set -g extended-keys on` to
+  `~/.tmux.conf`. Without it, tmux sends Shift+Enter as Enter.
 
 ### Windows Terminal
 
@@ -1426,8 +1507,8 @@ so on Windows Ctrl+Enter steers instead, and the input box shows Ctrl+Enter.
 Pax treats a session as Windows when it runs on Windows or when `WT_SESSION`
 is set, which Windows Terminal also passes into WSL. Alt+Enter still steers
 wherever it reaches Pax, and elsewhere Ctrl+Enter works like Enter.
-Terminals that do not report modified keys send Ctrl+Enter as Ctrl-J, so on
-Windows Ctrl-J steers too. Shift+Enter inserts a newline when the terminal
+Terminals that do not report modified keys send Ctrl+Enter as Ctrl+J, so on
+Windows Ctrl+J steers too. Shift+Enter inserts a newline when the terminal
 reports it separately from Enter, such as Windows Terminal 1.25 or later.
 Older terminals send Shift+Enter as Enter, so there a newline needs a paste or
 a terminal that reports modified keys.
@@ -1437,15 +1518,21 @@ example with `export WT_SESSION=1` in the shell you start Pax from.
 
 ### Interrupting a turn
 
-Press Esc or Ctrl-C to cancel the active agent turn without discarding your draft.
+Press Esc or Ctrl+C to cancel the active agent turn without discarding your draft.
+Queued messages, slash commands, and `!` shell commands stay queued and run next, in
+the order you queued them. While you edit a queued message, the first Esc stops
+editing instead of interrupting. Ctrl+C interrupts and ends the edit as Esc does:
+the message goes back to its place unchanged, since only Enter saves an edit, or is
+removed if you cleared it. Up finds your edit in history, and the draft you had
+before pressing Up comes back.
 Tool cleanup finishes before the next queued message starts. Esc does not request
-exit, even when pressed repeatedly. Arrow keys and Alt-key shortcuts keep their
+exit, even when pressed repeatedly. Arrow keys and Alt+key shortcuts keep their
 editing behavior. The active full-screen interface retains control of Esc rather
 than passing it to the agent turn; its behavior depends on that interface.
-After cancelling with Ctrl-C, press Ctrl-C again within two seconds to exit,
+After cancelling with Ctrl+C, press Ctrl+C again within two seconds to exit,
 including across the transition back to input. Esc does not arm this exit shortcut.
 At the prompt,
-the first press clears input and the second exits. Ctrl-D on an empty input and
+the first press clears input and the second exits. Ctrl+D on an empty input and
 `/exit` also quit after earlier queued messages finish.
 The interrupted prompt and captured partial responses and tool results stay in
 conversation history, so you can follow up with a clarification. No interrupted
@@ -1458,7 +1545,7 @@ tool side effects cannot be undone.
 
 Between turns, press Esc twice within half a second to open **Rewind conversation**.
 Use Up/Down to choose an earlier prompt, then Enter to rewind. The newest prompt
-is selected first. Esc or Ctrl-C closes the menu without changing your draft or
+is selected first. Esc or Ctrl+C closes the menu without changing your draft or
 conversation. An empty conversation shows a disabled placeholder.
 
 Rewinding removes the selected prompt and all later messages from the saved
@@ -1509,15 +1596,15 @@ from the transcript. Elsewhere, such as on Windows or with input piped into Pax,
 the command's stdout and stderr are pipes and it reads the terminal's input
 directly.
 
-Ctrl-C interrupts the
+Ctrl+C interrupts the
 command and returns to the prompt. On POSIX the command runs in its own session,
-so Pax forwards the Ctrl-C to its process group, and 0.25 seconds later (as
+so Pax forwards the Ctrl+C to its process group, and 0.25 seconds later (as
 `subprocess.run` waits) kills whatever is still running there, including
-background jobs and programs that ignore Ctrl-C. Only a process that detaches
+background jobs and programs that ignore Ctrl+C. Only a process that detaches
 on purpose with `setsid()`, as daemons do, outlives the command. Detached jobs
 should redirect stdout and stderr: Pax stops collecting their output shortly
 after the shell exits. On Windows the console
-delivers the Ctrl-C, and `taskkill` then ends the command's process tree. As at other times, a second Ctrl-C within two seconds exits
+delivers the Ctrl+C, and `taskkill` then ends the command's process tree. As at other times, a second Ctrl+C within two seconds exits
 Pax. The command, stdout, stderr, and completion status are saved in the
 conversation for the model's next turn, including partial output from interrupted
 commands. Each stream retains up to 100,000 characters, with a truncation notice
@@ -1542,7 +1629,7 @@ Done (12.4s)
 Pax needs no list of programs for this. Full-screen programs switch the
 terminal to its alternate screen when they start, and on the pseudo-terminal
 above Pax sees that happen. At that moment Pax takes its own display off the
-screen and passes the program's output and your keys, Ctrl-C included, straight
+screen and passes the program's output and your keys, Ctrl+C included, straight
 through. Window size changes reach the program too. When it exits, Pax redraws
 its screen. Output printed before the switch appears in the transcript; nothing
 is saved for the next prompt but the command and its exit status.
@@ -1561,7 +1648,7 @@ Done (42.0s)
 
 Pax leaves its screen, restores the terminal's normal input mode, and runs the
 command with its own input, output, and error streams, in Pax's process group.
-The command gets Ctrl-C and window size changes itself; Pax ignores Ctrl-C
+The command gets Ctrl+C and window size changes itself; Pax ignores Ctrl+C
 until it exits. When it exits, Pax restores the terminal's modes and redraws
 its screen. Anything the command printed outside a full screen stays on the
 terminal's main screen, which Pax covers again. Only the command and its exit
@@ -1584,7 +1671,7 @@ Done (0.8s)
 
 It runs with the sandbox's shell in the sandbox's copy of the checkout, with the keys the agent got there
 with `request_env`. The output shows once the command exits, not as it arrives, and the command gets no
-input from you. Ctrl-C stops it. If the sandbox fails the command, or was deleted, Pax says so; the line
+input from you. Ctrl+C stops it. If the sandbox fails the command, or was deleted, Pax says so; the line
 never runs on this machine instead. `!!` needs this terminal, so in a sandbox Pax refuses it and saves
 nothing. The command, output, and status are saved for the next prompt as on this machine.
 
@@ -1690,7 +1777,7 @@ link colour and are clickable too; URLs inside code spans are left as code.
 URLs longer than 2,048 characters are shown without clickable metadata to limit
 streaming output size.
 Links survive viewport resizing; following one uses your terminal's usual click
-modifier (often Cmd-click or Ctrl-click).
+modifier (often Cmd+click or Ctrl+click).
 Sign-in links are clickable too: the URL `/login openai-codex` prints, and URLs on
 a sign-in waiting screen, where a URL too long for the pane is folded over several
 rows that each link to all of it.
@@ -1743,8 +1830,9 @@ or by the capability's 16 KB event preview cap, the row shows the log path, wher
 output remains. Background commands can keep writing
 after the snapshot; those future lines are not included in its count.
 
-Read headers show the path, zero-based offset, and effective line limit (Coder
-default and maximum: 2000). Listing headers show the directory, recursive mode,
+Read headers show the path and, when the model set them, the lines read, as in
+`lines 20-34` or `from line 20`, numbered like `read_file`'s output (Coder
+default and maximum limit: 2000). Listing headers show the directory, recursive mode,
 result limit (default 200), and optional glob. Coder listings recurse using
 ripgrep and honor ignore rules. These displayed defaults describe Coder tools.
 Read and listing calls add no result row on success.
@@ -1799,7 +1887,7 @@ Every field is independently selectable and reorderable:
 | Field | Shows |
 |---|---|
 | `model` | Selected model, including the focused subagent's name and short task ID when its figures are shown |
-| `workspace` | Working directory, abbreviated to its tail; hidden when empty |
+| `workspace` | Working directory, abbreviated to its tail, with its `trusted` / `untrusted` state when folder trust applies; hidden when empty |
 | `context` | Used and maximum context tokens, with `?` for unknown figures |
 | `output` | Streamed output estimate, then reported output tokens |
 | `cost` | Retained-history cost; hidden until priced usage exists |
@@ -1895,7 +1983,8 @@ It retains up to 10,000 items and four million characters, plus a bounded partia
 line. Old output is dropped at those limits; oversized Markdown parts keep their
 rendered tail instead of their source. `/clear` and `/new` forget earlier output,
 so neither the panel nor the exit printout shows it again. Hyperlinks are
-preserved in that printout; Termflow 1.0's live cells do not carry hyperlink metadata.
+preserved in that printout. On the full screen, a click on a link in the status row, such as
+`watch live ↗`, opens it in your browser.
 Redirected output has no live editor or footer.
 No model requests or telemetry are added for status reporting.
 The status row follows Code Puppy's styling: muted surrounding text, an accented
@@ -1904,7 +1993,7 @@ context warnings keep the warning colour. The same styling applies while idle
 and working.
 
 A plugin can contribute its own fragment from `get_status_segments`, such
-as a branch name. Fragments are muted, grouped under the configurable `plugins`
+as a branch name, or a link that ends in `↗` and opens when clicked. Fragments are muted, grouped under the configurable `plugins`
 field, and dropped when the plugin unloads. See [PLUGINS.md](../PLUGINS.md) for the method and its cost
 rules.
 
@@ -1923,7 +2012,7 @@ Theme selection and cancellation are silent.
 Markdown, thinking, a tool call, syntax highlighting, warnings, errors, and the
 input/status area. Each bundled palette paints the sample's foreground and
 background. Browsing does not apply a palette or save a setting. Press `/` to
-search the names. Enter confirms; Esc or Ctrl-C keeps your current choice (while
+search the names. Enter confirms; Esc or Ctrl+C keeps your current choice (while
 searching, Esc first leaves the search). Narrow terminals show the list alone.
 
 `default` preserves Pax's existing brand colours, including Markdown, menus,
@@ -1935,6 +2024,13 @@ terminal (OSC 11), else from `COLORFGBG`; when neither says, it assumes a dark o
 It does not ask when stdin or stdout is not a terminal, with `TERM=dumb`, on Windows, or with `-p` or `--web`; keys typed
 during the question still reach the first prompt. The logo keeps its brand colours. On a dark or unknown background the default preview has no forced background.
 `/theme default` restores this appearance after trying another palette.
+
+Under a bundled palette, your prompts sit on a grey background: the palette's
+background moved a little towards its text colour, lighter on a dark palette and
+darker on a light one. This needs a terminal that advertises 24-bit colour
+(`COLORTERM=truecolor`), since the nearest of 256 colours is often not grey; without
+it, prompts keep the bold text alone. Under `default` they keep the bold text alone
+too, on a light terminal background as on a dark one.
 
 All other choices come from Termflow's bundled registry, including
 `catppuccin_mocha`, `catppuccin_latte`, `tokyo_night`, and `github_light`. Pax adds
@@ -1990,7 +2086,7 @@ next frame, with no restart.
 
 A changed speed, from the picker or `SECONDS`, is saved as that spinner's
 `interval` in `spinners.json` next to Pax's settings
-(`~/.config/pydantic-clai2/spinners.json`). The file is also where you add your
+(`~/.config/pydantic-ai-pax/spinners.json`). The file is also where you add your
 own; `/spinner init` writes a starter:
 
 ```json
@@ -2161,18 +2257,19 @@ compact numbered picker. The question stays pinned above its choices, so output 
 streams meanwhile, from a delegated task for instance, scrolls past above it instead
 of pushing it away. A delegated task's question names the task in its title. Use Up/Down and Enter, or press an option's number to
 select it. For multiple selections, Enter or a number toggles a choice; select
-`Done` to submit. At least one choice is required. Esc or Ctrl-C declines the
+`Done` to submit. At least one choice is required. Esc or Ctrl+C declines the
 whole request, which the model is told so it can make a stated choice and carry
 on. Several questions show progress in the title. The tool's transcript line
 names the questions by header, not their raw JSON. The editor's draft is
 preserved, and the question and your picks are printed to the transcript afterwards.
-Drag over the question, its header, or an option to select text; releasing copies it
-to the clipboard without choosing an answer. Transcript text remains selectable too.
+Drag over the question, its header, or an option, or double- or triple-click one, to
+select text; releasing copies it to the clipboard without choosing an answer. Transcript
+text remains selectable too.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for
 multi-select questions. Enter submits nonblank text. Esc returns to the choices
-and keeps your draft; Ctrl-C declines the whole request. Backspace and arrow keys
+and keeps your draft; Ctrl+C declines the whole request. Backspace and arrow keys
 edit the text. Multiline paste is inserted as text and waits for Enter; it does
 not submit an answer or select choices. The conversation stays visible while you type. Custom answers
 appear in the transcript and reach the model as a one-item list under the question's header.
@@ -2213,7 +2310,8 @@ can be asked in, such as `pax -p` or a web session with questions turned off, us
 harness default text, and answers questions from `AskUser` with "No one is available to answer in this run", so
 the run finishes. A session with the terminal picker or the web UI's approval cards does not deny these. Outside `full`, a delegation whose delegate would run without these checks is refused: a named
 sub-agent, or a delegation to `self` from an agent you supply (`pax --agent`), which gets `/permissions`
-per run rather than bound to the agent. The model is told to do the work itself instead.
+per run rather than bound to the agent. The model is told to do the work itself instead. Outside `full` the model also gets no
+[`computer`](#computer-use-computer-use) tool.
 
 ### Compacting the conversation
 
@@ -2569,9 +2667,12 @@ Skill commands are read on this machine. With a plugin that runs the agent in a
 sandbox, the model's catalog is read from the sandbox's workspace instead, so the
 two can differ. A plugin that adds a per-run capability function, such as
 `posthog` with browser sign-in, could supply a sandbox only after the catalog is
-read, so with one loaded the catalog is read from the project directory. If that
-plugin does run the agent in a sandbox, the skills' directories are paths on this
-machine that the sandbox may not reach.
+read, so with one loaded the catalog is read from the project directory. In an
+untrusted folder ([Folder trust](#folder-trust)), those skills are then offered
+through `list_skills` and `load_skill`, which read the project directory even when
+the plugin runs the agent in a sandbox. In a trusted folder, if that plugin does run
+the agent in a sandbox, the skills' directories are paths on this machine that the
+sandbox may not reach.
 
 ### Ask Pax about itself
 
@@ -2717,7 +2818,7 @@ The browser follows Code Puppy's project/session design:
   recent, message-count, and token-count sorting. `m` loads another 200 summaries.
 - `r` sets a manual title, which the namer will not overwrite. `d` asks for
   confirmation before deletion. The active session cannot be deleted.
-- Esc goes back; Ctrl-C closes. Narrow screens show one focused pane at a time.
+- Esc goes back; Ctrl+C closes. Narrow screens show one focused pane at a time.
 - Selecting a session from another directory resumes immediately, without
   confirmation. It does not change directories or move the saved conversation out
   of its original project group. Direct cross-directory resume asks you to use the browser.
@@ -2925,7 +3026,7 @@ switches the foreground to that fork's conversation. Output waits while a turn o
 command is running, then prints before the next prompt. Commands run between
 turns, so a `/fork` typed during a turn is queued like any other command.
 
-Cancelling a turn with Esc or Ctrl-C also cancels running forks. `/exit` and
+Cancelling a turn with Esc or Ctrl+C also cancels running forks. `/exit` and
 `/reload` cancel them too.
 
 A fork is a turn for plugins: `turn_start` runs before it starts and can rewrite
@@ -2986,7 +3087,7 @@ Otherwise, if the worktree changed, Pax asks **Remove this worktree?** with an i
 The path and removal details appear dimmed below the question. The complete
 details are also available in the transcript before you choose; use PageUp and
 PageDown to inspect long commands. Enter on **No**,
-Esc, Ctrl-C, or EOF keeps it; select **Yes** to confirm removal. The third choice
+Esc, Ctrl+C, or EOF keeps it; select **Yes** to confirm removal. The third choice
 keeps it and saves the preference in your settings database for this checkout,
 which also keeps it once its commits are pushed.
 There is no command to undo this choice for the same checkout.
@@ -3029,7 +3130,7 @@ To call a user-defined shell function, explicitly invoke its shell. For example,
 a zsh function named `cleanup_worktree` could use this argv:
 
 ```json
-["zsh", "-ic", "cleanup_worktree \"$1\"", "clai2-remove", "{branch}"]
+["zsh", "-ic", "cleanup_worktree \"$1\"", "pax-remove", "{branch}"]
 ```
 
 Interactive zsh loads your rc files, adding startup overhead and possibly output.
@@ -3038,7 +3139,7 @@ Neither the function nor the cleanup program above ships with Pax.
 
 Pax warns that the command may delete the branch and uncommitted files before
 asking for confirmation. The command inherits stdin, stdout, stderr, and the
-terminal, has no timeout, and can be interrupted with Ctrl-C. A command failure
+terminal, has no timeout, and can be interrupted with Ctrl+C. A command failure
 does not fall back to Git. If the saved configuration cannot be read or validated
 on exit, Pax warns and offers the existing Git cleanup prompt instead. If Git
 metadata cannot be read to prepare a registered command, Pax keeps the checkout
@@ -3066,8 +3167,8 @@ Run `/sandbox PROVIDER` (`local smol`, `local boxlite`, `e2b`, `boxd`, `daytona`
 `sprites`, or `kubernetes`) in a new conversation, before its first prompt. `local smol` and `local boxlite` run a
 microVM on this machine, with SmolVM or BoxLite; `/sandbox local` alone asks which, and says what each still needs.
 The others are cloud sandboxes. Pax copies this checkout (the branch, its unpushed commits, and
-uncommitted files) into a new sandbox, and every command and file edit of the conversation runs
-there, `!` lines included. `/resume` and `/fork` reopen it, and `/sandbox delete` deletes it. `/sandbox` alone says where
+uncommitted files) into a new sandbox, saying which step it is on, and every command and file edit of the
+conversation runs there, `!` lines included. `/resume` and `/fork` reopen it, and `/sandbox delete` deletes it. `/sandbox` alone says where
 the conversation runs. To work on this machine again, run `/new`.
 
 A sandbox stays until you run `/sandbox delete`, even when you leave its conversation. If Pax stops
@@ -3076,7 +3177,10 @@ it. A fork or copy of the conversation uses the same sandbox, and stops working 
 
 `git` and `gh` in the sandbox act as your `gh` login, so the agent can push and open pull requests.
 Each sandbox gets the token `gh` has when you run `/sandbox`, and loses it when the sandbox is deleted.
-Without a `gh` login, the sandbox has no GitHub access, and its copy has no `origin` remote.
+The copy downloads older versions of files from GitHub when a command first reads them, so `git log -p`,
+`git blame`, `git diff` against an older commit, or checking out another branch also need that token, and
+fail once it stops working. Without a `gh` login, the sandbox has no GitHub access, and its copy has no
+`origin` remote; it gets the whole history from this machine instead, and needs nothing from GitHub.
 
 | Provider | Install extra | Keys | Where your GitHub token is | Who can read it |
 |---|---|---|---|---|
@@ -3171,6 +3275,43 @@ needs a restart. The table says how long it lasts: one kept for this Pax session
 closes the sandbox, as an idle session does, or in a `/fork`, so the agent asks again. The agent asks only in the terminal,
 not in the web UI.
 
+### Computer use: `/computer-use`
+
+`/computer-use` gives the model a `computer` tool that sees and controls the sandbox's desktop.
+
+- **Before `/sandbox`**: run `/computer-use`, then `/sandbox PROVIDER`. The sandbox starts with a
+  desktop.
+- **In a running sandbox**: `boxd`, `daytona`, `local smol`, `render`, `sprites` and `kubernetes`
+  add a desktop to the sandbox you have. `e2b`, `modal` and `local boxlite` can only
+  give a desktop to a new sandbox, so Pax asks you to run `/sandbox delete`, `/new`, `/computer-use`,
+  then `/sandbox PROVIDER`. It never deletes the sandbox itself, since a fork or copy of the conversation
+  may use it.
+- **Turning it off**: `/computer-use off` removes the `computer` tool from the next turn. The sandbox
+  keeps running until `/sandbox delete`.
+- **Permissions**: the model gets the `computer` tool only under `/permissions full`, since the screen can
+  change anything. Under another mode it is told the desktop needs `/permissions full`, and `/computer-use` says so too.
+- `local smol` needs `smolmachines` for a desktop (`pydantic-ai-pax[local]`, on macOS Apple silicon
+  or Linux), so not on Windows. `opensandbox` has no desktop.
+
+The setting is saved in the conversation, so `/resume`, `/fork` and compaction keep it.
+
+#### Watching the desktop
+
+While computer use is on, the status row shows `watch live ↗` next to the sandbox. Click it to open the
+desktop on the provider's own website. Pax runs no viewer of its own. In a resumed conversation the link
+appears once a turn reaches the sandbox, since getting it would start a stopped one.
+
+- **`boxd`**: the machine's Desktop view in boxd's console. It opens in a browser signed in to your
+  boxd account.
+- **`daytona`**: the desktop's noVNC page, on a signed link that works for 1 hour. Anyone holding the link
+  can see the screen and use the mouse and keyboard until it expires. Pax gets a new link for the status
+  row when a turn starts, once the old one is over 50 minutes old, so in a turn longer than an hour the link
+  disappears until the next turn. A page opened earlier stays connected.
+- **Other providers** have no such link, so the status row shows no `watch live ↗`.
+
+Everything on the sandbox's screen, secrets included, goes to the model's provider in screenshots,
+and text on the screen can steer the model like any tool output.
+
 ### Several sessions in the web UI
 
 ```bash
@@ -3260,7 +3401,7 @@ many sessions run at once.
   fails with an error saying to enter it in a terminal, and names the page's
   equivalent when there is one, such as `/model` or `/keys`. `/login openai-codex`
   and a plugin's `read_line` prompt (see `PLUGINS.md`) ask in the page instead.
-- **Quitting.** Ctrl-C in the terminal that runs `pax --web` quits Pax and ends
+- **Quitting.** Ctrl+C in the terminal that runs `pax --web` quits Pax and ends
   every session.
 
 ## Plugins and integrations
@@ -3308,7 +3449,7 @@ class Search(Plugin):
         self.host.console.bell()
 ```
 
-Drop the file in `~/.config/pydantic-clai2/plugins/`, register anything
+Drop the file in `~/.config/pydantic-ai-pax/plugins/`, register anything
 importable with `/plugins add NAME module[:Class] [JSON]`, or clone a trusted
 repository with `/plugins add https://github.com/your-org/my-plugin.git`.
 Git repositories need an `__init__.py` or `plugin.py` at their root; install
@@ -3504,8 +3645,8 @@ same plugin; it appears as `observability` in `/plugins`.
 
 Set `LOGFIRE_TOKEN` to a write token for your Logfire project. Alternatively,
 place the SDK's `logfire_credentials.json` in your user config directory at
-`$XDG_CONFIG_HOME/pydantic-clai2/logfire/` (default
-`~/.config/pydantic-clai2/logfire/`). SDK configuration is also read only from
+`$XDG_CONFIG_HOME/pydantic-ai-pax/logfire/` (default
+`~/.config/pydantic-ai-pax/logfire/`). SDK configuration is also read only from
 that directory. The plugin ignores repository-local Logfire configuration and
 credentials, plus `LOGFIRE_CONFIG_DIR` and `LOGFIRE_CREDENTIALS_DIR`, so a checkout
 cannot choose the telemetry destination. Relative `XDG_CONFIG_HOME` values fall
@@ -3702,7 +3843,7 @@ pax -p "Continue the task" --resume SESSION-ID
 `-p` / `--prompt` requires prompt text as an argument, never reads stdin,
 and runs one turn through tools to completion. Only the final answer is printed
 to stdout, without Markdown rendering, wrapping, banners, thinking, or tool output.
-Errors go to stderr with a nonzero exit status; Ctrl-C exits with status 130.
+Errors go to stderr with a nonzero exit status; Ctrl+C exits with status 130.
 The turn is saved and can be resumed. With `-p`, `--resume` requires an explicit
 session ID; the browser cannot open. `--continue`, `--session-id`, and `--fork-session` work as
 interactively. Prompt text is literal, not a slash command.

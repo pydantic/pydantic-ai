@@ -339,7 +339,7 @@ def test_install_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
         f'pydantic-ai-pax @ {release}/pydantic_ai_pax-{NEWER}.tar.gz\n'
         f'pydantic-clai2 @ {release}/pydantic_clai2-{NEWER}.tar.gz\n'
         f'pydantic-ai-harness[coder,skills] @ {release}/pydantic_ai_harness-{NEWER}.tar.gz\n'
-        f'pydantic-ai-slim[anthropic,mcp,openai] @ {release}/pydantic_ai_slim-{NEWER}.tar.gz\n'
+        f'pydantic-ai-slim[anthropic,google,mcp,openai] @ {release}/pydantic_ai_slim-{NEWER}.tar.gz\n'
         f'pydantic-graph @ {release}/pydantic_graph-{NEWER}.tar.gz\n'
     )
     monkeypatch.setenv('CLAI_BLEEDING_URL', 'http://localhost:8000')
@@ -414,7 +414,7 @@ def _updates(
             overrides = Path(command[command.index('--overrides') + 1])
             text = await anyio.to_thread.run_sync(partial(overrides.read_text, encoding='utf-8'))
             assert 'pydantic-ai-harness[coder,skills] @ ' in text
-            assert 'pydantic-ai-slim[anthropic,mcp,openai] @ ' in text
+            assert 'pydantic-ai-slim[anthropic,google,mcp,openai] @ ' in text
         return (codes or [0]).pop(0)
 
     async def locate(uv: str) -> str | None:
