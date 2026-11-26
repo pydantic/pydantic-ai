@@ -157,6 +157,33 @@ permissions = Permissions(
 
 The check is best effort, by the command's text: a path a command builds at run time, as `cd .git && ...` or a script the agent wrote does, is not seen. It keeps an agent from changing these paths without a person noticing, and is not a sandbox: use [one](../workspace.md) when the agent must not reach a path.
 
+## Limits from outside the run
+
+When one party configures an agent and another runs it, such as an organization rolling a coding agent out to its developers, `max_mode` and `managed_rules` set limits that the person running it can't loosen with `mode` or `rules`:
+
+```python
+from pydantic_ai_harness.permissions import PermissionRule, Permissions
+
+permissions = Permissions(
+    'full',
+    max_mode='auto',
+    managed_rules=[
+        PermissionRule('deny', command='curl', reason='Use the corporate proxy.'),
+        PermissionRule('ask', command='git push'),
+        PermissionRule('allow', command='git status'),
+    ],
+)
+```
+
+- **`max_mode`** is the widest mode `mode` may take, or a function returning it for a run. `mode_for()` returns the stricter of the two, so with the example above the agent runs in `'auto'`. A wider `mode` acts as `max_mode`.
+- **`managed_rules`** are checked before `rules`. A managed `'deny'` refuses a call even when it was approved, and a managed `'ask'` holds a call even when a rule in `rules` allows it.
+- Every `'deny'`, managed or not, is checked before any `'ask'`, so approving a call never runs one that a rule in `rules` denies: the person running the agent can still make it stricter.
+- `max_mode` is checked on its own, after the person's `mode`. Only an `'allow'` in `managed_rules` skips the blanket ask of a `'read-only'` `max_mode`, and it doesn't skip a `'deny'` or `'ask'` in `rules`, a stricter `mode`, or `protected_paths`.
+- A call held by a managed rule or by `max_mode` is `person_only`, like a change to a protected path: an [`ApprovalReviewer`](https://pydantic.dev/docs/ai/harness/approval-reviewer/) never reviews it, and `remember=True` doesn't cover later calls. A managed `'ask'` on a tool that is neither a command nor a file write takes the plain approval flow, with `{'permissions': {'person_only': True}}` in its deferred request's metadata.
+- Several `Permissions` on one agent each check every call, so a second `Permissions('full')` can't loosen the first.
+
+A sub-agent is held to these limits when the parent's `Permissions` reaches it, through `SubAgents(shared_capabilities=[...])`. Like the rest of `Permissions`, they are checked in the agent's process, on a machine the person running it may control: they keep an agent within an organization's settings, and are not a sandbox.
+
 ## Changing the mode during a run
 
 `mode` can be a function of the run context. It is read on every call, so an application can switch modes while a run is going, and the run's next call follows the new mode:
