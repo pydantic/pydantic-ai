@@ -2,7 +2,7 @@ import hashlib
 import re
 from collections.abc import Callable
 from dataclasses import fields, is_dataclass
-from typing import Any, TypeGuard
+from typing import TYPE_CHECKING, Any, TypeGuard
 
 from prefect.cache_policies import INPUTS, RUN_ID, TASK_SOURCE, CachePolicy
 from prefect.context import TaskRunContext
@@ -12,8 +12,20 @@ from pydantic import BaseModel
 
 from pydantic_ai import ToolsetTool
 from pydantic_ai._utils import TOOL_CALL_ID_PREFIX
-from pydantic_ai.messages import CapabilityPart, CapabilitySource
+from pydantic_ai.messages import (
+    AgentInstructionSource,
+    BaseToolCallPart,
+    BaseToolReturnPart,
+    CapabilityInstructionSource,
+    CapabilityPart,
+    CapabilitySource,
+    RunInstructionSource,
+    ToolsetInstructionSource,
+)
 from pydantic_ai.tools import RunContext, ToolDefinition
+
+if TYPE_CHECKING:
+    from _typeshed import DataclassInstance
 
 _NON_SERIALIZABLE = '<non-serializable>'
 _BINARY_KEY = '__pydantic_ai_binary__'
@@ -59,37 +71,29 @@ def _cacheable_value(value: Any) -> Any:
     and non-`BaseModel` objects are treated as indivisible values.
     """
     projected = _strip_cache_excluded_fields(value)
-
-    def exclude_non_serializable(value: Any) -> Any:
-        if hash_objects(value, raise_on_failure=False) is not None:
-            return value
-        if _is_dict(value):
-            return _map_container(value, exclude_non_serializable)
-        if _is_list(value):
-            return [exclude_non_serializable(item) for item in value]
-        if _is_tuple(value):
-            return tuple(exclude_non_serializable(item) for item in value)
-        if isinstance(value, BaseModel):
-            return {name: exclude_non_serializable(getattr(value, name)) for name in type(value).model_fields}
-        return _NON_SERIALIZABLE
-
     # Expanding a model can expose bytes the first projection didn't reach. Keep any dataclasses
     # exposed alongside them intact, including their type and per-run fields, as the fallback did.
-    return _hash_binary_values(exclude_non_serializable(projected))
+    return _hash_binary_values(_exclude_non_serializable(projected))
+
+
+def _exclude_non_serializable(value: Any) -> Any:
+    if hash_objects(value, raise_on_failure=False) is not None:
+        return value
+    if _is_dict(value):
+        return _map_container(value, _exclude_non_serializable)
+    if _is_list(value):
+        return [_exclude_non_serializable(item) for item in value]
+    if _is_tuple(value):
+        return tuple(_exclude_non_serializable(item) for item in value)
+    if isinstance(value, BaseModel):
+        return {name: _exclude_non_serializable(getattr(value, name)) for name in type(value).model_fields}
+    return _NON_SERIALIZABLE
 
 
 def _replace_run_context(
     inputs: dict[str, Any],
 ) -> Any:
     """Replace RunContext objects with a dict containing only hashable fields.
-
-    This projection is hand-authored rather than derived from `fields(RunContext)`: most of what a
-    `RunContext` holds is live run machinery that can't be hashed. Every field a task's work can
-    depend on has to be listed here, because a tool task's only other inputs are the tool's name,
-    its arguments and its `ToolDefinition` — there is no `messages`, `prompt` or `model_settings`
-    input to carry them the way the model-request task's inputs do.
-    `test_cache_key_run_context_projection_is_exhaustive` fails when a new field is neither
-    projected here nor consciously categorized as cache-irrelevant.
 
     Recurses into the containers a task's bound parameters may nest them in: the durable base
     passes an operation's logical inputs as one `*args` tuple, so a `RunContext` is not always a
@@ -101,75 +105,89 @@ def _replace_run_context(
         if _is_container(value):
             inputs[key] = _map_container(value, lambda item: _replace_run_context({'_': item})['_'])
         elif _is_run_context(value):
-            inputs[key] = {
-                'deps': _cacheable_value(value.deps),
-                'agent': value.agent.name if value.agent is not None else None,
-                'model': value.model.model_id,
-                '_model_id': value.model_id,
-                'retries': value.retries,
-                # Keyed verbatim, unlike the framework-generated tool call IDs inside `messages`:
-                # those are normalized so an identical history hashes the same across runs, but the
-                # ID of the call being made is what separates two parallel calls to the same tool
-                # with the same arguments, which must each execute rather than replay each other.
-                'tool_call_id': value.tool_call_id,
-                'tool_name': value.tool_name,
-                # The run inputs a tool body can read. `metadata` and `validation_context` hold
-                # arbitrary user values, so they get the same sentinel treatment as `deps`.
-                'prompt': value.prompt,
-                'metadata': _cacheable_value(value.metadata),
-                'validation_context': _cacheable_value(value.validation_context),
-                # Populated before every model request and still set while tools run, so two runs
-                # that differ only in their settings must not share a tool result. Model-request
-                # tasks additionally take it as a separate input.
-                'model_settings': value.model_settings,
-                # Tool keys are deliberately history-sensitive: a tool reading `ctx.messages` must
-                # not replay a result produced against a different history. A flow retry replays a
-                # value-identical history (`_strip_cache_excluded_fields` drops the per-run fields),
-                # so this costs cross-run reuse of tool results, not retry idempotency.
-                'messages': value.messages,
-                'tool_call_approved': value.tool_call_approved,
-                'tool_call_metadata': value.tool_call_metadata,
-                'retry': value.retry,
-                'max_retries': value.max_retries,
-                'run_step': value.run_step,
-                # Deferred-load state must be part of the key: two runs identical except for which
-                # capabilities/tools have been loaded see different tools and must not share a cache
-                # entry. Sorted for a deterministic key (sets have no stable iteration order).
-                # `capability_active` is deliberately omitted (unlike Temporal's serializer, which
-                # round-trips every field a hook might read): it's derived from `loaded_capability_ids`
-                # plus the static capability set, so it adds no entropy the two fields above don't.
-                'loaded_capability_ids': sorted(value.loaded_capability_ids),
-                'discovered_tool_names': sorted(value.discovered_tool_names),
-                # The dispatch-time widening of the two sets above, keyed for the same reason and by
-                # the same rule: a tool reading `is_tool_available` sees a different answer when it
-                # differs, so two runs that differ only here must not share an entry.
-                '_anchored_evidence': (
-                    sorted(value._anchored_evidence.discovered_tool_names),  # pyright: ignore[reportPrivateUsage]
-                    sorted(value._anchored_evidence.loaded_capability_ids),  # pyright: ignore[reportPrivateUsage]
-                ),
-                # A tool or capability may read `usage_limits` to fork its behavior (e.g. budget
-                # disclosure), so two runs identical except for their limits must not share a cache
-                # entry. `_strip_cache_excluded_fields` recurses into the `UsageLimits` dataclass to
-                # hash it by value; `None` (bare/synthetic context) hashes distinctly.
-                'usage_limits': value.usage_limits,
-                **({'workspace': value.workspace.ref} if value.workspace.ref is not None else {}),
-                # A dynamic toolset's discovery, validation and call tasks list it again under this
-                # path and read retry counts by the names it gives the tools, so one toolset listed
-                # under two prefixes must not share a cache entry. Projected only when set, so other
-                # keys are unchanged.
-                **(
-                    {'_tool_name_path': tool_name_path}
-                    if (tool_name_path := value._tool_name_path)  # pyright: ignore[reportPrivateUsage]
-                    else {}
-                ),
-                # A tool reading `deadline` or `remaining_time()` must not replay a result computed under
-                # a different time budget. A flow retry records the run's start time, so a retried run with
-                # the same `timeout=` has the same deadline and still hits. Projected only when set, so the
-                # keys of runs without a deadline are unchanged.
-                **({'deadline': value.deadline} if value.deadline is not None else {}),
-            }
+            inputs[key] = _project_run_context(value)
 
     return inputs
+
+
+def _project_run_context(value: RunContext[object]) -> dict[str, Any]:
+    """The fields of a `RunContext` a task's work can depend on, each in a hashable form.
+
+    This projection is hand-authored rather than derived from `fields(RunContext)`: most of what a
+    `RunContext` holds is live run machinery that can't be hashed. Every field a task's work can
+    depend on has to be listed here, because a tool task's only other inputs are the tool's name,
+    its arguments and its `ToolDefinition` — there is no `messages`, `prompt` or `model_settings`
+    input to carry them the way the model-request task's inputs do.
+    `test_cache_key_run_context_projection_is_exhaustive` fails when a new field is neither
+    projected here nor consciously categorized as cache-irrelevant.
+    """
+    return {
+        'deps': _cacheable_value(value.deps),
+        'agent': value.agent.name if value.agent is not None else None,
+        'model': value.model.model_id,
+        '_model_id': value.model_id,
+        'retries': value.retries,
+        # Keyed verbatim, unlike the framework-generated tool call IDs inside `messages`:
+        # those are normalized so an identical history hashes the same across runs, but the
+        # ID of the call being made is what separates two parallel calls to the same tool
+        # with the same arguments, which must each execute rather than replay each other.
+        'tool_call_id': value.tool_call_id,
+        'tool_name': value.tool_name,
+        # The run inputs a tool body can read. `metadata` and `validation_context` hold
+        # arbitrary user values, so they get the same sentinel treatment as `deps`.
+        'prompt': value.prompt,
+        'metadata': _cacheable_value(value.metadata),
+        'validation_context': _cacheable_value(value.validation_context),
+        # Populated before every model request and still set while tools run, so two runs
+        # that differ only in their settings must not share a tool result. Model-request
+        # tasks additionally take it as a separate input.
+        'model_settings': value.model_settings,
+        # Tool keys are deliberately history-sensitive: a tool reading `ctx.messages` must
+        # not replay a result produced against a different history. A flow retry replays a
+        # value-identical history (`_strip_cache_excluded_fields` drops the per-run fields),
+        # so this costs cross-run reuse of tool results, not retry idempotency.
+        'messages': value.messages,
+        'tool_call_approved': value.tool_call_approved,
+        'tool_call_metadata': value.tool_call_metadata,
+        'retry': value.retry,
+        'max_retries': value.max_retries,
+        'run_step': value.run_step,
+        # Deferred-load state must be part of the key: two runs identical except for which
+        # capabilities/tools have been loaded see different tools and must not share a cache
+        # entry. Sorted for a deterministic key (sets have no stable iteration order).
+        # `capability_active` is deliberately omitted (unlike Temporal's serializer, which
+        # round-trips every field a hook might read): it's derived from `loaded_capability_ids`
+        # plus the static capability set, so it adds no entropy the two fields above don't.
+        'loaded_capability_ids': sorted(value.loaded_capability_ids),
+        'discovered_tool_names': sorted(value.discovered_tool_names),
+        # The dispatch-time widening of the two sets above, keyed for the same reason and by
+        # the same rule: a tool reading `is_tool_available` sees a different answer when it
+        # differs, so two runs that differ only here must not share an entry.
+        '_anchored_evidence': (
+            sorted(value._anchored_evidence.discovered_tool_names),  # pyright: ignore[reportPrivateUsage]
+            sorted(value._anchored_evidence.loaded_capability_ids),  # pyright: ignore[reportPrivateUsage]
+        ),
+        # A tool or capability may read `usage_limits` to fork its behavior (e.g. budget
+        # disclosure), so two runs identical except for their limits must not share a cache
+        # entry. `_strip_cache_excluded_fields` recurses into the `UsageLimits` dataclass to
+        # hash it by value; `None` (bare/synthetic context) hashes distinctly.
+        'usage_limits': value.usage_limits,
+        **({'workspace': value.workspace.ref} if value.workspace.ref is not None else {}),
+        # A dynamic toolset's discovery, validation and call tasks list it again under this
+        # path and read retry counts by the names it gives the tools, so one toolset listed
+        # under two prefixes must not share a cache entry. Projected only when set, so other
+        # keys are unchanged.
+        **(
+            {'_tool_name_path': tool_name_path}
+            if (tool_name_path := value._tool_name_path)  # pyright: ignore[reportPrivateUsage]
+            else {}
+        ),
+        # A tool reading `deadline` or `remaining_time()` must not replay a result computed under
+        # a different time budget. A flow retry records the run's start time, so a retried run with
+        # the same `timeout=` has the same deadline and still hits. Projected only when set, so the
+        # keys of runs without a deadline are unchanged.
+        **({'deadline': value.deadline} if value.deadline is not None else {}),
+    }
 
 
 _CACHE_EXCLUDED_FIELDS = frozenset({'timestamp', 'run_id', 'conversation_id'})
@@ -180,6 +198,16 @@ _CAPABILITY_PART_EXCLUDED_FIELDS = frozenset({'timestamp', 'record_id'})
 
 Excluded on every kind, which is usually defined outside `pydantic_ai`; the kind's own fields stay in the key.
 """
+
+_INSTRUCTION_SOURCE_EXCLUDED_FIELDS = frozenset({'kind'})
+"""An instruction source's type tag, left out so the keys of instruction ids stay what they were before it was added."""
+
+_INSTRUCTION_SOURCE_TYPES = (
+    AgentInstructionSource,
+    ToolsetInstructionSource,
+    CapabilityInstructionSource,
+    RunInstructionSource,
+)
 
 _SYNTHETIC_CAPABILITY_ID = re.compile(r'<[a-z0-9_]+:[0-9a-f]{6}>')
 """The key a run gives a capability with no `id`, which differs every run (`_synthetic_capability_id`)."""
@@ -202,6 +230,20 @@ def _normalized_field_value(obj: object, name: str, value: Any, *, is_framework:
     return value
 
 
+def _excluded_fields(obj: object, *, is_framework: bool) -> frozenset[str]:
+    """The fields of dataclass `obj` left out of its key."""
+    excluded_fields: frozenset[str] = _CACHE_EXCLUDED_FIELDS if is_framework else frozenset()
+    if isinstance(obj, CapabilityPart):
+        excluded_fields |= _CAPABILITY_PART_EXCLUDED_FIELDS
+    elif isinstance(obj, _INSTRUCTION_SOURCE_TYPES):
+        excluded_fields |= _INSTRUCTION_SOURCE_EXCLUDED_FIELDS
+    elif isinstance(obj, ToolDefinition | BaseToolCallPart | BaseToolReturnPart) and obj.ui_visibility is None:
+        # Left out while unset, so keys stay what they were before the field was added; a set stamp stays in the key,
+        # since the model task's cached response carries it.
+        excluded_fields |= {'ui_visibility'}
+    return excluded_fields
+
+
 def _strip_cache_excluded_fields(
     obj: Any | dict[str, Any] | list[Any] | tuple[Any, ...],
 ) -> Any:
@@ -212,17 +254,7 @@ def _strip_cache_excluded_fields(
     they share a name with a per-run framework field.
     """
     if is_dataclass(obj) and not isinstance(obj, type):
-        result: dict[str, Any] = {}
-        module = type(obj).__module__
-        is_framework = module == 'pydantic_ai' or module.startswith('pydantic_ai.')
-        excluded_fields: frozenset[str] = _CACHE_EXCLUDED_FIELDS if is_framework else frozenset()
-        if isinstance(obj, CapabilityPart):
-            excluded_fields |= _CAPABILITY_PART_EXCLUDED_FIELDS
-        for f in fields(obj):
-            if f.name not in excluded_fields:
-                value = _normalized_field_value(obj, f.name, getattr(obj, f.name), is_framework=is_framework)
-                result[f.name] = _strip_cache_excluded_fields(value)
-        return _project_dict(result, lambda item: item)
+        return _strip_dataclass_fields(obj)
     elif _is_dict(obj):
         return _map_container(obj, _strip_cache_excluded_fields)
     elif _is_list(obj):
@@ -230,6 +262,19 @@ def _strip_cache_excluded_fields(
     elif _is_tuple(obj):
         return tuple(_strip_cache_excluded_fields(item) for item in obj)
     return _hash_binary_values(obj)
+
+
+def _strip_dataclass_fields(obj: 'DataclassInstance') -> dict[str, Any]:
+    """A dataclass instance's fields, each stripped, without those a framework class varies per run."""
+    result: dict[str, Any] = {}
+    module = type(obj).__module__
+    is_framework = module == 'pydantic_ai' or module.startswith('pydantic_ai.')
+    excluded_fields = _excluded_fields(obj, is_framework=is_framework)
+    for f in fields(obj):
+        if f.name not in excluded_fields:
+            value = _normalized_field_value(obj, f.name, getattr(obj, f.name), is_framework=is_framework)
+            result[f.name] = _strip_cache_excluded_fields(value)
+    return _project_dict(result, lambda item: item)
 
 
 def _hash_binary_values(obj: Any) -> Any:

@@ -67,7 +67,7 @@ where it can't run commands, they walk its files instead, as `find_files` and
 
 | Tool | Purpose |
 |---|---|
-| `read_file` | Read a text file with line numbers and a content hash. An image (PNG, JPEG, GIF, WebP) or PDF up to 5 MB is returned as the file itself, so a model that takes files sees it. With `max_image_side` set (`Coder` sets 1024), a larger image is downscaled to fit first. Other binary files are described by size, media type and their first 64 bytes in hex. Supports `offset`/`limit` paging, at most `max_read_lines` lines per call; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. A file over 64 MiB is described by its size, not read. |
+| `read_file` | Read a text file with line numbers and a content hash. An image (PNG, JPEG, GIF, WebP) or PDF up to 5 MB is returned as the file itself, so a model that takes files sees it. With `max_image_side` set (`Coder` sets 1024), a larger image is downscaled to fit first. Other binary files are described by size, media type and their first 64 bytes in hex. Supports `offset`/`limit` paging, where `offset` is the 1-indexed line to start from, at most `max_read_lines` lines per call; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. A file over 64 MiB is described by its size, not read. |
 | `write_file` | Create or overwrite a file. Optional `expected_hash` rejects stale writes (optimistic concurrency). |
 | `edit_file` | Exact-string replacement: one `old_text`/`new_text` pair, or a `replacements` batch applied in order. Each `old_text` must match exactly once; a batch is checked in memory and written only if every replacement matches. Optional `expected_hash`. |
 | `list_directory` | List a directory's entries with type indicators and sizes. |
@@ -137,6 +137,9 @@ higher, such as a parent holding sibling projects, to let the model reach
 beyond the project directory without spelling out absolute paths. `root_dir`
 must contain the working directory. To work in a subdirectory, set it on the
 workspace instead (`LocalWorkspace('./repo')`).
+
+The instructions name the working directory through [`AnnounceWorkingDirectory`](../announce_working_directory/), which states it once however
+many capabilities bring it, and starts a sandbox that isn't running to ask for it.
 
 [`PrefixTools`](https://pydantic.dev/docs/ai/capabilities/prefix-tools/) renames the tools so the model can tell two
 `FileSystem`s apart (`FileSystem().prefix_tools('wiki')` offers `wiki_read_file`), but it
