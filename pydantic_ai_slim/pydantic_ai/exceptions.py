@@ -1492,8 +1492,8 @@ class DeprecatedModelWarning(UserWarning):
     It's emitted each time a model prepares a request it sends, streamed or not, for a model whose profile has a
     [`deprecation`][pydantic_ai.profiles.ModelProfile.deprecation]. The message names the model, its retirement
     date, the model the provider routes its requests to from then, if any, and the replacement the provider
-    recommends, and links the provider's announcement. Creating the model
-    doesn't warn. Python's warning filters decide how often it's shown.
+    recommends, and links the provider's announcement. Creating the model doesn't warn. Python's warning filters
+    decide how often it's shown.
 
     The profile is set for models on the Anthropic and OpenAI APIs and, for some Google models, on the Gemini API and
     Google Cloud, each with that API's dates, including through the Pydantic AI Gateway. It isn't set where another

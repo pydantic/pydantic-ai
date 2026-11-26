@@ -143,9 +143,9 @@ to other models, billed at those models' rates: `gemini-2.5-pro` to `gemini-3.8-
 `gemini-3.5-flash-lite`. Google Cloud [lists October 20, 2026](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions#gemini-models)
 as the retirement date of both, and lists `gemini-3.8-flash` first among their replacements.
 
-`GoogleModel` keeps building Gemini 2.5 requests for these model names, so each `thinking` setting still sends a
-`thinking_budget`. Both new models accept it, along with the function tools, structured output and native tools
-`GoogleModel` sends for Gemini 2.5. Google's migration guides for
+`GoogleModel` keeps building Gemini 2.5 requests for these model names, so `thinking=False` and each thinking level
+still send a `thinking_budget`, and `thinking=True` only asks for the thoughts. Both new models accept these, along
+with the function tools, structured output and native tools `GoogleModel` sends for Gemini 2.5. Google's migration guides for
 [Gemini 3.8 Flash](https://aistudio.google.com/docs/whats-new-gemini-3.8#migrate-to-gemini-3-8-flash) and
 [Gemini 3.5 Flash-Lite](https://aistudio.google.com/docs/whats-new-gemini-3.6#migrate-to-gemini-3-5-flash-lite) list
 what changes:
