@@ -534,25 +534,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         metadata = typed_tool.tool_def.metadata if typed_tool is not None else None
         metadata_config = metadata.get('temporal') if metadata is not None else None
         if is_child_workflow_metadata(metadata_config):
-            if set(metadata_config) != {'child_workflow'}:
-                raise UserError(f'Tool {name!r} has invalid Temporal metadata: `child_workflow` must be the only key.')
-            # Argument validation never executes the tool body, so it remains an activity even when the call is a child.
-            if isinstance(operation_id, ToolsetValidateToolArgumentsId) and operation_id.toolset_kind == 'function':
-                return base_config
-            if not isinstance(operation_id, ToolsetCallToolId) or operation_id.toolset_kind != 'function':
-                raise UserError('Temporal child workflows are only supported for function tool calls.')
-            assert isinstance(tool, FunctionToolsetTool)
-            if not tool.is_async:
-                raise UserError(
-                    f'Temporal metadata for tool {name!r} selects a child workflow, but non-async tools '
-                    'cannot run in workflow code. Make the tool function async instead.'
-                )
-            child_config = validate_child_workflow_config(metadata_config['child_workflow'], f'tool {name!r} metadata')
-            # Like an activity, a child never retries the framework's deterministic errors. Without a policy, Temporal
-            # doesn't retry a child workflow at all, so that default is left alone.
-            if (retry_policy := child_config.get('retry_policy')) is not None:
-                child_config['retry_policy'] = with_non_retryable_errors(retry_policy)
-            return ChildWorkflowOperationConfig(child_workflow=child_config)
+            return self._child_workflow_tool_config(operation_id, tool, name, metadata_config, base_config)
         config = resolve_tool_activity_config(typed_tool, name, {})
         if config is False:
             # The tool-kind checks read `operation_id.toolset_kind` rather than the type of `tool.toolset`: the
@@ -580,6 +562,35 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 )
             return False
         return cast(ActivityConfig, {**base_config, **config})
+
+    def _child_workflow_tool_config(
+        self,
+        operation_id: DurableOperationId,
+        tool: object | None,
+        name: str,
+        metadata_config: ChildWorkflowOperationConfig,
+        base_config: ActivityConfig,
+    ) -> ActivityConfig | ChildWorkflowOperationConfig:
+        """The config of a tool whose Temporal metadata selects a child workflow."""
+        if set(metadata_config) != {'child_workflow'}:
+            raise UserError(f'Tool {name!r} has invalid Temporal metadata: `child_workflow` must be the only key.')
+        # Argument validation never executes the tool body, so it remains an activity even when the call is a child.
+        if isinstance(operation_id, ToolsetValidateToolArgumentsId) and operation_id.toolset_kind == 'function':
+            return base_config
+        if not isinstance(operation_id, ToolsetCallToolId) or operation_id.toolset_kind != 'function':
+            raise UserError('Temporal child workflows are only supported for function tool calls.')
+        assert isinstance(tool, FunctionToolsetTool)
+        if not tool.is_async:
+            raise UserError(
+                f'Temporal metadata for tool {name!r} selects a child workflow, but non-async tools '
+                'cannot run in workflow code. Make the tool function async instead.'
+            )
+        child_config = validate_child_workflow_config(metadata_config['child_workflow'], f'tool {name!r} metadata')
+        # Like an activity, a child never retries the framework's deterministic errors. Without a policy, Temporal
+        # doesn't retry a child workflow at all, so that default is left alone.
+        if (retry_policy := child_config.get('retry_policy')) is not None:
+            child_config['retry_policy'] = with_non_retryable_errors(retry_policy)
+        return ChildWorkflowOperationConfig(child_workflow=child_config)
 
     def _bound_operation_registrations(self, *operations: object) -> list[Callable[..., Any]]:
         return [cast(Any, operation).registration for operation in operations]

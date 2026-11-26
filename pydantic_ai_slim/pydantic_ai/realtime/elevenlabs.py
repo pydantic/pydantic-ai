@@ -281,6 +281,7 @@ class ElevenLabsRealtimeConnection(OpenAIRealtimeConnection):
         keep_tool_items: AbstractSet[str] = frozenset(),
         manual_turns: bool = False,
         strip_audio_tags: bool = True,
+        session_config: dict[str, Any] | None = None,
     ) -> None:
         # ElevenLabs transcribes every spoken turn, so its transcripts arrive (and belong in history) even when
         # `input_transcription_model=None` asked for none.
@@ -297,6 +298,7 @@ class ElevenLabsRealtimeConnection(OpenAIRealtimeConnection):
             prune_tool_items=prune_tool_items,
             keep_tool_items=keep_tool_items,
             manual_turns=manual_turns,
+            session_config=session_config,
         )
         # Semantic VAD commits the speech it hears on its own, unless turn detection is off.
         self._lifecycle: _ElevenLabsLifecycle = _ElevenLabsLifecycle(server_vad=not manual_turns)
@@ -609,6 +611,7 @@ class ElevenLabsRealtimeModel(OpenAIRealtimeModel):
             keep_tool_items=settings.get('openai_keep_tool_items', frozenset()),
             manual_turns=config_has_manual_turns(session_config),
             strip_audio_tags=cast(ElevenLabsRealtimeModelSettings, settings).get('elevenlabs_strip_audio_tags', True),
+            session_config=session_config,
         )
 
     async def _webrtc_headers(self) -> dict[str, str]:
