@@ -383,3 +383,69 @@ def decide(
         if decided is not None:
             found.append(decided)
     return _strictest(found)
+
+
+_SHELL_NAMES = frozenset({'Bash', 'Shell'})
+_CLAUDE_CODE_TOOLS: dict[str, str] = {
+    'Read': '`read_file`',
+    'Edit': '`edit_file`',
+    'MultiEdit': '`edit_file`',
+    'Write': '`write_file`',
+    'Glob': '`find_files`',
+    'Grep': '`grep`',
+    'WebFetch': '`web_fetch`',
+}
+"""Claude Code tool names a rule string can't use, with the tools to name instead."""
+_RULE_STRING = re.compile(r'(?P<name>[^\s()]+)(?:\((?P<inner>.*)\))?', re.DOTALL)
+_ARG_GLOB = re.compile(r'(?P<arg>[A-Za-z_]\w*)=(?P<glob>.+)', re.DOTALL)
+
+
+def parse_permission_rule(rule: str, verdict: PermissionVerdict, *, reason: str | None = None) -> PermissionRule[Any]:
+    """A `PermissionRule` from a rule string in the style of Claude Code's permission rules.
+
+    - `'Bash(git push:*)'` or `'Shell(git push:*)'`: shell commands that start with `git push`, as a
+      `PermissionRule.command`, on any tool that declares a shell command argument. `'Bash'` alone matches every
+      shell command.
+    - `'Bash(git push)'`, without `:*`: the same rule for `'ask'` and `'deny'`. For `'allow'` it raises
+      `UserError`, since Claude Code reads it as one exact command and a command rule's allow matches every
+      command that starts with its words.
+    - `'write_file'`: every call to the tool of that name.
+    - `'write_file(docs/**)'`: calls whose `path` argument matches the glob.
+    - `'web_fetch(url=https://example.com/*)'`: calls whose `url` argument matches the glob.
+
+    The text between the first `(` and the last `)` is the pattern, so a command may hold parentheses. Claude Code's
+    own tool names, such as `Read` or `Edit`, raise `UserError` naming the tool to use: no tool here has them, so
+    a rule naming one would match nothing.
+    """
+    match = _RULE_STRING.fullmatch(rule.strip())
+    inner = None if match is None else match['inner']
+    if match is None or (inner is not None and not inner.strip()):
+        raise UserError(f'Permission rule {rule!r} must be a tool name, optionally followed by a pattern in `()`.')
+    name = match['name']
+    if (instead := _CLAUDE_CODE_TOOLS.get(name)) is not None:
+        raise UserError(f'Permission rule {rule!r} uses the Claude Code tool name {name!r}: name {instead} instead.')
+    inner = None if inner is None else inner.strip()
+    if name in _SHELL_NAMES:
+        if inner is None:
+            return PermissionRule(verdict, tools={'code_arg_language': 'shell'}, reason=reason)
+        command = inner.removesuffix(':*').rstrip()
+        if verdict == 'allow' and command == inner:
+            raise UserError(
+                f'Permission rule {rule!r} would allow every command starting with {inner!r}, not just that one: '
+                f'write `{name}({inner}:*)` to allow them.'
+            )
+        return PermissionRule(verdict, command=command, reason=reason)
+    if inner is None:
+        return PermissionRule(verdict, tools=[name], reason=reason)
+    arg = _ARG_GLOB.fullmatch(inner)
+    args = {'path': inner} if arg is None else {arg['arg']: arg['glob'].strip()}
+    return PermissionRule(verdict, tools=[name], args=args, reason=reason)
+
+
+def parse_permission_rules(rules: Mapping[PermissionVerdict, Sequence[str]]) -> list[PermissionRule[Any]]:
+    """`PermissionRule`s from rule strings by verdict, such as `{'allow': ['Bash(git status:*)'], 'deny': [...]}`.
+
+    Each string is parsed by `parse_permission_rule`. The order doesn't matter: `'deny'` beats `'ask'`, which beats
+    `'allow'`, whatever the order.
+    """
+    return [parse_permission_rule(rule, verdict) for verdict, strings in rules.items() for rule in strings]

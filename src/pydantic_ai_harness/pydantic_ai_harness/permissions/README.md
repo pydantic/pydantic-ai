@@ -133,6 +133,32 @@ An allow rule trusts everything after its words, so allowing `find` also allows 
 
 In an agent spec, `rules` is a list of mappings of these fields (`PermissionRuleSpec`), with `tools` limited to the serializable forms.
 
+### Rules as strings
+
+`parse_permission_rules` builds rules from strings by verdict, in the style of Claude Code's permission rules, for settings files that people write by hand:
+
+```python
+from pydantic_ai_harness.permissions import Permissions, parse_permission_rules
+
+permissions = Permissions(
+    'read-only',
+    rules=parse_permission_rules(
+        {
+            'allow': ['Bash(git status:*)', 'write_file(docs/*)'],
+            'ask': ['Bash(git push)', 'deploy(env=prod*)'],
+            'deny': ['Bash(rm -rf)'],
+        }
+    ),
+)
+```
+
+- `Bash(git push:*)` (or `Shell(...)`) is `command='git push'`, and `Bash` alone matches every shell command.
+- `Bash(git push)`, without `:*`, is the same rule in `'ask'` and `'deny'`. In `'allow'` it raises `UserError`: Claude Code reads it as that exact command, while a command rule allows every command starting with its words, so the string must say `:*`.
+- `write_file` is every call to that tool, `write_file(docs/*)` globs its `path` argument, and `deploy(env=prod*)` globs a named one.
+- Claude Code's own tool names (`Read`, `Edit`, `MultiEdit`, `Write`, `Glob`, `Grep`, `WebFetch`) raise `UserError` naming the tool to use instead, such as `edit_file`, since a rule naming them would match nothing.
+
+`parse_permission_rule(rule, verdict)` parses one string.
+
 ## Changing the mode during a run
 
 `mode` can be a function of the run context. It is read on every call, so an application can switch modes while a run is going, and the run's next call follows the new mode:
