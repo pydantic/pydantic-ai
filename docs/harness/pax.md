@@ -173,7 +173,7 @@ The second line adds web search from
 [Pydantic AI Harness](index.md). It needs the `exa` extra and an `EXA_API_KEY`:
 
 ```bash
-uv tool install --compile-bytecode pydantic-ai-pax --with 'pydantic-ai-harness[exa]'
+uv tool install pydantic-ai-pax --with 'pydantic-ai-harness[exa]'
 export EXA_API_KEY=...
 ```
 
@@ -184,7 +184,6 @@ Or ask Pax: it has a guide to its own plugin API, so you can ask it to "make a p
 that adds a `/standup` command".
 
 ## Working with Pax
-
 
 ### Tool calls and diffs
 
@@ -322,7 +321,6 @@ running your own agent the same way, see [the workspace docs](../workspace.md#ru
 
 ## Models and accounts
 
-
 ### Pick a model: `/model`
 
 `/model` lists the models you have added, with details for the highlighted one. Press
@@ -433,7 +431,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import Coder
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:medium }}',
     capabilities=[LocalWorkspace('.'), Coder()],
 )
 ```
@@ -442,7 +440,6 @@ See [Using Pax from code](https://github.com/pydantic/pydantic-ai/blob/main/src/
 in the reference.
 
 ## Make it yours
-
 
 ### Settings: `/set`
 
