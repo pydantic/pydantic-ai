@@ -5973,6 +5973,7 @@ async def test_prefect_with_non_retryable_errors_condition() -> None:
     assert await condition(None, None, _State(UserError('bad config'))) is False
     assert await condition(None, None, _State(PydanticUserError('bad schema', code=None))) is False
     assert await condition(None, None, _State(UnexpectedModelBehavior('bad response'))) is False
+    assert await condition(None, None, _State(UsageLimitExceeded('over the limit'))) is False
     for error in (
         WorkspaceTimeoutError('slow'),
         WorkspaceOutputLimitError('loud', limit=1),

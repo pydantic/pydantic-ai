@@ -3743,6 +3743,19 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::<module>"
       ]
     },
+    "UsageLimitExceeded": {
+      "engines": [
+        "prefect",
+        "temporal"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_toolset.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::<module>"
+      ]
+    },
     "UserError": {
       "engines": [
         "absurd",

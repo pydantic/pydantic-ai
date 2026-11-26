@@ -12421,6 +12421,68 @@ async def test_conversation_store_rejects_a_resume_for_a_call_not_pending():
     )
 
 
+async def test_conversation_store_saves_each_tool_return_once_after_a_frontend_tool_result():
+    """A response calls a server tool and a frontend tool; the store gets each return once after the client sends the frontend result.
+
+    See https://github.com/pydantic/pydantic-ai/issues/13547.
+    """
+    requests: list[list[ModelMessage]] = []
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        requests.append(messages)
+        if len(requests) == 1:
+            yield {0: DeltaToolCall(name='lookup', json_args='{}', tool_call_id='srv-1')}
+            yield {1: DeltaToolCall(name='pick_file', json_args='{}', tool_call_id='front-1')}
+        else:
+            yield 'ok'
+
+    agent: Agent[None, str | DeferredToolRequests] = Agent(
+        FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
+    )
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'server value'
+
+    store = InMemoryConversationStore()
+    tools = [Tool(name='pick_file', description='Pick a file.', parameters={'type': 'object', 'properties': {}})]
+    await _stored_turn(agent, store, create_input(UserMessage(id='u1', content='go'), tools=tools, thread_id='thread'))
+    called = AssistantMessage(
+        id='a1', tool_calls=[ToolCall(id='front-1', function=FunctionCall(name='pick_file', arguments='{}'))]
+    )
+    picked = ToolMessage(id='t1', tool_call_id='front-1', content='a.txt')
+    await _stored_turn(agent, store, create_input(called, picked, tools=tools, thread_id='thread'))
+
+    conversation = await store.load('thread')
+    assert conversation is not None
+    assert conversation_view(conversation.messages) == snapshot(
+        [
+            'user-prompt: go',
+            'call srv-1',
+            'call front-1',
+            'return srv-1: server value',
+            'return front-1: a.txt',
+            'text: ok',
+        ]
+    )
+
+    await _stored_turn(
+        agent, store, create_input(UserMessage(id='u2', content='and now?'), tools=tools, thread_id='thread')
+    )
+
+    assert conversation_view(requests[-1]) == snapshot(
+        [
+            'user-prompt: go',
+            'call srv-1',
+            'call front-1',
+            'return srv-1: server value',
+            'return front-1: a.txt',
+            'text: ok',
+            'user-prompt: and now?',
+        ]
+    )
+
+
 async def test_conversation_store_failure_warns_on_the_server_not_to_the_client():
     class FailingStore(InMemoryConversationStore):
         async def load(
