@@ -7,7 +7,7 @@ import signal
 import struct
 import sys
 from collections.abc import Generator, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 
 import anyio
@@ -170,6 +170,11 @@ async def test_full_screen_program_gets_the_terminal(user: int) -> None:
         os.write(user, b'typed\x03\n')  # Ctrl+C is the program's own key now.
         await _screen_shows(user, b'\x1b[?1049l', screen)
         context = await task
+    # The command's errors reach the screen through their own pipe, in no fixed order with its other
+    # output, so they can follow `\x1b[?1049l`. Pax has written them all once the command is done.
+    with suppress(BlockingIOError):
+        while data := os.read(user, 65536):
+            screen.extend(data)
     assert events == ['hold leave_screen=True', 'release']
     assert b'oops' in screen
     assert b'got:typed\x03' in screen
