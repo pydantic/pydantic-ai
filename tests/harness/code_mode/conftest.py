@@ -10,8 +10,7 @@ from tests.harness.code_mode.grpc_relay import MontyRelay, serve_monty_relay
 
 
 @pytest.fixture
-# Only the relay tests use this.
-async def monty_relay() -> AsyncIterator[MontyRelay]:  # pragma: lax no cover
+async def monty_relay() -> AsyncIterator[MontyRelay]:
     """Serve remote Monty workers on an ephemeral loopback port."""
     async with serve_monty_relay() as relay:
         yield relay
