@@ -37,6 +37,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.crusoe import CrusoeModelName
     from pydantic_ai.models.google import GoogleModelName
     from pydantic_ai.models.google_decisions import GoogleDecisionsModelName
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModelName
     from pydantic_ai.models.groq import GroqModelName
     from pydantic_ai.models.huggingface import HuggingFaceModelName
     from pydantic_ai.models.mistral import MistralModelName
@@ -57,6 +58,7 @@ if not imports_successful():  # pragma: lax no cover
     AnthropicModelName = BedrockModelName = BedrockMantleModelName = CerebrasModelName = CohereModelName = None
     GoogleModelName = GroqModelName = HuggingFaceModelName = MistralModelName = OpenAIModelName = None
     OpenAIDecisionsModelName = GoogleDecisionsModelName = None
+    GoogleInteractionsModelName = None
     DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
     CrusoeModelName = None
     DeepSeekModelName = XaiModelName = MoonshotAIModelName = ZaiModelName = SnowflakeModelName = None
@@ -88,6 +90,7 @@ _PROVIDER_TO_MODEL_NAMES = {
     'google': GoogleModelName,
     'google-cloud': GoogleModelName,
     'google-decisions': GoogleDecisionsModelName,
+    'google-interactions': GoogleInteractionsModelName,
     'xai': XaiModelName,
     'groq': GroqModelName,
     'huggingface': HuggingFaceModelName,
