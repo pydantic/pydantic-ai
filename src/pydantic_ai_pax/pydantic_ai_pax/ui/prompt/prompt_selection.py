@@ -109,9 +109,10 @@ class Selection:
         The surface supplies the selectable rows: normally just the transcript, or the question
         widget too while it owns the panel. Ordinary editor and status rows remain excluded.
         After a double- or triple-click, both ends widen to the word or line under them; `joins`
-        says which rows wrap on from the row above, as `url_at` reads it.
+        says which rows wrap on from the row above, as `url_at` reads it. One on an excluded row
+        selects nothing.
         """
-        if self.anchor is None or self.head is None:
+        if self.anchor is None or self.head is None or (self.clicks > 1 and self.anchor[0] >= rows):
             return range(0)
         width = frame.width
 

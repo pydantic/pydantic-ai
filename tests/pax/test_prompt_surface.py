@@ -781,6 +781,22 @@ def test_a_triple_clicked_line_ends_at_the_hint_and_the_pinned_rows() -> None:
     assert clicks(screen, 2, 8, 3) == 'TOP'
 
 
+def test_multi_clicks_on_an_unselectable_row_select_nothing() -> None:
+    """A press on the editor or status rows ends at the last transcript cell, which must not grow to its word or line."""
+    screen = Screen(width=10, height=8)
+    screen.surface.paint(ROWS)
+    screen.write(''.join(f'row {index}\n' for index in range(9)) + 'last words')
+    assert screen.lines()[3:6] == ['last words', 'TOP', 'DRAFT']
+    start = len(screen.terminal.getvalue())
+    for count in (2, 3):
+        screen.now += 1
+        assert clicks(screen, 3, 6, count) is None, count
+        assert highlighted(screen.surface) == [], count
+    assert '\x1b]52;' not in screen.terminal.getvalue()[start:]
+    screen.now += 1
+    assert clicks(screen, 3, 4, 2) == 'last', 'the transcript row itself still selects'
+
+
 def test_a_soft_wrap_before_a_double_width_character_copies_no_padding() -> None:
     """A double-width character that does not fit wraps to the next row, leaving the last cell blank."""
     screen = Screen(width=5, height=8)
