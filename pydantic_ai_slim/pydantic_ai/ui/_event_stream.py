@@ -159,7 +159,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     Only unstamped parts take it. A [`UIAdapter`][pydantic_ai.ui.UIAdapter] run sets it to the adapter's
     [`default_ui_visibility`][pydantic_ai.ui.UIAdapter.default_ui_visibility], which it also writes onto the tools
     without a setting, and stamps external and output tools `'public'`. A stream used on its own, with no adapter,
-    stamps nothing, so a non-public default here also hides calls to external (frontend) tools and output tools.
+    stamps nothing, so a non-public default here applies to external (frontend) and output tools too: under `'private'`,
+    an output tool's call isn't sent, and a frontend tool's call is sent only once the run defers it.
     """
 
     _call_ui_visibilities: dict[str, ToolUIVisibility] = field(default_factory=dict[str, ToolUIVisibility], init=False)

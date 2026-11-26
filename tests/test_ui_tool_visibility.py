@@ -666,8 +666,9 @@ async def test_failure_a_tool_reports_follows_its_visibility(protocol: ProtocolN
 async def test_standalone_event_stream_default_applies_only_to_unstamped_parts():
     """Without an adapter, nothing writes the default into the stamps, so only unstamped parts take it.
 
-    That includes calls to external and output tools: a stream used on its own with a non-public default hides
-    them too, which is why the adapter, not the stream, applies the default to tool definitions.
+    That includes calls to external and output tools, which is why the adapter, not the stream, applies the default
+    to tool definitions: under `'private'`, an output tool's call isn't sent, and a frontend tool's call is sent only
+    once the run defers it, since the client has to run it.
     """
     agent = Agent(calling(('lookup_order', '{"order_id": "o_1"}'), ('order_status', '{"order_id": "o_1"}')))
 
@@ -688,6 +689,23 @@ async def test_standalone_event_stream_default_applies_only_to_unstamped_parts()
     assert 'lookup_order' not in ''.join(wire)
     assert SECRET not in ''.join(wire)
     assert 'shipped' in ''.join(wire)
+
+    frontend = ExternalToolset(
+        [ToolDefinition(name='show_map', parameters_json_schema={'type': 'object', 'properties': {}})]
+    )
+    external = Agent(calling(('show_map', '{}')), toolsets=[frontend], output_type=[str, DeferredToolRequests])
+    output = Agent(calling(('final_result', '{"response": "It shipped."}')), output_type=ToolOutput(str))
+    edge_wires: dict[str, str] = {}
+    for name, edge_agent in (('external', external), ('output', output)):
+        edge_stream = AGUIEventStream[None, Any](default_ui_visibility='private')
+        async with edge_agent.run_stream_events('Where is my order?') as events:
+            edge_wires[name] = ''.join(
+                [edge_stream.encode_event(event) async for event in edge_stream.transform_stream(events)]
+            )
+
+    assert 'show_map' in edge_wires['external']
+    assert 'final_result' not in edge_wires['output']
+    assert 'It shipped.' not in edge_wires['output']
 
 
 def test_ui_visibility_flows_from_each_tool_setter_into_the_tool_definition() -> None:
