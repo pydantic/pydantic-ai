@@ -5,9 +5,9 @@ from collections.abc import Callable
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Generic, Protocol, TypeVar, cast, runtime_checkable
+from typing import Annotated, Any, Generic, Protocol, TypeVar, cast, runtime_checkable
 
-from pydantic import ConfigDict, JsonValue, TypeAdapter, with_config
+from pydantic import ConfigDict, Field, JsonValue, TypeAdapter, with_config
 
 from pydantic_ai.durable_exec import (
     CapabilityMethodDeclaration,
@@ -128,7 +128,8 @@ class _Call:
     context: ContextSnapshot
     tool_def: ToolDefinition | None
     original_name: str | None = None
-    raw_tool_args: str | dict[str, Any] | None = None
+    # Left out when `None`, so a call that doesn't need it crosses with the bytes it had before the field existed.
+    raw_tool_args: Annotated[str | dict[str, Any] | None, Field(exclude_if=lambda value: value is None)] = None
 
 
 _CALL = TypeAdapter(_Call)

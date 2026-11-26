@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
+import datetime
 import functools
 import inspect
 import math
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import AbstractContextManager, asynccontextmanager, contextmanager, nullcontext
 from dataclasses import KW_ONLY, dataclass, field, replace
+from decimal import Decimal
+from enum import Enum
+from fractions import Fraction
+from pathlib import PosixPath, PurePosixPath, PureWindowsPath, WindowsPath
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -20,10 +26,11 @@ from typing import (
     assert_never,
     cast,
 )
+from uuid import UUID
 
 import anyio
-from pydantic import Discriminator, Field, Tag, ValidationError
-from pydantic_core import PydanticCustomError, PydanticSerializationError, SchemaValidator, to_json, to_jsonable_python
+from pydantic import BaseModel, Discriminator, Field, SecretBytes, SecretStr, Tag, ValidationError
+from pydantic_core import PydanticCustomError, PydanticSerializationError, SchemaValidator, to_jsonable_python
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai._agent_graph import build_validation_context
@@ -614,27 +621,92 @@ def raw_tool_args_for_unit(
         or not _is_json_value(raw_args)
         # The unit validates with the tool it rebuilds from `toolset`.
         or (source := toolset.tools.get(tool.original_name or tool.tool_def.name)) is None
+        or tool.args_validator is not source.function_schema.validator
+        # Both checks below validate again in the workflow. Without user code in the schema, that runs
+        # pydantic-core alone: no user validator, plugin or validation context sees the extra pass.
+        or source.function_schema.validation_runs_user_code
     ):
         return None
-    context = params.ctx.validation_context
-    # Both checks run the tool's validators on copies: a validator that mutates its input would
-    # otherwise change the wire `loaded_tool_args` shares objects with, or the model's message.
-    # A check that raises leaves the call on today's path, where the unit fails the same way.
+    schema = source.function_schema
     try:
-        if source.function_schema.revalidate(copy.deepcopy(loaded_tool_args), context=context) == params.tool_args:
+        if _same_value(schema.revalidate_in_core(loaded_tool_args), params.tool_args):
             return None
-    except ValidationError:
+    except (ValidationError, KeyError):
         pass  # The unit can't validate the dump at all: the case the model's arguments are for.
-    except Exception:
-        return None
     try:
-        reproduced = _validate_raw_tool_args(source.function_schema.validator, copy.deepcopy(raw_args), context=context)
-        # `==` can ignore state a hook changed (a `compare=False` field, a lenient `__eq__`); the JSON form
-        # includes it, and both sides lose the same things to it.
-        reproduces = reproduced == params.tool_args and to_json(reproduced) == to_json(params.tool_args)
-        return raw_args if reproduces else None
-    except Exception:
+        reproduced = schema.validate_in_core(raw_args)
+    except ValidationError:
         return None
+    # A hook or wrapper toolset that changed the arguments, in place or not, makes them differ.
+    return raw_args if _same_value(reproduced, params.tool_args) else None
+
+
+_LEAF_TYPES: frozenset[type] = frozenset(
+    {
+        str,
+        bytes,
+        bytearray,
+        int,
+        bool,
+        type(None),
+        complex,
+        UUID,
+        Fraction,
+        PurePosixPath,
+        PureWindowsPath,
+        PosixPath,
+        WindowsPath,
+    }
+)
+
+
+def _same_value(a: object, b: object) -> bool:
+    """Whether a tool can't tell `a` from `b`, judged without calling their `__eq__`.
+
+    It reads every attribute of a model or dataclass, so a `compare=False` or excluded field counts.
+    A type it doesn't know counts as different.
+    """
+    if type(a) is not type(b):
+        return False
+    if isinstance(a, Enum):
+        return a is b
+    if type(a) in _LEAF_TYPES:
+        return a == b
+    if (exact := _exact_leaf(a)) is not None:
+        return exact == _exact_leaf(b)
+    parts_a, parts_b = _parts(a), _parts(b)
+    if parts_a is None or parts_b is None:
+        return False
+    return len(parts_a) == len(parts_b) and all(_same_value(x, y) for x, y in zip(parts_a, parts_b))
+
+
+def _exact_leaf(value: object) -> object:
+    """A leaf whose `==` hides a difference, as a value whose `==` doesn't; `None` for anything else."""
+    if isinstance(value, float):
+        return value.hex()
+    if isinstance(value, Decimal):
+        return value.as_tuple()
+    if isinstance(value, datetime.date | datetime.time | datetime.timedelta):
+        return repr(value)
+    if isinstance(value, SecretStr | SecretBytes):
+        secret: str | bytes = value.get_secret_value()
+        return (type(secret), secret)
+    return None
+
+
+def _parts(value: object) -> list[Any] | None:
+    """What a container holds, in order; `None` for a type `_same_value` doesn't know."""
+    if type(value) is dict:
+        return [part for item in value.items() for part in item]
+    if type(value) in (list, tuple) or (isinstance(value, tuple) and hasattr(value, '_fields')):
+        return list(value)
+    if type(value) in (set, frozenset):
+        return sorted(value, key=repr)
+    if isinstance(value, BaseModel):
+        return [value.__dict__, value.__pydantic_extra__, value.__pydantic_private__, value.__pydantic_fields_set__]
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return [*(getattr(value, f.name) for f in dataclasses.fields(value)), getattr(value, '__dict__', {})]
+    return None
 
 
 def _validate_raw_tool_args(

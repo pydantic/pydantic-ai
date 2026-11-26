@@ -57,6 +57,17 @@ class CallToolParams:
     tool_def: ToolDefinition | None
     original_name: str | None = None
     """The name the toolset holds the tool under, when a `prepare` function renamed it in `tool_def.name`."""
+
+
+@dataclass(kw_only=True)
+@with_config(ConfigDict(arbitrary_types_allowed=True))
+class FunctionCallToolParams(CallToolParams):
+    """A function tool call's activity input: `CallToolParams` the workflow sends only when it carries `raw_tool_args`.
+
+    The activity reads this type, so a payload without the field loads with `raw_tool_args=None`, and a call
+    that doesn't need the field crosses as `CallToolParams`, with the bytes it had before the field existed.
+    """
+
     raw_tool_args: str | dict[str, Any] | None = None
     """A function tool call's arguments as the model sent them, when `tool_args` don't survive the boundary; see `raw_tool_args_for_unit`."""
 

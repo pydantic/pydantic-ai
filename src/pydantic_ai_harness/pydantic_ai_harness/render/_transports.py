@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from typing import Annotated, Any, Generic, TypeVar
 
-from pydantic import TypeAdapter
+from pydantic import Field, TypeAdapter
 
 from pydantic_ai.durable_exec import DurabilityEngineSpec, ParameterTransports
 from pydantic_ai.exceptions import UserError
@@ -83,7 +83,8 @@ class _CallToolPayload:
     run_context: JSONObject
     tool_def: ToolDefinition | None = None
     original_name: str | None = None
-    raw_tool_args: str | JSONObject | None = None
+    # Left out when `None`, so a call that doesn't need it crosses with the bytes it had before the field existed.
+    raw_tool_args: Annotated[str | JSONObject | None, Field(exclude_if=lambda value: value is None)] = None
 
 
 @dataclass(kw_only=True)
@@ -144,7 +145,8 @@ class RenderFunctionCallTransport(Generic[AgentDepsT], RenderJSONTransport[Tools
             run_context=self._context_codec.dump(params.ctx),
             tool_def=tool.tool_def,
             original_name=function_tool_original_name(tool),
-            raw_tool_args=raw_tool_args_for_unit(self._toolset, params, loaded_tool_args=load_json_object(tool_args)),
+            # `tool_args` holds the JSON values the task loads.
+            raw_tool_args=raw_tool_args_for_unit(self._toolset, params, loaded_tool_args=tool_args),
         )
         return dump_json_object(_CallToolPayload, payload)
 

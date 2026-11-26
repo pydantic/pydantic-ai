@@ -81,6 +81,37 @@ class FunctionSchema:
     """JSON schema for the function's return type. At minimum `{}` (equivalent to `Any`)."""
     revalidator: SchemaValidator | None = None
     """`validator` reading the top-level arguments by Python name only, set when one of them has an alias."""
+    validation_schema: core_schema.CoreSchema | None = None
+    """The cleaned core schema `validator` was built from."""
+
+    @cached_property
+    def validation_runs_user_code(self) -> bool:
+        """Whether validating these arguments can call code outside Pydantic and Pydantic AI.
+
+        That code is a validator function, a `default_factory`, a custom `__init__`, a `model_post_init`
+        or `__post_init__`, an enum's `_missing_` or a callable discriminator. Without any, validation is
+        deterministic in its input and has no side effects.
+        """
+        return self.validation_schema is None or _runs_user_code(self.validation_schema, set())
+
+    def validate_in_core(self, raw_args: str | dict[str, Any]) -> dict[str, Any]:
+        """Validate a call's arguments as `ToolManager` does, without plugins or a validation context."""
+        validator = _core_validator(self.validator)
+        if isinstance(raw_args, str):
+            return validator.validate_json(raw_args or '{}')
+        return validator.validate_python(raw_args or {})
+
+    def revalidate_in_core(self, args_dict: dict[str, Any]) -> dict[str, Any]:
+        """`revalidate`, without plugins or a validation context."""
+        validator = _core_validator(self.validator)
+        if self.single_arg_name is not None:
+            return validator.validate_python(_Revalidated(args_dict[self.single_arg_name]))
+        try:
+            return validator.validate_python(args_dict)
+        except ValidationError:
+            if self.revalidator is None:
+                raise
+            return _core_validator(self.revalidator).validate_python(args_dict)
 
     @cached_property
     def parameter_names(self) -> dict[str, str]:
@@ -286,6 +317,71 @@ def function_schema(
         function=function,
         return_schema=return_schema,
         revalidator=revalidator,
+        validation_schema=schema,
+    )
+
+
+def _core_validator(validator: SchemaValidator) -> SchemaValidator:
+    """The `SchemaValidator` inside the one pydantic plugins observe, so validating with it notifies no plugin."""
+    return getattr(validator, '_schema_validator', validator)
+
+
+_TRUSTED_MODULES = ('pydantic', 'pydantic_core', 'pydantic_ai._function_schema', 'enum')
+_PURE_FACTORIES: frozenset[object] = frozenset({list, dict, set, frozenset, tuple, str, bytes, int, float, bool})
+_NOT_CALLED_KEYS = frozenset(
+    {'serialization', 'metadata', 'config', 'ref', 'schema_ref', 'generic_origin', 'expected', 'members'}
+)
+
+
+def _is_trusted_callable(value: object) -> bool:
+    if value in _PURE_FACTORIES:
+        return True
+    while isinstance(value, partial):
+        value = value.func
+    module = getattr(value, '__module__', None)
+    return isinstance(module, str) and any(module == m or module.startswith(f'{m}.') for m in _TRUSTED_MODULES)
+
+
+def _is_copied_safely(default: object) -> bool:
+    """Pydantic deep-copies an unhashable default, which runs `__deepcopy__`."""
+    try:
+        hash(default)
+        return True
+    except TypeError:
+        pass
+    if isinstance(default, list | tuple | set | frozenset):
+        return all(_is_copied_safely(item) for item in default)
+    if isinstance(default, dict):
+        return all(_is_copied_safely(k) and _is_copied_safely(v) for k, v in default.items())
+    return False
+
+
+def _runs_user_code(node: object, seen: set[int]) -> bool:
+    if id(node) in seen:
+        return False
+    seen.add(id(node))
+    if isinstance(node, list | tuple):
+        return any(_runs_user_code(item, seen) for item in node)
+    if not isinstance(node, dict):
+        return callable(node) and not _is_trusted_callable(node)
+    return any(_entry_runs_user_code(node, key, value, seen) for key, value in node.items())
+
+
+def _entry_runs_user_code(schema: dict[str, Any], key: str, value: object, seen: set[int]) -> bool:
+    if key in _NOT_CALLED_KEYS:
+        return False
+    if key == 'default':
+        return not _is_copied_safely(value)
+    if key != 'cls':
+        return _runs_user_code(value, seen)
+    # Building a model or dataclass instance calls only its custom `__init__` and post-init hook.
+    if schema.get('type') == 'dataclass':
+        return bool(schema.get('post_init'))
+    if schema.get('type') != 'model':
+        return False
+    post_init = schema.get('post_init')
+    return bool(schema.get('custom_init')) or (
+        post_init is not None and not _is_trusted_callable(getattr(value, post_init, None))
     )
 
 

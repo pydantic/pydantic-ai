@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ConfigDict, with_config
+from pydantic_core import from_json
 from temporalio import workflow
 
 from pydantic_ai import messages as _messages
@@ -51,7 +52,7 @@ from pydantic_ai.workspaces import WorkspaceRef
 
 from ._operation_backend import TemporalParameterTransport
 from ._spec import TEMPORAL_ENGINE_SPEC
-from ._toolset import CallToolParams, GetToolsParams
+from ._toolset import CallToolParams, FunctionCallToolParams, GetToolsParams
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
@@ -82,7 +83,7 @@ __all__ = (
 
 
 class _FunctionCallTransport(TemporalParameterTransport[ToolsetCallToolParams, tuple[CallToolParams, Any]]):
-    wire_type = CallToolParams
+    wire_type = FunctionCallToolParams
     result_type = CallToolResult
 
     def __init__(self, durability: TemporalDurability[Any], toolset: FunctionToolset[Any]) -> None:
@@ -92,20 +93,25 @@ class _FunctionCallTransport(TemporalParameterTransport[ToolsetCallToolParams, t
     def dump(self, params: ToolsetCallToolParams) -> tuple[CallToolParams, Any]:
         assert params.tool is not None
         tool = params.tool
-        # The activity loads `tool_args` through the same converter.
-        converter = workflow.payload_converter()
-        loaded_tool_args = converter.from_payloads(converter.to_payloads([params.tool_args]), [dict[str, Any]])[0]
-        return (
-            CallToolParams(
-                name=params.name,
-                tool_args=params.tool_args,
-                serialized_run_context=self._durability.run_context_type.serialize_run_context(params.ctx),
-                tool_def=tool.tool_def,
-                original_name=tool.original_name if isinstance(tool, FunctionToolsetTool) else None,
-                raw_tool_args=raw_tool_args_for_unit(self._toolset, params, loaded_tool_args=loaded_tool_args),
-            ),
-            params.ctx.deps,
+        tool_args: dict[str, Any] = params.tool_args
+        raw_tool_args = None
+        # Serialized once, here, by the workflow's converter: the activity input then carries the JSON values the
+        # activity loads, which the converter writes again unchanged, so serializers don't run a second time.
+        # `from_json` reads them back without a Pydantic adapter, so no validation plugin sees an extra pass.
+        [payload] = workflow.payload_converter().to_payloads([params.tool_args])
+        if payload.metadata.get('encoding') == b'json/plain':
+            tool_args = from_json(payload.data)
+            raw_tool_args = raw_tool_args_for_unit(self._toolset, params, loaded_tool_args=tool_args)
+        wire = CallToolParams(
+            name=params.name,
+            tool_args=tool_args,
+            serialized_run_context=self._durability.run_context_type.serialize_run_context(params.ctx),
+            tool_def=tool.tool_def,
+            original_name=tool.original_name if isinstance(tool, FunctionToolsetTool) else None,
         )
+        if raw_tool_args is not None:
+            wire = FunctionCallToolParams(**vars(wire), raw_tool_args=raw_tool_args)
+        return wire, params.ctx.deps
 
     def load(self, payload: tuple[CallToolParams, Any], *, runtime: object) -> ToolsetCallToolParams:
         params, deps = payload
@@ -122,7 +128,11 @@ class _FunctionCallTransport(TemporalParameterTransport[ToolsetCallToolParams, t
                 'Removing or renaming tools during an agent run is not supported with Temporal.'
             ) from exc
         return ToolsetCallToolParams(
-            params.name, tool_args=params.tool_args, ctx=ctx, tool=tool, raw_tool_args=params.raw_tool_args
+            params.name,
+            tool_args=params.tool_args,
+            ctx=ctx,
+            tool=tool,
+            raw_tool_args=getattr(params, 'raw_tool_args', None),
         )
 
 
