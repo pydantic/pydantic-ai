@@ -20,6 +20,9 @@ from typing import Any, Literal
 
 from claude_agent_sdk import ClaudeAgentOptions, CLIConnectionError, CLINotFoundError, ProcessError, Transport
 
+from pydantic_ai.models.claude_code import ClaudeCodeModel
+from pydantic_ai.providers.claude_code import ClaudeCodeProvider
+
 
 @dataclass
 class FakeResponse:
@@ -51,6 +54,13 @@ def text(content: str) -> dict[str, Any]:
 
 def thinking(content: str, signature: str) -> dict[str, Any]:
     return {'type': 'thinking', 'thinking': content, 'signature': signature}
+
+
+def restart(model: ClaudeCodeModel) -> None:
+    """As after a restart, or with a history from storage: the provider knows no session to fork."""
+    provider = model._provider  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(provider, ClaudeCodeProvider)
+    provider._sessions.fork_points.clear()  # pyright: ignore[reportPrivateUsage]
 
 
 def tool_use(tool_use_id: str, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -93,18 +103,21 @@ class FakeClaudeCode:
     """Set once a response waits on its `hold`."""
     missing: bool = False
     """There's no Claude Code executable to start."""
+    transcripts: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
+    """The transcript each session has left, as its assistant messages' UUIDs, by session ID."""
 
     def __call__(self, options: ClaudeAgentOptions) -> FakeSession:
-        session = FakeSession(self, options)
+        session = FakeSession(self, options, f'session-{len(self.sessions) + len(self.discoveries)}')
         # A process with no MCP server of Pydantic AI's is the one that finds the user's own servers.
         (self.sessions if options.mcp_servers else self.discoveries).append(session)
         return session
 
 
 class FakeSession(Transport):
-    def __init__(self, script: FakeClaudeCode, options: ClaudeAgentOptions) -> None:
+    def __init__(self, script: FakeClaudeCode, options: ClaudeAgentOptions, session_id: str) -> None:
         self.script = script
         self.options = options
+        self.session_id = session_id
         self.frames: list[dict[str, Any]] = []
         """The user and assistant frames the SDK sent, history replay included."""
         self.tool_results: list[dict[str, Any]] = []
@@ -125,6 +138,14 @@ class FakeSession(Transport):
     async def connect(self) -> None:
         if self.script.missing:
             raise CLINotFoundError('Claude Code not found')
+        options = self.options
+        if options.resume is not None:
+            kept = self.script.transcripts.get(options.resume)
+            if kept is None or options.resume_session_at not in kept:
+                raise ProcessError(f'No conversation found with session ID: {options.resume}', exit_code=1)
+            assert options.fork_session
+            # A fork starts its transcript with the one it forked, up to the message it forked at.
+            self.script.transcripts[self.session_id] = kept[: kept.index(options.resume_session_at) + 1]
 
     def is_ready(self) -> bool:  # pragma: no cover
         return not self.closed
@@ -339,7 +360,17 @@ class FakeSession(Transport):
             return
         # Claude Code reports the whole message before its `message_stop` event.
         assistant = {**message, 'content': response.blocks, 'stop_reason': response.stop_reason}
-        self._send({'type': 'assistant', 'message': assistant, 'parent_tool_use_id': None})
+        transcript = self.script.transcripts.setdefault(self.session_id, [])
+        transcript.append(f'{self.session_id}/{len(transcript)}')
+        self._send(
+            {
+                'type': 'assistant',
+                'message': assistant,
+                'parent_tool_use_id': None,
+                'session_id': self.session_id,
+                'uuid': transcript[-1],
+            }
+        )
         self._send(
             {'type': 'stream_event', 'uuid': 'u', 'session_id': 'fake-session', 'event': {'type': 'message_stop'}}
         )
