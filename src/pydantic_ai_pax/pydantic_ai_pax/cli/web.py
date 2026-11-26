@@ -7,9 +7,10 @@ from pathlib import Path
 from anyio import CancelScope, create_task_group, get_cancelled_exc_class, to_thread
 from rich.console import Console
 
+from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from pydantic_ai_pax.app import STOCK_PLUGINS, create_stock_agent
+from pydantic_ai_pax.app import DEFAULT_PLUGINS, STOCK_PLUGINS, create_stock_agent
 from pydantic_ai_pax.builtin_plugins.web import WebPlugin
 from pydantic_ai_pax.cli.self_update import WebHandoff
 from pydantic_ai_pax.config import Settings
@@ -34,6 +35,7 @@ async def run_web(
     store: SettingsStore,
     project: ProjectSettings,
     console: Console,
+    agent: AbstractAgent[None, object] | None = None,
     resume: str | None = None,
     resume_from: ImportSource | None = None,
     session_id: str | None = None,
@@ -45,6 +47,8 @@ async def run_web(
     """Load the stock plugins and `web`, start the web UI, and run turns the browser enters until Ctrl+C.
 
     `console` gets the transcript as plain text. Nothing saved changes: `web` loads for this launch only.
+    `agent`, from `--agent`, replaces the stock agent in every session, which then loads no plugin but `web`,
+    as `pax --agent` loads none.
     `resume`, `session_id`, and `fork_session` work as for `chat`, except that `resume` needs an ID.
 
     `project` is the launch directory's project file and `settings_for` the settings Pax starts with
@@ -72,6 +76,7 @@ async def run_web(
         project=project,
         console=console,
         workspace=workspace,
+        agent=agent,
         store=store,
     )
     if (notice := undecided_notice(shell.session.trust)) is not None:
@@ -85,6 +90,7 @@ async def run_web(
             else load_project_settings(directory, store=store),
             console=Console(file=sink, force_terminal=False),
             workspace=directory or launched_in,
+            agent=agent,
             process=shell.process,
         )
         await _serve_web(
@@ -106,28 +112,35 @@ def _web_session(
     project: ProjectSettings,
     console: Console,
     workspace: Path | None,
+    agent: AbstractAgent[None, object] | None,
     store: SettingsStore | None = None,
     process: ClaiProcess[None] | None = None,
-) -> SessionRuntime[None, str]:
-    """A session of `pax --web` in `workspace`: over a new process with `store`, or joining `process`."""
+) -> SessionRuntime[None, object]:
+    """A session of `pax --web` in `workspace`: over a new process with `store`, or joining `process`.
+
+    With `agent`, the session runs it with no plugin but `web`; without, a new stock agent with the plugins.
+    """
     settings = settings_for(project)
     shell = create_shell(
-        create_stock_agent(),
+        create_stock_agent() if agent is None else agent,
         deps=None,
         plugins=(),
         usage_limits=UsageLimits(request_limit=settings.request_limit),
         console=console,
         settings=settings,
         store=store,
-        builtin_plugins=STOCK_PLUGINS if process is None else (),
+        builtin_plugins=() if process is not None else STOCK_PLUGINS if agent is None else DEFAULT_PLUGINS,
         project=project,
         headless=True,
+        load_plugins=agent is None,
         workspace=workspace,
         process=process,
         # Ctrl+C reaches the session Pax started with, which ends Pax; the others are interrupted from the browser.
         signals=process is None,
         settings_for=settings_for,
     )
+    # The browser reaches the session through `web`, so it loads even where every other plugin is off.
+    shell.loader.kept = frozenset({WEB})
     SessionWorkspace(
         session=shell.session,
         context=shell.context,
@@ -140,7 +153,7 @@ def _web_session(
 
 
 async def _serve_web(
-    shell: SessionRuntime[None, str],
+    shell: SessionRuntime[None, object],
     *,
     console: Console,
     resume: str | None,

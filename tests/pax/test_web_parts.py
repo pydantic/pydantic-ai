@@ -8,7 +8,7 @@ import os
 import re
 import socket
 import sys
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -19,6 +19,7 @@ from pydantic import JsonValue
 from rich.console import Console
 
 from pydantic_ai import (
+    Agent,
     AgentRunResult,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -28,6 +29,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.messages import (
     BinaryContent,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
@@ -40,6 +42,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserResponse, Question, QuestionOption
@@ -72,6 +75,7 @@ from pydantic_ai_pax.builtin_plugins.web.protocol import (
     OrchestratorMessage,
     ServerMessage,
     ShellDone,
+    Snapshot,
     StatusChanged,
     SubCall,
     SubCallAdded,
@@ -108,6 +112,7 @@ from pydantic_ai_pax.runtime.worktrees import Worktree
 from pydantic_ai_pax.ui.rendering.status import Status
 from pydantic_ai_pax.ui.rendering.usage_report import session_usage
 from tests._ports import reserve_loopback_port
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.pax.test_web import WIRE
 
 REQUEST = AskUserRequest(
@@ -565,16 +570,28 @@ async def test_windows_keeps_its_port_exclusive(monkeypatch: pytest.MonkeyPatch)
 
 
 class _Output(io.StringIO):
-    """Console output that tells when `pax --web` is ready for its user."""
+    """Console output that tells when `pax --web` is ready for its user, and when it has logged a line."""
 
     def __init__(self) -> None:
         super().__init__()
         self.ready = anyio.Event()
+        self._awaited: dict[str, anyio.Event] = {}
 
     def write(self, s: str) -> int:
         if 'Press Ctrl+C to quit.' in s:
             self.ready.set()
-        return super().write(s)
+        written = super().write(s)
+        for text, event in self._awaited.items():
+            if text in self.getvalue():
+                event.set()
+        return written
+
+    def logged(self, text: str) -> anyio.Event:
+        """Set once the output holds `text`."""
+        event = self._awaited.setdefault(text, anyio.Event())
+        if text in self.getvalue():
+            event.set()
+        return event
 
 
 @pytest.mark.parametrize('resume', [False, True])
@@ -703,7 +720,6 @@ async def test_run_web_needs_a_session_id_to_resume(tmp_path: Path) -> None:
     ('argv', 'error'),
     [
         (['--web', '-p', 'hi'], '--web cannot be combined'),
-        (['--web', '--agent', 'a:b'], '--web cannot be combined'),
         (['--web', '--resume'], '--web requires an explicit --resume SESSION-ID'),
         (['--port', '8000'], '--port and --token-file need --web'),
         (['--token-file', 'token'], '--port and --token-file need --web'),
@@ -831,6 +847,100 @@ async def test_run_web_on_a_launchers_port_and_token(
     else:
         assert found[1] == f'http://127.0.0.1:{port}/' and opened == []
         assert token not in output.getvalue()
+
+
+CLI_AGENT = Agent(TestModel())
+"""What `pax --web --agent tests.pax.test_web_parts:CLI_AGENT` imports."""
+
+
+def test_web_flag_serves_an_agent_of_your_own(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`pax --web --agent MODULE:ATTR` hands `run_web` that agent, keeping its own model over the saved one."""
+    calls: list[dict[str, object]] = []
+
+    async def fake_run_web(**kwargs: object) -> None:
+        calls.append(kwargs)
+
+    monkeypatch.setattr('pydantic_ai_pax.cli.web.run_web', fake_run_web)
+    store = SettingsStore(tmp_path / 'c.db')
+    store.set('model', 'openai:gpt-5')
+    argv = ['pax', '--web', '--database', str(store.path), '--agent', 'tests.pax.test_web_parts:CLI_AGENT']
+    monkeypatch.setattr(sys, 'argv', argv)
+    cli.run()
+    [call] = calls
+    assert call['agent'] is CLI_AGENT
+    settings_for = call['settings_for']
+    assert callable(settings_for)
+    settings = settings_for(ProjectSettings())
+    assert isinstance(settings, Settings)
+    assert (settings.model, settings.code_mode) == (None, False)
+
+
+async def test_run_web_serves_an_agent_of_your_own(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`pax --web --agent` runs that agent, with its tools and model, in each session, and loads no plugin but `web`.
+
+    Its conversation is saved, so the sidebar can resume it, as for the stock agent.
+    """
+    opened: list[str] = []
+    monkeypatch.setattr('pydantic_ai_pax.builtin_plugins.web.open_browser', opened.append)
+    offered: list[list[str]] = []
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        offered.append(sorted(tool.name for tool in info.function_tools))
+        if len(offered) == 1:
+            yield {0: DeltaToolCall(name='shout', json_args='{"text": "hello"}')}
+        else:
+            yield 'Shouted.'
+
+    agent = Agent(FunctionModel(stream_function=respond, model_name='custom'))
+
+    @agent.tool_plain
+    def shout(text: str) -> str:
+        """Shout `text`."""
+        return text.upper()
+
+    store = SettingsStore(tmp_path / 'config.db')
+    store.set('model', 'openai:gpt-5')
+    output = _Output()
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        async with anyio.create_task_group() as group:
+            group.start_soon(
+                lambda: run_web(
+                    settings_for=cli._settings_for(  # pyright: ignore[reportPrivateUsage]
+                        store, model=None, request_limit=None, agent=True, agent_model=True
+                    ),
+                    store=store,
+                    project=ProjectSettings(),
+                    console=Console(file=output, force_terminal=False, width=500),
+                    agent=agent,
+                )
+            )
+            await output.ready.wait()
+            found = re.search(r'(http://\S+)/\?token=(\S+)', output.getvalue())
+            assert found is not None
+            async with httpx.AsyncClient(base_url=found[1], headers={HEADER: found[2]}, trust_env=False) as client:
+
+                async def snapshot() -> Snapshot:
+                    message = WIRE.validate_json((await client.get('/api/state')).content)
+                    assert isinstance(message, Snapshot)
+                    return message
+
+                await client.post('/api/input', json={'text': 'Shout hello'})
+                await output.logged('Done in').wait()
+                state = await snapshot()
+                assert [(item.kind, item.text) for item in state.items if isinstance(item, Item)] == [
+                    ('user', 'Shout hello'),
+                    ('tool', 'HELLO'),
+                    ('assistant', 'Shouted.'),
+                ]
+                assert state.status.model == 'custom', "the agent's own model, not the saved one"
+                # The model picker replaces the agent's model, as `/model` does in the terminal.
+                await client.post('/api/model', json={'name': 'test'})
+                await output.logged('Saved model. Applied.').wait()
+                assert (await snapshot()).status.model == 'test'
+            group.cancel_scope.cancel()
+    # Its own tool, and the web UI's way to ask you questions; none of the stock plugins' tools.
+    assert offered == [['ask_user_question', 'shout']] * 2
+    assert len(await SqliteConversationStore(database=store.path.with_name('sessions.db')).listing(limit=10)) == 1
 
 
 def test_web_flag_returns_after_the_web_ui(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

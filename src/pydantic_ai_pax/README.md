@@ -453,7 +453,7 @@ that adds a `/standup` command".
 ## Pax in your own code
 
 - `pax -p "Explain this repository"` runs one prompt and prints only the answer.
-- `pax --agent my_module:agent` chats with your own Pydantic AI agent.
+- `pax --agent my_module:agent` chats with your own Pydantic AI agent; add `--web` to chat with it in your browser.
 - `open_stock_agent(...)` gives your Python code Pax's coding agent, without the terminal.
 - `chat(agent, deps=...)` opens the Pax terminal on any agent.
 

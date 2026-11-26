@@ -220,6 +220,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
                     store=store,
                     project=project,
                     console=Console(force_terminal=False, highlight=False),
+                    agent=agent,
                     resume=args.resume,
                     resume_from=args.resume_from,
                     session_id=args.session_id,
@@ -633,8 +634,8 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
 
 def _validate_web_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     if args.web:
-        if args.command or args.prompt is not None or args.agent is not None:
-            parser.error('--web cannot be combined with config, plugins, sessions, --prompt, or --agent')
+        if args.command or args.prompt is not None:
+            parser.error('--web cannot be combined with config, plugins, sessions, or --prompt')
         if args.resume == '':
             parser.error('--web requires an explicit --resume SESSION-ID')
     elif args.port is not None or args.token_file is not None:

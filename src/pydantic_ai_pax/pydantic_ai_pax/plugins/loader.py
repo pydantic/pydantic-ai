@@ -213,7 +213,8 @@ class SessionPlugins(Generic[DepsT]):
         declarations shipped with Pax, as a host with one session does. `project` comes from the
         session's `.clai/settings.json`; the store overrides it and the built-ins.
 
-        `enabled=False` lists and loads no plugins at all, without changing anything saved.
+        `enabled=False` lists and loads no plugins at all, without changing anything saved, except those named
+        in `kept`, which a host sets after construction, as `pax --web --agent` keeps `web`.
 
         `full_screen` is handed to every host; the shell binds it to the live renderer per prompt.
         `conversation`, `status`, `submit_prompt`, `send_input`, `interrupt`, `sessions`, `setting`, `tasks`,
@@ -257,6 +258,8 @@ class SessionPlugins(Generic[DepsT]):
         # Plugins unloaded while a turn runs, with their `session_end` reasons; `None` between turns.
         self._retired: list[tuple[str, LoadedPlugin[DepsT], SessionEndReason]] | None = None
         self.enabled = enabled
+        self.kept: frozenset[str] = frozenset()
+        """With `enabled=False`, the plugins still listed, as their declarations say; ignored otherwise."""
         self._base = PluginHost[None](
             name='',
             console=console,
@@ -301,9 +304,11 @@ class SessionPlugins(Generic[DepsT]):
 
     def entries(self) -> list[PluginEntry[DepsT]]:
         """Saved declarations plus drop-in files, keeping the loaded state of each."""
-        if not self.enabled:
+        if not (self.enabled or self.kept):
             return []
         declared = self._process.declared(self._project, console=self._console)
+        if not self.enabled:
+            declared = {name: declared[name] for name in self.kept & declared.keys()}
         builtin = self._process.builtin
         refreshed: dict[str, PluginEntry[DepsT]] = {}
         for name in sorted(declared):
