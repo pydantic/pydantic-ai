@@ -33,6 +33,7 @@ def test_only_the_listed_cases_are_unbuildable() -> None:
     assert unbuildable == [
         'AWSLambdaDurability',
         'AbsurdDurability',
+        'CDPBrowser',
         'DynamicWorkflow',
         'GoogleWorkspace',
         'ModelRouter',

@@ -30,6 +30,7 @@ from pydantic_ai_harness.step_persistence.conversations import ConversationSumma
 from pydantic_ai_pax.builtin_plugins.web.app import HEADER, ASGIApp, create_app
 from pydantic_ai_pax.builtin_plugins.web.server import WebServer
 from pydantic_ai_pax.plugins import InstallProgress
+from pydantic_ai_pax.plugins.menus import Option
 from tests.pax.browser.conftest import Serve
 from tests.pax.test_web import TOKEN
 from tests.pax.test_web_sessions import Fleet
@@ -372,6 +373,110 @@ async def test_sidebar_search_accessible_name(page: Page, web_ui: WebUI) -> None
     await search.fill('Beta')
     await expect(sidebar.get_by_text('Browser Beta', exact=True)).to_be_visible()
     await expect(sidebar.get_by_text('Browser Alpha', exact=True)).to_have_count(0)
+
+
+VIEWS = ['sessions', 'projects']
+"""The sidebar's two listings, which render different rows and row controls."""
+FIELD_VIEWS = [*VIEWS, 'command palette', 'plugin settings', 'filter dialog']
+"""The views above, plus the command palette's, the plugin settings' and a long choice dialog's filter fields."""
+FILTERED = [Option(value=letter, label=letter) for letter in 'abcdefghi']
+"""More options than a choice dialog lists without its Filter field."""
+
+MARK_CONTROLS = """() => {
+  const controls = [...document.querySelectorAll('a[href], button, input, select, textarea, summary, [tabindex]')]
+    .filter((control) => !control.disabled && control.tabIndex >= 0 && control.type !== 'hidden' && !control.closest('[inert]'))
+  controls.forEach((control, index) => control.setAttribute('data-control', String(index)))
+  return controls.length
+}"""
+"""Mark each control the page renders in the Tab order; return how many."""
+
+MARK_PLACEHOLDER_FIELDS = """() => [...document.querySelectorAll('input[placeholder], textarea[placeholder]')]
+  .filter((field) => field.placeholder && field.checkVisibility())
+  .map((field, index) => {
+    field.setAttribute('data-placeholder-field', String(index))
+    const labelled = field.id && document.querySelector(`label[for="${CSS.escape(field.id)}"]`)
+    return [field.placeholder, field.hasAttribute('aria-label') || field.hasAttribute('aria-labelledby') || Boolean(labelled)]
+  })"""
+"""Mark each visible field with a placeholder; return its placeholder and whether it has a name of its own."""
+
+
+async def open_view(page: Page, web_ui: WebUI, view: str) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    await sidebar.get_by_text('Browser Beta', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
+    if view == 'projects':
+        await sidebar.get_by_role('button', name='Projects', exact=True).click()
+        await expect(sidebar.locator('.project-head').first).to_be_visible()
+    elif view == 'command palette':
+        await page.keyboard.press('ControlOrMeta+Shift+P')
+        await expect(page.get_by_placeholder('Search commands')).to_be_visible()
+    elif view == 'plugin settings':
+        await page.evaluate("() => { location.hash = '#settings/plugins' }")
+        await expect(page.get_by_placeholder('Search plugins')).to_be_visible()
+
+
+@pytest.mark.parametrize('view', VIEWS)
+async def test_tab_reaches_every_control_a_pointer_can(page: Page, web_ui: WebUI, view: str) -> None:
+    """A control hidden with `display` until hover takes no focus, so a keyboard cannot reach it (#12217)."""
+    await open_view(page, web_ui, view)
+    count: int = await page.evaluate(MARK_CONTROLS)
+    await page.mouse.move(0, 0)
+    reached: set[str] = set()
+    for _ in range(2 * count + 2):
+        await page.keyboard.press('Tab')
+        focused: str = await page.evaluate("() => document.activeElement?.getAttribute('data-control') ?? ''")
+        if focused in reached:
+            break
+        if focused:
+            reached.add(focused)
+    missed: list[str] = []
+    for index in map(str, range(count)):
+        if index in reached:
+            continue
+        control = page.locator(f'[data-control="{index}"]')
+        if not await control.count():
+            # Re-rendered during the walk; its replacement carries no mark.
+            continue
+        if not await control.is_visible():
+            row = await control.evaluate_handle(
+                'control => { let row = control.parentElement; while (row && !row.checkVisibility()) row = row.parentElement; return row }'
+            )
+            if (element := row.as_element()) is None:
+                continue
+            await element.hover()
+            revealed = await control.is_visible()
+            await page.mouse.move(0, 0)
+            if not revealed:
+                continue
+        missed.append(await control.evaluate("c => c.getAttribute('aria-label') || c.title || c.className"))
+    assert not missed, f'Tab never focuses these controls a pointer can use; hide one by size or opacity: {missed}'
+
+
+async def test_each_field_with_a_placeholder_has_an_accessible_name(page: Page, web_ui: WebUI) -> None:
+    """A field with no name of its own is named by its placeholder, not by whatever else its wrapping label holds.
+
+    A wrapping label named the session search 'Archived Ctrl K' (#11306), and one holding only an icon left the command
+    palette's and the plugin settings' search fields, and a long choice dialog's Filter field, with no name at all.
+    """
+    judged = 0
+    for view in FIELD_VIEWS:
+        await open_view(page, web_ui, view)
+        asked = None
+        if view == 'filter dialog':
+            choose = web_ui.fleet.service.dialogs.choose
+            asked = web_ui.fleet.portal.start_task_soon(lambda: choose(title='Pick a letter', options=FILTERED))
+            await expect(page.get_by_placeholder('Filter')).to_be_visible()
+        fields: list[tuple[str, bool]] = await page.evaluate(MARK_PLACEHOLDER_FIELDS)
+        for index, (placeholder, named) in enumerate(fields):
+            field = page.locator(f'[data-placeholder-field="{index}"]')
+            await expect(field).to_have_accessible_name(re.compile(r'\S' if named else rf'^{re.escape(placeholder)}$'))
+        judged += len(fields)
+        if asked is not None:
+            await page.keyboard.press('Escape')
+            assert await asyncio.wrap_future(asked) is None
+    assert judged, f'no view in {FIELD_VIEWS} has a field with a placeholder: open one that does'
 
 
 async def test_project_heading_title_is_its_folder(page: Page, web_ui: WebUI) -> None:

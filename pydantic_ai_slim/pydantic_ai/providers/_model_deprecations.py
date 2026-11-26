@@ -1,8 +1,8 @@
 """The models Anthropic and OpenAI have deprecated on their own APIs, for `ModelProfile.deprecation`.
 
-Compiled from the providers' deprecation pages as fetched on 2026-11-19. This file is the source of truth: edit it by
-hand when a provider announces a deprecation, following `.agents/skills/add-new-model/SKILL.md`. Each entry follows
-these rules:
+Compiled from the providers' deprecation pages as fetched on 2026-11-19, and Anthropic's again on 2026-11-24. This file
+is the source of truth: edit it by hand when a provider announces a deprecation, following
+`.agents/skills/add-new-model/SKILL.md`. Each entry follows these rules:
 
 - Add a model only when the provider's notice gives it a deprecation or retirement date. A model the notice doesn't
   date gets no entry, such as the bare `gpt-4o` alias, whose dated snapshots are listed instead.
@@ -186,6 +186,17 @@ ANTHROPIC_MODEL_DEPRECATIONS: dict[str, ModelDeprecation] = {
                 source_url='https://platform.claude.com/docs/en/about-claude/model-deprecations#deprecation-history',
                 retirement_date=date(2026, 11, 30),
                 replacement='claude-sonnet-5-5',
+            ),
+        ),
+        (
+            (
+                'claude-opus-4-5-20251101',
+                'claude-opus-4-5',
+            ),
+            ModelDeprecation(
+                source_url='https://platform.claude.com/docs/en/about-claude/model-deprecations#deprecation-history',
+                retirement_date=date(2027, 1, 22),
+                replacement='claude-opus-5-5',
             ),
         ),
         (
