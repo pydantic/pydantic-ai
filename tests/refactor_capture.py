@@ -108,20 +108,22 @@ before the capture starts or after. Each session, core and lifecycle a test uses
 the order the test first used it.
 
 An `MCPSamplingModel` sends its requests through an MCP session, so each call on its `request` is recorded as a request
-too, with the messages, model settings and model request parameters it's handed and the response it returns or the
-error it raises. Where a `unittest.mock` mock stands in for the session's `create_message`, each call the mock gets is
-a request after it, with the arguments the mock kept. A real session's calls aren't: what one sends shows where its
-peer handles it, like the sampling model an `MCPToolset` is given.
+too, with the messages, model settings and model request parameters it's handed, its tools' metadata recorded as an
+in-process model's are, and the response it returns or the error it raises. Where a `unittest.mock` mock stands in for
+the session's `create_message`, each call the mock gets is a request after it, with the arguments the mock kept. A real
+session's calls aren't: what one sends shows where its peer handles it, like the sampling model an `MCPToolset` is
+given.
 
 Each call the tool manager makes on a hook `TOOL_HOOKS` lists is one line of kind `hook`, under the class of the
 capability it's called on, with the arguments it's handed, an exception among them as its class and message, and the
-result it returns or the error it raises. The run context and a wrap hook's handler are left out. The capture wraps the
-hooks where `AbstractCapability` or a subclass defines them, whether the subclass is defined before the capture starts
-or after. A call on a hook while a recorded call on the same hook runs in the same agent run, like the one a combined
-capability makes on each capability it combines, isn't recorded again; one an agent run inside a hook or a tool makes
-is. The calls a run step makes run concurrently, and a sync tool on a worker thread, so the hook lines of each step's
-tool calls are put in the order the calls started, each call's own in the order they were made: how one call's hooks
-interleave with another's isn't compared.
+result it returns or the error it raises. A tool definition's metadata is recorded as an in-process model's tools' are.
+The run context and a wrap hook's handler are left out. The capture wraps the hooks where `AbstractCapability` or a
+subclass defines them, whether the subclass is defined before the capture starts or after. A call on a hook while a
+recorded call on the same hook runs in the same agent run, like the one a combined capability makes on each capability
+it combines, isn't recorded again; one an agent run inside a hook or a tool makes is. The calls a run step makes run
+concurrently, and a sync tool on a worker thread, so the hook lines of each step's tool calls are put in the order the
+calls started, each call's own in the order they were made: how one call's hooks interleave with another's isn't
+compared.
 
 Each event stream an agent run's root capability hands its consumer from `wrap_run_event_stream` is one line of kind
 `run_event_stream`, with the events it yields, in order, and the error iteration raised, if any. A run hands one for each
@@ -1665,9 +1667,6 @@ class RefactorCapture:
             *args: object,
             **kwargs: object,
         ) -> object:
-            recorded_parameters = copy.copy(model_request_parameters)
-            recorded_parameters.function_tools = self._recorded_tools(model_request_parameters.function_tools)
-            recorded_parameters.output_tools = self._recorded_tools(model_request_parameters.output_tools)
             self.records.append(
                 {
                     'kind': 'request',
@@ -1675,36 +1674,12 @@ class RefactorCapture:
                     'target': target,
                     'messages': normalized(messages),
                     'model_settings': normalized(model_settings),
-                    'model_request_parameters': normalized(recorded_parameters),
+                    'model_request_parameters': normalized(recorded_parameters(model_request_parameters)),
                 }
             )
             return original(model, messages, model_settings, model_request_parameters, *args, **kwargs)
 
         self._monkeypatch.setattr(model_class, name, recording_method)
-
-    @staticmethod
-    def _recorded_tools(tools: list[ToolDefinition]) -> list[ToolDefinition]:
-        """Copies of `tools` that keep each metadata value `json` can write, and record each other one as `unrecorded`,
-        with its class.
-
-        A tool's metadata isn't sent to the model, so the code under test may never serialize it, and serializing a value
-        like a model can run a test's serializer.
-        """
-        recorded_tools: list[ToolDefinition] = []
-        for tool in tools:
-            recorded = copy.copy(tool)
-            if tool.metadata is not None:
-                metadata: dict[str, object] = tool.metadata
-                recorded.metadata = {}
-                for key, value in metadata.items():
-                    try:
-                        json.dumps(value)
-                    except (TypeError, ValueError):
-                        recorded.metadata[key] = {'unrecorded': qualified_name(type(value))}
-                    else:
-                        recorded.metadata[key] = value
-            recorded_tools.append(recorded)
-        return recorded_tools
 
     def _wrap_capability(self, cls: type[AbstractCapability[object]]) -> None:
         self._wrap_tool_hooks(cls)
@@ -1907,7 +1882,9 @@ class RefactorCapture:
                     'target': method_target(type(capability), name),
                     # The run context is the run's, and the handler a function.
                     'kwargs': {
-                        arg: error_text(value) if isinstance(value, BaseException) else normalized(value)
+                        arg: error_text(value)
+                        if isinstance(value, BaseException)
+                        else normalized(recorded_tool(value) if isinstance(value, ToolDefinition) else value)
                         for arg, value in kwargs.items()
                         if arg not in ('ctx', 'handler')
                     },
@@ -1949,7 +1926,7 @@ class RefactorCapture:
                 'target': target,
                 'messages': normalized(messages),
                 'model_settings': normalized(model_settings),
-                'model_request_parameters': normalized(model_request_parameters),
+                'model_request_parameters': normalized(recorded_parameters(model_request_parameters)),
             }
             self.records.append(record)
             # A mock keeps the calls it's handed; what a real session sends shows where its peer handles it.
@@ -2403,6 +2380,35 @@ def readable_text(value: object, prefix: str = '') -> object:
 def error_text(e: BaseException) -> object:
     """`e`'s class and message, as `readable_text` records them."""
     return readable_text(e, f'{type(e).__name__}: ')
+
+
+def recorded_tool(tool: ToolDefinition) -> ToolDefinition:
+    """A copy of `tool` that keeps each metadata value `json` can write, and records each other one as `unrecorded`,
+    with its class.
+
+    A tool's metadata isn't sent to the model, so the code under test may never serialize it, and serializing a value
+    like a model can run a test's serializer.
+    """
+    recorded = copy.copy(tool)
+    if tool.metadata is not None:
+        metadata: dict[str, object] = tool.metadata
+        recorded.metadata = {}
+        for key, value in metadata.items():
+            try:
+                json.dumps(value)
+            except (TypeError, ValueError):
+                recorded.metadata[key] = {'unrecorded': qualified_name(type(value))}
+            else:
+                recorded.metadata[key] = value
+    return recorded
+
+
+def recorded_parameters(parameters: ModelRequestParameters) -> ModelRequestParameters:
+    """A copy of `parameters` with its tools as `recorded_tool` records them."""
+    recorded = copy.copy(parameters)
+    recorded.function_tools = [recorded_tool(tool) for tool in parameters.function_tools]
+    recorded.output_tools = [recorded_tool(tool) for tool in parameters.output_tools]
+    return recorded
 
 
 def recorded_value(value: object, decode: Callable[[object], object] | None = None) -> object:

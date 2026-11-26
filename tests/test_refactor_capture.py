@@ -876,6 +876,7 @@ AGENT_RUNS = """
 import asyncio
 
 import pytest
+from mcp.types import CreateMessageResult, TextContent
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from pydantic import BaseModel, model_serializer
@@ -886,6 +887,7 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponse, PartEndEvent, PartStartEvent, TextPart, ToolCallPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
@@ -1033,7 +1035,13 @@ def test_unformattable_error():
         agent.run_sync('echo')
 
 
-def test_tool_metadata():
+class ScriptedSession:
+    async def create_message(self, messages, **kwargs):
+        return CreateMessageResult(role='assistant', content=TextContent(type='text', text={text!r}), model='scripted')
+
+
+@pytest.mark.parametrize('model', [TestModel(), MCPSamplingModel(ScriptedSession())], ids=['test', 'sampling'])
+def test_tool_metadata(model):
     serializations = []
 
     class Tracked(BaseModel):
@@ -1042,7 +1050,7 @@ def test_tool_metadata():
             serializations.append('tracked')
             return 'tracked'
 
-    agent = Agent(TestModel(call_tools=[]))
+    agent = Agent(model)
 
     @agent.tool_plain(metadata={{'tracked': Tracked(), 'plain': {{'kind': 'lookup', 'tags': ['a']}}}})
     def lookup(key: str) -> str:
@@ -2578,7 +2586,7 @@ def test_capture_records_run_event_streams_agent_stream_calls_and_spans(run: Run
     order they started, each parent named by its number, or as `external` when no span started for it; an exception
     event leaves out its stack trace, and a span ended twice is recorded once.
     """
-    run(tmp_path, agent_runs=True).assert_outcomes(passed=9)
+    run(tmp_path, agent_runs=True).assert_outcomes(passed=10)
 
     records = [json.loads(line) for line in (tmp_path / 'main.jsonl').read_text().splitlines()]
     assert [
@@ -2611,7 +2619,9 @@ def test_capture_records_run_event_streams_agent_stream_calls_and_spans(run: Run
             ('test_agent_stream_calls', ['part_start', 'final_result', 'part_end'], None),
             ('test_spans', ['function_tool_call'], 'LookupError: tool failed'),
             ('test_unformattable_error', ['part_start'], {'unrecorded': 'Unformattable: `str()` raised RuntimeError'}),
-            ('test_tool_metadata', [], None),
+            ('test_tool_metadata[test]', ['function_tool_call', 'function_tool_result'], None),
+            ('test_tool_metadata[test]', [], None),
+            ('test_tool_metadata[sampling]', [], None),
         ]
     )
     assert [
@@ -2787,7 +2797,7 @@ def test_capture_records_an_unreadable_error_message_as_unrecorded(run: RunCaptu
     message recorded as `unrecorded`, with the class of the error `__str__` raised, instead of the capture raising that
     error into the test.
     """
-    run(tmp_path, agent_runs=True).assert_outcomes(passed=9)
+    run(tmp_path, agent_runs=True).assert_outcomes(passed=10)
 
     records = [json.loads(line) for line in (tmp_path / 'main.jsonl').read_text().splitlines()]
     assert [
@@ -2810,24 +2820,103 @@ def test_capture_records_an_unreadable_error_message_as_unrecorded(run: RunCaptu
 
 
 def test_capture_records_only_the_tool_metadata_json_can_write(run: RunCapture, tmp_path: Path):
-    """A request record keeps each tool metadata value `json` can write, and records a model as `unrecorded`, with its
-    class, without serializing it: the test that counts its serializer's calls passes.
+    """A request record of an in-process model or an `MCPSamplingModel`, and a hook record's tool definition, keep each
+    tool metadata value `json` can write, and record a model as `unrecorded`, with its class, without serializing it:
+    the test that counts its serializer's calls passes.
     """
-    run(tmp_path, agent_runs=True).assert_outcomes(passed=9)
+    run(tmp_path, agent_runs=True).assert_outcomes(passed=10)
 
     records = [json.loads(line) for line in (tmp_path / 'main.jsonl').read_text().splitlines()]
     assert [
-        [tool['metadata'] for tool in record['model_request_parameters']['function_tools']]
+        (
+            record['node'].split('::')[1],
+            record['target'].rsplit('.', 2)[1:],
+            [tool['metadata'] for tool in record['model_request_parameters']['function_tools']]
+            if record['kind'] == 'request'
+            else record['kwargs']['tool_def']['metadata'],
+        )
         for record in records
-        if record['node'].endswith('::test_tool_metadata') and record['kind'] == 'request'
+        if '::test_tool_metadata[' in record['node'] and record['kind'] in ('request', 'hook')
     ] == snapshot(
         [
-            [
+            (
+                'test_tool_metadata[test]',
+                ['TestModel', 'request'],
+                [
+                    {
+                        'tracked': {'unrecorded': 'test_agent_runs.test_tool_metadata.<locals>.Tracked'},
+                        'plain': {'kind': 'lookup', 'tags': ['a']},
+                    }
+                ],
+            ),
+            (
+                'test_tool_metadata[test]',
+                ['CombinedCapability', 'wrap_tool_validate'],
                 {
                     'tracked': {'unrecorded': 'test_agent_runs.test_tool_metadata.<locals>.Tracked'},
                     'plain': {'kind': 'lookup', 'tags': ['a']},
-                }
-            ]
+                },
+            ),
+            (
+                'test_tool_metadata[test]',
+                ['CombinedCapability', 'before_tool_validate'],
+                {
+                    'tracked': {'unrecorded': 'test_agent_runs.test_tool_metadata.<locals>.Tracked'},
+                    'plain': {'kind': 'lookup', 'tags': ['a']},
+                },
+            ),
+            (
+                'test_tool_metadata[test]',
+                ['CombinedCapability', 'after_tool_validate'],
+                {
+                    'tracked': {'unrecorded': 'test_agent_runs.test_tool_metadata.<locals>.Tracked'},
+                    'plain': {'kind': 'lookup', 'tags': ['a']},
+                },
+            ),
+            (
+                'test_tool_metadata[test]',
+                ['CombinedCapability', 'wrap_tool_execute'],
+                {
+                    'tracked': {'unrecorded': 'test_agent_runs.test_tool_metadata.<locals>.Tracked'},
+                    'plain': {'kind': 'lookup', 'tags': ['a']},
+                },
+            ),
+            (
+                'test_tool_metadata[test]',
+                ['CombinedCapability', 'before_tool_execute'],
+                {
+                    'tracked': {'unrecorded': 'test_agent_runs.test_tool_metadata.<locals>.Tracked'},
+                    'plain': {'kind': 'lookup', 'tags': ['a']},
+                },
+            ),
+            (
+                'test_tool_metadata[test]',
+                ['CombinedCapability', 'after_tool_execute'],
+                {
+                    'tracked': {'unrecorded': 'test_agent_runs.test_tool_metadata.<locals>.Tracked'},
+                    'plain': {'kind': 'lookup', 'tags': ['a']},
+                },
+            ),
+            (
+                'test_tool_metadata[test]',
+                ['TestModel', 'request'],
+                [
+                    {
+                        'tracked': {'unrecorded': 'test_agent_runs.test_tool_metadata.<locals>.Tracked'},
+                        'plain': {'kind': 'lookup', 'tags': ['a']},
+                    }
+                ],
+            ),
+            (
+                'test_tool_metadata[sampling]',
+                ['MCPSamplingModel', 'request'],
+                [
+                    {
+                        'tracked': {'unrecorded': 'test_agent_runs.test_tool_metadata.<locals>.Tracked'},
+                        'plain': {'kind': 'lookup', 'tags': ['a']},
+                    }
+                ],
+            ),
         ]
     )
 
