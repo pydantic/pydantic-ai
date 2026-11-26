@@ -14,7 +14,7 @@
 # only those tapes run; the setup tape always runs first.
 #
 # The `hero` shot is the exception: it shows a real model's turn, so it isn't in the default run and
-# needs a real model and its API key, for example:
+# is rendered on its own, with an Anthropic model and ANTHROPIC_API_KEY set:
 #   PAX_SHOTS_MODEL=anthropic:claude-opus-5-5 ANTHROPIC_API_KEY=... capture.sh hero
 # The answer differs a little between runs; check the image before committing it.
 set -euo pipefail
@@ -27,6 +27,30 @@ if [ "$model" != demo:tour ] && [ -n "${ANTHROPIC_API_KEY:-}" ]; then key=(ANTHR
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(git -C "$here" rev-parse --show-toplevel)
 images="$repo/src/pydantic_ai_pax/docs/images"
+# Every tape, in order: the browser goes first, so it shows only the sessions made below. Add new tapes here.
+tapes=("$@")
+if [ ${#tapes[@]} -eq 0 ]; then
+  tapes=(resume model model-add accounts keys plugins set theme spinner system-prompt
+    ask-user shell code-mode rewind usage fork)
+fi
+# The real model renders `hero` and nothing else: the scripted tapes wait on `demo:tour`'s answers.
+if [ "$model" = demo:tour ]; then
+  for name in "${tapes[@]}"; do
+    if [ "$name" = hero ]; then
+      echo "the hero shot needs a real model: set PAX_SHOTS_MODEL (see the top of $0)" >&2
+      exit 1
+    fi
+  done
+else
+  if [ "${tapes[*]}" != hero ]; then
+    echo "PAX_SHOTS_MODEL renders only the hero shot: run \`$0 hero\` on its own" >&2
+    exit 1
+  fi
+  if [ "${model%%:*}" != anthropic ] || [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+    echo "the hero shot needs an anthropic: model and ANTHROPIC_API_KEY set" >&2
+    exit 1
+  fi
+fi
 [ -x "$repo/.venv/bin/pax" ] || { echo "no $repo/.venv/bin/pax: run make install" >&2; exit 1; }
 tools=""
 for tool in vhs pngquant oxipng git; do
@@ -195,18 +219,6 @@ for folder in ('$project', '$other'):
 (cd "$project" && run pax -p 'Explain how a forecast is fetched' > /dev/null)
 (cd "$project" && run pax -p 'Write tests for the parser' > /dev/null)
 
-# Every tape, in order: the browser goes first, so it shows only the sessions made above. Add new tapes here.
-tapes=("$@")
-if [ ${#tapes[@]} -eq 0 ]; then
-  tapes=(resume model model-add accounts keys plugins set theme spinner system-prompt
-    ask-user shell code-mode rewind usage fork)
-fi
-for name in "${tapes[@]}"; do
-  if [ "$name" = hero ] && [ "$model" = demo:tour ]; then
-    echo "the hero shot needs a real model: set PAX_SHOTS_MODEL (see the top of $0)" >&2
-    exit 1
-  fi
-done
 failed=""
 cd "$root"
 run vhs "$here/tapes/setup.tape" || run vhs "$here/tapes/setup.tape"
