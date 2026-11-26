@@ -3,10 +3,11 @@
 import json
 import logging
 import os
+import socket
 import sqlite3
 import sys
 import warnings
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -32,6 +33,64 @@ def quiet_telemetry_logs() -> Generator[None]:
     finally:
         for logger in loggers:
             logger.removeHandler(handler)
+
+
+_WSAECONNRESET = 10054
+"""Windows' `winerror` for a connection the peer reset."""
+
+
+class _ResetTolerantSocket:
+    """A socket whose `shutdown` ignores the peer having reset the connection already."""
+
+    def __init__(self, sock: socket.socket) -> None:
+        self.sock = sock
+
+    def fileno(self) -> int:
+        return self.sock.fileno()
+
+    def close(self) -> None:
+        self.sock.close()
+
+    def shutdown(self, how: int) -> None:
+        try:
+            self.sock.shutdown(how)
+        except ConnectionResetError as exc:
+            if getattr(exc, 'winerror', None) != _WSAECONNRESET:
+                raise
+
+
+@contextmanager
+def quiet_proactor_resets() -> Generator[None]:
+    """Let Windows Proactor transports finish teardown when the peer already reset the connection.
+
+    CPython shuts the socket down before closing it (python/cpython#87419). A reset raises there, which skips the
+    close and prints a callback traceback over the live display.
+    """
+    if sys.platform != 'win32':
+        yield
+        return
+    from asyncio import proactor_events
+
+    # Typeshed declares neither the private method nor `_sock`.
+    transport_class: type = vars(proactor_events)['_ProactorBasePipeTransport']
+    original: Callable[[object, BaseException | None], None] = vars(transport_class)['_call_connection_lost']
+
+    def call_connection_lost(self: object, exc: BaseException | None) -> None:
+        state = vars(self)
+        sock: socket.socket | None = state['_sock']
+        if sock is not None:
+            state['_sock'] = _ResetTolerantSocket(sock)
+        try:
+            original(self, exc)
+        finally:
+            if state['_sock'] is not None:
+                state['_sock'] = sock
+
+    setattr(transport_class, '_call_connection_lost', call_connection_lost)
+    try:
+        yield
+    finally:
+        setattr(transport_class, '_call_connection_lost', original)
 
 
 def main() -> None:
@@ -66,7 +125,7 @@ def main() -> None:
     try:
         from pydantic_ai_pax.cli.cli import run
 
-        with warnings.catch_warnings(), quiet_telemetry_logs():
+        with warnings.catch_warnings(), quiet_telemetry_logs(), quiet_proactor_resets():
             if not sys.warnoptions:
                 # Library warnings are advice for the developer who wired the agent, not the person at the
                 # prompt, and stderr output tears through the live display. Not every one is a `UserWarning`
