@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import inspect
+import logging
 import os
 import re
 import sys
@@ -118,6 +120,7 @@ from ...workspace_fakes import (
     RecordingWorkspaceBackend,
 )
 from ...wrapped_retry_toolsets import call_probe_once, snapshot_probe_toolset
+from ..span_utils import drop_fastmcp_client_spans
 
 try:
     from temporalio import activity, workflow
@@ -410,6 +413,59 @@ async def test_wait_for_nonstreaming_agent_timeout_does_not_livelock(client: Cli
         )
 
     assert result == 'clean-timeout'
+
+
+@workflow.defn
+class CancelledActivityErrorRetrievedWorkflow:
+    def __init__(self) -> None:
+        self.timed_out = False
+        self.finish = False
+
+    @workflow.run
+    async def run(self) -> None:
+        try:
+            # real-wait: the issue's shape, a workflow timer that cancels the in-flight model request activity
+            await asyncio.wait_for(_wait_for_nonstreaming_agent.run('say hi'), timeout=0.5)
+        except TimeoutError:
+            self.timed_out = True
+        # Stay open: once the workflow ends, Temporal discards anything its event loop would still log.
+        await workflow.wait_condition(lambda: self.finish)
+
+    @workflow.update
+    async def wait_for_timeout(self) -> None:
+        await workflow.wait_condition(lambda: self.timed_out)
+
+    @workflow.signal
+    def finish_run(self) -> None:
+        self.finish = True
+
+
+async def test_cancelled_activity_error_is_not_logged(client: Client, caplog: pytest.LogCaptureFixture) -> None:
+    """Cancelling a model request activity must not leave its `ActivityError` for asyncio to log (#13459).
+
+    asyncio logs an unread handle error when the handle is garbage collected, so the test collects
+    while the workflow is still open.
+    """
+    caplog.set_level(logging.ERROR)
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CancelledActivityErrorRetrievedWorkflow],
+        plugins=[AgentPlugin(_wait_for_nonstreaming_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            CancelledActivityErrorRetrievedWorkflow.run,
+            id=f'{CancelledActivityErrorRetrievedWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        await handle.execute_update(CancelledActivityErrorRetrievedWorkflow.wait_for_timeout)  # pyright: ignore[reportUnknownMemberType]
+        gc.collect()
+        await handle.signal(CancelledActivityErrorRetrievedWorkflow.finish_run)
+        await handle.result()
+
+    logged = [record.getMessage() for record in caplog.records if record.levelno >= logging.ERROR]
+    assert [m for m in logged if 'never retrieved' in m or 'shielded future' in m] == []
 
 
 async def _wait_for_timeout_stream_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
@@ -1028,6 +1084,7 @@ async def test_complex_agent_run_in_workflow(
                 _strip_volatile_fields(cast(dict[str, Any], v))
 
     assert root_span is not None
+    drop_fastmcp_client_spans(root_span)
     _normalize_json_spans(root_span)
 
     assert root_span == snapshot(
@@ -2286,6 +2343,16 @@ class SimpleAgentWorkflowWithOverrideModel:
             pass
 
 
+async def test_temporal_agent_override_capabilities_in_workflow() -> None:
+    """The guard raises before any model request, so there is nothing to record: `in_workflow` is patched instead."""
+    with patch.object(workflow, 'in_workflow', return_value=True):
+        with pytest.raises(
+            UserError, match='Capabilities cannot be contextually overridden inside a Temporal workflow'
+        ):
+            with simple_temporal_agent.override(capabilities=[]):
+                pass
+
+
 async def test_temporal_agent_override_model_in_workflow(allow_model_requests: None, client: Client):
     async with Worker(
         client,
@@ -2394,7 +2461,7 @@ async def test_temporal_agent_sync_tool_activity_disabled(allow_model_requests: 
         with workflow_raises(
             UserError,
             snapshot(
-                "Temporal activity config for tool 'get_weather' has been explicitly set to `False` (activity disabled), but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead."
+                "Temporal activity config for tool 'get_weather' has been explicitly set to `False` (activity disabled by `durable=False`, its Temporal metadata or `tool_activity_config`), but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead."
             ),
         ):
             await client.execute_workflow(

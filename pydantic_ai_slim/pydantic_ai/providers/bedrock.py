@@ -370,6 +370,13 @@ class BedrockModelProfile(ModelProfile, total=False):
     When set, `BedrockConverseModel` drops these settings with a warning instead of sending them.
     """
 
+    bedrock_supports_stop_sequences: bool
+    """Whether Converse accepts `stopSequences` for this model. Default: `True`.
+
+    When `False`, `BedrockConverseModel` drops `stop_sequences` with an `UnsupportedSettingWarning` instead of sending
+    it, as Converse rejects it with a 400.
+    """
+
     bedrock_supported_on_converse: bool
     """Whether this model is served by the Bedrock Converse API. Default: `True`.
 
@@ -462,7 +469,12 @@ def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
         return merge_profile(profile, BedrockModelProfile(bedrock_send_back_thinking_parts=True))
     if model_name == 'v3.2':
         # Bedrock's id doesn't match the native DeepSeek names, and V3.2 only reasons with `reasoning_effort='high'`.
-        return merge_profile(profile, BedrockModelProfile(supports_thinking=True, bedrock_thinking_variant='deepseek'))
+        return merge_profile(
+            profile,
+            BedrockModelProfile(
+                supports_thinking=True, bedrock_thinking_variant='deepseek', bedrock_supports_stop_sequences=False
+            ),
+        )
     return profile  # pragma: no cover
 
 
@@ -489,10 +501,12 @@ def bedrock_mistral_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Mistral model used via Bedrock."""
     models_that_support_structured_output = ('magistral-small', 'ministral-3', 'mistral-large-3', 'voxtral')
     supports_structured_output = model_name.startswith(models_that_support_structured_output)
+    models_that_reject_stop_sequences = ('devstral', 'magistral', 'ministral-3', 'mistral-large-3', 'voxtral')
     return merge_profile(
         _strip_builtin_tools(mistral_model_profile(model_name)),
         BedrockModelProfile(
             bedrock_tool_result_format='json',
+            bedrock_supports_stop_sequences=not model_name.startswith(models_that_reject_stop_sequences),
             json_schema_transformer=BedrockJsonSchemaTransformer,
             supports_json_schema_output=supports_structured_output,
             bedrock_supports_strict_tool_definition=supports_structured_output,
@@ -522,6 +536,7 @@ def bedrock_qwen_model_profile(model_name: str) -> ModelProfile | None:
         BedrockModelProfile(
             bedrock_supports_leading_assistant_message=True,
             bedrock_thinking_variant='qwen',
+            bedrock_supports_stop_sequences=False,
             supports_thinking=supports_reasoning,
             json_schema_transformer=(
                 _BedrockJsonSchemaTransformerWithoutContains
@@ -558,6 +573,7 @@ def bedrock_google_model_profile(model_name: str) -> ModelProfile | None:
             supports_json_object_output=False,
             # Bedrock Converse API doesn't support tool return schemas natively
             supports_tool_return_schema=False,
+            bedrock_supports_stop_sequences=False,
         ),
     )
 
@@ -572,6 +588,7 @@ def bedrock_zai_model_profile(model_name: str) -> ModelProfile | None:
         _strip_builtin_tools(zai_model_profile(model_name)),
         BedrockModelProfile(
             bedrock_supports_tool_choice=True,
+            bedrock_supports_stop_sequences=False,
             bedrock_supports_leading_assistant_message=True,
             json_schema_transformer=(
                 _BedrockGlm53JsonSchemaTransformer if is_glm_5_3 else _BedrockJsonSchemaTransformerWithoutContains
@@ -592,6 +609,7 @@ def bedrock_moonshotai_model_profile(model_name: str) -> ModelProfile | None:
         _strip_builtin_tools(moonshotai_model_profile(model_name)),
         BedrockModelProfile(
             bedrock_supports_tool_choice=True,
+            bedrock_supports_stop_sequences=False,
             bedrock_supports_leading_assistant_message=True,
             json_schema_transformer=BedrockJsonSchemaTransformer,
             supports_json_schema_output=True,
@@ -621,6 +639,7 @@ def bedrock_xai_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_supports_tool_choice=True,
             bedrock_thinking_variant='xai',
             bedrock_disallows_sampling_settings=True,
+            bedrock_supports_stop_sequences=False,
             supports_thinking=True,
             thinking_always_enabled=True,
             supports_json_schema_output=False,
@@ -645,6 +664,7 @@ def bedrock_writer_model_profile(model_name: str) -> ModelProfile | None:
         bedrock_tool_result_colocatable_content=frozenset(),
         # Writer Palmyra also rejects the `status` field on a `toolResult` block, unlike every other family.
         bedrock_supports_tool_result_status=False,
+        bedrock_supports_stop_sequences=not model_name.startswith('palmyra-vision'),
     )
 
 
@@ -657,6 +677,7 @@ def bedrock_minimax_model_profile(model_name: str) -> ModelProfile | None:
         family_profile,
         BedrockModelProfile(
             supported_native_tools=frozenset(),
+            bedrock_supports_stop_sequences=False,
             json_schema_transformer=(
                 _BedrockMiniMaxJsonSchemaTransformer if family_profile is not None else BedrockJsonSchemaTransformer
             ),
@@ -672,6 +693,7 @@ def bedrock_nvidia_model_profile(model_name: str) -> ModelProfile | None:
     supports_structured_output = model_name.startswith(models_that_support_structured_output)
     return BedrockModelProfile(
         supported_native_tools=frozenset(),
+        bedrock_supports_stop_sequences=False,
         json_schema_transformer=BedrockJsonSchemaTransformer,
         supports_json_schema_output=supports_structured_output,
         bedrock_supports_strict_tool_definition=supports_structured_output,
@@ -717,6 +739,7 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
         # Sol reject `effort='none'` here too, verified with live requests).
         return BedrockModelProfile(
             bedrock_disallows_sampling_settings=True,
+            bedrock_supports_stop_sequences=False,
             bedrock_thinking_variant='openai_responses',
             supports_thinking=True,
             thinking_always_enabled=openai_model_profile(model_name).get('thinking_always_enabled', False),
@@ -729,6 +752,7 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
         # gpt-oss doesn't see a tool schema's `$defs`, as on every other host (see `openai_model_profile`).
         json_schema_transformer=_GptOssInlineDefsJsonSchemaTransformer,
         bedrock_thinking_variant='openai',
+        bedrock_supports_stop_sequences=False,
         supports_thinking=True,
         thinking_always_enabled=True,
         # The family's default, which this profile doesn't otherwise build on: Converse has no mid-conversation

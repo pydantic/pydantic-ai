@@ -110,6 +110,7 @@ from pydantic_ai.realtime.codec import (
     ToolCall,
     ToolResult,
     TruncateOutput,
+    UpdateTools,
 )
 from pydantic_ai.realtime.profiles import merge_realtime_profile
 from pydantic_ai.realtime.xai import map_conversation_event as _map_conversation_wire_event
@@ -2272,9 +2273,12 @@ async def test_connect_rejects_orphan_tool_return(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     history = [ModelRequest(parts=[ToolReturnPart(tool_name='weather', content='sunny', tool_call_id='missing')])]
 
-    with pytest.raises(UserError, match=r"tool 'weather' with call ID 'missing'.*no preceding `ToolCallPart`"):
+    with pytest.raises(UserError) as exc_info:
         async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x', messages=history):
             pass  # pragma: no cover
+    assert str(exc_info.value) == snapshot(
+        "Cannot seed output for tool 'weather' with call ID 'missing': no preceding `ToolCallPart` with that ID was included in `message_history`."
+    )
 
 
 async def test_connect_seeds_retained_user_audio(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2302,25 +2306,39 @@ async def test_connect_seeds_retained_user_audio(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.parametrize(
-    ('audio', 'match'),
+    ('audio', 'message'),
     [
-        (BinaryContent(data=_wav_bytes(b'pcm-audio!', 16000), media_type='audio/wav'), 'recorded at 16000 Hz'),
-        (BinaryContent(data=b'pcm-audio', media_type='audio/pcm'), "media type 'audio/pcm'"),
-        (BinaryContent(data=b'not a wav', media_type='audio/wav'), 'not valid WAV audio'),
+        (
+            BinaryContent(data=_wav_bytes(b'pcm-audio!', 16000), media_type='audio/wav'),
+            snapshot(
+                'Cannot seed retained audio into openai realtime history: it was recorded at 16000 Hz, but the session expects 24000 Hz. Resample it first.'
+            ),
+        ),
+        (
+            BinaryContent(data=b'pcm-audio', media_type='audio/pcm'),
+            snapshot(
+                "`SpeechPart.audio` with media type 'audio/pcm' cannot be seeded into openai realtime history. Use WAV audio matching the target session input format."
+            ),
+        ),
+        (
+            BinaryContent(data=b'not a wav', media_type='audio/wav'),
+            snapshot('Cannot seed retained audio into openai realtime history: it is not valid WAV audio.'),
+        ),
     ],
 )
 async def test_connect_rejects_retained_audio_incompatible_with_input_format(
     monkeypatch: pytest.MonkeyPatch,
     audio: BinaryContent,
-    match: str,
+    message: str,
 ) -> None:
     ws = FakeWebSocket([_created(), _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     history = [ModelRequest(parts=[SpeechPart(speaker='user', audio=audio)])]
 
-    with pytest.raises(UserError, match=re.escape(match)):
+    with pytest.raises(UserError) as exc_info:
         async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x', messages=history):
             pass  # pragma: no cover
+    assert str(exc_info.value) == message
 
 
 async def test_connect_rejects_non_mono_retained_wav(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2338,13 +2356,52 @@ async def test_connect_rejects_non_mono_retained_wav(monkeypatch: pytest.MonkeyP
         )
     ]
 
-    with pytest.raises(UserError, match='expected mono 16-bit PCM WAV'):
+    with pytest.raises(UserError) as exc_info:
         async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x', messages=history):
             pass  # pragma: no cover
+    assert str(exc_info.value) == snapshot(
+        "Cannot seed retained audio into openai realtime history: expected mono 16-bit PCM WAV, got 2 channel(s), 16-bit samples, compression 'NONE'."
+    )
 
 
-@pytest.mark.parametrize('content_kind', ['audio-url', 'video-url', 'document-url', 'binary', 'uploaded'])
-async def test_connect_rejects_unseedable_user_content(monkeypatch: pytest.MonkeyPatch, content_kind: str) -> None:
+@pytest.mark.parametrize(
+    ('content_kind', 'message'),
+    [
+        (
+            'audio-url',
+            snapshot(
+                '`AudioUrl` cannot be sent to openai in a realtime session. Convert it to text or an inline image, or remove it from `message_history` or the tool result.'
+            ),
+        ),
+        (
+            'video-url',
+            snapshot(
+                '`VideoUrl` cannot be sent to openai in a realtime session. Convert it to text or an inline image, or remove it from `message_history` or the tool result.'
+            ),
+        ),
+        (
+            'document-url',
+            snapshot(
+                '`DocumentUrl` cannot be sent to openai in a realtime session. Convert it to text or an inline image, or remove it from `message_history` or the tool result.'
+            ),
+        ),
+        (
+            'binary',
+            snapshot(
+                "`BinaryContent` with media type 'application/pdf' cannot be sent to openai in a realtime session. Convert it to text or an image, or remove it from `message_history` or the tool result."
+            ),
+        ),
+        (
+            'uploaded',
+            snapshot(
+                '`UploadedFile` cannot be sent to openai in a realtime session. Convert it to text or an inline image, or remove it from `message_history` or the tool result.'
+            ),
+        ),
+    ],
+)
+async def test_connect_rejects_unseedable_user_content(
+    monkeypatch: pytest.MonkeyPatch, content_kind: str, message: str
+) -> None:
     content = {
         'audio-url': AudioUrl(url='https://example.com/a.mp3'),
         'video-url': VideoUrl(url='https://example.com/a.mp4'),
@@ -2356,9 +2413,10 @@ async def test_connect_rejects_unseedable_user_content(monkeypatch: pytest.Monke
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     history = [ModelRequest(parts=[UserPromptPart(content=[content])])]
 
-    with pytest.raises(UserError, match='cannot be sent to openai in a realtime session'):
+    with pytest.raises(UserError) as exc_info:
         async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x', messages=history):
             pass  # pragma: no cover
+    assert str(exc_info.value) == message
 
 
 async def test_connect_rejects_image_url_returning_non_image(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2370,9 +2428,12 @@ async def test_connect_rejects_image_url_returning_non_image(monkeypatch: pytest
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     history = [ModelRequest(parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/a.png')])])]
 
-    with pytest.raises(UserError, match='`ImageUrl` resolved to unsupported media type'):
+    with pytest.raises(UserError) as exc_info:
         async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x', messages=history):
             pass  # pragma: no cover
+    assert str(exc_info.value) == snapshot(
+        "`ImageUrl` resolved to media type 'application/pdf', which cannot be sent to openai in a realtime session. Use a URL that returns an image, or remove it."
+    )
 
 
 async def test_connect_rejects_unseedable_speech_and_response_parts(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2388,7 +2449,9 @@ async def test_connect_rejects_unseedable_speech_and_response_parts(monkeypatch:
                     ]
                 )
             ],
-            '`SpeechPart.audio` with media type',
+            snapshot(
+                "`SpeechPart.audio` with media type 'application/pdf' cannot be seeded into realtime history. Use retained audio bytes or filter the part from `message_history` before connecting."
+            ),
         ),
         (
             [
@@ -2401,11 +2464,15 @@ async def test_connect_rejects_unseedable_speech_and_response_parts(monkeypatch:
                     ]
                 )
             ],
-            'assistant `SpeechPart` without a transcript',
+            snapshot(
+                'An assistant `SpeechPart` without a transcript cannot be seeded into openai realtime history. Enable output transcription or filter the part from `message_history` before connecting.'
+            ),
         ),
         (
             [ModelResponse(parts=[FilePart(content=BinaryContent(data=b'file', media_type='application/pdf'))])],
-            '`FilePart`',
+            snapshot(
+                '`FilePart` cannot be seeded into openai realtime history. Convert it to text or filter it from `message_history` before connecting.'
+            ),
         ),
     ]
     ws = FakeWebSocket([_created(), _updated()])
@@ -2421,12 +2488,13 @@ async def test_connect_rejects_unseedable_speech_and_response_parts(monkeypatch:
         pass
     assert not any(json.loads(item).get('type') == 'conversation.item.create' for item in ws.sent)
 
-    for history, match in histories:
+    for history, message in histories:
         ws = FakeWebSocket([_created(), _updated()])
         monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
-        with pytest.raises(UserError, match=re.escape(match)):
+        with pytest.raises(UserError) as exc_info:
             async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x', messages=history):
                 pass  # pragma: no cover
+        assert str(exc_info.value) == message
 
 
 async def test_connect_captures_server_reported_model(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2811,7 +2879,7 @@ async def test_socket_oserror_is_reported_like_a_drop() -> None:
     error = events[0]
     assert isinstance(error, RealtimeSessionErrorEvent)
     assert error.recoverable is False
-    assert 'connection reset by peer' in error.message
+    assert error.message == snapshot('OpenAI Realtime connection closed: connection reset by peer')
 
 
 async def test_response_done_without_response_object_is_recoverable() -> None:
@@ -3279,6 +3347,8 @@ async def test_connection_closed_yields_fatal_error() -> None:
     error = events[0]
     assert isinstance(error, RealtimeSessionErrorEvent)
     assert error.recoverable is False
+    # The drop's own description is `websockets`' wording.
+    assert error.message == f'OpenAI Realtime connection closed: {rt_openai.websockets.ConnectionClosed(None, None)}'
 
 
 class _ExpiredWebSocket(FakeWebSocket):
@@ -3430,6 +3500,50 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     assert connect.closed == [dropped, good]
 
 
+async def test_tool_update_is_kept_for_a_reconnect(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`UpdateTools` replaces the session's tools, and the configuration a re-dial sends, so a reconnect keeps them."""
+    dropped = _DroppableAfterHandshake()
+    redialed = FakeWebSocket([_created(), _updated()])
+    connect = _RecordingConnect([dropped, redialed])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+    loader = ToolDefinition(name='load_capability', description='Load a capability.')
+    forecast = ToolDefinition(name='get_forecast', description='Look up the forecast.')
+
+    model = OpenAIRealtimeModel('gpt-realtime', settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1}})
+    async with _connect(model, 'x', tools=[loader]) as conn:
+        await conn.send(UpdateTools(tools=[loader, forecast]))
+        dropped.dropped.set()
+        events = await collect_codec_events(conn)
+
+    assert events == [RealtimeSessionReconnectEvent(state_restored=False)]
+    # Only the tools, with the `type` the GA configuration needs: the rest of it stands.
+    assert json.loads(dropped.sent[-1]) == snapshot(
+        {
+            'type': 'session.update',
+            'session': {
+                'tools': [
+                    {
+                        'type': 'function',
+                        'name': 'load_capability',
+                        'description': 'Load a capability.',
+                        'parameters': {'type': 'object', 'properties': {}},
+                    },
+                    {
+                        'type': 'function',
+                        'name': 'get_forecast',
+                        'description': 'Look up the forecast.',
+                        'parameters': {'type': 'object', 'properties': {}},
+                    },
+                ],
+                'type': 'realtime',
+            },
+        }
+    )
+    (handshake,) = [json.loads(frame) for frame in redialed.sent if json.loads(frame)['type'] == 'session.update']
+    assert [tool['name'] for tool in handshake['session']['tools']] == ['load_capability', 'get_forecast']
+    assert handshake['session']['instructions'] == 'x'
+
+
 async def test_connect_webrtc_reconnect_closes_previous_connection(monkeypatch: pytest.MonkeyPatch) -> None:
     updated = json.dumps({'type': 'session.updated', 'session': {'model': 'gpt-realtime'}})
     transcript = json.dumps({'type': 'response.audio_transcript.done', 'transcript': 'hi'})
@@ -3537,7 +3651,9 @@ async def test_reconnect_gives_up_after_max_attempts() -> None:
     error = events[0]
     assert isinstance(error, RealtimeSessionErrorEvent)
     assert error.recoverable is False
-    assert 'reconnect failed' in error.message
+    assert error.message == (
+        f'OpenAI Realtime connection closed; reconnect failed: {rt_openai.websockets.ConnectionClosed(None, None)}'
+    )
 
 
 async def test_reconnect_handshake_failure_consumes_an_attempt() -> None:
@@ -3563,7 +3679,9 @@ async def test_reconnect_handshake_failure_consumes_an_attempt() -> None:
     error = events[0]
     assert isinstance(error, RealtimeSessionErrorEvent)
     assert error.recoverable is False
-    assert 'reconnect failed' in error.message
+    assert error.message == (
+        f'OpenAI Realtime connection closed; reconnect failed: {rt_openai.websockets.ConnectionClosed(None, None)}'
+    )
 
 
 async def test_reconnect_replays_a_deferred_response_request() -> None:
@@ -3773,7 +3891,9 @@ async def test_reconnect_replay_failure_consumes_an_attempt() -> None:
     error = events[0]
     assert isinstance(error, RealtimeSessionErrorEvent)
     assert error.recoverable is False
-    assert 'reconnect failed' in error.message
+    assert error.message == (
+        f'OpenAI Realtime connection closed; reconnect failed: {rt_openai.websockets.ConnectionClosed(None, None)}'
+    )
 
 
 async def test_response_done_settles_a_response_whose_id_was_never_announced() -> None:
@@ -5300,15 +5420,43 @@ async def test_parallel_tool_calls_get_one_response_create() -> None:
     ]
 
 
+_WEATHER_CALL_ITEM = {
+    'id': 'item-call-1',
+    'type': 'function_call',
+    'call_id': 'call-1',
+    'name': 'get_weather',
+    'arguments': '{}',
+    'status': 'completed',
+}
+
+
 @pytest.mark.anyio
-@pytest.mark.parametrize('status', ['completed', 'cancelled'])
-async def test_single_tool_call_frames_and_timing_are_unchanged_by_batching(status: str) -> None:
+@pytest.mark.parametrize(
+    'done_response',
+    [
+        pytest.param({'id': 'resp-1', 'status': 'completed', 'output': [_WEATHER_CALL_ITEM]}, id='completed'),
+        pytest.param({'id': 'resp-1', 'status': 'cancelled', 'output': [_WEATHER_CALL_ITEM]}, id='cancelled'),
+        pytest.param({'status': 'completed', 'output': [_WEATHER_CALL_ITEM]}, id='without-id'),
+        pytest.param(
+            {'id': 'resp-1', 'status': 'completed', 'output': [_WEATHER_CALL_ITEM], 'usage': 'bogus'},
+            id='unreadable-usage',
+        ),
+        pytest.param('garbled', id='unreadable'),
+    ],
+)
+async def test_single_tool_call_frames_and_timing_are_unchanged_by_batching(
+    done_response: dict[str, Any] | str,
+) -> None:
     """One call's result goes out as soon as it settles, and its `response.create` at the `response.done`.
 
     The same frames at the same moments as before tool results were batched: the connection already held
     an early result's `response.create` back until the calling response's `response.done`, and dropped it
     when the server cancelled that response (the user barged in), leaving the answer to the response the
     user's speech starts.
+
+    A `response.done` the connection can't read, or one without an id, still ends the calling response: its
+    status is unknown or completed, so the result is answered as after a completed one. No recorded session
+    has such a frame, so these cases are scripted.
     """
     ws = _QueuedWebSocket()
     connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
@@ -5326,14 +5474,6 @@ async def test_single_tool_call_frames_and_timing_are_unchanged_by_batching(stat
     async with session:
         await session.send('Weather?')
         ws.push({'type': 'response.created', 'response': {'id': 'resp-1', 'status': 'in_progress', 'output': []}})
-        call = {
-            'id': 'item-call-1',
-            'type': 'function_call',
-            'call_id': 'call-1',
-            'name': 'get_weather',
-            'arguments': '{}',
-            'status': 'completed',
-        }
         ws.push(
             {
                 'type': 'response.function_call_arguments.done',
@@ -5354,8 +5494,8 @@ async def test_single_tool_call_frames_and_timing_are_unchanged_by_batching(stat
         # The result is out while the calling response is still active; nothing more until it's done.
         assert sent_types()[1:] == ['response.create', 'conversation.item.create/output']
 
-        ws.push({'type': 'response.done', 'response': {'id': 'resp-1', 'status': status, 'output': [call]}})
-        if status == 'cancelled':
+        ws.push({'type': 'response.done', 'response': done_response})
+        if isinstance(done_response, dict) and done_response['status'] == 'cancelled':
             for _ in range(50):
                 await asyncio.sleep(0)
             assert sent_types()[1:] == ['response.create', 'conversation.item.create/output']

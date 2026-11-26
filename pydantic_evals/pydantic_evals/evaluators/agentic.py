@@ -454,16 +454,20 @@ class ArgumentCorrectness(Evaluator[object, object, object]):
 
         try:
             actual_args = json.loads(selected.arguments)
-        except json.JSONDecodeError as e:
+        except (ValueError, RecursionError) as e:  # also integers past the digit limit, and deeply nested JSON
             return EvaluationReason(
                 value=False,
                 reason=f'Tool {self.tool_name!r} arguments could not be parsed as JSON: {e}',
             )
 
         if not isinstance(actual_args, dict):
+            try:
+                args_repr = repr(actual_args)
+            except RecursionError:  # from Python 3.14, `json.loads` can parse deeper than `repr` can print
+                args_repr = 'a JSON array nested too deeply to display'
             return EvaluationReason(
                 value=False,
-                reason=f'Tool {self.tool_name!r} arguments are not a JSON object: {actual_args!r}',
+                reason=f'Tool {self.tool_name!r} arguments are not a JSON object: {args_repr}',
             )
 
         diffs = _diff_arguments(cast(dict[str, Any], actual_args), self.expected_arguments, self.match_mode)

@@ -18,12 +18,12 @@ the reduction is not recomputed per request.
 ```mermaid
 flowchart TB
     accTitle: Tool Output Limits: reduce large tool results once, when they arrive
-    accDescr: The model calls your tool, and in after_tool_execute the result goes to ToolOutputLimits, whose default band is Spill at 10,000 characters. It writes the full payload to the WorkspaceOverflowStore under .pydantic-ai-harness/tool-output/ and gives the model a marker, a handle and a preview. The model passes the handle to read_tool_result, which reads the store and returns a slice.
+    accDescr: The model calls your tool, and in after_tool_execute the result goes to ToolOutputLimits, whose default band is Spill at 10,000 characters. It writes the full payload to the WorkspaceOverflowStore under .pydantic-ai-harness/tool-output/ and gives the model a marker, a handle and a preview. The model passes the handle to read_tool_result or grep_tool_result, which read the store and return a slice or the matching lines.
     model(["model"])
     tool["your tool"]
     limits["ToolOutputLimits()<br/>default band: Spill at<br/>10,000 characters"]:::capability
     store[("WorkspaceOverflowStore<br/>.pydantic-ai-harness/<br/>tool-output/")]:::external
-    reader["read_tool_result"]:::capability
+    reader["read_tool_result<br/>grep_tool_result"]:::capability
     model -->|"tool call"| tool
     tool -->|"after_tool_execute"| limits
     limits -->|"full payload"| store
@@ -49,10 +49,19 @@ is re-sent on every later model request, paying its token cost for the rest of t
 | `Summarize` | one LLM call | yes | A size-gated summary (inherits the run's model by default) |
 
 `Spill` is lossless: the full payload is persisted and the model reads slices of it through
-the registered `read_tool_result(handle, offset, limit, from_end, pattern)` tool.
-That tool is bounded: `offset >= 0`, `limit` clamped to a built-in line cap, the joined output
-capped, and `pattern` is a literal substring (not a regex), so a model-supplied value cannot
-hang the host with catastrophic backtracking.
+the registered `read_tool_result(handle, offset, limit, from_end, pattern, unit)` tool, and searches
+it with `grep_tool_result` ([Querying a spill](#querying-a-spill)).
+Both tools are bounded: `offset >= 0`, `read_tool_result`'s `limit` and `grep_tool_result`'s
+`context` and `max_matches` clamped to built-in caps, the joined output capped, and `pattern` is a
+literal substring (not a regex), so a model-supplied value cannot hang the host with catastrophic
+backtracking.
+
+Every reduction says what it left out and how to get it back. A spill's marker names its handle
+and the tool to read it with. `Truncate` and `Summarize` keep no copy, so their markers tell the
+model to rerun the original tool: a `[truncated: ...]` marker ends with
+`; rerun the original tool for the full output`, and a summary opens with
+`[summary of N chars of output; rerun the original tool for the full output]`. A capped query says
+where to continue ([Querying a spill](#querying-a-spill)).
 
 ## Usage
 
@@ -70,11 +79,12 @@ from pydantic_ai_harness import ToolOutputLimits
 agent = Agent('{{ anthropic:large }}', capabilities=[LocalWorkspace('.'), ToolOutputLimits()])
 ```
 
-The capability registers a single `read_tool_result` tool so the model can page back into any
-spilled payload. Its own returns are exempt from reduction. With `FileSystem` on the agent,
-`read_file` takes its place for spills in the run's workspace, and its reads of spills are exempt
-too ([Reading spills with `FileSystem`](#reading-spills-with-filesystem)). Core's `load_capability`
-and `search_tools` returns are never reduced either: core reads them back from history to know which
+The capability registers the `read_tool_result` and `grep_tool_result` tools so the model can page
+back into, and search, any spilled payload. Their own returns are exempt from reduction. With
+`FileSystem` on the agent, both step aside for its tools for spills in the run's workspace, and
+`read_file` reads of spills are exempt too
+([Reading spills with `FileSystem`](#reading-spills-with-filesystem)). Core's `load_capability` and
+`search_tools` returns are never reduced either: core reads them back from history to know which
 [on-demand capabilities](../capabilities/on-demand.md) are loaded and which tools are revealed.
 
 ## Bands: combine the modes
@@ -256,14 +266,16 @@ with a `warnings.warn`.
 Spill keys (`overflow_handle`, `overflow_bytes`, `overflow_content_handle`) live in
 `ToolReturn.metadata` alongside whatever the tool put there. A pre-existing mapping is copied
 in with stringified keys; a pre-existing non-mapping value (a string, a dataclass, anything
-that is not a `Mapping`) is kept under `original_metadata` rather than dropped. Either way the
-caller's own metadata survives a spill and is readable from `metadata` on the resulting
-`ToolReturnPart` after `Agent.run`.
+that is not a `Mapping`) is kept under `original_metadata` rather than dropped. A list or tuple,
+the shape the AG-UI and Vercel AI adapters read UI events and chunks from, stays a list with the
+spill keys appended as one dict item, and a single event or chunk becomes such a list, so those
+events still reach the UI. Either way the caller's own metadata survives a spill and is readable
+from `metadata` on the resulting `ToolReturnPart` after `Agent.run`.
 
 ## Size unit
 
 Thresholds are measured in characters by default. Set `over_tokens=True` to measure in
-estimated tokens (the same ~4-chars-per-token heuristic as [compaction](compaction.md)); pass a
+estimated tokens (the same [text estimate](compaction.md#triggers) as compaction); pass a
 `tokenizer` callable for accuracy. `Truncate.max_chars` is always characters -- truncation is a
 character operation regardless of the threshold unit. The cap includes the truncation marker
 and applies separately to each reduced text value. If the budget cannot fit both retained
@@ -271,10 +283,40 @@ content and a complete marker, truncation keeps the selected slice without a mar
 non-positive cap returns an empty string. Set `strip_ansi=True` to strip ANSI escape sequences
 from text returns before measuring and reducing.
 
+## Querying a spill
+
+`grep_tool_result(handle, pattern, context=2, max_matches=20, offset=0)` finds the lines that
+contain a literal substring and returns them with their 1-based line numbers and `context` lines on
+each side, in `grep` format: `12:` marks a match, `11-` a context line, and `--` separates groups.
+Context windows that overlap or touch merge into one group. `context` is clamped to 10 lines and
+`max_matches` to 200; when more matches remain, the header says how many and the `offset` to
+continue from. The model can then page around a match with `read_tool_result`.
+
+`read_tool_result(..., unit='bytes')` slices the raw stored bytes instead of lines, for output
+without useful line breaks such as minified JSON. `offset` and `limit` count bytes (`limit` is
+clamped to 50,000, and its default of 200 counts bytes too), `from_end` counts from the end, and a
+range past the end is clamped. The header reports the returned interval and the total length, such as
+`bytes 50000-100000 of 240311 (end exclusive)`, so the model knows where to continue. A
+multi-byte UTF-8 character cut at either edge of the slice, and any byte of a binary spill that is
+not UTF-8, renders as U+FFFD. `pattern` filters lines, so combining it with `unit='bytes'` asks
+the model to retry.
+
+Both tools cap their output at 50,000 characters. They stop before the line that would cross the
+cap, and the header gives the `offset` of the next line (a read) or the next match (a search). A
+search drops leading context rather than its first match, so every page makes progress, and its
+header lists any context it left out as the `read_tool_result` call that reads it. A single line longer
+than the cap is cut, and the header gives the byte offset its rest starts at, to read with
+`unit='bytes'`.
+
+Both tools are recognized by kind (`READ_TOOL_RESULT_KIND`, `GREP_TOOL_RESULT_KIND`), not name, and
+their returns are exempt from reduction. They emit no spans of their own: core's tool spans cover
+each call.
+
 ## Pageable structured spills
 
 A spilled structured return is stored as compact JSON: one long line. `read_tool_result`
-pages by line, so page 1 returns the whole payload and page 2 is empty. Setting `serializer`
+pages by line, so page 1 returns the whole payload and page 2 is empty. The model can slice such a
+payload with `unit='bytes'` ([Querying a spill](#querying-a-spill)), or setting `serializer`
 stores the value in a layout with real lines instead:
 
 ```python
@@ -306,7 +348,7 @@ sends to the model. `json_lines` makes that switch per record.
 The default `WorkspaceOverflowStore` writes each spill as a file in the run's workspace, under
 `.pydantic-ai-harness/tool-output/` in the working directory, which is git-ignored. With a
 sandbox the files live in the sandbox. The handle is the file's absolute path, so a file tool
-such as `FileSystem`'s `read_file` can open it too, and replaces `read_tool_result` when it is
+such as `FileSystem`'s `read_file` can open it too, and replaces the query tools when it is
 on the agent ([Reading spills with `FileSystem`](#reading-spills-with-filesystem)).
 `read_tool_result` only opens handles inside the store's directory.
 
@@ -327,10 +369,11 @@ Spilled files are kept for the life of the workspace; they are not pruned by thi
 ### Reading spills with `FileSystem`
 
 When spills are files in the run's workspace (the default `WorkspaceOverflowStore()`, without a
-`workspace=` of its own) and `FileSystem` is on the agent, `read_tool_result` steps aside for
-`FileSystem`'s `read_file`. The tool is marked with
+`workspace=` of its own) and `FileSystem` is on the agent, `read_tool_result` and `grep_tool_result`
+step aside for `FileSystem`'s tools, so its access rules govern every read of a spill. The tools are
+marked with
 [`unless_tool_kind`][pydantic_ai.tools.ToolDefinition.unless_tool_kind]
-set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind. The
+set to `READ_FILE_KIND`, so they are left out of every run step that has a tool of that kind. The
 spill marker then names that tool as it is called in the run, with the spill's path:
 
 ```text
@@ -338,8 +381,9 @@ spill marker then names that tool as it is called in the run, with the spill's p
 ```
 
 A `read_file` call whose path is under `.pydantic-ai-harness/tool-output/` is exempt from
-reduction, as `read_tool_result` is, so reading a spill back does not spill it again; `read_file`
-bounds its own output. Other `read_file` calls are reduced as usual. `read_tool_result` is
+reduction, as the query tools are, so reading a spill back does not spill it again; `read_file`
+bounds its own output. Other `read_file` calls, and `search_files` and `grep` calls, are reduced as
+usual: they bound how many lines match, not how long a line is. `read_tool_result` is
 recognized by its kind, `READ_TOOL_RESULT_KIND`, not its name, so a prefixed reader is exempt too.
 
 `WorkspaceOverflowStore(workspace=...)`, `LocalFileOverflowStore` and other `OverflowStore`s keep spills where
@@ -347,11 +391,12 @@ recognized by its kind, `READ_TOOL_RESULT_KIND`, not its name, so a prefixed rea
 
 Two gaps to know about:
 
-- `read_file` has no equivalent of `read_tool_result`'s `from_end`. Filtering by `pattern` maps to
-  `FileSystem`'s `search_files` (or `grep`).
+- `read_file` has no equivalent of `read_tool_result`'s `from_end` or `unit='bytes'`. Filtering by
+  `pattern` and `grep_tool_result` map to `FileSystem`'s `search_files` (or `grep`), given the
+  spill's path; a `FileSystem` registered without either leaves spills unsearchable.
 - The decision is made from the store, not from `FileSystem`'s access rules. A `FileSystem`
   whose `denied_patterns` cover `.pydantic-ai-harness/`, or whose `allowed_patterns` leave it
-  out, still replaces `read_tool_result` but cannot open the spills. Pass a store with a
+  out, still replaces the query tools but cannot open the spills. Pass a store with a
   `workspace=` of its own, or `LocalFileOverflowStore()`, to keep `read_tool_result` in that setup.
 
 A read-only workspace cannot take spills: the spill warns and falls back to its `then` action (a
@@ -380,8 +425,9 @@ security does not come from per-instance isolation:
   foreign-owned root raises `PermissionError`; for a write, the band's `then` fallback runs.
   Windows has no uid, so it uses the unsuffixed `pyai_harness_overflow` root and skips the
   ownership check.
-- `read` resolves the target and rejects any path that escapes the root. Handle segments are
-  sanitized so a crafted handle cannot traverse out.
+- `read` and `write` resolve the target, following symlinks, and reject any path that escapes
+  the root. `write` checks before it creates a directory, and a refused write runs the band's
+  `then` fallback. Handle segments are sanitized so a crafted handle cannot traverse out.
 
 Set `cleanup_after` to delete spills older than that age.
 
@@ -437,7 +483,13 @@ replay.
   content that overflows is left unreduced with a warning.
 - Multiple oversized returns in one step get distinct handles (keyed per `tool_call_id`);
   retries get distinct handles too (keyed per `retry`), so a retried call never clobbers the
-  earlier attempt's spill.
+  earlier attempt's spill. A `tool_call_id` is only unique within one response, so a provider
+  that numbers calls per response (`call_0`, then `call_0` again) reuses one later in the run:
+  the first call to spill keeps the plain handle, and a later call that would land on the same
+  one moves under the run step that produced it, so each call gets its own spill. The step comes
+  from the run context rather than the history, so a compaction rewriting `ctx.messages` between
+  the two responses cannot make them collide. Every other handle keeps the documented shape, so
+  code that builds or globs it, such as a cleanup job, still matches.
 
 ## Relationship to other capabilities
 

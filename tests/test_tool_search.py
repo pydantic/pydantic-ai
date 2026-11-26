@@ -20,7 +20,7 @@ import pytest
 import yaml
 from cassetter import Cassette
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
@@ -49,6 +49,7 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    ModelResponsePart,
     NativeToolCallPart,
     NativeToolReturnPart,
     NativeToolSearchCallPart,
@@ -57,6 +58,7 @@ from pydantic_ai.messages import (
     TextPart,
     ThinkingPart,
     ToolAvailabilityDeltaPart,
+    ToolKind,
     ToolPartKind,
     ToolReturnPart,
     ToolSearchCallPart,
@@ -83,7 +85,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._deferred_capability_loader import LOAD_CAPABILITY_TOOL_NAME
 from pydantic_ai.toolsets._tool_search import (
     ToolSearchToolset,
-    keywords_search_fn,
+    keywords_search,
     parse_discovered_tools,
 )
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
@@ -92,6 +94,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from .cassette_utils import request_json
 from .conftest import RequestCapture, iter_message_parts, message, message_part, try_import
 from .function_model_prefix import TOOLS_CHANGE_MID_RUN
+from .models.conftest import content_blocks
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
@@ -129,6 +132,12 @@ def ag_ui_preserves_tool_kind() -> bool:
 
 with try_import() as anthropic_available:
     import anthropic  # pyright: ignore[reportUnusedImport]  # noqa: F401
+    from anthropic import (
+        AsyncAnthropicBedrock,
+        AsyncAnthropicBedrockMantle,
+        AsyncAnthropicFoundry,
+        AsyncAnthropicVertex,
+    )
     from anthropic.types.beta import (
         BetaServerToolUseBlock,
         BetaTextBlock,
@@ -168,6 +177,7 @@ with try_import() as openai_available:
     from openai.types.responses.namespace_tool import NamespaceTool, ToolFunction
 
     from pydantic_ai.models.openai import (
+        OpenAIChatModel,
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
     )
@@ -179,6 +189,8 @@ with try_import() as openai_available:
         tool_search_namespace_for_synthesis,
     )
     from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
+    from pydantic_ai.providers.gateway import gateway_provider
+    from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
     from .models.mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
@@ -2954,10 +2966,13 @@ async def test_openai_gpt_5_4_nano_deferred_tool_uses_local_search(
     ]
 
 
-def _cross_provider_tool_search_agent(model: AnthropicModel | OpenAIResponsesModel) -> Agent[None, str]:
+def _cross_provider_tool_search_agent(
+    model: AnthropicModel | OpenAIResponsesModel, *, client_executed_search: bool = False
+) -> Agent[None, str]:
     agent: Agent[None, str] = Agent(
         model,
         instructions='Always use get_exchange_rate to answer exchange-rate questions.',
+        capabilities=[ToolSearch(strategy='keywords')] if client_executed_search else None,
     )
 
     @agent.tool_plain(defer_loading=True)
@@ -3098,6 +3113,93 @@ async def test_live_tool_search_handoff_anthropic_openai_anthropic(
     anthropic_bodies = _recorded_request_bodies(vcr, 'anthropic')
     _assert_openai_native_search_replay(openai_bodies[0])
     _assert_anthropic_native_search_replay(anthropic_bodies[-1], 'tool_search_tool_result')
+
+
+@pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='native tool search replays the local search_tools call as tool_search_call')
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
+async def test_live_local_tool_search_replays_on_native_tool_search_model(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    """A `search_tools` call made on a model without native tool search replays on one with it.
+
+    The local call carries a function-call (`fc_*`) item ID, which the Responses API rejects on the
+    `tool_search_call` item it is replayed as, so the item ID is omitted there.
+    """
+    first_agent = _cross_provider_tool_search_agent(
+        OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    )
+    first = await first_agent.run('What is the USD/EUR exchange rate?')
+    search_calls = list(iter_message_parts(first.all_messages(), ModelResponse, ToolSearchCallPart))
+    assert search_calls and all(call.id and call.id.startswith('fc_') for call in search_calls)
+
+    second_agent = _cross_provider_tool_search_agent(
+        OpenAIResponsesModel(
+            'gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+        )
+    )
+    second = await second_agent.run(
+        'Now call get_exchange_rate for GBP/USD without searching again.',
+        message_history=first.all_messages(),
+    )
+
+    _assert_exchange_rate_called(second.new_messages(), 'GBP/USD')
+    replayed_input = request_capture.body('/responses')['input']
+    assert isinstance(replayed_input, list)
+    assert [
+        (item.get('type'), 'id' in item)
+        for item in replayed_input
+        if isinstance(item, dict) and item.get('type') in ('reasoning', 'tool_search_call')
+    ] == snapshot([('reasoning', True), ('tool_search_call', False), ('reasoning', True)])
+
+
+@pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='a model without native tool search replays tool_search_call as function_call')
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
+async def test_live_client_tool_search_replays_on_model_without_native_tool_search(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    """A client-executed search made on a model with native tool search replays on one without it.
+
+    The stored call carries a `tool_search_call` (`tsc_*`) item ID, which the Responses API rejects
+    on the `function_call` item it is replayed as, so the item ID is omitted there. The reasoning
+    item before the call keeps its own ID and is accepted.
+    """
+    # `gpt-5.4` defaults to no reasoning, and the reasoning item is what this replay must keep valid.
+    model_settings = OpenAIResponsesModelSettings(openai_reasoning_effort='low', openai_reasoning_summary='auto')
+    first_agent = _cross_provider_tool_search_agent(
+        OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key)),
+        client_executed_search=True,
+    )
+    first = await first_agent.run('What is the USD/EUR exchange rate?', model_settings=model_settings)
+    search_calls = list(iter_message_parts(first.all_messages(), ModelResponse, ToolSearchCallPart))
+    assert search_calls and all(call.id and call.id.startswith('tsc_') for call in search_calls)
+    search_call_ids = {call.tool_call_id for call in search_calls}
+
+    second_agent = _cross_provider_tool_search_agent(
+        OpenAIResponsesModel(
+            'gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+        ),
+        client_executed_search=True,
+    )
+    second = await second_agent.run(
+        'Now call get_exchange_rate for GBP/USD without searching again.',
+        message_history=first.all_messages(),
+        model_settings=model_settings,
+    )
+
+    _assert_exchange_rate_called(second.new_messages(), 'GBP/USD')
+    replayed_input = request_capture.body('/responses')['input']
+    assert isinstance(replayed_input, list)
+    assert [
+        (item.get('type'), 'id' in item)
+        for item in replayed_input
+        if isinstance(item, dict)
+        and (
+            item.get('type') == 'reasoning'
+            or (item.get('type') == 'function_call' and item.get('call_id') in search_call_ids)
+        )
+    ] == snapshot([('reasoning', True), ('function_call', False)])
 
 
 def _trace_capability_messages(messages: list[ModelMessage]) -> list[tuple[str, list[dict[str, Any]]]]:
@@ -5255,14 +5357,27 @@ async def test_tool_search_capability_named_strategy_wraps_with_tool_search_tool
 
 async def test_tool_search_named_strategy_raises_on_unsupported_model():
     """Named native strategies error on models that don't support `ToolSearchTool`
-    — there's no legal fallback for `strategy='bm25'` on e.g. GPT-4."""
+    — there's no legal fallback for `strategy='bm25'` on e.g. GPT-4.
+
+    The supported tools come from a `frozenset` of classes, whose iteration order changes per process,
+    so the exact message pins their sorted order."""
 
     m = TestModel()
-    with pytest.raises(UserError, match='not supported by this model'):
+    with pytest.raises(UserError) as exc_info:
         m.prepare_request(
             None,
             ModelRequestParameters(function_tools=[], native_tools=[ToolSearchTool(strategy='bm25')]),
         )
+    assert str(exc_info.value) == snapshot(
+        "Native tool(s) ['ToolSearchTool'] not supported by this model. "
+        "Supported: ['AdvisorTool', 'CodeExecutionTool', 'ComputerTool', 'FileSearchTool', 'ImageGenerationTool', "
+        "'MCPServerTool', 'MemoryTool', 'WebFetchTool', 'WebSearchTool', 'XSearchTool']. "
+        'To use these tools with this model, provide a local fallback via NativeOrLocalTool(native=..., local=...) '
+        "or the `local` parameter of the capability (e.g. WebSearch(local='duckduckgo'), WebFetch(local=True), "
+        'MCP(local=True), ImageGeneration(local=my_func)). '
+        'Some capabilities require an optional install group for the local fallback '
+        '(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
+    )
 
 
 @pytest.mark.parametrize('strategy', ['bm25', 'regex'])
@@ -6312,6 +6427,627 @@ def test_prepare_messages_then_clean_history_merges_consecutive_requests() -> No
     assert isinstance(last.parts[1], UserPromptPart)
 
 
+_DISCOVERED_METRICS: ToolSearchReturnContent = {'discovered_tools': [{'name': 'get_metrics'}]}
+# How OpenAI records a server-executed tool search, which carries no `call_id` of its own.
+_OPENAI_SERVER_SEARCH: dict[str, str | None] = {'call_id': None, 'execution': 'server', 'status': 'completed'}
+
+
+def _openai_search_call(call_id: str, *, query: str | None = None) -> NativeToolSearchCallPart:
+    return NativeToolSearchCallPart(
+        provider_name='openai',
+        args={'queries': [query or call_id]},
+        tool_call_id=call_id,
+        id=call_id,
+        provider_details=_OPENAI_SERVER_SEARCH,
+    )
+
+
+def _openai_search_output(tool_call_id: str) -> NativeToolSearchReturnPart:
+    return NativeToolSearchReturnPart(
+        provider_name='openai',
+        content=_DISCOVERED_METRICS,
+        tool_call_id=tool_call_id,
+        provider_details={**_OPENAI_SERVER_SEARCH, 'id': tool_call_id.replace('tsc_', 'tso_')},
+    )
+
+
+def _anthropic_search_call(call_id: str) -> NativeToolSearchCallPart:
+    return NativeToolSearchCallPart(provider_name='anthropic', args={'queries': ['metrics']}, tool_call_id=call_id)
+
+
+def _anthropic_search_return(call_id: str) -> NativeToolSearchReturnPart:
+    return NativeToolSearchReturnPart(provider_name='anthropic', content=_DISCOVERED_METRICS, tool_call_id=call_id)
+
+
+def _tool_exchange(messages: Sequence[ModelMessage]) -> list[tuple[str, str]]:
+    """The tool calls and returns in `messages`, in order, as a kind and a call ID.
+
+    Flat, so it reads the same whether or not an agent run merged the requests.
+    """
+    exchange: list[tuple[str, str]] = []
+    for part in (part for msg in messages for part in msg.parts):
+        if isinstance(part, ToolCallPart):
+            exchange.append(('call', part.tool_call_id))
+        elif isinstance(part, ToolReturnPart):
+            exchange.append((part.outcome, part.tool_call_id))
+    return exchange
+
+
+@dataclass(frozen=True)
+class PairingCase:
+    id: str
+    parts: list[ModelResponsePart]
+    expected: list[tuple[str, str]]
+
+
+PAIRING_CASES = [
+    PairingCase(
+        id='output-ids-interleaved',
+        parts=[
+            _openai_search_call('tsc_1'),
+            _openai_search_output('tso_1'),
+            _openai_search_call('tsc_2'),
+            _openai_search_output('tso_2'),
+        ],
+        expected=snapshot([('call', 'tsc_1'), ('success', 'tsc_1'), ('call', 'tsc_2'), ('success', 'tsc_2')]),
+    ),
+    PairingCase(
+        id='output-ids-after-their-calls',
+        parts=[
+            _openai_search_call('tsc_1'),
+            _openai_search_call('tsc_2'),
+            _openai_search_output('tso_1'),
+            _openai_search_output('tso_2'),
+        ],
+        expected=snapshot([('call', 'tsc_1'), ('call', 'tsc_2'), ('success', 'tsc_1'), ('success', 'tsc_2')]),
+    ),
+    PairingCase(
+        id='more-calls-than-outputs',
+        parts=[
+            _openai_search_call('tsc_1'),
+            _openai_search_output('tso_1'),
+            _openai_search_call('tsc_2'),
+        ],
+        expected=snapshot([('call', 'tsc_1'), ('success', 'tsc_1'), ('call', 'tsc_2')]),
+    ),
+    PairingCase(
+        id='output-id-with-no-call-to-take',
+        parts=[_openai_search_call('tsc_1'), _openai_search_output('tsc_1'), _openai_search_output('tso_2')],
+        expected=snapshot([('call', 'tsc_1'), ('success', 'tsc_1'), ('success', 'tso_2')]),
+    ),
+    PairingCase(
+        id='paired',
+        parts=[
+            _openai_search_call('tsc_1'),
+            _openai_search_output('tsc_1'),
+            _openai_search_call('tsc_2'),
+            _openai_search_output('tsc_2'),
+        ],
+        expected=snapshot([('call', 'tsc_1'), ('success', 'tsc_1'), ('call', 'tsc_2'), ('success', 'tsc_2')]),
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in PAIRING_CASES])
+def test_synthesize_messages_pairs_returns_that_name_no_call(case: PairingCase) -> None:
+    """A translated return naming no earlier call takes the ID of the oldest call in its response still unanswered.
+
+    History that OpenAI wrote before https://github.com/pydantic/pydantic-ai/pull/8313 gives each anonymous
+    server search output the output item's ID (`tso_…`), which Anthropic rejects as naming no `tool_use`
+    (https://github.com/pydantic/pydantic-ai/issues/13404). Only that ID-level translation is pinned here; the
+    agent-level tests below show it reaching a request.
+    """
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='show metrics')]),
+        ModelResponse(parts=case.parts, provider_name='openai'),
+    ]
+    assert _tool_exchange(synthesize_local_tool_search_messages(history, pair_returns=True)) == case.expected
+
+
+def test_synthesize_messages_keeps_a_late_result_on_its_call() -> None:
+    """A return naming a call from an earlier response keeps its ID, even when its own response has an unanswered call.
+
+    Anthropic can deliver a search result in the response after its call. Re-pairing the result with the
+    unanswered call next to it would answer the wrong call and leave the first one without a result.
+    """
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='show metrics')]),
+        ModelResponse(
+            parts=[
+                _anthropic_search_call('srvtoolu_1'),
+                ToolCallPart('send_status', {'message': 'searching'}, tool_call_id='toolu_1'),
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[ToolReturnPart('send_status', 'sent', tool_call_id='toolu_1')]),
+        ModelResponse(
+            parts=[_anthropic_search_call('srvtoolu_2'), _anthropic_search_return('srvtoolu_1')],
+            provider_name='anthropic',
+        ),
+    ]
+    assert _tool_exchange(synthesize_local_tool_search_messages(history, pair_returns=True)) == snapshot(
+        [
+            ('call', 'srvtoolu_1'),
+            ('call', 'toolu_1'),
+            ('success', 'toolu_1'),
+            ('call', 'srvtoolu_2'),
+            ('success', 'srvtoolu_1'),
+        ]
+    )
+
+
+def _send_status(message: str) -> str:
+    """Send a status update to the user."""
+    return 'sent'
+
+
+def _get_metrics() -> str:  # pragma: no cover
+    """Get this quarter's revenue metrics."""
+    return 'Revenue: 1.2M'
+
+
+_METRICS_TOOLSET = FunctionToolset(
+    [Tool(_send_status, name='send_status'), Tool(_get_metrics, name='get_metrics', defer_loading=True)]
+)
+
+# Two OpenAI server searches as history recorded before https://github.com/pydantic/pydantic-ai/pull/8313:
+# each return carries its output item's ID rather than its call's.
+_OPENAI_OUTPUT_ID_HISTORY: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart(content='show metrics')]),
+    ModelResponse(
+        parts=[
+            _openai_search_call('tsc_1'),
+            _openai_search_output('tso_1'),
+            _openai_search_call('tsc_2'),
+            _openai_search_output('tso_2'),
+            TextPart('Here are the metrics.'),
+        ],
+        provider_name='openai',
+    ),
+]
+
+# An Anthropic search run alongside a client tool call, whose result Anthropic would deliver in its next response.
+_ANTHROPIC_UNANSWERED_SEARCH_HISTORY: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart(content='show metrics')]),
+    ModelResponse(
+        parts=[
+            _anthropic_search_call('srvtoolu_1'),
+            ToolCallPart('send_status', {'message': 'searching'}, tool_call_id='toolu_1'),
+        ],
+        provider_name='anthropic',
+    ),
+    ModelRequest(parts=[ToolReturnPart('send_status', 'sent', tool_call_id='toolu_1')]),
+    ModelResponse(parts=[TextPart('Here are the metrics.')], provider_name='anthropic'),
+]
+
+
+@dataclass(frozen=True)
+class TranslatedHistoryCase:
+    id: str
+    history: list[ModelMessage]
+    expected: list[tuple[str, str]]
+    prompt: str | None = 'and for Q3?'
+
+
+TRANSLATED_HISTORY_CASES = [
+    TranslatedHistoryCase(
+        id='openai-output-ids',
+        history=_OPENAI_OUTPUT_ID_HISTORY,
+        expected=snapshot([('call', 'tsc_1'), ('success', 'tsc_1'), ('call', 'tsc_2'), ('success', 'tsc_2')]),
+    ),
+    TranslatedHistoryCase(
+        id='anthropic-unanswered-search',
+        history=_ANTHROPIC_UNANSWERED_SEARCH_HISTORY,
+        expected=snapshot(
+            [('call', 'srvtoolu_1'), ('call', 'toolu_1'), ('success', 'toolu_1'), ('interrupted', 'srvtoolu_1')]
+        ),
+    ),
+    TranslatedHistoryCase(
+        id='anthropic-search-in-flight',
+        history=_ANTHROPIC_UNANSWERED_SEARCH_HISTORY[:2],
+        prompt=None,
+        expected=snapshot(
+            [('call', 'srvtoolu_1'), ('call', 'toolu_1'), ('success', 'toolu_1'), ('interrupted', 'srvtoolu_1')]
+        ),
+    ),
+    TranslatedHistoryCase(
+        id='openai-paired',
+        history=[
+            ModelRequest(parts=[UserPromptPart(content='show metrics')]),
+            ModelResponse(
+                parts=[
+                    _openai_search_call('tsc_1'),
+                    _openai_search_output('tsc_1'),
+                    _openai_search_call('tsc_2'),
+                    _openai_search_output('tsc_2'),
+                    TextPart('Here are the metrics.'),
+                ],
+                provider_name='openai',
+            ),
+        ],
+        expected=snapshot([('call', 'tsc_1'), ('success', 'tsc_1'), ('call', 'tsc_2'), ('success', 'tsc_2')]),
+    ),
+    TranslatedHistoryCase(
+        id='anthropic-late-result',
+        history=[
+            *_ANTHROPIC_UNANSWERED_SEARCH_HISTORY[:3],
+            ModelResponse(
+                parts=[_anthropic_search_return('srvtoolu_1'), TextPart('Here are the metrics.')],
+                provider_name='anthropic',
+            ),
+        ],
+        expected=snapshot(
+            [('call', 'srvtoolu_1'), ('call', 'toolu_1'), ('success', 'toolu_1'), ('success', 'srvtoolu_1')]
+        ),
+    ),
+]
+
+
+# What the OpenAI provider and the Claude API's own Anthropic client set, given to a `FunctionModel`.
+_REJECTS_UNPAIRED_TOOL_CALLS: ModelProfile = {'rejects_unpaired_tool_calls': True}
+
+
+@pytest.mark.parametrize('fallback', [False, True], ids=['agent', 'fallback'])
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in TRANSLATED_HISTORY_CASES])
+async def test_translated_tool_search_history_pairs_every_call(case: TranslatedHistoryCase, fallback: bool) -> None:
+    """Another provider's tool-search history reaches the model with every call answered, through any agent.
+
+    `FallbackModel` sends each model the messages that model prepared, without the repair an agent run
+    makes after preparing them, so an unpaired translated call or return reached the provider there and
+    failed the request (https://github.com/pydantic/pydantic-ai/issues/13404). Each case has the same
+    expectation with and without `FallbackModel`. A call whose result never arrived gets an interrupted
+    return after the request's other returns, where an agent run's repair already put it, so the request
+    an agent run sends is unchanged; already-paired histories are unchanged on both paths. `FunctionModel`
+    receives the prepared messages directly, which a recorded request wouldn't show.
+    """
+    received: list[ModelMessage] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received[:] = messages
+        return ModelResponse(parts=[TextPart('done')])
+
+    function_model = FunctionModel(respond, profile=_REJECTS_UNPAIRED_TOOL_CALLS)
+    agent = Agent(FallbackModel(function_model) if fallback else function_model, toolsets=[_METRICS_TOOLSET])
+
+    await agent.run(case.prompt, message_history=case.history)
+
+    assert _tool_exchange(received) == case.expected
+
+
+@dataclass(frozen=True)
+class AcceptedHistoryCase:
+    id: str
+    history: list[ModelMessage]
+    fallback: bool
+    expected: list[tuple[str, str]]
+
+
+ACCEPTED_HISTORY_CASES = [
+    AcceptedHistoryCase(
+        id='openai-output-ids-agent',
+        history=_OPENAI_OUTPUT_ID_HISTORY,
+        fallback=False,
+        expected=snapshot([('call', 'tsc_1'), ('interrupted', 'tsc_1'), ('call', 'tsc_2'), ('interrupted', 'tsc_2')]),
+    ),
+    AcceptedHistoryCase(
+        id='openai-output-ids-fallback',
+        history=_OPENAI_OUTPUT_ID_HISTORY,
+        fallback=True,
+        expected=snapshot([('call', 'tsc_1'), ('success', 'tso_1'), ('call', 'tsc_2'), ('success', 'tso_2')]),
+    ),
+    AcceptedHistoryCase(
+        id='anthropic-unanswered-search-agent',
+        history=_ANTHROPIC_UNANSWERED_SEARCH_HISTORY,
+        fallback=False,
+        expected=snapshot(
+            [('call', 'srvtoolu_1'), ('call', 'toolu_1'), ('success', 'toolu_1'), ('interrupted', 'srvtoolu_1')]
+        ),
+    ),
+    AcceptedHistoryCase(
+        id='anthropic-unanswered-search-fallback',
+        history=_ANTHROPIC_UNANSWERED_SEARCH_HISTORY,
+        fallback=True,
+        expected=snapshot([('call', 'srvtoolu_1'), ('call', 'toolu_1'), ('success', 'toolu_1')]),
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in ACCEPTED_HISTORY_CASES])
+async def test_translated_tool_search_history_is_sent_as_translated_where_the_api_accepts_it(
+    case: AcceptedHistoryCase,
+) -> None:
+    """A model whose API takes an unpaired tool call or result gets the translated history as before.
+
+    Gemini, for one, accepted both shapes of https://github.com/pydantic/pydantic-ai/issues/13404, so its requests
+    stay as they were: under `FallbackModel` the returns keep their IDs and the call stays unanswered, and a plain
+    agent run still applies its own repair to the prepared messages.
+    """
+    received: list[ModelMessage] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received[:] = messages
+        return ModelResponse(parts=[TextPart('done')])
+
+    function_model = FunctionModel(respond)
+    agent = Agent(FallbackModel(function_model) if case.fallback else function_model, toolsets=[_METRICS_TOOLSET])
+
+    await agent.run('and for Q3?', message_history=case.history)
+
+    assert _tool_exchange(received) == case.expected
+
+
+def test_prepare_messages_answers_only_translated_calls_before_the_frontier() -> None:
+    """Only translated calls get an interrupted return, and a trailing response is left for a resumed run to continue.
+
+    An agent run repairs every other unanswered call before `prepare_messages`, and resumes a suspended
+    response without repairing it, so neither shape reaches the model through a run started here.
+    """
+    model = FunctionModel(lambda messages, info: ModelResponse(parts=[]), profile=_REJECTS_UNPAIRED_TOOL_CALLS)
+    local_call = ToolSearchCallPart(args={'queries': ['metrics']}, tool_call_id='local_1')
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='show metrics')]),
+        ModelResponse(parts=[_anthropic_search_call('srvtoolu_1'), local_call], provider_name='anthropic'),
+        ModelRequest(parts=[UserPromptPart(content='and for Q3?')]),
+        ModelResponse(parts=[_anthropic_search_call('srvtoolu_2')], provider_name='anthropic'),
+    ]
+    assert _tool_exchange(model.prepare_messages(history)) == snapshot(
+        [('call', 'srvtoolu_1'), ('call', 'local_1'), ('interrupted', 'srvtoolu_1'), ('call', 'srvtoolu_2')]
+    )
+
+
+_GATEWAY_BASE_URL = 'https://gateway.example.com/proxy'
+
+
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'build,rejects',
+    [
+        pytest.param(lambda: OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key='x')), True, id='openai'),
+        pytest.param(lambda: OpenAIChatModel('gpt-5.4', provider=OpenAIProvider(api_key='x')), True, id='openai-chat'),
+        pytest.param(
+            lambda: AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key='x')), True, id='anthropic'
+        ),
+        pytest.param(
+            lambda: OpenAIResponsesModel(
+                'gpt-5.4', provider=gateway_provider('openai', api_key='x', base_url=_GATEWAY_BASE_URL)
+            ),
+            True,
+            id='gateway-openai',
+        ),
+        pytest.param(
+            lambda: AnthropicModel(
+                'claude-sonnet-5-5', provider=gateway_provider('anthropic', api_key='x', base_url=_GATEWAY_BASE_URL)
+            ),
+            True,
+            id='gateway-anthropic',
+        ),
+        pytest.param(
+            lambda: AnthropicModel(
+                'claude-sonnet-5-5',
+                provider=AnthropicProvider(anthropic_client=AsyncAnthropicBedrock(api_key='x', aws_region='us-east-1')),
+            ),
+            False,
+            id='bedrock',
+        ),
+        pytest.param(
+            lambda: AnthropicModel(
+                'claude-sonnet-5-5',
+                provider=AnthropicProvider(
+                    anthropic_client=AsyncAnthropicBedrockMantle(api_key='x', aws_region='us-east-1')
+                ),
+            ),
+            False,
+            id='mantle',
+        ),
+        pytest.param(
+            lambda: AnthropicModel(
+                'claude-sonnet-5-5',
+                provider=AnthropicProvider(
+                    anthropic_client=AsyncAnthropicVertex(project_id='p', region='us-east5', access_token='x')
+                ),
+            ),
+            False,
+            id='vertex',
+        ),
+        pytest.param(
+            lambda: AnthropicModel(
+                'claude-sonnet-5-5',
+                provider=AnthropicProvider(
+                    anthropic_client=AsyncAnthropicFoundry(api_key='x', base_url='https://example.com/anthropic')
+                ),
+            ),
+            False,
+            id='foundry',
+        ),
+        pytest.param(
+            lambda: OpenAIChatModel('llama3.2', provider=OllamaProvider(base_url='http://localhost:11434/v1')),
+            False,
+            id='ollama',
+        ),
+        pytest.param(
+            lambda: OpenAIChatModel(
+                'llama3.2',
+                provider=OllamaProvider(base_url='http://localhost:11434/v1'),
+                profile=_REJECTS_UNPAIRED_TOOL_CALLS,
+            ),
+            True,
+            id='ollama-profile-on',
+        ),
+    ],
+)
+def test_rejects_unpaired_tool_calls_by_endpoint(build: Callable[[], Model], rejects: bool) -> None:
+    """`rejects_unpaired_tool_calls` is on only for the endpoints where an unpaired tool call fails the request.
+
+    First-party OpenAI and the Claude API's own client, directly or through the Pydantic AI Gateway, failed the
+    histories of https://github.com/pydantic/pydantic-ai/issues/13404. Other endpoints, unverified, keep the
+    history as translated unless the user's `profile=` opts in. Checked on the resolved profile: the tests above
+    pin what each value sends.
+    """
+    assert build().profile.get('rejects_unpaired_tool_calls', False) is rejects
+
+
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+def test_rejects_unpaired_tool_calls_provider_profile_wins() -> None:
+    """A provider's own `model_profile()` value wins over the default `AnthropicModel` sets by client class."""
+
+    class AcceptsUnpairedProvider(AnthropicProvider):
+        @staticmethod
+        def model_profile(model_name: str) -> ModelProfile | None:
+            return {'rejects_unpaired_tool_calls': False}
+
+    model = AnthropicModel('claude-sonnet-5-5', provider=AcceptsUnpairedProvider(api_key='x'))
+    assert model.profile.get('rejects_unpaired_tool_calls') is False
+
+
+# `_OPENAI_OUTPUT_ID_HISTORY` as a conversation a user could have had. Anthropic's content filter refused a live
+# request with the placeholder queries and a canned reply (`reasoning_extraction`).
+_LIVE_OPENAI_OUTPUT_ID_HISTORY: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart(content='Which tool can report our revenue numbers?')]),
+    ModelResponse(
+        parts=[
+            _openai_search_call('tsc_1', query='revenue report'),
+            _openai_search_output('tso_1'),
+            _openai_search_call('tsc_2', query='quarterly metrics'),
+            _openai_search_output('tso_2'),
+            TextPart("`get_metrics` reports this quarter's revenue metrics."),
+        ],
+        provider_name='openai',
+    ),
+]
+
+
+@pytest.mark.vcr
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+async def test_live_fallback_sends_openai_output_ids_to_anthropic_paired(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+) -> None:
+    """Anthropic accepts old OpenAI search history under `FallbackModel`, with each result on its call.
+
+    Anthropic rejected the translated `tool_result` blocks, which named the output items `tso_1` and
+    `tso_2` rather than a `tool_use` (https://github.com/pydantic/pydantic-ai/issues/13404). The cassette
+    matches a request without its body, so the blocks the request carries are pinned from the wire.
+    """
+    provider = AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
+    agent = Agent(FallbackModel(AnthropicModel('claude-sonnet-5-5', provider=provider)), toolsets=[_METRICS_TOOLSET])
+
+    result = await agent.run("Thanks, that's all I needed.", message_history=_LIVE_OPENAI_OUTPUT_ID_HISTORY)
+
+    body = request_capture.body('/v1/messages')
+    assert {kind: content_blocks(body, kind) for kind in ('tool_use', 'tool_result')} == snapshot(
+        {
+            'tool_use': [
+                {'id': 'tsc_1', 'type': 'tool_use', 'name': 'search_tools', 'input': {'queries': ['revenue report']}},
+                {
+                    'id': 'tsc_2',
+                    'type': 'tool_use',
+                    'name': 'search_tools',
+                    'input': {'queries': ['quarterly metrics']},
+                },
+            ],
+            'tool_result': [
+                {
+                    'tool_use_id': 'tsc_1',
+                    'type': 'tool_result',
+                    'content': [{'tool_name': 'get_metrics', 'type': 'tool_reference'}],
+                    'is_error': False,
+                },
+                {
+                    'tool_use_id': 'tsc_2',
+                    'type': 'tool_result',
+                    'content': [{'tool_name': 'get_metrics', 'type': 'tool_reference'}],
+                    'is_error': False,
+                },
+            ],
+        }
+    )
+    assert result.output == snapshot("You're welcome! If you want the numbers, I can pull them with `get_metrics`.")
+
+
+def _wire_tool_exchange(body: dict[str, JsonValue]) -> list[tuple[str, str]]:
+    """The tool calls and results an OpenAI Responses or Chat Completions request carries, as wire type and call ID."""
+    items = body.get('input', body.get('messages'))
+    assert isinstance(items, list)
+    exchange: list[tuple[str, str]] = []
+    for item in items:
+        assert isinstance(item, dict)
+        if isinstance(call_id := item.get('call_id'), str):
+            exchange.append((str(item['type']), call_id))
+        elif isinstance(tool_call_id := item.get('tool_call_id'), str):
+            exchange.append(('tool', tool_call_id))
+        elif isinstance(tool_calls := item.get('tool_calls'), list):
+            for tool_call in tool_calls:
+                assert isinstance(tool_call, dict)
+                exchange.append(('tool_call', str(tool_call['id'])))
+    return exchange
+
+
+@dataclass(frozen=True)
+class LiveFallbackCase:
+    id: str
+    api: Literal['responses', 'chat']
+    history: list[ModelMessage]
+    expected: list[tuple[str, str]]
+
+
+LIVE_FALLBACK_CASES = [
+    LiveFallbackCase(
+        id='responses-anthropic-unanswered-search',
+        api='responses',
+        history=_ANTHROPIC_UNANSWERED_SEARCH_HISTORY,
+        expected=snapshot(
+            [
+                ('tool_search_call', 'srvtoolu_1'),
+                ('function_call', 'toolu_1'),
+                ('function_call_output', 'toolu_1'),
+                ('function_call_output', 'srvtoolu_1'),
+            ]
+        ),
+    ),
+    LiveFallbackCase(
+        id='chat-anthropic-unanswered-search',
+        api='chat',
+        history=_ANTHROPIC_UNANSWERED_SEARCH_HISTORY,
+        expected=snapshot(
+            [('tool_call', 'srvtoolu_1'), ('tool_call', 'toolu_1'), ('tool', 'toolu_1'), ('tool', 'srvtoolu_1')]
+        ),
+    ),
+    LiveFallbackCase(
+        id='chat-openai-output-ids',
+        api='chat',
+        history=_OPENAI_OUTPUT_ID_HISTORY,
+        expected=snapshot([('tool_call', 'tsc_1'), ('tool', 'tsc_1'), ('tool_call', 'tsc_2'), ('tool', 'tsc_2')]),
+    ),
+]
+
+
+@pytest.mark.vcr
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in LIVE_FALLBACK_CASES])
+async def test_live_fallback_sends_unpaired_tool_search_history_to_openai(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture, case: LiveFallbackCase
+) -> None:
+    """OpenAI accepts another provider's unpaired tool-search history under `FallbackModel`.
+
+    Each case failed with a 400 before: Responses with `No tool output found for tool search call`, Chat
+    Completions because a tool call had no tool message or a tool message named no call
+    (https://github.com/pydantic/pydantic-ai/issues/13404). The cassette matches a request without its
+    body, so the request each case sends is pinned from the wire.
+    """
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    model = (
+        OpenAIResponsesModel('gpt-5.4', provider=provider)
+        if case.api == 'responses'
+        else OpenAIChatModel('gpt-5.4', provider=provider)
+    )
+    agent = Agent(FallbackModel(model), toolsets=[_METRICS_TOOLSET])
+
+    result = await agent.run('Reply with just OK.', message_history=case.history)
+
+    assert result.output == snapshot('OK')
+    assert _wire_tool_exchange(request_capture.body()) == case.expected
+
+
 def test_narrow_type_local_return_passthrough_when_already_narrowed() -> None:
     """Narrowing an already-typed `ToolSearchReturnPart` returns the input instance."""
     part = ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='c1')
@@ -7256,17 +7992,17 @@ async def test_openai_promotes_mixed_native_and_local_history_a_b_c_chain() -> N
     )
 
 
-def test_keywords_search_fn_returns_empty_for_no_tokens() -> None:
+def test_keywords_search_returns_empty_for_no_tokens() -> None:
     """The shared keyword algorithm returns `[]` when the queries tokenize to nothing
     (whitespace / punctuation only), instead of raising. Callers (`_run_search_fn`
     in the toolset) translate that into the empty-discoveries `_empty_return` shape.
     """
 
     ctx = _build_run_context(None)
-    assert keywords_search_fn(ctx, ['   '], []) == []
+    assert keywords_search(ctx, ['   '], []) == []
     # Punctuation-only queries also produce no tokens — `_SEARCH_TOKEN_RE` matches
     # `[a-z0-9]+` only.
-    assert keywords_search_fn(ctx, ['!!!'], []) == []
+    assert keywords_search(ctx, ['!!!'], []) == []
 
 
 async def test_tool_search_strategy_keywords_runs_keyword_algorithm_via_search_fn() -> None:
@@ -8389,5 +9125,160 @@ async def test_anthropic_replays_search_whose_matches_are_no_longer_declared(all
                 ],
                 'is_error': False,
             }
+        ]
+    )
+
+
+class _SelectorOutput(BaseModel):
+    answer: str
+
+
+_SELECTOR_LOOKUP_KIND = ToolKind('test_tool_search_selector', 'lookup')
+
+
+def _selector_toolset() -> FunctionToolset:
+    toolset = FunctionToolset()
+
+    # The model in these tests never calls these tools; only which ones it's shown matters.
+    @toolset.tool_plain
+    def crm_lookup() -> str:  # pragma: no cover
+        return 'lookup'
+
+    @toolset.tool_plain(metadata={'searchable': True})
+    def crm_update() -> str:  # pragma: no cover
+        return 'update'
+
+    @toolset.tool_plain
+    def get_time() -> str:  # pragma: no cover
+        return 'now'
+
+    @toolset.tool_plain(tool_kind=_SELECTOR_LOOKUP_KIND)
+    def inventory_lookup() -> str:  # pragma: no cover
+        return 'inventory'
+
+    return toolset
+
+
+async def _first_request_tools(capability: ToolSearch[Any]) -> tuple[list[str], list[str]]:
+    """Run an agent with `capability` and return the function and output tools of its first request."""
+    seen: list[tuple[list[str], list[str]]] = []
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append((sorted(t.name for t in info.function_tools), sorted(t.name for t in info.output_tools)))
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name=info.output_tools[0].name, args={'answer': 'done'}, tool_call_id='out')]
+        )
+
+    agent = Agent(
+        NoNativeToolSearchModel(model_fn),
+        output_type=_SelectorOutput,
+        toolsets=[_selector_toolset()],
+        capabilities=[capability],
+    )
+    result = await agent.run('hi')
+    assert result.output == _SelectorOutput(answer='done')
+    return seen[0]
+
+
+def _select_crm(ctx: RunContext[None], tool_def: ToolDefinition) -> bool:
+    return tool_def.name.startswith('crm_')
+
+
+async def _select_crm_async(ctx: RunContext[None], tool_def: ToolDefinition) -> bool:
+    return tool_def.name.startswith('crm_')
+
+
+@pytest.mark.anyio
+async def test_tool_search_tools_all_defers_every_regular_tool():
+    function_tools, output_tools = await _first_request_tools(ToolSearch(tools='all'))
+    assert function_tools == snapshot(['search_tools'])
+    assert output_tools == snapshot(['final_result'])
+
+
+@pytest.mark.parametrize(
+    'selector',
+    [
+        pytest.param(['crm_lookup', 'crm_update'], id='names'),
+        pytest.param(_select_crm, id='callable'),
+        pytest.param(_select_crm_async, id='async-callable'),
+    ],
+)
+@pytest.mark.anyio
+async def test_tool_search_tools_selector_defers_selected_tools(selector: Any):
+    function_tools, output_tools = await _first_request_tools(ToolSearch(tools=selector))
+    assert function_tools == snapshot(['get_time', 'inventory_lookup', 'search_tools'])
+    assert output_tools == snapshot(['final_result'])
+
+
+@pytest.mark.anyio
+async def test_tool_search_tools_metadata_selector():
+    function_tools, _ = await _first_request_tools(ToolSearch(tools={'searchable': True}))
+    assert function_tools == snapshot(['crm_lookup', 'get_time', 'inventory_lookup', 'search_tools'])
+
+
+@pytest.mark.anyio
+async def test_tool_search_tools_selects_tools_with_a_custom_tool_kind():
+    """A user tool with its own `tool_kind` is selectable; only the framework's kinds are excluded."""
+    function_tools, _ = await _first_request_tools(ToolSearch(tools=['inventory_lookup']))
+    assert function_tools == snapshot(['crm_lookup', 'crm_update', 'get_time', 'search_tools'])
+
+
+@pytest.mark.anyio
+async def test_tool_search_tools_none_defers_nothing():
+    function_tools, output_tools = await _first_request_tools(ToolSearch())
+    assert function_tools == snapshot(['crm_lookup', 'crm_update', 'get_time', 'inventory_lookup'])
+    assert output_tools == snapshot(['final_result'])
+
+
+@pytest.mark.anyio
+async def test_tool_search_tools_selected_tool_is_discovered_and_called():
+    """Selected tools join the corpus alongside per-tool and toolset deferral, and `load_capability` stays visible."""
+    user_toolset = FunctionToolset()
+
+    @user_toolset.tool_plain
+    def weather_report() -> str:
+        return 'sunny'
+
+    @user_toolset.tool_plain
+    def archive_export() -> str:  # pragma: no cover
+        return 'archive'
+
+    capability_toolset = FunctionToolset()
+
+    @capability_toolset.tool_plain
+    def capability_tool() -> str:  # pragma: no cover
+        return 'capability'
+
+    capability = Capability(
+        id='example', description='Example capability.', defer_loading=True, toolsets=[capability_toolset]
+    )
+    seen: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(sorted(t.name for t in info.function_tools))
+        if len(seen) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='search_tools', args={'queries': ['weather']}, tool_call_id='s')]
+            )
+        if len(seen) == 2:
+            return ModelResponse(parts=[ToolCallPart(tool_name='weather_report', args={}, tool_call_id='c')])
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name=info.output_tools[0].name, args={'answer': 'done'}, tool_call_id='o')]
+        )
+
+    agent = Agent(
+        NoNativeToolSearchModel(model_fn),
+        output_type=_SelectorOutput,
+        toolsets=[user_toolset.defer_loading(['archive_export'])],
+        capabilities=[ToolSearch(tools='all'), capability],
+    )
+    result = await agent.run('find and use the selected tool')
+
+    assert result.output == _SelectorOutput(answer='done')
+    assert seen == snapshot(
+        [
+            ['load_capability', 'search_tools'],
+            ['load_capability', 'search_tools', 'weather_report'],
+            ['load_capability', 'search_tools', 'weather_report'],
         ]
     )

@@ -97,6 +97,7 @@ call. Step names are built from the agent's `name` and each toolset's `id`:
 |---|---|
 | `{name}__model.request` | one model request segment |
 | `{name}__model.request_stream` | one streamed model request segment |
+| `{name}__model.request.retry_after`, `{name}__model.request_stream.retry_after`, `{name}__model.compact_messages.retry_after`, `{name}__model.cancel_suspended_response.retry_after` | the wait a model error's `retry_after` asked for, before that model operation runs again |
 | `{name}__model.compact_messages` | one model message-compaction operation |
 | `{name}__model.count_tokens` | one token count ahead of a model request, with `count_tokens_before_request` |
 | `{name}__model.cancel_suspended_response` | tearing down a suspended response |
@@ -113,6 +114,9 @@ A model other than the agent's default adds its id to the step name
 the same task or the same tool called twice, gets an encounter-order suffix (`#2`, `#3`, ...). Await
 one run before starting the next in the same task.
 
+An async function tool with [`durable=False`](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/#running-a-tool-outside-the-durable-unit) gets no step:
+it runs in the task handler on every attempt, so keep it deterministic and free of I/O.
+
 These are not checkpointed and run again on replay:
 
 - a tool call that raises `ModelRetry`, `ToolFailed`, `CallDeferred`, or `ApprovalRequired`;
@@ -127,13 +131,24 @@ These are not checkpointed and run again on replay:
 - A step is checkpointed after it runs, so a crash between a tool's side effect and its checkpoint
   re-runs the tool. Keep side effects in tools and in an `event_stream_handler` idempotent.
 - Function, MCP, or dynamic toolsets passed per run with `run(toolsets=...)` inside a task raise a
-  `UserError`; register them on the agent instead. `ExternalToolset` is allowed.
+  `UserError`; register them on the agent instead. `ExternalToolset` is allowed, and so is a
+  `FunctionToolset` whose tools are all async and set `durable=False`.
 - Streaming inside a task is not live: the model stream is consumed inside the step, then its
   final response is replayed to the caller, one event per part.
 - Under [`BatchModelRequests`](https://pydantic.dev/docs/ai/core-concepts/batch/#durable-execution), submitting a request and each check on its batch are
   steps, but the waits between checks are plain sleeps: the task has to keep running for as long as
   the batch takes, within its claim timeout, and a recovered run sleeps again through the waits it
   already did.
+- A model request that fails with a model error that has a `retry_after` (read from a provider's
+  `Retry-After` header, for example) is checkpointed as a failed attempt. The task then sleeps that
+  long with Absurd's durable `sleep_for` (the `{name}__model.request.retry_after` step), which
+  suspends it until then without using one of its attempts, and the request runs again as the next
+  occurrence of its step. The wait is capped at the delay the task's `RetryStrategy` would wait
+  before its next attempt, or at a minute, whichever is longer. Each model request waits at most as
+  many times as the task has attempts left after the current one; after that, the model error fails
+  the run and Absurd's own retry applies.
+  The suspension leaves `agent.run` as Absurd's `SuspendTask`, so an `on_model_request_error` hook
+  that handles every exception has to re-raise it.
 
 ## Parallel execution
 

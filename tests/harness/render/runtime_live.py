@@ -6,7 +6,6 @@ import os
 import re
 import shutil
 import signal
-import socket
 import subprocess
 import sys
 import threading
@@ -17,6 +16,9 @@ from pathlib import Path
 
 import pytest
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+
+from tests._ports import reserve_loopback_port
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from .conftest import renderless_environment
 
@@ -126,12 +128,18 @@ class LocalRenderRuntime:
         """Return local runs for one registered task name."""
         return _LOCAL_RUNS.validate_python(self.cli(['runs', 'list', task_name]))
 
-    def wait_for_run(self, run_id: str, *, timeout: float = 60) -> LocalTaskRun:
-        """Poll a run until the local task server reports a terminal state."""
+    def wait_for_run(self, run_id: str, *, timeout: float = READINESS_WAIT_TIMEOUT) -> LocalTaskRun:
+        """Poll a run until the local task server reports a terminal state, with its results once it completed.
+
+        The dev server maps a run for `runs show` outside its store's lock, reading the run's output before its
+        status, so a show that overlaps the run's completion can report it completed with no results yet. This
+        assumes every task returns a value, as each one in `runtime_app_live.py` does: a completed run of a task that
+        returns nothing would read as unfinished until the timeout.
+        """
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             run = _LOCAL_RUN.validate_python(self.cli(['runs', 'show', run_id]))
-            if run.status in {'completed', 'failed', 'canceled'}:
+            if run.status in {'failed', 'canceled'} or (run.status == 'completed' and run.results is not None):
                 return run
             if self.process.poll() is not None:
                 break
@@ -141,12 +149,6 @@ class LocalRenderRuntime:
     def logs(self) -> str:
         """Read diagnostics emitted by the local task server and workers."""
         return self.log_path.read_text(errors='replace') if self.log_path.exists() else '<missing>'
-
-
-def _unused_local_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
-        server.bind(('127.0.0.1', 0))
-        return int(server.getsockname()[1])
 
 
 def _stop_process_group(process: subprocess.Popen[str]) -> None:
@@ -204,7 +206,7 @@ def local_render_runtime(tmp_path_factory: pytest.TempPathFactory) -> Iterator[L
     repository = Path(__file__).resolve().parents[3]
     log_path = tmp_path_factory.mktemp('render-runtime') / 'render-workflows-dev.log'
     log_file = log_path.open('w')
-    port = _unused_local_port()
+    port = reserve_loopback_port()
     command = [
         'render',
         'workflows',

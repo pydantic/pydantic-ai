@@ -17,9 +17,11 @@ Run your agent's commands and file edits in an isolated [Render sandbox](https:/
 pip/uv-add "pydantic-ai-harness[coder,render,anthropic]"
 ```
 
-The `coder` extra installs the coding tools. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `RENDER_API_KEY` to a [Render API key](https://render.com/docs/api#1-create-an-api-key), `RENDER_WORKSPACE_ID` to the `tea-...` ID of a [workspace](https://render.com/docs/team-members) with Sandboxes access and billing configured, and `ANTHROPIC_API_KEY` for the examples.
+Set `RENDER_API_KEY` to a [Render API key](https://render.com/docs/api#1-create-an-api-key), and `RENDER_WORKSPACE_ID` to the `tea-...` ID of your [Render workspace](https://render.com/docs/team-members), Render's name for a team. The workspace needs Sandboxes access and billing set up. The examples also use `Coder` and an Anthropic model, so they need the `coder` and `anthropic` extras and `ANTHROPIC_API_KEY`. Swap them for your own tools and model provider.
 
 ## Quick start
+
+<span id="choose-the-tools"></span>
 
 ```python {names="defined"}
 from pydantic_ai import Agent
@@ -30,33 +32,20 @@ agent = Agent('{{ anthropic:large }}', capabilities=[RenderSandbox(), Coder()])
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summarize how capabilities work.')
 ```
 
-`Coder`'s shell and file tools now run in the sandbox. With `Coder`, the sandbox is created when the run starts; pass `Coder(repo_context=False)` to create it on the first tool call instead. The sandbox keeps running, and billing, after the run ends; see [Clean up](#clean-up).
+`Coder`'s shell and file tools now run in the sandbox. For a narrower agent, use [`Shell`](shell.md), [`FileSystem`](filesystem.md) or your own tools on [`ctx.workspace`](../workspace.md#using-the-workspace-in-tools).
 
-A new sandbox can reach the internet; pass `allow_internet_access=False` to block it. It lives for 1 hour; pass up to `sandbox_timeout=86400` for longer.
+- `Coder` creates it when the run starts, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
+- It keeps running, and billing, after the run, even when idle, until `sandbox_timeout` runs out. `RenderSandbox` turns off Render's idle suspension. See [Clean up](#clean-up).
+- It lives for 1 hour. Pass up to `sandbox_timeout=86400` for longer.
+- Commands start in the sandbox's home directory. Pass `working_dir=` for another absolute directory. It is created on a new sandbox.
+- It can reach the internet. Pass `allow_internet_access=False` to block it.
+- The image needs `python3`. Render's default image has it.
 
-Commands start in the sandbox's home directory. Pass `working_dir=` for another absolute directory, created on a new sandbox.
+## Continue in the same sandbox
 
-## Choose the tools
+<span id="reattach-later"></span>
 
-`RenderSandbox` supplies the workspace only. Add [`Coder`](coder.md) for a coding agent, or the narrower [`Shell`](shell.md) and [`FileSystem`](filesystem.md).
-
-A string command runs under `/bin/sh -c`; a list runs as given. Standard input is empty, and a non-zero exit is a normal result. Output over 10 MiB raises `WorkspaceOutputLimitError` with the first 64 KiB of each stream and attempts to stop the command; redirect large output to a file. A command and its environment must fit in about 110 KB; write larger content with the file tools.
-
-The sandbox image needs `python3`. Render's default image has it.
-
-Render allows 100 API requests a minute. A rate-limited request raises the SDK's `RateLimitError`, and is not retried.
-
-Sandbox setup timeouts raise `TimeoutError`. Missing sandboxes and rejected access raise `WorkspaceUnavailableError`; other SDK errors propagate. A connection failure during creation can leave a sandbox running without a ref, so check your Render workspace for unused sandboxes.
-
-### What a timeout stops
-
-On a timeout or cancellation, stopping the command and its children is best effort; the sandbox remains usable. If stopping cannot be confirmed, a warning identifies the sandbox and the original exception still propagates. Background processes that detach from the command can keep running.
-
-See [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more.
-
-## Reattach later
-
-To come back to the sandbox, store the run's workspace ref and pass it back as `workspace=`:
+Pass the message history, and the next run works in the same sandbox:
 
 ```python {names="defined"}
 from pydantic_ai import Agent
@@ -64,16 +53,17 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.render_sandbox import RenderSandbox
 
 agent = Agent('{{ anthropic:large }}', capabilities=[RenderSandbox(), Coder()])
-
 result = agent.run_sync('Write a fizzbuzz.py and run it.')
-ref = result.workspace.ref  # store this, e.g. in your database
 
-later = agent.run_sync('Add tests for fizzbuzz.py.', workspace=ref)
+followup = agent.run_sync('Add tests for fizzbuzz.py.', message_history=result.all_messages())
+ref = result.workspace.ref  # or store this, and pass `workspace=ref` to a later run
 ```
 
-The process that reattaches needs `RENDER_API_KEY` and `RENDER_WORKSPACE_ID` too. A terminated sandbox raises `WorkspaceUnavailableError`, and no replacement is created. Pass `workspace='new'` to start a fresh sandbox even when the message history names one.
+The history records the sandbox as a `WorkspaceRef`, or "ref": the provider's name and the sandbox's ID. `result.workspace.ref` is the same ref, for continuing without the history.
 
-`allow_internet_access` and `sandbox_timeout` apply only to a new sandbox. `working_dir` and `env` apply to every command; an attached sandbox must already have `working_dir`.
+If the sandbox has been terminated, the run raises `WorkspaceUnavailableError`. Pass `workspace='new'` to start over. [Workspaces](../workspace.md#continuing-in-the-same-workspace) covers how runs find their workspace.
+
+The ref holds no credentials, so the process that reattaches needs `RENDER_API_KEY` and `RENDER_WORKSPACE_ID`, or a `client=`, too.
 
 ## Prepare a sandbox before the run
 
@@ -110,11 +100,23 @@ if __name__ == '__main__':
     asyncio.run(main())
 ```
 
-The `finally` terminates the sandbox even if setup or the run fails. Read any files you want to keep before it.
+The `finally` terminates the sandbox even when setup or the run fails, so read any files you want to keep before it. To keep the sandbox, store `backend.ref` instead.
+
+## Give the agent a desktop
+
+Pass `desktop=True` and add [`ComputerUse`](computer-use.md):
+`capabilities=[RenderSandbox(desktop=True), ComputerUse()]`. The screen is 1280x800; pass a size such as
+`desktop=(1440, 900)` for another.
+
+Render's default image has none of [the display's programs](computer-use.md#what-the-display-needs), so the first use of the screen installs them with `apt-get`, with no web browser. That needs `allow_internet_access`: creating a new sandbox without it raises `UserError`. An attached sandbox without internet access must already have the programs, or the first use of the screen raises `WorkspaceUnavailableError` naming what's missing.
+
+To give the agent a browser or other programs, install them before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run) with `RenderSandboxBackend(desktop=True)`, or let the agent install them with `Shell`.
+
+The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
 
 ## Clean up
 
-The sandbox keeps running, and billing, until `sandbox_timeout` runs out: `RenderSandbox` turns off Render's idle suspension for the sandboxes it creates. Pydantic AI never terminates it. Terminate it with the ref you stored:
+Terminate a sandbox with the ref you stored:
 
 ```python {names="defined"}
 from pydantic_ai.workspaces import WorkspaceRef
@@ -125,7 +127,7 @@ async def terminate_sandbox(ref: WorkspaceRef) -> None:
     await RenderSandbox().destroy(ref)
 ```
 
-`destroy(ref)` terminates the sandbox by ID. It returns quietly if the sandbox is already gone, and raises `WorkspaceUnavailableError` if Render rejects the credentials. New sandbox IDs are also logged at INFO.
+`destroy(ref)` raises `WorkspaceUnavailableError` if Render rejects the credentials.
 
 To terminate the sandbox after every run, including failed ones, use `after_run` and `run_error` hooks:
 
@@ -161,25 +163,53 @@ agent = Agent('{{ anthropic:large }}', capabilities=[sandbox, Coder(), hooks])
 
 To keep results, read them through `ctx.workspace` in `after_run` before calling `destroy`.
 
+### Find a lost sandbox
+
+If your program stops before it stores the ref, for example after a crash or Ctrl-C, the sandbox runs until its `sandbox_timeout`. To find it:
+
+- Search your logs for `Created Render sandbox <id>`, logged at INFO by the `pydantic_ai_harness` logger.
+- A connection failure while Render creates the sandbox can leave it running with no ref and no log line. Check your Render workspace for unused sandboxes.
+
+Then terminate it: `await RenderSandbox().destroy(WorkspaceRef(provider='render', id='<id>'))`.
+
 ## Configuration
 
 | Option | What it does |
 | --- | --- |
-| `client` | A `render.RenderAsync` you own; it is never closed for you. Default: `None`, which reads `RENDER_API_KEY` and `RENDER_WORKSPACE_ID`. |
+| `client` | A `render.RenderAsync` you own. It is never closed for you. Default: `None`, which reads `RENDER_API_KEY` and `RENDER_WORKSPACE_ID`. |
 | `allow_internet_access` | Whether a new sandbox can reach the internet. Default: `True`. |
 | `sandbox_timeout` | Seconds a new sandbox lives before Render terminates it, at most `86_400`. Default: `3_600`. |
-| `working_dir` | Absolute directory commands start in and relative paths resolve from, created on a new sandbox. Default: `None`, the sandbox's home directory. |
-| `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment is passed. |
+| `working_dir` | Absolute directory commands start in and relative paths resolve from. Default: `None`, the sandbox's home directory. Created on a new sandbox. On an attached one, it must already exist. |
+| `env` | Environment variables every command gets. Default: `None`. Nothing from your machine reaches the sandbox. The agent's commands can read these, so leave out secrets it shouldn't see. |
+| `desktop` | Give the sandbox a graphical display for [`ComputerUse`](computer-use.md): `True` for 1280x800, or its `(width, height)`. The first use installs the desktop's programs with `apt-get`, so a new sandbox needs `allow_internet_access`. The size applies when the display first starts. Default: `False`. |
+| `authority` | Who wrote the sandbox's files. A capability that puts a file's text in the prompt gives it no more [authority](../workspace-custom.md#workspace-authority) than this. Default: `'operator'`, your own files. Use `'user'` for the user's files, and `'none'` for files nobody on your side wrote, such as a cloned third-party repository. |
+| `path_authority` | Levels for some directories and files, overriding `authority` under them. The longest matching path wins. Paths are in the sandbox, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
 
-`RenderSandbox` needs asyncio; on Trio it raises `UserError`.
+`client`, `working_dir`, `env`, `desktop`, `authority` and `path_authority` also apply when you reattach, and `destroy` uses `client`. The other options only shape a new sandbox.
 
-## Render Workflows
+## Limits
 
-`RenderSandbox` composes with [`RenderWorkflows`](render-workflows.md): model and tool tasks share one sandbox. The `render` extra covers both; set the Render variables on every worker. A retried root task runs the agent again, so terminate the sandbox from the task that runs the agent, as in [Clean up](#clean-up).
+<span id="what-a-timeout-stops"></span>
+
+- A sandbox that doesn't finish setting up in time raises `TimeoutError`.
+- A missing sandbox or rejected access raises `WorkspaceUnavailableError`.
+- Render allows 100 API requests a minute. A rate-limited request raises the SDK's `RateLimitError` and is not retried.
+- A command and its environment must fit in about 110 KB. Write larger content with the file tools.
+- A command whose output passes 10 MiB raises `WorkspaceOutputLimitError`. Redirect large output to a file.
+- Stopping a command on a timeout or cancellation is best effort. If the stop can't be confirmed, a warning names the sandbox.
+- Background processes that detach can keep running.
+- `RenderSandbox` needs asyncio. Under Trio, it raises `UserError`.
+
+## Durable execution
+
+<span id="render-workflows"></span>`RenderSandbox` works with [`RenderWorkflows`](render-workflows.md), and its model and tool tasks share one sandbox.
+
+- The `render` extra covers both. Set the Render variables on every worker.
+- A retried root task runs the agent again, so terminate the sandbox from the task that runs the agent, as in [Clean up](#clean-up).
 
 ## Telemetry
 
-With [instrumentation](../capabilities/instrumentation.md), the agent run span identifies the sandbox with `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span.
+`RenderSandbox` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id` on the agent run span, and each command or file operation runs inside its tool call's span.
 
 ## API reference
 

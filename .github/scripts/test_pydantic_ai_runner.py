@@ -53,8 +53,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 # tests import each from where it actually lives, not from a re-export.
 import agentic_workflow_guard
 import pydantic_ai_gh_aw_shim as pkg
-from mcp.shared.exceptions import McpError
-from mcp.types import ErrorData
+from fastmcp.exceptions import McpError
 from pydantic_ai_gh_aw_shim import (
     cli as shim,
     shared,
@@ -2143,7 +2142,11 @@ def test_runner_drops_dynamic_workflow_dependencies():
 
 
 def test_runner_resolves_pydantic_ai_from_the_workspace():
-    """The shim's code is this checkout, so its libraries must be too — see #6998, #7103."""
+    """The legacy runner installs this checkout's libraries; no workflow runs it (#12796).
+
+    Its smoke test therefore cannot catch a symbol the pinned engine runtime lacks. CI's "Import the gh-aw
+    shim on the pinned engine runtime" step checks the shim on that runtime.
+    """
     runner = (Path(__file__).parent / 'pydantic-ai-runner').read_text(encoding='utf-8')
     assert '# [tool.uv.sources]' in runner
     assert '# pydantic-ai-slim = { path = "../../pydantic_ai_slim", editable = true }' in runner
@@ -2794,6 +2797,40 @@ _RATE_LIMITED_RESPONSE = {
 }
 
 
+@pytest.mark.parametrize(
+    ('base_url', 'output_config'),
+    [
+        # The AWF api-proxy the engine points the agent step at, in front of Z.AI.
+        pytest.param('http://host.docker.internal:10001', {'effort': 'low'}, id='zai-through-awf'),
+        pytest.param('https://api.anthropic.com', None, id='anthropic'),
+        pytest.param(None, None, id='sdk-default'),
+    ],
+)
+def test_build_model_requests_low_effort_only_from_zai(
+    monkeypatch: pytest.MonkeyPatch, base_url: str | None, output_config: dict[str, str] | None
+):
+    """Z.AI gets its low effort and no `thinking`, which it would run at its default `max`; Anthropic gets neither."""
+    bodies: list[dict[str, object]] = []
+
+    def _handle(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        return httpx2.Response(200, json=_MESSAGE_RESPONSE)
+
+    transport = shim.rate_limit_retry_transport
+    monkeypatch.setattr(shim, 'rate_limit_retry_transport', lambda: transport(httpx2.MockTransport(_handle)))
+    if base_url is None:
+        monkeypatch.delenv('ANTHROPIC_BASE_URL', raising=False)
+    else:
+        monkeypatch.setenv('ANTHROPIC_BASE_URL', base_url)
+    monkeypatch.setenv('ANTHROPIC_MODEL', 'glm-5.4')
+    model, _ = shim.build_model(shim.parse_args(['--print']))
+    assert asyncio.run(Agent(model).run('hi')).output == 'ok'
+    [body] = bodies
+    assert body['model'] == 'glm-5.4'
+    assert body.get('output_config') == output_config
+    assert 'thinking' not in body
+
+
 def _rate_limited_client(rate_limited_responses: int, calls: list[int]) -> AsyncAnthropic:
     """An `AsyncAnthropic` client whose first requests receive a retryable 429."""
 
@@ -3190,7 +3227,7 @@ def test_observability_names_the_running_shim_sources(monkeypatch: pytest.Monkey
 
 
 def test_clai2_engine_names_the_staged_shim_sources():
-    """The CLAI 2 engine configures Logfire before it loads the shim, so the staging step supplies `service.version`.
+    """The Pax engine configures Logfire before it loads the shim, so the staging step supplies `service.version`.
 
     It digests the staged copy: CI Review checks out the pull request head after staging.
     """
@@ -3650,7 +3687,7 @@ def test_mcp_wrapped_in_filter_when_allowlist_present(tmp_path: Path):
 # from the gh-aw gateway escaped `MCPToolset` and killed the whole run).
 # --------------------------------------------------------------------------- #
 def _mcp_error(message: str) -> McpError:
-    return McpError(ErrorData(code=-32602, message=message))
+    return McpError(code=-32602, message=message)
 
 
 def _error_hook_ctx() -> RunContext[None]:
@@ -3829,6 +3866,27 @@ def test_failure_metadata_classifies_anthropic_timeout_wrapped_by_model_api_erro
     details = shim.failure_details(error)
 
     assert details == {'kind': 'timeout'}
+
+
+def test_failure_metadata_does_not_read_the_awf_cache_miss_refusal_as_authentication():
+    """AWF's API proxy refuses a run at its consecutive cache-miss cap with a 403 that Z.ai never sent."""
+    # The 403 body in the agent log of https://github.com/pydantic/pydantic-ai/actions/runs/45107391472.
+    refusal: dict[str, object] = {
+        'error': {
+            'type': 'max_cache_misses_exceeded',
+            'message': 'Maximum consecutive cache misses exceeded (5 / 5).',
+            'consecutive_cache_misses': 5,
+            'max_cache_misses': 5,
+        }
+    }
+    transport = httpx2.MockTransport(lambda _request: httpx2.Response(403, json=refusal))
+    client = AsyncAnthropic(api_key='x', http_client=httpx2.AsyncClient(transport=transport))
+    agent = Agent(AnthropicModel('glm-5.3-flash', provider=AnthropicProvider(anthropic_client=client)))
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        asyncio.run(agent.run('hi'))
+
+    assert shim.failure_details(exc_info.value) == {'kind': 'cache_miss_limit', 'http_status': 403}
 
 
 def test_run_preserves_partial_usage_on_failure_after_model_activity(monkeypatch: pytest.MonkeyPatch):

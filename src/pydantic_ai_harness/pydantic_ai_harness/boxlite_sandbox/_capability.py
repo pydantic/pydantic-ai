@@ -8,10 +8,13 @@ from typing import Any
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness._workspace import with_authority
 from pydantic_ai_harness._workspace_provider import (
     check_integer,
+    check_path_authority,
     check_working_dir,
     reject_defer_loading,
     require_asyncio,
@@ -32,7 +35,8 @@ class BoxLiteSandbox(AbstractCapability[AgentDepsT]):
     """
 
     image: str | None = None
-    """OCI image a new box runs, such as `'python:3.12-slim'`; BoxLite's default, Alpine Linux, when `None`."""
+    """OCI image a new box runs, such as `'python:3.12-slim'`; BoxLite's default, Alpine Linux, when `None`, unless
+    `desktop` is set."""
 
     cpus: int | None = None
     """vCPUs for a new box; BoxLite's default when `None`."""
@@ -59,11 +63,27 @@ class BoxLiteSandbox(AbstractCapability[AgentDepsT]):
     its deprecated `auto_remove`), so passing one of those here raises `UserError`.
     """
 
+    desktop: bool | tuple[int, int] = False
+    """Give the box a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for
+    1280x800, or its `(width, height)`. Without an `image`, a new box runs `debian:bookworm-slim`, and the first start
+    installs the display programs, which needs `allow_internet_access`."""
+
+    authority: Authority = 'operator'
+    """The [authority][pydantic_ai.messages.Authority] of the sandbox's files: `'none'` for files nobody on the
+    application's side wrote, such as a cloned third-party repository, and `'user'` for the user's own files.
+    Anything below `'operator'` wraps the workspace in an [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace]."""
+
+    path_authority: Mapping[str, Authority] | None = None
+    """Levels for some directories and files, overriding `authority` for the paths under them; the longest matching
+    path wins. Paths are sandbox paths: relative ones resolve against the working directory, and `~` isn't expanded.
+    See [`Workspace.authority_of`][pydantic_ai.workspaces.Workspace.authority_of]."""
+
     def __post_init__(self) -> None:
         reject_defer_loading('BoxLiteSandbox', self.defer_loading)
         check_integer('cpus', self.cpus, optional=True)
         check_integer('memory_mb', self.memory_mb, optional=True)
         check_working_dir(self.working_dir)
+        check_path_authority(self.path_authority)
         try:
             # Built once here so a bad option fails when the agent is defined, not on its first run.
             self._new_backend(None)
@@ -73,7 +93,7 @@ class BoxLiteSandbox(AbstractCapability[AgentDepsT]):
     def backend(self, ref: WorkspaceRef) -> BoxLiteSandboxBackend:
         """Attach lazily to an existing box, one `BoxLiteSandbox` created."""
         _backend.check_ref(ref)
-        return BoxLiteSandboxBackend(ref=ref, working_dir=self.working_dir, env=self.env)
+        return BoxLiteSandboxBackend(ref=ref, working_dir=self.working_dir, env=self.env, desktop=self.desktop)
 
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Delete a box by ref; one that is already gone returns quietly.
@@ -86,6 +106,10 @@ class BoxLiteSandbox(AbstractCapability[AgentDepsT]):
         await _backend.delete(ref.id)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        """The backend for this run, in an `AuthorityWorkspace` when `authority` or `path_authority` asks for one."""
+        return with_authority(self._run_backend(ctx, ref=ref), self.authority, self.path_authority)
+
+    def _run_backend(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it creates or attaches on first use."""
         del ctx
         if ref is not None:
@@ -106,4 +130,5 @@ class BoxLiteSandbox(AbstractCapability[AgentDepsT]):
             working_dir=self.working_dir,
             env=self.env,
             box_options=self.box_options,
+            desktop=self.desktop,
         )

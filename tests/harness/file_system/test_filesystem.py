@@ -9,15 +9,18 @@ import posixpath
 import re
 import socket
 import stat
+import sys
 from collections.abc import Sequence
 from dataclasses import replace
 from functools import partial
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
 import anyio
 import anyio.lowlevel
 import pytest
+from PIL import Image
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, on_event
@@ -77,17 +80,6 @@ class ReadOnlyMount(LocalWorkspaceBackend):
 
     async def make_dir(self, path: str) -> None:
         raise WorkspaceReadOnlyError('read-only mount')
-
-
-class UntouchableWorkspace(WorkspaceBackend):
-    """A sandbox-like workspace whose first operation would create a billed environment, so any operation fails."""
-
-    @property
-    def ref(self) -> None:
-        return None
-
-    async def working_dir(self) -> str:
-        raise AssertionError('the workspace was touched')  # pragma: no cover
 
 
 class CountingWorkspace(LocalWorkspaceBackend):
@@ -329,7 +321,7 @@ def toolset(fs_root: Path) -> FileSystemToolset[None]:
     )
 
 
-def _unhashed_toolset() -> FileSystemToolset[None]:
+def _unhashed_toolset(*, max_image_side: int | None = 1024) -> FileSystemToolset[None]:
     return FileSystemToolset(
         allowed_patterns=[],
         denied_patterns=[],
@@ -338,7 +330,22 @@ def _unhashed_toolset() -> FileSystemToolset[None]:
         max_search_results=1000,
         max_find_results=1000,
         content_hashes=False,
+        max_image_side=max_image_side,
     )
+
+
+def _encoded_image(
+    size: tuple[int, int], image_format: str = 'PNG', *, noise: bool = False, mode: str = 'RGB'
+) -> bytes:
+    image = Image.frombytes(mode, size, os.urandom(size[0] * size[1] * 3)) if noise else Image.new(mode, size)
+    output = BytesIO()
+    image.save(output, format=image_format)
+    return output.getvalue()
+
+
+def _shown_size(content: BinaryContent) -> tuple[int, int]:
+    with Image.open(BytesIO(content.data)) as image:
+        return image.size
 
 
 @pytest.fixture
@@ -536,7 +543,8 @@ class TestRootDir:
         workspace = CountingWorkspace(tmp_path)
         read: tuple[str, dict[str, object]] = ('read_file', {'path': 'a.txt'})
         await call_tools([FileSystem[None]()], [read, read], workspace=workspace)
-        assert workspace.working_dir_calls == 1
+        # One ask for the boundary and one for the instructions naming the directory, however many requests follow.
+        assert workspace.working_dir_calls == 2
 
     async def test_each_run_resolves_the_boundary_in_its_own_workspace(self, tmp_path: Path) -> None:
         # One toolset serves every run, so durable execution sees the toolset it registered.
@@ -553,9 +561,6 @@ class TestRootDir:
         ]
         assert first.endswith('1\tfirst\n')
         assert second.endswith('1\tsecond\n')
-
-    async def test_a_run_without_file_operations_does_no_workspace_io(self) -> None:
-        assert await call_tools([FileSystem[None](root_dir='/srv')], [], workspace=UntouchableWorkspace()) == []
 
     async def test_no_workspace_fails_the_run(self) -> None:
         with pytest.raises(UserError, match='`FileSystem` needs a workspace') as error:
@@ -846,6 +851,165 @@ class TestReadFile:
         result = await toolset.read_file('big.png', workspace=LocalWorkspaceBackend(tmp_path))
         assert result == '[big.png | image/png | 5000008 bytes]\nToo large to view: the limit is 5000000 bytes.\n'
 
+    @pytest.mark.parametrize(
+        ('image_format', 'media_type', 'size', 'shown'),
+        [
+            ('PNG', 'image/png', (3000, 2000), (1024, 683)),
+            ('JPEG', 'image/jpeg', (500, 2000), (256, 1024)),
+            ('GIF', 'image/gif', (1200, 800), (1024, 683)),
+            ('WEBP', 'image/webp', (1100, 1100), (1024, 1024)),
+        ],
+    )
+    async def test_read_large_image_is_downscaled_in_its_own_format(
+        self,
+        tmp_path: Path,
+        image_format: str,
+        media_type: str,
+        size: tuple[int, int],
+        shown: tuple[int, int],
+    ) -> None:
+        raw = _encoded_image(size, image_format)
+        (tmp_path / 'photo').write_bytes(raw)
+        result = await _unhashed_toolset().read_file('photo', workspace=LocalWorkspaceBackend(tmp_path))
+        assert isinstance(result, list)
+        header, content = result
+        assert header == (
+            f'[photo | {media_type} | {len(raw)} bytes]\n'
+            f'Shown downscaled from {size[0]}x{size[1]} to {shown[0]}x{shown[1]} pixels.\n'
+        )
+        assert isinstance(content, BinaryContent)
+        assert content.media_type == media_type
+        with Image.open(BytesIO(content.data)) as image:
+            assert (image.format, image.size) == (image_format, shown)
+
+    async def test_read_image_is_downscaled_as_it_is_displayed(self, tmp_path: Path) -> None:
+        output = BytesIO()
+        exif = Image.Exif()
+        exif[0x0112] = 6  # Orientation: rotate 90 degrees to display.
+        Image.new('RGB', (3000, 2000)).save(output, format='JPEG', exif=exif)
+        (tmp_path / 'photo.jpg').write_bytes(output.getvalue())
+        result = await _unhashed_toolset().read_file('photo.jpg', workspace=LocalWorkspaceBackend(tmp_path))
+        assert isinstance(result, list)
+        header, content = result
+        assert isinstance(header, str)
+        assert header.endswith('Shown downscaled from 2000x3000 to 683x1024 pixels.\n')
+        assert isinstance(content, BinaryContent)
+        assert _shown_size(content) == (683, 1024)
+
+    async def test_read_image_that_fits_is_returned_unchanged(self, tmp_path: Path) -> None:
+        raw = _encoded_image((1024, 600))
+        (tmp_path / 'small.png').write_bytes(raw)
+        result = await _unhashed_toolset().read_file('small.png', workspace=LocalWorkspaceBackend(tmp_path))
+        assert result == [f'[small.png | image/png | {len(raw)} bytes]\n', BinaryContent(raw, media_type='image/png')]
+
+    async def test_read_image_over_the_byte_limit_is_downscaled_under_it(self, tmp_path: Path) -> None:
+        raw = _encoded_image((1500, 1200), noise=True)
+        assert len(raw) > 5_000_000
+        (tmp_path / 'noise.png').write_bytes(raw)
+        result = await _unhashed_toolset().read_file('noise.png', workspace=LocalWorkspaceBackend(tmp_path))
+        assert isinstance(result, list)
+        assert isinstance(result[1], BinaryContent)
+        assert len(result[1].data) <= 5_000_000
+        assert _shown_size(result[1]) == (1024, 819)
+
+    async def test_read_image_downscaled_but_still_over_the_byte_limit_is_described(self, tmp_path: Path) -> None:
+        raw = _encoded_image((2000, 1600), noise=True)
+        (tmp_path / 'noise.png').write_bytes(raw)
+        toolset = _unhashed_toolset(max_image_side=1900)
+        result = await toolset.read_file('noise.png', workspace=LocalWorkspaceBackend(tmp_path))
+        assert result == (
+            f'[noise.png | image/png | {len(raw)} bytes]\n'
+            'Shown downscaled from 2000x1600 to 1900x1520 pixels.\n'
+            'Too large to view: the limit is 5000000 bytes.\n'
+        )
+
+    async def test_read_tall_jpeg_is_decoded_at_a_reduced_scale(self, tmp_path: Path) -> None:
+        # A full-page screenshot: its short side is under the target, but the scale follows the long side.
+        raw = _encoded_image((1000, 26000), 'JPEG', mode='L')
+        (tmp_path / 'page.jpg').write_bytes(raw)
+        result = await _unhashed_toolset().read_file('page.jpg', workspace=LocalWorkspaceBackend(tmp_path))
+        assert isinstance(result, list)
+        header, content = result
+        assert header == (
+            f'[page.jpg | image/jpeg | {len(raw)} bytes]\nShown downscaled from 1000x26000 to 39x1024 pixels.\n'
+        )
+        assert isinstance(content, BinaryContent)
+        assert _shown_size(content) == (39, 1024)
+
+    async def test_read_image_too_large_to_decode_is_described(self, tmp_path: Path) -> None:
+        # 30 megapixels in a small file: decoding it to downscale would take far more memory than the file.
+        raw = _encoded_image((6000, 5000), mode='1')
+        (tmp_path / 'huge.png').write_bytes(raw)
+        result = await _unhashed_toolset().read_file('huge.png', workspace=LocalWorkspaceBackend(tmp_path))
+        assert result == (
+            f'[huge.png | image/png | {len(raw)} bytes]\n'
+            'Too large to view: 6000x5000 pixels is over the 25,000,000-pixel limit for downscaling.\n'
+        )
+
+    async def test_read_progressive_jpeg_too_large_to_decode_is_described(self, tmp_path: Path) -> None:
+        # A progressive JPEG holds full-size coefficients even when decoded at a reduced scale.
+        output = BytesIO()
+        Image.new('L', (6000, 5000)).save(output, format='JPEG', progressive=True)
+        (tmp_path / 'photo.jpg').write_bytes(output.getvalue())
+        result = await _unhashed_toolset().read_file('photo.jpg', workspace=LocalWorkspaceBackend(tmp_path))
+        assert isinstance(result, str)
+        assert result.endswith(
+            'Too large to view: 6000x5000 pixels is over the 25,000,000-pixel limit for downscaling.\n'
+        )
+
+    async def test_read_image_pillow_warns_about_is_described_where_warnings_are_errors(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Between `MAX_IMAGE_PIXELS` and twice it, Pillow only warns; this suite turns warnings into errors.
+        raw = _encoded_image((3000, 2000))
+        (tmp_path / 'big.png').write_bytes(raw)
+        monkeypatch.setattr(Image, 'MAX_IMAGE_PIXELS', 4_000_000)
+        result = await _unhashed_toolset().read_file('big.png', workspace=LocalWorkspaceBackend(tmp_path))
+        assert result == (
+            f'[big.png | image/png | {len(raw)} bytes]\n'
+            'Too large to view: Pillow refused to decode it as a possible decompression bomb.\n'
+        )
+
+    async def test_read_image_pillow_refuses_as_a_bomb_is_described(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        raw = _encoded_image((3000, 2000))
+        (tmp_path / 'big.png').write_bytes(raw)
+        monkeypatch.setattr(Image, 'MAX_IMAGE_PIXELS', 1000)
+        result = await _unhashed_toolset().read_file('big.png', workspace=LocalWorkspaceBackend(tmp_path))
+        assert result == (
+            f'[big.png | image/png | {len(raw)} bytes]\n'
+            'Too large to view: Pillow refused to decode it as a possible decompression bomb.\n'
+        )
+
+    async def test_read_large_jpeg_is_decoded_at_a_reduced_scale(self, tmp_path: Path) -> None:
+        # Over the decode limit at full size, but a JPEG decodes at 1/4 scale here, under it.
+        raw = _encoded_image((6000, 5000), 'JPEG', mode='L')
+        (tmp_path / 'photo.jpg').write_bytes(raw)
+        result = await _unhashed_toolset().read_file('photo.jpg', workspace=LocalWorkspaceBackend(tmp_path))
+        assert isinstance(result, list)
+        header, content = result
+        assert header == (
+            f'[photo.jpg | image/jpeg | {len(raw)} bytes]\nShown downscaled from 6000x5000 to 1024x853 pixels.\n'
+        )
+        assert isinstance(content, BinaryContent)
+        assert _shown_size(content) == (1024, 853)
+
+    def test_max_image_side_without_pillow_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setitem(sys.modules, 'PIL', None)
+        with pytest.raises(ImportError, match=r'needs Pillow: install `pydantic-ai-harness\[coder\]`'):
+            _unhashed_toolset()
+        with pytest.raises(ImportError, match='needs Pillow'):
+            FileSystem(max_image_side=1024)
+        assert _unhashed_toolset(max_image_side=None) is not None
+
+    async def test_read_image_without_max_image_side_is_returned_unchanged(self, tmp_path: Path) -> None:
+        raw = _encoded_image((3000, 2000))
+        (tmp_path / 'big.png').write_bytes(raw)
+        toolset = _unhashed_toolset(max_image_side=None)
+        result = await toolset.read_file('big.png', workspace=LocalWorkspaceBackend(tmp_path))
+        assert result == [f'[big.png | image/png | {len(raw)} bytes]\n', BinaryContent(raw, media_type='image/png')]
+
     async def test_limit_is_capped_by_max_read_lines(self, tmp_path: Path) -> None:
         (tmp_path / 'big.txt').write_text(''.join(f'line {number}\n' for number in range(50)))
         toolset = FileSystemToolset(
@@ -871,6 +1035,17 @@ class TestReadFile:
         walked = await toolset.search_files('needle', workspace=ReadOnlyWorkspace(Workspace(ws)))
         assert walked == 'feed.c:3:needle = 3;'
         assert 'lines: 3' in await toolset.file_info('feed.c', workspace=ws)
+
+    async def test_window_deep_into_a_file(self, tmp_path: Path) -> None:
+        # About 30 KB of short lines, so the offset lies several 4 KiB blocks into the file.
+        (tmp_path / 'long.txt').write_bytes(''.join(f'line {i}\n' for i in range(3000)).encode())
+        result = await _unhashed_toolset().read_file(
+            'long.txt', offset=2501, limit=2, workspace=LocalWorkspaceBackend(tmp_path)
+        )
+        assert result == (
+            '[long.txt | 3000 lines]\n  2501\tline 2500\n  2502\tline 2501\n'
+            '... (498 more lines. Use offset=2503 to continue reading.)\n'
+        )
 
     async def test_crlf_lines_match_without_their_carriage_return(self, tmp_path: Path) -> None:
         (tmp_path / 'dos.txt').write_bytes(b'first\r\nneedle\r\n')
@@ -1127,7 +1302,7 @@ class HeldWriteWorkspace:
 
     @property
     def ref(self) -> WorkspaceRef | None:
-        return None
+        return None  # pragma: no cover
 
     async def working_dir(self) -> str:
         return '/work'
@@ -1172,35 +1347,64 @@ class HeldWriteWorkspace:
 class TestConcurrentChanges:
     """Calls changing one file take turns, so none is computed from content another is about to replace."""
 
-    async def test_parallel_edit_calls_to_one_file_both_land(self) -> None:
-        """Two `edit_file` calls in one model response, as a model batching its edits sends them."""
-        workspace = HeldWriteWorkspace({'/work/a.py': b'import old\nold()\n'}, held='/work/a.py')
+    @pytest.mark.parametrize(
+        ('files', 'calls', 'expected'),
+        [
+            pytest.param(
+                {},
+                [
+                    ToolCallPart('create_directory', {'path': 'pkg/sub'}),
+                    ToolCallPart('write_file', {'path': 'pkg/sub/a.py', 'content': 'import old\n'}),
+                ],
+                {'pkg/sub/a.py': 'import old\n'},
+                id='write-into-new-directory',
+            ),
+            pytest.param(
+                {},
+                [
+                    ToolCallPart('write_file', {'path': 'a.py', 'content': 'import old\n'}),
+                    ToolCallPart('edit_file', {'path': 'a.py', 'old_text': 'old', 'new_text': 'new'}),
+                ],
+                {'a.py': 'import new\n'},
+                id='edit-new-file',
+            ),
+            pytest.param(
+                {'pkg/sub/a.py': 'import old\n'},
+                [
+                    ToolCallPart('edit_file', {'path': 'pkg/sub/a.py', 'old_text': 'old', 'new_text': 'new'}),
+                    ToolCallPart('edit_file', {'path': 'pkg/sub/a.py', 'old_text': 'new', 'new_text': 'newer'}),
+                ],
+                {'pkg/sub/a.py': 'import newer\n'},
+                id='edit-edited-text',
+            ),
+        ],
+    )
+    async def test_changes_in_one_response_run_in_order(
+        self, tmp_path: Path, files: dict[str, str], calls: list[ToolCallPart], expected: dict[str, str]
+    ) -> None:
+        """Each change depends on the one sent before it in the same response.
+
+        Uses `content_hashes=False` because the edit cases reproduce the race far more often without hashes. Keep it
+        unhashed so this test still guards `sequential` for edits.
+        """
+        for path, content in files.items():
+            (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / path).write_text(content)
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             if len(messages) > 1:
                 return ModelResponse(parts=[TextPart('done')])
-            return ModelResponse(
-                parts=[
-                    ToolCallPart('edit_file', {'path': 'a.py', 'old_text': 'import old', 'new_text': 'import new'}),
-                    ToolCallPart('edit_file', {'path': 'a.py', 'old_text': 'old()', 'new_text': 'new()'}),
-                ]
-            )
+            return ModelResponse(parts=calls)
 
-        async def release_after_the_other_edit_stops() -> None:
-            await workspace.writing.wait()
-            # The other edit either finishes or waits its turn before the held write goes ahead.
-            await anyio.wait_all_tasks_blocked()
-            workspace.release.set()
+        agent = Agent(
+            FunctionModel(respond),
+            capabilities=[LocalWorkspace(tmp_path), FileSystem[object](content_hashes=False)],
+        )
+        messages = (await agent.run('change the file')).all_messages()
 
-        agent = Agent(FunctionModel(respond), capabilities=[FileSystem()])
-        messages: list[ModelMessage] = []
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(release_after_the_other_edit_stops)
-            messages = (await agent.run('Rename old to new', workspace=workspace)).all_messages()
-
-        returns = [part.content for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
-        assert len(returns) == 2 and all(str(content).startswith('Edited a.py.') for content in returns)
-        assert workspace.files['/work/a.py'] == b'import new\nnew()\n'
+        returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+        assert [part.tool_name for part in returns] == [call.tool_name for call in calls]
+        assert {path: (tmp_path / path).read_text() for path in expected} == expected
 
     async def test_edits_through_a_symlink_and_its_target_take_turns(self) -> None:
         toolset = FileSystem[None]().get_toolset()
@@ -2408,6 +2612,11 @@ class TestMutationKillers:
         # Verify hash is a real hex hash not None
         assert 'hash:None' not in result
 
+    async def test_write_file_counts_a_final_line_without_a_line_feed(
+        self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend
+    ) -> None:
+        assert 'Wrote 3 chars (2 lines) to f.txt.' in await toolset.write_file('f.txt', 'a\nb', workspace=ws)
+
     async def test_edit_file_output_format(
         self, toolset: FileSystemToolset[None], fs_root: Path, ws: LocalWorkspaceBackend
     ) -> None:
@@ -2570,7 +2779,7 @@ class TestFileSystemCapability:
         assert exc_info.value.message == READ_ONLY_FAILURE
         assert list(tmp_path.iterdir()) == []
 
-    def test_search_files_description_has_string_return_type(self) -> None:
+    def test_search_files_description_returns_text_when_return_annotated(self) -> None:
         toolset = FileSystem().get_toolset()
         assert isinstance(toolset, FileSystemToolset)
         description = toolset.tools['search_files'].description
@@ -2578,7 +2787,6 @@ class TestFileSystemCapability:
         assert description == (
             '<summary>Search file contents using a regular expression.</summary>\n'
             '<returns>\n'
-            '<type>str</type>\n'
             '<description>Matching lines formatted as file:line_number:text, with paths relative to the working directory.</description>\n'
             '</returns>'
         )
@@ -2631,6 +2839,12 @@ class TestFileSystemCapability:
     def test_non_positive_max_find_results_rejected(self) -> None:
         with pytest.raises(ValueError, match='max_find_results must be a positive integer'):
             FileSystem(max_find_results=-1)
+
+    def test_non_positive_max_image_side_rejected(self) -> None:
+        assert FileSystem().max_image_side is None
+        assert FileSystem(max_image_side=1024).max_image_side == 1024
+        with pytest.raises(ValueError, match='max_image_side must be a positive integer'):
+            FileSystem(max_image_side=0)
 
     def test_boolean_limits_rejected(self) -> None:
         # `bool` is an `int` subclass, so `True` would otherwise pass as a limit of 1.
@@ -3062,4 +3276,30 @@ class TestReadFileInARun:
         assert tool_return.content == [
             f'[chart.png | image/png | {len(png)} bytes | hash:{content_hash}]\n',
             BinaryContent(data=png, media_type='image/png'),
+        ]
+
+    async def test_a_large_image_reaches_the_model_downscaled_to_max_image_side(self, tmp_path: Path) -> None:
+        png = _encoded_image((1000, 500))
+        (tmp_path / 'chart.png').write_bytes(png)
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('read_file', {'path': 'chart.png'})])
+            return ModelResponse(parts=[TextPart('seen')])
+
+        capabilities = [LocalWorkspace(tmp_path), FileSystem[object](max_image_side=256)]
+        result = await Agent(FunctionModel(model), capabilities=capabilities).run('look at the chart')
+        request = result.all_messages()[2]
+        assert isinstance(request, ModelRequest)
+        tool_return = request.parts[0]
+        assert isinstance(tool_return, ToolReturnPart)
+        [image] = tool_return.files
+        assert isinstance(image, BinaryContent)
+        assert _shown_size(image) == (256, 128)
+        # The hash is of the file in the workspace, not of the downscaled copy.
+        content_hash = hashlib.sha256(png).hexdigest()[:12]
+        assert tool_return.content == [
+            f'[chart.png | image/png | {len(png)} bytes | hash:{content_hash}]\n'
+            'Shown downscaled from 1000x500 to 256x128 pixels.\n',
+            image,
         ]

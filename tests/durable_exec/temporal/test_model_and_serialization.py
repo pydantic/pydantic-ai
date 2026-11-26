@@ -23,10 +23,12 @@ from pydantic_ai import (
     BinaryContent,
     BinaryImage,
     CodeExecutionTool,
+    DeprecatedModelWarning,
     DocumentUrl,
     FilePart,
     FunctionToolset,
     ImageUrl,
+    ModelDeprecation,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -62,7 +64,9 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelAuthenticationError,
     ModelContextWindowExceededError,
+    ModelEmptyResponseError,
     ModelHTTPError,
+    ModelInvalidResponseError,
     ModelNotFoundError,
     ModelRateLimitError,
     ModelRequestRejectedError,
@@ -73,11 +77,15 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import (
     CUSTOM_EVENT_TYPES,
+    AgentInstructionSource,
     CapabilityEvent,
+    CapabilityInstructionSource,
     CustomEvent,
+    InstructionDeltaPart,
     InstructionId,
     InstructionPart,
     ModelRequestAttempt,
+    RunInstructionSource,
     ThinkingPart,
     ToolsetInstructionSource,
     UnknownCustomEvent,
@@ -975,6 +983,55 @@ async def test_oversized_model_response_payload(client: Client):
             )
 
 
+async def _answer_ok(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('ok')])
+
+
+deprecated_model_agent = Agent(
+    FunctionModel(
+        _answer_ok,
+        model_name='retiring-model',
+        profile={'deprecation': ModelDeprecation(source_url='https://example.com/retiring-model')},
+    ),
+    name='deprecated_model_agent',
+    deps_type=type(None),
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class DeprecatedModelWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await deprecated_model_agent.run(prompt)
+        return result.output
+
+
+async def test_deprecated_model_warns_once_from_its_activity(client: Client):
+    """A deprecated model warns once per request, from the activity that sends it.
+
+    The workflow prepares the request too, to resolve the output mode and describe it on the span, and a warning
+    there would repeat on every replay.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DeprecatedModelWorkflow],
+        plugins=[AgentPlugin(deprecated_model_agent)],
+    ):
+        with pytest.warns(DeprecatedModelWarning) as record:
+            output = await client.execute_workflow(
+                DeprecatedModelWorkflow.run,
+                args=['hello'],
+                id=DeprecatedModelWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+    assert output == 'ok'
+    assert [str(w.message) for w in record if w.category is DeprecatedModelWarning] == snapshot(
+        ["Model 'function:retiring-model' is deprecated by its provider. See https://example.com/retiring-model"]
+    )
+
+
 # ============================================================================
 # DocumentUrl Serialization Test - Verifies that DocumentUrl with custom
 # media_type is properly serialized through Temporal activities
@@ -1145,6 +1202,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         '_cancellation',  # runtime-only controller holding a live asyncio task reference; cannot cross the activity boundary
         '_durable_operations',  # workflow-side callables cannot cross the activity boundary; worker dispatch is pre-registered
         '_run_capabilities_by_id',  # live per-run capability instances are recovered from the worker agent instead
+        '_output_submitter',  # live view of the workflow's graph state; output can only be submitted from workflow code
         'workspace',  # live facade cannot cross the activity boundary; only a concrete ref is optionally carried
         # Live toolsets the run holds entered; an activity may run in another process, so it enters its own
         '_run_held_toolsets',
@@ -1264,6 +1322,90 @@ async def test_payload_converter_rebuilds_adapter_when_an_event_class_registers_
         assert decoded.done == 1
     finally:
         CUSTOM_EVENT_TYPES.pop('temporal_late_registration', None)
+
+
+_INSTRUCTION_IDS = [
+    InstructionId(AgentInstructionSource()),
+    InstructionId(AgentInstructionSource(), name='persona'),
+    InstructionId(RunInstructionSource(), name='task'),
+    InstructionId(ToolsetInstructionSource('memory')),
+    InstructionId(ToolsetInstructionSource('memory'), name='usage'),
+    InstructionId(CapabilityInstructionSource('memory')),
+    InstructionId(CapabilityInstructionSource('memory'), name='usage'),
+]
+
+
+def test_payload_converter_round_trips_instruction_ids() -> None:
+    """Every instruction source keeps its type through the payload converter (#14492).
+
+    The converter writes an id as an object rather than its string, so the source's `kind` is what tells a
+    capability from a toolset with the same `id`, and a run from the agent.
+    """
+    converter = PydanticAIPayloadConverter()
+    request = ModelRequest(parts=[InstructionDeltaPart(id=id, content='x') for id in _INSTRUCTION_IDS])
+
+    [decoded] = converter.from_payloads(converter.to_payloads([request]), [ModelRequest])
+
+    assert [part.id for part in decoded.parts] == _INSTRUCTION_IDS
+    assert [str(part.id) for part in decoded.parts] == snapshot(
+        [
+            'agent',
+            'agent:persona',
+            'run:task',
+            'toolset:memory',
+            'toolset:memory:usage',
+            'capability:memory',
+            'capability:memory:usage',
+        ]
+    )
+
+
+def test_payload_converter_decodes_instruction_ids_without_kind() -> None:
+    """A payload written before instruction sources carried a `kind` decodes as it always has.
+
+    Those payloads can be in recorded workflow histories, and replay has to rebuild the values the workflow
+    first ran with. The source's fields alone can't tell a capability from a toolset or a run from the agent,
+    so an id-bearing source reads as a toolset and an empty one as the agent.
+    """
+    payload = temporalio.api.common.v1.Payload(
+        metadata={'encoding': b'json/plain'},
+        data=(
+            b'{"parts":['
+            b'{"id":{"source":{},"name":null},"content":"x","part_kind":"instruction-delta"},'
+            b'{"id":{"source":{},"name":"task"},"content":"x","part_kind":"instruction-delta"},'
+            b'{"id":{"source":{"id":"memory"},"name":null},"content":"x","part_kind":"instruction-delta"},'
+            b'{"id":{"source":{"id":"memory"},"name":"usage"},"content":"x","part_kind":"instruction-delta"},'
+            b'{"id":"capability:memory","content":"x","part_kind":"instruction-delta"}'
+            b'],"kind":"request"}'
+        ),
+    )
+
+    [decoded] = PydanticAIPayloadConverter().from_payloads([payload], [ModelRequest])
+
+    assert [part.id for part in decoded.parts] == [
+        InstructionId(AgentInstructionSource()),
+        InstructionId(AgentInstructionSource(), name='task'),
+        InstructionId(ToolsetInstructionSource('memory')),
+        InstructionId(ToolsetInstructionSource('memory'), name='usage'),
+        InstructionId(CapabilityInstructionSource('memory')),
+    ]
+
+
+def test_payload_converter_reads_an_unknown_instruction_source_kind_as_unaddressable() -> None:
+    """A source `kind` from a newer version leaves the id unaddressable, as an unknown string namespace does."""
+    payload = temporalio.api.common.v1.Payload(
+        metadata={'encoding': b'json/plain'},
+        data=(
+            b'{"parts":['
+            b'{"id":{"source":{"id":"x","kind":"workspace"},"name":null},"content":"x","part_kind":"instruction-delta"},'
+            b'{"id":{"source":{"id":"memory","kind":"capability"},"name":null},"content":"x","part_kind":"instruction-delta"}'
+            b'],"kind":"request"}'
+        ),
+    )
+
+    [decoded] = PydanticAIPayloadConverter().from_payloads([payload], [ModelRequest])
+
+    assert [part.id for part in decoded.parts] == [None, InstructionId(CapabilityInstructionSource('memory'))]
 
 
 async def test_unknown_custom_event_recovers_across_workers() -> None:
@@ -1849,6 +1991,35 @@ def test_temporal_model_context_window_follows_active_model():
         # An unregistered model ID resolves through profile inference, not the wrapped default's window.
         assert temporal_model.context_window == infer_model_profile('openai:gpt-5').get('context_window')
         assert temporal_model.context_window not in (None, 100)
+
+
+class _OutsidePrefixTestModel(TestModel):
+    @property
+    def _rewrite_instructions_outside_prefix(self) -> bool:
+        return True
+
+
+def test_temporal_model_rewrite_instructions_outside_prefix_follows_active_model():
+    """The instruction window rule comes from the active model, so a run moved off a default that reads dynamic
+    instructions outside the cached prefix keeps the shared rule.
+
+    A raw model string has no model to ask, so it keeps the shared rule, as `Model` does.
+    """
+    temporal_model = TemporalModel(
+        _OutsidePrefixTestModel(model_name='default-model'),
+        activity_name_prefix='test__rewrite_instructions_outside_prefix',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        models={'alt': TestModel(model_name='alt-model')},
+    )
+
+    assert temporal_model._rewrite_instructions_outside_prefix  # pyright: ignore[reportPrivateUsage]
+
+    with temporal_model.using_model('alt'):
+        assert not temporal_model._rewrite_instructions_outside_prefix  # pyright: ignore[reportPrivateUsage]
+
+    with temporal_model.using_model('openai-responses:gpt-6.2-sol'):
+        assert not temporal_model._rewrite_instructions_outside_prefix  # pyright: ignore[reportPrivateUsage]
 
 
 def test_temporal_model_model_id_follows_active_model():
@@ -3881,6 +4052,11 @@ def test_the_application_error_keeps_the_type_temporal_retries_on():
             id='http-request-rejected',
         ),
         pytest.param(
+            ModelHTTPError.for_category(ModelTimeoutError, status_code=408, model_name='gpt-test'),
+            'ModelHTTPError',
+            id='http-timeout',
+        ),
+        pytest.param(
             ModelNotFoundError('gpt-test', 'The model does not exist.', in_stream=True),
             'ModelAPIError',
             id='not-found',
@@ -3895,6 +4071,16 @@ def test_the_application_error_keeps_the_type_temporal_retries_on():
             ModelServerError('gpt-test', 'server_error: failed', in_stream=True), 'ModelAPIError', id='server'
         ),
         pytest.param(ModelAPIError('gpt-test', 'boom'), 'ModelAPIError', id='base'),
+        pytest.param(
+            ModelEmptyResponseError('gpt-test', 'Streamed response ended without content or tool calls'),
+            'UnexpectedModelBehavior',
+            id='empty-response',
+        ),
+        pytest.param(
+            ModelInvalidResponseError('gpt-test', 'Invalid response', body='<html>Bad gateway</html>'),
+            'UnexpectedModelBehavior',
+            id='invalid-response',
+        ),
         pytest.param(DecisionHandOff('decider', 'search', 0.4, 'handed off'), 'DecisionHandOff', id='other-subclass'),
     ],
 )
@@ -3907,6 +4093,7 @@ def test_a_categorized_error_keeps_the_type_temporal_retries_on(error: ModelAPIE
     assert raised.value.type == type_name
     rebuilt = _crossed(error)
     assert type(rebuilt) is type(error)
+    assert str(rebuilt) == str(error)
 
 
 def test_a_categorized_http_error_is_rebuilt_as_itself_not_its_category():

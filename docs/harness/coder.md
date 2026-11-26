@@ -35,7 +35,7 @@ flowchart LR
 
 ## Usage
 
-Install the Coder extra. It includes `json-repair`, which `RepairToolArguments` needs, and ripgrep (`rg`), which backs the `list_files` and `grep` tools. Without the extra, importing `Coder` raises an `ImportError` naming it:
+Install the Coder extra. It includes `json-repair`, which `RepairToolArguments` needs, ripgrep (`rg`), which backs the `list_files` and `grep` tools, and Pillow, which downscales large images `read_file` returns. Without the extra, importing `Coder` raises an `ImportError` naming it, and without Pillow, constructing `Coder` does, unless you pass `max_image_side=None`:
 
 ```bash
 pip/uv-add "pydantic-ai-harness[coder]"
@@ -77,11 +77,13 @@ agent = Agent('{{ anthropic:large }}', capabilities=[ModalSandbox(), Coder()])
 With `LocalWorkspace`, [`agent.to_cli_sync()`](https://pydantic.dev/docs/ai/cli/) and [`agent.to_web()`](https://pydantic.dev/docs/ai/web/) work in the same directory. With a sandbox, the CLI keeps one sandbox for the session, but `to_web()` starts a new one for each message because the web protocol does not carry the workspace ref, so use `LocalWorkspace` when files must persist between web messages.
 
 The exported `pydantic_ai_harness.coder:coder_agent` is the same agent, model-less and named `coder`, working in the directory that is current when it is imported.
-Use it with the Pydantic AI CLI:
+[Pax](pax.md) runs this agent in your terminal, with `--agent` taking the import path. It loads no plugins, and needs a model because the export carries none:
 
 ```bash
-uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m {{ anthropic:large }}
+uvx pydantic-ai-pax --agent pydantic_ai_harness.coder:coder_agent -m {{ anthropic:large }}
 ```
+
+For a coding agent rather than this export, plain `uvx pydantic-ai-pax` builds its own `Coder` with Pax's plugins.
 
 ### The command environment
 
@@ -140,10 +142,11 @@ The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pyda
 `Coder()` is these capabilities, in this order:
 
 1. A `Capability` carrying the default instructions, plus any `instructions=` you pass.
-2. [`FileSystem`](filesystem.md)`(content_hashes=False, max_read_chars=50000, tools=FILE_TOOL_NAMES, max_retries=5)`, where
+2. [`FileSystem`](filesystem.md)`(content_hashes=False, max_read_chars=50000, tools=FILE_TOOL_NAMES, max_retries=5, max_image_side=1024)`, where
    `FILE_TOOL_NAMES` is `read_file`, `write_file`, `edit_file`, `list_files`, and `grep`. Its `root_dir` is the workspace's working directory.
    Each file tool allows five consecutive retries (for a denied path or a stale edit) rather than the agent's default one,
-   so a repeated correctable mistake does not end a long run.
+   so a repeated correctable mistake does not end a long run. Images over 1024 pixels on the longest side are downscaled;
+   `Coder(max_image_side=None)` sends them at full size and drops the Pillow requirement.
 3. [`Shell`](shell.md)`(denied_commands=[], allow_interactive=True, default_timeout=270, tools=['shell'])`.
 4. [`RepoContext`](repo-context.md)`(walk_up='repo_root')`
    for repository instructions: the instruction file of each directory (`AGENTS.md`, else `CLAUDE.md`) from the repository root down to the working directory
@@ -203,10 +206,16 @@ everything the agent has -- the same model, workspace, instructions, and capabil
 gate, guardrail, or audit hook bound next to `Coder`, so those see the commands a delegate runs too. A
 delegate can delegate in turn, up to three levels counting the top-level run (`SubAgents.max_depth`).
 
-`Coder`'s instructions tell the agent not to spawn sub-agents with `delegate_task` unless the user or `AGENTS.md` asks,
-the rule Codex gives its models for `spawn_agent`. A delegate explores the project again from a fresh context, so
-delegation the user did not ask for multiplies tool calls and cost. To have the agent delegate, ask for it in the
-prompt, in `AGENTS.md`, or in `instructions=`.
+On OpenAI's GPT models, `Coder`'s instructions tell the agent not to spawn sub-agents with `delegate_task`
+unless the user or `AGENTS.md` asks, the rule Codex gives its models for `spawn_agent`. Without it, GPT models delegate
+work nobody asked for, and Claude, measured the same way, doesn't. The rule goes to models whose profile sets
+`delegates_unprompted`, and follows the model handling each request: after a fallback with the
+[`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/) capability, or a later run on another
+model, the new model is sent the instructions it would have had from the start, with or without the rule. A `FallbackModel` gets no model-specific instructions, and `Coder` warns once
+when it runs on one. See
+[Instructions for specific models](https://pydantic.dev/docs/ai/core-concepts/agent/#model-specific-instructions).
+A delegate explores the project again from a fresh context, so delegation the user did not ask for multiplies tool
+calls and cost. To have the agent delegate, ask for it in the prompt, in `AGENTS.md`, or in `instructions=`.
 
 Only what is bound to the `Agent` carries over to a delegate; capabilities, toolsets, instructions, and model
 settings passed to `run()` do not. So bind `Coder` with `Agent(capabilities=[...])`: passing it to `run()`
@@ -258,6 +267,26 @@ on benchmarks is opt-in; see [Benchmarking](#benchmarking).
 | `'high'` (default) | Works until done, asking only for credentials, approvals, or real ambiguity, and measures results against any numeric target the task states. |
 | `'max'` | Never asks: chooses sensible defaults, measures against numeric targets, deletes its scratch files, and treats a stated criterion it cannot meet as a sign it misread the task rather than settling for a partial answer. Use it for runs nobody can answer, such as CI jobs. |
 
+At `'max'`, OpenAI's GPT models (not gpt-oss or the o-series) get three sentences of their own, each sent to models
+whose profile sets a flag for the behavior it corrects:
+
+- `reinterprets_malformed_inputs`: refines the misread check. First look for a rule in the task that classifies
+  inconsistent inputs, for example as malformed or rejected, and apply it before assuming a misreading.
+- `omits_handoff_evidence`: notes and handoffs use headed sections with each decision, the verification commands and
+  their results, the remaining risk, and what was left out.
+- `ignores_stated_runtime_constraints`: when a task constrains where or how its code will run, such as a restricted
+  interpreter or a specific Python version, the agent finds out what's allowed before writing code.
+
+The evidence for them is weak: on Harness-Bench SWE81 with GPT-6.2 Sol at `'max'`, one run each, `Coder` scored 53.2
+with the three sentences against 51.0 without them (measured with the classify sentence in place of the shared misread
+check; both are sent here), within that benchmark's single-run noise of about 5.6 points. Like the rule against
+unrequested delegation (see [Sub-agents](#sub-agents)), each is its own instruction block that follows the model
+handling each request: after a fallback with the
+[`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/) capability, or a later run on another
+model, the new model is sent the instructions it would have had from the start, with or without the sentences. Models
+without the flags get only the shared `'max'` guidance. See
+[Instructions for specific models](https://pydantic.dev/docs/ai/core-concepts/agent/#model-specific-instructions).
+
 `autonomy` is guidance to the model, not a limit on its tools. Nothing stops the agent from editing
 or running commands if it ignores the sentence. To require approval before writes or commands, add
 [`Permissions`](permissions.md).
@@ -267,7 +296,7 @@ so, whatever the level, it is told to choose sensible defaults and finish, and t
 target the task states.
 
 Tool descriptions supply tool usage; `RepoContext` supplies repository instructions and structure.
-The instructions also name the workspace's working directory as the project, where shell commands start and the file tools work.
+The instructions also name the workspace's working directory, through [`AnnounceWorkingDirectory`](announce-working-directory.md).
 `Coder(instructions='...')` appends project-specific guidance rather than replacing defaults.
 Use it for additional policy, such as file-size limits or a preferred verification workflow.
 
@@ -332,7 +361,11 @@ Provider-specific cache settings, such as `anthropic_cache`, take precedence ove
 
 `json-repair` moved from the base install to the `coder` and `repair-tool-arguments` extras. If you install plain `pydantic-ai-harness`, importing `Coder` or `coder_agent` raises an `ImportError`: install `pydantic-ai-harness[coder]`, or add `coder` to the extras you already use. If you use `RepairToolArguments` on its own, install `pydantic-ai-harness[repair-tool-arguments]`.
 
+Pillow is now in the `coder` extra too, because `Coder` downscales the images `read_file` returns. After an upgrade of `pydantic-ai-harness` alone that does not re-resolve its extras, constructing `Coder` or loading `coder_agent` raises an `ImportError`: reinstall `pydantic-ai-harness[coder]`, install `pillow`, or pass `Coder(max_image_side=None)` to keep full-size images.
+
 `Coder` now loads the repository's instruction files from the repository root (the nearest directory with a `.git` entry) down to the working directory at run start, one per directory with `AGENTS.md` ahead of `CLAUDE.md`, and inlines a subdirectory's instruction file the first time the agent reads, lists, writes or edits something under it, up to 32,000 characters per conversation. Its bundled `RepoContext` is now `RepoContext(walk_up='repo_root')`. This adds workspace `exists` and `stat` calls at run start, so Temporal and DBOS runs started before the upgrade no longer replay: let them finish or version the deployment first. To get close to the old behavior, pass `Coder(repo_context=RepoContext(filenames=('CLAUDE.md', 'AGENTS.md'), nested_traversal=False))`. It only approximates it: a directory holding both files now loads only `CLAUDE.md`, where it used to load both.
+
+`Coder`'s instructions name the working directory in one line (The working directory is `/repo`.), from [`AnnounceWorkingDirectory`](announce-working-directory.md), in place of the line that also said where commands start and which paths the file tools accept. It is there with `repo_context=False` too, so a lazily created sandbox is now created before the first request (outside durable execution; durable runs already did this).
 
 `Coder`'s default instructions no longer ask for self-contained deliverables checked from a clean directory, or for a solution that uses every field of the provided data. Bind `BenchmarkInstructions()` next to `Coder` to keep them (see [Benchmarking](#benchmarking)).
 
@@ -361,7 +394,7 @@ When retaining `result.workspace` after a run with a provider backend that expos
 
 Sandbox refs identify existing environments; provider-specific cleanup should use an ID-only delete API for refs your application owns (where that provider offers one). Do not create or attach a backend merely to delete a sandbox. Directory upload and preview URLs depend on the provider SDK.
 
-With a remote sandbox such as `ModalSandbox(working_dir='/workspace')`, `Coder` loads repo instructions at run start, which creates the sandbox before the model's first tool call. Use `Coder(repo_context=False)` if the sandbox should be created lazily; the instructions then do not name the working directory. A new sandbox creates its `working_dir` for you.
+With a remote sandbox such as `ModalSandbox(working_dir='/workspace')`, `Coder` names the working directory and loads repo instructions at run start, which creates the sandbox before the model's first request. A new sandbox creates its `working_dir` for you.
 
 ## Benchmarking
 

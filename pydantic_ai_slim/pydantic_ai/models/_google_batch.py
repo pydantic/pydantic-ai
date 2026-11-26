@@ -290,7 +290,7 @@ def batch_decode(model: GoogleModel, result: BatchResult, request: BatchRequest)
             response=_GenerateContentResponse_from_mldev(json.loads(result.body)), kwargs={}
         )
         _, model_request_parameters = prepare_decode(model, request)
-        model_response = model._process_response(response, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+        model_response = model._process_response(response, model_request_parameters, request.messages)  # pyright: ignore[reportPrivateUsage]
         return batch_priced(model_response)
     if result.status == 'errored':
         assert result.body is not None
