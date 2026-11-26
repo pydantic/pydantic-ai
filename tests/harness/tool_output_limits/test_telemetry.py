@@ -77,15 +77,17 @@ class TestToolOutputLimitsTelemetry:
             pytest.param(
                 limits(Truncate(max_chars=50)),
                 TEXT,
-                {
-                    'tool_output_limits.action': 'truncate',
-                    'tool_output_limits.original_size': 500,
-                    'tool_output_limits.reduced_size': 50,
-                    'tool_output_limits.size_unit': 'chars',
-                },
+                snapshot(
+                    {
+                        'tool_output_limits.action': 'truncate',
+                        'tool_output_limits.original_size': 500,
+                        'tool_output_limits.reduced_size': 50,
+                        'tool_output_limits.size_unit': 'chars',
+                    }
+                ),
                 id='truncate',
             ),
-            pytest.param(limits(Truncate(max_chars=1_000)), TEXT, {}, id='truncate-cuts-nothing'),
+            pytest.param(limits(Truncate(max_chars=1_000)), TEXT, snapshot({}), id='truncate-cuts-nothing'),
             pytest.param(
                 ToolOutputLimits[object](
                     bands=[Band(over=100, action=Truncate(max_chars=100))],
@@ -93,23 +95,27 @@ class TestToolOutputLimitsTelemetry:
                     tokenizer=lambda text: len(text) // 4,
                 ),
                 'x' * 2_000,
-                {
-                    'tool_output_limits.action': 'truncate',
-                    'tool_output_limits.original_size': 500,
-                    'tool_output_limits.reduced_size': 25,
-                    'tool_output_limits.size_unit': 'tokens',
-                },
+                snapshot(
+                    {
+                        'tool_output_limits.action': 'truncate',
+                        'tool_output_limits.original_size': 500,
+                        'tool_output_limits.reduced_size': 25,
+                        'tool_output_limits.size_unit': 'tokens',
+                    }
+                ),
                 id='tokens',
             ),
             pytest.param(
                 limits(Summarize(summarize=short_summarize, then=Truncate(max_chars=50))),
                 TEXT,
-                {
-                    'tool_output_limits.action': 'summarize',
-                    'tool_output_limits.original_size': 500,
-                    'tool_output_limits.reduced_size': 93,
-                    'tool_output_limits.size_unit': 'chars',
-                },
+                snapshot(
+                    {
+                        'tool_output_limits.action': 'summarize',
+                        'tool_output_limits.original_size': 500,
+                        'tool_output_limits.reduced_size': 93,
+                        'tool_output_limits.size_unit': 'chars',
+                    }
+                ),
                 id='summarize',
             ),
             pytest.param(
@@ -130,13 +136,15 @@ class TestToolOutputLimitsTelemetry:
             pytest.param(
                 limits(Spill(then=Truncate(max_chars=1_000))),
                 TEXT,
-                {
-                    'tool_output_limits.action': 'truncate',
-                    'tool_output_limits.original_size': 500,
-                    'tool_output_limits.reduced_size': 500,
-                    'tool_output_limits.size_unit': 'chars',
-                    'tool_output_limits.fallback_from': 'spill',
-                },
+                snapshot(
+                    {
+                        'tool_output_limits.action': 'truncate',
+                        'tool_output_limits.original_size': 500,
+                        'tool_output_limits.reduced_size': 500,
+                        'tool_output_limits.size_unit': 'chars',
+                        'tool_output_limits.fallback_from': 'spill',
+                    }
+                ),
                 id='failed-spill-falls-back',
             ),
             # The spill fails, then its summary: the band's own action and its error are what's kept.
@@ -158,24 +166,26 @@ class TestToolOutputLimitsTelemetry:
             pytest.param(
                 ToolOutputLimits[object](store=FailingStore()),
                 b'\x00' * 200_000,
-                {'tool_output_limits.fallback_from': 'spill'},
+                snapshot({'tool_output_limits.fallback_from': 'spill'}),
                 id='binary-store-fails',
             ),
             pytest.param(
                 limits(Truncate()),
                 BINARY,
-                {'tool_output_limits.fallback_from': 'truncate'},
+                snapshot({'tool_output_limits.fallback_from': 'truncate'}),
                 id='binary-under-bare-truncate',
             ),
             pytest.param(
                 limits(Truncate(max_chars=50)),
                 ToolReturn(return_value='small', content='y' * 300),
-                {
-                    'tool_output_limits.content.action': 'truncate',
-                    'tool_output_limits.content.original_size': 300,
-                    'tool_output_limits.content.reduced_size': 50,
-                    'tool_output_limits.content.size_unit': 'chars',
-                },
+                snapshot(
+                    {
+                        'tool_output_limits.content.action': 'truncate',
+                        'tool_output_limits.content.original_size': 300,
+                        'tool_output_limits.content.reduced_size': 50,
+                        'tool_output_limits.content.size_unit': 'chars',
+                    }
+                ),
                 id='separate-content',
             ),
             pytest.param(
