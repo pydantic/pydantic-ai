@@ -105,7 +105,7 @@ async def test_interactions_batch_names_google_model(allow_model_requests: None,
     )
 
 
-async def test_interactions_computer_tool_names_google_model():
+def test_interactions_computer_tool_names_google_model():
     """A computer use model on the Gemini API points at `GoogleModel`, which sends the tool there.
 
     Not a VCR test: the tool is rejected in `prepare_request`, before any request is built.
