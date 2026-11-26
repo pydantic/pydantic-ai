@@ -502,6 +502,9 @@ Your settings, saved sessions, and plugins live in `~/.config/pydantic-ai-pax/`,
 - `plugins/`: plugins you drop in
 - `input-history`: what you typed, for the <kbd>↑</kbd> arrow
 
+Bookkeeping that isn't a preference, such as your workspaces and which Pax processes are running, lives in
+`~/.local/state/pydantic-ai-pax/`, or `$XDG_STATE_HOME/pydantic-ai-pax/`.
+
 Sign-ins and API keys are encrypted, with the key kept in your system keychain. Without a
 keychain, they are saved unencrypted in a file only you can read. A
 repository can also pin settings for everyone who works in it with a
@@ -537,9 +540,6 @@ There are two channels. Pick one with `/set updates.channel`:
 /set updates.channel main
 /update now
 ```
-
-Bookkeeping that isn't a preference, such as your workspaces and which Pax processes are running, lives in
-`~/.local/state/pydantic-ai-pax/`, or `$XDG_STATE_HOME/pydantic-ai-pax/`.
 
 `/update now` works when Pax was installed with `uv tool install`. On Windows, Pax closes
 first and installs in a new PowerShell window; start `pax` again when it is done.
