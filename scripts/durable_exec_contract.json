@@ -3743,6 +3743,19 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::<module>"
       ]
     },
+    "UsageLimitExceeded": {
+      "engines": [
+        "prefect",
+        "temporal"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_toolset.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::<module>"
+      ]
+    },
     "UserError": {
       "engines": [
         "absurd",
@@ -4116,6 +4129,28 @@
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_transports.py::<module>"
       ]
     },
+    "BaseToolCallPart": {
+      "engines": [
+        "prefect"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::<module>"
+      ]
+    },
+    "BaseToolReturnPart": {
+      "engines": [
+        "prefect"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::<module>"
+      ]
+    },
     "CapabilityEvent": {
       "engines": [
         "durable_exec",
@@ -4215,10 +4250,12 @@
         "prefect"
       ],
       "kinds": [
+        "attribute_read",
         "import"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::<module>"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_excluded_fields"
       ]
     },
     "CapabilitySource": {
