@@ -30,7 +30,7 @@ from pydantic_core import PydanticOmit, SchemaError, to_jsonable_python
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 from typing_extensions import TypedDict
 
-from pydantic_ai._utils import get_function_type_hints
+from pydantic_ai._utils import get_function_type_hints, is_classvar_annotation
 
 if TYPE_CHECKING:
     from pydantic import ModelWrapValidatorHandler
@@ -332,7 +332,8 @@ def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any
     The second dict holds the type hints of its required parameters only. Returns `None` when a required parameter's
     type has no JSON form, since no spec entry can then load `target`.
     """
-    hints = get_function_type_hints(target)
+    parameters = inspect.signature(target).parameters
+    hints = _spec_annotation_hints(target)
     hints.pop('return', None)
 
     # Filter out non-serializable types (TypeVars, Callables) from unions
@@ -341,7 +342,7 @@ def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any
 
     required_type_hints: dict[str, Any] = {}
 
-    for p in inspect.signature(target).parameters.values():
+    for p in parameters.values():
         # Skip self/cls (unbound instance/class methods) and *args/**kwargs
         if p.name in ('self', 'cls') and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
             type_hints.pop(p.name, None)
@@ -360,6 +361,19 @@ def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any
             required_type_hints[p.name] = type_hints.setdefault(p.name, Any)
 
     return type_hints, required_type_hints
+
+
+def _spec_annotation_hints(target: Callable[..., object]) -> dict[str, Any]:
+    """The resolved type hints of `target`'s annotations that can be spec parameters.
+
+    A class target's annotations also name attributes its `__init__` doesn't take, like a `ClassVar` or an
+    `init=False` dataclass field. A target that takes `*args` or `**kwargs` may take any of them except a `ClassVar`.
+    """
+    parameters = inspect.signature(target).parameters
+    if any(p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD) for p in parameters.values()):
+        hints = get_function_type_hints(target)
+        return {name: hint for name, hint in hints.items() if not is_classvar_annotation(hint)}
+    return get_function_type_hints(target, include_keys=set(parameters))
 
 
 def _without_not_required(type_hint: object) -> object:

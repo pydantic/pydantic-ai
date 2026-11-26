@@ -50,6 +50,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability, Capability, Instrumentation, ToolSearch, Toolset
+from pydantic_ai.computer_use import COMPUTER_KIND
 from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -2030,6 +2031,21 @@ class TestCodeMode:
         assert 'load_capability' in tools
         assert tools['load_capability'].tool_def.tool_kind == 'capability-load'
 
+    async def test_computer_tool_not_sandboxed(self) -> None:
+        """`ComputerUse`'s `computer` tool stays native: the model itself has to see the screenshot it returns."""
+        td_computer = ToolDefinition(name='computer', description='Run actions on the screen.', tool_kind=COMPUTER_KIND)
+        static = _StaticToolset([_make_address_tool_def('get_user', 'Get a user.', 'street'), td_computer])
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(static)
+        assert isinstance(wrapper, CodeModeToolset)
+
+        tools = await wrapper.get_tools(build_run_context(None))
+
+        description = tools['run_code'].tool_def.description
+        assert description is not None
+        assert 'async def get_user' in description
+        assert 'async def computer' not in description
+        assert tools['computer'].tool_def.tool_kind == COMPUTER_KIND.id
+
     async def test_code_execution_tool_not_sandboxed(self) -> None:
         """A tool that is itself a code sandbox (carries `code_arg_name` metadata) stays native.
 
@@ -2749,14 +2765,19 @@ class TestCodeMode:
         class PanicException(BaseException):
             """Match the pyo3 panic class recognized by `is_sandbox_panic`."""
 
+        class CrashedError(ValueError):
+            """Stand in for `MontyCrashedError`, which cannot be constructed from Python."""
+
+            timed_out = False
+
         errors: dict[str, BaseException] = {
-            'worker-crash': ValueError('worker crash'),
+            'worker-crash': CrashedError('worker crash'),
             'host-error': RuntimeError('host failure'),
             'sandbox-panic': PanicException('sandbox panic'),
         }
         # The native crash exception cannot be constructed from Python. Inject it after a real
         # feed so the snippet catches the refusal before the worker or host binding fails.
-        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyCrashedError', ValueError)
+        monkeypatch.setattr('pydantic_ai_harness._monty_turns.MontyCrashedError', CrashedError)
         original_run = MontyExecutor.run
 
         async def fail_after_feed(
@@ -5486,7 +5507,7 @@ class TestCodeModeOSAccess:
         assert result.return_value == "os.getenv('A', None)"
 
     async def test_positional_os_callback_is_deprecated_but_still_works(self) -> None:
-        def os_cb(fn: OsFunction, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
+        def os_cb(fn: OsFunction, args: tuple[object, ...], kwargs: dict[str, object]) -> str:
             return f'positional {fn}'
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -5749,6 +5770,7 @@ def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
     definitions = AgentSpec.model_json_schema_with_capabilities([CodeMode])['$defs']
     assert sorted(definitions['spec_params_CodeMode']['properties']) == snapshot(
         [
+            'allow_final_output',
             'defer_loading',
             'description',
             'dynamic_catalog',
@@ -5766,7 +5788,12 @@ def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
 
 def test_from_spec_forwards_the_spec_fields() -> None:
     code_mode = CodeMode[None].from_spec(
-        tools=['add'], max_tool_calls=5, resource_limits={'max_duration_seconds': 2.0}, speculate='declared', id='code'
+        tools=['add'],
+        max_tool_calls=5,
+        resource_limits={'max_duration_seconds': 2.0},
+        speculate='declared',
+        id='code',
+        allow_final_output=True,
     )
     assert (
         code_mode.tools,
@@ -5774,10 +5801,12 @@ def test_from_spec_forwards_the_spec_fields() -> None:
         code_mode.resource_limits,
         code_mode.speculate,
         code_mode.id,
+        code_mode.allow_final_output,
     ) == (
         ['add'],
         5,
         {'max_duration_seconds': 2.0},
         'declared',
         'code',
+        True,
     )

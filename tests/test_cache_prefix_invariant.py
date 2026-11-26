@@ -373,6 +373,27 @@ def test_responses_continuation_reconstructs_stored_input(tmp_path: Path, stream
     assert [violation.level for violation in violations] == (['system', 'system'] if rewrite_prefix else [])
 
 
+@pytest.mark.parametrize('model, expected_levels', [('gpt-6.1-sol', ['system']), ('gpt-6.2-sol', [])])
+def test_responses_instructions_outside_prefix_from_gpt_6_2(
+    tmp_path: Path, model: str, expected_levels: list[str]
+) -> None:
+    """GPT-6.2 puts the top-level `instructions` after `input`, so changing them doesn't move the cached prefix."""
+    interactions: list[dict[str, object]] = []
+    history: list[dict[str, str]] = [{'role': 'system', 'content': 'Stable.'}]
+    for turn in ('First.', 'Second.'):
+        history = [*history, {'role': 'user', 'content': turn}]
+        body = {'model': model, 'instructions': f'Changes every turn: {turn}', 'input': history}
+        interactions.append(
+            {
+                'request': {'method': 'POST', 'uri': 'https://api.openai.com/v1/responses', 'parsed_body': body},
+                'response': {'status': {'code': 200, 'message': 'OK'}},
+            }
+        )
+    cassette = tmp_path / 'instructions.yaml'
+    cassette.write_text(yaml.safe_dump({'interactions': interactions}))
+    assert [violation.level for violation in iter_cassette_prefix_violations(cassette)] == expected_levels
+
+
 @pytest.mark.parametrize('response', [None, {'body': {'string': None}}])
 def test_responses_continuation_ignores_unusable_response_metadata(tmp_path: Path, response: object) -> None:
     """A continuation with no usable response id cannot reconstruct stored input, but remains checkable."""
@@ -484,3 +505,20 @@ def test_anthropic_deferred_tail_must_be_append_only(tmp_path: Path) -> None:
         ],
     )
     assert list(iter_cassette_prefix_violations(new_conversation)) == []
+
+
+@pytest.mark.parametrize(
+    'endpoint',
+    [
+        'https://generativelanguage.googleapis.com/v1beta/interactions',
+        'https://aiplatform.googleapis.com/v1beta1/interactions',
+        'https://proxy.example/v1/interactions',
+    ],
+)
+def test_interactions_prefix_blocks(endpoint: str) -> None:
+    """Interactions uses signed steps in `input`, including on custom endpoints."""
+    first = {'type': 'user_input', 'content': [{'type': 'text', 'text': 'Hello'}]}
+    shape = canonical_prefix_blocks({'system_instruction': 'Be helpful.', 'input': [first]}, endpoint)
+    assert shape == ('google-interactions', [('system', json.dumps('Be helpful.')), ('messages', json.dumps(first))])
+    assert is_new_user_turn(json.dumps(first))
+    assert not is_new_user_turn(json.dumps({'type': 'function_result', 'call_id': 'call', 'result': 'ok'}))

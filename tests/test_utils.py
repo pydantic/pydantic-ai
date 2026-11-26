@@ -33,6 +33,7 @@ from pydantic_ai._utils import (
     format_inlined_text_file,
     get_first_param_type,
     group_by_temporal,
+    has_yaml_structured_suffix,
     is_async_callable,
     is_google_files_api_url,
     is_str_dict,
@@ -43,13 +44,12 @@ from pydantic_ai._utils import (
     using_thread_executor,
 )
 from pydantic_ai.models.test import TestModel
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._inline_snapshot import snapshot
 from .conftest import no_leaked_tasks, undrivable_event_loop
 from .models.mock_async_stream import MockAsyncStream
 from .realtime.simulation._loop import SimulatedLoop
-
-READINESS_WAIT_TIMEOUT = 5
 
 
 @pytest.mark.parametrize(
@@ -1522,6 +1522,18 @@ def test_format_inlined_text_file() -> None:
     )
     assert 'text/plain' in result
     assert 'abc123' in result
+
+
+def test_has_yaml_structured_suffix() -> None:
+    """`+yaml` types match with or without parameters (RFC 2045); bare YAML and other suffixes don't.
+
+    This is a plain unit test rather than a public-API/VCR test because it exercises the pure media-type
+    predicate directly.
+    """
+    assert has_yaml_structured_suffix('application/openapi+yaml') is True
+    assert has_yaml_structured_suffix('application/openapi+yaml; charset=utf-8') is True
+    assert has_yaml_structured_suffix('application/yaml') is False
+    assert has_yaml_structured_suffix('application/ld+json') is False
 
 
 def test_replace_no_init() -> None:

@@ -4,13 +4,18 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
 from pydantic_ai import AbstractToolset
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, ToolSearch as _ToolSearch
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    CapabilityOrdering,
+    ToolSearch as _ToolSearch,
+    durable_operation,
+)
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -24,6 +29,9 @@ from pydantic_ai.messages import (
     post_compaction_window,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector
+from pydantic_ai_harness._combine import one_per_id
+from pydantic_ai_harness._monty_exec import build_remote_pool, session_os_policy
+from pydantic_ai_harness._monty_turns import MontyTurn, TurnRequest, redacted_error_type, run_monty_turn
 from pydantic_ai_harness._warn import renamed_duration_limit
 from pydantic_ai_harness.code_mode._eager import EagerCodeModeToolset
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore
@@ -139,6 +147,15 @@ class CodeMode(AbstractCapability[AgentDepsT]):
 
     _: KW_ONLY
 
+    id: str | None = 'code_mode'
+    """Stable capability ID, so its instructions are addressable, `defer_loading=True` needs none, and a
+    durable run can send its Monty turns to activities.
+
+    An agent has one `run_code` tool, so two `CodeMode` sharing this `id` are one configuration stated
+    twice when they agree, and an error when they differ. To keep two, give each its own `id` and wrap
+    them in `PrefixTools`, since their tool names are the same.
+    """
+
     max_tool_calls: int = 100
     """Maximum nested tool calls dispatched by one `run_code` invocation.
 
@@ -183,6 +200,17 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     applies. Set `max_suspensions` to bound cumulative host interactions across consecutive snippets.
     """
 
+    allow_final_output: bool = False
+    """Let sandboxed code submit the agent run's final output, so the model doesn't have to copy a computed value into its output.
+
+    The sandbox gets one function per output type, named and typed like the output tools listed in
+    [`RunContext.output_tools`][pydantic_ai.tools.RunContext.output_tools], in every output mode. A call
+    submits through [`RunContext.submit_output`][pydantic_ai.tools.RunContext.submit_output] and stops the code: an
+    accepted output ends the run once the `run_code` call returns, and a rejected one answers `run_code` with the
+    validation errors and uses up an output retry, keeping the REPL's variables so the model can fix the value
+    and call again.
+    """
+
     eager: bool = False
     """Execute complete streamed statements before the `run_code` call finishes.
 
@@ -208,11 +236,12 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = field(
         default=None, repr=False
     )
-    """Where sandboxed code runs: an `http://`, `https://`, `ws://`, or `wss://` URL of the server root, with no path, query, or fragment, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`, called for each run. Unset, code runs locally.
+    """Where sandboxed code runs: an `http://`, `https://`, `ws://`, or `wss://` URL of the server root, with no path, query, or fragment, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`, called for each run, or for each turn when turns run as Temporal activities. Unset, code runs locally.
 
     A remote pool's `request_timeout` adds a per-turn transport deadline to `max_duration_seconds`.
-    Inside Temporal, only the transport deadline applies. Tools, mounts, `os_access`, and print
-    output stay in your process.
+    In Temporal workflow code, only the transport deadline applies. Tools, `os_access`, and print
+    output stay in your process, and so do mounts unless turns run as activities, where the activity
+    worker reads them.
     """
 
     monty_sandbox_url: str | None = field(default=None, repr=False)
@@ -266,12 +295,20 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     Earlier releases defaulted to `False`.
     """
 
-    speculation_stats: SpeculationStats = field(default_factory=SpeculationStats, init=False, repr=False)
+    speculation_stats: SpeculationStats = field(default_factory=SpeculationStats, init=False, repr=False, compare=False)
     """Aggregate launch/adopt/evict counters across this instance's runs, when `speculate` is set."""
 
-    _speculation: SpeculationCoordinator[AgentDepsT] | None = field(default=None, init=False, repr=False)
+    _durable_operations_need_id: ClassVar[bool] = False
+    """A `CodeMode` given `id=None` binds no `monty_turn` operation and runs every Monty turn in the workflow."""
 
-    _in_flight_announcements: set[str] = field(default_factory=set[str], init=False, repr=False)
+    _speculation: SpeculationCoordinator[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
+
+    _in_flight_announcements: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Two under one `id` are one configuration stated twice; two that disagree raise rather than merge."""
+        return one_per_id(capabilities)
 
     def __post_init__(self) -> None:
         # Converted once here, so the per-run copies and the toolsets built from this do not warn again.
@@ -291,7 +328,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         tools: Literal['all'] | Sequence[str] | dict[str, Any] = 'all',
         max_retries: int = 3,
         *,
-        id: str | None = None,
+        id: str | None = 'code_mode',
         description: str | None = None,
         defer_loading: bool = False,
         max_tool_calls: int = 100,
@@ -300,6 +337,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         speculate: Sequence[str] | Literal['declared'] | None = None,
         monty_sandbox: str | None = None,
         dynamic_catalog: bool = True,
+        allow_final_output: bool = False,
         **kwargs: Any,
     ) -> CodeMode[Any]:
         """Build from an agent spec, naming the fields a spec can express.
@@ -323,6 +361,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             speculate=speculate,
             monty_sandbox=monty_sandbox,
             dynamic_catalog=dynamic_catalog,
+            allow_final_output=allow_final_output,
             **kwargs,
         )
 
@@ -372,6 +411,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 os_policy=self.os_policy,
                 monty_sandbox=self.monty_sandbox,
                 repl_store=self.repl_store,
+                allow_final_output=self.allow_final_output,
                 capability=self,
                 speculation=self._speculation,
             )
@@ -387,9 +427,31 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             os_policy=self.os_policy,
             monty_sandbox=self.monty_sandbox,
             repl_store=self.repl_store,
+            allow_final_output=self.allow_final_output,
             capability=self,
             speculation=self._speculation,
         )
+
+    @durable_operation('monty_turn')
+    async def _monty_turn(self, ctx: RunContext[AgentDepsT], request: TurnRequest) -> MontyTurn:
+        """Run one turn of the remote sandbox in an activity, outside the workflow task.
+
+        `CodeModeToolset._durable_turn` says when a run uses it. The pool is opened per turn: the
+        session lives on the server between turns, so nothing here needs to outlive one.
+        """
+        assert self.monty_sandbox is not None, 'only a remote sandbox runs turns as durable operations'
+        try:
+            async with await build_remote_pool(self.monty_sandbox, request.limits) as pool:
+                return await run_monty_turn(
+                    pool, request, os_policy=session_os_policy(self.os_policy), mount=self.mount
+                )
+        except Exception as error:
+            # Temporal records an activity's failure, cause included, in workflow history, and a pool
+            # or connection error's text can carry the pool's URL or credentials, so only the type's
+            # name is kept, and the retry policy matches it. A `UserError` stays one, which Temporal
+            # does not retry; the `monty_sandbox` factory can raise one, so its text is dropped too.
+            name = type(error).__name__
+            raise (UserError if isinstance(error, UserError) else redacted_error_type(name))(name) from None
 
     @property
     def has_wrap_run_event_stream(self) -> bool:

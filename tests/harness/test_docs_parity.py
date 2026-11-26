@@ -104,7 +104,7 @@ _DOCS_DIR = _ROOT / '../../docs/harness'
 _NON_CAPABILITY_PAGES = {
     'AGENTS.md',
     'CLAUDE.md',
-    'clai2.md',
+    'pax.md',
     'examples.md',
     'gh-aw.md',
     'index.md',
@@ -159,6 +159,7 @@ _CAPABILITY_PAGE_META = {
     'skills.md': ('skills', 'Skills'),
     'filesystem.md': ('file_system', 'FileSystem'),
     'shell.md': ('shell', 'Shell'),
+    'announce-working-directory.md': ('announce_working_directory', 'Announce Working Directory'),
     'smart-search.md': ('smart_search', 'Smart Search'),
     'managed-prompt.md': ('logfire', 'Managed Prompt'),
     'memory.md': ('memory', 'Memory'),
@@ -185,10 +186,12 @@ _CAPABILITY_PAGE_META = {
     'pydantic-ai-docs.md': ('pydantic_ai_docs', 'Pydantic AI Docs'),
     'exa-search.md': ('exa', 'Exa Search'),
     'playwright.md': ('playwright', 'Playwright Browser'),
+    'computer-use.md': ('computer_use', 'Computer Use'),
     'youdotcom.md': ('youdotcom', 'You.com'),
     'keenable-search.md': ('keenable', 'Keenable Search'),
     'macroscope.md': ('macroscope', 'Macroscope'),
     'browser-use.md': ('browser_use', 'Browser Use'),
+    'cdp-browser.md': ('cdp_browser', 'CDP Browser'),
     'compaction.md': ('compaction', 'Compaction'),
     'tool-output-limits.md': ('tool_output_limits', 'Tool Output Limits'),
     'tool-bridge.md': ('tool_bridge', 'Tool Bridge'),
@@ -208,11 +211,14 @@ _CAPABILITY_PAGE_META = {
     'detect-loops.md': ('detect_loops', 'Detect Loops'),
     'tool-budgets.md': ('tool_budgets', 'Tool Budgets'),
     'report-remaining-budget.md': ('report_remaining_budget', 'Report Remaining Budget'),
+    'report-tool-errors.md': ('report_tool_errors', 'Report Tool Errors'),
     'trajectory-judge.md': ('trajectory_judge', 'Trajectory Judge'),
     'refine-output.md': ('refine_output', 'Refine Output'),
+    'require-verification.md': ('require_verification', 'Require Verification'),
     'wrap-up-at-limits.md': ('wrap_up_at_limits', 'Wrap Up At Limits'),
     'capability-creation.md': ('capability_creation', 'Runtime Capability Creation'),
     'guardrails.md': ('guardrails', 'Input, Output & Tool Guardrails'),
+    'goal.md': ('goal', 'Goal'),
     'github.md': ('github', 'GitHub'),
     'google-workspace.md': ('google_workspace', 'Google Workspace'),
     'prompt-injection-defender.md': ('prompt_injection_defender', 'Prompt Injection Defender'),
@@ -526,6 +532,7 @@ _PROBLEM_TO_SKILL_ROUTE = (
     ('spend ceiling', 'spend limits'),
     ('without making progress', 'loop detection'),
     ('malformed JSON', 'repair malformed tool arguments'),
+    ('the whole run ends', 'report tool exceptions to the model'),
 )
 
 
@@ -566,18 +573,19 @@ def test_problem_to_capability_rows_match_across_surfaces() -> None:
     assert readme == docs
 
 
-_PACKAGES_HEADING = '## Pydantic AI, the Harness, and CLAI'
-_PACKAGES_SURFACES = ('../../docs/harness/index.md', 'README.md', '../pydantic_clai2/README.md')
+_PACKAGES_HEADING = '## Pydantic AI, the harness SDK, `Coder`, and Pax'
+_PACKAGES_SURFACES = ('../../docs/harness/index.md', 'README.md', '../pydantic_ai_pax/README.md')
 
 
 @pytest.mark.parametrize('surface', _PACKAGES_SURFACES[1:])
 def test_package_comparison_matches_across_surfaces(surface: str) -> None:
-    """The Harness docs index and the Harness and CLAI READMEs compare the three packages the same way."""
+    """The Harness docs index and the Harness and Pax READMEs draw the same four-way distinction."""
     canonical = _without_link_targets(_section_table_rows(_PACKAGES_SURFACES[0], _PACKAGES_HEADING))
     assert [row.split(' | ', 1)[0] for row in canonical[1:]] == [
         '| [Pydantic AI] (`pydantic-ai`)',
         '| [Pydantic AI Harness] (`pydantic-ai-harness`)',
-        '| [CLAI] (`pydantic-clai2`)',
+        '| [`Coder`]',
+        '| [Pax] (`pydantic-ai-pax`)',
     ]
     assert _without_link_targets(_section_table_rows(surface, _PACKAGES_HEADING)) == canonical
 

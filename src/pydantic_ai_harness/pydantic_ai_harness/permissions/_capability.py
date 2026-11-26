@@ -24,6 +24,7 @@ from pydantic_ai.tools import (
     matches_tool_selector,
 )
 from pydantic_ai_harness._durable import in_durable_context
+from pydantic_ai_harness._shell_command import shell_command, shell_command_arg
 from pydantic_ai_harness.file_system._tool_kinds import CREATE_DIRECTORY_KIND, EDIT_FILE_KIND, WRITE_FILE_KIND
 from pydantic_ai_harness.permissions._rules import PermissionRule, PermissionRuleSpec, decide
 
@@ -143,9 +144,9 @@ class Permissions(AbstractCapability[AgentDepsT]):
 
     A call the mode asks about raises [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired], so it
     joins the run's deferred approval flow: a
-    [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler that calls
-    `ask_permissions` puts it to a person inline, and without one the run ends with it in its
-    [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output.
+    [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] whose handler is
+    `approval_ask(approver)` puts it to a person inside the run, and without a handler the run ends with
+    it in its [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output.
 
     `rules` decide calls to any tool before the mode does: a matching `'allow'` rule runs the call, `'ask'`
     holds it, and `'deny'` refuses it with a `ToolReturnPart` whose `outcome` is `'denied'`, even when it was
@@ -274,10 +275,10 @@ class Permissions(AbstractCapability[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], *, tool_def: ToolDefinition, args: dict[str, Any]
     ) -> _Asked | None:
         """What to ask about this call, or `None` to run it; raises `SkipToolExecution` when a rule denies it."""
-        command = _command(tool_def, args)
+        command = shell_command(tool_def, args)
         rules = [rule for rule in self.rules if await matches_tool_selector(rule.tools, ctx, tool_def)]
         posix = ctx.workspace.platform != 'windows'
-        rule = decide(rules, command=command, command_arg=_command_arg(tool_def), args=args, posix=posix)
+        rule = decide(rules, command=command, command_arg=shell_command_arg(tool_def), args=args, posix=posix)
         if rule is not None and rule.verdict != 'allow':
             return _rule_asks(ctx, rule, _subject(tool_def, args, command))
         return self._mode_asks(
@@ -314,20 +315,6 @@ class Permissions(AbstractCapability[AgentDepsT]):
                 reason=f'{label} mode asks before commands that delete, push, install, or reach the network.',
             )
         return None
-
-
-def _command_arg(tool_def: ToolDefinition) -> str | None:
-    """The argument holding the shell command a tool runs, when it declares one."""
-    metadata = tool_def.metadata or {}
-    name = metadata.get('code_arg_name')
-    return name if metadata.get('code_arg_language') == 'shell' and isinstance(name, str) else None
-
-
-def _command(tool_def: ToolDefinition, args: dict[str, Any]) -> str | None:
-    """The shell command a call runs, when its tool declares one."""
-    name = _command_arg(tool_def)
-    command = None if name is None else args.get(name)
-    return command if isinstance(command, str) else None
 
 
 def _subject(
@@ -399,7 +386,8 @@ async def ask_permissions(requests: DeferredToolRequests, approver: Approver) ->
     """Put each call `Permissions` holds in `requests` to `approver`, one at a time; `None` when it holds none.
 
     Call it from the handler of a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls]
-    capability. Approvals other capabilities asked for are left for the next handler.
+    capability, or pass `approval_ask(approver)` to one as its handler. Approvals other capabilities asked
+    for are left for the next handler.
     """
     asked = permission_requests(requests)
     if not asked:
@@ -416,6 +404,28 @@ async def ask_permissions(requests: DeferredToolRequests, approver: Approver) ->
         if decision.remember:
             metadata[call_id] = _AnsweredMetadata(permissions=_Answered(remember=True)).model_dump()
     return DeferredToolResults(approvals=approvals, metadata=metadata)
+
+
+def approval_ask(
+    approver: Approver,
+) -> Callable[[RunContext[AgentDepsT], DeferredToolRequests, str], Awaitable[DeferredToolResults]]:
+    """A [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler that asks `approver`.
+
+    `approver` answers each call `Permissions` holds in place, as `ask_permissions` asks it. Approvals other
+    capabilities asked for, and external calls, are left pending for the next handler, or for the run's
+    `DeferredToolRequests` output.
+
+    The handler takes a resume token, so a durable run records it, and the durable runs of engines without
+    external event support, every engine but AWS Lambda so far, refuse it: there, use the two-parameter
+    handler `lambda ctx, requests: ask_permissions(requests, approver)`. On Lambda, the handler runs in a
+    step that records the answer, so the approver must answer quickly.
+    """
+
+    async def ask(ctx: RunContext[AgentDepsT], requests: DeferredToolRequests, token: str) -> DeferredToolResults:
+        # Empty results, not `None`, which would make the run wait for a token no one will resolve.
+        return await ask_permissions(requests, approver) or requests.build_results()
+
+    return ask
 
 
 def denial_message(request: PermissionRequest, *, reason: str | None = None) -> str:

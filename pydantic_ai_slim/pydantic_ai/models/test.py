@@ -6,8 +6,10 @@ import string
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import InitVar, dataclass, field
-from datetime import date, datetime, timedelta
-from typing import Any, Literal, TypeVar, assert_never, cast
+from datetime import date, datetime
+from fractions import Fraction
+from typing import Any, ClassVar, Literal, TypeVar, assert_never, cast
+from uuid import UUID
 
 import pydantic_core
 
@@ -488,6 +490,14 @@ class TestStreamedResponse(StreamedResponse):
 
 
 _chars = string.ascii_letters + string.digits + string.punctuation
+_SEED_DATE = date(2024, 1, 1).toordinal()
+
+
+def _seed_date(seed: int) -> str:
+    """The date `seed` days after 2024-01-01, wrapping around the range a `date` holds instead of overflowing it."""
+    return date.fromordinal((_SEED_DATE + seed - 1) % date.max.toordinal() + 1).isoformat()
+
+
 _BoundT = TypeVar('_BoundT', int, float)
 
 
@@ -496,6 +506,39 @@ class _JsonSchemaTestData:
 
     This tries to generate the minimal viable data for the schema.
     """
+
+    _NUMBER_BOUNDS: ClassVar[tuple[tuple[str, Callable[[float, float], bool]], ...]] = (
+        ('minimum', lambda value, bound: value >= bound),
+        ('maximum', lambda value, bound: value <= bound),
+        ('exclusiveMinimum', lambda value, bound: value > bound),
+        ('exclusiveMaximum', lambda value, bound: value < bound),
+    )
+    """Each JSON Schema numeric bound, and whether a value is within it."""
+    _TIGHTER_BOUND: ClassVar[dict[str, Callable[[float, float], float]]] = {
+        'minimum': max,
+        'exclusiveMinimum': max,
+        'minLength': max,
+        'minItems': max,
+        'minProperties': max,
+        'maximum': min,
+        'exclusiveMaximum': min,
+        'maxLength': min,
+        'maxItems': min,
+        'maxProperties': min,
+    }
+    """Each JSON Schema bound, and how two `allOf` members' values for it combine into the tighter one."""
+    _FORMATS: ClassVar[dict[str, Callable[[int], str]]] = {
+        'date': _seed_date,
+        'date-time': lambda seed: f'{_seed_date(seed)}T00:00:00Z',
+        'time': lambda seed: f'00:00:{seed % 60:02}Z',
+        'duration': lambda seed: f'PT{abs(seed)}S',
+        'email': lambda seed: f'user{seed}@example.com',
+        'uri': lambda seed: f'https://example.com/{seed}',
+        'uuid': lambda seed: str(UUID(int=seed % (1 << 128))),
+        'ipv4': lambda seed: f'192.0.2.{seed % 256}',
+        'ipv6': lambda seed: f'2001:db8::{seed % 65536:x}',
+    }
+    """A value for each string `format` the generator knows, by seed; any other `format` gets an ordinary string."""
 
     def __init__(self, schema: ObjectJsonSchema, seed: int = 0):
         self.schema = schema
@@ -517,6 +560,8 @@ class _JsonSchemaTestData:
             return enum[self.seed % len(enum)]
         elif examples := schema.get('examples'):
             return examples[self.seed % len(examples)]
+        elif _utils.is_list(all_of := schema.get('allOf')) and all_of:
+            return self._gen_any(self._merge_all_of(schema, all_of))
         elif ref := schema.get('$ref'):
             return self._gen_any(self._resolve_ref(ref))
         elif any_of := schema.get('anyOf'):
@@ -537,9 +582,9 @@ class _JsonSchemaTestData:
             case 'string':
                 return self._str_gen(schema)
             case 'integer':
-                return self._int_gen(schema)
+                return self._multiple_of(self._int_gen(schema), schema)
             case 'number':
-                return self._number_gen(schema)
+                return self._multiple_of(self._number_gen(schema), schema)
             case 'boolean':
                 return self._bool_gen()
             case 'array':
@@ -555,6 +600,69 @@ class _JsonSchemaTestData:
         if name not in self.defs and (target := resolve_json_pointer(self.schema, ref)) is not None:
             return target
         return self.defs[name]
+
+    def _merge_all_of(self, schema: dict[str, Any], all_of: list[object]) -> dict[str, Any]:
+        """`schema` without `allOf`, with each member's keywords added.
+
+        `properties` and `required` are combined, a property two of them declare gets both schemas as an `allOf`, and a
+        bound takes the tighter value; any other keyword the schema or an earlier member has keeps its value.
+        """
+        merged = {key: value for key, value in schema.items() if key != 'allOf'}
+        # A member's own `allOf`, `$ref` and the `anyOf` member the seed picks are merged as members too, and each `$ref`
+        # once, so a cycle ends. Copied into `merged`, a `$ref` or `anyOf` would drive generation and drop its `type`.
+        members, seen = list(all_of), set[str]()
+        while members:
+            if (member := self._all_of_member(members.pop(0), seen)) is None:
+                continue
+            if _utils.is_list(nested := member.get('allOf')):
+                members.extend(nested)
+            if (chained := member.get('$ref')) and isinstance(chained, str):
+                members.append({'$ref': chained})
+            if _utils.is_list(any_of := member.get('anyOf')) and any_of:
+                members.append(any_of[self.seed % len(any_of)])
+            self._merge_keywords(merged, member)
+        return merged
+
+    @staticmethod
+    def _merge_keywords(merged: dict[str, Any], member: dict[str, Any]) -> None:
+        """Add an `allOf` member's keywords to `merged`, combining `properties`, `required` and bounds."""
+        for key, value in member.items():
+            existing = merged.get(key)
+            if key == 'properties' and _utils.is_str_dict(value) and (existing is None or _utils.is_str_dict(existing)):
+                existing = existing or {}
+                both = {name: {'allOf': [existing[name], schema]} for name, schema in value.items() if name in existing}
+                merged['properties'] = {**value, **existing, **both}
+            elif key == 'required' and isinstance(value, list) and isinstance(existing, list | None):
+                merged['required'] = [*(existing or []), *value]
+            elif (tighter := _JsonSchemaTestData._TIGHTER_BOUND.get(key)) and (
+                (bound := _JsonSchemaTestData._finite_bound(merged, key)) is not None
+                and (other := _JsonSchemaTestData._finite_bound(member, key)) is not None
+            ):
+                merged[key] = tighter(bound, other)
+            elif key not in ('allOf', 'anyOf', '$ref'):
+                merged.setdefault(key, value)
+
+    def _all_of_member(self, member: object, seen: set[str]) -> dict[str, Any] | None:
+        """An `allOf` member with its `$ref` resolved, or `None` for one with nothing to merge.
+
+        That's a boolean, a `$ref` already merged, and one that isn't a string or points at nothing or at a boolean,
+        which `allOf` adds no keywords from, as when `allOf` was ignored.
+        """
+        if not _utils.is_str_dict(member):
+            return None
+        if not (ref := member.get('$ref')):
+            return member
+        if not isinstance(ref, str) or ref in seen:
+            return None
+        seen.add(ref)
+        try:
+            target: object = self._resolve_ref(ref)
+        except (KeyError, TypeError):
+            # `TypeError` is a `$defs` that isn't an object.
+            return None
+        if not _utils.is_str_dict(target):
+            return None
+        return {**target, **{key: value for key, value in member.items() if key != '$ref'}}
 
     def _one_of_gen(self, schema: dict[str, Any]) -> Any:
         """Generate data for a JSON Schema `oneOf`."""
@@ -580,31 +688,64 @@ class _JsonSchemaTestData:
         required = set(schema.get('required', []))
 
         data: dict[str, Any] = {}
-        if properties := schema.get('properties'):
-            for key, value in properties.items():
-                if key in required:
-                    data[key] = self._gen_any(value)
+        properties: dict[str, Any] = schema.get('properties') or {}
+        for key, value in properties.items():
+            if key in required:
+                data[key] = self._gen_any(value)
 
-        if addition_props := schema.get('additionalProperties'):
+        max_properties = self._finite_bound(schema, 'maxProperties')
+        if (addition_props := schema.get('additionalProperties')) and (
+            max_properties is None or max_properties > len(data)
+        ):
             add_prop_key = 'additionalProperty'
             while add_prop_key in data:
                 add_prop_key += '_'
             data[add_prop_key] = self._gen_any(addition_props)
 
+        self._add_min_properties(data, properties, addition_props, self._finite_bound(schema, 'minProperties') or 0)
         return data
+
+    def _add_min_properties(
+        self,
+        data: dict[str, Any],
+        properties: dict[str, Any],
+        addition_props: dict[str, Any] | bool | None,
+        min_properties: float,
+    ) -> None:
+        """Add optional properties, then additional ones where the schema allows them, until `minProperties` holds.
+
+        An optional property holding a `$ref` is left out: through a recursive definition, adding it can recurse forever.
+        """
+        optional = iter(
+            [key for key, value in properties.items() if key not in data and not _utils.contains_ref(value)]
+        )
+        # Numbered names keep the time and the names' length linear in `minProperties`.
+        numbers = itertools.count(1)
+        while len(data) < min_properties:
+            if (key := next(optional, None)) is not None:
+                data[key] = self._gen_any(properties[key])
+            elif addition_props is False:
+                return
+            else:
+                while (key := f'additionalProperty_{next(numbers)}') in data or key in properties:
+                    pass
+                data[key] = self._gen_any(addition_props or {})
 
     def _str_gen(self, schema: dict[str, Any]) -> str:
         """Generate a string from a JSON Schema string."""
+        # A value of a known format, unless it breaks the length bounds an ordinary string below keeps to.
+        if isinstance(fmt := schema.get('format'), str) and fmt in self._FORMATS:
+            value = self._FORMATS[fmt](self.seed)
+            min_length, max_length = self._finite_bound(schema, 'minLength'), self._finite_bound(schema, 'maxLength')
+            if (min_length or 0) <= len(value) <= (len(value) if max_length is None else max_length):
+                return value
+
         min_len = schema.get('minLength')
         if min_len is not None:
             return self._char() * min_len
 
         if schema.get('maxLength') == 0:
             return ''
-
-        if fmt := schema.get('format'):
-            if fmt == 'date':
-                return (date(2024, 1, 1) + timedelta(days=self.seed)).isoformat()
 
         return self._char()
 
@@ -653,6 +794,46 @@ class _JsonSchemaTestData:
             return float(maximum - self.seed - offset)
         else:
             return float(self.seed)
+
+    @staticmethod
+    def _multiple_of(value: _BoundT, schema: dict[str, Any]) -> _BoundT:
+        """`value`, or the nearest multiple of the schema's `multipleOf` above or below it that stays within bounds."""
+        step = _JsonSchemaTestData._finite_bound(schema, 'multipleOf')
+        if step is None or step <= 0:
+            return value
+        try:
+            if value % step == 0:
+                return value
+            if isinstance(value, int) and isinstance(step, int):
+                # Integer arithmetic, which an integer too large for a float needs.
+                lower = value // step
+                candidates = ((lower + 1) * step, lower * step)
+            elif math.isfinite(quotient := value / step):
+                candidates = (math.ceil(quotient) * step, math.floor(quotient) * step)
+                if isinstance(value, int):
+                    # The integer multiples of a fractional step p/q in lowest terms are the multiples of p.
+                    numerator = Fraction(step).numerator
+                    lower = value // numerator
+                    candidates += ((lower + 1) * numerator, lower * numerator)
+            else:
+                # A step so small that the quotient overflows has no multiple to move to.
+                return value
+        except OverflowError:
+            # An integer too large for a float, with a fractional step.
+            return value
+        # An integer value skips a fractional multiple, which converting it to an integer would truncate.
+        within_bounds = (
+            converted
+            for candidate in candidates
+            if (converted := type(value)(candidate)) == candidate
+            and all(
+                not isinstance(bound := schema.get(key), int | float)
+                or isinstance(bound, bool)
+                or within(candidate, bound)
+                for key, within in _JsonSchemaTestData._NUMBER_BOUNDS
+            )
+        )
+        return next(within_bounds, value)
 
     @staticmethod
     def _finite_bound(schema: dict[str, Any], key: str) -> float | None:

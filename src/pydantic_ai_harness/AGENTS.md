@@ -120,7 +120,8 @@ structure. Tag names are lowercase snake_case. See
 - prefer the most generic input types possible (reduce dependency chains)
 - don't add comments that restate what the code does
 - capabilities that add to or edit message history, instructions or tools follow core's
-  `agent_docs/message-history-and-caching.md`: history is append-only, content goes in the channel
+  `agent_docs/message-history-and-caching.md`: history is append-only (except a model-gated instruction
+  whose other side is nothing, which is `on_change='rewrite'`), content goes in the channel
   matching who wrote it, framework records are found by type or metadata, never by their text, and
   what a capability tells the model mid-conversation is a `CapabilityPart` kind (see "Framing tags"), with
   `snake_case` tag names, attributes and no preambles; text that can't be one goes through
@@ -179,7 +180,7 @@ only from an author with write access; any other author asks a maintainer to add
 uv sync --locked --all-packages --all-extras --group lint
 ```
 
-Harness and `pydantic-clai2` share the root `uv.lock`, `.venv`, and Pyright
+Harness and `pydantic-ai-pax` share the root `uv.lock`, `.venv`, and Pyright
 configuration. Every workspace package requires Python 3.11 or newer.
 
 ## File structure

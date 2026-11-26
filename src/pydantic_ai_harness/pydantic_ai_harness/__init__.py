@@ -7,6 +7,7 @@ from ._warn import HarnessDeprecationWarning, MCPReadOnlyNoToolsWarning
 if TYPE_CHECKING:
     from .absurd import AbsurdDurability
     from .advisor import Advisor
+    from .announce_working_directory import AnnounceWorkingDirectory
     from .approval_reviewer import ApprovalReviewer
     from .artifact_scanning import ArtifactScanner
     from .ask_user import AskUser
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
     from .browser_use import BrowserUse
     from .bubblewrap_sandbox import BubblewrappedWorkspace, BubblewrapWorkspace
     from .capability_creation import CapabilityCreation
+    from .cdp_browser import CDPBrowser
     from .code_mode import CodeMode
     from .coder import BenchmarkInstructions, Coder
     from .compaction import (
@@ -33,6 +35,7 @@ if TYPE_CHECKING:
         TieredCompaction,
         WarnNearLimits,
     )
+    from .computer_use import ComputerUse
     from .conversation_search import ConversationSearch
     from .current_time import CurrentTime
     from .day_ai import DayAI
@@ -47,6 +50,7 @@ if TYPE_CHECKING:
     from .e2b_sandbox import E2BSandbox, E2BSandboxBackend
     from .exa import ExaAgent, ExaSearch
     from .file_system import READ_ONLY_TOOL_NAMES, FileSystem
+    from .goal import Goal, GoalVerifier
     from .grain import Grain
     from .guardrails import (
         GuardrailError,
@@ -88,6 +92,8 @@ if TYPE_CHECKING:
     from .repo_context import RepoContext
     from .report_remaining_budget import ReportRemainingBudget
     from .report_stale_files import ReportStaleFiles
+    from .report_tool_errors import ReportToolErrors
+    from .require_verification import DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS, RequireVerification
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
     from .skills import Skills
@@ -112,6 +118,7 @@ if TYPE_CHECKING:
 __all__ = [
     'AbsurdDurability',
     'Advisor',
+    'AnnounceWorkingDirectory',
     'ApprovalReviewer',
     'ArtifactScanner',
     'AskUser',
@@ -126,15 +133,18 @@ __all__ = [
     'BubblewrappedWorkspace',
     'BubblewrapWorkspace',
     'CapabilityCreation',
+    'CDPBrowser',
     'ClampOversizedMessages',
     'ClearToolResults',
     'CodeMode',
     'Coder',
     'CompactOnRequest',
+    'ComputerUse',
     'ConversationSearch',
     'CurrentTime',
     'DEFAULT_CROSS_MODEL_NOTICE',
     'DEFAULT_REFINE_OUTPUT_INSTRUCTIONS',
+    'DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS',
     'DEFAULT_RESEARCHER_INSTRUCTIONS',
     'DEFAULT_WRAP_UP_PROMPT',
     'DayAI',
@@ -152,6 +162,8 @@ __all__ = [
     'ExaSearch',
     'FallbackCompaction',
     'FileSystem',
+    'Goal',
+    'GoalVerifier',
     'Grain',
     'GuardrailError',
     'GuardrailResult',
@@ -199,7 +211,9 @@ __all__ = [
     'ReportContextUsage',
     'ReportRemainingBudget',
     'ReportStaleFiles',
+    'ReportToolErrors',
     'RepoContext',
+    'RequireVerification',
     'Researcher',
     'SSHWorkspace',
     'SSHWorkspaceBackend',
@@ -238,6 +252,7 @@ __all__ = [
 _LAZY_EXPORTS = {
     'AbsurdDurability': 'absurd',
     'Advisor': 'advisor',
+    'AnnounceWorkingDirectory': 'announce_working_directory',
     'ApprovalReviewer': 'approval_reviewer',
     'ArtifactScanner': 'artifact_scanning',
     'AskUser': 'ask_user',
@@ -252,11 +267,13 @@ _LAZY_EXPORTS = {
     'BubblewrappedWorkspace': 'bubblewrap_sandbox',
     'BubblewrapWorkspace': 'bubblewrap_sandbox',
     'CapabilityCreation': 'capability_creation',
+    'CDPBrowser': 'cdp_browser',
     'ClampOversizedMessages': 'compaction',
     'ClearToolResults': 'compaction',
     'CodeMode': 'code_mode',
     'Coder': 'coder',
     'CompactOnRequest': 'compaction',
+    'ComputerUse': 'computer_use',
     'ConversationSearch': 'conversation_search',
     'CurrentTime': 'current_time',
     'DayAI': 'day_ai',
@@ -265,6 +282,7 @@ _LAZY_EXPORTS = {
     'DeduplicateFileReads': 'compaction',
     'DEFAULT_CROSS_MODEL_NOTICE': 'label_cross_model_history',
     'DEFAULT_REFINE_OUTPUT_INSTRUCTIONS': 'refine_output',
+    'DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS': 'require_verification',
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
     'DEFAULT_WRAP_UP_PROMPT': 'wrap_up_at_limits',
     'DenyUnanswered': 'deny_unanswered',
@@ -278,6 +296,8 @@ _LAZY_EXPORTS = {
     'ExaSearch': 'exa',
     'FallbackCompaction': 'compaction',
     'FileSystem': 'file_system',
+    'Goal': 'goal',
+    'GoalVerifier': 'goal',
     'Grain': 'grain',
     'GuardrailError': 'guardrails',
     'GuardrailResult': 'guardrails',
@@ -324,6 +344,8 @@ _LAZY_EXPORTS = {
     'ReportContextUsage': 'compaction',
     'ReportRemainingBudget': 'report_remaining_budget',
     'ReportStaleFiles': 'report_stale_files',
+    'ReportToolErrors': 'report_tool_errors',
+    'RequireVerification': 'require_verification',
     'Researcher': 'researcher',
     'Shell': 'shell',
     'Skills': 'skills',

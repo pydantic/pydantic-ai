@@ -216,7 +216,7 @@ Two `logfire.scorer.*` attributes make the record lossless and groupable. They u
 - `logfire.scorer.score_type` — the type of the evaluator's return value: `'pass_fail'` for `bool`, `'numeric'` for `int`/`float`, `'categorical'` for `str`. This tells a passed assertion apart from a `1.0` score or a `'pass'` label, which share `score.value`/`score.label`. Omitted on failure events, which have no value.
 - `logfire.scorer.run_id` — a UUID shared by every event (results and failures) from one function or agent call's evaluators, including evaluators routed to different sinks. Each call gets a new ID, so consumers can group the results of one scoring pass.
 
-[OTel baggage](https://pydantic.dev/docs/logfire/reference/baggage/) entries (if any) are also attached to each event as attributes — configurable via `include_baggage` on the config. The `gen_ai.*` and `error.type` attributes above always win on conflict with baggage, and baggage keys in the `logfire.scorer.*` namespace are dropped.
+[OTel baggage](https://pydantic.dev/docs/logfire/reference/baggage/) entries (if any) are also attached to each event as attributes — configurable via `include_baggage` on the config. Baggage keys in the `gen_ai.evaluation.*` and `logfire.scorer.*` namespaces, and the `error.type` key, are dropped, so the attributes above always come from the evaluation.
 
 For example, the `OutputNotEmpty` evaluator above, decorated as `@evaluate(OutputNotEmpty(), target='customer_support')` and returning `True` for a given call, emits one event with:
 

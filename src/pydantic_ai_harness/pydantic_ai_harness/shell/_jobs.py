@@ -49,6 +49,16 @@ POLL_MIN = 0.05
 POLL_MAX = 1.0
 """Bounds of the backoff between polls of a job's status, so a remote workspace is not asked every 50 ms."""
 
+_STATUS_READ_ATTEMPTS = 100
+_STATUS_READ_DELAY = 0.02
+"""Reads of `status.json` a `'windows'` workspace refuses before the refusal is raised, and the seconds between them.
+
+`Move-Item -Force` replaces the file by deleting it and renaming `status.tmp`, holding it open for `DELETE` at each
+step. Windows refuses an open that does not share delete while it does, and `os.open` does not share delete. It
+reports that refusal and an access denial alike, so a refusal that outlasts these attempts is raised. They match the
+retry `_powershell`'s `Publish` gives its replace. Counted rather than timed, so a durable engine replays the reads.
+"""
+
 _WRAPPER = f"""{LIMIT_FUNCTION}
 dir=$1
 publish() {{
@@ -183,11 +193,17 @@ _REQUIRED_TOOLS = ('mv', 'base64')
 _MISSING_TOOLS = 122
 """The launcher's exit status when a tool in `_REQUIRED_TOOLS` is not on the workspace's `PATH`."""
 
+_CLAIMED = 'claimed'
+"""What the launcher prints when an exclusive job directory exists already: a launch in flight, or one whose reply
+was lost. A word rather than an exit status, as a shell that cannot start the launcher exits 126 itself, such as
+for a command longer than the operating system takes as one argument.
+"""
+
 _LAUNCHER = f"""missing=
 for tool in {' '.join(_REQUIRED_TOOLS)}; do command -v "$tool" > /dev/null 2>&1 || missing="$missing $tool"; done
 if [ -n "$missing" ]; then echo $missing; exit {_MISSING_TOOLS}; fi
 if [ "$exclusive" = 1 ]; then
-  (umask 077 && mkdir -p "${{dir%/*}}" && mkdir "$dir") || {{ [ -e "$dir" ] && exit 126; exit 125; }}
+  (umask 077 && mkdir -p "${{dir%/*}}" && mkdir "$dir") || {{ [ -e "$dir" ] && echo {_CLAIMED}; exit 125; }}
 else
   (umask 077 && mkdir -p "$dir") || exit 125
 fi
@@ -213,6 +229,9 @@ operating system's limit on the size of one argument (128 KiB on Linux).
 
 It first checks for `_REQUIRED_TOOLS` with the shell's `command -v` builtin, which costs no extra
 process, and prints the missing ones and exits `_MISSING_TOOLS` instead of launching.
+
+An exclusive launch exits 125 when it cannot create the job directory, after printing `_CLAIMED` when the
+directory exists already.
 
 Before returning, the launcher waits for the wrapper to publish its status after `setsid`
 has detached it: some workspaces kill the launching process group as soon as it exits.
@@ -271,7 +290,7 @@ class Job:
             needed = ' and '.join(f'`{tool}`' for tool in _REQUIRED_TOOLS)
             lacking = ' and '.join(f'`{tool}`' for tool in result.stdout.split())
             raise WorkspaceError(f'Shell needs {needed} on PATH in the workspace; this image lacks {lacking}.')
-        if job_id is not None and result.exit_code == 126:
+        if job_id is not None and result.stdout.split() == [_CLAIMED]:
             # An existing claim can be an in-flight launch or a lost reply. Never
             # spawn a second process in either case; a later retry can attach.
             if existing := await cls.attach(workspace, directory, combined=combined):
@@ -378,10 +397,21 @@ class Job:
         """`status.json` as the wrapper published it, or `None` before the first publication."""
         if self._final_status is not None:
             return self._final_status
-        try:
-            text = (await self.workspace.read_bytes(self.status_path)).decode('utf-8', errors='replace')
-        except FileNotFoundError:
-            return None
+        attempts = 1
+        while True:
+            try:
+                text = (await self.workspace.read_bytes(self.status_path)).decode('utf-8', errors='replace')
+                break
+            except FileNotFoundError:
+                return None
+            # Before `PermissionError`: a `WorkspaceError` subclassing it is a backend failure, not a sharing violation.
+            except WorkspaceError:
+                raise
+            except PermissionError:
+                if self.workspace.platform != 'windows' or attempts == _STATUS_READ_ATTEMPTS:
+                    raise
+            attempts += 1
+            await anyio.sleep(_STATUS_READ_DELAY)
         try:
             exit_code = json.loads(text)['exit_code']
         except (ValueError, KeyError, TypeError):
