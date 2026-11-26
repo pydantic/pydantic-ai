@@ -383,7 +383,8 @@ Where the tracer comes from:
 - Code that runs during a run but has no `RunContext`, such as a backend, store or session that runs
   can share, passes `current_run_telemetry()`: the calling run's tracer and content policy, read at
   call time. Never store a tracer on such an object: a run sharing it would trace to another run's
-  tracer. Inside a hook, pass `ctx` instead: the value is only published once `wrap_run` starts.
+  tracer. Inside a hook, pass `ctx` instead: the value is only published once `Instrumentation.wrap_run`
+  has opened the run's span.
 - A standalone helper that users call outside any run takes `tracer: Tracer | None = None` and falls
   back to `NoOpTracer()`, so it emits the same span shape as the in-run path (`compaction`'s
   `compact_messages`).
@@ -395,10 +396,12 @@ What to record, and where:
 
 - Prefer an attribute on a span that is already open, through `current_span(ctx)`. In a tool hook
   (`before_tool_execute`, `after_tool_execute`, `wrap_tool_execute`) that is the call's `execute_tool`
-  span; in `before_model_request` it is the request's `chat` span. The helpers work only inside the
-  run's `agent run` span: in `for_run`, and in a `wrap_run` of a capability that is also outermost and
-  listed before an explicit `Instrumentation`, they do nothing. Don't call `opentelemetry.trace.get_current_span()` directly: in an
-  uninstrumented run it returns whatever span the application has open, such as its request span.
+  span; in `before_model_request` it is the request's `chat` span. `current_span(ctx)` and
+  `current_run_telemetry()` see the run only inside its `agent run` span: in `for_run`, and in a
+  `wrap_run` of a capability that is also outermost and listed before an explicit `Instrumentation`,
+  they return `INVALID_SPAN` and `None`. The helpers that take `ctx` still record there. Don't call
+  `opentelemetry.trace.get_current_span()` directly: in an uninstrumented run it returns whatever span
+  the application has open, such as its request span.
 - `current_span(ctx)` in a tool's own body, including a toolset's `call_tool`, is also that call's
   `execute_tool` span, not only the span seen by tool hooks, except in a durable unit that runs out of
   process, such as a Temporal activity, where it is `INVALID_SPAN`.

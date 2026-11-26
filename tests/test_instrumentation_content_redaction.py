@@ -86,7 +86,7 @@ from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, File
 from pydantic_ai.output import PromptedOutput
 from pydantic_ai.realtime import RealtimeModelSettings
 from pydantic_ai.realtime.codec import InputTranscript, OutputTranscript, ResponseDone, ToolCall
-from pydantic_ai.telemetry import current_run_telemetry, open_span, set_content_attribute
+from pydantic_ai.telemetry import current_run_telemetry, open_span, record_decision, set_content_attribute
 from pydantic_ai.tools import Tool, ToolDefinition
 
 from .conftest import try_import
@@ -144,6 +144,7 @@ SECRETS = {
     'deps': 'SENTINEL-deps',
     'validation_context': 'SENTINEL-validation-context',
     'helper_content': 'SENTINEL-helper-content',
+    'decision_content': 'SENTINEL-decision-content',
 }
 
 
@@ -1381,6 +1382,7 @@ def _record_without_a_context() -> str:
     telemetry = current_run_telemetry()
     with open_span(telemetry, 'example helper', content={'example.first': SECRETS['helper_content']}) as span:
         set_content_attribute(telemetry, span, 'example.later', SECRETS['helper_content'])
+    record_decision(telemetry, 'example decision', content={'example.reason': SECRETS['decision_content']})
     return 'done'
 
 
@@ -1410,8 +1412,8 @@ async def test_no_content_reaches_telemetry_from_a_helper_without_a_context(
         async with realtime.session() as session:
             _ = [event async for event in session]
 
-    assert 'example helper' in [span.name for span in exporter.get_finished_spans()]
-    check(exporter, include_content, {'helper_content'})
+    assert {'example helper', 'example decision'} <= {span.name for span in exporter.get_finished_spans()}
+    check(exporter, include_content, {'helper_content', 'decision_content'})
 
 
 @dataclass(frozen=True)
