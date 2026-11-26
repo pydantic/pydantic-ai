@@ -487,7 +487,7 @@ jobs:
           # --- Default-branch base ---------------------------------------------
           # An approval or label requests a review only on a PR into the default branch.
           if [ "$EVENT_NAME" = 'pull_request_review' ] || [ "$EVENT_NAME" = 'pull_request' ]; then
-            [ "$EVENT_BASE_REF" = "$DEFAULT_BRANCH" ] \
+            [ -n "$EVENT_BASE_REF" ] && [ "$EVENT_BASE_REF" = "$DEFAULT_BRANCH" ] \
               || skip "PR #${PR_NUMBER} is based on ${EVENT_BASE_REF}, not ${DEFAULT_BRANCH}"
           fi
 

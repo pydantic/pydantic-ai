@@ -240,6 +240,18 @@ def test_eligibility_requires_a_default_branch_base(tmp_path: Path, event: str, 
         assert 'reason=PR #123 is based on release, not main' in outputs
 
 
+def test_eligibility_skips_a_request_without_a_base(tmp_path: Path):
+    result = run_shell(
+        workflow_script(WORKFLOWS[0], 'eligibility', 'Decide whether to review'),
+        tmp_path,
+        EVENT_BASE_REF='',
+        DEFAULT_BRANCH='',
+        GRAPHQL_PAGES=json.dumps([pr_page([check()])]),
+    )
+    assert result.returncode == 0, result.stderr
+    assert 'eligible=false' in (tmp_path / 'outputs').read_text()
+
+
 @pytest.mark.parametrize(
     'pages', ['[]', '[{"errors":[{"message":"denied"}]}]', '[{"data":{"repository":{"pullRequest":null}}}]']
 )
