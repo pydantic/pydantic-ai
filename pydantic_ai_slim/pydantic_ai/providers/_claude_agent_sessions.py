@@ -850,10 +850,11 @@ class _TurnStream(httpx2.AsyncByteStream):
         elif isinstance(message, AssistantMessage):
             # Claude Code reports each message, with its transcript entry, before the response's `message_stop`, which
             # ends this stream: the last one before it is where the turn's answer ends.
-            # A message without its entry, or a subagent's (none come with Claude Code's tools off), leaves none.
-            top_level = message.parent_tool_use_id is None
-            entry = top_level and message.session_id and message.uuid and _ForkPoint(message.session_id, message.uuid)
-            self._turn.fork_point = entry or None
+            if message.parent_tool_use_id is None and message.session_id and message.uuid:
+                self._turn.fork_point = _ForkPoint(message.session_id, message.uuid)
+            else:
+                # A message without its entry, or a subagent's (none come with Claude Code's tools off), leaves none.
+                self._turn.fork_point = None
         elif results := self._session.external_result(message):
             for block in results:
                 yield from self._result(block)

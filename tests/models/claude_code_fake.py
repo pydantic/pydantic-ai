@@ -97,6 +97,8 @@ class FakeClaudeCode:
     discoveries: list[FakeSession] = field(default_factory=list['FakeSession'])
     """The processes started only to find the user's own MCP servers."""
     exit_on_history: bool = False
+    exit_once_on_history: bool = False
+    """The next process exits when it's sent history to replay, and the ones after it don't."""
     """Each process exits when it's sent history to replay."""
     mcp_servers: list[str] = field(default_factory=list[str])
     """The user's own MCP servers and connectors, which Claude Code offers when MCP config isn't strict."""
@@ -201,7 +203,8 @@ class FakeSession(Transport):
                 self.frames.append(message)
                 if message['type'] == 'user':
                     if message.get('shouldQuery') is False:
-                        if self.script.exit_on_history:
+                        if self.script.exit_on_history or self.script.exit_once_on_history:
+                            self.script.exit_once_on_history = False
                             self._outbox.put_nowait(None)
                             return
                         self._send(self._init())

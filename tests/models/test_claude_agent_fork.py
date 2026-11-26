@@ -12,7 +12,6 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
-from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
 
 from ..conftest import try_import
@@ -199,17 +198,17 @@ async def test_a_fork_that_exits_falls_back_to_the_replay():
     """A forked process that exits while it's sent the rest of the history gives way to one sent all of it."""
     agent, fake = claude_agent(FakeResponse([text('One.')]), FakeResponse([text('Two.')]))
     first = await agent.run('Count.')
-    fake.exit_on_history = True
+    fake.exit_once_on_history = True
 
-    with pytest.raises(ModelHTTPError, match='Claude Code exited while it was sent the history'):
-        await agent.run('Again.', message_history=edit_last_answer_after(first.all_messages()))
+    second = await agent.run('Again.', message_history=with_exchange_after(first.all_messages()))
 
+    assert second.output == 'Two.'
     assert [forked_from(session) for session in fake.sessions[1:]] == [('session-0', 'session-0/0'), (None, None)]
     # Only a missing transcript forgets the fork point.
-    assert fork_points(agent) == [('session-0', 'session-0/0')]
+    assert ('session-0', 'session-0/0') in fork_points(agent)
 
 
-def edit_last_answer_after(messages: list[ModelMessage]) -> list[ModelMessage]:
+def with_exchange_after(messages: list[ModelMessage]) -> list[ModelMessage]:
     """The history with one more exchange after it, so a fork is sent history without querying the model."""
     return [*messages, ModelRequest.user_text_prompt('Next.'), ModelResponse(parts=[TextPart('Edited.')])]
 
