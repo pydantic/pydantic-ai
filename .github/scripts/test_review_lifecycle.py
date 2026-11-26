@@ -367,6 +367,36 @@ def test_unrelated_label_events_cannot_evict_pending_reviews(action: str, label:
 
 
 @pytest.mark.parametrize(
+    ('event', 'conclusion', 'group', 'cancels', 'evaluates'),
+    [
+        ('workflow_run', 'success', f'feature-{HEAD}', True, True),
+        ('workflow_run', 'failure', f'feature-{HEAD}', True, True),
+        ('workflow_run', 'cancelled', 'run-456', True, False),
+        ('merge_group', '', 'run-456', False, True),
+    ],
+)
+def test_review_gate_wake_ups_collapse_per_head(
+    event: str, conclusion: str, group: str, cancels: bool, evaluates: bool
+):
+    workflow = TypeAdapter(dict[str | bool, object]).validate_python(
+        yaml.safe_load((ROOT / '.github/workflows/pr-review-gates.yml').read_text())
+    )
+    concurrency = TypeAdapter(dict[str, str]).validate_python(workflow['concurrency'])
+    jobs = TypeAdapter(dict[str, dict[str, object]]).validate_python(workflow['jobs'])
+    values: dict[str, str | bool | int] = {
+        'github.event_name': event,
+        'github.event.workflow_run.conclusion': conclusion,
+        "format('{0}-{1}', github.event.workflow_run.head_branch, github.event.workflow_run.head_sha)": f'feature-{HEAD}',
+        "format('run-{0}', github.run_id)": 'run-456',
+    }
+    prefix, expression = concurrency['group'].split('${{', 1)
+    assert prefix == 'pr-review-gates-'
+    assert evaluate_expression(expression, values) == group
+    assert evaluate_expression(concurrency['cancel-in-progress'], values) == cancels
+    assert evaluate_expression(TypeAdapter(str).validate_python(jobs['review-target']['if']), values) == evaluates
+
+
+@pytest.mark.parametrize(
     'agent,safe,failed,expected',
     [
         ('success', 'success', '0', False),

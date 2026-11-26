@@ -14,9 +14,20 @@ on:
 
 permissions: {}
 
+# Each evaluation reads the live PR, so the newest wake-up for a head is enough: it replaces the
+# pending run and cancels the running one. The group names the head's branch and SHA because a
+# review wake-up reports the base repository as its head repository, even for a fork PR.
+# A cancelled wake-up skips, in a group of its own so that it cannot cancel an evaluation:
+# concurrency cancels a wake-up only for a newer run, which wakes this workflow too.
+# Merge groups are never cancelled.
+concurrency:
+  group: pr-review-gates-${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion != 'cancelled' && format('{0}-{1}', github.event.workflow_run.head_branch, github.event.workflow_run.head_sha) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_run' }}
+
 jobs:
   review-target:
     name: Resolve review gate target
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion != 'cancelled'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
