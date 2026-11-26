@@ -808,7 +808,7 @@ The validation result is exposed via the `args_valid` field on [`FunctionToolCal
 
 When a model returns multiple tool calls in one response, Pydantic AI schedules them concurrently using `asyncio.create_task`, executing them in the order the model emitted them.
 
-To stop a specific tool from overlapping with other tools in the same run, mark it `sequential=True` — tools emitted before it finish first, it runs alone, and tools emitted after it start once it finishes.
+To stop a specific tool from overlapping with other tools in the same run, mark it `sequential=True` — it acts as a barrier within that run: tools emitted before it finish first, it runs alone, and tools emitted after it start once it finishes.
 
 ```python {title="sequential_tool.py"}
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
@@ -857,7 +857,7 @@ Async functions run on the event loop; sync functions run on worker threads. Pre
 !!! warning "Sync tools run concurrently on worker threads"
     Because sync tools run on worker threads, keep two things in mind:
 
-    - **Thread safety**: Parallel tool calls within one run and concurrent agent runs can call the same sync function (or different sync tools sharing state) at the same time. Your function, shared `deps`, and any libraries it calls must be thread-safe — especially on free-threaded Python. `sequential=True` only prevents overlap within a single run, not across concurrent runs. For non-thread-safe code or libraries, guard calls with a `threading.Lock`, or share a single [`ThreadPoolExecutor(max_workers=1)`][concurrent.futures.ThreadPoolExecutor] via [`UseThreadExecutor`][pydantic_ai.capabilities.UseThreadExecutor] (see [Thread executor for long-running servers](#thread-executor-for-long-running-servers)) if the library also requires thread affinity.
+    - **Thread safety**: Parallel tool calls within one run and concurrent agent runs can call the same sync function (or different sync tools sharing state) at the same time. Your function, shared `deps`, and any libraries it calls must be thread-safe — especially on free-threaded Python. `sequential=True` only prevents overlap within a single run, not across concurrent runs. For non-thread-safe code or libraries, guard calls with a `threading.Lock`; if a library also requires single-thread affinity, make the tool `async def` and dispatch just those library calls to a dedicated single-worker [`ThreadPoolExecutor(max_workers=1)`][concurrent.futures.ThreadPoolExecutor] via `await asyncio.get_running_loop().run_in_executor(...)`.
     - **Context variables and asyncio**: Writes to a [`contextvars.ContextVar`][contextvars.ContextVar] don't propagate back out of the worker thread (which affects libraries like tracing and logging integrations), and asyncio APIs like `asyncio.get_running_loop()` fail because the worker thread has no event loop. Reading context variables still works. Make the tool `async def` if you need either.
 
     The same applies to any other sync function the agent runs for you, including [hooks](hooks.md), system prompt functions, output functions, and history processors.
