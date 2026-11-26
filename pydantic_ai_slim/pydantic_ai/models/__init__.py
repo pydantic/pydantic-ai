@@ -60,6 +60,13 @@ from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
 from .._canonical_system import accepts_stateless_artifact
+from .._capability_parts import (
+    LookalikeNaming,
+    is_downgraded_request_scoped,
+    lowered_instruction_statement,
+    render_capability_part,
+    render_capability_parts,
+)
 from .._file_input import (
     KNOWN_DOCUMENT_MEDIA_TYPES,
     FileInputKind,
@@ -67,7 +74,6 @@ from .._file_input import (
     unsupported_file_input,
     unsupported_file_note,
 )
-from .._framework_frame import framework_frame_body, is_framework_frame
 from .._framing import (
     CONVERSATION_SUMMARY_TAG,
     LookalikeSource,
@@ -91,8 +97,10 @@ from .._http import (
 from .._instructions import (
     InstructionValues,
     LoadedInstructionValues,
+    LoweredInstructions,
     advance_instruction_window,
     instruction_window_start,
+    is_lowered_statement,
     window_boundary_index,
 )
 from .._json_schema import (
@@ -111,9 +119,15 @@ from .._special_tokens import (
     restore_special_tokens_in_response,
     restore_special_tokens_in_stream,
 )
-from .._unsupported_settings import SUPPRESSED_WARNINGS, warn_unsupported_settings
+from .._tool_status import TOOL_STATUS_TEXTS
+from .._unsupported_settings import (
+    DEPRECATED_MODEL_WARNING_SUPPRESSED,
+    SUPPRESSED_WARNINGS,
+    warn_unsupported_settings,
+)
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
-from ..exceptions import ModelAPIError, UserError
+from ..computer_use import COMPUTER_KIND
+from ..exceptions import DeprecatedModelWarning, ModelAPIError, UserError
 from ..messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     STANDING_PROMPT_PLANTED_KEY,
@@ -122,8 +136,8 @@ from ..messages import (
     BinaryContent,
     BinaryImage,
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     CompactionPart,
-    DocumentMediaType,
     FilePart,
     FileUrl,
     FinalResultEvent,
@@ -152,6 +166,8 @@ from ..messages import (
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
+    ToolKind,
+    ToolKindLike,
     ToolReturnPart,
     ToolSearchCallPart,
     ToolSearchReturnPart,
@@ -172,7 +188,7 @@ from ..messages import (
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
-from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
+from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool, ComputerTool
 from ..native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchTool
 from ..output import OutputMode, OutputObjectDefinition, StructuredOutputMode
 from ..profiles import (
@@ -206,6 +222,7 @@ from ._speech import assistant_speech_text
 from ._tool_call_ids import hashed_tool_call_id, response_tool_call_id_scopes, with_unqualified_tool_call_ids
 
 if TYPE_CHECKING:
+    from google.genai import Client
     from httpx import AsyncClient
 
     from ..agent.abstract import AbstractAgent
@@ -298,9 +315,11 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'nebius',
         'ollama',
         'openrouter',
+        'otari',
         'ovhcloud',
         'sambanova',
         'snowflake',
+        'stav',
         'together',
         'vercel',
         'vllm',
@@ -320,6 +339,7 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
         'openrouter',
         'ovhcloud',
         'sambanova',
+        'stav',
         'together',
     ],
 )
@@ -534,6 +554,23 @@ class ModelRequestParameters:
         tool_def = self.tool_defs.get(tool_name)
         return 'withheld' if tool_def is not None and tool_def.defer_loading else 'visible'
 
+    def available_tool_names_for_kind(self, kind: ToolKindLike) -> list[str]:
+        """The names of the function tools of this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] that the model can call on this request.
+
+        A tool with `defer_loading=True` is included only once the message history has revealed it.
+        [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind] also returns a deferred tool,
+        so instructions that name it don't change when it is revealed.
+
+        Args:
+            kind: The [`ToolKind`][pydantic_ai.messages.ToolKind], or its id.
+        """
+        kind_id = kind.id if isinstance(kind, ToolKind) else kind
+        return [
+            t.name
+            for t in self.function_tools
+            if t.tool_kind == kind_id and (not t.defer_loading or t.name in self.revealed_tool_names)
+        ]
+
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
@@ -687,6 +724,12 @@ class ModelRequestContext:
     _serving_wrapper: tuple[Model, Model] | None = field(default=None, repr=False, compare=False)
     """The model a capability's `get_wrapper_model` returned to serve the request, which is entered around it, and
     the model it wraps, whose lifecycle its owner manages."""
+    _hooked_messages: list[ModelMessage] | None = field(default=None, repr=False, compare=False)
+    """The messages once the request hooks have run, before `prepare_messages` renders them for the model.
+
+    Typed parts, such as a capability part, are still themselves here, and anything a hook removed from `messages`
+    is gone, so a reader that needs both, such as a judge model, reads this instead of `RunContext.messages`.
+    """
 
     @property
     def _usage_responses(self) -> tuple[ModelResponse, ...]:
@@ -898,10 +941,12 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     `profile` turns the matching file-input flags off after every other layer, the user's included,
     so the profile never claims a file the mapping would refuse.
     """
-    _supported_document_media_types: ClassVar[frozenset[DocumentMediaType] | None] = None
-    """The document media types this adapter's message mapping can send, or `None` for all of them.
+    _supported_media_types: ClassVar[Mapping[FileInputKind, frozenset[str]]] = {}
+    """The media types this adapter's message mapping can send, per kind of file. A kind it doesn't list is
+    limited by the profile alone.
 
-    Intersected with the profile's `supported_document_media_types`, like `_unsupported_file_inputs`.
+    Intersected with the profile's `supported_image_media_types` and the other per-kind sets, like
+    `_unsupported_file_inputs`.
     """
     _renders_effort_deltas: ClassVar[bool] = False
     """Whether this adapter renders a `ModelSettingsDeltaPart` on a model whose profile sets `supports_mid_conversation_effort`.
@@ -1504,6 +1549,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     _honors_compaction_boundaries: ClassVar[bool] = False
     """Whether the adapter drops the history before a compaction part it sends, with `_trim_before_compaction`."""
 
+    @property
+    def _rewrite_instructions_outside_prefix(self) -> bool:
+        """Whether this model reads dynamic rewrite-mode instructions outside the cached prompt prefix.
+
+        A change to one then doesn't end the instruction window (see `update_instruction_history`).
+        """
+        return False
+
     def _model_for_response(self, response: ModelResponse) -> Model:
         """The model that produced `response`, for a model that delegates requests to others."""
         return self
@@ -1819,6 +1872,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 ]
             )
         model_settings = merge_model_settings(self.settings, model_settings)
+        self._warn_if_deprecated()
         self._warn_unsupported_settings(model_settings, model_request_parameters)
 
         customized_params = self.customize_request_parameters(model_request_parameters)
@@ -1931,6 +1985,28 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         return model_settings, params
 
+    def _warn_if_deprecated(self) -> None:
+        """Warn when the profile has a `deprecation`, unless framework code prepares the request without sending it."""
+        deprecation = self.profile.get('deprecation')
+        if deprecation is None or DEPRECATED_MODEL_WARNING_SUPPRESSED.get():
+            return
+        retirement_date, rerouted_to = deprecation.retirement_date, deprecation.rerouted_to
+        retirement = f', with a retirement date of {retirement_date}' if retirement_date else ''
+        if rerouted_to:
+            retirement += (
+                f', from which it routes requests to {rerouted_to!r}'
+                if retirement_date
+                else f', and it routes requests to {rerouted_to!r}'
+            )
+        replacement = f' It recommends {deprecation.replacement!r} instead.' if deprecation.replacement else ''
+        # Attributed to this line, so the default filters don't repeat it for a model until something changes the filters.
+        warnings.warn(
+            f'Model {self.model_id!r} is deprecated by its provider{retirement}.{replacement} '
+            f'See {deprecation.source_url}',
+            DeprecatedModelWarning,
+            stacklevel=1,
+        )
+
     def _unsupported_settings(self) -> frozenset[str]:
         """The settings this model ignores: its class's `unsupported_settings`, plus any its profile adds."""
         return self.unsupported_settings
@@ -1988,6 +2064,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         Drops [`CapabilityLoadDeltaPart`][pydantic_ai.messages.CapabilityLoadDeltaPart]s: the
         model sees a capability's load as its instructions and tools, not as the record that loads it.
 
+        Renders each [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] into the parts every adapter maps: an
+        instruction part as a mid-conversation `SystemPromptPart`, a data part as its content in its tag on the user
+        channel, behind its note. They're rendered in the lookalike pass, from the part's own fields, so an override
+        that runs before calling this sees the typed parts, and the result holds none.
+
         Renders [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s as
         `SystemPromptPart`s for this model's delivery path, dropping deltas from before the latest
         instruction baseline or compaction. A change to a loaded deferred capability's block is kept
@@ -2004,7 +2085,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         Where the profile's `supports_request_scoped_system_prompts` is `False`, leaves out every
         [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] `SystemPromptPart` whose request has been answered
-        and moves the current request's ones to the end of the last request.
+        and moves the current request's ones to the end of the last request. On every profile, a downgraded
+        request-scoped capability part goes there too once rendered, and is left out once answered.
 
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
         the profile's `supports_inline_system_prompts` is `False`; a request-scoped one the API clears itself
@@ -2021,7 +2103,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         tool results in each request in the order of the calls they answer, so the request bytes
         (and the provider's prompt cache) don't depend on the order a history happened to store
         them in. When the profile sets `tool_call_id_length`, tool call IDs that don't fit it are
-        replaced with stable hashes that do.
+        replaced with stable hashes that do. When it sets `needs_json_string_tool_returns`, a successful
+        tool return of a string goes out as a `{"tool_output": ...}` JSON string field.
 
         Subclasses normally don't need to override this; the framework calls it on the
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
@@ -2067,6 +2150,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         # history was authored with, and a note or announcement in the first request is not part of it.
         first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
         standing_prompt_count = _standing_system_prompt_count(first_request) if first_request else 0
+        # Left out while they're still typed: once rendered, nothing says they were request-scoped.
+        messages = _without_answered_parts(messages, is_downgraded_request_scoped)
         # Kept as stored, after speech becomes user text: lookalike frames below are looked for in what the user, a
         # tool, a file or a summarizer wrote and in the text retry feedback quotes, never in the frame the framework
         # renders around it.
@@ -2079,6 +2164,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             # Without a system role, a retry that would join the standing prompt is a `<system>` block like the rest.
             sealed=self._seals_system_blocks,
         )
+        # Ahead of the file replacement, so a note the framework puts in place of an unreadable file isn't wrapped.
+        messages = _tool_returns_as_json_strings(messages, self.profile)
         messages = _replace_unsupported_tool_return_files(messages, self.profile)
         # After retry feedback becomes user text, and before any step below renders the application's own text.
         messages = break_special_tokens_in_messages(messages, self.profile, self.accepts_stateless_artifacts)
@@ -2170,8 +2257,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             pair_returns=self.profile.get('rejects_unpaired_tool_calls', False),
         )
 
-        if not clears_request_scoped_prompts:
-            messages = _move_request_scoped_prompts_to_tail(messages)
+        messages = _move_request_scoped_prompts_to_tail(messages, self._goes_in_request_scoped_tail)
 
         if not inline_system:
             unwrapped = messages
@@ -2198,6 +2284,22 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             messages = _fit_tool_call_ids(messages, tool_call_id_length)
 
         return messages
+
+    def _goes_in_request_scoped_tail(self, part: ModelRequestPart) -> bool:
+        """Whether `part` goes last in the current request, because the next request won't send it.
+
+        A downgraded request-scoped capability part's frame always does, since no provider clears it. Its notes do too,
+        unless this adapter sends a request's system entries after its user turn: they're past the frame there, and
+        `_system_prompts_placed_for_notes` has placed them among the request's other system prompts. A request-scoped
+        system prompt does on a model that can't clear it.
+        """
+        if isinstance(part, _RenderedCapabilityBody):
+            return part.request_scoped
+        if isinstance(part, _FrameworkNote | _RenderedCapabilityNote):
+            return part.request_scoped and not (
+                self.profile.get('supports_inline_system_prompts', False) and self._system_entries_follow_user_turn
+            )
+        return not self.profile.get('supports_request_scoped_system_prompts', False) and _is_request_scoped(part)
 
     def _repair_dangling_translated_tool_search_calls(
         self, messages: list[ModelMessage], untranslated: list[ModelMessage]
@@ -2291,10 +2393,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         files moved onto the user channel and reasoning carried into a user turn. The request is found from the history
         alone, so the announcement stays in the same place on every later request.
 
-        Requests made inside `second_model_prompt()` (a judge or summarizer reading a transcript) get neither.
+        Requests made inside `second_model_prompt()` (a judge or summarizer reading a transcript) get neither. Every
+        [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] is rendered here either way.
         """
         if in_second_model_prompt():
-            return messages, False
+            return render_capability_parts(messages), False
         inline_system = self.profile.get('supports_inline_system_prompts', False)
         pending_announcement = inline_system and announce
         has_frame = False
@@ -2344,21 +2447,27 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         (`genuine_change` in `lookalike_frame_note`), unless the user's text in it has a lookalike too. On a profile
         with `needs_sealed_system_blocks`, a user note names it too, and the request's own system messages go after
         the user's words.
+
+        Each [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] is rendered here, in place: its system parts are
+        the application's, its framed body is a frame to announce, and the lookalike notes for its body name the
+        author its source gives (`render_capability_part`).
         """
         inline_system = self.profile.get('supports_inline_system_prompts', False)
         # With a system role, a tool's note goes right after the tool results even where the API takes it ahead of
         # them: a genuine change in the same turn was followed more reliably with the note after them.
         precede_tool_results = self._lookalike_notes_precede_tool_results and not inline_system
-        all_sources = [_lookalike_sources(original) for original in authored.parts]
+        expanded = _with_capability_parts_rendered(authored, request)
         # A tool or file note names the application's own mid-conversation system message in the same request, unless
         # the user's text there has a lookalike too, which "the other <system> block" would no longer pick out.
+        # A capability part is never among the standing prompt the first request opens with, so neither is what it
+        # renders as.
         leading = _leading_system_prompt_count(request) if first_request else 0
-        has_genuine = _has_lasting_system_prompt(request.parts[leading:])
-        genuine_change = has_genuine and not _has_user_lookalike(all_sources)
+        has_genuine = _has_lasting_system_prompt([part for _, _, part in expanded[leading:]])
+        genuine_change = has_genuine and not _has_user_lookalike([sources for _, sources, _ in expanded])
         parts: list[ModelRequestPart] = []
         framed: list[ModelRequestPart] = []
         tool_notes: list[SystemPromptPart] = []
-        for original, sources, part in zip(authored.parts, all_sources, request.parts):
+        for original, sources, part in expanded:
             if _is_tool_result_part(part):
                 tool_notes.extend(
                     self._tool_lookalike_notes(
@@ -2378,7 +2487,13 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 framed.append(part)
             after = self._lookalike_notes_follow_item(parts, first_request=first_request)
             notes = self._item_lookalike_notes(
-                request, sources, preceding=after, has_genuine=has_genuine, genuine_change=genuine_change
+                request,
+                sources,
+                preceding=after,
+                has_genuine=has_genuine,
+                genuine_change=genuine_change,
+                naming=part.naming if isinstance(part, _RenderedCapabilityBody) else LookalikeNaming(),
+                request_scoped=isinstance(part, _RenderedCapabilityBody) and part.request_scoped,
             )
             framed.extend(notes)
             parts.extend([part, *notes] if after else [*notes, part])
@@ -2443,19 +2558,26 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         preceding: bool,
         has_genuine: bool,
         genuine_change: bool,
+        naming: LookalikeNaming,
+        request_scoped: bool,
     ) -> list[_FrameworkNote]:
         """The notes for a user prompt's lookalikes in `request`, one per author.
 
         The user's note names any genuine change in the request; a file's or a frame body's only when the user's text
-        has no lookalike (`genuine_change`).
+        has no lookalike (`genuine_change`). `naming` names a capability part's body and its author, and `request_scoped`
+        says that body goes with its request.
         """
         return [
-            self._lookalike_note(
-                request,
-                source,
-                tags,
-                preceding=preceding,
-                genuine_change=has_genuine if source == 'user' else genuine_change,
+            replace(
+                self._lookalike_note(
+                    request,
+                    source,
+                    tags,
+                    preceding=preceding,
+                    genuine_change=has_genuine if source == 'user' else genuine_change,
+                    naming=naming,
+                ),
+                request_scoped=request_scoped,
             )
             for source, tags in sources
         ]
@@ -2505,8 +2627,13 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         genuine_change: bool,
         tool_name: str | None = None,
         tool_call_id: str | None = None,
+        naming: LookalikeNaming | None = None,
     ) -> _FrameworkNote:
-        """The note for a lookalike that `source` wrote in `request`, worded for this model (`lookalike_frame_note`)."""
+        """The note for a lookalike that `source` wrote in `request`, worded for this model (`lookalike_frame_note`).
+
+        `naming` names a capability part's body and its author (`render_capability_part`).
+        """
+        naming = naming or LookalikeNaming()
         return _FrameworkNote(
             content=lookalike_frame_note(
                 source,
@@ -2515,8 +2642,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 system_role=self.profile.get('supports_inline_system_prompts', False),
                 genuine_change=genuine_change,
                 sealed=source != 'tool' and self._seals_system_blocks,
-                tool_name=tool_name,
-                tool_call_id=tool_call_id,
+                tool_name=naming.get('tool_name', tool_name),
+                tool_call_id=naming.get('tool_call_id', tool_call_id),
+                model_name=naming.get('model_name'),
+                frame_tag=naming.get('frame_tag'),
             ),
             timestamp=request.timestamp or _utils.now_utc(),
         )
@@ -2684,7 +2813,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """The model profile.
 
         Resolution order (later layers override earlier ones):
-          1. `DEFAULT_PROFILE` — base values for every key in `ModelProfile`.
+          1. `DEFAULT_PROFILE` — base values for every key in `ModelProfile` but the image, audio and video media-type sets.
           2. The provider's `model_profile(model_name)` result — provider-specific defaults
              for this model — or what `_provider_model_profile()` returns in its place.
           3. A best-effort `context_window` value from
@@ -2739,23 +2868,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             resolved = merge_profile(resolved, ModelProfile(supported_native_tools=effective_tools))
 
         # Step 6: file input the model class's message mapping can't send, whatever the profile says
-        unsupported = self._unsupported_file_inputs
-        document_media_types = self._supported_document_media_types
-        if unsupported or document_media_types is not None:
-            supported_document_media_types = resolved.get('supported_document_media_types', KNOWN_DOCUMENT_MEDIA_TYPES)
-            if document_media_types is not None:
-                supported_document_media_types &= document_media_types
+        if self._unsupported_file_inputs or self._supported_media_types:
             resolved = merge_profile(
-                resolved,
-                ModelProfile(
-                    supports_image_input=resolved.get('supports_image_input', True) and 'image' not in unsupported,
-                    supports_document_input=resolved.get('supports_document_input', True)
-                    and 'document' not in unsupported,
-                    supported_document_media_types=supported_document_media_types,
-                    supports_audio_file_input=resolved.get('supports_audio_file_input', True)
-                    and 'audio' not in unsupported,
-                    supports_video_input=resolved.get('supports_video_input', True) and 'video' not in unsupported,
-                ),
+                resolved, _narrowed_file_input(resolved, self._unsupported_file_inputs, self._supported_media_types)
             )
 
         return resolved
@@ -2910,6 +3025,9 @@ class _FrameworkAdded:
 class _FrameworkNote(SystemPromptPart, _FrameworkAdded):
     """A note or the announcement, as a mid-conversation system message."""
 
+    request_scoped: bool = field(default=False, compare=False)
+    """Whether it's about a downgraded request-scoped capability part's frame, which the next request won't send."""
+
 
 @dataclass(repr=False)
 class _FrameworkUserPromptPart(UserPromptPart, _FrameworkAdded):
@@ -2929,6 +3047,8 @@ def _is_framework_added(part: object) -> bool:
 def _system_prompts_after_user_words(parts: list[ModelRequestPart], *, leading: int) -> list[ModelRequestPart]:
     """Move a request's own mid-conversation system prompts to right after its last user prompt, notes left in place.
 
+    A note, a lookalike note or a capability part's note about its framed body, stays next to what it's about.
+
     For a profile with `needs_sealed_system_blocks`: Claude Sonnet 4.6 followed a sealed block after the user's words
     where it ignored one ahead of them (steering after a tool result, and a user lookalike next to a genuine
     change); the sealed announcement says such a block applies to the reply to those words. `leading` is the
@@ -2939,11 +3059,7 @@ def _system_prompts_after_user_words(parts: list[ModelRequestPart], *, leading: 
     )
     if last_user is None:
         return parts
-    moved = [
-        part
-        for i, part in enumerate(parts[:last_user])
-        if i >= leading and isinstance(part, SystemPromptPart) and not isinstance(part, _FrameworkNote)
-    ]
+    moved = [part for i, part in enumerate(parts[:last_user]) if i >= leading and _is_genuine_system_prompt(part)]
     if not moved:
         return parts
     kept = [part for part in parts[: last_user + 1] if not any(part is m for m in moved)]
@@ -3667,6 +3783,11 @@ def infer_model_profile(model: str) -> ModelProfile:
         context_window = lookup_context_window(model_name, provider_name=provider)
         if context_window is not None:
             profile = merge_profile(profile, ModelProfile(context_window=context_window))
+    if provider == 'google-interactions':
+        from ..profiles.google import google_interactions_model_profile
+
+        # The overrides `GoogleInteractionsModel._instance_profile_defaults` applies over the `GoogleProvider` profile.
+        profile = merge_profile(profile, google_interactions_model_profile(model_name))
     return profile
 
 
@@ -3793,10 +3914,8 @@ def infer_model(  # noqa: C901
         from .openai import OpenAIChatModel
 
         return OpenAIChatModel(model_name, provider=provider)
-    elif model_kind in ('google', 'google-cloud'):
-        from .google import GoogleModel
-
-        return GoogleModel(model_name, provider=provider)
+    elif model_kind in ('google', 'google-cloud', 'google-interactions'):
+        return _infer_google_model(model_kind, model_name, provider)
     elif model_kind == 'groq':
         from .groq import GroqModel
 
@@ -3840,6 +3959,20 @@ def infer_model(  # noqa: C901
         return XaiModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
+
+
+def _infer_google_model(
+    kind: Literal['google', 'google-cloud', 'google-interactions'],
+    model_name: str,
+    provider: Provider[Client],
+) -> Model:
+    if kind == 'google-interactions':
+        from .google_interactions import GoogleInteractionsModel
+
+        return GoogleInteractionsModel(model_name, provider=provider)
+    from .google import GoogleModel
+
+    return GoogleModel(model_name, provider=provider)
 
 
 def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> AsyncClient:
@@ -4083,6 +4216,32 @@ def _needs_tool_resolution(params: ModelRequestParameters) -> bool:
     )
 
 
+def _drop_unrunnable_computer_tool(
+    params: ModelRequestParameters, natives: list[AbstractNativeTool]
+) -> list[AbstractNativeTool]:
+    """The native tools, keeping a `ComputerTool` only when the request has exactly one `computer` tool to run its calls."""
+    # A tool that is left out because a native tool is sent in its place can't run any calls.
+    native_tool_ids = {t.unique_id for t in natives}
+    computer_tool_names = [
+        name
+        for name in params.available_tool_names_for_kind(COMPUTER_KIND)
+        if params.tool_defs[name].unless_native not in native_tool_ids
+    ]
+    kept: list[AbstractNativeTool] = []
+    for native_tool in natives:
+        if isinstance(native_tool, ComputerTool) and not computer_tool_names:
+            if native_tool.optional:
+                continue
+            raise UserError('`ComputerTool` needs a `computer` tool the model can call, and this request has none.')
+        if isinstance(native_tool, ComputerTool) and len(computer_tool_names) > 1:
+            # Which of them ran a call would depend on the order of the tools.
+            raise UserError(
+                '`ComputerTool` needs a `computer` tool the model can call, and this request has more than one.'
+            )
+        kept.append(native_tool)
+    return kept
+
+
 def _supported_native_tools(
     params: ModelRequestParameters,
     supported_types: frozenset[type[AbstractNativeTool]],
@@ -4115,7 +4274,7 @@ def _supported_native_tools(
             for t in unsupported_natives
             if t.unique_id in without_fallback and t.unique_id not in unapplied_settings
         ]
-        supported_names = [t.__name__ for t in supported_types]
+        supported_names = sorted(t.__name__ for t in supported_types)
         raise UserError(
             f'Native tool(s) {unsupported_names} not supported by this model. '
             f'Supported: {supported_names}. '
@@ -4173,17 +4332,19 @@ def resolve_request_tools(
        into `tool_visibility` exactly once. A caller without a `can_withhold_tool_schemas` answer
        (the realtime session path) can't withhold schemas at all.
 
-    On top of the filter, two narrower drops apply, kept independent:
+    On top of the filter, three narrower drops apply, kept independent. `optional=True` decides
+    the outcome of each one:
 
-    * `optional=True` only governs the *unsupported-on-this-model* path: an unsupported
-      optional native tool is silently dropped (no error raised). It does NOT govern the
-      corpus-empty drop.
+    * An optional native tool that this model doesn't support is silently dropped (no error raised).
     * The corpus-empty drop is specific to the framework-managed tool-search native tool's
       corpus-management role: an *optional* `ToolSearchTool` is dropped when nothing is
       searchable, since sending it with no corpus to search would waste a tool slot. A
-      non-optional `ToolSearchTool` stays — the user asked explicitly. Other native tools
-      don't have a corpus and aren't subject to this drop, so making `optional` a base-class
+      non-optional `ToolSearchTool` stays, because the user asked for it explicitly. Other native
+      tools don't have a corpus and aren't subject to this drop, so making `optional` a base-class
       field doesn't accidentally cause e.g. `WebSearchTool(optional=True)` to be dropped here.
+    * An optional `ComputerTool` is dropped when the request has no `computer` tool to run its
+      calls. A required `ComputerTool` in that case raises `UserError`, as does any `ComputerTool`
+      when the request has more than one `computer` tool.
 
     This is a module-level function rather than a `Model` method so both the classic agent-run
     path (via `Model._resolve_request_tools`, which passes its profile-derived
@@ -4202,6 +4363,8 @@ def resolve_request_tools(
     supported_natives = [
         t for t in supported_natives if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in corpus_ids
     ]
+    # After the tool search drop, so a tool kept because tool search isn't sent can run a `ComputerTool`'s calls.
+    supported_natives = _drop_unrunnable_computer_tool(params, supported_natives)
 
     # Computed after the drop above so it names the native tools this request really sends:
     # rule 1 must not drop a local fallback for a native tool that just left.
@@ -4431,7 +4594,9 @@ def _standing_system_prompt_count(request: ModelRequest) -> int:
     exists to avoid.
 
     A request-scoped part ends the standing prompt too: the top-level system parameter is sent with every
-    request, and a request-scoped part has to stop being sent once its request has been answered.
+    request, and a request-scoped part has to stop being sent once its request has been answered. So does a
+    [`CapabilityPart`][pydantic_ai.messages.CapabilityPart], which `prepare_messages` renders only after counting: a
+    capability said it, the history wasn't authored with it.
     """
     count = 0
     for part in request.parts:
@@ -4542,19 +4707,29 @@ _REQUEST_SCOPED_TAIL_KEY = 'request_scoped_tail'
 def _drop_superseded_request_scoped_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
     """Leave out the request-scoped `SystemPromptPart`s whose request has been answered, for a model that can't clear them itself.
 
-    A request emptied this way is left out too: it held nothing but prompts the model no longer sees.
+    Returns the original list when nothing changed.
+    """
+    return _without_answered_parts(messages, _is_request_scoped)
+
+
+def _without_answered_parts(
+    messages: list[ModelMessage], is_answered_part: Callable[[ModelRequestPart], bool]
+) -> list[ModelMessage]:
+    """`messages` without the parts `is_answered_part` picks out in requests that have been answered.
+
+    A request emptied this way is left out too: it held nothing but parts the model no longer sees.
     Returns the original list when nothing changed.
     """
     start = _current_request_start(messages)
     if not any(
-        isinstance(message, ModelRequest) and any(_is_request_scoped(part) for part in message.parts)
+        isinstance(message, ModelRequest) and any(is_answered_part(part) for part in message.parts)
         for message in messages[:start]
     ):
         return messages
     kept_messages: list[ModelMessage] = []
     for message in messages[:start]:
-        if isinstance(message, ModelRequest) and any(_is_request_scoped(part) for part in message.parts):
-            if parts := [part for part in message.parts if not _is_request_scoped(part)]:
+        if isinstance(message, ModelRequest) and any(is_answered_part(part) for part in message.parts):
+            if parts := [part for part in message.parts if not is_answered_part(part)]:
                 kept_messages.append(replace(message, parts=parts))
         else:
             kept_messages.append(message)
@@ -4620,10 +4795,13 @@ def _reaches_the_model_as_a_user_message(part: ModelRequestPart) -> bool:
     return not (isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part))
 
 
-def _move_request_scoped_prompts_to_tail(messages: list[ModelMessage]) -> list[ModelMessage]:
-    """Send the current request's request-scoped prompts last, and record that they're there.
+def _move_request_scoped_prompts_to_tail(
+    messages: list[ModelMessage], goes_in_tail: Callable[[ModelRequestPart], bool]
+) -> list[ModelMessage]:
+    """Send the parts of the current request that the next request won't send last, and record that they're there.
 
-    Runs after `_drop_superseded_request_scoped_prompts`, so every request-scoped part left is current. They
+    `goes_in_tail` picks them out: the rendering of a downgraded request-scoped capability part, and a request-scoped
+    prompt on a model that can't clear it. Answered ones have been left out by now, so every one left is current. They
     move to the end of the last request, where adapters that place cache breakpoints automatically can
     leave them out of the cached prefix: the next request won't contain them, so a breakpoint on one
     would write a cache entry nothing ever reads. How many trailing parts they are is recorded under
@@ -4632,14 +4810,14 @@ def _move_request_scoped_prompts_to_tail(messages: list[ModelMessage]) -> list[M
 
     Returns the original list when there's nothing to move.
     """
-    request_scoped = [
+    tail = [
         part
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if _is_request_scoped(part)
+        if goes_in_tail(part)
     ]
-    if not request_scoped:
+    if not tail:
         return messages
     last_index = max(index for index, message in enumerate(messages) if isinstance(message, ModelRequest))
     moved: list[ModelMessage] = []
@@ -4647,7 +4825,7 @@ def _move_request_scoped_prompts_to_tail(messages: list[ModelMessage]) -> list[M
         if not isinstance(message, ModelRequest):
             moved.append(message)
             continue
-        parts = [part for part in message.parts if not _is_request_scoped(part)]
+        parts = [part for part in message.parts if not goes_in_tail(part)]
         if index != last_index:
             if len(parts) == len(message.parts):
                 moved.append(message)
@@ -4659,10 +4837,10 @@ def _move_request_scoped_prompts_to_tail(messages: list[ModelMessage]) -> list[M
             **(message.metadata or {}),
             _PYDANTIC_AI_METADATA_KEY: {
                 **(namespace if _utils.is_str_dict(namespace) else {}),
-                _REQUEST_SCOPED_TAIL_KEY: len(request_scoped),
+                _REQUEST_SCOPED_TAIL_KEY: len(tail),
             },
         }
-        moved.append(replace(message, parts=[*parts, *request_scoped], metadata=metadata))
+        moved.append(replace(message, parts=[*parts, *tail], metadata=metadata))
     return moved
 
 
@@ -4687,19 +4865,32 @@ _SuffixItemT = TypeVar('_SuffixItemT')
 
 
 def _request_scoped_suffix_start(  # pyright: ignore[reportUnusedFunction]
-    items: Sequence[_SuffixItemT], texts: tuple[str, ...], text_of: Callable[[_SuffixItemT], str | None]
+    items: Sequence[_SuffixItemT],
+    texts: tuple[str, ...],
+    text_of: Callable[[_SuffixItemT], str | None],
+    *,
+    is_after_tail: Callable[[_SuffixItemT], bool] = lambda _: False,
 ) -> tuple[int, tuple[str, ...]]:
     """Where the wire items rendering the request-scoped `texts` start at the end of `items`, and the texts left unmatched.
 
     `texts` come from `_request_scoped_tail_texts`, in order, and end the request, so they're matched from the end,
     each once: a lasting item with the same text as a reminder, ahead of it, stays before the returned index.
     `text_of` reads an item's text the way the adapter renders a request-scoped prompt, or `None` if it can't be one.
+    `is_after_tail` picks out the items that can sit behind a text and be no part of it: an adapter that sends a
+    request's system messages after its user content sends even a lasting one behind a frame. Skipped while texts are
+    left to match, it stays past the returned index.
     """
     end = len(items)
     remaining = len(texts)
-    while end and remaining and text_of(items[end - 1]) == texts[remaining - 1]:
-        end -= 1
-        remaining -= 1
+    index = end
+    while index and remaining:
+        item = items[index - 1]
+        index -= 1
+        if text_of(item) == texts[remaining - 1]:
+            end = index
+            remaining -= 1
+        elif not is_after_tail(item):
+            break
     return end, texts[:remaining]
 
 
@@ -4709,8 +4900,9 @@ def _request_scoped_tail_texts(messages: Sequence[ModelMessage]) -> tuple[str, .
     They end the request, so adapters that place a cache breakpoint automatically skip the wire blocks at
     the end of the request carrying these texts, matched from the end in order, and the breakpoint lands on
     the last block the next request will still contain. Matching only that suffix keeps lasting content
-    with the same text as a reminder in the cached prefix. Empty for a model that clears request-scoped
-    prompts itself; its adapter recognizes them on the wire instead.
+    with the same text as a reminder in the cached prefix. A model that clears request-scoped prompts itself only
+    has the frames of downgraded request-scoped capability parts here; its adapter recognizes its native entries on
+    the wire instead.
     """
     request = next((message for message in reversed(messages) if isinstance(message, ModelRequest)), None)
     namespace = (request.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY) if request else None
@@ -4823,12 +5015,12 @@ def _replies_noted_later(messages: list[ModelMessage], index: int) -> list[Model
 
 
 def _has_lasting_system_prompt(parts: Sequence[ModelRequestPart]) -> bool:
-    """Whether `parts` hold a system prompt that stays in later requests, which a note can name.
+    """Whether `parts` hold one of the application's system prompts that stays in later requests, which a note can name.
 
     A request-scoped prompt doesn't count: it leaves later requests, and a note, sent unchanged with them so the cached
     prefix stays put, would then name a block that isn't there.
     """
-    return any(isinstance(part, SystemPromptPart) and not _is_request_scoped(part) for part in parts)
+    return any(_is_genuine_system_prompt(part) and not _is_request_scoped(part) for part in parts)
 
 
 def _leading_system_prompt_count(request: ModelRequest) -> int:
@@ -4855,15 +5047,11 @@ def _with_tool_notes(
 def _is_user_channel_frame(original: ModelRequestPart, part: ModelRequestPart) -> bool:
     """Whether `part`, sent for `original`, is a frame on the user channel.
 
-    That is retry feedback, a compaction summary, or a frame a capability wrote.
+    That is retry feedback, a compaction summary, or a capability part's framed body.
     """
-    if isinstance(part, CompactionPart):
-        return True
-    if not isinstance(part, UserPromptPart):
-        return False
-    if isinstance(original, RetryFeedbackPart | RetryPromptPart):  # pyright: ignore[reportDeprecated]
-        return True
-    return not isinstance(part.content, str) and any(is_framework_frame(item) for item in part.content)
+    return isinstance(part, _RenderedCapabilityBody | CompactionPart) or (
+        isinstance(part, UserPromptPart) and isinstance(original, RetryFeedbackPart | RetryPromptPart)  # pyright: ignore[reportDeprecated]
+    )
 
 
 def _system_prompts_after_notes(parts: list[ModelRequestPart], *, leading: int) -> list[ModelRequestPart]:
@@ -4878,10 +5066,11 @@ def _system_prompts_after_notes(parts: list[ModelRequestPart], *, leading: int) 
     if last_note is None:
         return parts
     head = parts[leading : last_note + 1]
-    genuine = [p for p in head if isinstance(p, SystemPromptPart) and not isinstance(p, _FrameworkNote)]
+    # A capability part's note stays with the content it's about.
+    genuine = [p for p in head if _is_genuine_system_prompt(p)]
     if not genuine:
         return parts
-    others = [p for p in head if not isinstance(p, SystemPromptPart) or isinstance(p, _FrameworkNote)]
+    others = [p for p in head if not _is_genuine_system_prompt(p)]
     return [*parts[:leading], *others, *genuine, *parts[last_note + 1 :]]
 
 
@@ -4896,9 +5085,88 @@ def _system_prompts_before_notes(parts: list[ModelRequestPart]) -> list[ModelReq
     if first_note is None:
         return parts
     rest = parts[first_note:]
-    genuine = [p for p in rest if isinstance(p, SystemPromptPart) and not isinstance(p, _FrameworkNote)]
-    others = [p for p in rest if not isinstance(p, SystemPromptPart) or isinstance(p, _FrameworkNote)]
+    # A capability part's note stays with the content it's about.
+    genuine = [p for p in rest if _is_genuine_system_prompt(p)]
+    others = [p for p in rest if not _is_genuine_system_prompt(p)]
     return [*parts[:first_note], *genuine, *others]
+
+
+def _is_genuine_system_prompt(part: ModelRequestPart) -> bool:
+    """Whether `part` is one of the application's own system prompts, not a note about another part.
+
+    A capability part's note is the application's, but changes no instruction.
+    """
+    return isinstance(part, SystemPromptPart) and not isinstance(part, _FrameworkNote | _RenderedCapabilityNote)
+
+
+@dataclass(repr=False)
+class _RenderedCapabilityNote(SystemPromptPart):
+    """A capability part's note about its framed content, as `prepare_messages` renders it.
+
+    Like `_FrameworkNote`, a private subclass made fresh on every request and never stored: it tells the lookalike pass
+    the note isn't a change to the application's instructions, and lowers exactly like its base type.
+    """
+
+    request_scoped: bool = field(default=False, compare=False)
+    """Whether its part is downgraded and request-scoped, so the next request won't send it."""
+
+
+@dataclass(repr=False, kw_only=True)
+class _RenderedCapabilityBody(UserPromptPart):
+    """A capability part's framed content, as `prepare_messages` renders it: a frame to announce.
+
+    A private subclass made fresh on every request and never stored, which lowers exactly like its base type.
+    """
+
+    naming: LookalikeNaming = field(default_factory=LookalikeNaming, compare=False)
+    """How a lookalike note about this content names it and its author."""
+
+    request_scoped: bool = field(default=False, compare=False)
+    """Whether its part is downgraded and request-scoped, so the next request won't send it."""
+
+
+_LookalikeSources: TypeAlias = list[tuple[LookalikeSource, list[str]]]
+
+
+def _with_capability_parts_rendered(
+    authored: ModelRequest, request: ModelRequest
+) -> list[tuple[ModelRequestPart, _LookalikeSources, ModelRequestPart]]:
+    """Each of `request`'s parts with its authored form and its lookalikes, and every capability part rendered in place.
+
+    A capability part's framed body and its note are private part subclasses (`_RenderedCapabilityBody`,
+    `_RenderedCapabilityNote`) that carry what the lookalike pass needs as typed fields, within this pass only.
+    """
+    expanded: list[tuple[ModelRequestPart, _LookalikeSources, ModelRequestPart]] = []
+    for original, part in zip(authored.parts, request.parts):
+        if isinstance(part, CapabilityPart):
+            expanded.extend(_rendered_capability_part(part))
+        else:
+            expanded.append((original, _lookalike_sources(original), part))
+    return expanded
+
+
+def _rendered_capability_part(
+    part: CapabilityPart,
+) -> list[tuple[ModelRequestPart, _LookalikeSources, ModelRequestPart]]:
+    """The parts `part` renders as, each with its lookalikes, the way `_with_capability_parts_rendered` lists them."""
+    rendering = render_capability_part(part)
+    if rendering.body is None:
+        return [(new, [], new) for new in rendering.parts]
+    request_scoped = is_downgraded_request_scoped(part)
+    body = _RenderedCapabilityBody(
+        content=rendering.body.content,
+        timestamp=rendering.body.timestamp,
+        naming=rendering.naming,
+        request_scoped=request_scoped,
+    )
+    rendered: list[tuple[ModelRequestPart, _LookalikeSources, ModelRequestPart]] = []
+    if rendering.note is not None:
+        note = _RenderedCapabilityNote(
+            content=rendering.note.content, timestamp=rendering.note.timestamp, request_scoped=request_scoped
+        )
+        rendered.append((note, [], note))
+    rendered.append((body, rendering.lookalikes, body))
+    return rendered
 
 
 def _lookalike_sources(part: ModelRequestPart) -> list[tuple[LookalikeSource, list[str]]]:
@@ -4940,9 +5208,6 @@ def _lookalike_texts(part: ModelRequestPart) -> Iterator[tuple[LookalikeSource, 
             yield 'user', _text_of(item)
         for item in items:
             yield 'file', _text_file_content(item)
-        # A frame a capability wrote around someone else's text, such as a background tool's output: the frame's own
-        # tags aren't a lookalike, the body can hold one.
-        yield from (body for item in items if is_framework_frame(item) and (body := framework_frame_body(item)))
     elif isinstance(part, ToolReturnPart):
         for item in part.content_items(mode='str', wrap_if_error=False):
             text = _text_file_content(item)
@@ -4956,8 +5221,7 @@ def _lookalike_texts(part: ModelRequestPart) -> Iterator[tuple[LookalikeSource, 
 def _text_of(item: object) -> str | None:
     if isinstance(item, str):
         return item
-    # A frame a capability wrote, marked by `framework_frame_text`, is checked for its body's author alone.
-    if isinstance(item, TextContent) and not is_framework_frame(item):
+    if isinstance(item, TextContent):
         return item.content
     return None
 
@@ -4966,6 +5230,39 @@ def _text_file_content(item: object) -> str | None:
     if isinstance(item, BinaryContent) and _utils.is_text_like_media_type(item.media_type):
         return item.data.decode(errors='replace')
     return None
+
+
+def _tool_returns_as_json_strings(messages: list[ModelMessage], profile: ModelProfile) -> list[ModelMessage]:
+    """Send each successful string tool return as a JSON string field, where the profile asks for it.
+
+    See [`needs_json_string_tool_returns`][pydantic_ai.profiles.ModelProfile.needs_json_string_tool_returns]. Parts are
+    replaced one for one, and only in the outgoing copy. The status text Pydantic AI writes for an output tool or a
+    skipped call isn't a tool's output, so it's left as is. Returns the original list when nothing changed.
+    """
+    if not profile.get('needs_json_string_tool_returns', False):
+        return messages
+    new_messages: list[ModelMessage] = []
+    changed = False
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            parts = [_as_json_string_tool_return(part) for part in message.parts]
+            if _parts_changed(parts, message.parts):
+                message = replace(message, parts=parts)
+                changed = True
+        new_messages.append(message)
+    return new_messages if changed else messages
+
+
+def _as_json_string_tool_return(part: ModelRequestPart) -> ModelRequestPart:
+    """`part` with its content as `{"tool_output": ...}` JSON when it's a successful string return of a tool's text."""
+    if (
+        not isinstance(part, ToolReturnPart)
+        or part.outcome != 'success'
+        or not isinstance(part.content, str)
+        or part.content in TOOL_STATUS_TEXTS
+    ):
+        return part
+    return replace(part, content=json.dumps({'tool_output': part.content}, ensure_ascii=False))
 
 
 def _replace_unsupported_tool_return_files(messages: list[ModelMessage], profile: ModelProfile) -> list[ModelMessage]:
@@ -5004,6 +5301,41 @@ def _without_unsupported_files(part: ToolReturnPart, profile: ModelProfile) -> T
     return replace(part, content=new_items if isinstance(part.content, list) else new_items[0])
 
 
+def _narrowed_media_types(listed: frozenset[str] | None, adapter_media_types: frozenset[str]) -> frozenset[str]:
+    return adapter_media_types if listed is None else listed & adapter_media_types
+
+
+def _narrowed_file_input(
+    profile: ModelProfile,
+    unsupported: frozenset[FileInputKind],
+    adapter_media_types: Mapping[FileInputKind, frozenset[str]],
+) -> ModelProfile:
+    """The file-input flags of `profile` narrowed to what an adapter's message mapping can send."""
+    narrowed = ModelProfile(
+        supports_image_input=profile.get('supports_image_input', True) and 'image' not in unsupported,
+        supports_document_input=profile.get('supports_document_input', True) and 'document' not in unsupported,
+        supports_audio_file_input=profile.get('supports_audio_file_input', True) and 'audio' not in unsupported,
+        supports_video_input=profile.get('supports_video_input', True) and 'video' not in unsupported,
+    )
+    if (image_media_types := adapter_media_types.get('image')) is not None:
+        narrowed['supported_image_media_types'] = _narrowed_media_types(
+            profile.get('supported_image_media_types'), image_media_types
+        )
+    if (document_media_types := adapter_media_types.get('document')) is not None:
+        narrowed['supported_document_media_types'] = (
+            profile.get('supported_document_media_types', KNOWN_DOCUMENT_MEDIA_TYPES) & document_media_types
+        )
+    if (audio_media_types := adapter_media_types.get('audio')) is not None:
+        narrowed['supported_audio_media_types'] = _narrowed_media_types(
+            profile.get('supported_audio_media_types'), audio_media_types
+        )
+    if (video_media_types := adapter_media_types.get('video')) is not None:
+        narrowed['supported_video_media_types'] = _narrowed_media_types(
+            profile.get('supported_video_media_types'), video_media_types
+        )
+    return narrowed
+
+
 def _note_if_unsupported(item: object, profile: ModelProfile) -> object:
     if not isinstance(item, SendableFile):
         return item
@@ -5035,6 +5367,10 @@ def _project_instruction_state(
     statements are rendered until the compaction that ends the load, each change as a diff against the text an
     earlier statement delivered.
 
+    So is a statement of a block below `'operator'` authority, a lowered capability's instructions: it's rendered until
+    the latest compaction as a capability part at its authority, framed data on the user channel that the lookalike
+    pass renders like any other (`lowered_instruction_statement`), never in the application's voice.
+
     The baseline parts themselves are dropped. Every request in the current window was sent the same prefix,
     `prefix` (the request's instruction parts), so those requests get their `instructions` rendered from it,
     tagged, for the adapters that read a request's instructions from history rather than from the request
@@ -5045,6 +5381,7 @@ def _project_instruction_state(
     window: InstructionBaselinePart | None = None
     values = InstructionValues.at(None)
     loaded = LoadedInstructionValues()
+    lowered = LoweredInstructions()
     # Loads are folded over the post-compaction window alone, as everywhere else they're derived from history.
     loads_start = _post_compaction_window_start(messages)
     projected: list[ModelMessage] = []
@@ -5064,22 +5401,23 @@ def _project_instruction_state(
         opened_at = window_boundary_index(message) if index == current_start else -1
         for part_index, part in enumerate(message.parts):
             in_loads_window = (index, part_index) >= loads_start
-            if in_loads_window and loaded.tracks(part):
+            if is_lowered_statement(part):
+                parts.extend(_project_lowered_statement(part, lowered, in_window=in_loads_window, message=message))
+            elif in_loads_window and loaded.tracks(part):
                 # A statement of a loaded capability's block, which no instruction window restates, so it stays in
                 # effect until the compaction that ends the load.
                 text = part.render(inline_system=inline_system, previous=loaded.apply(part))
                 parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
-            elif isinstance(part, InstructionDeltaPart):
-                # A change a newer version wrote, which this one can't address, is superseded by the window
-                # the next request opens.
-                if index >= current_start and part_index > opened_at and part.id is not None:
-                    text = part.render(inline_system=inline_system, previous=values.apply(part))
-                    parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
-            else:
+            elif not isinstance(part, InstructionDeltaPart):
                 if in_loads_window:
                     loaded.observe(part)
                 if not isinstance(part, InstructionBaselinePart):
                     parts.append(part)
+            # A change a newer version wrote, which this one can't address, is superseded by the window the next
+            # request opens.
+            elif index >= current_start and part_index > opened_at and part.id is not None:
+                text = part.render(inline_system=inline_system, previous=values.apply(part))
+                parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
         instructions = message.instructions
         if (
             window is not None
@@ -5093,6 +5431,21 @@ def _project_instruction_state(
             message = replace(message, parts=parts, instructions=instructions)
         projected.append(message)
     return projected
+
+
+def _project_lowered_statement(
+    part: InstructionDeltaPart, lowered: LoweredInstructions, *, in_window: bool, message: ModelRequest
+) -> list[SystemPromptPart | CapabilityPart]:
+    """What a statement of a block below operator authority in `message` is projected as.
+
+    No instruction window restates such a block, so its statements stay in effect until the latest compaction, before
+    which they're dropped (`in_window` is `False`). Each is a capability part at the block's authority.
+    """
+    if not in_window:
+        return []
+    return lowered_instruction_statement(
+        part, restated=lowered.apply(part), timestamp=message.timestamp or _utils.now_utc()
+    )
 
 
 def _drop_capability_load_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -5399,11 +5752,12 @@ _UnpreparedPart: TypeAlias = (
     | RetryFeedbackPart
     | RetryPromptPart  # pyright: ignore[reportDeprecated]
     | CompactionPart
+    | CapabilityPart
 )
 """The request parts `prepare_messages` translates away before any adapter sees them.
 
 Each of these carries something no provider API has a field for — a mid-conversation change to the tool list or the
-thinking effort, a capability load from code, or a retry that isn't a plain turn — and `prepare_messages` turns it into
+thinking effort, a capability load from code, a retry that isn't a plain turn, or a capability's record — and `prepare_messages` turns it into
 the parts every adapter already knows how to map, or drops it. So an adapter meeting one has been handed a history that
 step never ran on, which is one branch to check rather than one per part. The one exception is a `RetryFeedbackPart` on
 a model that sets `Model._renders_retry_feedback`: `prepare_messages` leaves it for that model to render.

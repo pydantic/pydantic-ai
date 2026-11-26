@@ -22,9 +22,11 @@ from ...messages import (
     BinaryContent,
     CachePoint,
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     CompactionPart,
     DocumentUrl,
     FilePart,
+    FileUrl,
     ForceDownloadMode,
     ImageUrl,
     InstructionBaselinePart,
@@ -48,11 +50,13 @@ from ...messages import (
     ToolCallPart,
     ToolPartKind,
     ToolReturnPart,
+    ToolUIVisibility,
     UploadedFile,
     UploadedFileProviderName,
     UserContent,
     UserPromptPart,
     VideoUrl,
+    _multi_modal_content_identifier,  # pyright: ignore[reportPrivateUsage]
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
     narrow_message_parts,
@@ -84,7 +88,13 @@ from .._adapter import (
     tool_availability_delta_payload,
     tool_retry_payload,
 )
-from .._utils import client_error_text, get_ui_message_id, set_ui_message_id, without_internal_text_metadata
+from .._utils import (
+    client_error_text,
+    client_view,
+    get_ui_message_id,
+    set_ui_message_id,
+    without_internal_text_metadata,
+)
 from ._event_stream import VercelAIEventStream
 from ._utils import (
     CAPABILITY_LOAD_DELTA_DATA_TYPE,
@@ -249,6 +259,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         server_message_id: str | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         manage_message_history: Literal['client', 'server'] = 'client',
+        default_ui_visibility: ToolUIVisibility = 'public',
         conversation_store: ConversationStore | None = None,
         conversation_scope: str | None = None,
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
@@ -270,6 +281,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             server_message_id=server_message_id,
             manage_system_prompt=manage_system_prompt,
             manage_message_history=manage_message_history,
+            default_ui_visibility=default_ui_visibility,
             conversation_store=conversation_store,
             conversation_scope=conversation_scope,
             allowed_file_url_schemes=allowed_file_url_schemes,
@@ -306,6 +318,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         on_cancel: OnCancelFunc[BaseChunk] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         manage_message_history: Literal['client', 'server'] = 'client',
+        default_ui_visibility: ToolUIVisibility = 'public',
         conversation_store: ConversationStore | None = None,
         conversation_scope: str | None = None,
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
@@ -344,6 +357,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             on_cancel=on_cancel,
             manage_system_prompt=manage_system_prompt,
             manage_message_history=manage_message_history,
+            default_ui_visibility=default_ui_visibility,
             conversation_store=conversation_store,
             conversation_scope=conversation_scope,
             allowed_file_url_schemes=allowed_file_url_schemes,
@@ -574,7 +588,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 parsed = json.loads(args)
                 if _is_str_dict(parsed):
                     args = parsed
-            except json.JSONDecodeError:
+            except (ValueError, RecursionError):  # also integers past the digit limit, and deeply nested JSON
                 pass
         elif isinstance(args, dict) or args is None:
             pass
@@ -773,9 +787,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 case UserPromptPart():
                     _add_segment(segments, 'user', *_convert_user_prompt_part(part, starts_new_prompt=seen_user_prompt))
                     seen_user_prompt = True
-                case ToolReturnPart() | InstructionDeltaPart() | InstructionBaselinePart():
+                case ToolReturnPart() | InstructionDeltaPart() | InstructionBaselinePart() | CapabilityPart():
                     # Tool returns are merged into the tool call in the assistant message, and operator
-                    # instruction state stays in trusted server-side history.
+                    # instruction state stays in trusted server-side history. So do capability parts, until they
+                    # have a carrier whose trust a client can't change (#11029).
                     pass
                 case ModelSettingsDeltaPart():
                     _add_segment(
@@ -1105,8 +1120,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         generate_message_id: Callable[[ModelRequest | ModelResponse, Literal['system', 'user', 'assistant'], int], str]
         | None = None,
         sdk_version: Literal[5, 6, 7] = 5,
+        default_ui_visibility: ToolUIVisibility = 'public',
     ) -> list[UIMessage]:
-        """Transform Pydantic AI messages into Vercel AI messages.
+        """Transform Pydantic AI messages into Vercel AI messages, as the client is to be sent them.
+
+        A tool's calls and returns are dumped by their `ui_visibility` stamp: neither for a `'private'` tool, and a
+        `'redacted'` tool's calls with a placeholder instead of each result. See
+        [Tool visibility](../../ui/overview.md#tool-visibility).
 
         Note: The round-trip `dump_messages` -> `load_messages` is not fully lossless for tool
         results. Successful, failed, and denied results each round-trip via their own part type
@@ -1165,10 +1185,15 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             sdk_version: Vercel AI SDK version to target: 5, 6, or 7. Defaults to 5 for backwards
                 compatibility. Set to 6 to emit tool approval parts for deferred tool calls; 7 emits
                 identically to 6 (v7's data-stream protocol equals v6's).
+            default_ui_visibility: What the client is sent for a tool part with no `ui_visibility` stamp, as
+                [`UIAdapter.default_ui_visibility`][pydantic_ai.ui.UIAdapter.default_ui_visibility]. A stamped
+                part is dumped by its stamp, so this only reaches history without stamps, such as one from an
+                earlier version or a run that didn't set a default.
 
         Returns:
             A list of UIMessage objects in Vercel AI format
         """
+        messages = client_view(messages, default_ui_visibility)
         tool_results = _collect_tool_results(messages)
         id_generator = generate_message_id or _generate_message_id
         result: list[UIMessage] = []
@@ -1342,7 +1367,10 @@ def _convert_user_prompt_part(
                             media_type=item.media_type,
                             # Round-trip vendor_metadata (e.g. OpenAI/xAI image `detail`,
                             # Google `video_metadata`); see `BinaryContent.vendor_metadata`.
-                            provider_metadata=dump_provider_metadata(vendor_metadata=item.vendor_metadata),
+                            provider_metadata=dump_provider_metadata(
+                                vendor_metadata=item.vendor_metadata,
+                                identifier=_custom_file_identifier(item),
+                            ),
                         )
                     )
                 case ImageUrl() | AudioUrl() | VideoUrl() | DocumentUrl():
@@ -1362,6 +1390,7 @@ def _convert_user_prompt_part(
                                 force_download=item.force_download or None,
                                 vendor_metadata=item.vendor_metadata,
                                 kind=None if media_type else item.kind,
+                                identifier=_custom_file_identifier(item),
                             ),
                         )
                     )
@@ -1391,6 +1420,18 @@ def _convert_user_prompt_part(
         }
 
     return ui_parts
+
+
+def _custom_file_identifier(item: BinaryContent | FileUrl) -> str | None:
+    """The identifier `load_messages` could not compute again from the file's content, if any.
+
+    `_identifier` alone doesn't say: `BinaryContent.narrow_type` and a reload from JSON store the computed hash there.
+    """
+    identifier = item._identifier  # pyright: ignore[reportPrivateUsage]
+    if not identifier:
+        return None
+    content = item.data if isinstance(item, BinaryContent) else item.url
+    return None if identifier == _multi_modal_content_identifier(content) else identifier
 
 
 def _user_prompt_part(content: list[UserContent]) -> UserPromptPart:
@@ -1471,6 +1512,9 @@ def _load_user_file(part: FileUIPart) -> MultiModalContent:
     # request params and is dict-validated by the constructors below.
     vendor_metadata = provider_meta.get('vendor_metadata')
     force_download = provider_meta.get('force_download', False)
+    # `provider_metadata` is the client's to send: anything but a string counts as no identifier.
+    restored_identifier = provider_meta.get('identifier')
+    identifier = restored_identifier if isinstance(restored_identifier, str) else None
     try:
         file = BinaryContent.from_data_uri(part.url)
     except ValueError:
@@ -1500,20 +1544,21 @@ def _load_user_file(part: FileUIPart) -> MultiModalContent:
                 media_type=part.media_type,
                 force_download=force_download,
                 vendor_metadata=vendor_metadata,
+                identifier=identifier,
             )
     else:
-        # `from_data_uri` succeeded: restore vendor_metadata onto the BinaryContent.
-        # Reconstruct through the constructor so a malformed client value is rejected
-        # here (matching the URL constructor path) instead of being stored unvalidated
-        # and crashing a provider model later. Re-narrow afterwards so an image
-        # round-trips back to `BinaryImage` (as `from_data_uri` returned it), not
+        # `from_data_uri` succeeded: restore vendor_metadata and the identifier onto the
+        # BinaryContent. Reconstruct through the constructor so a malformed client value
+        # is rejected here (matching the URL constructor path) instead of being stored
+        # unvalidated and crashing a provider model later. Re-narrow afterwards so an
+        # image round-trips back to `BinaryImage` (as `from_data_uri` returned it), not
         # plain `BinaryContent`.
-        if vendor_metadata is not None:
+        if vendor_metadata is not None or identifier:
             file = BinaryContent.narrow_type(
                 BinaryContent(
                     data=file.data,
                     media_type=file.media_type,
-                    identifier=file.identifier,
+                    identifier=identifier or file.identifier,
                     vendor_metadata=vendor_metadata,
                 )
             )
@@ -1610,7 +1655,7 @@ def _parse_json(value: object) -> object:
         return None
     try:
         return json.loads(value)
-    except (json.JSONDecodeError, RecursionError):  # `RecursionError` on deeply nested JSON
+    except (ValueError, RecursionError):  # also integers past the digit limit, and deeply nested JSON
         return None
 
 

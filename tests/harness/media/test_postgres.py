@@ -208,3 +208,13 @@ class TestPostgresMediaStoreSchema:
         creates = [statement for statement in pool.statements if statement.startswith('CREATE TABLE')]
         assert len(creates) == 1
         assert pool.statements.count('SELECT pg_advisory_xact_lock(hashtext($1))') == 1
+
+    async def test_a_store_on_an_existing_table_issues_no_ddl(self, pool: SqlitePool) -> None:
+        """A role without `CREATE` on the schema can use a table that exists."""
+        await PostgresMediaStore(pool).exists(_MISSING_URI)
+        pool.statements.clear()
+
+        uri = await PostgresMediaStore(pool).put(b'into an existing table')
+
+        assert await PostgresMediaStore(pool).get(uri) == b'into an existing table'
+        assert not any(statement.startswith(('CREATE', 'SELECT pg_advisory')) for statement in pool.statements)

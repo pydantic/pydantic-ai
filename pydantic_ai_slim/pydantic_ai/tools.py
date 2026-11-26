@@ -46,6 +46,7 @@ from .function_signature import FunctionSignature
 from .messages import (
     ToolPartKind,
     ToolReturn,
+    ToolUIVisibility as ToolUIVisibility,
     _tool_kind_id,  # pyright: ignore[reportPrivateUsage]
 )
 from .native_tools import AbstractNativeTool
@@ -70,6 +71,7 @@ __all__ = (
     'Tool',
     'ObjectJsonSchema',
     'ToolDefinition',
+    'ToolUIVisibility',
     'DeferredToolRequests',
     'DeferredToolResults',
     'ToolApproved',
@@ -377,6 +379,8 @@ class Tool(Generic[ToolAgentDepsT]):
     metadata: dict[str, Any] | None
     tool_kind: ToolPartKind | None
     timeout: float | None
+    durable: bool | None
+    ui_visibility: ToolUIVisibility | None
     defer_loading: bool
     include_return_schema: bool | None
     function_schema: _function_schema.FunctionSchema
@@ -410,6 +414,8 @@ class Tool(Generic[ToolAgentDepsT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: _messages.ToolKindLike | None = None,
         timeout: float | None = None,
+        durable: bool | None = None,
+        ui_visibility: ToolUIVisibility | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
@@ -481,6 +487,12 @@ class Tool(Generic[ToolAgentDepsT]):
                 See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
+            durable: Where a [durable execution](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) engine runs this tool: `False` runs it
+                outside its durable unit, in workflow code, and `True` keeps the engine's default placement.
+                Defaults to `None`, the engine's default placement.
+            ui_visibility: What a [UI adapter](../ui/overview.md#tool-visibility) sends a client for this tool's calls
+                and returns: `'public'`, `'redacted'` or `'private'`.
+                Defaults to `None`, the adapter's `default_ui_visibility`.
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
                 or another tool's `ToolReturn.tools`. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
@@ -513,6 +525,8 @@ class Tool(Generic[ToolAgentDepsT]):
         self.metadata = metadata
         self.tool_kind = _tool_kind_id(tool_kind)
         self.timeout = timeout
+        self.durable = durable
+        self.ui_visibility = ui_visibility
         self.defer_loading = defer_loading
         self.include_return_schema = include_return_schema
 
@@ -588,6 +602,8 @@ class Tool(Generic[ToolAgentDepsT]):
             metadata=self.metadata,
             tool_kind=self.tool_kind,
             timeout=self.timeout,
+            durable=self.durable,
+            ui_visibility=self.ui_visibility,
             defer_loading=self.defer_loading and not (without_toolset and self._defer_loading_from_toolset),
             kind='unapproved' if self.requires_approval else 'function',
             return_schema=self.function_schema.return_schema,
@@ -783,6 +799,42 @@ class ToolDefinition:
 
     If the tool takes longer than this, a retry prompt is returned to the model.
     Defaults to None (no timeout).
+    """
+
+    durable: bool | None = None
+    """Where a [durable execution](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) engine runs this tool.
+
+    `False` runs it outside its durable unit (activity, step or task), in workflow code, on every engine built on
+    the durable execution backend. Only async function tools can do that; an engine raises a
+    [`UserError`][pydantic_ai.exceptions.UserError] for any other tool it wraps.
+    `None` (the default) and `True` keep the engine's default placement; `True` lets a `prepare` function undo an
+    earlier `durable=False`, but not an opt-out in the engine's own per-tool config, such as Temporal's
+    `tool_activity_config`. An engine's own metadata key, such as `metadata={'temporal': ...}`, wins when it's set
+    on the tool.
+
+    Not sent to the model.
+    """
+
+    ui_visibility: ToolUIVisibility | None = None
+    """What a [UI adapter](../ui/overview.md#tool-visibility) sends a client for this tool's calls and returns.
+
+    - `'public'`: the call and the result, in full.
+    - `'redacted'`: the call, with its arguments, and a placeholder instead of the result.
+    - `'private'`: neither the call nor the result.
+
+    `None` (the default) means the adapter's `default_ui_visibility`, which is `'public'` unless you set it.
+    The value is stamped on the call and return parts when the model calls the tool, and the adapters read the
+    stamp, so a conversation reloaded from history is sent the way it was streamed. The stored history always
+    keeps the full return.
+
+    An `'external'` tool is always `'public'`, since its result comes from the client, as is an output tool, whose
+    arguments are the run's answer. An `'unapproved'` tool set to `'private'` is shown as `'redacted'`, so the user
+    can see the call they're asked to approve; so is a `'private'` tool that defers its call at runtime.
+
+    It covers the call and its return value. Content sent with [`ToolReturn.content`][pydantic_ai.messages.ToolReturn]
+    is a separate user message, which `dump_messages` sends to the client as one.
+
+    Not sent to the model.
     """
 
     defer_loading: bool = False

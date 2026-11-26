@@ -311,8 +311,16 @@ execution's traces show only the work that invocation did, and costs are counted
     ```
 
 - **Retries stack.** Pydantic AI and provider clients have their own retry logic. Leaving those
-  enabled alongside the step retry policy multiplies the attempts and mishandles `Retry-After`;
-  disable one side.
+  enabled alongside the step retry policy multiplies the attempts, and a retry inside the step
+  waits out the provider's `Retry-After` while the invocation runs. Disable one side, for example
+  with `model_settings={'max_retries': 0}` on the agent.
+- **A model step's retry waits the provider's `Retry-After`.** When a model request fails with a
+  model error that has a `retry_after` (read from a `Retry-After` or `retry-after-ms` header, for
+  example) and the step's retry strategy retries it, the execution suspends for that long, rounded
+  up to whole seconds (at least one), instead of the strategy's delay. No compute is billed while it waits. The
+  strategy still decides whether to retry, so its attempt limit and error filters apply. A strategy
+  is a function with no maximum to read, so the wait is capped at the strategy's own delay for that
+  attempt or a minute, whichever is longer.
 - **Tool calls run one at a time.** A step's identity comes from the order steps are reached, so
   concurrently scheduled tool calls could claim each other's checkpoints when the execution
   resumes. Inside a durable handler the run is switched to sequential tool execution. Outside one
@@ -332,6 +340,11 @@ execution's traces show only the work that invocation did, and costs are counted
   served another step's recorded result, which usually fails to decode but can return the wrong
   data. Either way, deploy under a new published version and let in-flight executions drain on the
   old one.
+- **A held dynamic toolset is built outside any step.** A `DynamicToolset` built with
+  `per_run_step=False` is resolved once per run and held for its steps. Its factory, and the
+  `for_run` of the toolset it returns (for an `MCPToolset`, its `auth` or `headers` function), run in
+  the handler on every invocation, so keep them deterministic given the run's `deps` and leave their
+  I/O to the steps.
 - **Step results must survive the SDK serializer.** Results are checkpointed through the Lambda
   SDK's serializer. Tool results are encoded by Pydantic first, so structured returns such as
   `ToolReturn` and `BinaryContent` round-trip; a value Pydantic cannot serialize does not.
@@ -377,6 +390,8 @@ def charge_card(amount: int) -> str:
 `metadata={'aws_lambda': False}` opts a tool out of checkpointing entirely, so it runs inline on
 every attempt. Use it for cheap, side-effect-free tools whose result is not worth a checkpoint. MCP
 tools cannot opt out, because they perform I/O that must not re-run when the execution resumes.
+The engine-neutral [`durable=False`](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) opts an async
+function tool out the same way on every engine; an `'aws_lambda'` key on the same tool wins.
 
 `AWSLambdaDurability(step_config=...)` sets the base configuration for every step. Per-tool metadata
 overrides it key by key, so a tool that sets only `step_semantics` keeps the base `retry_strategy`.

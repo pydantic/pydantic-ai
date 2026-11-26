@@ -26,6 +26,8 @@ A fourth property covers apps that keep the history on the server instead:
 
 `test_conversation_store_round_trip` covers apps that give the adapter a `conversation_store`: the client hands
 the app the saved entries' ids without adding them to its messages, and its retry replaces the right stored turn.
+`test_conversation_store_regenerate_after_reload` retries from a client hydrated with `dump_messages()`, as after a
+page reload, and checks that the retry still replaces the stored turn.
 
 Properties 1 and 2 compare histories after the adapter's `sanitize_messages()`, so parts the server owns and
 never trusts from a client (its system prompt, by default) count as kept. The projection drops only part fields
@@ -58,13 +60,17 @@ from pydantic_ai.capabilities import AbstractCapability, Capability
 from pydantic_ai.conversation_store import InMemoryConversationStore
 from pydantic_ai.messages import (
     BinaryContent,
+    BinaryImage,
     CompactionPart,
+    ImageUrl,
+    InstructionCapabilityPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
     ModelSettingsDeltaPart,
+    OperatorSource,
     StructuredContent,
     SystemPromptPart,
     TextPart,
@@ -99,7 +105,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import FunctionToolset
 
 from .._inline_snapshot import snapshot
-from ..conftest import try_import
+from ..conftest import sse_data, try_import
 from .conftest import HERE, JSDriver
 
 with try_import() as imports_successful:
@@ -687,11 +693,16 @@ def _progress_state(ctx: RunContext[None]) -> str:
     return f'The user has asked {_questions_asked(ctx)} question(s) so far.'
 
 
+@dataclass(kw_only=True)
+class _ReminderPart(InstructionCapabilityPart, namespace='test_ui_roundtrip', name='reminder'):
+    pass
+
+
 class _RequestScopedReminder(AbstractCapability[None]):
     async def before_model_request(
         self, ctx: RunContext[None], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        ctx.enqueue(SystemPromptPart('Reminder: keep it short.', scope='request'))
+        ctx.enqueue(_ReminderPart(content='Reminder: keep it short.', source=OperatorSource(), scope='request'))
         return request_context
 
 
@@ -722,6 +733,7 @@ _AGUI_ACTIVITY = (
     "With `framing_announcement='when_needed'`, a dropped mid-conversation system prompt also takes the framing "
     "announcement out of the standing prompt on the next turn; accepted, and documented: UI apps set `'always'`"
 )
+_AGUI_FILE_IDENTIFIER = "`AGUIAdapter.dump_messages` doesn't carry a user file's custom `identifier`; #14284"
 _RETRY = (
     "the AI SDK stream has no carrier for a tool's outcome, so a streamed retry reloads as "
     '`outcome="failed"` instead of `"retried"`; #8185'
@@ -981,6 +993,26 @@ SCENARIOS = [
     ),
     Scenario(id='multimodal_tool_return', script=_image_script, setup=_image_tools),
     Scenario(
+        id='custom_file_identifiers',
+        script=_text_script,
+        gaps=_gaps(_AGUI_FILE_IDENTIFIER, ('load', 'dump', 'agui'), ('load', 'stream', 'agui')),
+        seed=[
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        [
+                            'Question 0',
+                            BinaryImage(data=_PNG.data, media_type='image/png', identifier='chart'),
+                            BinaryContent(data=b'%PDF-1.7', media_type='application/pdf', identifier='contract'),
+                            ImageUrl(url='https://example.com/logo.png', identifier='logo'),
+                        ]
+                    )
+                ]
+            ),
+            ModelResponse(parts=[TextPart('Three files received.')]),
+        ],
+    ),
+    Scenario(
         id='structured_content',
         script=_enqueue_script,
         setup=_enqueue_structured_tools,
@@ -1045,15 +1077,6 @@ SCENARIOS = [
 # --- Clients ------------------------------------------------------------------------------------------------------
 
 
-def _sse_data(encoded: Sequence[str]) -> list[dict[str, Any]]:
-    """The JSON payloads of a server-sent event stream."""
-    return [
-        json.loads(line.removeprefix('data: '))
-        for line in ''.join(encoded).splitlines()
-        if line.startswith('data: ') and line != 'data: [DONE]'
-    ]
-
-
 @dataclass
 class Turn:
     """One request from the client, as the server received it, and what the server did with it."""
@@ -1089,9 +1112,13 @@ class Client(ABC):
         self.sent_ids.append([message['id'] for message in body['messages']])
         return json.dumps(body).encode()
 
-    def regenerate(self) -> bytes:
-        """Retry the client's last response, the way each client's app does it."""
-        body = self.driver.request(f'{self.protocol}.regenerate', session=self.session)
+    def regenerate(self, hydrate: list[ModelMessage] | None = None) -> bytes:
+        """Retry the client's last response, the way each client's app does it, after hydrating it if given."""
+        params: dict[str, Any] = {}
+        if hydrate is not None:
+            dumped = self.adapter_type.dump_messages(hydrate)
+            params['messages'] = to_jsonable_python(dumped, by_alias=True, exclude_none=True)
+        body = self.driver.request(f'{self.protocol}.regenerate', session=self.session, **params)
         self.sent_ids.append([message['id'] for message in body['messages']])
         return json.dumps(body).encode()
 
@@ -1104,6 +1131,8 @@ class Client(ABC):
     def sanitize(self, adapter: UIAdapter[Any, Any, Any, Any, Any], messages: list[ModelMessage]) -> list[ModelMessage]:
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore', 'Parts carrying the system voice were stripped', UserWarning)
+            # The server's own history has capability parts, which `dump_messages()` never sends to a client.
+            warnings.filterwarnings('ignore', 'Capability parts were dropped', UserWarning)
             return adapter.sanitize_messages(messages)
 
     async def turn(
@@ -1161,7 +1190,7 @@ class VercelClient(Client):
         return VercelAIAdapter(agent, VercelAIAdapter.build_run_input(body), sdk_version=6, **self.adapter_kwargs)
 
     def stream(self, encoded: list[str]) -> dict[str, Any]:
-        return {'chunks': _sse_data(encoded)}
+        return {'chunks': sse_data(encoded)}
 
 
 class AGUIClient(Client):
@@ -1183,7 +1212,7 @@ class AGUIClient(Client):
         return AGUIAdapter(agent, AGUIAdapter.build_run_input(body), **self.adapter_kwargs)
 
     def stream(self, encoded: list[str]) -> dict[str, Any]:
-        return {'events': _sse_data(encoded)}
+        return {'events': sse_data(encoded)}
 
 
 CLIENTS: dict[Protocol, type[Client]] = {'vercel': VercelClient, 'agui': AGUIClient}
@@ -1480,6 +1509,94 @@ async def test_conversation_store_round_trip(protocol: Protocol, js_driver: JSDr
     conversation = await store.load(session, scope='alice')
     assert conversation is not None
     assert len(conversation.messages) == 4
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_conversation_store_regenerate_after_reload(protocol: Protocol, js_driver: JSDriver) -> None:
+    """A retry from a client hydrated with `dump_messages()` replaces the stored turn, through the real client.
+
+    The agent sets a thinking effort, so the run records a `ModelSettingsDeltaPart` behind the user prompt, which
+    AG-UI dumps as an activity message after the user message. The hydrated user message has to keep its stored
+    id: the client resends it on the retry, and the server replaces the turn only when that id matches
+    (https://github.com/pydantic/pydantic-ai/issues/12691).
+    """
+    seen: list[list[ModelMessage]] = []
+
+    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(list(messages))
+        return ModelResponse(parts=[TextPart(f'Answer number {len(seen)}.')])
+
+    scenario = Scenario(
+        id='regenerate_after_reload', script=script, agent_kwargs={'model_settings': {'thinking': 'low'}}
+    )
+    agent, _ = scenario.agent()
+    store = InMemoryConversationStore()
+    session = f'regenerate-after-reload-{protocol}'
+    client = CLIENTS[protocol](js_driver, session, {'conversation_store': store, 'conversation_scope': 'alice'})
+
+    async def run_turn(body: bytes) -> list[ModelMessage]:
+        adapter = client.adapter(agent, body)
+        client.receive([chunk async for chunk in adapter.encode_stream(adapter.run_stream())])
+        conversation = await store.load(session, scope='alice')
+        assert conversation is not None
+        return conversation.messages
+
+    stored = await run_turn(client.submit('Question 1', None))
+    assert any(isinstance(part, ModelSettingsDeltaPart) for message in stored for part in message.parts)
+
+    # The page reloads: the app hydrates the client from the store, and the user retries the answer.
+    stored = await run_turn(client.regenerate(hydrate=stored))
+
+    [first_ids, retry_ids] = client.sent_ids
+    assert retry_ids == first_ids
+    assert [type(message).__name__ for message in stored] == ['ModelRequest', 'ModelResponse']
+    assert stored[-1].parts == [TextPart('Answer number 2.')]
+    assert [len(messages) for messages in seen] == [1, 1]
+
+
+REDACTED_CLIENT_TOOL_RESULTS: dict[Protocol, dict[str, str]] = {
+    'vercel': {'state': 'output-available', 'output': '[REDACTED]'},
+    'agui': {'role': 'tool', 'content': '[REDACTED]'},
+}
+"""What a client holds for a `'redacted'` tool's result: the AI SDK's tool part, or AG-UI's tool message."""
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_redacted_tool_result_completes_the_client_tool_call(protocol: Protocol, js_driver: JSDriver) -> None:
+    """A `'redacted'` tool's placeholder result completes the call in the real client, streamed and after a reload.
+
+    A frontend renders a tool call as running until the client holds its result, so the placeholder has to land
+    where a result would. The history is held on the server, so the model still gets the real result.
+    """
+    seen: list[list[ModelMessage]] = []
+
+    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(list(messages))
+        return _tool_call_script(messages, info)
+
+    agent, _ = Scenario(id='redacted_tool', script=script, setup=_get_weather).agent()
+    session = f'redacted-tool-{protocol}'
+    client = CLIENTS[protocol](
+        js_driver, session, {'manage_message_history': 'server', 'default_ui_visibility': 'redacted'}
+    )
+
+    adapter = client.adapter(agent, client.submit('Question 1', None))
+    results: list[AgentRunResult[Any]] = []
+    encoded = [chunk async for chunk in adapter.encode_stream(adapter.run_stream(on_complete=results.append))]
+    [result] = results
+    streamed = client.receive(encoded)['messages']
+    # The page reloads: the app hydrates the client from the server's history.
+    reloaded = json.loads(client.submit('Question 2', result.all_messages()))['messages']
+
+    expected = REDACTED_CLIENT_TOOL_RESULTS[protocol]
+    for messages in (streamed, reloaded):
+        entries = [part for message in messages for part in message['parts']] if protocol == 'vercel' else messages
+        tool_result = next(entry for entry in entries if entry.get('toolCallId') == 'call-1')
+        assert {key: tool_result[key] for key in expected} == expected
+        assert 'Sunny in Paris' not in json.dumps(messages)
+
+    # The model got the real result.
+    assert any('Sunny in Paris' in str(part) for message in seen[-1] for part in message.parts)
 
 
 def test_server_held_history_has_none_of_the_client_round_trip_gaps() -> None:

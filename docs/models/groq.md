@@ -80,6 +80,21 @@ agent = Agent(model)
 ...
 ```
 
+## Structured output {#structured-output}
+
+[`NativeOutput`][pydantic_ai.output.NativeOutput] sends Groq's [`json_schema` response format](https://console.groq.com/docs/structured-outputs) on the models below. Unless you pass `strict` to `NativeOutput`, the `strict` value Pydantic AI sends depends on the model:
+
+| Models | `strict` sent |
+|---|---|
+| `openai/gpt-oss-*`, `qwen/qwen3.8-*` | `true` when the schema meets strict mode's requirements (for example, no field has a default), otherwise `false` |
+| `qwen/qwen3.6-*` | `false` |
+| `meta-llama/llama-4-scout-17b-16e-instruct`, `meta-llama/llama-4-maverick-17b-128e-instruct` | `true` |
+| `moonshotai/*`, `meta-models/muse-spark-open` | `null`; Groq documents best effort as the default |
+
+Other Groq models raise a [`UserError`][pydantic_ai.exceptions.UserError] for `NativeOutput`. [`PromptedOutput`][pydantic_ai.output.PromptedOutput] uses Groq's JSON mode (`json_object`) on every model when the request has no function tools.
+
+Groq can't combine `json_schema` with function tools, so `NativeOutput` on an agent with function tools raises a [`UserError`][pydantic_ai.exceptions.UserError] before the request is sent. Use the default [`ToolOutput`][pydantic_ai.output.ToolOutput] instead.
+
 ## Service tier
 
 Groq supports controlling the [service tier](https://console.groq.com/docs/service-tiers) to trade off throughput and reliability.
@@ -89,7 +104,7 @@ The unified field maps as follows for Groq:
 
 - `'auto'`: passed through as `'auto'`, so Groq picks the best tier available to you.
 - `'default'`: maps to `'on_demand'`, Groq's standard tier.
-- `'flex'`: passed through as `'flex'`. Flex requests [fail fast with a 498 error](https://console.groq.com/docs/flex-processing) when flex capacity is unavailable.
+- `'flex'`: passed through as `'flex'`. Flex requests [fail fast with a 498 error](https://console.groq.com/docs/flex-processing) when flex capacity is unavailable, which raises a [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] that [`ModelFallback`](../capabilities/model-fallback.md) and [`RetryOnModelErrors`](../capabilities/retry-on-model-errors.md) act on.
 - `'priority'`: not part of Groq's tier model and silently ignored.
 
 Groq's enterprise `'performance'` tier is only reachable through `groq_service_tier`.

@@ -178,6 +178,7 @@ with try_import() as imports_successful:
         BetaDirectCaller,
         BetaDocumentBlock,
         BetaInputJSONDelta,
+        BetaMCPToolUseBlock,
         BetaMemoryTool20250818CreateCommand,
         BetaMemoryTool20250818DeleteCommand,
         BetaMemoryTool20250818InsertCommand,
@@ -2354,6 +2355,121 @@ async def test_anthropic_sampling_settings_reach_the_wire(
     )
 
 
+async def test_anthropic_thinking_drops_the_sampling_settings_it_rejects(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """With thinking, Claude rejects `temperature` other than `1`, `top_p` below `0.95` and any `top_k` with a 400.
+
+    They're dropped silently instead, as tuning knobs are, so settings chosen for another model don't fail the request.
+    """
+    agent = Agent(anthropic_model('claude-haiku-4-5', capture=True))
+
+    result = await agent.run(
+        'What is 2+2? Answer with the number only.',
+        model_settings=ModelSettings(thinking=True, temperature=0.5, top_p=0.9, top_k=40),
+    )
+
+    assert result.output.strip() == snapshot('4')
+    body = request_capture.body('/v1/messages')
+    assert {key: value for key, value in body.items() if key in ('temperature', 'top_p', 'top_k', 'thinking')} == (
+        snapshot({'thinking': {'type': 'enabled', 'budget_tokens': 10000}})
+    )
+
+
+@pytest.mark.parametrize(
+    'model_settings', [pytest.param({'temperature': 1}, id='temperature'), pytest.param({'top_p': 0.97}, id='top_p')]
+)
+async def test_anthropic_thinking_keeps_the_sampling_settings_it_accepts(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    model_settings: ModelSettings,
+):
+    """With thinking, `temperature=1` and `top_p` from `0.95` are accepted, so they're still sent.
+
+    One at a time, since Claude Sonnet 4.6 takes only one of them either way.
+    """
+    agent = Agent(anthropic_model('claude-sonnet-4-6', capture=True))
+
+    await agent.run('What is 2+2? Answer with the number only.', model_settings={**model_settings, 'thinking': True})
+
+    body = request_capture.body('/v1/messages')
+    assert {key: value for key, value in body.items() if key in ('temperature', 'top_p', 'top_k')} == model_settings
+
+
+async def test_anthropic_thinking_keeps_top_p_when_it_drops_temperature(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """With thinking, a `temperature` other than `1` is dropped, so an accepted `top_p` no longer conflicts and is kept.
+
+    Claude Haiku 4.5 takes `temperature` or `top_p`, not both, but only `top_p` is left to send here.
+    """
+    agent = Agent(anthropic_model('claude-haiku-4-5', capture=True))
+
+    await agent.run(
+        'What is 2+2? Answer with the number only.',
+        model_settings=ModelSettings(thinking=True, temperature=0.5, top_p=0.97),
+    )
+
+    body = request_capture.body('/v1/messages')
+    assert {key: value for key, value in body.items() if key in ('temperature', 'top_p')} == snapshot({'top_p': 0.97})
+
+
+async def test_anthropic_drops_top_p_set_together_with_temperature(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """Claude Haiku 4.5 takes `temperature` or `top_p`, not both, so `top_p` is dropped silently."""
+    agent = Agent(anthropic_model('claude-haiku-4-5', capture=True))
+
+    await agent.run(
+        'What is 2+2? Answer with the number only.', model_settings=ModelSettings(temperature=0.5, top_p=0.9)
+    )
+
+    body = request_capture.body('/v1/messages')
+    assert {key: value for key, value in body.items() if key in ('temperature', 'top_p')} == snapshot(
+        {'temperature': 0.5}
+    )
+
+
+async def test_anthropic_thinking_keeps_sampling_settings_without_the_restriction(allow_model_requests: None):
+    """A model without `anthropic_restricts_sampling_with_thinking`, like a non-Claude model behind an
+    Anthropic-compatible endpoint, gets its sampling settings with thinking too.
+
+    A mock, since this only checks that the drop follows the profile flag, which the request shows.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    )
+    model = AnthropicModel(
+        'claude-opus-4-1',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        profile=AnthropicModelProfile(anthropic_restricts_sampling_with_thinking=False),
+    )
+
+    await Agent(model).run(
+        'What is 2+2?', model_settings=ModelSettings(thinking=True, temperature=0.5, top_p=0.9, top_k=40)
+    )
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['thinking'] == {'type': 'enabled', 'budget_tokens': 10000}
+    assert kwargs['extra_body'] == {'temperature': 0.5, 'top_p': 0.9, 'top_k': 40}
+
+
+async def test_anthropic_keeps_top_p_set_together_with_temperature_where_accepted(allow_model_requests: None):
+    """Models without `anthropic_disallows_temperature_with_top_p`, like Claude Opus 4.1, get both.
+
+    A mock, since this only checks that the drop is limited to the flagged models, which the request shows.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    )
+    agent = Agent(AnthropicModel('claude-opus-4-1', provider=AnthropicProvider(anthropic_client=mock_client)))
+
+    await agent.run('What is 2+2?', model_settings=ModelSettings(temperature=0.5, top_p=0.9))
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['extra_body'] == {'temperature': 0.5, 'top_p': 0.9}
+
+
 async def test_anthropic_betas_setting(allow_model_requests: None):
     """Verify anthropic_betas setting adds betas to the API request."""
     c = completion_message(
@@ -4399,12 +4515,7 @@ def test_expired_container_error(status_code: int, error_type: str | None, messa
         if error_type is None
         else {'type': 'error', 'error': {'type': error_type, 'message': message}}
     )
-    error = APIStatusError(
-        'test error',
-        response=httpx2.Response(status_code=status_code, request=httpx2.Request('POST', 'https://example.com/v1')),
-        body=body,
-    )
-    assert is_expired_container_error(error) is expected
+    assert is_expired_container_error(status_code, body) is expected
 
 
 def test_model_connection_error(allow_model_requests: None) -> None:
@@ -6976,6 +7087,39 @@ async def test_anthropic_opus_47_rejects_budget_thinking(allow_model_requests: N
         await agent.run('What is 2+2?')
 
 
+async def test_anthropic_extra_body_budget_thinking_reaches_api(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """Budget thinking in `extra_body['thinking']` is sent as is, and the API's 400 comes back as a `ModelHTTPError`.
+
+    Only typed `anthropic_thinking` is checked before sending. `FallbackModel` and `ModelFallback` fall back on the 400,
+    while a check before sending would stop `ModelFallback` with structured output, and fail a whole
+    `model_request_batch` instead of returning the 400 in that request's place.
+    """
+    agent = Agent(
+        anthropic_model('claude-opus-4-7', capture=True),
+        model_settings=AnthropicModelSettings(extra_body={'thinking': {'type': 'enabled', 'budget_tokens': 1024}}),
+    )
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('What is 2+2?')
+
+    assert (exc_info.value.status_code, exc_info.value.body) == snapshot(
+        (
+            400,
+            {
+                'type': 'error',
+                'error': {
+                    'type': 'invalid_request_error',
+                    'message': '"thinking.type.enabled" is not supported for this model. Use "thinking.type.adaptive" and "output_config.effort" to control thinking behavior.',
+                },
+                'request_id': 'req_011Ch9EAuo6tvE72oqfMtLyV',
+            },
+        )
+    )
+    assert request_capture.body('/v1/messages')['thinking'] == {'type': 'enabled', 'budget_tokens': 1024}
+
+
 @pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
 async def test_anthropic_unified_thinking_opus_47_xhigh(allow_model_requests: None, model_name: str):
     responses = [
@@ -7131,6 +7275,95 @@ async def test_anthropic_opus_47_keeps_non_sampling_extra_body(allow_model_reque
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert kwargs['extra_body'] == {'metadata': {'keep': True}}
+
+
+@pytest.mark.parametrize('header_name', ['anthropic-version', 'Anthropic-Version'])
+@pytest.mark.parametrize('model_name', ['claude-sonnet-4-6', 'claude-haiku-4-5'])
+async def test_anthropic_api_version_2026_10_21_drops_sampling_settings(
+    allow_model_requests: None, model_name: str, header_name: str
+):
+    """`anthropic>=2` sends `2026-10-21`, which rejects sampling settings on every model, not just Opus 4.7+.
+
+    Kept as a unit test because the header under test can't be set through a recording: the locked SDK sends
+    `2023-06-01`, and the cassette hooks strip `anthropic-*` headers.
+    """
+    responses = [
+        completion_message([BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1))
+    ]
+    mock_client = cast(AsyncAnthropic, MockAnthropic(messages_=responses, default_headers={header_name: '2026-10-21'}))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings=AnthropicModelSettings(temperature=0, extra_body={'metadata': {'keep': True}}))
+
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        await agent.run('What is 2+2?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['extra_body'] == {'metadata': {'keep': True}}
+
+
+@pytest.mark.parametrize(
+    'default_headers,extra_headers',
+    [
+        pytest.param({'anthropic-version': '2023-06-01'}, None, id='client'),
+        pytest.param({'anthropic-version': '2026-10-21'}, {'Anthropic-Version': '2023-06-01'}, id='request'),
+    ],
+)
+async def test_anthropic_api_version_2023_06_01_keeps_sampling_settings(
+    allow_model_requests: None, default_headers: dict[str, str], extra_headers: dict[str, str] | None
+):
+    """`2023-06-01` accepts sampling settings, whether the client sets it or the request's `extra_headers` does.
+
+    Kept as a unit test because the header under test can't be set through a recording: the locked SDK sends
+    `2023-06-01`, and the cassette hooks strip `anthropic-*` headers.
+    """
+    responses = [
+        completion_message([BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1))
+    ]
+    mock_client = cast(AsyncAnthropic, MockAnthropic(messages_=responses, default_headers=default_headers))
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    settings = AnthropicModelSettings(temperature=0)
+    if extra_headers is not None:
+        settings['extra_headers'] = extra_headers
+    agent = Agent(m, model_settings=settings)
+
+    await agent.run('What is 2+2?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['extra_body'] == {'temperature': 0}
+
+
+async def test_anthropic_api_version_header_does_not_drop_sampling_settings_on_legacy_bedrock(
+    allow_model_requests: None,
+):
+    """The legacy Bedrock client sends its API version in the body, so its `anthropic-version` header doesn't count.
+
+    Kept as a unit test because it pins the outbound body under a client header that a recording can't set: the
+    cassette hooks strip `anthropic-*` headers.
+    """
+    bodies: list[dict[str, JsonValue]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(TypeAdapter(dict[str, JsonValue]).validate_json(request.content))
+        return httpx2.Response(400, json={'message': 'captured'})
+
+    from anthropic import AsyncAnthropicBedrock
+
+    # A bearer token skips SigV4 signing, which would need `botocore` from the `bedrock` extra.
+    async with AsyncAnthropicBedrock(
+        api_key='x',
+        aws_region='us-east-1',
+        base_url='http://localhost',
+        max_retries=0,
+        default_headers={'anthropic-version': '2026-10-21'},
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        agent = Agent(AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client)))
+        with pytest.raises(ModelHTTPError):
+            await agent.run('What is 2+2?', model_settings=AnthropicModelSettings(temperature=0))
+
+    [body] = bodies
+    assert body['temperature'] == 0
+    assert body['anthropic_version'] == 'bedrock-2023-05-31'
 
 
 async def test_anthropic_explicit_extra_body_overrides_the_sampling_setting(allow_model_requests: None):
@@ -7493,6 +7726,64 @@ async def test_streaming_bedrock_start_event_without_message_is_skipped(allow_mo
     )
     assert response.provider_response_id == 'x'
     assert response.model_name == 'claude-haiku-4-5'
+
+
+async def test_unknown_content_block_is_skipped(allow_model_requests: None):
+    """Unit test: a block type the SDK doesn't know can't be recorded in a cassette."""
+    # Built the way the SDK builds a response: an unknown type becomes one of its classes, without validation.
+    future_block = cast(
+        BetaContentBlock, construct_type(type_=BetaContentBlock, value={'type': 'future_block', 'id': 'fb_1'})
+    )
+    c = completion_message(
+        [future_block, BetaTextBlock(text='hello', type='text')], BetaUsage(input_tokens=5, output_tokens=10)
+    )
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_mock(c)))
+
+    with pytest.warns(UserWarning, match='future_block'):
+        result = await Agent(m).run('hello')
+    assert result.output == 'hello'
+
+
+async def test_unknown_streamed_content_block_and_delta_are_skipped(allow_model_requests: None):
+    """Unit test: a block or delta type the SDK doesn't know can't be recorded in a cassette."""
+
+    def unknown_event(value: dict[str, Any]) -> BetaRawMessageStreamEvent:
+        # Built the way the SDK builds a stream event: an unknown type becomes one of its classes, without validation.
+        return cast(BetaRawMessageStreamEvent, construct_type(type_=BetaRawMessageStreamEvent, value=value))
+
+    stream: list[MockRawMessageStreamEvent] = [
+        BetaRawMessageStartEvent(message=anth_msg(BetaUsage(input_tokens=4, output_tokens=0)), type='message_start'),
+        unknown_event({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'future_block'}}),
+        unknown_event({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'future_delta', 'x': 1}}),
+        BetaRawContentBlockStopEvent(index=0, type='content_block_stop'),
+        BetaRawContentBlockStartEvent(
+            content_block=BetaTextBlock(text='', type='text'), index=1, type='content_block_start'
+        ),
+        BetaRawContentBlockDeltaEvent(
+            delta=BetaTextDelta(text='hello', type='text_delta'), index=1, type='content_block_delta'
+        ),
+        unknown_event({'type': 'content_block_delta', 'index': 1, 'delta': {'type': 'future_delta', 'x': 1}}),
+        BetaRawContentBlockStopEvent(index=1, type='content_block_stop'),
+        BetaRawMessageDeltaEvent(
+            delta=Delta(stop_reason='end_turn'), usage=BetaMessageDeltaUsage(output_tokens=2), type='message_delta'
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+    m = AnthropicModel(
+        'claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_stream_mock(stream))
+    )
+
+    with pytest.warns(UserWarning) as warned:
+        async with Agent(m).run_stream('hello') as result:
+            output = await result.get_output()
+    assert output == 'hello'
+    # The unknown block's own delta is dropped with it; only the delta on the text block warns on its own.
+    assert [str(w.message) for w in warned] == snapshot(
+        [
+            "Handling of this content block type is not yet implemented, so it was skipped. Please report on our GitHub: 'future_block'",
+            "Handling of this content block delta type is not yet implemented, so it was skipped. Please report on our GitHub: 'future_delta'",
+        ]
+    )
 
 
 def test_streaming_usage_with_compaction():
@@ -9995,6 +10286,58 @@ async def test_anthropic_mcp_call_replays_empty_tool_args(allow_model_requests: 
     assert completion_kwargs['messages'][1]['content'][0] == snapshot(
         {'id': 'mcptoolu_123', 'type': 'mcp_tool_use', 'server_name': 'clock', 'name': 'current_time', 'input': {}}
     )
+
+
+@pytest.mark.parametrize('empty_delta', [False, True], ids=['no-delta', 'empty-delta'])
+async def test_anthropic_mcp_call_streams_empty_tool_args(allow_model_requests: None, empty_delta: bool):
+    """Mocked, not recorded: no MCP server in the cassettes exposes a zero-argument tool."""
+    input_deltas: list[BetaRawMessageStreamEvent] = []
+    if empty_delta:
+        input_deltas.append(
+            BetaRawContentBlockDeltaEvent(
+                type='content_block_delta', index=0, delta=BetaInputJSONDelta(type='input_json_delta', partial_json='')
+            )
+        )
+    stream: list[BetaRawMessageStreamEvent] = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_1',
+                model='claude-sonnet-4-5',
+                role='assistant',
+                type='message',
+                content=[],
+                stop_reason=None,
+                usage=BetaUsage(input_tokens=1, output_tokens=1),
+            ),
+        ),
+        BetaRawContentBlockStartEvent(
+            type='content_block_start',
+            index=0,
+            content_block=BetaMCPToolUseBlock(
+                type='mcp_tool_use', id='mcptoolu_01', name='who_am_i', server_name='srv', input={}
+            ),
+        ),
+        *input_deltas,
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+        BetaRawContentBlockStartEvent(
+            type='content_block_start', index=1, content_block=BetaTextBlock(type='text', text='ok')
+        ),
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=1),
+        BetaRawMessageDeltaEvent(
+            type='message_delta', delta=Delta(stop_reason='end_turn'), usage=BetaMessageDeltaUsage(output_tokens=1)
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+    model = AnthropicModel(
+        'claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_stream_mock(stream))
+    )
+    agent = Agent(model, capabilities=[NativeTool(MCPServerTool(id='srv', url='https://mcp.example/mcp'))])
+
+    async with agent.run_stream('Who am I?') as result:
+        await result.get_output()
+    call = next(iter_message_parts(result.all_messages(), ModelResponse, NativeToolCallPart))
+    assert call.args == '{"action":"call_tool","tool_name":"who_am_i","tool_args":{}}'
 
 
 @pytest.mark.vcr()

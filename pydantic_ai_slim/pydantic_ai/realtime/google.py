@@ -53,6 +53,7 @@ from ..messages import (
     BinaryImage,
     CachePoint,
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     CompactionPart,
     DocumentUrl,
     FilePart,
@@ -95,6 +96,7 @@ from ..models import (
     _conversation_summary_text,  # pyright: ignore[reportPrivateUsage]
     download_item,
 )
+from ..models._google_common import snap_thinking_level, thinking_effort_to_level
 from ..models._speech import assistant_speech_text
 
 # Reuse the classic `GoogleModel`'s native tool mappers so a realtime turn's grounding / code-execution
@@ -107,8 +109,6 @@ from ..models.google import (
     _map_executable_code,  # pyright: ignore[reportPrivateUsage]
     _map_grounding_metadata,  # pyright: ignore[reportPrivateUsage]
     _map_url_context_metadata,  # pyright: ignore[reportPrivateUsage]
-    _snap_thinking_level,  # pyright: ignore[reportPrivateUsage]
-    _thinking_effort_to_level,  # pyright: ignore[reportPrivateUsage]
     _usage_metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
@@ -572,7 +572,7 @@ def _thinking_to_config(thinking: ThinkingLevel, profile: GoogleRealtimeModelPro
     effort: ThinkingEffort = (
         _IMPLIED_THINKING_EFFORT if thinking is False else 'medium' if thinking is True else thinking
     )
-    level = _snap_thinking_level(_thinking_effort_to_level(effort), profile.get('google_thinking_levels'))
+    level = snap_thinking_level(thinking_effort_to_level(effort), profile.get('google_thinking_levels'))
     return genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel(level))
 
 
@@ -667,7 +667,7 @@ async def _open_live_session(
             # so the SDK's `async with ws_connect(...)` still gets to close the socket it opened,
             # where a level-triggered scope would cancel that close too and leak the socket.
             try:
-                return await asyncio.wait_for(opening.__aenter__(), timeout=handshake_timeout)
+                return await asyncio.wait_for(opening.__aenter__(), timeout=handshake_timeout)  # noqa: TID251  (not converted to anyio yet)
             except TimeoutError as e:
                 raise TimeoutError(f'no setup_complete within {handshake_timeout} seconds') from e
 
@@ -715,6 +715,8 @@ async def _seed_request_parts(
                 | ToolAvailabilityDeltaPart()
                 | CapabilityLoadDeltaPart()
                 | ModelSettingsDeltaPart()
+                # Rendered into the parts below by `wrap_seeded_system_prompts` before seeding.
+                | CapabilityPart()
             ):
                 # System prompts are seeded through session instructions, and tool-availability news
                 # from a prior standard run is stale here: the session advertises its own tools.

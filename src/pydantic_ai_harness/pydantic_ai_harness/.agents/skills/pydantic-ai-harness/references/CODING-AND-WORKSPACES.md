@@ -14,10 +14,11 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | General coding agent: investigate, edit, test, delegate | `Coder()` + a workspace |
 | Narrower agent: file tools and/or commands with policy (allowlists, patterns, read-only) | `FileSystem()` and/or `Shell()` + a workspace |
 | Files and commands start in a specific directory | `LocalWorkspace('./repo')`, or `working_dir=` on a sandbox |
-| Untrusted model or repo, or no access to this machine | Swap `LocalWorkspace` for `ModalSandbox()` / `E2BSandbox()` / `RenderSandbox()` / `SpritesSandbox()` / `DaytonaSandbox()` / `BoxdSandbox()`; tool capabilities stay the same |
+| Untrusted model or repo, or no access to this machine | Swap `LocalWorkspace` for `ModalSandbox()` / `E2BSandbox()` / `RenderSandbox()` / `SpritesSandbox()` / `DaytonaSandbox()` / `BoxdSandbox()`; tool capabilities stay the same. For a repo the operator didn't write, add `authority='none'` (every sandbox and `SSHWorkspace` takes `authority` and `path_authority`, like `LocalWorkspace`) |
 | Isolation without a cloud account | `SmolSandbox()`: a smolvm microVM on this machine (macOS Apple silicon, Linux x86_64/aarch64 with KVM) |
 | Local microVM with an egress allow-list, or host mounts/ports/secrets | `BoxLiteSandbox(allow_internet_access=True, allowed_hosts=[...])`: a BoxLite micro-VM; `box_options` passes other `boxlite.BoxOptions` |
 | A disposable environment on this machine with Docker or Podman, not a security boundary | `DockerContainer(image='python:3.13-slim')`: a local container on your kernel |
+| A desktop the agent sees and controls | `DockerContainer(desktop=True)` + `ComputerUse()`: a local container with a display. `desktop=True` also works on `SmolSandbox` and `BoxLiteSandbox` (local micro-VMs, with `allow_internet_access=True`), on `BoxdSandbox`, `DaytonaSandbox`, `E2BSandbox`, `ModalSandbox`, `RenderSandbox` and `SpritesSandbox` in the cloud, on `OpenSandbox(image=...)` self-hosted, and on `KubernetesSandbox(warm_pool=...)` on your cluster |
 | Sandboxes on your own server, on Docker or Kubernetes | `OpenSandbox(image='python:3.13-slim')`: an [OpenSandbox](https://open-sandbox.ai) sandbox |
 | Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrappedWorkspace(...)` to confine its commands to the working directory on that host |
 | Only your own tools use `ctx.workspace` | A workspace capability alone |
@@ -53,9 +54,14 @@ except UserError as e:
   provider's proxy option, which only shapes a new sandbox. Each provider's docs page has a section on it:
   - E2B: `E2BSandbox(network={'rules': {host: [{'transform': {'headers': {...}}}]}})`; HTTPS only.
   - boxd: `BoxdSandbox(secrets=['GH_TOKEN'])`, naming a secret made beforehand with
-    `secrets.set(name, value, scope='private-unattached', domains=[...])`; without `domains` the real value is set.
-    boxd also substitutes request bodies, so a command can store the value on a named host (a GitHub
-    issue or gist) and read it back: use a fine-grained token without Gists access.
+    `secrets.set(name, value, scope='private-unattached', domains=[...], replace_in=['headers'])`; without
+    `domains` the real value is set. Without `replace_in`, boxd also substitutes the URL and body, so a command
+    can store the value on a named host (a GitHub issue or gist) and read it back.
+  - Daytona: `DaytonaSandbox(secrets={'GH_TOKEN': 'secret-name'})`, mounting an organization Secret created with
+    `hosts` (without them it goes to any host); HTTPS headers only, Basic auth included.
+  - OpenSandbox: `OpenSandboxBackend(credential_proxy=CredentialProxyConfig(enabled=True), network_policy=...)`
+    (backend only), then fill `(await backend.get_sandbox()).credential_vault` before passing the backend as
+    `workspace=`. Needs the server's egress sidecar in `dns+nft` mode and a policy allowing every bound host.
 - On Windows, use `WindowsWorkspace('.')` (same options, also not a sandbox); `Coder()` without a
   workspace fails as on POSIX. Commands run in PowerShell and paths are Windows paths. `Shell` offers no `run_command` there and refuses `max_file_bytes`; `grep` and
   `list_files` read the files when `rg` is missing.
@@ -94,7 +100,7 @@ the last 16,000 bytes of output after `[... output truncated, N earlier bytes om
 log's path (`.pydantic-ai-harness/shell/<id>/output.log`), and its commands outlive the run;
 `delegate_task` has one delegate, `self`):
 
-- `read_file(path, offset=0, limit=None)`, `write_file(path, content)`,
+- `read_file(path, offset=1, limit=None)`, `write_file(path, content)`,
   `edit_file(path, old_text=None, new_text=None, replacements=None)`
 - `list_files(path='.', glob=None)`,
   `grep(pattern, path='.', glob=None, file_type=None, ignore_case=False, literal=False, context=0)`
@@ -117,6 +123,17 @@ is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `cac
 - **Bind `Coder` on the `Agent`**: passing it to `run(capabilities=...)` raises `UserError` unless
   `sub_agents=False`. Delegates re-run the bound agent (same model, workspace, and neighbouring
   capabilities such as approval gates), up to 3 levels deep.
+- **The rule against unrequested delegation is GPT-only:** `Coder` tells the model not to call
+  `delegate_task` unless the user or `AGENTS.md` asks only when the model's profile sets
+  `delegates_unprompted` (OpenAI's GPT models, not gpt-oss). After a `ModelFallback` fallback or a later
+  run on another model, the new model is sent the instructions it would have had from the start (the
+  block rewrites the prefix; no withdrawal note); a `FallbackModel` gets no rule (and a one-time
+  `UserWarning`: use the `ModelFallback` capability). To make another
+  model hold back, pass `profile={'delegates_unprompted': True}` to its model or say so in `instructions=`.
+- **GPT-only `'max'` guidance:** at `autonomy='max'`, three more blocks follow the same per-model pattern:
+  `misread` (a classify-first refinement of the inline misread check, for `reinterprets_malformed_inputs`), `handoff` (structured notes, for `omits_handoff_evidence`) and `runtime_constraints` (check what a
+  stated runtime allows before writing code, for `ignores_stated_runtime_constraints`). `openai_model_profile` sets
+  all three for GPT models, not gpt-oss or the o-series. Evidence is one SWE81 run each (53.2 vs 51.0, within noise; measured with the classify sentence in place of the shared misread check).
 - **Lazy sandbox creation:** `RepoContext` reads the workspace at run start, which creates a sandbox
   before any tool call. `Coder(repo_context=False)` defers it (the instructions then stop naming the
   working directory). To use your own `RepoContext`, pass it as `repo_context=RepoContext(...)` rather than
@@ -145,8 +162,10 @@ is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `cac
 `LocalWorkspace('.')` (cwd at import) and `Coder()`:
 
 ```bash
-uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-opus-5-5
+uvx pydantic-ai-pax --agent pydantic_ai_harness.coder:coder_agent -m anthropic:claude-opus-5-5
 ```
+
+That is Pax, the harness TUI, loading this exported agent: `--agent` takes an import path, loads no plugins, and needs `-m` because the agent carries no model. Plain `uvx pydantic-ai-pax` instead builds its own `Coder`-based agent with Pax's plugins, which is what someone who wants a coding agent rather than this export should run.
 
 ### BenchmarkInstructions
 
@@ -194,7 +213,7 @@ agent = Agent(
 ```
 
 Tool arguments (scripted tests need them; `expected_hash` exists only with `content_hashes=True`, the default):
-`read_file(path, offset=0, limit=None)`, `write_file(path, content, expected_hash=None)`,
+`read_file(path, offset=1, limit=None)`, `write_file(path, content, expected_hash=None)`,
 `edit_file(path, old_text=None, new_text=None, replacements=None, expected_hash=None)`,
 `list_directory(path='.')`, `search_files(pattern, path='.', include_glob=None)`,
 `find_files(pattern, path='.')`, `create_directory(path)`, `file_info(path)`; `list_files` and `grep`
@@ -203,10 +222,15 @@ as under Coder.
 `read_file` returns `[header, BinaryContent]` for a PNG, JPEG, GIF, WebP or PDF up to 5 MB (detected
 from its leading bytes, not its extension), and a text description (size, media type, and for other
 binary files the first 64 bytes in hex) for any other binary file; text files come back as a string.
+With `max_image_side` set (`Coder` sets 1024; `FileSystem` defaults to `None`), an image longer than that
+on either side is downscaled first, in its own format; the header adds a
+`Shown downscaled from WxH to wxh pixels.` line and keeps the file's own size and hash; one over 25
+megapixels at its decoding scale is described as too large. It needs Pillow
+(the `coder` extra); setting `max_image_side` without it raises `ImportError`.
 A file over 64 MiB is described by its size instead of read: find the lines with `search_files` or `grep`.
 
 `read_file` has the tool kind `READ_FILE_KIND` (`file_system.read_file`). `ToolOutputLimits`'
-`read_tool_result`, `Memory`'s `read_memory` and `RepoContext`'s inventory tool step aside for it when
+`read_tool_result` and `grep_tool_result`, `Memory`'s `read_memory` and `RepoContext`'s inventory tool step aside for it when
 the files they read are in the run's workspace, also when `FileSystem` is renamed (`FileSystem().prefix_tools('wiki')`).
 
 Parameters: `root_dir` (default the working directory; must be the working directory or an **ancestor**
@@ -214,7 +238,8 @@ of it, so `FileSystem(root_dir='data')` under `LocalWorkspace('.')` raises `User
 `LocalWorkspace('./data')` instead; `'/'` disables containment), `allowed_patterns` /
 `denied_patterns` / `read_only_patterns` (`fnmatch`: `*` spans `/`; a directory pattern covers
 descendants; denied and read-only patterns ignore case), `read_only=False` (`True` registers only read tools), `content_hashes=True`
-(`expected_hash` concurrency check), `max_read_lines=2000` (also caps a model's `limit`), `max_read_chars=50_000`, `max_*_results=1000`.
+(`expected_hash` concurrency check), `max_read_lines=2000` (also caps a model's `limit`), `max_read_chars=50_000`, `max_*_results=1000`,
+`max_image_side=None` (keyword-only).
 
 - Passing `read_only_patterns` **replaces** the defaults (`**/.git`, `**/.env`, `**/.env.*`, `*.pem`,
   `*.key`, `**/secrets*`, `**/.pydantic-ai-harness/**`).
@@ -291,7 +316,9 @@ Parameters: `denied_commands` (default `rm`, `rmdir`, `mkfs`, `dd`, `format`, `s
 `halt`, `poweroff`, `init`), `denied_operators`, `default_timeout=30.0`, `max_output_chars=50_000`
 (keeps the **tail**; `shell` already returns at most the last 16,000 bytes), `max_file_bytes=None`
 (per-file `ulimit -f`), `max_log_bytes=100_000_000` (see below), `persist_cwd=False` (sticky `cd`),
-`allow_interactive=False`, `env`, `denied_env_patterns`.
+`allow_interactive=False`, `env`, `denied_env_patterns`, `secret_env` (added like `env`; exact occurrences
+masked as `[REDACTED:<name>]` in tool results, so not a value a command encodes or slices, nor logs the
+model reads with file tools; short values are masked everywhere).
 
 - `max_log_bytes` bounds `start_command` and `shell` logs, including with `tools=['shell']`: a log past
   it is emptied and gets a `[Log exceeded max_log_bytes=...]` notice while the command keeps running.
@@ -301,10 +328,25 @@ Parameters: `denied_commands` (default `rm`, `rmdir`, `mkfs`, `dd`, `format`, `s
   `persist_cwd=True` or `tools=['shell']`; `tools=['shell']` with `default_timeout` outside (0, 270].
 - Only the first token is checked: `python`, `git`, `make`, `uv` can spawn anything.
 - `denied_env_patterns` does **not** filter `LocalWorkspace(env=)`.
+- For output pushed to the model when a command ends, add `BackgroundTools(tools=['run_command'])`.
+  Commands get stdin at EOF; there is no tool to send input.
 - Background commands **outlive the run**; a later run on the same workspace can check or stop them.
   Clean up with `stop_command` or your own code. They need `mv` and `base64` in the workspace, and
   `setsid` for process-group stops.
 - `persist_cwd` does not apply to `shell`. A read-only workspace gets no Shell tools.
+
+## AnnounceWorkingDirectory
+
+`AnnounceWorkingDirectory()` adds one instruction line naming the workspace's working directory (The working directory is `/repo`.), so the model uses relative paths. `Shell` and `FileSystem` bring it themselves (not when `defer_loading=True`), and copies merge by its fixed `id`, so the line appears once. Add it yourself when your own tools work in `ctx.workspace`. Asking the workspace starts a sandbox that isn't running before the first request; without a workspace, or with one that is gone, the line is left out.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+
+from pydantic_ai_harness import AnnounceWorkingDirectory
+
+agent = Agent('test', capabilities=[LocalWorkspace('.'), AnnounceWorkingDirectory()])
+```
 
 ## Sandbox workspaces
 
@@ -312,10 +354,10 @@ Parameters: `denied_commands` (default `rm`, `rmdir`, `mkfs`, `dd`, `format`, `s
 | --- | --- | --- | --- | --- | --- | --- |
 | Extra | `[modal]` | `[e2b]` | `[render]` | `[sprites]` | `[daytona]` | `[boxd]` |
 | Credentials | `modal token new`, or `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` | `E2B_API_KEY` | `RENDER_API_KEY` + `RENDER_WORKSPACE_ID` | `SPRITE_TOKEN` | `DAYTONA_API_KEY` | `BOXD_API_KEY` |
-| Lifetime | `sandbox_timeout=86_400` (10 to 86,400), optional `idle_timeout`; then terminated | `sandbox_timeout=3_600` (Pro: up to 86,400); then **paused**, resumed on attach | `sandbox_timeout=3_600` (up to 86,400); then terminated | Unlimited: sleeps when idle, persists until deleted | Unlimited: stopped after `auto_stop_interval` idle minutes (default 15), started again on attach; archived after 7 days stopped, never deleted | Unlimited: suspended, then hibernated, when idle (organization defaults; `auto_suspend_timeout` seconds), woken by the next command; a stopped machine is started on attach; no delete timer unless the organization sets one |
+| Lifetime | `sandbox_timeout=86_400` (10 to 86,400), optional `idle_timeout`; then terminated | `sandbox_timeout=3_600` (Pro: up to 86,400), optional `idle_timeout`; then **paused**, resumed on attach | `sandbox_timeout=3_600` (up to 86,400); then terminated | Unlimited: sleeps when idle, persists until deleted | Unlimited: stopped after `auto_stop_interval` idle minutes (default 15), started again on attach; archived after 7 days stopped, never deleted | Unlimited: suspended, then hibernated, when idle (organization defaults; `auto_suspend_timeout` seconds), woken by the next command; a stopped machine is started on attach; no delete timer unless the organization sets one |
 | Default cwd / user | `/root`, `root` | `/home/user`, `user` | home directory, `root` | `/home/sprite`, `sprite` | `/home/daytona`, `daytona` | `/home/boxd`, `boxd` |
 | `rg` preinstalled | Yes | No | Not documented | No | Yes | Yes |
-| New-sandbox options | `image`, `app_name`, `create_app_if_missing`, `client` | `template`, `allow_internet_access`, `network`, `client` | `allow_internet_access`, `client` | `runtime`, `client` | `snapshot`, `auto_stop_interval`, `allow_internet_access`, `client` | `org`, `snapshot`, `vcpu`, `auto_suspend_timeout`, `secrets`, `client` |
+| New-sandbox options | `image`, `app_name`, `create_app_if_missing`, `client` | `template`, `allow_internet_access`, `network`, `client` | `allow_internet_access`, `client` | `runtime`, `client` | `snapshot`, `auto_stop_interval`, `allow_internet_access`, `secrets`, `client` | `org`, `snapshot`, `vcpu`, `auto_suspend_timeout`, `secrets`, `client` |
 
 All take `working_dir` (absolute; created on a new sandbox, must exist on an attached one) and `env`
 (nothing from your machine is passed through). All are asyncio-only and reject `defer_loading=True`.
@@ -392,6 +434,10 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   isolated one and returns its ref: pass it as `workspace=` to try another approach from the same state,
   then `destroy` it. It wakes a suspended machine first, and refuses one that isn't isolated or is on a
   named boxd network.
+- `BoxdSandbox(desktop=True)` gives the agent the machine's 1280x800 desktop for `ComputerUse()`; `desktop=(w, h)`
+  sets another size. It needs a machine on boxd's current default image, not a fork or snapshot of an older one. A
+  top panel's Terminal button opens `xterm` and its Chromium button opens agent-browser's Chromium; from a shell,
+  `agent-browser open <url>` opens a URL in it. The agent can type any text, emoji included. Anyone in the boxd organization can watch the desktop in the console.
 - `workspace=` wins over the ref in `message_history`, and UI adapters strip refs from client-sent
   history, so keep the ref server-side. Attaching to a gone sandbox raises `WorkspaceUnavailableError`
   (so do rejected credentials); no empty replacement is created unless you pass `workspace='new'`.
@@ -399,6 +445,22 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   `ModalSandboxBackend(working_dir=...)` (or E2B/Render/Sprites/Daytona/boxd), use `Workspace(backend)` (`write_text`,
   `run([...], timeout=300)`), pass `workspace=backend`, destroy `backend.ref` in `finally`; a Sprites,
   Daytona or boxd backend you build needs `await backend.aclose()`.
+- `E2BSandbox(desktop=True)` gives a new sandbox a 1280x800 screen for `ComputerUse()`, from E2B's `desktop`
+  template (Ubuntu, XFCE, a terminal, Chrome). `desktop=(w, h)` sets another size. The Print key opens XFCE's
+  screenshot dialog instead of reaching the app. The agent can type only ASCII. A custom `template` needs `xdotool`,
+  `xwininfo`, `scrot`, `setsid`, and Xvfb unless an X server runs, which the first use installs with `apt-get` as
+  root or with passwordless `sudo`, plus `startxfce4` for the XFCE desktop.
+- `KubernetesSandbox(warm_pool=..., desktop=True)` gives the pod a 1280x800 desktop for `ComputerUse()`, or pass
+  `desktop=(w, h)`. Without root or passwordless `sudo` in the pod, the template's image must already have the
+  display's programs (listed under "What the display needs" in the `ComputerUse` docs); otherwise every command and
+  file operation refuses, naming what is missing.
+- `OpenSandbox(image=..., desktop=True)` gives the sandbox a 1280x800 desktop for `ComputerUse()`, or pass
+  `desktop=(w, h)`. The first use installs the desktop's programs with `apt-get` when the image's user is root;
+  otherwise build them into the image. Use execd 1.2 or later: older versions take about a second per command. On
+  the Docker runtime, set the server's `network_mode` to `bridge`. No port or endpoint is opened for the screen.
+- `RenderSandbox(desktop=True)` gives the sandbox a 1280x800 desktop (fluxbox, a panel with a terminal button, no
+  browser) for `ComputerUse()`, or pass `desktop=(w, h)`. The first use installs the desktop's programs with
+  `apt-get`, so a new sandbox with `allow_internet_access=False` raises `UserError`.
 - Idempotent per-turn setup goes in a `@hooks.on.before_run` hook: `await ctx.workspace.run('test -d
   repo/.git || git clone <url> repo', shell=True, timeout=300)`. Clone into a subdirectory: `shell`,
   background commands, and output spills create `.pydantic-ai-harness/` in the working directory, so
@@ -408,15 +470,28 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
 - On E2B and Sprites, a background child that inherits stdout/stderr keeps `run()` waiting: redirect
   its output (`start_command` already does). On Daytona and boxd, `run()` returns when the command exits, without
   what the child prints later.
+- `DaytonaSandbox(desktop=True)` gives a new sandbox a 1280x800 XFCE desktop for `ComputerUse()`; `desktop=(w, h)`
+  sets another size, fixed at creation. It can't press print screen, pause, scroll lock or the menu key, or type
+  characters beyond U+FFFF (most emoji). Its VNC server has no password: anyone with a preview token for its port
+  can see and control it, and on a public sandbox anyone with the preview URL can.
+  Where Chromium can't run its own sandbox, as in the default snapshot, it adds `--no-sandbox` through a file in
+  `/etc/chromium.d/` (as root or passwordless `sudo`) that stays after the run, also on an attached sandbox.
 - `ModalSandbox` warns `ModalSandboxNoToolsWarning` when the run has no `Shell`/`FileSystem` tools;
   pass `warn_if_no_tools=False` if only your own tools use it.
+- `ModalSandbox(desktop=True)` gives the sandbox a 1280x800 desktop (fluxbox, a panel with a terminal button, no
+  browser) for `ComputerUse()`, or pass `desktop=(w, h)`. The default image has the desktop's programs; a custom
+  `image` gets them installed on first use. The agent can type only ASCII.
+- `SpritesSandbox(desktop=True)` gives the Sprite a 1280x800 screen for `ComputerUse()`, with a window manager, a
+  panel and a terminal, whose programs the first use installs with `apt-get`. A cold wake closes the agent's windows. Within the same run, the display restarts on the next screenshot or action, and
+  until then a program started from the shell can't open a window; a later run's first command starts it.
 
 ### KubernetesSandbox
 
 `KubernetesSandbox(*, warm_pool, namespace='default', connection='port-forward', sandbox_timeout=86_400,
-working_dir=None, env=None)` (backend `KubernetesSandboxBackend`, extra `[kubernetes]`) claims a pod from a
-[kubernetes-sigs/agent-sandbox](https://agent-sandbox.sigs.k8s.io) `SandboxWarmPool` on first use. Credentials
-are your kubeconfig (or the pod's service account in the cluster); `'port-forward'` also needs `kubectl`.
+working_dir=None, env=None, desktop=False)` (backend `KubernetesSandboxBackend`, extra `[kubernetes]`) claims a
+pod from a [kubernetes-sigs/agent-sandbox](https://agent-sandbox.sigs.k8s.io) `SandboxWarmPool` on first use.
+Credentials are your kubeconfig (or the pod's service account in the cluster); `'port-forward'` also needs
+`kubectl`.
 
 - The pool's `SandboxTemplate` must run sandboxd; commands run in that container, so its image decides the
   tools. Commands start in sandboxd's root directory (`/workspace` by default).
@@ -425,15 +500,18 @@ are your kubeconfig (or the pod's service account in the cluster); `'port-forwar
 - From inside the cluster use `connection='in-cluster-pod-ip'` or `'in-cluster-service'`; the template's
   NetworkPolicy must admit the agent on ports 8080 and 9090. Port-forward does not work on gVisor or Kata.
 - File operations go through the sandbox's shell.
+- `desktop=True` or `(w, h)` gives the pod a desktop for `ComputerUse()`; see the desktop bullet above for what the
+  image needs.
 
 ### SmolSandbox
 
 `SmolSandbox(*, image=None, cpus=None, memory_mb=None, allow_internet_access=False,
-working_dir='/workspace', env=None)` (backend `SmolSandboxBackend`, extra `[smol]`) boots a local
+working_dir='/workspace', env=None, desktop=False)` (backend `SmolSandboxBackend`, extra `[smol]`) boots a local
 [smolvm](https://github.com/smol-machines/smolvm) microVM on first use. No credentials; needs macOS on
 Apple silicon, or Linux x86_64/aarch64 with glibc 2.34+ and access to `/dev/kvm`.
 
-- Without `image` it runs smolvm's Alpine (BusyBox, root, no Python/git/`rg`); pass an OCI image such as
+- Without `image` it runs smolvm's Alpine (BusyBox, root, no Python/git/`rg`), or `debian:bookworm-slim` with
+  `desktop`; pass an OCI image such as
   `image='python:3.12-alpine'`. No network unless `allow_internet_access=True`, which is unrestricted
   egress from this machine's network (LAN, metadata endpoints), not internet-only. `working_dir` is created.
 - The ref is `WorkspaceRef(provider='smol', id='pydantic-ai-<32 hex>')`; from history, `workspace=ref`,
@@ -447,16 +525,22 @@ Apple silicon, or Linux x86_64/aarch64 with glibc 2.34+ and access to `/dev/kvm`
   not flush a VM's disk when the process exits, so stop it first:
   `await (await SmolSandbox().backend(ref).get_sandbox()).stop()`.
 - File operations go through the VM's shell, 64 KiB per command; multi-MiB files take seconds.
+- `desktop=True` gives the VM a 1280x800 desktop (fluxbox, a panel with a terminal button, no browser) for
+  `ComputerUse()`, or pass `desktop=(w, h)`. The first start installs its programs with `apt-get`, which needs
+  `allow_internet_access=True`, or an `image` that has them; creating a new VM without either raises `UserError`,
+  attaching to one doesn't.
 
 ### BoxLiteSandbox
 
 `BoxLiteSandbox(*, image=None, cpus=None, memory_mb=None, allow_internet_access=False, allowed_hosts=None,
-working_dir='/workspace', env=None, box_options=None)` (backend `BoxLiteSandboxBackend`, extra `[boxlite]`)
+working_dir='/workspace', env=None, box_options=None, desktop=False)` (backend `BoxLiteSandboxBackend`, extra
+`[boxlite]`)
 creates a local [BoxLite](https://github.com/boxlite-ai/boxlite) micro-VM on first use. No credentials or
 daemon; needs macOS 14+ on Apple silicon, or Linux x86_64/aarch64 with glibc 2.28+ and access to `/dev/kvm`;
 Python up to 3.14.
 
-- Without `image` it runs Alpine (BusyBox, root, no Python/git/`rg`); pass e.g. `image='python:3.12-slim'`.
+- Without `image` it runs Alpine (BusyBox, root, no Python/git/`rg`), or `debian:bookworm-slim` with `desktop`;
+  pass e.g. `image='python:3.12-slim'`.
   No network unless `allow_internet_access=True`; `allowed_hosts=['pypi.org', ...]` limits egress to those
   hosts, IPs or CIDRs. `working_dir` is created.
 - `box_options` passes other `boxlite.BoxOptions` arguments to a new box (`volumes`, `ports`, `secrets`,
@@ -471,16 +555,21 @@ Python up to 3.14.
   `WorkspaceUnavailableError`.
 - Output is read while the command runs and for at most 2 s after it exits, so a background job never holds
   a command open; output past 10 MiB stops the command with `WorkspaceOutputLimitError`.
+- `desktop=True` gives the box a 1280x800 desktop (fluxbox, a panel with a terminal button, no browser) for
+  `ComputerUse()`, or pass `desktop=(w, h)`. The first start installs its programs with `apt-get`, which needs
+  `allow_internet_access=True` (with `deb.debian.org` in any `allowed_hosts`), or an `image` that has them;
+  creating a new box without either raises `UserError`, attaching to one doesn't. For a browser, pass `box_options={'disk_size_gb': 4}`.
 
 ### DockerContainer
 
-`DockerContainer(*, image=None, working_dir='/workspace', env=None, allow_internet_access=True, docker_args=(), executable='docker')`
+`DockerContainer(*, image=None, working_dir='/workspace', env=None, allow_internet_access=True, docker_args=(), executable='docker', desktop=False)`
 (backend `DockerContainerBackend`) runs commands and file operations in a local container through the
 `docker` CLI (`executable='podman'` works). No extra, no SDK.
 
 - The first operation creates the container; the image needs a POSIX `sh`, and its own entrypoint and
   command don't run. Creating the container (and pulling) is not bounded by a command's `timeout`. Without `image` the
-  capability only attaches and removes by ref, and leaves a run without a ref to other workspace capabilities.
+  capability only attaches and removes by ref, and leaves a run without a ref to other workspace capabilities,
+  unless `desktop=True`: then it builds the desktop image (below).
   `working_dir=None` uses the image's `WORKDIR`; a missing `working_dir` is created on first use, in an attached container too.
 - The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`; attaching starts a stopped container,
   so it comes back. The container outlives the run: `await DockerContainer().destroy(ref)`.
@@ -493,10 +582,15 @@ Python up to 3.14.
 - New containers get `--pids-limit 2048`; a `--pids-limit` in `docker_args` replaces it (`-1` removes it).
 - With Docker, a background child holding stdout/stderr open keeps `run()` waiting: redirect it.
   With Podman, `run()` returns when the command exits.
+- `desktop=True` gives the container a 1280x800 screen for `ComputerUse()`.
+  Without `image`, the first run builds one from `DESKTOP_DOCKERFILE` (Debian, xterm, Firefox), and later runs reuse
+  it. A custom `image` needs `xdotool`, `xwininfo`, `scrot`, `setsid`, Xvfb unless an X server runs, and `fluxbox`,
+  `tint2` and `xterm` for the desktop, which the first use installs with `apt-get` as root or with passwordless
+  `sudo`. Under durable execution, build the image before the first run and pass it as `image`.
 
 ### OpenSandbox
 
-`OpenSandbox(*, image=None, connection=None, resource=None, allow_internet_access=True, secure_access=False, sandbox_timeout=None, working_dir='/workspace', env=None)`
+`OpenSandbox(*, image=None, connection=None, resource=None, allow_internet_access=True, network_policy=None, secure_access=False, sandbox_timeout=None, working_dir='/workspace', env=None)`
 (backend `OpenSandboxBackend`, extra `[opensandbox]`) runs commands and file operations in a sandbox on
 your own OpenSandbox server, which runs it as a Docker container or a Kubernetes pod.
 
@@ -516,11 +610,13 @@ your own OpenSandbox server, which runs it as a Docker container or a Kubernetes
 - `allow_internet_access=False` asks the server for a deny-all egress policy on a new sandbox; the default
   sends none, so the server's configuration applies. The server's egress sidecar enforces it: its default `dns`
   mode filters DNS lookups only, and `dns+nft` also blocks direct IP connections. asyncio only.
+- `network_policy=` takes the SDK's `NetworkPolicy` for a new sandbox, passed through unchanged; it cannot be
+  combined with `allow_internet_access=False` (`UserError`; `ValueError` on the backend).
 - `secure_access=True` asks the server to turn on Secure Access for a new sandbox (Kubernetes with the ingress
   gateway; Docker rejects it). The gateway and server proxy then require the sandbox's token, which the SDK
   fetches with the server API key and sends automatically. Requests that reach the pod directly are not checked.
 - Without the server proxy, the SDK does not send the server API key to a sandbox's endpoint; the endpoint checks
-  only what the server configures for it. Attaching never changes `allow_internet_access` or `secure_access`.
+  only what the server configures for it. Attaching never changes `allow_internet_access`, `network_policy` or `secure_access`.
 
 ## Remote hosts and bubblewrap
 
@@ -616,16 +712,51 @@ trusted instructions, not `/` or all of home; repository links can select readab
 files beneath it. See
 [Repo Context](https://pydantic.dev/docs/ai/harness/repo-context/#shared-instruction-symlinks)
 for resolution, labels, and backend requirements.
+Below `'operator'` workspace authority, each walk-up file is read at `authority_of(path)` (an ancestor:
+its `path_authority` entry's level, else the workspace's), and only `'operator'` files go in the
+instructions: the working directory's own file is named for the model to read with its file tools, and
+an ancestor's file is sent once as a workspace-sourced `ContextFilePart` (again when it changes).
 
 `nested_traversal=True` (the default) surfaces the instruction files between the working directory and
 whatever `FileSystem` reads, lists, writes or edits in, shallowest first, each directory once while its note is in the
 conversation (`nested_inject='contents'` by default, or `'pointer'`), in the message tail so the cached
-prefix stays stable. With it on, the instructions also gain one static sentence: each instruction file
-applies to its subtree, the deeper file wins, and the user's direct instructions win over all of them.
+prefix stays stable. Notes are workspace-sourced `DataCapabilityPart`s, `ContextFilePathPart`
+(`<context_file_path>`) or `ContextFilePart` (`<context_file path="...">`), from
+`pydantic_ai_harness.repo_context`; find them by type, and their `directory` field. With it on, the
+instructions also gain one static sentence: each instruction file applies to its subtree, the deeper file
+wins, and the user's direct instructions win over all of them.
 `nested_max_chars` (32,000 by default) caps the `'contents'` inlined per conversation, counting the
 inlined notes still in history, so a compaction frees room: a file that would go past it becomes a pointer;
 `None` removes the cap. It doesn't apply with
 `nested_inject='pointer'`.
+`nested_exclude` (`('node_modules', '.venv', 'venv', 'site-packages')` by default) lists `fnmatch` patterns for
+directory names below the working directory whose instruction files nested traversal never surfaces, nor
+anything beneath them.
+
+To pin files a user accepted (instruction files, `SKILL.md`, sub-agent definitions), record
+`file_digest(workspace, path)` at acceptance and pass the digests to
+`await pin_accepted_files(workspace, accepted, changed='none')` (both from `pydantic_ai_harness.repo_context`)
+before each run: a changed file is capped at `changed` in `authority_of` until its new digest is recorded.
+
+## ReportStaleFiles
+
+Tells the model when a file a `FileSystem` tool read or wrote has since changed or been deleted in the
+workspace, by someone else (a user, another agent, a build step). It records each file's content hash from
+`FileReadEvent` / `FileWrittenEvent` and, before each model request, reads the recorded files through
+`ctx.workspace`; a mismatch is named in a request-scoped `StaleFilesPart` (`.report_stale_files`, with the
+workspace's authority), on every request until the model reads the file again (a deleted file once). The model's
+own writes and edits refresh the record. Records are per conversation and workspace, in memory on the instance, so
+a continued run hears about changes made between runs.
+
+```python
+from pydantic_ai_harness import FileSystem, ReportStaleFiles
+
+capabilities = [FileSystem(), ReportStaleFiles(max_tracked_files=100, max_reported_files=20, max_checked_bytes=8 << 20)]
+```
+
+Before every request, each recorded file costs a sequential `realpath`, `stat` and read, most recent first, up to
+`max_checked_bytes`; lower `max_tracked_files` on a slow remote workspace. A file whose real path changed since it
+was read is skipped. Not supported under durable execution: the run fails at its start.
 
 ## Macroscope
 
@@ -666,6 +797,7 @@ and write host files (`file://`, `s3 cp`), but gets its own empty AWS config and
 - https://pydantic.dev/docs/ai/harness/boxlite-sandbox/
 - https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution
 - https://pydantic.dev/docs/ai/harness/repo-context/
+- https://pydantic.dev/docs/ai/harness/report-stale-files/
 - https://pydantic.dev/docs/ai/harness/macroscope/
 - https://pydantic.dev/docs/ai/harness/localstack/
 - https://pydantic.dev/docs/ai/core-concepts/workspace/

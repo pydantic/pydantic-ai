@@ -5,18 +5,22 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
+import os
 import re
 import sys
 import time
-from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal, TypeVar
 from uuid import uuid4
 
 import anyio
+from anyio import to_thread
 from pydantic import SerializerFunctionWrapHandler, TypeAdapter, ValidationError, WrapSerializer
 from pydantic_core import PydanticSerializationError
 
@@ -25,15 +29,23 @@ from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, on_even
 from pydantic_ai.exceptions import ModelRetry, RunCancelled, UserError
 from pydantic_ai.messages import (
     EnqueuedMessagesEvent,
+    FinalResultEvent,
     ModelMessage,
     ModelMessagesTypeAdapter,
+    ModelRequestPart,
+    ModelResponse,
+    ModelResponsePart,
+    TextPart,
+    ToolCallPart,
     UserPromptPart,
 )
 from pydantic_ai.output import OutputContext
+from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness._history import STORED_HISTORY_CONTEXT
-from pydantic_ai_harness._task_report import make_task_output, make_task_question
+from pydantic_ai_harness._task_report import TaskOutputPart, TaskQuestionPart, make_task_output, make_task_question
 from pydantic_ai_harness.step_persistence import StepPersistence, StepStore
-from pydantic_ai_harness.sub_agents._events import DelegationOutcome
+from pydantic_ai_harness.step_persistence.conversations import process_running
+from pydantic_ai_harness.sub_agents._events import DelegationOutcome, bounded_text
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.sub_agents._toolset import SubAgent
@@ -57,6 +69,55 @@ def _dump_messages(messages: list[ModelMessage], handler: SerializerFunctionWrap
         return ModelMessagesTypeAdapter.dump_python(messages, mode='json')
 
 
+ASK_PARENT_TOOL_NAME = 'ask_parent'
+"""The tool a delegated run uses to ask the delegating agent a question."""
+
+PREVIEW_CHARS = 80
+RECENT_TOOL_CALLS = 5
+
+
+TaskStatus = Literal['running', 'finished']
+
+
+def preview(text: str) -> str:
+    return text if len(text) <= PREVIEW_CHARS else f'{text[:PREVIEW_CHARS]}...'
+
+
+@dataclass(kw_only=True, frozen=True)
+class DelegationToolCall:
+    """A tool call in a `DelegationSnapshot`."""
+
+    tool_name: str
+    args: str
+    """The arguments as JSON, cut short."""
+
+
+@dataclass(kw_only=True)
+class DelegationSnapshot:
+    """What a task is doing right now, read from its history without waiting on it."""
+
+    task_id: str
+    agent_name: str
+    status: TaskStatus
+    outcome: DelegationOutcome | None
+    elapsed_seconds: float
+    """Time since the task last started, up to when it finished if it has."""
+    usage: RunUsage | None
+    """The requests, tool calls and tokens of the task's current run so far; other counts stay `0`.
+
+    `tool_calls` counts the calls `recent_tool_calls` lists the last few of, including any still running.
+
+    `None` when this owner doesn't see the run's history as it streams: before the child's first model request,
+    for a remote or durable task, and once the task settles. Its tool calls and text are then empty too.
+    """
+    recent_tool_calls: list[DelegationToolCall]
+    """The child's last few tool calls other than `ask_parent`, oldest first."""
+    latest_text: str | None
+    """The child's latest text, cut at `MAX_EVENT_TEXT_CHARS`. It is never from the response that ends the run."""
+    pending_question: str | None
+    """The question the task is waiting on an answer to, if any, cut at `MAX_EVENT_TEXT_CHARS`."""
+
+
 @dataclass(kw_only=True)
 class DelegationTask:
     """A stable child conversation, retained across explicit resumes."""
@@ -73,7 +134,7 @@ class DelegationTask:
     backgroundable: bool = True
     resumable: bool = True
     user_stopped: bool = False
-    status: Literal['running', 'finished'] = 'running'
+    status: TaskStatus = 'running'
     outcome: DelegationOutcome | None = None
     output: str = ''
     pending_question: str | None = None
@@ -86,15 +147,17 @@ class DelegationTask:
     delivered: bool = False
     generation: int = 1
     run_id: str = field(default_factory=lambda: uuid4().hex)
+    owner_pid: int | None = None
+    """The process that saved the task while it was running, so an owner opening the same directory in another
+    process leaves it to that process while it runs. `None` once settled, and in a task saved by an older version."""
 
-    def report(self) -> UserPromptPart:
-        """The settled task's report: the child's output, framed as `<task_output>` data on the user channel.
+    def report(self) -> TaskOutputPart:
+        """The settled task's report: the child's output, as `<task_output>` data on the user channel.
 
         The output was written by a model and may carry instructions from whatever the child read, so it
-        never enters system voice. The frame's escaped attributes identify the task (its id, agent name,
-        and an `outcome` other than `ok`). The acceptance receipt the parent got when the task started
-        already says a report will follow, so nothing precedes the frame. The `TextContent` metadata
-        identifies the report without matching its text.
+        never enters system voice. The frame's attributes identify the task (its id, agent name, and an
+        `outcome` other than `ok`), and a note says the sub-agent wrote it. The acceptance receipt the parent
+        got when the task started already says a report will follow. Find it in history by its type.
         """
         return make_task_output(
             self.output,
@@ -103,6 +166,33 @@ class DelegationTask:
             outcome=self.outcome or 'ok',
             generation=self.generation,
         )
+
+
+def _run_responses(record: DelegationTask) -> list[ModelResponse]:
+    """The model responses of the task's current run: a resumed task's history holds earlier runs too."""
+    return [
+        message for message in record.messages if isinstance(message, ModelResponse) and message.run_id == record.run_id
+    ]
+
+
+@dataclass(kw_only=True)
+class _LiveRun:
+    """A running task whose history its owner sees as it streams."""
+
+    output_tools: frozenset[str] = frozenset()
+    final_text: int | None = None
+    """The index in the run of the response whose text streamed as a final result."""
+
+
+def _progress(response: ModelResponse, live: _LiveRun, index: int) -> Sequence[ModelResponsePart]:
+    """`response`'s parts, less any final result in it: an output tool call, or text that ends the run."""
+    parts = [
+        part for part in response.parts if not (isinstance(part, ToolCallPart) and part.tool_name in live.output_tools)
+    ]
+    if index != live.final_text or any(isinstance(part, ToolCallPart) for part in parts):
+        # Text next to a call of a tool that isn't an output tool doesn't end the run: the tool runs first.
+        return parts
+    return [part for part in parts if not isinstance(part, TextPart)]
 
 
 @dataclass(kw_only=True)
@@ -159,7 +249,7 @@ class _Question:
     queued: bool = False
 
 
-def _question_part(record: DelegationTask, question: _Question) -> UserPromptPart:
+def _question_part(record: DelegationTask, question: _Question) -> TaskQuestionPart:
     return make_task_question(
         question.text, task_id=record.id, agent_name=record.agent_name, question_id=question.question_id
     )
@@ -283,10 +373,12 @@ class DelegationTasks:
         self.problems: list[SavedTaskProblem] = []
         """Saved task files that `opened()` skipped, from the most recent `opened()`."""
         self._workers: dict[str, asyncio.Task[str]] = {}
-        self._released: dict[str, asyncio.Event] = {}
+        self._released: dict[str, asyncio.Event] = {}  # noqa: TID251  (not converted to anyio yet)
         self._stopping: set[str] = set()
         # Stacks, like `_emitters`: the latest registration receives, and each run removes only its own.
-        self._receivers: dict[tuple[str, str | None], list[Callable[[UserPromptPart], str | None]]] = {}
+        self._receivers: dict[
+            tuple[str, str | None], list[Callable[[TaskOutputPart | TaskQuestionPart], str | None]]
+        ] = {}
         self._steering: dict[str, list[Callable[[str], str | None]]] = {}
         self._unsteered: dict[str, list[str]] = {}
         self._queued: dict[str, tuple[str, int]] = {}
@@ -304,6 +396,7 @@ class DelegationTasks:
         self._stops: set[str] = set()
         self._emitters: dict[tuple[str, str | None], list[Emitter]] = {}
         self._starting: dict[str, int] = {}
+        self._live: dict[str, _LiveRun] = {}
         self._open = False
 
     @staticmethod
@@ -402,6 +495,11 @@ class DelegationTasks:
             )
         for record in saved.tasks.values():
             if record.status == 'running':
+                if record.owner_pid is not None and await to_thread.run_sync(
+                    partial(process_running, record.owner_pid, since=datetime.fromtimestamp(record.started_at, UTC))
+                ):
+                    # Its process still runs it and saves it, so this owner neither shows nor writes it.
+                    continue
                 await self._settle_interrupted(record)
             else:
                 self._history_on_disk[record.id] = (directory / f'{record.id}.json', _ADAPTER.dump_json(record))
@@ -436,10 +534,60 @@ class DelegationTasks:
         context_window: int | None = None,
     ) -> None:
         """Send correlated activity, and the child's model when known, to the application's observer."""
+        live = self._live.get(record.id)
+        if live is not None and isinstance(event, FinalResultEvent) and event.tool_name is None:
+            # The response streaming this event is not in the history yet, so it is the next one.
+            live.final_text = len(_run_responses(record))
         if self.observer is not None:
             await self.observer(
                 DelegationTaskEvent(task=record, event=event, model_name=model_name, context_window=context_window)
             )
+
+    def follow(self, record: DelegationTask, output_tools: frozenset[str]) -> None:
+        """Note that this owner sees the history of `record`'s current run as it streams, with these output tools."""
+        live = self._live.setdefault(record.id, _LiveRun())
+        live.output_tools |= output_tools
+
+    def snapshot(self, task_id: str) -> DelegationSnapshot:
+        """A bounded view of what a task is doing, cheap to take repeatedly while it runs.
+
+        The child's final result is left out of its tool calls and text, so a snapshot doesn't hold a result
+        before its listeners have processed it.
+        """
+        record = self.records[task_id]
+        if task_id not in self._live:
+            return self._snapshot(record, None, ())
+        live = self._live[task_id]
+        responses = _run_responses(record)
+        parts = [part for index, response in enumerate(responses) for part in _progress(response, live, index)]
+        return self._snapshot(record, responses, parts)
+
+    @staticmethod
+    def _snapshot(
+        record: DelegationTask, responses: Sequence[ModelResponse] | None, parts: Sequence[ModelResponsePart]
+    ) -> DelegationSnapshot:
+        # A question's arguments are left out: `pending_question` holds it as listeners rewrote it.
+        calls = [part for part in parts if isinstance(part, ToolCallPart) and part.tool_name != ASK_PARENT_TOOL_NAME]
+        texts = [part.content for part in parts if isinstance(part, TextPart)]
+        usage = None
+        if responses is not None:
+            usage = RunUsage(requests=len(responses), tool_calls=len(calls))
+            for response in responses:
+                usage.incr(response.usage)
+        return DelegationSnapshot(
+            task_id=record.id,
+            agent_name=record.agent_name,
+            status=record.status,
+            outcome=record.outcome,
+            elapsed_seconds=(record.finished_at or time.time()) - record.started_at,
+            usage=usage,
+            recent_tool_calls=[
+                DelegationToolCall(tool_name=call.tool_name, args=preview(call.args_as_json_str()))
+                for call in calls[-RECENT_TOOL_CALLS:]
+            ],
+            latest_text=bounded_text(texts[-1])[0] if texts else None,
+            pending_question=None if record.pending_question is None else bounded_text(record.pending_question)[0],
+        )
 
     async def save(self, record: DelegationTask) -> None:
         """Atomically replace one child's persisted history.
@@ -453,15 +601,16 @@ class DelegationTasks:
 
     async def _write(self, record: DelegationTask) -> None:
         """Save `record` with its history, loading that back first when it is in the saved file only."""
-        if not _SAFE_ID.fullmatch(record.id):
-            raise ValueError('Invalid task identity')
         if self.directory is not None:
+            if not _SAFE_ID.fullmatch(record.id):
+                raise ValueError('Invalid task identity')
             async with self._save_locks.setdefault(record.id, anyio.Lock()):
                 destination = anyio.Path(self.directory / f'{record.id}.json')
                 temporary = anyio.Path(self.directory / f'{record.id}.tmp')
                 if (saved := self._saved_history(record)) is not None:
                     record.messages = (await _read(anyio.Path(saved))).messages
                 self._history_on_disk.pop(record.id, None)
+                record.owner_pid = os.getpid() if record.status == 'running' else None
                 await temporary.write_bytes(_ADAPTER.dump_json(record))
                 await temporary.replace(destination)
 
@@ -545,7 +694,7 @@ class DelegationTasks:
             resumable=resumable,
             working_directory=working_directory,
         )
-        release = self._released[record.id] = asyncio.Event()
+        release = self._released[record.id] = asyncio.Event()  # noqa: TID251  (not converted to anyio yet)
         # Persist acceptance before scheduling: cancellation here cannot leave an orphan worker.
         try:
             await self.save(record)
@@ -672,6 +821,7 @@ class DelegationTasks:
         finally:
             _CHILD.reset(token)
             self._unsteered.pop(record.id, None)
+            self._live.pop(record.id, None)
             self._stops.discard(record.id)
             record.status, record.finished_at = 'finished', time.time()
             # A cancelled/failed parent cannot leave descendants without an observer.
@@ -836,7 +986,7 @@ class DelegationTasks:
         *,
         conversation_id: str,
         parent_id: str | None,
-        enqueue: Callable[[UserPromptPart], str | None],
+        enqueue: Callable[[TaskOutputPart | TaskQuestionPart], str | None],
         steer: Callable[[str], str | None] | None = None,
     ) -> Generator[None]:
         """Keep a queue attached only for the lifetime of its owning run.
@@ -847,7 +997,7 @@ class DelegationTasks:
         # What this run queued, which it alone can still deliver.
         queued: set[str] = set()
 
-        def receive(part: UserPromptPart) -> str | None:
+        def receive(part: TaskOutputPart | TaskQuestionPart) -> str | None:
             enqueue_id = enqueue(part)
             if enqueue_id is not None:
                 queued.add(enqueue_id)
@@ -1028,7 +1178,7 @@ def isolated(owner: DelegationTasks | None) -> Generator[None]:
 
 
 def enqueue_while_open(
-    ctx: RunContext[object], part: UserPromptPart, *, priority: Literal['asap', 'when_idle']
+    ctx: RunContext[object], part: ModelRequestPart, *, priority: Literal['asap', 'when_idle']
 ) -> str | None:
     """Queue `part` on the run of `ctx`, or return `None` once that run takes no more messages.
 
