@@ -2,16 +2,18 @@ from __future__ import annotations as _annotations
 
 import warnings
 from collections.abc import Callable, Sequence
+from importlib.metadata import version
 from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
 
 import httpx
 import httpx2
 import pytest
+from packaging.version import Version
 
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 
-from ..conftest import TestEnv, google_user_agents, try_import
+from ..conftest import TestEnv, google_genai_merges_user_agent_spellings, google_user_agents, try_import
 
 with try_import() as imports_successful:
     from google.auth import crypt
@@ -208,6 +210,58 @@ async def test_google_provider_server_timeout_header(
     assert [request.headers['X-Server-Timeout'] for request in requests] == [server_timeout, server_timeout]
 
 
+@pytest.mark.parametrize(
+    ('env_api_version', 'path'),
+    [
+        pytest.param(None, '/v1beta/models/gemini-2.5-flash:generateContent', id='default'),
+        pytest.param('v1alpha', '/v1alpha/models/gemini-2.5-flash:generateContent', id='GOOGLE_GENAI_API_VERSION'),
+    ],
+)
+async def test_google_provider_api_version(
+    allow_model_requests: None, env: TestEnv, env_api_version: str | None, path: str
+) -> None:
+    """The Gemini API client is on `v1beta`, google-genai 2's default, unless `GOOGLE_GENAI_API_VERSION` names another.
+
+    google-genai 3 defaults to `v1`, which serves neither context caching nor the Live API, and reads the variable;
+    google-genai 2 ignores it.
+    """
+    if env_api_version is None:
+        env.remove('GOOGLE_GENAI_API_VERSION')
+    else:
+        if Version(version('google-genai')) < Version('3'):
+            pytest.skip('google-genai 2 ignores `GOOGLE_GENAI_API_VERSION`')
+        env.set('GOOGLE_GENAI_API_VERSION', env_api_version)
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json=_GEMINI_RESPONSE)
+
+    async with httpx2.AsyncClient(timeout=60, transport=httpx2.MockTransport(handler)) as http_client:
+        provider = GoogleProvider(api_key='test-key', http_client=http_client)
+        await Agent(GoogleModel('gemini-2.5-flash', provider=provider)).run('What is the capital of France?')
+
+    assert [request.url.path for request in requests] == [path]
+
+
+async def test_google_cloud_provider_keeps_sdk_api_version(allow_model_requests: None, env: TestEnv) -> None:
+    """Google Cloud stays on google-genai's own default, `v1beta1`, which 3.x did not change."""
+    env.remove('GOOGLE_GENAI_API_VERSION')
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json=_GEMINI_RESPONSE)
+
+    async with httpx2.AsyncClient(timeout=60, transport=httpx2.MockTransport(handler)) as http_client:
+        provider = GoogleCloudProvider(api_key='test-key', http_client=http_client)
+        await Agent(GoogleModel('gemini-2.5-flash', provider=provider)).run('What is the capital of France?')
+
+    assert [request.url.path for request in requests] == [
+        '/v1beta1/publishers/google/models/gemini-2.5-flash:generateContent'
+    ]
+
+
 async def test_google_server_timeout_header_respects_caller(allow_model_requests: None) -> None:
     """An `X-Server-Timeout` in `extra_headers` wins, and a client without a timeout gets no server deadline."""
     requests: list[httpx2.Request] = []
@@ -301,10 +355,12 @@ async def test_google_extra_headers_user_agent_replaces_user_built_client_user_a
 ) -> None:
     """A user-agent in `extra_headers` replaces the one the user set on their own client, in any spelling.
 
-    A client given `User-Agent` sends google-genai's lowercase `user-agent` beside it, which no per-request header
-    can remove, so the caller's value goes on both. Without google-genai's label in front, h11 rejects the
-    surrounding whitespace, so it's stripped.
+    Before google-genai 3.4, a client given `User-Agent` sends google-genai's lowercase `user-agent` beside it, which
+    no per-request header can remove, so the caller's value goes on both. Without google-genai's label in front, h11
+    rejects the surrounding whitespace, so it's stripped.
     """
+    if client_header == 'User-Agent' and google_genai_merges_user_agent_spellings():
+        expected = ['google-genai per-request-app']
     requests: list[httpx2.Request] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:

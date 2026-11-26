@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from functools import cache
+from importlib.metadata import version
 from pathlib import Path
 from time import monotonic
 from types import ModuleType
@@ -28,6 +29,7 @@ import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from cassetter import Cassette, RecordMode
 from coverage import Coverage
+from packaging.version import Version
 from pydantic import JsonValue, TypeAdapter
 from pytest_mock import MockerFixture
 
@@ -289,6 +291,14 @@ def google_user_agents(request: httpx2.Request) -> list[str]:
         )
         for value in request.headers.get_list('user-agent')
     ]
+
+
+def google_genai_merges_user_agent_spellings() -> bool:
+    """Whether google-genai folds a client's `User-Agent`, in any spelling, into its own lowercase `user-agent`.
+
+    From 3.4. Earlier releases keep the caller's spelling as a second key, so the request sends two user-agent lines.
+    """
+    return Version(version('google-genai')) >= Version('3.4.0')
 
 
 SNAPSHOT_BYTES_COLLAPSE_THRESHOLD = 50

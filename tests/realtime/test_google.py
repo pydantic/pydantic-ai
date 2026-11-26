@@ -89,7 +89,14 @@ from pydantic_ai.settings import ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsDatetime, IsSameStr, IsStr, legacy_retry_prompt_part, try_import
+from ..conftest import (
+    IsDatetime,
+    IsSameStr,
+    IsStr,
+    google_genai_merges_user_agent_spellings,
+    legacy_retry_prompt_part,
+    try_import,
+)
 from .test_session import FakeRealtimeModel, make_tool_manager
 
 with try_import() as imports_successful:
@@ -831,12 +838,14 @@ async def test_connect_serializes_shared_client_header_mutations(monkeypatch: py
 
 
 async def test_connect_sends_one_user_agent_for_a_user_built_client(monkeypatch: pytest.MonkeyPatch) -> None:
-    # google-genai adds its own label under a lowercase `user-agent`, so a client the user builds with
+    # Before 3.4, google-genai adds its own label under a lowercase `user-agent`, so a client the user builds with
     # `User-Agent` holds both keys, and `websockets` rejects the pair at the Live handshake.
     client = Client(api_key='test-key', http_options=genai_types.HttpOptions(headers={'User-Agent': 'my-app'}))
     headers = client._api_client._http_options.headers  # pyright: ignore[reportPrivateUsage]
     assert headers is not None
-    assert [key for key in headers if key.lower() == 'user-agent'] == ['User-Agent', 'user-agent']
+    assert [key for key in headers if key.lower() == 'user-agent'] == (
+        ['user-agent'] if google_genai_merges_user_agent_spellings() else ['User-Agent', 'user-agent']
+    )
     original_headers = headers.copy()
     handshake_headers: list[dict[str, str]] = []
 
@@ -4411,11 +4420,13 @@ async def test_proactive_audio_dials_its_own_v1alpha_client(
     assert sum(key.lower() == 'user-agent' for key in captured['headers']) == 1
     assert client._api_client._http_options.api_version == 'v1beta'  # pyright: ignore[reportPrivateUsage]
     assert client._api_client._http_options.headers == headers  # pyright: ignore[reportPrivateUsage]
-    assert not client._api_client._async_httpx_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    http_client = client._api_client._async_httpx_client  # pyright: ignore[reportPrivateUsage]
+    assert http_client is not None and not http_client.is_closed
     if settings:
         [session_client] = built
         assert session_client is not client
-        assert session_client._api_client._async_httpx_client.is_closed  # pyright: ignore[reportPrivateUsage]
+        session_http_client = session_client._api_client._async_httpx_client  # pyright: ignore[reportPrivateUsage]
+        assert session_http_client is not None and session_http_client.is_closed
     else:
         assert built == []
 
@@ -4429,7 +4440,8 @@ async def test_proactive_audio_uses_a_caller_client_already_on_v1alpha(monkeypat
             pass  # pragma: no cover
 
     assert captured['uri'] == _live_uri('v1alpha')
-    assert not client._api_client._async_httpx_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    http_client = client._api_client._async_httpx_client  # pyright: ignore[reportPrivateUsage]
+    assert http_client is not None and not http_client.is_closed
 
 
 async def test_proactive_audio_on_a_caller_client_says_how_to_fix_it(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -4442,7 +4454,10 @@ async def test_proactive_audio_on_a_caller_client_says_how_to_fix_it(monkeypatch
             pass  # pragma: no cover
 
     message = str(exc_info.value)
-    assert 'needs a client on the `v1alpha` API version, but this one is on `v1beta`' in message
+    # The SDK's own default: `v1beta` on google-genai 2, `v1` on 3, which the provider leaves as the caller built it.
+    api_version = client._api_client._http_options.api_version  # pyright: ignore[reportPrivateUsage]
+    assert api_version in ('v1beta', 'v1')
+    assert f'needs a client on the `v1alpha` API version, but this one is on `{api_version}`' in message
     assert "types.HttpOptions(api_version='v1alpha')" in message
     assert captured == {}
 

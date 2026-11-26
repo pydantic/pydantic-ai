@@ -400,12 +400,14 @@ class GoogleInteractionsModel(Model[Client]):
         headers = dict(settings.get('extra_headers', {}))
         # The SDK sends its own lowercase `user-agent` and merges per-request headers by exact name, so only a
         # lowercase line replaces it; any other spelling would go out as a second `User-Agent` line.
+        # An empty value sends the client's `user-agent` without our label, as `GoogleModel` does. Not the SDK's
+        # own label: google-genai 3 swaps that value for the client's `user-agent`, which carries ours.
         caller_user_agents = [headers.pop(name) for name in [*headers] if name.lower() == 'user-agent']
-        sdk_user_agent = self.client.aio.interactions.sdk_configuration.user_agent
+        client_user_agent = (self.client._api_client._http_options.headers or {}).get('user-agent', '')  # pyright: ignore[reportPrivateUsage]
         headers['user-agent'] = (
-            ' '.join(filter(None, caller_user_agents)).strip() or sdk_user_agent
+            ' '.join(filter(None, caller_user_agents)).strip() or client_user_agent.removesuffix(f' {get_user_agent()}')
             if caller_user_agents
-            else f'{sdk_user_agent} {get_user_agent()}'
+            else f'{self.client.aio.interactions.sdk_configuration.user_agent} {get_user_agent()}'
         )
         # The Interactions SDK never sends `X-Server-Timeout`, so without this a long decode is cut off mid-stream.
         _google_common.set_server_timeout(headers, self.client._api_client._http_options.timeout)  # pyright: ignore[reportPrivateUsage]

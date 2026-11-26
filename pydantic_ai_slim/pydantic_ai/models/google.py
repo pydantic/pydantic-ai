@@ -533,8 +533,9 @@ def _move_caller_user_agent(headers: dict[str, str], client_headers: Mapping[str
 
     The SDK merges per-request headers into the client's by exact name, and adds its label only to a lowercase
     `user-agent`. So the caller's value, with several spellings joined into one, goes under `user-agent`, the one
-    line on a client that has no other spelling, and under each other spelling the client has. aiohttp folds those
-    into the last one, the SDK's `user-agent`.
+    line on a client that has no other spelling, and under each other spelling the client has (only before
+    google-genai 3.4, which folds every spelling into `user-agent`). aiohttp folds those into the last one, the SDK's
+    `user-agent`.
 
     The value is stripped because h11 rejects surrounding whitespace, and only the `user-agent` line gets the SDK's
     label in front of it. An empty value sends the client's `user-agent` without our label instead, because the SDK

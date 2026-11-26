@@ -981,11 +981,11 @@ def _single_ws_user_agent(client: Client) -> Generator[None]:
 
     `google-genai` forwards the client's HTTP headers verbatim as the Live WebSocket's
     `additional_headers`, and adds its own label under a lowercase `user-agent` key. The clients the
-    `GoogleProvider` builds use that key, but a client the user builds with another casing, such as
-    `HttpOptions(headers={'User-Agent': 'my-app'})`, ends up holding both. The `websockets` library stores
-    headers case-insensitively and rejects the pair as a duplicate, failing the handshake. We remove the
-    extra keys just for the connect and restore them after, so a single user-agent reaches the socket and
-    the client's HTTP headers are left as they were.
+    `GoogleProvider` builds use that key, but before `google-genai` 3.4, which folds every spelling into it, a
+    client the user builds with another casing, such as `HttpOptions(headers={'User-Agent': 'my-app'})`, ends up
+    holding both. The `websockets` library stores headers case-insensitively and rejects the pair as a
+    duplicate, failing the handshake. We remove the extra keys just for the connect and restore them after, so
+    a single user-agent reaches the socket and the client's HTTP headers are left as they were.
     """
     headers = client._api_client._http_options.headers  # pyright: ignore[reportPrivateUsage]
     assert headers is not None

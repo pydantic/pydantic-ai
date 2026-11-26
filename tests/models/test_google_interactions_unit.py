@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from unittest.mock import AsyncMock, patch
@@ -136,7 +137,7 @@ def mock_model(mock_google: MockGoogle) -> GoogleInteractionsModel:
         pytest.param({'user-agent': 'support-bot'}, 'support-bot', id='user-agent'),
         pytest.param({'USER-AGENT': 'support-bot'}, 'support-bot', id='USER-AGENT'),
         pytest.param({'User-Agent': 'a', 'user-agent': 'b'}, 'a b', id='two spellings'),
-        pytest.param({'User-Agent': ''}, 'google-genai', id='empty'),
+        pytest.param({'User-Agent': ''}, 'google-genai-sdk', id='empty'),
     ],
 )
 async def test_one_user_agent(
@@ -148,6 +149,7 @@ async def test_one_user_agent(
 ):
     """A request carries one user-agent line: the caller's in any spelling, or the SDK's label with ours.
 
+    An empty value sends the client's `user-agent` without our label, google-genai's version label alone.
     Not recorded: the claim is about the header lines the SDK sends, which no response bears on.
     """
     await model_request(
@@ -156,9 +158,9 @@ async def test_one_user_agent(
 
     [user_agent] = mock_google.headers[-1].get_list('user-agent')
     assert (
-        user_agent.replace(get_user_agent(), 'pydantic-ai').replace(
-            mock_model.client.aio.interactions.sdk_configuration.user_agent, 'google-genai'
-        )
+        re.sub(r'google-genai-sdk/\S+ gl-python/\S+', 'google-genai-sdk', user_agent)
+        .replace(get_user_agent(), 'pydantic-ai')
+        .replace(mock_model.client.aio.interactions.sdk_configuration.user_agent, 'google-genai')
         == expected
     )
 

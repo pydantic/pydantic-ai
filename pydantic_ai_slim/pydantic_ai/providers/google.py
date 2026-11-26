@@ -89,6 +89,7 @@ class BaseGoogleProvider(Provider[Client], ABC):
         http_client: AsyncHTTPClient | None,
         base_url: str | None,
         retry_options: HttpRetryOptions | None = None,
+        api_version: str | None = None,
     ) -> HttpOptions:
         """Build `HttpOptions` and record ownership of the httpx client if we created it.
 
@@ -120,6 +121,7 @@ class BaseGoogleProvider(Provider[Client], ABC):
         timeout_ms = int(timeout_seconds * 1000)
         return HttpOptions(
             base_url=base_url,
+            api_version=api_version,
             headers={'user-agent': get_user_agent()},
             httpx_async_client=http_client,
             timeout=timeout_ms,
@@ -193,7 +195,14 @@ class GoogleProvider(BaseGoogleProvider):
                 ' to use the Gemini API.'
             )
         self._api_key = api_key
-        http_options = self._build_http_options(http_client=http_client, base_url=base_url, retry_options=retry_options)
+        http_options = self._build_http_options(
+            http_client=http_client,
+            base_url=base_url,
+            retry_options=retry_options,
+            # google-genai 3 defaults the Gemini API to `v1`, which serves neither context caching nor the Live API,
+            # where 2.x defaults to `v1beta`. `GOOGLE_GENAI_API_VERSION` still picks another version.
+            api_version=None if os.getenv('GOOGLE_GENAI_API_VERSION') else 'v1beta',
+        )
         self._client = Client(vertexai=False, api_key=api_key, http_options=http_options)
 
     def _client_for_api_version(self, api_version: str) -> Client:
