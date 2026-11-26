@@ -296,11 +296,13 @@ _COMMANDS = (
 
 def _file_system_allows(file_system: FileSystem[None]) -> frozenset[object]:
     """The tools, path accesses, and limits `file_system` allows, out of fixed probes."""
+    # The unfiltered toolset, whose tools `read_only` narrows below as `FileSystem.get_toolset` does.
     toolset = file_system._file_system_toolset()  # pyright: ignore[reportPrivateUsage]
     tools = {name for name in toolset.tools if not file_system.read_only or name in READ_ONLY_TOOL_NAMES}
     allowed: set[object] = {('tool', name) for name in tools}
     for path in _PATHS:
         for write in (False, True):
+            # The allow, deny and read-only check every file tool runs before touching a path.
             try:
                 toolset._patterns.check(path, write=write)  # pyright: ignore[reportPrivateUsage]
             except PermissionError:
@@ -316,6 +318,7 @@ def _shell_allows(shell: Shell[None]) -> frozenset[object]:
     toolset = shell.get_toolset()
     allowed: set[object] = {('tool', name) for name in toolset.tools}
     for command in _COMMANDS:
+        # The allow, deny, operator and interactive check every command tool runs before spawning.
         try:
             toolset._check_command(command)  # pyright: ignore[reportPrivateUsage]
         except PermissionError:
