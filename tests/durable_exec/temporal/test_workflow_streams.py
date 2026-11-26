@@ -826,10 +826,20 @@ async def _redact(ctx: RunContext[object], event: EnqueuedMessagesEvent) -> Enqu
     return None
 
 
+_handled: list[list[Any]] = []
+
+
+async def _record_handled(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        if isinstance(event, EnqueuedMessagesEvent):
+            _handled.append(_user_prompts(event.messages))
+
+
 _continue_as_new_durability = TemporalDurability(
     activity_config=BASE_ACTIVITY_CONFIG,
     # The checks stay off the topic: their listeners running exactly once is what the tests count.
     event_stream_topic=WorkflowStreamTopic(TOPIC, events=lambda event: not isinstance(event, _RequestCheckEvent)),
+    event_stream_handler=_record_handled,
     continue_as_new=_continue_as_new_with_stream,
 )
 _continue_as_new_agent = Agent(
@@ -878,6 +888,7 @@ async def _run_continue_as_new_enqueue_workflow(
     client: Client, *, continues_as_new: bool, listener: Literal['mutate', 'replace'] | None = None
 ) -> tuple[list[Any], list[ModelMessage], WorkflowHistory]:
     """Run the workflow to the end: the topic's events, the final messages, and the first run's history."""
+    _handled.clear()
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -955,6 +966,8 @@ async def test_continue_as_new_publishes_the_enqueued_messages_event(client: Cli
     assert _user_prompts(messages) == ['Hello', 'Follow-up']
     assert _kinds(received) == _CONTINUE_AS_NEW_ENQUEUE_KINDS
     assert _enqueued_prompts(received) == [['Follow-up']]
+    # The `event_stream_handler` gets it too, from the first run only.
+    assert _handled == [['Follow-up']]
     await _replay_continue_as_new_enqueue_workflow(history)
 
 
@@ -966,6 +979,7 @@ async def test_declined_continue_as_new_publishes_the_enqueued_messages_event_on
     assert _declined_continuations
     assert _user_prompts(messages) == ['Hello', 'Follow-up']
     assert _kinds(received) == _CONTINUE_AS_NEW_ENQUEUE_KINDS
+    assert _handled == [['Follow-up']]
 
 
 @pytest.mark.parametrize('listener', ['mutate', 'replace'])
@@ -994,6 +1008,7 @@ async def test_continue_as_new_publishes_events_as_their_listeners_left_them(
     assert _user_prompts(messages) == ['Hello', 'Follow-up']
     assert _listened == [['Follow-up']]
     assert _enqueued_prompts(received) == [['[redacted]']]
+    assert _handled == [['[redacted]']]
     # One check per model request: the successor makes the third.
     assert len(_request_checks) == (3 if continues_as_new else 2)
     assert _kinds(received) == _CONTINUE_AS_NEW_ENQUEUE_KINDS
@@ -1017,7 +1032,85 @@ async def test_continue_as_new_replays_a_history_recorded_without_publishing_buf
 
     assert _user_prompts(messages) == ['Hello', 'Follow-up']
     assert 'EnqueuedMessagesEvent' not in _kinds(received)
+    assert _handled == []
     await _replay_continue_as_new_enqueue_workflow(history)
+
+
+# Without a topic, nothing has to go out before `continue_as_new` runs: listeners get the events once the run continues.
+
+_topicless_listened: list[list[Any]] = []
+_topicless_hooks = Hooks[object]()
+
+
+@_topicless_hooks.on.event(EnqueuedMessagesEvent)
+async def _listen_topicless(ctx: RunContext[object], event: EnqueuedMessagesEvent) -> None:
+    _topicless_listened.append(_user_prompts(event.messages))
+
+
+def _continue_as_new_without_stream(ctx: RunContext[object]) -> None:
+    if cast(TopiclessContinueAsNewWorkflow, workflow.instance()).continues_as_new:
+        workflow.continue_as_new(args=[False, ctx.messages])
+
+
+_topicless_agent = Agent(
+    _model,
+    name='topicless_continue_as_new_agent',
+    tools=[get_answer],
+    capabilities=[
+        _topicless_hooks,
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, continue_as_new=_continue_as_new_without_stream),
+    ],
+)
+
+
+@workflow.defn
+class TopiclessContinueAsNewWorkflow:
+    @workflow.init
+    def __init__(self, continues_as_new: bool, history: list[ModelMessage] | None = None) -> None:
+        self.continues_as_new = continues_as_new
+
+    @workflow.run
+    async def run(self, continues_as_new: bool, history: list[ModelMessage] | None = None) -> list[ModelMessage]:
+        async with _topicless_agent.iter(None if history else 'Hello', message_history=history) as run:
+            async for node in run:
+                if history is None and Agent.is_call_tools_node(node) and node.model_response.tool_calls:
+                    run.enqueue('Follow-up')
+        assert run.result is not None
+        return run.result.all_messages()
+
+
+@pytest.mark.parametrize('continues_as_new', [True, False])
+async def test_continue_as_new_without_a_topic_dispatches_buffered_events_once(
+    client: Client, continues_as_new: bool
+) -> None:
+    """An `on_event` listener sees the event of content delivered where the run continues as new, exactly once."""
+    _topicless_listened.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[TopiclessContinueAsNewWorkflow],
+        plugins=[AgentPlugin(_topicless_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            TopiclessContinueAsNewWorkflow.run,
+            args=[continues_as_new, None],
+            id=f'{TopiclessContinueAsNewWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        messages = await handle.result()
+    latest = await client.get_workflow_handle(handle.id).describe()
+    history = await client.get_workflow_handle(handle.id, run_id=handle.first_execution_run_id).fetch_history()
+
+    assert (latest.run_id != handle.first_execution_run_id) is continues_as_new
+    assert _user_prompts(messages) == ['Hello', 'Follow-up']
+    assert _topicless_listened == [['Follow-up']]
+    replay = await Replayer(
+        workflows=[TopiclessContinueAsNewWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=pydantic_data_converter,
+    ).replay_workflow(history)
+    assert replay.replay_failure is None
 
 
 # --- Guards and validation ------------------------------------------------------------------------
