@@ -3509,6 +3509,7 @@ async def test_stdio_toolset_script_path_server_stops_after_agent_exit(tmp_path:
     async with toolset:
         pid = _read_pid_file(pid_file)
     await _wait_for_process_exit(pid)
+    assert not _pid_is_running(pid)
 
 
 @pytest.mark.subprocess(reason='runs a stdio MCP server from a config in a separate interpreter', conditional=True)
