@@ -1983,7 +1983,9 @@ jobs:
 
   # Live-service suites for the harness storage and AWS backends, outside `tests/` because they need
   # a real server. Each runs when its capability, the dependencies, or this workflow change, and
-  # always on tags.
+  # always on tags. Each service image is pinned by version and digest, so a new upstream image cannot
+  # fail a tag; `live-service-images-daily.yml` runs the image-backed suites against the floating
+  # tags shortly before the usual release time.
   harness-integration-changes:
     name: classify harness integration changes
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.ref_type == 'branch'
@@ -2057,6 +2059,8 @@ jobs:
     env:
       LOCALSTACK_REQUIRE_AUTH_TOKEN: "1"
       LOCALSTACK_AWS_CLI: aws
+      # Not pinned yet: no run of this disabled job has pulled it. Pin it by version and digest from
+      # the first passing run once the job is enabled.
       LOCALSTACK_IMAGE: localstack/localstack
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -2093,7 +2097,7 @@ jobs:
         # MongoDB's published image on Quay avoids Docker Hub and public ECR pull limits.
         # 9.0.4+, not 8.3: older 8.x builds refuse to start on the runner's Ubuntu `7.0.0-*-azure`
         # kernel (https://jira.mongodb.org/browse/SERVER-131779).
-        image: quay.io/mongodb/mongodb-community-server:9.0-ubuntu2204
+        image: quay.io/mongodb/mongodb-community-server:9.0.8-ubuntu2204@sha256:420ce2f2905d046159cc5f3a30110d7ebc523f75b7453e7052233afd08199cb1
         ports:
           - 27017:27017
         options: >-
@@ -2130,7 +2134,7 @@ jobs:
     services:
       postgres:
         # Public Docker Hub pulls from GitHub-hosted runners are exempt from its pull rate limit.
-        image: postgres:17
+        image: postgres:17.12@sha256:223efeb196329b55b3b9a13db144956411dbc18e727e59f681c3e0aede6475cf
         ports:
           - 5432:5432
         env:
