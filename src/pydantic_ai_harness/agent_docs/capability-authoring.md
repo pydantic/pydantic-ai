@@ -152,7 +152,7 @@ so the kind does not change: `DelegationStartedEvent` is still `sub_agents.deleg
   `max_output_chars` (shell) and `max_read_lines` (filesystem) predate this
   convention and stay for compatibility.
 - Line offsets in model-facing file tools are 1-indexed, matching `grep -n`,
-  editors, and stack traces (`filesystem` is 0-based pending migration).
+  editors, and stack traces.
 
 ### A Listener Stops An Immediate Event With `cancel()` Or `veto()`
 
@@ -272,8 +272,14 @@ Pick by asking what the capability's toolset registers:
   way `StackOne` uses `stackone-{account_id}` and Pydantic AI's `MCP` uses its
   URL. Two resources stay two capabilities; two of one resource collide, which
   is the right answer for a mistake.
-- **Neither: hooks, guards, observers** -- no default `id`. Several per agent
-  is the normal shape, and `CombinedCapability` chains them.
+- **Hooks that apply one run-wide policy** (a wrap-up, a budget, a run-level
+  setting) -- declare a default `id`: this is the "single fixed concern" of
+  [Building Custom Capabilities](../../../docs/capabilities/custom.md), and a
+  second instance can only repeat or contradict the first. Override `combine` when the field-by-field merge picks
+  the wrong value, such as a margin that should take the larger of two.
+- **Hooks, guards, observers that compose** (several validators, several
+  observers) -- no default `id`. Several per agent is the normal shape, and
+  `CombinedCapability` chains them.
 
 ### An `id` Is Not A Namespace
 

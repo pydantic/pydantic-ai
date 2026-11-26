@@ -478,6 +478,8 @@ The part's [source](capabilities/custom.md#where-the-content-came-from) decides 
 
 Rendering reads only the part's content, the declared attributes and the [rendering facts][pydantic_ai.messages.CapabilityPart.rendering] stored with it, so the same history renders to the same bytes on every request, in every process, and after a round trip through [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter], which keeps the prompt cache warm. History from a client is another matter: the [UI adapters](ui/overview.md) never send capability parts to a frontend, and [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] drops any a client sends.
 
+The instructions of a capability below `'operator'` [authority][pydantic_ai.messages.Authority] are [rendered the same way](capabilities/custom.md#lowered-instructions), from an [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] whose [`authority`][pydantic_ai.messages.InstructionDeltaPart.authority] field stores that authority. The field is `'operator'` for every other instruction change, which reaches the model in the application's voice, and for one stored before the field existed. Like the other instruction records, `sanitize_messages(strip_system_prompts=True)` strips these parts from a client's history whatever their authority, and the next request states the capability's current instructions again.
+
 ### Identifying system prompts
 
 Code that adds a system prompt sometimes needs to find it again: to add a note only once, to count the reminders it has sent, to replace a note it wrote earlier, or to tell its own records apart from prompts that came from somewhere else. Give the [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] a [`metadata`][pydantic_ai.messages.SystemPromptPart.metadata] dictionary and identify it by that, never by its visible text:
@@ -1367,7 +1369,9 @@ the messages whose [`run_id`][pydantic_ai.messages.ModelRequest.run_id] equals
 
 !!! warning "History processors replace the message history"
     History processors replace the message history in the state with the processed messages, including the new user prompt part.
-    This means that if you want to keep the original message history, you need to make a copy of it.
+    [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages] then returns the processed history, while the result's
+    [`conversation`][pydantic_ai.agent.AgentRunResult.conversation] keeps the original history and every message the run added,
+    so you don't need to copy it yourself to store or continue the whole conversation.
     Later requests in the same run start from the processed messages, so a processor sees its own earlier output, not the original history.
 
     When using deferred tools, preserve their
@@ -1381,6 +1385,8 @@ the messages whose [`run_id`][pydantic_ai.messages.ModelRequest.run_id] equals
     produced during the current run. Messages provided via `message_history` are excluded —
     including the trailing `ModelRequest` when resuming without a user prompt, even though
     the framework may stamp it with the current run's `run_id` for observability.
+    Once a processor drops messages, [`result.conversation`][pydantic_ai.agent.AgentRunResult.conversation] also
+    differs from `all_messages()`: it keeps the messages the processor dropped.
 
     To keep this working when your processor mutates or adds messages:
 
