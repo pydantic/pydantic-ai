@@ -484,6 +484,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         # Only calls the client was sent are pending, so the closing result is never hidden.
         client_part = client_tool_return(error_part, self._ui_visibility(error_part))
         assert client_part is not None
+        if client_part is not error_part:
+            self._warn_once_on_hidden_tools()
         if kind == 'output':
             return self.handle_output_tool_result(OutputToolResultEvent(client_part))
         return self.handle_function_tool_result(FunctionToolResultEvent(client_part))
@@ -562,7 +564,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         - [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] -> `handle_run_result`
 
         Tool calls and returns reach those methods as the client is to be sent them, by their `ui_visibility`
-        stamp: nothing for a `'private'` tool, and a placeholder instead of a `'redacted'` tool's result. See
+        stamp: nothing for a `'private'` tool, and a placeholder instead of a `'redacted'` tool's result. A result
+        event's `content`, from [`ToolReturn.content`][pydantic_ai.messages.ToolReturn], is user-channel content
+        that `ui_visibility` doesn't cover, so it arrives as the tool sent it. See
         [Tool visibility](../../ui/overview.md#tool-visibility).
 
         Subclasses are encouraged to override the individual `handle_*` methods rather than this one.
@@ -572,16 +576,21 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             async for e in self._show_deferred_hidden_calls(event):
                 yield e
         client_event = self._client_event(event)
-        if client_event is not event and self._warns_on_hidden_tools:
+        if client_event is not event:
             # The event changed, so a non-public tool part was hidden or redacted.
-            self._warns_on_hidden_tools = False
-            warn_client_held_history_with_hidden_tools(stacklevel=2)
+            self._warn_once_on_hidden_tools()
         if client_event is None:
             return
         if (handler := self._dispatch_event(client_event)) is None:
             return
         async for e in handler:
             yield e
+
+    def _warn_once_on_hidden_tools(self) -> None:
+        """Warn, the first time the stream hides or redacts a tool part, that the client holds the history."""
+        if self._warns_on_hidden_tools:
+            self._warns_on_hidden_tools = False
+            warn_client_held_history_with_hidden_tools(stacklevel=3)
 
     def _ui_visibility(
         self, part: ToolCallPart | NativeToolCallPart | ToolReturnPart | NativeToolReturnPart

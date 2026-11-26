@@ -450,6 +450,8 @@ async def test_tool_return_content_is_a_user_message_visibility_does_not_cover(
     run = await run_adapter(protocol, agent)
 
     assert SECRET not in run.wire
+    # The adapters' streams never send a result event's `content`, for any tool.
+    assert 'Order o_1 is on its way.' not in run.wire
     assert SECRET not in dump(protocol, run.messages)
     assert 'Order o_1 is on its way.' in dump(protocol, run.messages)
 
@@ -514,6 +516,21 @@ async def test_client_held_history_warns_about_non_public_tools(protocol: Protoc
         warnings.simplefilter('error')
         await run_adapter(protocol, secret_agent('private'))
         await run_adapter(protocol, secret_agent(None), manage_message_history='client')
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_client_held_history_warns_when_an_interrupted_redacted_call_is_closed(protocol: ProtocolName):
+    """A redacted call is sent in full, so the first thing hidden can be the placeholder that closes it on an error."""
+    agent = Agent(calling(('lookup_order', '{"order_id": "o_1"}')))
+
+    @agent.tool_plain(ui_visibility='redacted')
+    def lookup_order(order_id: str) -> str:
+        raise RuntimeError('The order service is down.')
+
+    with pytest.warns(UserWarning, match="`manage_message_history='server'`") as record:
+        run = await run_adapter(protocol, agent, manage_message_history='client')
+    assert len([warning for warning in record if 'ui_visibility' in str(warning.message)]) == 1
+    assert '[REDACTED]' in run.wire
 
 
 async def test_standalone_event_stream_default_applies_only_to_unstamped_parts():
