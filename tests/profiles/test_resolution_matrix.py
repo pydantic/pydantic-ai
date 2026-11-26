@@ -738,23 +738,25 @@ def test_openrouter_gpt_6_2(model_name: str):
 @pytest.mark.parametrize(
     ('provider', 'model_name', 'expected'),
     [
-        ('azure', 'gpt-6.2-sol', True),
-        ('azure', 'gpt-6.2-astra', True),
-        ('azure', 'gpt-6.1-sol', False),
-        ('bedrock-mantle', 'openai.gpt-6.2-sol', True),
-        ('bedrock-mantle', 'openai.gpt-5.6-sol', False),
-        ('openrouter', 'openai/gpt-6.2-sol', True),
-        ('openrouter', 'openai/gpt-6.1-sol', False),
-        ('vercel', 'openai/gpt-6.2-sol', True),
-        ('vercel', 'openai/gpt-6.1-sol', False),
+        ('openai', 'gpt-6.2-sol', True),
+        ('openai', 'gpt-6.2-astra', True),
+        ('openai', 'gpt-6.1-sol', False),
+        ('azure', 'gpt-6.2-sol', False),
+        ('azure', 'gpt-6.2-astra', False),
+        ('bedrock-mantle', 'openai.gpt-6.2-sol', False),
+        ('openrouter', 'openai/gpt-6.2-sol', False),
+        ('vercel', 'openai/gpt-6.2-sol', False),
     ],
 )
-def test_gpt_6_2_stable_instructions_as_input_beyond_openai(provider: str, model_name: str, expected: bool):
-    """GPT-6.2 puts the top-level `instructions` after `input` wherever it's served, so the flag is the model's.
+def test_gpt_6_2_stable_instructions_as_input_only_on_openai(provider: str, model_name: str, expected: bool):
+    """GPT-6.2's leading-input instructions are set on OpenAI's own API only, where the uncached top-level field was measured.
+
+    Other providers serving the same model keep the instructions in the top-level field until measured there.
 
     Not a VCR test: this validates local provider-profile capability resolution.
     """
     provider_class = {
+        'openai': OpenAIProvider,
         'azure': AzureProvider,
         'bedrock-mantle': BedrockMantleProvider,
         'openrouter': OpenRouterProvider,
