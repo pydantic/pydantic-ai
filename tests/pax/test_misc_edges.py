@@ -44,6 +44,7 @@ RENAMED_MODULES = (
     'mcp/settings',
     'mcp/store',
     'mcp/tokens',
+    'models/retry_after',
     'plugins/factories',
     'plugins/git',
     'runtime/processes',

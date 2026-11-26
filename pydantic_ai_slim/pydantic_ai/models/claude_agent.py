@@ -18,17 +18,17 @@ from . import ModelRequestParameters
 try:
     from anthropic.types.beta import BetaCompactionConfigParam
 
-    from ..providers._claude_code_sessions import CONVERSATION_HEADER, INHERIT_MCP_SERVERS_HEADER
-    from ..providers.claude_code import ClaudeCodeProvider
+    from ..providers._claude_agent_sessions import CONVERSATION_HEADER, INHERIT_MCP_SERVERS_HEADER
+    from ..providers.claude_agent import ClaudeAgentProvider
     from .anthropic import AnthropicModel, AnthropicModelName, AnthropicModelSettings
     from .anthropic._request_params import PreparedMessagesCreate
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
-        'Please install the `anthropic` and `claude-agent-sdk` packages to use the Claude Code model, '
-        'you can use the `claude-code` optional group — `pip install "pydantic-ai-slim[claude-code]"`'
+        'Please install the `anthropic` and `claude-agent-sdk` packages to use the Claude Agent model, '
+        'you can use the `claude-agent` optional group — `pip install "pydantic-ai-slim[claude-agent]"`'
     ) from _import_error
 
-__all__ = ('ClaudeCodeModel',)
+__all__ = ('ClaudeAgentModel',)
 
 
 _HONORED_ANTHROPIC_SETTINGS = frozenset(
@@ -43,12 +43,12 @@ _HONORED_ANTHROPIC_SETTINGS = frozenset(
 """The `anthropic_*` settings Claude Code takes, or that `AnthropicModel` already reports as unsupported."""
 
 
-class ClaudeCodeModelSettings(AnthropicModelSettings, total=False):
-    """Settings used for a Claude Code model request."""
+class ClaudeAgentModelSettings(AnthropicModelSettings, total=False):
+    """Settings used for a Claude Agent model request."""
 
-    # ALL FIELDS MUST BE `claude_code_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    # ALL FIELDS MUST BE `claude_agent_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
-    claude_code_inherit_mcp_servers: bool | list[str]
+    claude_agent_inherit_mcp_servers: bool | list[str]
     """Let Claude Code offer the model the MCP servers and claude.ai connectors the user set up for it.
 
     `True` brings all of them, and a list of names, as `claude mcp list` shows them, brings those alone. Claude Code
@@ -59,8 +59,8 @@ class ClaudeCodeModelSettings(AnthropicModelSettings, total=False):
     """
 
 
-class ClaudeCodeModel(AnthropicModel):
-    """A model that uses Claude through Claude Code, with the Claude login the user set up for it.
+class ClaudeAgentModel(AnthropicModel):
+    """A model that runs on the user's logged-in Claude account, including Claude Code subscriptions (Pro and Max).
 
     Each request goes to a Claude Code process started through the Claude Agent SDK, which signs it with the user's own
     login; this process never sees the credentials. The agent's instructions replace Claude Code's system prompt, its
@@ -72,7 +72,8 @@ class ClaudeCodeModel(AnthropicModel):
 
     Claude Code doesn't take sampling settings, so `temperature`, `top_p`, `top_k`, `seed`, the penalties and
     `logit_bias` are ignored, as are `stop_sequences`, `parallel_tool_calls=False`, `extra_headers`, `extra_body`,
-    `service_tier`, `timeout` and `max_retries`. `max_tokens`, `thinking` and `anthropic_effort` are applied.
+    `service_tier` and `timeout`. `max_tokens`, `max_retries`, `thinking`, `tool_choice`, `anthropic_thinking` and
+    `anthropic_effort` are applied.
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
@@ -99,21 +100,21 @@ class ClaudeCodeModel(AnthropicModel):
         self,
         model_name: AnthropicModelName,
         *,
-        provider: Literal['claude-code'] | ClaudeCodeProvider = 'claude-code',
+        provider: Literal['claude-agent'] | ClaudeAgentProvider = 'claude-agent',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
-        """Initialize a Claude Code model.
+        """Initialize a Claude Agent model.
 
         Args:
             model_name: The name of the Claude model to use, such as `claude-sonnet-5-5`, or one of Claude Code's
                 aliases, such as `sonnet`.
-            provider: The provider to use. Defaults to `'claude-code'`.
+            provider: The provider to use. Defaults to `'claude-agent'`.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             settings: Default model settings for this model instance.
         """
-        if provider == 'claude-code':
-            provider = ClaudeCodeProvider()
+        if provider == 'claude-agent':
+            provider = ClaudeAgentProvider()
         super().__init__(model_name, provider=provider, profile=profile, settings=settings)
 
     @override
@@ -140,7 +141,7 @@ class ClaudeCodeModel(AnthropicModel):
     @override
     def _run_scope(self) -> AbstractAsyncContextManager[None]:
         provider = self._provider
-        assert isinstance(provider, ClaudeCodeProvider)
+        assert isinstance(provider, ClaudeAgentProvider)
         return provider._sessions.lease()  # pyright: ignore[reportPrivateUsage]
 
     @override
@@ -192,7 +193,7 @@ class ClaudeCodeModel(AnthropicModel):
         # in-memory transport.
         if conversation_id := next((m.conversation_id for m in reversed(messages) if m.conversation_id), None):
             prepared.extra_headers = {**prepared.extra_headers, CONVERSATION_HEADER: conversation_id}
-        claude_code_settings = cast(ClaudeCodeModelSettings, model_settings)
-        if inherit := claude_code_settings.get('claude_code_inherit_mcp_servers'):
+        claude_agent_settings = cast(ClaudeAgentModelSettings, model_settings)
+        if inherit := claude_agent_settings.get('claude_agent_inherit_mcp_servers'):
             prepared.extra_headers = {**prepared.extra_headers, INHERIT_MCP_SERVERS_HEADER: json.dumps(inherit)}
         return prepared

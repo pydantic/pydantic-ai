@@ -18,7 +18,7 @@
 
 ::: pydantic_ai.providers.openai_compatible
 
-::: pydantic_ai.providers.claude_code
+::: pydantic_ai.providers.claude_agent
     options:
       inherited_members: true
 

@@ -1,18 +1,18 @@
-"""LOCKED: the behavior `ClaudeCodeModel` must keep to stay within Anthropic's terms for Claude subscriptions.
+"""LOCKED: the behavior `ClaudeAgentModel` must keep to stay within Anthropic's terms for Claude subscriptions.
 
 Anthropic lets a user sign in to the *unmodified* Claude Code with their own subscription, and forbids third parties to
 collect, store or intermediate Claude credentials, or to route requests through a subscription on behalf of their users
-(https://code.claude.com/docs/en/legal-and-compliance). `ClaudeCodeModel` stays within that by running the user's own
+(https://code.claude.com/docs/en/legal-and-compliance). `ClaudeAgentModel` stays within that by running the user's own
 signed-in Claude Code through the Claude Agent SDK, and these tests pin each part of that:
 
 - Claude Code is the SDK's own process for the user's `claude` executable, unmodified and with no extra CLI flags.
 - Pydantic AI never reads, holds or forwards a Claude credential, and never opens Claude Code's configuration directory.
 - Every Claude Code process identifies the client as Pydantic AI.
 - Claude Code's own tools, settings and skills are off, and nothing can turn them on. The user's own MCP servers and
-  claude.ai connectors are off unless the user's code opts in with `claude_code_inherit_mcp_servers`.
+  claude.ai connectors are off unless the user's code opts in with `claude_agent_inherit_mcp_servers`.
 - The environment Claude Code gets can't switch it from the user's login to an API key, proxy or cloud provider.
 
-Don't change, skip or delete these tests to make a change pass. A failure here means the change moves `ClaudeCodeModel`
+Don't change, skip or delete these tests to make a change pass. A failure here means the change moves `ClaudeAgentModel`
 outside what was agreed as compliant: bring it to a maintainer, who decides, and who updates this file in a PR of its
 own.
 """
@@ -38,14 +38,14 @@ with try_import() as imports_successful:
     from anthropic import AsyncAnthropic
     from claude_agent_sdk import ClaudeAgentOptions
 
-    import pydantic_ai.models.claude_code
-    import pydantic_ai.profiles.claude_code
-    import pydantic_ai.providers.claude_code
+    import pydantic_ai.models.claude_agent
+    import pydantic_ai.profiles.claude_agent
+    import pydantic_ai.providers.claude_agent
     from pydantic_ai import __version__
-    from pydantic_ai.models.claude_code import ClaudeCodeModel, ClaudeCodeModelSettings
-    from pydantic_ai.providers import _claude_code_mcp, _claude_code_sessions
-    from pydantic_ai.providers._claude_code_sessions import ClaudeCodeTransport
-    from pydantic_ai.providers.claude_code import ClaudeCodeProvider
+    from pydantic_ai.models.claude_agent import ClaudeAgentModel, ClaudeAgentModelSettings
+    from pydantic_ai.providers import _claude_agent_mcp, _claude_agent_sessions
+    from pydantic_ai.providers._claude_agent_sessions import ClaudeCodeTransport
+    from pydantic_ai.providers.claude_agent import ClaudeAgentProvider
 
     from .claude_code_fake import FakeClaudeCode, FakeResponse, text, tool_use
 
@@ -55,7 +55,7 @@ pytestmark = [
 ]
 
 
-def fake_claude_code(provider: ClaudeCodeProvider, *responses: FakeResponse) -> FakeClaudeCode:
+def fake_claude_code(provider: ClaudeAgentProvider, *responses: FakeResponse) -> FakeClaudeCode:
     fake = FakeClaudeCode(list(responses))
     provider._sessions.transport_factory = fake  # pyright: ignore[reportPrivateUsage]
     return fake
@@ -79,13 +79,13 @@ def chosen_options(options: ClaudeAgentOptions) -> dict[str, Any]:
 
 async def test_claude_code_runs_with_exactly_these_options():
     """The whole set of options Claude Code gets: a new or changed option fails here, whatever it is."""
-    provider = ClaudeCodeProvider()
+    provider = ClaudeAgentProvider()
     fake = fake_claude_code(
         provider,
         FakeResponse([tool_use('toolu_1', 'get_city', {})], stop_reason='tool_use'),
         FakeResponse([text('Lisbon.')]),
     )
-    agent = Agent(ClaudeCodeModel('claude-sonnet-5-5', provider=provider), instructions='Be brief.')
+    agent = Agent(ClaudeAgentModel('claude-sonnet-5-5', provider=provider), instructions='Be brief.')
 
     @agent.tool_plain
     def get_city() -> str:
@@ -137,22 +137,22 @@ async def test_claude_code_runs_with_exactly_these_options():
 
 
 async def test_claude_code_identifies_the_client_as_pydantic_ai():
-    provider = ClaudeCodeProvider()
+    provider = ClaudeAgentProvider()
     fake = fake_claude_code(provider, FakeResponse([text('Hi.')]))
 
-    await Agent(ClaudeCodeModel('claude-sonnet-5-5', provider=provider)).run('Hello')
+    await Agent(ClaudeAgentModel('claude-sonnet-5-5', provider=provider)).run('Hello')
 
     assert fake.sessions[0].options.client_app == f'pydantic-ai/{__version__}'
 
 
 async def test_only_the_opt_in_brings_the_users_own_mcp_servers():
-    """`claude_code_inherit_mcp_servers` loosens strict MCP config alone: tools, settings and skills stay off."""
-    provider = ClaudeCodeProvider()
+    """`claude_agent_inherit_mcp_servers` loosens strict MCP config alone: tools, settings and skills stay off."""
+    provider = ClaudeAgentProvider()
     fake = fake_claude_code(provider, FakeResponse([text('Hi.')]))
     fake.mcp_servers = ['claude.ai Docs']
-    settings = ClaudeCodeModelSettings(claude_code_inherit_mcp_servers=True)
+    settings = ClaudeAgentModelSettings(claude_agent_inherit_mcp_servers=True)
 
-    await Agent(ClaudeCodeModel('claude-sonnet-5-5', provider=provider), model_settings=settings).run('Hello')
+    await Agent(ClaudeAgentModel('claude-sonnet-5-5', provider=provider), model_settings=settings).run('Hello')
 
     options = fake.sessions[0].options
     assert (options.strict_mcp_config, options.tools, options.setting_sources, options.skills) == snapshot(
@@ -162,14 +162,14 @@ async def test_only_the_opt_in_brings_the_users_own_mcp_servers():
 
 def test_claude_code_is_the_sdk_process_for_the_users_own_executable():
     """Outside tests, the SDK starts the `claude` executable it bundles, or the one the user names, as is."""
-    assert ClaudeCodeProvider()._sessions.transport_factory is None  # pyright: ignore[reportPrivateUsage]
-    assert ClaudeCodeProvider(cli_path='/opt/claude/bin/claude')._sessions.options.cli_path == '/opt/claude/bin/claude'  # pyright: ignore[reportPrivateUsage]
+    assert ClaudeAgentProvider()._sessions.transport_factory is None  # pyright: ignore[reportPrivateUsage]
+    assert ClaudeAgentProvider(cli_path='/opt/claude/bin/claude')._sessions.options.cli_path == '/opt/claude/bin/claude'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_nothing_can_loosen_the_options_or_take_a_credential():
     """Neither the provider nor the model takes a credential, or an option that would turn Claude Code's own on."""
-    assert list(inspect.signature(ClaudeCodeProvider.__init__).parameters) == snapshot(['self', 'cli_path', 'cwd'])
-    assert list(inspect.signature(ClaudeCodeModel.__init__).parameters) == snapshot(
+    assert list(inspect.signature(ClaudeAgentProvider.__init__).parameters) == snapshot(['self', 'cli_path', 'cwd'])
+    assert list(inspect.signature(ClaudeAgentModel.__init__).parameters) == snapshot(
         ['self', 'model_name', 'provider', 'profile', 'settings']
     )
 
@@ -179,11 +179,11 @@ def test_the_anthropic_client_never_leaves_the_process(monkeypatch: pytest.Monke
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'sk-ant-from-the-environment')
     monkeypatch.setenv('ANTHROPIC_BASE_URL', 'https://proxy.example.com')
 
-    client = ClaudeCodeProvider().client
+    client = ClaudeAgentProvider().client
 
     assert isinstance(client, AsyncAnthropic)
     assert (client.api_key, client.auth_token, str(client.base_url)) == snapshot(
-        ('claude-code', None, 'https://claude-code.invalid')
+        ('claude-agent', None, 'https://claude-agent.invalid')
     )
     assert isinstance(client._client._transport, ClaudeCodeTransport)  # pyright: ignore[reportPrivateUsage]
     assert client._client.trust_env is False  # pyright: ignore[reportPrivateUsage]
@@ -213,9 +213,9 @@ async def test_no_claude_configuration_or_credential_file_is_opened(
     monkeypatch.setenv('CLAUDE_CONFIG_DIR', str(config_dir))
     already_opened = len(opened_paths)  # The test's own setup above.
 
-    provider = ClaudeCodeProvider()
+    provider = ClaudeAgentProvider()
     fake_claude_code(provider, FakeResponse([text('Hi.')]))
-    async with Agent(ClaudeCodeModel('claude-sonnet-5-5', provider=provider)) as agent:
+    async with Agent(ClaudeAgentModel('claude-sonnet-5-5', provider=provider)) as agent:
         await agent.run('Hello')
 
     claude_dirs = (str(config_dir), str(Path.home() / '.claude'))
@@ -243,13 +243,13 @@ def test_the_source_never_reaches_for_a_credential():
     Docstrings may describe the guarantee; only names and non-docstring strings count. The names of the environment
     variables Claude Code gets as empty strings are allowed, since blanking them is the point.
     """
-    blanked = {name for name, value in _claude_code_sessions._ENV.items() if value == ''}  # pyright: ignore[reportPrivateUsage]
+    blanked = {name for name, value in _claude_agent_sessions._ENV.items() if value == ''}  # pyright: ignore[reportPrivateUsage]
     modules = [
-        _claude_code_sessions,
-        _claude_code_mcp,
-        pydantic_ai.providers.claude_code,
-        pydantic_ai.models.claude_code,
-        pydantic_ai.profiles.claude_code,
+        _claude_agent_sessions,
+        _claude_agent_mcp,
+        pydantic_ai.providers.claude_agent,
+        pydantic_ai.models.claude_agent,
+        pydantic_ai.profiles.claude_agent,
     ]
     found: list[str] = []
     for module in modules:

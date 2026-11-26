@@ -54,7 +54,7 @@ async def signed(message: str = 'Signed in.') -> str:
 
 
 def plugin_login(
-    *, name: str = 'claude', profiles: bool = True, models: tuple[str, ...] = ('acme-claude:opus',)
+    *, name: str = 'claude', profiles: bool = True, models: tuple[str, ...] = ('claude-code:opus',)
 ) -> PluginLogin:
     async def for_profile(profile: str) -> str:
         return f'Signed in as {profile}.'
@@ -66,12 +66,12 @@ def test_the_store_keeps_order_labels_and_owners(tmp_path: Path) -> None:
     store = store_at(tmp_path)
     for profile in (None, 'work', 'side'):
         store.add_account(StoredAccount(provider='openai-codex', profile=profile))
-    store.add_account(StoredAccount(provider='acme-claude', profile='work', plugin_login='claude'))
+    store.add_account(StoredAccount(provider='claude-code', profile='work', plugin_login='claude'))
     # Adding a known account keeps its place and label.
     store.rename_account(provider='openai-codex', profile='work', label='Work laptop')
     store.add_account(StoredAccount(provider='openai-codex', profile='work'))
     assert [(row.provider, row.profile, row.label) for row in store.accounts()] == [
-        ('acme-claude', 'work', None),
+        ('claude-code', 'work', None),
         ('openai-codex', None, None),
         ('openai-codex', 'work', 'Work laptop'),
         ('openai-codex', 'side', None),
@@ -90,11 +90,11 @@ def test_accounts_find_existing_logins_and_their_state(tmp_path: Path) -> None:
     save_codex_credentials(account='openai-codex', value=CODEX)
     save_codex_credentials(account='openai-codex@work', value=CODEX)
     save_codex_credentials(account='gateway/openai@team', value='{}')
-    store.add_account(StoredAccount(provider='acme-claude', profile='work', plugin_login='claude'))
+    store.add_account(StoredAccount(provider='claude-code', profile='work', plugin_login='claude'))
     store.add_account(StoredAccount(provider='github-copilot', profile='gone'))
     found = {(item.provider, item.profile): item for item in accounts(store)}
     assert set(found) == {
-        ('acme-claude', 'work'),
+        ('claude-code', 'work'),
         ('gateway/openai', 'team'),
         ('github-copilot', 'gone'),
         ('openai-codex', None),
@@ -105,7 +105,7 @@ def test_accounts_find_existing_logins_and_their_state(tmp_path: Path) -> None:
     assert found['openai-codex', 'work'].model('gpt-6') == 'openai-codex@work:gpt-6'
     assert not found['github-copilot', 'gone'].signed_in
     # A plugin keeps its own tokens, so its accounts count as signed in.
-    plugin = found['acme-claude', 'work']
+    plugin = found['claude-code', 'work']
     assert plugin.signed_in and plugin.login == 'claude@work'
     assert [item.profile for item in pool(store, 'openai-codex')] == [None, 'work']
     assert pool(store, 'github-copilot') == []
@@ -127,7 +127,7 @@ def test_remember_and_sign_out(tmp_path: Path) -> None:
     save_codex_credentials(account='openai-codex@work', value=CODEX)
     remember(store, login='openai-codex', profile='work')
     rows = {(row.provider, row.profile): row for row in store.accounts()}
-    assert rows['acme-claude', 'work'].plugin_login == 'claude'
+    assert rows['claude-code', 'work'].plugin_login == 'claude'
     assert rows['solo', None].plugin_login == 'solo'  # no models: listed under its sign-in name
     by_login = {item.login: item for item in accounts(store)}
     assert sign_out(store, by_login['openai-codex@work']) == 'Signed out of openai-codex@work.'
@@ -151,7 +151,7 @@ def test_login_choices_group_and_describe_providers(monkeypatch: pytest.MonkeyPa
     assert [(choice.kind, choice.login, choice.provider) for choice in choices] == [
         ('subscription', 'openai-codex', 'openai-codex'),
         ('subscription', 'github-copilot', 'github-copilot'),
-        ('plugin', 'claude', 'acme-claude'),
+        ('plugin', 'claude', 'claude-code'),
         ('plugin', 'solo', 'solo'),
         ('connection', 'openrouter', 'openrouter'),
         ('connection', 'vllm', 'vllm'),
@@ -189,23 +189,23 @@ def keyed_resolver(tmp_path: Path, *, store: SettingsStore | None = None) -> Mod
     def resolve(name: str) -> Model:  # pragma: no cover -- only accounts with a profile run here
         return TestModel()
 
-    providers = {'acme-claude': ModelProvider(prefix='acme-claude', resolve=resolve, resolve_profile=resolve_profile)}
+    providers = {'claude-code': ModelProvider(prefix='claude-code', resolve=resolve, resolve_profile=resolve_profile)}
     return ModelResolver(console=Console(file=io.StringIO()), plugins=lambda: providers, store=store)
 
 
 async def test_all_accounts_fall_back_in_list_order(tmp_path: Path) -> None:
     store = store_at(tmp_path)
     resolver = keyed_resolver(tmp_path, store=store)
-    with pytest.raises(UserError, match=r'No acme-claude account is signed in\. Add one with /accounts\.'):
-        await resolver.resolve('acme-claude@*:opus')
-    with pytest.raises(UserError, match='No acme-claude account'):
-        await keyed_resolver(tmp_path).resolve('acme-claude@*:opus')
+    with pytest.raises(UserError, match=r'No claude-code account is signed in\. Add one with /accounts\.'):
+        await resolver.resolve('claude-code@*:opus')
+    with pytest.raises(UserError, match='No claude-code account'):
+        await keyed_resolver(tmp_path).resolve('claude-code@*:opus')
     remember(store, login='claude', profile='work', plugin=plugin_login())
-    single = await resolver.resolve('acme-claude@*:opus')
+    single = await resolver.resolve('claude-code@*:opus')
     assert isinstance(single, TestModel) and single.custom_output_text == 'work answered opus'
     remember(store, login='claude', profile='side', plugin=plugin_login())
-    store.move_account(provider='acme-claude', profile='side', offset=-1)
-    model = await resolver.resolve('acme-claude@*:opus')
+    store.move_account(provider='claude-code', profile='side', offset=-1)
+    model = await resolver.resolve('claude-code@*:opus')
     assert isinstance(model, FallbackModel)
     assert [member.custom_output_text for member in model.models if isinstance(member, TestModel)] == [
         'side answered opus',
@@ -221,7 +221,7 @@ def pooling_resolver(store: SettingsStore, pooled: Callable[[], bool]) -> ModelR
     def resolve_profile(name: str, profile: str) -> Model:
         return TestModel(custom_output_text=f'{profile} answered {name}')
 
-    providers = {'acme-claude': ModelProvider(prefix='acme-claude', resolve=resolve, resolve_profile=resolve_profile)}
+    providers = {'claude-code': ModelProvider(prefix='claude-code', resolve=resolve, resolve_profile=resolve_profile)}
     return ModelResolver(
         console=Console(file=io.StringIO()), plugins=lambda: providers, store=store, pool_accounts=pooled
     )
@@ -238,25 +238,25 @@ async def test_plain_names_pool_accounts_while_the_setting_is_on(tmp_path: Path)
     resolver = pooling_resolver(store, lambda: pooled)
     remember(store, login='claude', profile=None, plugin=plugin_login())
     # One signed-in account: the plain name runs on it alone.
-    assert answers(await resolver.resolve('acme-claude:opus')) == ['default answered opus']
+    assert answers(await resolver.resolve('claude-code:opus')) == ['default answered opus']
     remember(store, login='claude', profile='work', plugin=plugin_login())
-    store.move_account(provider='acme-claude', profile='work', offset=-1)
-    model = await resolver.resolve('acme-claude:opus')
+    store.move_account(provider='claude-code', profile='work', offset=-1)
+    model = await resolver.resolve('claude-code:opus')
     assert isinstance(model, FallbackModel)
     assert answers(model) == ['work answered opus', 'default answered opus']
     assert (await Agent(model).run('hi')).output == 'work answered opus'
     # `@default` and a named profile each pin one account; `@*` still pools.
-    assert answers(await resolver.resolve('acme-claude@default:opus')) == ['default answered opus']
-    assert answers(await resolver.resolve('acme-claude@work:opus')) == ['work answered opus']
-    assert len(answers(await resolver.resolve('acme-claude@*:opus'))) == 2
+    assert answers(await resolver.resolve('claude-code@default:opus')) == ['default answered opus']
+    assert answers(await resolver.resolve('claude-code@work:opus')) == ['work answered opus']
+    assert len(answers(await resolver.resolve('claude-code@*:opus'))) == 2
     # A provider without accounts, or a name without a provider, is left as it was.
     assert await resolver.resolve('openai:gpt-5') == 'openai:gpt-5'
     assert await resolver.resolve('openai@default:gpt-5') == 'openai:gpt-5'
     assert await resolver.resolve('test') == 'test'
     pooled = False
-    assert answers(await resolver.resolve('acme-claude:opus')) == ['default answered opus']
-    with pytest.raises(UserError, match=r'acme-claude@Work:opus: Profile .Work. must be'):
-        await resolver.resolve('acme-claude@Work:opus')
+    assert answers(await resolver.resolve('claude-code:opus')) == ['default answered opus']
+    with pytest.raises(UserError, match=r'claude-code@Work:opus: Profile .Work. must be'):
+        await resolver.resolve('claude-code@Work:opus')
 
 
 async def test_set_accounts_pool_applies_to_the_next_run(tmp_path: Path) -> None:
@@ -277,7 +277,7 @@ def resolve_profile(name, profile):
 
 class ClaudePool(Plugin):
     def get_model_providers(self):
-        return (ModelProvider(prefix='acme-claude', resolve=resolve, resolve_profile=resolve_profile),)
+        return (ModelProvider(prefix='claude-code', resolve=resolve, resolve_profile=resolve_profile),)
 """)
     remember(store, login='claude', profile=None, plugin=plugin_login())
     remember(store, login='claude', profile='work', plugin=plugin_login())
@@ -294,7 +294,7 @@ class ClaudePool(Plugin):
         headless=True,
     )
     await shell.loader.load_all()
-    shell.session.model = 'acme-claude:opus'
+    shell.session.model = 'claude-code:opus'
     # The running turn keeps the model it bound, so `/accounts` opens at once instead of queueing.
     assert shell.commands.runs_during_turn('/accounts')
     try:
@@ -317,10 +317,10 @@ def test_menu_rows_details_and_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     save_codex_credentials(account='openai-codex', value=CODEX)
     save_codex_credentials(account='openai-codex@work', value=CODEX)
     remember(store, login='claude', profile='work', plugin=plugin_login())
-    store.add_account(StoredAccount(provider='acme-claude', profile='old'))
+    store.add_account(StoredAccount(provider='claude-code', profile='old'))
     rows = menu.items()
     assert [row.label for row in rows] == [
-        'acme-claude',
+        'claude-code',
         '  ● work',
         '  ○ old',
         'openai-codex',
@@ -332,7 +332,7 @@ def test_menu_rows_details_and_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert rows[0].disabled and rows[1].description == 'claude@work'
     assert menu.details(rows[0]) == ''  # a heading has nothing to explain
     assert 'Its plugin keeps the sign-in.' in menu.details(rows[1])
-    assert 'signed out: Enter signs in (acme-claude@old)' in menu.details(rows[2])
+    assert 'signed out: Enter signs in (claude-code@old)' in menu.details(rows[2])
     default = menu.details(rows[4])
     assert 'use      openai-codex@default:MODEL' in default and 'this one is number 1.' in default
     monkeypatch.setattr(accounts_menu, 'terminal_size', lambda: (60, 20))
@@ -565,9 +565,9 @@ async def test_a_chain_can_pool_accounts_before_another_provider(tmp_path: Path)
     store = store_at(tmp_path)
     remember(store, login='claude', profile='work', plugin=plugin_login())
     remember(store, login='claude', profile='side', plugin=plugin_login())
-    store.save_chain(name='best', models=['acme-claude@*:opus', 'test'])
+    store.save_chain(name='best', models=['claude-code@*:opus', 'test'])
     resolver = keyed_resolver(tmp_path, store=store)
-    assert await resolver.expand('chain:best') == ['acme-claude@work:opus', 'acme-claude@side:opus', 'test']
+    assert await resolver.expand('chain:best') == ['claude-code@work:opus', 'claude-code@side:opus', 'test']
     model = await resolver.resolve('chain:best')
     assert isinstance(model, FallbackModel)
     assert answers(model) == ['work answered opus', 'side answered opus', None]

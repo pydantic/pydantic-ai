@@ -4,8 +4,8 @@ from . import ModelProfile, merge_profile
 from .anthropic import AnthropicModelProfile, anthropic_model_profile
 
 
-def claude_code_model_profile(model_name: str) -> ModelProfile:
-    """Get the model profile for Claude models used through Claude Code with the user's own Claude login.
+def claude_agent_model_profile(model_name: str) -> ModelProfile:
+    """Get the model profile for Claude models used on the user's logged-in Claude account, through Claude Code.
 
     Claude Code sends the Messages API request itself, from a system prompt, tool list and settings fixed when its
     session starts, so the request features it doesn't let a client control are turned off: cache breakpoints (it
