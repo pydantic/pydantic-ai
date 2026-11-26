@@ -303,6 +303,7 @@ jobs:
           .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
           .github/scripts/test_pr_guard.py
+          .github/scripts/test_pr_guard_sweep.py
           .github/scripts/test_lint_exemptions.py
           .github/scripts/test_pr_gates.py
           .github/scripts/test_douwebot_config_approval.py
@@ -1300,8 +1301,10 @@ jobs:
   # `tests/`, where the `test` job turns it on for the 3.13 cells (`test-all-extras` leaves it off).
   # The `lowest` resolution leg is the only place the declared minimum bounds
   # (`temporalio`, `dbos`, `prefect`) are proven: `test-lowest-versions` skips this directory.
+  # Each Python and resolution runs as two legs, one per `suite`, so neither suite's time counts
+  # against the other's `timeout-minutes` (#14423).
   test-durable-exec:
-    name: test durable-exec on ${{ matrix.python-version }} (${{ matrix.resolution }})
+    name: test ${{ matrix.suite }} on ${{ matrix.python-version }} (${{ matrix.resolution }})
     needs: classify
     if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
@@ -1311,11 +1314,17 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
         resolution: [locked, lowest]
-        # A pull request runs only the legs that collect coverage (see `COLLECT_COVERAGE`), which
-        # include one `lowest` leg (see the `test` job's matrix), the 3.13 `locked` leg that runs the
-        # Render local runtime tests (see `RENDER_LOCAL_RUNTIME`), and the 3.15 `locked` leg below,
-        # the newest Python, which runs the manifest freshness test of a `pydantic-ai-harness`-only
-        # change (see `DURABLE_EXEC_MANIFEST_FRESHNESS`).
+        # `durable-exec` runs `tests/durable_exec`; `harness-temporal` runs the harness `temporal` tests.
+        suite: [durable-exec, harness-temporal]
+        # A `pydantic-ai-harness`-only change runs no `durable-exec` leg but the 3.15 one below.
+        harness_only: ["${{ needs.classify.outputs.harness_only }}"]
+        # A pull request runs only the Python and resolution pairs whose legs carry a check: the pairs
+        # that collect coverage (see `COLLECT_COVERAGE`), which include one `lowest` pair (see the
+        # `test` job's matrix), the 3.13 `locked` pair, whose `durable-exec` leg runs the Render local
+        # runtime tests (see `RENDER_LOCAL_RUNTIME`), and the 3.15 `locked` pair below, the newest
+        # Python, whose `durable-exec` leg runs the manifest freshness test of a
+        # `pydantic-ai-harness`-only change (see `DURABLE_EXEC_MANIFEST_FRESHNESS`). Each pair it keeps
+        # runs both suites.
         pull_request: ["${{ github.event_name == 'pull_request' && 'true' || 'false' }}"]
         exclude:
           - pull_request: "true"
@@ -1327,12 +1336,18 @@ jobs:
           - pull_request: "true"
             python-version: "3.14"
             resolution: lowest
-        # 3.15 runs the `locked` leg only: `lowest` installs our declared minimums, and 13 of them
+          - harness_only: "true"
+            suite: durable-exec
+        # 3.15 runs the `locked` legs only: `lowest` installs our declared minimums, and 13 of them
         # have no 3.15 wheel (pydantic-core 2.41, numpy 2.3, tiktoken 0.12, ...), so the leg would
         # compile them from source past this job's timeout.
         include:
           - python-version: "3.15"
             resolution: locked
+            suite: durable-exec
+          - python-version: "3.15"
+            resolution: locked
+            suite: harness-temporal
     env:
       CI: true
       # Python 3.11 and 3.14 cover version endpoints; both 3.12 resolutions cover Temporal dependency branches.
@@ -1344,11 +1359,13 @@ jobs:
       # Blocking detection already runs in the Python 3.13 slim, evals, and standard jobs.
       BLOCKBUSTER_ENABLED: false
       # The one leg that runs the Render local runtime tests (see that step).
-      RENDER_LOCAL_RUNTIME: ${{ matrix.python-version == '3.13' && matrix.resolution == 'locked' }}
+      RENDER_LOCAL_RUNTIME: >-
+        ${{ matrix.suite == 'durable-exec' && matrix.python-version == '3.13' && matrix.resolution == 'locked' }}
       # The one leg that runs the contract manifest freshness test of a `pydantic-ai-harness`-only
-      # change (see the run tests step). On the full path, every leg runs it within
+      # change (see the run tests step). On the full path, every `durable-exec` leg runs it within
       # `tests/durable_exec`.
-      DURABLE_EXEC_MANIFEST_FRESHNESS: ${{ matrix.python-version == '3.15' && matrix.resolution == 'locked' }}
+      DURABLE_EXEC_MANIFEST_FRESHNESS: >-
+        ${{ matrix.suite == 'durable-exec' && matrix.python-version == '3.15' && matrix.resolution == 'locked' }}
       # Puts every Temporal worker in debug mode, which disables the workflow deadlock detector
       # (temporalio sets the per-activation budget to `None` instead of 2s). That budget is
       # wall-clock, so it measures runner contention as readily as a blocking call, and a
@@ -1409,26 +1426,27 @@ jobs:
             unset COVERAGE_PROCESS_START
             runner=(pytest)
           fi
-          # A `pydantic-ai-harness`-only change runs the harness `temporal` tests and, of
-          # `tests/durable_exec`, only the contract manifest freshness test, on the leg that sets
-          # `DURABLE_EXEC_MANIFEST_FRESHNESS`: the manifest also walks the Harness engines, so a
-          # harness change can leave it stale.
-          if [[ "$HARNESS_ONLY" != "true" ]]; then
+          if [[ "$SUITE" == "harness-temporal" ]]; then
+            # Only modules that mention Temporal can hold `temporal` tests (`tests/harness/conftest.py` enforces it), so the
+            # workers don't spend over a minute collecting the rest of `tests/harness` just to deselect it.
+            mapfile -t temporal_modules < <(git grep -liE 'temporal' -- 'tests/harness/**/test_*.py' 'tests/harness/test_*.py')
+            (( ${#temporal_modules[@]} )) || { echo '::error::No harness module mentions Temporal.'; exit 1; }
+            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra sentence-transformers' }} \
+              "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal "${temporal_modules[@]}"
+          # A `pydantic-ai-harness`-only change runs, of `tests/durable_exec`, only the contract
+          # manifest freshness test, on the leg that sets `DURABLE_EXEC_MANIFEST_FRESHNESS`: the
+          # manifest also walks the Harness engines, so a harness change can leave it stale.
+          elif [[ "$HARNESS_ONLY" != "true" ]]; then
             uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra sentence-transformers' }} \
               "${runner[@]}" --durations=20 -n logical --dist=loadgroup tests/durable_exec
           elif [[ "$DURABLE_EXEC_MANIFEST_FRESHNESS" == "true" ]]; then
             uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra sentence-transformers' }} \
               "${runner[@]}" tests/durable_exec/test_durable_exec_contract_manifest.py
           fi
-          # Only modules that mention Temporal can hold `temporal` tests (`tests/harness/conftest.py` enforces it), so the
-          # workers don't spend over a minute collecting the rest of `tests/harness` just to deselect it.
-          mapfile -t temporal_modules < <(git grep -liE 'temporal' -- 'tests/harness/**/test_*.py' 'tests/harness/test_*.py')
-          (( ${#temporal_modules[@]} )) || { echo '::error::No harness module mentions Temporal.'; exit 1; }
-          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra sentence-transformers' }} \
-            "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal "${temporal_modules[@]}"
         env:
+          SUITE: ${{ matrix.suite }}
           HARNESS_ONLY: ${{ needs.classify.outputs.harness_only }}
-          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-${{ matrix.suite }}-${{ matrix.resolution }}
 
       # The Render Workflows integration runs nested agents in separate worker processes on the
       # keyless local runtime from the Render CLI. It adds about a minute, so one leg runs it; the
@@ -1458,13 +1476,13 @@ jobs:
           uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra sentence-transformers' }}
           coverage combine
         env:
-          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-${{ matrix.suite }}-${{ matrix.resolution }}
 
       - name: store coverage files
         if: env.COLLECT_COVERAGE == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: coverage-${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
+          name: coverage-${{ matrix.python-version }}-${{ matrix.suite }}-${{ matrix.resolution }}
           path: .coverage
           include-hidden-files: true
 
@@ -1716,7 +1734,9 @@ jobs:
       - run: uv sync --all-packages --all-extras --group lint
       # `--no-config`: the project's `exclude-dependencies` would otherwise drop the package too.
       - run: uv pip install --no-config "browser-use>=0.13.6,<0.14"
-      - run: uv run --no-sync coverage run -m pytest tests/harness/browser_use
+      # Every harness module imports only here, so the spec conformance gate checks `BrowserUse` and its tables'
+      # stale entries only here.
+      - run: uv run --no-sync coverage run -m pytest -rs tests/harness/browser_use tests/harness/test_spec_conformance.py
       # The capability contracts skip `BrowserUse` on every other job.
       - run: uv run --no-sync coverage run -m pytest tests/harness/test_capability_contracts.py -k BrowserUse
       - run: uv run --no-sync pyright -p tests/harness/browser_use
@@ -1965,7 +1985,9 @@ jobs:
 
   # Live-service suites for the harness storage and AWS backends, outside `tests/` because they need
   # a real server. Each runs when its capability, the dependencies, or this workflow change, and
-  # always on tags.
+  # always on tags. Each service image is pinned by version and digest, so a new upstream image cannot
+  # fail a tag; `live-service-images-daily.yml` runs the image-backed suites against the floating
+  # tags shortly before the usual release time.
   harness-integration-changes:
     name: classify harness integration changes
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.ref_type == 'branch'
@@ -2039,6 +2061,8 @@ jobs:
     env:
       LOCALSTACK_REQUIRE_AUTH_TOKEN: "1"
       LOCALSTACK_AWS_CLI: aws
+      # Not pinned yet: no run of this disabled job has pulled it. Pin it by version and digest from
+      # the first passing run once the job is enabled.
       LOCALSTACK_IMAGE: localstack/localstack
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -2075,7 +2099,7 @@ jobs:
         # MongoDB's published image on Quay avoids Docker Hub and public ECR pull limits.
         # 9.0.4+, not 8.3: older 8.x builds refuse to start on the runner's Ubuntu `7.0.0-*-azure`
         # kernel (https://jira.mongodb.org/browse/SERVER-131779).
-        image: quay.io/mongodb/mongodb-community-server:9.0-ubuntu2204
+        image: quay.io/mongodb/mongodb-community-server:9.0.8-ubuntu2204@sha256:420ce2f2905d046159cc5f3a30110d7ebc523f75b7453e7052233afd08199cb1
         ports:
           - 27017:27017
         options: >-
@@ -2112,7 +2136,7 @@ jobs:
     services:
       postgres:
         # Public Docker Hub pulls from GitHub-hosted runners are exempt from its pull rate limit.
-        image: postgres:17
+        image: postgres:17.12@sha256:223efeb196329b55b3b9a13db144956411dbc18e727e59f681c3e0aede6475cf
         ports:
           - 5432:5432
         env:

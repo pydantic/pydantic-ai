@@ -100,7 +100,7 @@ the last 16,000 bytes of output after `[... output truncated, N earlier bytes om
 log's path (`.pydantic-ai-harness/shell/<id>/output.log`), and its commands outlive the run;
 `delegate_task` has one delegate, `self`):
 
-- `read_file(path, offset=0, limit=None)`, `write_file(path, content)`,
+- `read_file(path, offset=1, limit=None)`, `write_file(path, content)`,
   `edit_file(path, old_text=None, new_text=None, replacements=None)`
 - `list_files(path='.', glob=None)`,
   `grep(pattern, path='.', glob=None, file_type=None, ignore_case=False, literal=False, context=0)`
@@ -123,6 +123,17 @@ is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `cac
 - **Bind `Coder` on the `Agent`**: passing it to `run(capabilities=...)` raises `UserError` unless
   `sub_agents=False`. Delegates re-run the bound agent (same model, workspace, and neighbouring
   capabilities such as approval gates), up to 3 levels deep.
+- **The rule against unrequested delegation is GPT-only:** `Coder` tells the model not to call
+  `delegate_task` unless the user or `AGENTS.md` asks only when the model's profile sets
+  `delegates_unprompted` (OpenAI's GPT models, not gpt-oss). After a `ModelFallback` fallback or a later
+  run on another model, the new model is sent the instructions it would have had from the start (the
+  block rewrites the prefix; no withdrawal note); a `FallbackModel` gets no rule (and a one-time
+  `UserWarning`: use the `ModelFallback` capability). To make another
+  model hold back, pass `profile={'delegates_unprompted': True}` to its model or say so in `instructions=`.
+- **GPT-only `'max'` guidance:** at `autonomy='max'`, three more blocks follow the same per-model pattern:
+  `misread` (a classify-first refinement of the inline misread check, for `reinterprets_malformed_inputs`), `handoff` (structured notes, for `omits_handoff_evidence`) and `runtime_constraints` (check what a
+  stated runtime allows before writing code, for `ignores_stated_runtime_constraints`). `openai_model_profile` sets
+  all three for GPT models, not gpt-oss or the o-series. Evidence is one SWE81 run each (53.2 vs 51.0, within noise; measured with the classify sentence in place of the shared misread check).
 - **Lazy sandbox creation:** `RepoContext` reads the workspace at run start, which creates a sandbox
   before any tool call. `Coder(repo_context=False)` defers it (the instructions then stop naming the
   working directory). To use your own `RepoContext`, pass it as `repo_context=RepoContext(...)` rather than
@@ -202,7 +213,7 @@ agent = Agent(
 ```
 
 Tool arguments (scripted tests need them; `expected_hash` exists only with `content_hashes=True`, the default):
-`read_file(path, offset=0, limit=None)`, `write_file(path, content, expected_hash=None)`,
+`read_file(path, offset=1, limit=None)`, `write_file(path, content, expected_hash=None)`,
 `edit_file(path, old_text=None, new_text=None, replacements=None, expected_hash=None)`,
 `list_directory(path='.')`, `search_files(pattern, path='.', include_glob=None)`,
 `find_files(pattern, path='.')`, `create_directory(path)`, `file_info(path)`; `list_files` and `grep`
@@ -323,6 +334,19 @@ model reads with file tools; short values are masked everywhere).
   Clean up with `stop_command` or your own code. They need `mv` and `base64` in the workspace, and
   `setsid` for process-group stops.
 - `persist_cwd` does not apply to `shell`. A read-only workspace gets no Shell tools.
+
+## AnnounceWorkingDirectory
+
+`AnnounceWorkingDirectory()` adds one instruction line naming the workspace's working directory (The working directory is `/repo`.), so the model uses relative paths. `Shell` and `FileSystem` bring it themselves (not when `defer_loading=True`), and copies merge by its fixed `id`, so the line appears once. Add it yourself when your own tools work in `ctx.workspace`. Asking the workspace starts a sandbox that isn't running before the first request; without a workspace, or with one that is gone, the line is left out.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+
+from pydantic_ai_harness import AnnounceWorkingDirectory
+
+agent = Agent('test', capabilities=[LocalWorkspace('.'), AnnounceWorkingDirectory()])
+```
 
 ## Sandbox workspaces
 
@@ -688,6 +712,10 @@ trusted instructions, not `/` or all of home; repository links can select readab
 files beneath it. See
 [Repo Context](https://pydantic.dev/docs/ai/harness/repo-context/#shared-instruction-symlinks)
 for resolution, labels, and backend requirements.
+Below `'operator'` workspace authority, each walk-up file is read at `authority_of(path)` (an ancestor:
+its `path_authority` entry's level, else the workspace's), and only `'operator'` files go in the
+instructions: the working directory's own file is named for the model to read with its file tools, and
+an ancestor's file is sent once as a workspace-sourced `ContextFilePart` (again when it changes).
 
 `nested_traversal=True` (the default) surfaces the instruction files between the working directory and
 whatever `FileSystem` reads, lists, writes or edits in, shallowest first, each directory once while its note is in the
