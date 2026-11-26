@@ -163,15 +163,7 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 
 #### Observability {#observability}
 
-When you use Pydantic AI Gateway alongside [Pydantic AI instrumentation](logfire.md), each model request appears as **two** nested `chat {model}` spans in Logfire:
-
-- The outer span emitted by Pydantic AI (`otel_scope_name = 'pydantic-ai'`), which carries `gen_ai.usage.*`, `operation.cost` (using the Gateway-reported cost when available), and your agent and run attributes.
-- A child span emitted by the Gateway (`otel_scope_name = 'pydantic-ai-gateway'`, with `service_name = 'PAIG'` by default), which carries `gen_ai.usage.*` and raw HTTP request/response details (and one span per upstream attempt when a [gateway endpoint](#gateway-endpoints) fails over).
-
-Summing `gen_ai.usage.*` over all `chat` spans without filtering will double-count tokens, request counts, and token-derived costs:
-
-- **For per-agent or app-level totals**: filter on `otel_scope_name = 'pydantic-ai'`, or sum `gen_ai.aggregated_usage.*` on `invoke_agent` spans.
-- **For org-wide Gateway traffic across all clients** (including uninstrumented apps, Claude Code, Codex, and direct SDK calls): filter on `otel_scope_name = 'pydantic-ai-gateway'` (or your Gateway `service_name`, `'PAIG'` by default).
+With [Pydantic AI instrumentation](logfire.md) turned on, each model request through the Gateway shows as two `chat {model}` spans: one from Pydantic AI, under the instrumentation scope `pydantic-ai`, and one from the Gateway. Both carry `gen_ai.usage.*`, so summing usage over every `chat` span counts each request twice. To total tokens or cost, filter on `otel_scope_name = 'pydantic-ai'`, or sum `gen_ai.aggregated_usage.*` on the `invoke_agent` spans.
 
 ### Claude Code
 
