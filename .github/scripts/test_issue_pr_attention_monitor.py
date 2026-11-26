@@ -196,6 +196,8 @@ class FakeClient(monitor.GitHubClient):
         self.calls.append(('FIRST', path, None))
         if '/issues?' in path:
             return self.get(path), not self.truncated_issue_list
+        if path.endswith('/timeline'):
+            return self.last_page(path), int(path.split('/issues/')[1].split('/')[0]) not in self.truncated
         if '/pulls/' in path:
             number = int(path.split('/pulls/')[1].split('/')[0])
             source = self.reviews if path.endswith('/reviews') else self.review_comments
@@ -3209,6 +3211,11 @@ def test_priority_sla_cannot_tell_without_a_moment_or_with_exhausted_maintainer_
     empty = sla_client({1: [sla_event('commented', 'contributor', days_ago(9))]})
     assert decide(empty)[0] == 'unknown'
 
+    # Past the fetched pages, a newer marker or linked pull request could hide.
+    long = sla_client({1: [label_event('p:2-high', created_at=days_ago(9))]}, assignees={1: ['DouweM']})
+    long.truncated.add(1)
+    assert decide(long)[0] == 'unknown'
+
     monkeypatch.setattr(monitor, '_ITEM_PROBE_LIMIT', 1)
     crowded = sla_client(
         {
@@ -3295,14 +3302,14 @@ def test_priority_sla_post_decides_each_issue_again_on_live_state(monkeypatch: p
 
 def test_priority_sla_records_a_failed_issue_and_keeps_going(monkeypatch: pytest.MonkeyPatch):
     client = sla_client({1: [label_event('p:2-high', created_at=days_ago(8))], 2: []}, assignees={1: ['DouweM']})
-    real = client.last_pages
+    real = client.first_pages
 
-    def last_pages(path: str, *, count: int = 1) -> list[dict[str, Any]]:
+    def first_pages(path: str, *, count: int) -> tuple[list[dict[str, Any]], bool]:
         if '/issues/2/' in path:
             raise urllib.error.HTTPError(path, 502, 'bad gateway', {}, None)
         return real(path, count=count)
 
-    monkeypatch.setattr(client, 'last_pages', last_pages)
+    monkeypatch.setattr(client, 'first_pages', first_pages)
 
     due, _, failures = monitor.priority_sla(client, 'r', now=SLA_NOW, post=False)
 
@@ -3311,9 +3318,24 @@ def test_priority_sla_records_a_failed_issue_and_keeps_going(monkeypatch: pytest
 
 
 @pytest.mark.parametrize('value', ['', '[true]', '[0]', '["1"]', '{"items": [1]}'])
-def test_priority_sla_post_input_must_be_positive_issue_numbers(value: str):
+def test_priority_sla_post_input_must_be_positive_issue_numbers(value: str, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv('PRIORITY_SLA_ITEMS', value)
     with pytest.raises(ValueError):
-        monitor._PRIORITY_SLA_ITEMS.validate_json(value)
+        monitor._run_priority_sla(FakeClient(), 'r', 'priority-sla-post', now=SLA_NOW)
+
+
+def test_priority_sla_never_judges_or_posts_on_a_pull_request(monkeypatch: pytest.MonkeyPatch):
+    client = sla_client({1: [label_event('p:2-high', created_at=days_ago(8))]}, assignees={1: ['DouweM']})
+    client.items[1]['pull_request'] = {'url': 'u'}
+    monkeypatch.setenv('PRIORITY_SLA_ITEMS', '[1]')
+
+    due, lines, _ = monitor.priority_sla(client, 'r', now=SLA_NOW, post=True)
+    posted_lines, _ = monitor._run_priority_sla(client, 'r', 'priority-sla-post', now=SLA_NOW)
+
+    assert due == []
+    assert lines == ['due: 0, active: 0, commented: 0, owner_skipped: 0, unknown: 0']
+    assert posted_lines == ['#1: no longer an open priority issue']
+    assert posted(client) == []
 
 
 def test_priority_sla_workflow_plans_read_only_and_posts_only_when_enabled():
@@ -3330,6 +3352,10 @@ def test_priority_sla_workflow_plans_read_only_and_posts_only_when_enabled():
     }
     assert loaded['permissions'] == {}
     assert jobs['plan']['permissions'] == {'contents': 'read', 'issues': 'read'}
+    for job in jobs.values():
+        checkout = job['steps'][0]
+        assert checkout['with']['ref'] == '${{ github.event.repository.default_branch }}'
+        assert checkout['with']['persist-credentials'] is False
     assert jobs['post']['permissions'] == {'contents': 'read', 'issues': 'write'}
     plan_step = jobs['plan']['steps'][-1]
     assert plan_step['run'] == 'python3 .github/scripts/issue_pr_attention_monitor.py priority-sla'

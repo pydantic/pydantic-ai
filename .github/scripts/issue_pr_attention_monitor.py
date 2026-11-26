@@ -54,17 +54,7 @@ _PRIORITY_SLA_WINDOWS = {
     'p:1-highest': dt.timedelta(days=3),
     'p:2-high': dt.timedelta(days=7),
 }
-# An open pull request linked to the issue counts as movement only while it is this fresh.
-_PRIORITY_SLA_PR_FRESHNESS = dt.timedelta(days=7)
-_PRIORITY_SLA_MARKER = '<!-- pydantic-ai-priority-sla:v1 '
-# Only this author's markers count, so pasting the marker cannot suppress a comment.
-_PRIORITY_SLA_AUTHOR = 'github-actions[bot]'
-# Never mentioned: an issue only they own is counted and skipped, because a comment
-# without a mention still notifies every assignee. Casefolded.
-_PRIORITY_SLA_SILENT_OWNERS = frozenset({'dsfaccini'})
-_PRIORITY_SLA_PAGE_LIMIT = 5
 _PrioritySlaOutcome = Literal['due', 'active', 'commented', 'owner_skipped', 'unknown']
-_PRIORITY_SLA_ITEMS: TypeAdapter[list[int]] = TypeAdapter(list[Annotated[int, Field(strict=True, gt=0)]])
 _RESURFACE_AFTER = dt.timedelta(days=7)
 _RECENT_ACTIVITY_WINDOW = dt.timedelta(days=45)
 _CANDIDATE_LIMIT = 10
@@ -2172,9 +2162,11 @@ def _priority_sla_since(
     """When the issue last moved: its priority label, a maintainer's action, or a fresh open linked PR.
 
     Title edits, bots and the passive `mentioned`/`subscribed` events never count; an assignment
-    counts as the assignee's, as in `_owner_quiet_since`. None means the fetched pages hold no such
+    counts as the assignee's, as in `_owner_quiet_since`. None means the timeline holds no such
     moment, or the maintainer lookups ran out before ruling an actor out.
     """
+    # An open pull request linked to the issue counts as movement only while it is this fresh.
+    pull_freshness = dt.timedelta(days=7)
     probe = _MaintainerProbe(client, repo)
     moments: list[dt.datetime] = []
     for value in timeline:
@@ -2189,7 +2181,7 @@ def _priority_sla_since(
             and linked.pull_request is not None
             and linked.state == 'open'
             and linked.updated_at
-            and now - (updated := parse_time(linked.updated_at)) <= _PRIORITY_SLA_PR_FRESHNESS
+            and now - (updated := parse_time(linked.updated_at)) <= pull_freshness
         ):
             moments.append(updated)
         if (
@@ -2205,11 +2197,21 @@ def _priority_sla_since(
 def _priority_sla_decision(
     client: GitHubClient, repo: str, issue: Mapping[str, Any], label: str, *, now: dt.datetime
 ) -> tuple[_PrioritySlaOutcome, str]:
-    """Decide one open priority issue, with the comment to post when it is due one."""
+    """Decide one open priority issue, with the comment to post when it is due one.
+
+    The whole timeline is read, oldest first: on a longer one the newest marker or linked pull
+    request could lie past the pages fetched, so the issue is left `unknown` rather than pinged.
+    """
+    marker = '<!-- pydantic-ai-priority-sla:v1 '
+    # Only this author's markers count, so pasting the marker cannot suppress a comment.
+    author = 'github-actions[bot]'
+    # Never mentioned: an issue only they own is counted and skipped, because a comment
+    # without a mention still notifies every assignee. Casefolded.
+    silent_owners = frozenset({'dsfaccini'})
     number = int(issue['number'])
-    timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
+    timeline, whole = client.first_pages(f'/repos/{repo}/issues/{number}/timeline', count=_EVENT_PAGE_LIMIT)
     window = _PRIORITY_SLA_WINDOWS[label]
-    since = _priority_sla_since(client, repo, label, timeline, now=now)
+    since = _priority_sla_since(client, repo, label, timeline, now=now) if whole else None
     if since is None:
         return 'unknown', ''
     if now - since <= window:
@@ -2218,22 +2220,22 @@ def _priority_sla_decision(
     # moved back because a counted pull request closed or went stale.
     if any(
         event.get('event') == 'commented'
-        and _actor(event) == _PRIORITY_SLA_AUTHOR
-        and _PRIORITY_SLA_MARKER in str(event.get('body') or '')
+        and _actor(event) == author
+        and marker in str(event.get('body') or '')
         and (when := _event_time(event)) is not None
         and when > since
         for event in timeline
     ):
         return 'commented', ''
     owners = _maintainer_assignees(client, repo, issue) or [_FALLBACK_OWNER]
-    mentions = [owner for owner in owners if owner.casefold() not in _PRIORITY_SLA_SILENT_OWNERS]
+    mentions = [owner for owner in owners if owner.casefold() not in silent_owners]
     if not mentions:
         return 'owner_skipped', ''
     body = (
         f'{" ".join(f"@{login}" for login in mentions)} this `{label}` issue has had no maintainer or linked-PR '
         f'activity for {(now - since).days} days; the window for its priority is {window.days}. '
         'Could you post a next step, or change its priority?\n\n'
-        f'{_PRIORITY_SLA_MARKER}label={label} since={since.strftime("%Y-%m-%dT%H:%M:%SZ")} -->'
+        f'{marker}label={label} since={since.strftime("%Y-%m-%dT%H:%M:%SZ")} -->'
     )
     return 'due', body
 
@@ -2242,6 +2244,7 @@ def priority_sla(
     client: GitHubClient, repo: str, *, now: dt.datetime, post: bool
 ) -> tuple[list[int], list[str], list[str]]:
     """List the priority issues due a comment, and record the run; `post_priority_sla` posts them."""
+    page_limit = 5
     counts: dict[_PrioritySlaOutcome, int] = dict.fromkeys(get_args(_PrioritySlaOutcome), 0)
     due: list[int] = []
     lines: list[str] = []
@@ -2251,7 +2254,7 @@ def priority_sla(
     # Tightest window first, so an issue carrying both labels is judged once, by P1.
     for label in sorted(_PRIORITY_SLA_WINDOWS, key=_PRIORITY_SLA_WINDOWS.__getitem__):
         path = f'/repos/{repo}/issues?state=open&labels={urllib.parse.quote(label)}'
-        issues, whole = client.first_pages(path, count=_PRIORITY_SLA_PAGE_LIMIT)
+        issues, whole = client.first_pages(path, count=page_limit)
         truncated = truncated or not whole
         for issue in issues:
             if 'pull_request' in issue or (number := int(issue['number'])) in seen:
@@ -2271,7 +2274,7 @@ def priority_sla(
                 flat = body.replace('\n', ' ')
                 lines.append(f'#{number}: {action}: {flat}')
     if truncated:
-        failures.append(f'priority SLA: more than {_PRIORITY_SLA_PAGE_LIMIT * 100} issues for one label')
+        failures.append(f'priority SLA: more than {page_limit * 100} issues for one label')
     _emit_event('priority_sla.run', repo=repo, post=post, truncated=truncated, failures=len(failures), **counts)
     lines.append(', '.join(f'{outcome}: {count}' for outcome, count in counts.items()))
     return due, lines, failures
@@ -2323,7 +2326,8 @@ def _run_priority_sla(
     client: GitHubClient, repo: str, mode: Literal['priority-sla', 'priority-sla-post'], *, now: dt.datetime
 ) -> tuple[list[str], list[str]]:
     if mode == 'priority-sla-post':
-        numbers = _PRIORITY_SLA_ITEMS.validate_json(os.environ.get('PRIORITY_SLA_ITEMS') or '')
+        items: TypeAdapter[list[int]] = TypeAdapter(list[Annotated[int, Field(strict=True, gt=0)]])
+        numbers = items.validate_json(os.environ.get('PRIORITY_SLA_ITEMS') or '')
         return post_priority_sla(client, repo, numbers, now=now)
     # Anything but an explicit `true` is a dry run, which only lists the comments.
     post = os.environ.get('PRIORITY_SLA_POST') == 'true'
