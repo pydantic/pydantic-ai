@@ -300,12 +300,28 @@ def run_cli(
         ['-a', 'echo', 'what', 'is', 'up'],
         ['what', 'is', '-a', 'echo', 'up'],
         ['-a', 'echo', '-p', 'what is up'],
+        ['-a', 'echo', '--', 'what', 'is', 'up'],
+        ['-a', 'echo', 'what', '--', 'is', 'up'],
     ],
 )
 def test_cli_positional_prompt_runs_like_p(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], args: list[str]
 ) -> None:
     assert run_cli(tmp_path, monkeypatch, capsys, *args)[:2] == (0, 'echo: what is up\n')
+
+
+@pytest.mark.parametrize(
+    ('args', 'answer'),
+    [
+        (['-a', 'echo', '--', 'explain', '--version'], 'echo: explain --version\n'),
+        (['-a', 'echo', '--', 'review', '--agent=other:agent', '-p', 'x'], 'echo: review --agent=other:agent -p x\n'),
+    ],
+)
+def test_cli_words_after_double_dash_are_prompt_text_not_options(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], args: list[str], answer: str
+) -> None:
+    """After `--`, words that look like options stay in the prompt, so prompt text can't pick another agent."""
+    assert run_cli(tmp_path, monkeypatch, capsys, *args)[:2] == (0, answer)
 
 
 def test_cli_subcommand_is_not_a_prompt(

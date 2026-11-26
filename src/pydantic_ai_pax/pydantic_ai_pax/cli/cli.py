@@ -361,19 +361,34 @@ def _version() -> str:
 
 
 def _parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace:
-    """Normalize the update command before validating modes and session options."""
-    args = parser.parse_args()
+    """Normalize the update command before validating modes and session options.
+
+    Everything after the first `--` is taken literally: prompt words for a prompt, or a subcommand's arguments as
+    before, never options, however often the words before it are parsed again.
+    """
+    argv = sys.argv[1:]
+    literal: list[str] | None = None
+    if '--' in argv:
+        end = argv.index('--')
+        argv, literal = argv[:end], argv[end + 1 :]
+    args = parser.parse_args(argv)
     while args.command == 'update':
         # `pax update` is `pax --update`; options after it parse as they would before it.
         parser.parse_args(args.arguments, namespace=args)
         args.update = True
-    if args.command is not None and args.command not in _SUBCOMMANDS:
-        _positional_prompt(args, parser)
+    if args.command in _SUBCOMMANDS:
+        if literal is not None:
+            args.arguments = [*args.arguments, '--', *literal]
+    elif args.command is not None or literal:
+        _positional_prompt(args, parser, literal or [])
     return args
 
 
-def _positional_prompt(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
-    """`pax WORDS...` runs the words, joined by spaces, as `-p` would; options may follow any of them."""
+def _positional_prompt(args: argparse.Namespace, parser: argparse.ArgumentParser, literal: list[str]) -> None:
+    """`pax WORDS...` runs the words, joined by spaces, as `-p` would; options may follow any of them before `--`.
+
+    `literal`, the words after `--`, are added as they are.
+    """
     words: list[str] = []
     while args.command is not None:
         words.append(args.command)
@@ -381,7 +396,7 @@ def _positional_prompt(args: argparse.Namespace, parser: argparse.ArgumentParser
         parser.parse_args(args.arguments, namespace=args)
     if args.prompt is not None:
         parser.error('Give the prompt once: either with -p or after the options')
-    args.prompt = ' '.join(words)
+    args.prompt = ' '.join([*words, *literal])
 
 
 async def _update(channel: 'UpdateChannel') -> int:
