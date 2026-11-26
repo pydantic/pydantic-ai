@@ -1,0 +1,196 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "385"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: >-
+              Use the get_file tool now to retrieve a video file, then describe what you
+              received.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=2083
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: requires_action
+        usage:
+          total_tokens: 110
+          total_input_tokens: 36
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 36
+          total_cached_tokens: 0
+          total_output_tokens: 10
+          total_tool_use_tokens: 0
+          total_thought_tokens: 64
+          initial_input_tokens: 29
+        created: 2026-11-06T02:51:41Z
+        updated: 2026-11-06T02:51:41Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            EtcCCtQCAWkUfROJqNN0AqCnrI+9VTxQFyX/zMagfqZyjrmCtIT0sUmOPknTkNhnu6n65/8uE21qH+bQQHBuJ1gqocbg2tRh1883NjNOD7cBsPeuQDKqFeR+RN/TzX5Ya91361mCIWygr1l0g6xZcmGyklqY+qALapxLYKwn9+7CG9ayKF3zJZDSP7OsZanOyLLiWGVivpRw3jNoc1QPzW7VtpmHDA2eht+k2tY7236FXNVR/FoHuaRRubwL9aEgxO8B+AjLmED3wy0palkJmpsyml1Whw2VJoPIL7pms8HrGnMiZzvR93O5EzsdjXoEW0HsHP31dHkKh93Skt5Af7GZ1t4mZj1h0OYTN1IRQWjtNC85fwiDcFSADhJiqOUwjR+c7GrU9C/4tnd5xuQT6/Z1M36UgeUhPzjSRglYTKZrprnJDaz1P6A39aLeaahiLvtGeDi9BeRxYg==
+          type: thought
+        - id: call_5043817367829826223
+          type: function_call
+          name: get_file
+          arguments: {}
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:51:41.089957+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1248"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: >-
+              Use the get_file tool now to retrieve a video file, then describe what you
+              received.
+        - signature: >-
+            EtcCCtQCAWkUfROJqNN0AqCnrI+9VTxQFyX/zMagfqZyjrmCtIT0sUmOPknTkNhnu6n65/8uE21qH+bQQHBuJ1gqocbg2tRh1883NjNOD7cBsPeuQDKqFeR+RN/TzX5Ya91361mCIWygr1l0g6xZcmGyklqY+qALapxLYKwn9+7CG9ayKF3zJZDSP7OsZanOyLLiWGVivpRw3jNoc1QPzW7VtpmHDA2eht+k2tY7236FXNVR/FoHuaRRubwL9aEgxO8B+AjLmED3wy0palkJmpsyml1Whw2VJoPIL7pms8HrGnMiZzvR93O5EzsdjXoEW0HsHP31dHkKh93Skt5Af7GZ1t4mZj1h0OYTN1IRQWjtNC85fwiDcFSADhJiqOUwjR+c7GrU9C/4tnd5xuQT6/Z1M36UgeUhPzjSRglYTKZrprnJDaz1P6A39aLeaahiLvtGeDi9BeRxYg==
+          type: thought
+        - id: call_5043817367829826223
+          name: get_file
+          type: function_call
+          arguments: {}
+        - type: function_result
+          name: get_file
+          call_id: call_5043817367829826223
+          is_error: false
+          result:
+          - type: text
+            text: File attached
+        - type: user_input
+          content:
+          - mime_type: video/mp4
+            type: video
+            uri: https://www.w3schools.com/html/mov_bbb.mp4
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=7290
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 1459
+          total_input_tokens: 1034
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 124
+          - modality: video
+            tokens: 910
+          total_cached_tokens: 0
+          total_output_tokens: 172
+          total_tool_use_tokens: 0
+          total_thought_tokens: 253
+          initial_input_tokens: 1122
+        created: 2026-11-06T02:51:47Z
+        updated: 2026-11-06T02:51:47Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            Eq8JCqwJAWkUfRPWPg937uQQG5Nlcv9bF8dbV9JTklMsWbFNHMuEm98lMnCX2QTGXNO0WHxY68zkas9I5HLl6Obb63qbI+eJcvBoOIEjbs7fyfKZdDEe4pgp1EH8Xi79J7WN47G2Y25BMC9hDj4calP4wz3+oX0leXDjzluzgssH0NXnteP5JdX0/F4LyNl0N9+hyIY4uMpugq8bl8avaGqi705FNzu/71fQQ5wMYuofmiFEz2gk+ZtFjdKBxzfG/p+8byPhwDkNoAuRV6rhaLbhl04uLAAnKi13dHRhVTvedCj2FxVRc4SlnYUPPfqvY10RMVFXVFvwo9XSS2bwuMRGxYmdeq84xM+nGbeUEGlTu9ApevG4c34yoo/CO7zsoZOqFyHs0dQh8XTNL1uCYbXjPVtrwGDS+DsIBXqhCgK8QMpPxCheL8nWZnPAJvjLz6FNq813V3K1YpEaVm8aekNRc4PSJ183ybF9x7vqsGnXfck2EDUQybFhuyP3Tkk3yGeoCaDlb28Y66p9djqUQl5VQ3oToNnOkJGcyHeUO/W/vOm4Ynv5l9Sk1jej0LwBUDmlOmNspIlJRUK86hyg+cUXifb+IN2P3h6KDuwBzUZFlcwhxnhkDRqblpk0+3m9SeGEIWPCwmIFeokfM4yxCChCkpduGCge4v8GYfpak6GXcSozjGTiPcSu1Xc/Rft37yVwPwflUNUTHTkOatZr39R0fLfXl+1y7wLMSi57GLxU7DC7JtRzF3lOFh/Fb12ZmU0iD2MWfJbPLUNSgh7g91g3DsiZ0facX+H4y46RRguSEvwFhAPGcbXS6QuCmmzSfxAlZfLg6NNbOEKnZgen95nZfnVtWO8fPpU9klkiYCYJ+j3ESxaqUf2YLwkLY7msplVbnUz4/eZHuyorKhmgHZhRGgItdnRdETrMgD7mILKAY4UEIu/Xeqbdv7sqq/ox8rWarlf92I+yy6bM2L4HxJwe31rf8tqtvOyls3w31y2kNhR8DuU+hBNNmcLhlB+xVE/SYd5qIW9toljuPIwVy8IO26QhBuFwsHAnMOGigxa7hFgcpiEKTr62ema2rkaXeB9vIxORlPOyRuCd8t6CvzKB79cfeXnX9iPUgdgryq5VOhuA5aASnh5gZlhEcZY6M1+BVUSXolVDvQdt/0A4TXZFUVHpiybzX1l29CmrmnMg5q7vXIb/XL/rWCQIt25DxEgPuV8dNw9hclo29va6RQCWWabA6BvTDuFT6oe3RKHJaAs+F5vH5ywrL0df1fpe0GySRSuOte26S4KhE38/RGAFlQ8ET9Kd5+IUznfkcC5CuDN/ZKj0Ex9wQKHF0KIkW33tiZ+NMYo50+dye/TwOC+PpSXhT+cF1U+j2AveLttsWwD4+pL26gUcU86ZHEUyjnZqZfdhlCwhFxmHrSPP1AZfC+YdK2oo1agIctyh9LzGExf0fAiL8InCUwDKZMAGcguBqYmgesIBUg8fb8P+4pHhmS2VBYb/6XdZ6PhlLz7uLoPr13F6oN1RSBhQh9Mc2xvvfh+AO6awevS3A3DdV4KyFjiC0Zgji15GFgDCypySffduSpA31gEhaBi9ho1doXA=
+          type: thought
+        - content:
+          - text: |-
+              I received a short animated video clip from the Blender open-source film ***Big Buck Bunny***.
+
+              ### Summary of the Video:
+              * **Characters & Setting**: The clip features **Big Buck Bunny** (a large, round white rabbit) standing happily in a sunny, grassy meadow filled with wildflowers.
+              * **Action**:
+                1. A vibrant purple butterfly flutters around him and briefly rests near his ear as he looks up lovingly while cheerfully vocalizing/singing.
+                2. The shot shifts to a wide angle of the scenic valley as the butterfly flutters downward toward the flowers.
+                3. Suddenly, an apple is thrown from off-screen, striking the butterfly directly and crushing it into the grass.
+                4. The clip ends with Big Buck Bunny staring in stunned disbelief at what just happened.
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:51:48.403082+00:00
