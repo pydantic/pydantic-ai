@@ -111,6 +111,13 @@ A model other than the agent's default adds its id to the step name
 the same task or the same tool called twice, gets an encounter-order suffix (`#2`, `#3`, ...). Await
 one run before starting the next in the same task.
 
+A run started without `run_id=` gets a default built from the task ID, the agent's `name`, and how
+many runs that agent has started in the task so far, and its default `conversation_id` follows from
+it. A retried task therefore gives each run the IDs it had before the crash. Runs are numbered in the
+order they start, so pass `run_id=` to runs of one agent that start concurrently. A run started inside
+a step, such as a sub-agent called from a tool, gets a random ID: the step's result is replayed
+without running it again.
+
 An async function tool with [`durable=False`](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) gets no step:
 it runs in the task handler on every attempt, so keep it deterministic and free of I/O.
 

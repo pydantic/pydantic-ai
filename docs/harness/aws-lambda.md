@@ -292,6 +292,12 @@ records a model request's or tool call's span, and a model request's token and c
 invocation that ran it, and an agent run's span in each invocation that did work for it. A resumed
 execution's traces show only the work that invocation did, and costs are counted once.
 
+A run started without `run_id=` gets a default built from a hash of the durable execution ARN, the
+agent's `name`, and how many runs that agent has started in the invocation so far, across all its
+`run_durable` calls. Its default `conversation_id` follows from it, so a resumed execution gives each
+run the IDs it had before. Runs are numbered in the order they start, so pass `run_id=` to runs of one
+agent that start concurrently. A run started inside a parallel branch gets a random ID.
+
 ## Constraints
 
 - **Steps are at least once, and retried by default.** A step is checkpointed after it runs, so an

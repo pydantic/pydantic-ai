@@ -34,12 +34,14 @@ import functools
 import inspect
 import threading
 import time
+import uuid
 from collections import Counter
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from queue import Queue
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast, overload, runtime_checkable
+from weakref import WeakKeyDictionary
 
 import anyio
 
@@ -145,6 +147,12 @@ class _ExecutionContext(Protocol):
 
 
 ContextT = TypeVar('ContextT', bound=DurableStepContext)
+
+_default_run_counts: WeakKeyDictionary[DurableStepContext, Counter[str]] = WeakKeyDictionary()
+"""Agent runs that drew a default `run_id`, per agent name, in each invocation's `DurableContext`.
+
+Kept per context rather than per bridge, so the `run_durable` calls of one invocation count together.
+"""
 
 
 class _AgentLoop:
@@ -324,26 +332,26 @@ def _record(item: _Request, *, executed: bool) -> None:
 class StepBridge:
     """Runs durable steps on the handler thread on behalf of the agent loop."""
 
-    def __init__(self, context: DurableStepContext, *, execution_arn: str | None = None) -> None:
+    def __init__(self, context: DurableStepContext, *, execution_id: str | None = None) -> None:
         self._context = context
         self._queue: Queue[_Request | _Finished[Any]] = Queue()
         # Serialises step requests so their queue order -- and so the order Lambda assigns
         # checkpoint identity in -- is first-come, rather than depending on how the event loop
         # interleaves concurrent callers (two MCP servers being listed in parallel, say).
         self._order = anyio.Lock(fast_acquire=True)
-        self._execution_arn = execution_arn
-        self._run_counts = Counter[str]()
+        self._execution_id = execution_id
 
     def next_run_id(self, agent_name: str) -> str | None:
         """A `run_id` for the next run of `agent_name` in this invocation, numbered in the order runs start.
 
-        `None` without an execution ARN, as in a parallel branch, whose runs can start in any order.
+        `None` without an execution ID, as in a parallel branch, whose runs can start in any order.
         """
-        if self._execution_arn is None:
+        if self._execution_id is None:
             return None
-        index = self._run_counts[agent_name]
-        self._run_counts[agent_name] += 1
-        return f'{self._execution_arn}:{agent_name}:{index}'
+        counts = _default_run_counts.setdefault(self._context, Counter())
+        index = counts[agent_name]
+        counts[agent_name] += 1
+        return f'{self._execution_id}:{agent_name}:{index}'
 
     async def run_step(
         self,
@@ -780,8 +788,13 @@ def _run_durable_on_agent_loop(
     context: DurableStepContext,
     cancel_timeout: float,
 ) -> T:
-    execution_arn = context.state.durable_execution_arn if isinstance(context, _ExecutionContext) else None
-    bridge = StepBridge(context, execution_arn=execution_arn)
+    # Hashed so the run ID, which ends up in messages and UI message IDs, doesn't carry the account and function.
+    execution_id = (
+        str(uuid.uuid5(uuid.NAMESPACE_URL, context.state.durable_execution_arn))
+        if isinstance(context, _ExecutionContext)
+        else None
+    )
+    bridge = StepBridge(context, execution_id=execution_id)
     token = _active_bridge.set(bridge)
     loop = _agent_loop.get()
     run_context = contextvars.copy_context()

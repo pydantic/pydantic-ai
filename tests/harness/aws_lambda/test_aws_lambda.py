@@ -422,15 +422,16 @@ class TestCrashMidRunRetry:
             seen.append((ctx.run_id, ctx.conversation_id))
             return 'sunny'
 
-        async def two_runs() -> list[tuple[str, str]]:
-            results = [await agent.run('go'), await agent.run('go')]
+        def invoke(context: FakeDurableContext) -> list[tuple[str, str]]:
+            # Two `run_durable` calls in one invocation, as a synchronous handler makes them.
+            results = [run_durable(lambda: agent.run('go'), context=context) for _ in range(2)]
             return [(result.run_id, result.conversation_id) for result in results]
 
         first = FakeDurableContext()
-        before = run_durable(two_runs, context=first)
+        before = invoke(first)
         # Resume after the first run's tool step: it replays, so only the steps after it run again.
         resumed = FakeDurableContext(journal=first.operations[:2])
-        after = run_durable(two_runs, context=resumed)
+        after = invoke(resumed)
 
         assert after == before
         assert seen == [before[0], before[1], after[1]]
