@@ -36,7 +36,7 @@ from pydantic_ai.messages import (
 )
 
 from ._special_tokens import StreamRestorer
-from ._utils import generate_tool_call_id as _generate_tool_call_id
+from ._utils import copy_dataclass_fields as _copy_dataclass_fields, generate_tool_call_id as _generate_tool_call_id
 
 if TYPE_CHECKING:
     from .models import ModelRequestParameters
@@ -116,15 +116,22 @@ class ModelResponsePartsManager:
     def _tool_kind_for(self, tool_name: str) -> ToolPartKind | None:
         return self._tool_kind_by_name.get(tool_name)
 
-    def _typed_call_part(self, part: ToolCallPart) -> ToolCallPart:
+    def _typed_call_part(self, part: ToolCallPart, *, reevaluate_kind: bool = False) -> ToolCallPart:
         """Promote a base `ToolCallPart` to a typed subclass via `ToolDefinition.tool_kind`.
 
+        When `reevaluate_kind` is True (e.g. a streamed `tool_name` grew across deltas),
+        re-derive `tool_kind` from the complete `part.tool_name` — demoting back to a base
+        `ToolCallPart` or re-promoting to another typed subclass if the kind changed.
         Safe no-op for unknown tool names (model hallucinations) and for tool defs
         without a `tool_kind`.
         """
-        if part.tool_kind is not None:
+        if not reevaluate_kind and part.tool_kind is not None:
             return part
         kind = self._tool_kind_for(part.tool_name)
+        if reevaluate_kind:
+            if kind == part.tool_kind and (kind is not None or type(part) is ToolCallPart):
+                return part
+            part = _copy_dataclass_fields(part, ToolCallPart, tool_kind=None)
         if kind is None:
             return part
         return ToolCallPart.narrow_type(part, tool_kind=kind)
@@ -464,7 +471,9 @@ class ModelResponsePartsManager:
             try:
                 updated_part = self._apply_tool_call_delta(part_index, existing_part, delta)
                 if isinstance(updated_part, ToolCallPart):
-                    updated_part = self._typed_call_part(updated_part)
+                    updated_part = self._typed_call_part(
+                        updated_part, reevaluate_kind=delta.tool_name_delta is not None
+                    )
             except Exception:
                 self._parts[part_index] = existing_part
                 if buffer is None:

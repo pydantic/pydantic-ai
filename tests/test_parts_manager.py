@@ -1183,3 +1183,70 @@ def test_apply_event_preserves_stream_part_indexes():
     assert replay_manager.get_parts() == snapshot(
         [TextPart(content='hello world'), TextPart(content='goodbye everyone')]
     )
+
+
+def test_tool_call_name_growth_reevaluates_tool_kind():
+    """Growing a streamed tool name across deltas re-derives `tool_kind` and subclass (#14665)."""
+    from typing_extensions import TypedDict
+
+    from pydantic_ai.messages import ToolKind
+
+    class _Args(TypedDict, total=False):
+        q: str
+
+    lookup_kind = ToolKind('test-growth', 'lookup', args=_Args)
+    order_kind = ToolKind('test-growth', 'order', args=_Args)
+
+    class _LookupCallPart(ToolCallPart[_Args], kind=lookup_kind):
+        pass
+
+    class _OrderCallPart(ToolCallPart[_Args], kind=order_kind):
+        pass
+
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='lookup', tool_kind=lookup_kind.id),
+            ToolDefinition(name='lookup_order', tool_kind=order_kind.id),
+            ToolDefinition(name='lookup_plain', tool_kind=None),
+            ToolDefinition(name='plain_to_order', tool_kind=order_kind.id),
+        ]
+    )
+
+    # 1. Typed kind -> different typed kind (`lookup` -> `lookup_order`)
+    mgr = ModelResponsePartsManager(model_request_parameters=params)
+    mgr.handle_tool_call_delta(vendor_part_id='c1', tool_name='lookup', tool_call_id='id1')
+    assert isinstance(mgr.get_part_by_vendor_id('c1'), _LookupCallPart)
+    mgr.handle_tool_call_delta(vendor_part_id='c1', tool_name='_order', args='{"q":"x"}')
+    part = mgr.get_part_by_vendor_id('c1')
+    assert isinstance(part, _OrderCallPart)
+    assert part.tool_name == 'lookup_order'
+    assert part.tool_kind == order_kind.id
+
+    # 2. Typed kind -> untyped base tool (`lookup` -> `lookup_plain`)
+    mgr2 = ModelResponsePartsManager(model_request_parameters=params)
+    mgr2.handle_tool_call_delta(vendor_part_id='c2', tool_name='lookup', tool_call_id='id2')
+    assert isinstance(mgr2.get_part_by_vendor_id('c2'), _LookupCallPart)
+    mgr2.handle_tool_call_delta(vendor_part_id='c2', tool_name='_plain', args='{}')
+    part2 = mgr2.get_part_by_vendor_id('c2')
+    assert type(part2) is ToolCallPart
+    assert part2.tool_name == 'lookup_plain'
+    assert part2.tool_kind is None
+
+    # 3. Untyped prefix -> typed kind (`plain` -> `plain_to_order`)
+    mgr3 = ModelResponsePartsManager(model_request_parameters=params)
+    mgr3.handle_tool_call_delta(vendor_part_id='c3', tool_name='plain', tool_call_id='id3')
+    assert type(mgr3.get_part_by_vendor_id('c3')) is ToolCallPart
+    mgr3.handle_tool_call_delta(vendor_part_id='c3', tool_name='_to_order', args='{"q":"y"}')
+    part3 = mgr3.get_part_by_vendor_id('c3')
+    assert isinstance(part3, _OrderCallPart)
+    assert part3.tool_name == 'plain_to_order'
+    assert part3.tool_kind == order_kind.id
+
+    # 4. Pre-built part via handle_part keeps its explicit tool_kind across args-only deltas
+    mgr4 = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    custom = ToolCallPart(tool_name='external', args='{"a":', tool_call_id='id4', tool_kind='custom-kind')
+    mgr4.handle_part(vendor_part_id='c4', part=custom)
+    mgr4.handle_tool_call_delta(vendor_part_id='c4', args='1}')
+    part4 = mgr4.get_part_by_vendor_id('c4')
+    assert isinstance(part4, ToolCallPart)
+    assert part4.tool_kind == 'custom-kind'
