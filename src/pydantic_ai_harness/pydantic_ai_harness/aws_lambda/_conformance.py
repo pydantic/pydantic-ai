@@ -20,9 +20,9 @@ _FOREGROUND = (
 RECOVERY = Recovery()
 
 SUPPORT: Mapping[str, Support] = {
-    'BackgroundTools.runs_in_background': Support('limited', _FOREGROUND, check=ran_in_foreground),
+    'BackgroundTools.runs_in_background': Support('limited', _FOREGROUND, check=ran_in_foreground, issue=13206),
     'BackgroundTools.survives_approval_wait': Support(
-        'limited', f'{_FOREGROUND}, so no call is in flight across the wait', check=ran_in_foreground
+        'limited', f'{_FOREGROUND}, so no call is in flight across the wait', check=ran_in_foreground, issue=13206
     ),
 }
 """The cells measured so far, by case or scenario name."""

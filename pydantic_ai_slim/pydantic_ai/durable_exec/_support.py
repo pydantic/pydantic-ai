@@ -61,7 +61,10 @@ class Support:
     check: Callable[[EngineRun], None] | None = None
     """Asserts the limit on the first run. Required for `limited`, and only for it."""
     issue: int | None = None
-    """The GitHub issue that tracks the cell. Required for `broken` and `untested`, and recommended for `refused`."""
+    """The GitHub issue that tracks the cell: full support for `limited`, the bug for `broken`, a suite for `untested`.
+
+    Required for those three, and recommended for `refused`. The docs badge links it.
+    """
 
     def __post_init__(self) -> None:
         if self.level != 'supported' and not self.reason:
@@ -70,7 +73,7 @@ class Support:
             raise ValueError('a `refused` or `broken` cell, and only one, names what it matches in `match`')
         if (self.level == 'limited') != (self.check is not None):
             raise ValueError('a `limited` cell, and only one, asserts its limit in `check`')
-        if self.level in ('broken', 'untested') and self.issue is None:
+        if self.level in ('limited', 'broken', 'untested') and self.issue is None:
             raise ValueError(f'a `{self.level}` cell needs the `issue` that tracks it')
 
 

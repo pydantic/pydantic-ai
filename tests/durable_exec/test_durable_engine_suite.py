@@ -84,7 +84,7 @@ def test_a_supported_cell_must_not_break() -> None:
 
 
 def test_a_limited_cell_checks_its_limit() -> None:
-    suite = _suite({'case': Support('limited', 'runs in the foreground', check=_check)})
+    suite = _suite({'case': Support('limited', 'runs in the foreground', check=_check, issue=1)})
     suite._assert_cell('case', _Engine(), EngineRun('', ANSWER), [])  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(AssertionError):
         suite._assert_cell('case', _Engine(), EngineRun('', 'other'), [])  # pyright: ignore[reportPrivateUsage]

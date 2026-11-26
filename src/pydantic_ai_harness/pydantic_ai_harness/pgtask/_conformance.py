@@ -23,7 +23,7 @@ _WAIT_REFUSED = 'does not support waiting for external events yet'
 RECOVERY = Recovery()
 
 SUPPORT: Mapping[str, Support] = {
-    'BackgroundTools.runs_in_background': Support('limited', _SEQUENTIAL_DEFAULT, check=ran_in_foreground),
+    'BackgroundTools.runs_in_background': Support('limited', _SEQUENTIAL_DEFAULT, check=ran_in_foreground, issue=13206),
     'BackgroundTools.survives_approval_wait': Support('refused', _NO_DURABLE_WAIT, match=_WAIT_REFUSED),
 }
 """The cells measured so far, by case or scenario name."""

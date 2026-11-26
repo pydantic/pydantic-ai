@@ -198,8 +198,9 @@ _check: Callable[[EngineRun], None] = lambda run: None  # noqa: E731
 @pytest.mark.parametrize(
     ('make', 'error'),
     [
-        (lambda: Support('limited', check=_check), 'a `limited` cell needs a `reason`'),
-        (lambda: Support('limited', 'foreground'), 'asserts its limit in `check`'),
+        (lambda: Support('limited', check=_check, issue=1), 'a `limited` cell needs a `reason`'),
+        (lambda: Support('limited', 'foreground', issue=1), 'asserts its limit in `check`'),
+        (lambda: Support('limited', 'foreground', check=_check), 'a `limited` cell needs the `issue`'),
         (lambda: Support('supported', check=_check), 'asserts its limit in `check`'),
         (lambda: Support('refused', 'no id'), 'names what it matches'),
         (lambda: Support('supported', match='boom'), 'names what it matches'),

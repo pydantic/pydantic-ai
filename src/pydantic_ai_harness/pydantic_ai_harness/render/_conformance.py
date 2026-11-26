@@ -16,7 +16,11 @@ __all__ = ('RECOVERY', 'SUPPORT')
 _NO_DURABLE_WAIT = 'the engine has no durable wait for an outside answer, so a mid-run approval wait raises `UserError`'
 _WAIT_REFUSED = 'does not support waiting for external events yet'
 
-RECOVERY = Recovery()
+RECOVERY = Recovery(
+    'restart',
+    'retrying the entry task run restarts `agent.run(...)`, so finished model and tool calls run again',
+    issue=14815,
+)
 
 SUPPORT: Mapping[str, Support] = {
     'BackgroundTools.runs_in_background': Support('supported'),
