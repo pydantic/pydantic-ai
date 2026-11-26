@@ -26,7 +26,7 @@ workspaces are plugins too, so where the agent runs and where it works are yours
 choose. To run an agent of your own instead, use `pax --agent my_module:agent`, which
 loads that agent on its own without Pax's plugins.
 
-![Pax starting up in a project and adding a flag: its thinking, the files it read, the diff it made, and the test run](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/hero.png)
+![Pax in a terminal running anthropic:claude-opus-5-5: the PAX banner, a question about how a forecast is fetched, the tool calls it made with counts, a three-step answer, and the status row with the model, its context meter at 12k of 1m tokens and the cost](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/hero.png)
 
 - **Any model, any account.** Switch models mid-conversation. Sign in to several
   accounts and let Pax move to the next one when you hit a limit.
@@ -484,9 +484,10 @@ covers everything in detail:
 - [The plugin guide](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/PLUGINS.md):
   every plugin method, event, and rule
 
-The screenshots are real Pax sessions. Only the model is scripted (`demo:tour`), so they
-need no account and cost nothing. To make them again, run
-`src/pydantic_ai_pax/scripts/screenshots/capture.sh`.
+The screenshots are real Pax sessions. Every shot but the hero at the top uses a scripted model
+(`demo:tour`), so they need no account and cost nothing: run
+`src/pydantic_ai_pax/scripts/screenshots/capture.sh` to make them again. The hero shows a real
+`anthropic:claude-opus-5-5` turn; the top of `capture.sh` says how to re-render it.
 
 ## Legacy CLI
 
