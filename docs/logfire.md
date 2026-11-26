@@ -344,82 +344,73 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 Agent.instrument_all(InstrumentationSettings(use_aggregated_usage_attribute_names=False))
 ```
 
+### Spans and attributes {#spans-and-attributes}
+
+All spans emitted by Pydantic AI use the OpenTelemetry instrumentation scope `pydantic-ai`. With the default format (`version=5`), a run emits these spans:
+
+| Span name | `gen_ai.operation.name` | Key attributes |
+|---|---|---|
+| `invoke_agent {agent_name}` | `invoke_agent` | `gen_ai.agent.name` (and `agent_name`), `model_name`, `gen_ai.agent.call.id`, `gen_ai.conversation.id`, `pydantic_ai.all_messages`, `gen_ai.system_instructions`, `final_result`, `gen_ai.aggregated_usage.*` (or `gen_ai.usage.*` when aggregated names are disabled) |
+| `chat {model}` | `chat` | `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.response.id`, `gen_ai.response.finish_reasons`, `gen_ai.input.messages`, `gen_ai.output.messages`, `gen_ai.system_instructions`, `gen_ai.tool.definitions`, `gen_ai.usage.*`, `operation.cost` (when a price is known), `gen_ai.client.operation.time_to_first_chunk` (streaming) |
+| `execute_tool {tool_name}` | `execute_tool` | `gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.tool.call.arguments`, `gen_ai.tool.call.result` (used for both function tools and output functions) |
+| `model request attempt {model}` | — | Failed attempt during [model-request retries](capabilities/retry-on-model-errors.md) or [fallback](capabilities/model-fallback.md); carries `pydantic_ai.model_request.attempt` and, for a rejected response, its usage, cost, and finish reason |
+| `embeddings {model}` | `embeddings` | `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.usage.*`, `operation.cost` |
+| `image_generation {model}` | `image_generation` | `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.output.type`, `gen_ai.usage.*`, `operation.cost` |
+
+Specialized features emit additional spans — see [decision model spans](#decision-model-spans), [realtime observability](realtime/observability.md), and [batching](batch.md#tracing). When using [Pydantic AI Gateway](gateway.md#observability), each model request also emits a nested Gateway `chat` span; filter by `otel_scope_name` before summing usage across `chat` spans.
+
+#### Message attributes (`pydantic_ai.all_messages`, `gen_ai.input.messages`, `gen_ai.output.messages`) {#message-attributes}
+
+`pydantic_ai.all_messages` (on `invoke_agent` spans) and `gen_ai.input.messages` / `gen_ai.output.messages` (on `chat` spans) all use the same JSON format: an array of OpenTelemetry GenAI message objects (`{"role": "...", "parts": [...]}`), **not** the Pydantic AI message schema returned by [`result.all_messages_json()`](message-history.md#storing-and-loading-messages-to-json).
+
+Each entry in `parts` has a `type` such as `text`, `thinking`, `tool_call`, `tool_call_response`, `uri`, or `blob`. When `include_content=False`, the message and part structure (roles, part types, tool names, and tool call IDs) is still recorded, while text, arguments, results, URIs, and blobs are omitted.
+
+!!! warning "Tool-call `arguments` can be a JSON string or a JSON object"
+    Inside a `tool_call` part (`{"type": "tool_call", "id": "...", "name": "...", "arguments": ...}`), `arguments` preserves [`ToolCallPart.args`][pydantic_ai.messages.ToolCallPart.args] as the provider returned it:
+
+    - A JSON **object** for providers that return parsed objects — including Gemini, and non-streaming Anthropic and Bedrock responses.
+    - A JSON **string** for providers that return serialized JSON — including OpenAI and most streaming responses.
+    - Omitted when `args` is `None` or `include_content=False`.
+
+    Code reading `pydantic_ai.all_messages`, `gen_ai.input.messages`, or `gen_ai.output.messages` should handle both `str` (via `json.loads`) and `dict`. By contrast, `gen_ai.tool.call.arguments` on `execute_tool` spans is always a JSON string when present (omitted when `include_content=False`).
+
 ### Configuring data format
 
-Pydantic AI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/), specifically version 1.37.0 of the conventions. The instrumentation format can be configured using the `version` parameter of [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings].
+Pydantic AI follows version 1.37.0 of the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/). You can select the telemetry format with the `version` parameter of [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings].
 
-**The default is `version=5`**.
+**The default is `version=5`.** Versions 2, 3, and 4 are deprecated compatibility formats that emit a [`PydanticAIDeprecationWarning`][pydantic_ai.agent.PydanticAIDeprecationWarning]; only pass them while migrating an existing telemetry pipeline. Version 6 is opt-in because it changes message roles.
 
-Versions 2, 3, and 4 are deprecated compatibility formats. Passing one of these versions to [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings] emits a [`PydanticAIDeprecationWarning`][pydantic_ai.agent.PydanticAIDeprecationWarning]; use version 5 unless you are temporarily preserving an older telemetry pipeline.
+Each version builds on the previous one:
 
-Version 6 is opt-in: it changes the role of messages you already receive, so pass it explicitly once your telemetry consumer is ready for the new role.
+| Version | Status | What changes |
+|---|---|---|
+| `2` | Deprecated | Uses legacy span names (`agent run`, `running tool`, `running output function`), legacy tool attributes (`tool_arguments`, `tool_response`), legacy media parts (`image-url` / `binary`), and marks deferred tools (`CallDeferred`, `ApprovalRequired`) as `ERROR`. |
+| `3` | Deprecated | Renames spans to `invoke_agent {agent_name}` and `execute_tool {tool_name}` (including output functions), and tool attributes to `gen_ai.tool.call.arguments` and `gen_ai.tool.call.result`. |
+| `4` | Deprecated | Switches multimodal parts to OTel GenAI `uri` and `blob` objects (details below). |
+| `5` | **Default** | Leaves [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] and [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] spans `UNSET` instead of recording an exception and `ERROR` status, since deferrals are control flow. |
+| `6` | Opt-in | Emits tool results under `role: "tool"` instead of `role: "user"`, and empty-output retry feedback (`RetryFeedbackPart` with `retry.cause == 'no_output'`) under `role: "system"` in `pydantic_ai.all_messages`. |
 
-Agent run spans carry the agent name under both `agent_name` and `gen_ai.agent.name` at every version, so a dashboard keyed on either name keeps working when you change versions.
+Agent run spans carry both `agent_name` and `gen_ai.agent.name` at every version, so dashboards keyed on either name keep working across upgrades.
 
-#### Version 2 (deprecated)
+#### Version 4 multimodal part shapes
 
-Uses the newer OpenTelemetry GenAI spec and stores messages in the following attributes:
+Version 4 (and later) aligns media parts with the [GenAI semantic conventions for multimodal inputs](https://opentelemetry.io/docs/specs/semconv/gen-ai/non-normative/examples-llm-calls/#multimodal-inputs-example):
 
-- `gen_ai.system_instructions` for instructions passed to the agent
-- `gen_ai.input.messages` and `gen_ai.output.messages` on model request spans
-- `pydantic_ai.all_messages` on agent run spans
+- **URL media (`ImageUrl`, `AudioUrl`, `VideoUrl`, `DocumentUrl`)**: `{"type": "uri", "modality": "image", "uri": "...", "mime_type": "..."}` (previously `{"type": "image-url", "url": "..."}` for `ImageUrl`, and similarly `audio-url`, `video-url`, or `document-url`).
+- **Inline binary (`BinaryContent`, `FilePart`)**: `{"type": "blob", "modality": "image", "mime_type": "...", "content": "..."}` (previously `{"type": "binary", "media_type": "...", "content": "..."}`).
 
-Some span and attribute names are not fully spec-compliant for compatibility reasons. Use version 5 for current telemetry.
+`modality` is included only for `image`, `audio`, and `video`; `DocumentUrl` and other media types omit it.
 
-#### Version 3 (deprecated)
+#### Version 6 message roles (opt-in)
 
-Builds on version 2 with the following improvements:
+Version 6 aligns message roles with the [GenAI semantic conventions](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/model/gen-ai/gen-ai-input-messages.json):
 
-- **Spec-compliant span names:**
-    - `agent run` becomes `invoke_agent {gen_ai.agent.name}` (with the agent name filled in)
-    - `running tool` becomes `execute_tool {gen_ai.tool.name}` (with the tool name filled in)
-    - `running output function` becomes `execute_tool {gen_ai.tool.name}`, so output tools and output functions share the span name used for other tools
-- **Spec-compliant attribute names:**
-    - `tool_arguments` becomes `gen_ai.tool.call.arguments`
-    - `tool_response` becomes `gen_ai.tool.call.result`
-- **Thinking tokens support:** Captures thinking/reasoning tokens when available
-
-#### Version 4 (deprecated)
-
-Builds on version 3 with improved multimodal content handling to better align with the [GenAI semantic conventions for multimodal inputs](https://opentelemetry.io/docs/specs/semconv/gen-ai/non-normative/examples-llm-calls/#multimodal-inputs-example):
-
-**URL-based media (ImageUrl, AudioUrl, VideoUrl):**
-
-- Old (v2-3): `{"type": "image-url", "url": "..."}`
-- New (v4): `{"type": "uri", "modality": "image", "uri": "...", "mime_type": "..."}`
-
-**Inline binary content (BinaryContent, FilePart):**
-
-- Old (v2-3): `{"type": "binary", "media_type": "...", "content": "..."}`
-- New (v4): `{"type": "blob", "modality": "image", "mime_type": "...", "content": "..."}`
-
-Note: The `modality` field is only included for image, audio, and video content types as specified in the OTel spec. DocumentUrl and unsupported media types omit the `modality` field.
-
-#### Version 5
-
-Builds on version 4 with improved handling of deferred tool calls:
-
-- [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] and [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] exceptions no longer record an exception event or set the span status to ERROR — the span is left as UNSET, since deferrals are control flow, not errors.
-
-#### Version 6 (opt-in)
-
-Builds on version 5 by giving tool results the message role the [GenAI semantic conventions](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/model/gen-ai/gen-ai-input-messages.json) pair with the `tool_call_response` parts they carry:
-
-- Old (v2-5): a tool result is a `tool_call_response` part inside a `{"role": "user"}` message
-- New (v6): it moves to a `{"role": "tool"}` message
-
-This applies to tool returns and to retries that answer a tool call. A request whose parts span both roles is emitted as consecutive messages in part order rather than one merged message.
-
-Pydantic AI's own [retry feedback](retries.md#feedback-that-belongs-to-no-tool-call) — a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart], the retry that answers no tool call — moves on the same version, for the same reason:
-
-- Old (v2-5): a text part inside a `{"role": "user"}` message, whatever its `retry.cause`
-- New (v6): it takes the voice the part reaches the model in — a `{"role": "system"}` message for a `'no_output'` cause, and the `{"role": "user"}` message it was already on for a `'validation_error'` or `'model_retry'`
-
-That move shows up on `pydantic_ai.all_messages`, which records the stored message history. A model request span's `gen_ai.input.messages` records the history as sent, and by then the part has been translated into the prompt part its `retry.cause` calls for, so that attribute reads the same at every version. A history recorded before this part existed carries these parts too — a stored [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] is [translated as it loads](retries.md#feedback-that-belongs-to-no-tool-call) — so only an instance your own code still holds records itself, and a tool-less one stays on `user`.
+- **Tool results** (tool returns and tool-call retries): move from `{"role": "user"}` to `{"role": "tool"}`. Requests containing both user parts and tool results are emitted as separate consecutive messages in part order.
+- **No-output retry feedback** ([`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] with `retry.cause == 'no_output'`): moves from `{"role": "user"}` to `{"role": "system"}` in `pydantic_ai.all_messages` (validation and `ModelRetry` feedback stay `user`). `gen_ai.input.messages` on `chat` spans already reflects the translated prompt role at every version.
 
 ---
 
-Note that the OpenTelemetry Semantic Conventions are still experimental and are likely to change.
+Note that the OpenTelemetry Semantic Conventions are still experimental and may change.
 
 ### Setting OpenTelemetry SDK providers
 

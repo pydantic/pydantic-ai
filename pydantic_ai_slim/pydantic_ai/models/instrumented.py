@@ -140,24 +140,21 @@ class InstrumentationSettings:
             version: Version of the data format. This is unrelated to the Pydantic AI package version.
                 Defaults to version 5. Versions 2, 3, and 4 are deprecated compatibility formats
                 and emit a `PydanticAIDeprecationWarning` when used.
-                Version 2 uses the newer OpenTelemetry GenAI spec and stores messages in the following attributes:
-                    - `gen_ai.system_instructions` for instructions passed to the agent.
-                    - `gen_ai.input.messages` and `gen_ai.output.messages` on model request spans.
-                    - `pydantic_ai.all_messages` on agent run spans.
-                Version 3 is the same as version 2, with additional support for thinking tokens.
-                Version 4 is the same as version 3, with GenAI semantic conventions for multimodal content:
-                    URL-based media uses type='uri' with uri and mime_type fields (and modality for image/audio/video).
-                    Inline binary content uses type='blob' with mime_type and content fields (and modality for image/audio/video).
+                Version 2 uses the OpenTelemetry GenAI message attributes (`gen_ai.system_instructions`,
+                    `gen_ai.input.messages`, `gen_ai.output.messages`, and `pydantic_ai.all_messages`)
+                    with legacy span names (`agent run`, `running tool`, `running output function`) and
+                    tool attributes (`tool_arguments`, `tool_response`).
+                Version 3 renames spans to `invoke_agent {agent_name}` and `execute_tool {tool_name}`
+                    (including output functions), and tool attributes to `gen_ai.tool.call.arguments`
+                    and `gen_ai.tool.call.result`.
+                Version 4 switches multimodal content to OTel GenAI `uri` and `blob` parts
+                    (with `modality` for image, audio, and video).
                     https://opentelemetry.io/docs/specs/semconv/gen-ai/non-normative/examples-llm-calls/#multimodal-inputs-example
-                Version 5 is the same as version 4, but CallDeferred and ApprovalRequired exceptions
-                    no longer record an exception event or set the span status to ERROR — the span is left
-                    as UNSET, since deferrals are control flow, not errors.
-                Version 6 is the same as version 5, but tool results are emitted in a message with
-                    `role='tool'` rather than `role='user'`, which is the role the GenAI semantic
-                    conventions pair with the `tool_call_response` parts they carry, and retry feedback
-                    that answers no tool call moves from `role='user'` to `role='system'`, the voice it
-                    reaches the model in. Opt in to it when your telemetry consumer keys on the message
-                    role; it is not the default.
+                Version 5 leaves `CallDeferred` and `ApprovalRequired` spans `UNSET` instead of recording
+                    an exception event and `ERROR` status, since deferrals are control flow, not errors.
+                Version 6 (opt-in) emits tool results under `role='tool'` instead of `role='user'` and moves
+                    empty-output retry feedback (`RetryFeedbackPart` with `retry.cause == 'no_output'`) to
+                    `role='system'` in `pydantic_ai.all_messages`.
             use_aggregated_usage_attribute_names: Whether to use `gen_ai.aggregated_usage.*` attribute names
                 for token usage on agent run spans instead of the standard `gen_ai.usage.*` names.
                 Defaults to True to prevent double-counting in observability backends that aggregate span

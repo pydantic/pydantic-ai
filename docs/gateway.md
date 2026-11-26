@@ -161,6 +161,18 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 
 [`RequestUsage.cost`][pydantic_ai.usage.RequestUsage.cost] (summed into [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost]) uses the cost the gateway reports for a request instead of the [genai-prices](https://github.com/pydantic/genai-prices) estimate, so [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit] and your own cost tracking match what the gateway charged, including a free response-cache hit. Google and Bedrock read the gateway's cost from a response header on non-streamed requests, and from the stream itself on streamed requests; when a gateway doesn't send the cost yet, they keep the genai-prices estimate. The `cost()` methods on responses and embedding results always return the genai-prices estimate.
 
+#### Observability {#observability}
+
+When you use Pydantic AI Gateway alongside [Pydantic AI instrumentation](logfire.md), each model request appears as **two** nested `chat {model}` spans in Logfire:
+
+- The outer span emitted by Pydantic AI (`otel_scope_name = 'pydantic-ai'`), which carries `gen_ai.usage.*`, `operation.cost` (using the Gateway-reported cost when available), and your agent and run attributes.
+- A child span emitted by the Gateway (`otel_scope_name = 'pydantic-ai-gateway'`, with `service_name = 'PAIG'` by default), which carries `gen_ai.usage.*` and raw HTTP request/response details (and one span per upstream attempt when a [gateway endpoint](#gateway-endpoints) fails over).
+
+Summing `gen_ai.usage.*` over all `chat` spans without filtering will double-count tokens, request counts, and token-derived costs:
+
+- **For per-agent or app-level totals**: filter on `otel_scope_name = 'pydantic-ai'`, or sum `gen_ai.aggregated_usage.*` on `invoke_agent` spans.
+- **For org-wide Gateway traffic across all clients** (including uninstrumented apps, Claude Code, Codex, and direct SDK calls): filter on `otel_scope_name = 'pydantic-ai-gateway'` (or your Gateway `service_name`, `'PAIG'` by default).
+
 ### Claude Code
 
 Before you start, log out of Claude Code using `/logout`.
