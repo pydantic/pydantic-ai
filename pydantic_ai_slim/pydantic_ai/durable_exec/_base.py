@@ -282,7 +282,9 @@ class _CompactMessagesCacheIdentity(CacheIdentity[ModelCompactMessagesParams]):
 
 class _EventStreamHandlerCacheIdentity(CacheIdentity[EventStreamHandlerParams]):
     def project(self, params: EventStreamHandlerParams) -> tuple[object, ...]:
-        return (params.events,)
+        # A one-event unit keeps the single-event identity, so engines that dispatch per event keep the cache keys
+        # their recorded runs were written with.
+        return (params.events[0],) if len(params.events) == 1 else (params.events,)
 
 
 class _GetToolsCacheIdentity(CacheIdentity[ToolsetGetToolsParams]):
@@ -1013,15 +1015,22 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     @property
     def _batch_event_stream_dispatch(self) -> bool:
-        """Whether this durable run uses batched event-handler operations."""
-        return True
+        """Whether this durable run dispatches workflow-side events in bursts, one durable unit per burst.
+
+        A burst is the events that became ready while the previous burst's unit was in flight, so its boundaries
+        follow task scheduling. Only an engine whose workflow code replays with the same scheduling, such as
+        Temporal's deterministic workflow event loop, may enable this: on any other engine a replay can form
+        different bursts and so a different sequence of durable units. Every other engine dispatches one unit per
+        event, in stream order.
+        """
+        return False
 
     async def _batched_event_stream(  # noqa: C901
         self, ctx: RunContext[AgentDepsT], stream: AsyncIterable[AgentStreamEvent]
     ) -> AsyncIterator[AgentStreamEvent]:
         ready: list[tuple[AgentStreamEvent, asyncio.Future[None]]] = []
-        available = asyncio.Event()  # noqa: TID251  (not converted to anyio yet)
-        output: asyncio.Queue[tuple[AgentStreamEvent, asyncio.Future[None]] | BaseException | None] = asyncio.Queue()  # noqa: TID251  (not converted to anyio yet)
+        available = asyncio.Event()  # noqa: TID251  (runs on Temporal's deterministic workflow event loop)
+        output: asyncio.Queue[tuple[AgentStreamEvent, asyncio.Future[None]] | BaseException | None] = asyncio.Queue()  # noqa: TID251  (runs on Temporal's deterministic workflow event loop)
         producer_done = False
 
         async def produce() -> None:

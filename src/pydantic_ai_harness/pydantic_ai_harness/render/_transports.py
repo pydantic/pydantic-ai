@@ -364,13 +364,15 @@ class RenderEventStreamHandlerTransport(Generic[AgentDepsT], RenderJSONTransport
         self._context_codec = context_codec
 
     def dump(self, params: EventStreamHandlerParams) -> JSONObject:
-        payload = _EventPayload(event=params.event, run_context=self._context_codec.dump(params.run_context))
+        # Render dispatches one unit per event, so the wire keeps its single-event shape.
+        (event,) = params.events
+        payload = _EventPayload(event=event, run_context=self._context_codec.dump(params.run_context))
         return dump_json_object(_EventPayload, payload)
 
     def load(self, payload: JSONObject, *, runtime: object) -> EventStreamHandlerParams:
         del runtime
         decoded = load_json_type(_EventPayload, payload)
-        return EventStreamHandlerParams(decoded.event, run_context=self._context_codec.load(decoded.run_context))
+        return EventStreamHandlerParams([decoded.event], run_context=self._context_codec.load(decoded.run_context))
 
 
 @dataclass(kw_only=True)

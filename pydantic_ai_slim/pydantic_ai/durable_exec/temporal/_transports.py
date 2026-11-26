@@ -493,9 +493,12 @@ class _EventStreamHandlerTransport(
 
     def dump(self, params: _SemanticEventStreamHandlerParams) -> tuple[_EventStreamHandlerParams, Any]:
         ctx = params.run_context
+        # A one-event unit keeps the single-event wire shape, so per-event dispatch (an unpatched history, or a
+        # burst of one) stays readable by workers that predate batching.
+        event = params.events[0] if len(params.events) == 1 else params.events
         return (
             _EventStreamHandlerParams(
-                event=params.events,
+                event=event,
                 serialized_run_context=self._durability.run_context_type.serialize_run_context(ctx),
             ),
             ctx.deps,

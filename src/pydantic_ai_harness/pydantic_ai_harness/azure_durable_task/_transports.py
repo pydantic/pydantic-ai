@@ -324,10 +324,14 @@ _EVENT = TypeAdapter(_Event)
 
 def event_transport(restore: RestoreContext) -> _Transport[EventStreamHandlerParams, _Event]:
     return _Transport(
-        _EVENT,
-        lambda params: _Event(event=params.event, context=ContextSnapshot.capture(params.run_context)),
-        lambda wire: EventStreamHandlerParams(wire.event, run_context=restore(wire.context)),
+        _EVENT, _event_wire, lambda wire: EventStreamHandlerParams([wire.event], run_context=restore(wire.context))
     )
+
+
+def _event_wire(params: EventStreamHandlerParams) -> _Event:
+    # Azure Durable Task dispatches one unit per event, so the wire keeps its single-event shape.
+    (event,) = params.events
+    return _Event(event=event, context=ContextSnapshot.capture(params.run_context))
 
 
 @dataclass(kw_only=True)

@@ -371,19 +371,18 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
 
             case EventStreamHandlerId():
 
-                async def event_step(
-                    event: _messages.AgentStreamEvent | list[_messages.AgentStreamEvent],
-                    run_context: RunContext[Any],
-                ) -> object:
-                    events = event if isinstance(event, list) else [event]
-                    params = EventStreamHandlerParams(events, run_context=run_context)
+                async def event_step(event: _messages.AgentStreamEvent, run_context: RunContext[Any]) -> object:
+                    params = EventStreamHandlerParams([event], run_context=run_context)
                     return operation.result_codec.dump(await operation.handler(cast(ParamsT, params)))
 
                 step = event_step
 
                 async def dispatch_event(step: Callable[..., Any], params: ParamsT) -> ResultT:
                     event_params = cast(EventStreamHandlerParams, params)
-                    payload = await step(event_params.events, event_params.run_context)
+                    # DBOS dispatches one step per event (see `BaseDurabilityCapability._batch_event_stream_dispatch`),
+                    # so the step keeps its single-event input.
+                    (event,) = event_params.events
+                    payload = await step(event, event_params.run_context)
                     return operation.result_codec.load(payload)
 
                 dispatch = dispatch_event

@@ -251,15 +251,48 @@ def _tool_events(count: int) -> list[AgentStreamEvent]:
     return events
 
 
-async def test_event_stream_dispatch_batches_ready_burst_and_preserves_handler_calls() -> None:
+class BatchingJournalDurability(JournalDurability):
+    """A journal engine that opts into burst dispatch, as Temporal does."""
+
+    @property
+    def _batch_event_stream_dispatch(self) -> bool:
+        return True
+
+
+async def test_event_stream_dispatch_defaults_to_one_unit_per_event() -> None:
+    """Without the opt-in, an engine dispatches each event in its own unit, in stream order, as before batching."""
     handled: list[AgentStreamEvent] = []
 
     async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
         handled.extend([event async for event in stream])
 
     durability = JournalDurability(event_stream_handler=handler)
-    agent = Agent(TestModel(), name='batched-events', capabilities=[durability])
+    agent = Agent(TestModel(), name='per-event-events', capabilities=[durability])
     bound = JournalDurability.from_agent(agent)
+    assert bound is not None
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=agent)
+    events = _tool_events(2)
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        for event in events:
+            yield event
+
+    actual = [event async for event in bound.wrap_run_event_stream(ctx, stream=stream())]
+
+    assert actual == handled == events
+    event_calls = [call for call in bound.calls if call[0].endswith('__event_stream_handler')]
+    assert [call[1] for call in event_calls] == [(event,) for event in events]
+
+
+async def test_event_stream_dispatch_batches_ready_burst_and_preserves_handler_calls() -> None:
+    handled: list[AgentStreamEvent] = []
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        handled.extend([event async for event in stream])
+
+    durability = BatchingJournalDurability(event_stream_handler=handler)
+    agent = Agent(TestModel(), name='batched-events', capabilities=[durability])
+    bound = BatchingJournalDurability.from_agent(agent)
     assert bound is not None
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=agent)
     events = _tool_events(3)
@@ -1343,7 +1376,7 @@ async def test_temporal_backend_labels_validation_activity(
     assert dispatched == [(registration, params, 'validate tool args: tools:guarded')]
 
 
-def test_temporal_event_transport_writes_batches_and_decodes_legacy_single_event() -> None:
+def test_temporal_event_transport_keeps_single_event_wire_and_writes_bursts_as_lists() -> None:
     pytest.importorskip('temporalio')
     from pydantic_ai.durable_exec.temporal import TemporalDurability
     from pydantic_ai.durable_exec.temporal._transports import (
@@ -1354,14 +1387,17 @@ def test_temporal_event_transport_writes_batches_and_decodes_legacy_single_event
     durability = TemporalDurability.from_agent(agent)
     assert durability is not None
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=agent)
-    events = _tool_events(1)
     transport = _EventStreamHandlerTransport(durability)
 
-    wire, deps = transport.dump(EventStreamHandlerParams(events, run_context=ctx))
-    assert wire.event == events
+    single = _tool_events(1)[:1]
+    wire, deps = transport.dump(EventStreamHandlerParams(single, run_context=ctx))
+    assert wire.event == single[0]
+    assert transport.load((wire, deps), runtime=object()).events == single
 
-    loaded = transport.load((replace(wire, event=events[0]), deps), runtime=object())
-    assert loaded.events == [events[0]]
+    burst = _tool_events(1)
+    wire, deps = transport.dump(EventStreamHandlerParams(burst, run_context=ctx))
+    assert wire.event == burst
+    assert transport.load((wire, deps), runtime=object()).events == burst
 
 
 def _exhaustive_identity(operation_id: DurableOperationId) -> str:
