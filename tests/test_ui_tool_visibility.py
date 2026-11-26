@@ -14,9 +14,10 @@ from typing import Any, Literal
 import pytest
 
 from pydantic_ai import Agent, AgentRunResult, ToolOutput
-from pydantic_ai.capabilities import Capability, PrepareTools
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed
+from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools, WrapModelRequestHandler
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, SkipModelRequest, ToolFailed
 from pydantic_ai.messages import (
+    CustomEvent as PydanticAICustomEvent,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -28,6 +29,7 @@ from pydantic_ai.messages import (
     ToolReturn,
     ToolReturnPart,
 )
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, BuiltinToolCallsReturns, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.tools import DeferredToolRequests, RunContext, Tool, ToolDefinition, ToolUIVisibility
 from pydantic_ai.toolsets import ExternalToolset, FunctionToolset
@@ -471,6 +473,36 @@ async def test_redacted_tool_drops_the_mcp_app_and_keeps_metadata_events(protoco
     assert 'ui://weather/forecast' not in dump(protocol, run.messages)
 
 
+@dataclass(kw_only=True)
+class StockChecked(PydanticAICustomEvent, name='stock_checked'):
+    """What a `'private'` tool tells the client while it runs."""
+
+    in_stock: int
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_private_tool_sends_no_metadata_events_and_can_emit_instead(protocol: ProtocolName):
+    """A `'private'` result isn't sent, so neither are the events in its `metadata`; `ctx.emit` still reaches the client."""
+    agent = Agent(calling(('check_stock', '{}')))
+    event: CustomEvent | DataChunk = (
+        CustomEvent(name='progress', value='from-metadata')
+        if protocol == 'ag_ui'
+        else DataChunk(type='data-progress', data='from-metadata')
+    )
+
+    @agent.tool(ui_visibility='private')
+    async def check_stock(ctx: RunContext[object]) -> ToolReturn:
+        await ctx.emit(StockChecked(in_stock=7))
+        return ToolReturn(return_value=SECRET, metadata=event)
+
+    run = await run_adapter(protocol, agent)
+
+    assert 'from-metadata' not in run.wire
+    assert 'from-metadata' not in dump(protocol, run.messages)
+    assert 'stock_checked' in run.wire
+    assert 'call_0' not in run.wire
+
+
 @pytest.mark.parametrize('protocol', PROTOCOLS)
 @pytest.mark.parametrize('ui_visibility', ['redacted', 'private'])
 async def test_tool_return_content_is_a_user_message_visibility_does_not_cover(
@@ -858,6 +890,94 @@ def test_unknown_visibility_raises_rather_than_sends_the_result():
 
     with pytest.raises(AssertionError):
         dump('vercel_ai', [ModelResponse(parts=[call])])
+
+
+def _lookup_call() -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('lookup_order', {'order_id': 'o_1'}, tool_call_id='call_0')])
+
+
+@dataclass
+class AnswersForTheModel(AbstractCapability[Any]):
+    """Answers the first request with a call to `lookup_order` instead of the model, the way `path` says."""
+
+    path: Literal['wrap', 'skip', 'recover']
+
+    async def wrap_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        if self.path == 'recover' or any(
+            isinstance(part, ToolReturnPart) for message in request_context.messages for part in message.parts
+        ):
+            return await handler(request_context)
+        if self.path == 'skip':
+            raise SkipModelRequest(_lookup_call())
+        return _lookup_call()
+
+    async def on_model_request_error(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        return _lookup_call()
+
+
+def answered_agent(path: Literal['wrap', 'skip', 'recover']) -> Agent[None, Any]:
+    """A `'private'` `lookup_order` whose call comes from `AnswersForTheModel`; the model only fails, then answers."""
+
+    def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if not any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            raise RuntimeError('The model is down.')
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        answer(messages, info)
+        yield 'Done.'
+
+    agent = Agent(FunctionModel(answer, stream_function=stream), capabilities=[AnswersForTheModel(path)])
+
+    @agent.tool_plain(ui_visibility='private')
+    def lookup_order(order_id: str) -> dict[str, str]:
+        return {'order_id': order_id, 'margin': SECRET}
+
+    return agent
+
+
+ANSWER_PATHS: list[Literal['wrap', 'skip', 'recover']] = ['wrap', 'skip', 'recover']
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+@pytest.mark.parametrize('path', ANSWER_PATHS)
+async def test_response_a_capability_supplies_is_stamped(
+    protocol: ProtocolName, path: Literal['wrap', 'skip', 'recover']
+):
+    """A call in a response a capability gives instead of the model's is stamped from its tool like the model's own."""
+    run = await run_adapter(protocol, answered_agent(path))
+
+    assert stamps(run.messages) == [
+        ('tool-call', 'lookup_order', 'private'),
+        ('tool-return', 'lookup_order', 'private'),
+    ]
+    assert 'o_1' not in run.wire
+    assert SECRET not in run.wire
+    assert SECRET not in dump(protocol, run.messages)
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_recovered_response_keeps_its_tools_setting_under_a_non_public_default(protocol: ProtocolName):
+    """A recovered response is stamped before `after_model_request`, so the adapter's default can't write over it."""
+    run = await run_adapter(protocol, answered_agent('recover'), default_ui_visibility='redacted')
+
+    assert stamps(run.messages) == [
+        ('tool-call', 'lookup_order', 'private'),
+        ('tool-return', 'lookup_order', 'private'),
+    ]
+    assert 'o_1' not in run.wire
+
+
+@pytest.mark.parametrize('path', ANSWER_PATHS)
+async def test_response_a_capability_supplies_is_stamped_without_streaming(path: Literal['wrap', 'skip', 'recover']):
+    """A run that doesn't stream stamps the supplied response too, so a later dump with no default leaves it out."""
+    result = await answered_agent(path).run('Where is my order?')
+
+    assert SECRET not in dump('vercel_ai', result.all_messages())
 
 
 def test_dump_drops_a_response_left_empty_by_private_parts():

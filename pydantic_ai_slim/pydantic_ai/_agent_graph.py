@@ -14,6 +14,7 @@ from collections.abc import (
     Collection,
     Generator,
     Iterable,
+    Mapping,
     Sequence,
 )
 from contextlib import (
@@ -166,6 +167,7 @@ from .tools import (
     NativeToolFunc,
     RunContext,
     ToolDefinition,
+    ToolUIVisibility,
 )
 from .toolsets._deferred_capability_loader import (
     capability_load_window,
@@ -3011,6 +3013,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # The consumer didn't iterate the stream far enough to see the failure.
                 raise error
             self._did_stream = True
+            model_response = _stamp_ui_visibility(model_response, wrap_request_context.model_request_parameters)
             replay_sr = CompletedStreamedResponse(
                 model_response,
                 model_request_parameters=wrap_request_context.model_request_parameters,
@@ -4272,6 +4275,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         record_usage: bool,
         described: Sequence[_messages.ModelRequestAttempt] = (),
     ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
+        assert self.last_request_context is not None
+        # A response a capability supplied, or one a hook replaced, has unstamped calls; the model's own are stamped.
+        response = _stamp_ui_visibility(response, self.last_request_context.model_request_parameters)
         self._emit_capability_load_records(ctx)
         if record_usage:
             self._record_response_usage(ctx, response, described=described)
@@ -4313,9 +4319,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         try:
             if not root_capability._handles_model_request_error(run_context, request_context):  # pyright: ignore[reportPrivateUsage]
                 raise error
-            return await root_capability.on_model_request_error(
+            recovered = await root_capability.on_model_request_error(
                 run_context, request_context=request_context, error=error
             )
+            # Before `after_model_request` and the streamed replay, as `Model.request()`'s own response is stamped.
+            return _stamp_ui_visibility(recovered, request_context.model_request_parameters)
         except exceptions.RetryModelRequest as retry:
             failed.record(request_context, error, start, retry)
             raise
@@ -6049,7 +6057,26 @@ def _apply_tool_defs_to_call_parts(
     tool_kind_by_name: dict[str, _messages.ToolPartKind] = {
         td.name: td.tool_kind for td in model_request_parameters.function_tools if td.tool_kind
     }
-    ui_visibility_by_name = ui_visibility_stamps(model_request_parameters)
+    return _with_call_parts_from_tool_defs(response, tool_kind_by_name, ui_visibility_stamps(model_request_parameters))
+
+
+def _stamp_ui_visibility(
+    response: _messages.ModelResponse, model_request_parameters: models.ModelRequestParameters
+) -> _messages.ModelResponse:
+    """Stamp each `ToolCallPart` of a response a capability supplied instead of `Model.request()` with its tool's `ui_visibility`.
+
+    Only the stamp is written: those calls keep the typing they came with, as execution types each call from its tool
+    (`ToolManager._with_tool_kind`).
+    """
+    return _with_call_parts_from_tool_defs(response, {}, ui_visibility_stamps(model_request_parameters))
+
+
+def _with_call_parts_from_tool_defs(
+    response: _messages.ModelResponse,
+    tool_kind_by_name: Mapping[str, _messages.ToolPartKind],
+    ui_visibility_by_name: Mapping[str, ToolUIVisibility],
+) -> _messages.ModelResponse:
+    """`response` with each `ToolCallPart` passed through `call_part_from_tool_defs`; `response` itself if none changes."""
     if not tool_kind_by_name and not ui_visibility_by_name:
         return response
 
