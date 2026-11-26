@@ -1,5 +1,6 @@
 """Tests for the shared _spec.py module."""
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Protocol, Self
@@ -662,7 +663,7 @@ class TestBuildSchemaTypes:
             schema = AgentSpec.model_json_schema_with_capabilities([PricedLabel])
         assert [str(warning.message) for warning in record] == snapshot(
             [
-                "Capability 'PricedLabel': the type hints of rate could not be resolved (NameError: name 'Decimal' is not defined), so the agent spec schema leaves out rate. Override `from_spec` with the parameters a spec can set, or import those types at runtime in `tests.test_spec`."
+                "Capability 'PricedLabel': the type hints of `rate` could not be resolved (NameError: name 'Decimal' is not defined), so the agent spec schema leaves out `rate`. Override `from_spec` with the parameters a spec can set, or import those types at runtime in `tests.test_spec`."
             ]
         )
         assert schema['$defs']['spec_params_PricedLabel'] == snapshot(
@@ -704,7 +705,7 @@ class TestBuildSchemaTypes:
             schema = AgentSpec.model_json_schema_with_capabilities([Priced])
         assert [str(warning.message) for warning in record] == snapshot(
             [
-                "Capability 'Priced': the type hints of rate could not be resolved (NameError: name 'Decimal' is not defined), so the agent spec schema accepts any value for rate. Override `from_spec` with the parameters a spec can set, or import those types at runtime in `tests.test_spec`."
+                "Capability 'Priced': the type hints of `rate` could not be resolved (NameError: name 'Decimal' is not defined), so the agent spec schema accepts any value for `rate`. Override `from_spec` with the parameters a spec can set, or import those types at runtime in `tests.test_spec`."
             ]
         )
         assert schema['$defs']['spec_params_Priced'] == snapshot(
@@ -775,7 +776,7 @@ class TestBuildSchemaTypes:
             schema = AgentSpec.model_json_schema_with_capabilities([PricedFromSpec])
         assert [str(warning.message) for warning in record] == snapshot(
             [
-                "Capability 'PricedFromSpec': the type hints of rate could not be resolved (NameError: name 'Decimal' is not defined), so the agent spec schema leaves out rate. Override `from_spec` with the parameters a spec can set, or import those types at runtime in `tests.test_spec`."
+                "Capability 'PricedFromSpec': the type hints of `rate` could not be resolved (NameError: name 'Decimal' is not defined), so the agent spec schema leaves out `rate`. Override `from_spec` with the parameters a spec can set, or import those types at runtime in `tests.test_spec`."
             ]
         )
         assert {key: schema['$defs'][key] for key in schema['$defs'] if key.endswith('_PricedFromSpec')} == snapshot(
@@ -789,6 +790,49 @@ class TestBuildSchemaTypes:
                 }
             }
         )
+
+    def test_type_checking_only_hint_var_keyword_capability_schema(self):
+        """An `__init__` taking `**kwargs` also resolves its hints one parameter at a time."""
+
+        @dataclass(init=False)
+        class PricedKwargs(AbstractCapability[None]):
+            limit: int = 3
+
+            def __init__(self, limit: int = 3, rate: 'Decimal | None' = None, **kwargs: object) -> None:
+                self.limit = limit  # pragma: no cover
+
+        with pytest.warns(UserWarning) as record:
+            schema = AgentSpec.model_json_schema_with_capabilities([PricedKwargs])
+        assert [str(warning.message) for warning in record] == snapshot(
+            [
+                "Capability 'PricedKwargs': the type hints of `rate` could not be resolved (NameError: name 'Decimal' is not defined), so the agent spec schema leaves out `rate`. Override `from_spec` with the parameters a spec can set, or import those types at runtime in `tests.test_spec`."
+            ]
+        )
+        assert {key: schema['$defs'][key] for key in schema['$defs'] if key.endswith('_PricedKwargs')} == snapshot(
+            {
+                'short_spec_PricedKwargs': {
+                    'additionalProperties': False,
+                    'properties': {'PricedKwargs': {'title': 'Pricedkwargs', 'type': 'integer'}},
+                    'required': ['PricedKwargs'],
+                    'title': 'short_spec_PricedKwargs',
+                    'type': 'object',
+                }
+            }
+        )
+
+    def test_type_checking_only_hint_unloadable_capability_schema(self):
+        """A class with a required parameter no JSON form can hold stays out of the schema, without a warning.
+
+        No spec entry can load it whatever its other hints resolve to, so its unresolved hint changes nothing.
+        """
+
+        @dataclass
+        class PricedHook(AbstractCapability[None]):
+            hook: Callable[[], None]
+            rate: 'Decimal | None' = None
+
+        schema = AgentSpec.model_json_schema_with_capabilities([PricedHook])
+        assert 'PricedHook' not in json.dumps(schema)
 
     def test_type_checking_only_hint_inherited_from_spec_schema(self):
         """A class whose `__init__` hints don't all resolve keeps the schema of the `from_spec` override it inherits."""

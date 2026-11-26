@@ -364,8 +364,8 @@ def _capability_schema_target(cls: type[Any]) -> Any:
         get_function_type_hints(cls.__init__)
         return cls.__init__
     # build_schema_types resolves the hints one parameter at a time, so a hint that doesn't resolve (e.g. a
-    # TYPE_CHECKING import) leaves only its own parameter unannotated. Fall back to from_spec, as before,
-    # if a superclass overrides it or the spec forms can't be built from the hints that resolve.
+    # TYPE_CHECKING import) leaves only its own parameter unannotated. Fall back to from_spec if a superclass
+    # overrides it or the spec forms can't be built from the hints that resolve.
     if cls.from_spec.__func__ is AbstractCapability.from_spec.__func__ and _init_spec_forms_build(cls):
         return cls.__init__
     return cls.from_spec
@@ -376,7 +376,8 @@ def _init_spec_forms_build(cls: type[Any]) -> bool:
     try:
         for schema_type in build_schema_types({cls.__name__: cls}, get_schema_target=lambda _: cls.__init__):
             TypeAdapter(schema_type).json_schema()
-    except (SchemaError, PydanticUserError, PydanticOmit, NameError, TypeError, AttributeError) as e:
+    # What `TypeAdapter` raises for a type with no core or JSON schema, as `_spec._type_accepts_object` expects.
+    except (SchemaError, PydanticUserError, PydanticOmit) as e:
         warnings.warn(
             f'Capability {cls.get_serialization_name()!r}: the agent spec schema publishes only its name, because '
             f'the schema for its parameters could not be built ({type(e).__name__}). '

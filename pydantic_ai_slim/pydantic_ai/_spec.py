@@ -31,7 +31,7 @@ from pydantic_core import PydanticOmit, SchemaError, to_jsonable_python
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 from typing_extensions import TypedDict
 
-from pydantic_ai._utils import get_function_type_hints, is_classvar_annotation
+from pydantic_ai._utils import get_function_type_hints, is_classvar_annotation, own_annotations
 
 if TYPE_CHECKING:
     from pydantic import ModelWrapValidatorHandler
@@ -293,8 +293,9 @@ class UnresolvedHints:
 
     def describe(self, schema: str) -> str:
         """Say which parameters `schema` leaves out or accepts any value for, and why."""
-        left_out = [name for name in self.errors if name not in self.required]
-        any_value = [name for name in self.errors if name in self.required]
+        names = {name: f'`{name}`' for name in self.errors}
+        left_out = [code for name, code in names.items() if name not in self.required]
+        any_value = [code for name, code in names.items() if name in self.required]
         effects: list[str] = []
         if left_out:
             effects.append(f'leaves out {", ".join(left_out)}')
@@ -302,7 +303,7 @@ class UnresolvedHints:
             effects.append(f'accepts any value for {", ".join(any_value)}')
         reasons = '; '.join(dict.fromkeys(self.errors.values()))
         return (
-            f'the type hints of {", ".join(self.errors)} could not be resolved ({reasons}), '
+            f'the type hints of {", ".join(names.values())} could not be resolved ({reasons}), '
             f'so the {schema} {" and ".join(effects)}'
         )
 
@@ -411,23 +412,39 @@ def _spec_annotation_hints(target: Callable[..., object]) -> tuple[dict[str, Any
 
     A class target's annotations also name attributes its `__init__` doesn't take, like a `ClassVar` or an
     `init=False` dataclass field. A target that takes `*args` or `**kwargs` may take any of them except a `ClassVar`.
-    Otherwise a hint that doesn't resolve, like a `TYPE_CHECKING` import, leaves only its own parameter unannotated.
+    A hint that doesn't resolve, like a `TYPE_CHECKING` import, leaves only its own parameter unannotated.
     """
     parameters = inspect.signature(target).parameters
-    if any(p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD) for p in parameters.values()):
-        hints = get_function_type_hints(target)
-        return {name: hint for name, hint in hints.items() if not is_classvar_annotation(hint)}, {}
+    if not any(p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD) for p in parameters.values()):
+        return _resolve_hints(target, list(parameters))
+    hints, errors = _resolve_hints(target, None)
+    errors.pop('return', None)
+    return {name: hint for name, hint in hints.items() if not is_classvar_annotation(hint)}, errors
+
+
+def _resolve_hints(target: Callable[..., object], names: list[str] | None) -> tuple[dict[str, Any], dict[str, str]]:
+    """The resolved type hints of `target`'s `names` (all its annotations when `None`), and the errors of the others.
+
+    They're resolved together, and one at a time only if that fails.
+    """
     try:
-        return get_function_type_hints(target, include_keys=set(parameters)), {}
+        return get_function_type_hints(target, include_keys=None if names is None else set(names)), {}
     except (NameError, TypeError, AttributeError):
-        hints: dict[str, Any] = {}
-        errors: dict[str, str] = {}
-        for name in parameters:
-            try:
-                hints |= get_function_type_hints(target, include_keys={name})
-            except (NameError, TypeError, AttributeError) as e:
-                errors[name] = f'{type(e).__name__}: {e}'
-        return hints, errors
+        pass
+    if names is None:
+        names = (
+            list(own_annotations(target))
+            if isinstance(target, type)
+            else [*inspect.signature(target).parameters, 'return']
+        )
+    hints: dict[str, Any] = {}
+    errors: dict[str, str] = {}
+    for name in names:
+        try:
+            hints |= get_function_type_hints(target, include_keys={name})
+        except (NameError, TypeError, AttributeError) as e:
+            errors[name] = f'{type(e).__name__}: {e}'
+    return hints, errors
 
 
 def _without_not_required(type_hint: object) -> object:
