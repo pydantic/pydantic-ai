@@ -334,8 +334,7 @@ def _search_files_arguments(
         '--max-columns',
         str(_MAX_MATCH_COLUMNS),
         '--max-columns-preview',
-        *(['--glob', command_glob] if command_glob and not fnmatch_only else []),
-        *hidden_flag,
+        *(_ripgrep_glob(command_glob, hidden_flag) if command_glob and not fnmatch_only else hidden_flag),
         '--regexp',
         pattern,
         '--',
@@ -373,8 +372,7 @@ def _grep_arguments(
         str(context),
     ]
     if glob is not None:
-        arguments.extend(['--glob', glob])
-    arguments.extend(hidden_flag)
+        arguments.extend(_ripgrep_glob(glob, hidden_flag))
     if file_type is not None:
         arguments.extend(['--type', file_type])
     if ignore_case:
@@ -435,6 +433,16 @@ def _ripgrep_hidden(glob: str | None) -> list[str]:
         )
     )
     return ['--hidden'] if named else []
+
+
+def _ripgrep_glob(glob: str, hidden_flag: list[str]) -> list[str]:
+    """The `rg` arguments that filter by `glob`, keeping hidden paths out unless `hidden_flag` lets them in.
+
+    A `--glob` overrides `rg`'s own hidden-path skip: one that matches a hidden path, as `*` does, makes `rg`
+    walk every hidden directory, only for the results to drop what it found there. A later `!.*` takes
+    precedence and prunes those directories; paths passed to `rg` explicitly are still searched.
+    """
+    return ['--glob', glob, *(hidden_flag or ['--glob', '!.*'])]
 
 
 def _sort_key(path: str) -> list[str]:
@@ -906,24 +914,31 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         return descended
 
     async def read_file(
-        self, path: str, *, offset: int = 0, limit: int | None = None, workspace: WorkspaceBackend
+        self, path: str, *, offset: int = 1, limit: int | None = None, workspace: WorkspaceBackend
     ) -> str | list[str | BinaryContent]:
         """Read a file in `workspace` directly, outside an agent run.
 
         An image, PDF or video, recognized by its leading bytes, comes back as its header
         followed by a `BinaryContent`; everything else is text.
+
+        Args:
+            path: File path relative to the working directory.
+            offset: Line number to start reading from (1-indexed, matching the printed line
+                numbers). An `offset` below 1 raises `ModelRetry`.
+            limit: Maximum number of lines to return; defaults to, and is capped at, the configured read limit.
+            workspace: The workspace backend to read from.
         """
         return await self._read_file(await self._scope(workspace), None, path, offset=offset, limit=limit)
 
     async def _read_file_tool(
-        self, ctx: RunContext[AgentDepsT], path: str, *, offset: int = 0, limit: int | None = None
+        self, ctx: RunContext[AgentDepsT], path: str, *, offset: int = 1, limit: int | None = None
     ) -> str | list[str | BinaryContent]:
         """Read a text file with line numbers, or view an image, PDF or video.
 
         Args:
             ctx: The current agent run context.
             path: File path relative to the working directory.
-            offset: Zero-based line offset to start reading from.
+            offset: Line number to start reading from (1-indexed).
             limit: Maximum number of lines to return; defaults to, and is capped at, the configured read limit.
 
         Returns:
@@ -937,10 +952,10 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
     @_recoverable
     async def _read_file(
-        self, scope: _Scope, ctx: RunContext[AgentDepsT] | None, path: str, *, offset: int = 0, limit: int | None = None
+        self, scope: _Scope, ctx: RunContext[AgentDepsT] | None, path: str, *, offset: int = 1, limit: int | None = None
     ) -> str | list[str | BinaryContent]:
-        if offset < 0:
-            raise ValueError('offset must be non-negative.')
+        if offset < 1:
+            raise ValueError('offset counts lines from 1; use offset=1 for the first line.')
         if limit is not None and limit < 1:
             raise ValueError('limit must be at least 1.')
         limit = self._max_read_lines if limit is None else min(limit, self._max_read_lines)
@@ -973,8 +988,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         header = self._read_header(path, total, content_hash)
         # Decode only the lines shown, from a view so the window is not copied first: a large
         # file is paged through one window at a time.
-        start = skip_lines(raw, offset)
-        end = len(raw) if offset + limit >= total else skip_lines(raw, limit, start)
+        start = skip_lines(raw, offset - 1)
+        end = len(raw) if offset - 1 + limit >= total else skip_lines(raw, limit, start)
         window = split_lines(str(memoryview(raw)[start:end], 'utf-8', 'replace'))
         # Format before emitting: an out-of-range offset is a failed read, and
         # a failed read must not look like a successful one to subscribers.
@@ -1855,8 +1870,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             '--files',
             '--sort',
             'path',
-            *(['--glob', glob] if glob is not None else []),
-            *hidden_flag,
+            *(_ripgrep_glob(glob, hidden_flag) if glob is not None else []),
         ]
         try:
             if scope.bounds.lacks_ripgrep:
