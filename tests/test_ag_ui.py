@@ -9,17 +9,18 @@ import inspect
 import json
 import uuid
 import warnings
-from collections.abc import AsyncIterator, MutableMapping, Sequence
+from collections.abc import AsyncIterator, Callable, MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal, cast
 
 import pytest
 from dirty_equals import IsJson, IsPartialDict
-from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic import BaseModel, Field, Json, TypeAdapter, ValidationError
 
 from pydantic_ai import (
+    AgentRunResultEvent,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -78,10 +79,12 @@ from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolFailed, UserError
 from pydantic_ai.messages import (
+    InstructionCapabilityPart,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
+    OperatorSource,
     _clean_message_history,  # pyright: ignore[reportPrivateUsage]
     sanitize_messages,
 )
@@ -113,6 +116,7 @@ from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 from pydantic_ai.usage import UsageLimits
 
 from ._inline_snapshot import snapshot
+from .canonical_system_utils import PROVIDER_NAME, StampedModel
 from .conftest import (
     IsDatetime,
     IsInt,
@@ -2576,6 +2580,7 @@ def test_activity_message_other_types_ignored() -> None:
         pytest.param('[1, 2, 3]', id='non-dict-list'),
         pytest.param('42', id='non-dict-number'),
         pytest.param('[' * 100_000 + ']' * 100_000, id='deeply-nested'),
+        pytest.param('{"a": ' + '1' * 5_000 + '}', id='oversized-integer'),
     ],
 )
 def test_reasoning_message_malformed_encrypted_value(encrypted_value: str) -> None:
@@ -2782,6 +2787,52 @@ def test_load_dump_message_id_on_merged_and_split_messages() -> None:
     uuid.UUID(dumped[3].id)
 
 
+def test_load_dump_message_id_skips_activity_messages() -> None:
+    """The kept id goes on the last chat message dumped from a `ModelMessage`, never on a trailing activity.
+
+    A run records a `ModelSettingsDeltaPart` behind the user prompt that set a thinking effort, and a
+    `CompactionPart` in the response that compacted; both dump as activity messages after the chat message
+    the client sent. `@ag-ui/client` doesn't send activity messages back, so the id has to stay on the user
+    message for a regenerate or edit after a reload to find the stored turn. A message that dumps to
+    activities alone keeps the id on the last of them. Loading the dump again keeps every id: an activity
+    merged after a chat message doesn't replace the id the chat message kept.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/12691
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart('Think about it.'),
+                ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True),
+            ],
+            metadata={'__pydantic_ai__': {'ui_message_id': 'usr-1'}},
+        ),
+        ModelResponse(
+            parts=[TextPart('Done.'), CompactionPart(content='Summary of the conversation so far.')],
+            metadata={'__pydantic_ai__': {'ui_message_id': 'asst-1'}},
+        ),
+        ModelRequest(
+            parts=[ModelSettingsDeltaPart(settings={'thinking': 'high'})],
+            metadata={'__pydantic_ai__': {'ui_message_id': 'act-1'}},
+        ),
+    ]
+
+    dumped = AGUIAdapter.dump_messages(messages)
+
+    assert [(type(m).__name__, m.id) for m in dumped] == [
+        ('UserMessage', 'usr-1'),
+        ('ActivityMessage', IsStr()),
+        ('AssistantMessage', 'asst-1'),
+        ('ActivityMessage', IsStr()),
+        ('ActivityMessage', 'act-1'),
+    ]
+    uuid.UUID(dumped[1].id)
+    uuid.UUID(dumped[3].id)
+
+    reloaded = AGUIAdapter.load_messages(dumped)
+    assert [m.metadata for m in reloaded] == [m.metadata for m in messages]
+
+
 def test_dump_load_roundtrip_drops_message_level_recovery_metadata() -> None:
     """AG-UI does not trust a client round-trip with framework or provider response state.
 
@@ -2883,6 +2934,97 @@ def test_dump_load_roundtrip_canonical_system() -> None:
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
     _sync_load_bookkeeping(original, reloaded)
     assert reloaded == original
+
+
+def _stamped_script(messages: list[ModelMessage]) -> list[ModelResponsePart]:
+    if next(iter_message_parts(messages, ModelRequest, ToolReturnPart), None) is None:
+        return [
+            ThinkingPart(content='Thinking...', signature='sig', provider_name=PROVIDER_NAME),
+            ThinkingPart(content='Earlier thinking.', signature='other', provider_name='other'),
+            ToolCallPart(tool_name='lookup', args={'id': 1}, tool_call_id='call-1', provider_name=PROVIDER_NAME),
+        ]
+    return [
+        CompactionPart(content=None, id='cmp-1', provider_name=PROVIDER_NAME, provider_details={'blob': 'x'}),
+        TextPart(content='Done.'),
+    ]
+
+
+async def _stamped_stream_round_trip(
+    canonical_system: str | None,
+) -> tuple[list[ModelMessage], list[ModelMessage], list[Message]]:
+    """Stream a stamped run, then load the messages the client builds from the stream."""
+    agent = Agent(StampedModel(_stamped_script, canonical_system=canonical_system))
+
+    @agent.tool_plain
+    def lookup(id: int) -> str:
+        return 'found'
+
+    user = UserMessage(id='user-1', content='Go')
+    adapter = AGUIAdapter(agent, create_input(user), ag_ui_version='0.1.19')
+    server_history: list[ModelMessage] = []
+    events = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(
+            adapter.run_stream(on_complete=lambda result: server_history.extend(result.all_messages()))
+        )
+    ]
+    client_messages = _reduce_events(events)
+    return server_history, AGUIAdapter.load_messages([user, *client_messages]), client_messages
+
+
+def _stored_metadata(messages: Sequence[Message]) -> list[Any]:
+    """The reasoning `encrypted_value`s and activity contents, where the AG-UI adapter carries `canonical_system`."""
+    stored: list[Any] = []
+    for msg in messages:
+        if isinstance(msg, ReasoningMessage) and msg.encrypted_value:
+            stored.append(json.loads(msg.encrypted_value))
+        elif isinstance(msg, ActivityMessage):
+            stored.append(msg.content)
+    return stored
+
+
+def _response_stamps(messages: list[ModelMessage]) -> list[tuple[str | None, str | None]]:
+    return [
+        (message.provider_name, message.canonical_system) for message in messages if isinstance(message, ModelResponse)
+    ]
+
+
+@requires_ag_ui('0.1.19')
+async def test_canonical_system_stream_round_trip() -> None:
+    """A streamed response's `canonical_system` survives the client storing the stream and sending it back.
+
+    The stream emits it where `dump_messages` writes it: in the `encrypted_value` of a thinking part from the
+    response's provider, whose `provider_name` only arrived in a delta, and in a compaction's activity content.
+    """
+    server_history, loaded, client_messages = await _stamped_stream_round_trip('stamp-system')
+
+    assert _stored_metadata(client_messages) == snapshot(
+        [
+            {'signature': 'sig', 'provider_name': 'stamped', 'canonical_system': 'stamp-system'},
+            {'signature': 'other', 'provider_name': 'other'},
+            {
+                'id': 'cmp-1',
+                'provider_name': 'stamped',
+                'provider_details': {'blob': 'x'},
+                'canonical_system': 'stamp-system',
+            },
+        ]
+    )
+    assert _stored_metadata(client_messages) == _stored_metadata(
+        AGUIAdapter.dump_messages(server_history, ag_ui_version='0.1.19')
+    )
+    assert _response_stamps(server_history) == snapshot([('stamped', 'stamp-system'), ('stamped', 'stamp-system')])
+    assert _response_stamps(loaded) == _response_stamps(server_history)
+
+
+@requires_ag_ui('0.1.19')
+async def test_canonical_system_stream_round_trip_without_stamp() -> None:
+    """A response without a `canonical_system` streams no claim, and none comes back."""
+    server_history, loaded, client_messages = await _stamped_stream_round_trip(None)
+
+    assert 'canonical_system' not in json.dumps(_stored_metadata(client_messages))
+    assert _response_stamps(server_history) == snapshot([('stamped', None), ('stamped', None)])
+    assert [canonical_system for _, canonical_system in _response_stamps(loaded)] == [None, None]
 
 
 def test_dump_load_roundtrip_tools() -> None:
@@ -6629,6 +6771,60 @@ def test_tool_return_json_scalar_string_stays_string(content: str) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param('[' * 100_000 + ']' * 100_000, id='list'),
+        pytest.param('{"a":' * 5_000 + '1' + '}' * 5_000, id='object'),
+    ],
+)
+async def test_tool_return_deeply_nested_json_string_stays_string(content: str) -> None:
+    """A tool return nested past the request body's depth limit reaches the model as the string, like plain text."""
+    received: list[ToolReturnPart] = []
+
+    async def stream_function(messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
+        received.extend(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        yield 'done'
+
+    run_input = create_input(
+        AssistantMessage(
+            id='msg-1', tool_calls=[ToolCall(id='tc-1', function=FunctionCall(name='get_value', arguments='{}'))]
+        ),
+        ToolMessage(id='msg-2', tool_call_id='tc-1', content=content),
+    )
+    events = await run_and_collect_events(Agent(FunctionModel(stream_function=stream_function)), run_input)
+
+    assert events[-1]['type'] == 'RUN_FINISHED'
+    assert received == [
+        ToolReturnPart(tool_name='get_value', tool_call_id='tc-1', content=content, timestamp=IsDatetime())
+    ]
+
+
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param('caf\udce9', id='lone-surrogate'),
+        pytest.param('{"a": ' + '1' * 5_000 + '}', id='oversized-integer'),
+    ],
+)
+def test_tool_return_unparseable_json_string_stays_string(content: str) -> None:
+    """A tool return `pydantic_core.from_json` rejects loads as the string, like any other plain-text return.
+
+    A str holding a lone surrogate reaches it when `build_run_input` re-reads the body with `json.loads`.
+    """
+    loaded = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id='msg-1', tool_calls=[ToolCall(id='tc-1', function=FunctionCall(name='get_value', arguments='{}'))]
+            ),
+            ToolMessage(id='msg-2', tool_call_id='tc-1', content=content),
+        ]
+    )
+    assert list(iter_message_parts(loaded, ModelRequest, ToolReturnPart)) == [
+        ToolReturnPart(tool_name='get_value', tool_call_id='tc-1', content=content, timestamp=IsDatetime())
+    ]
+
+
 def test_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryImage) -> None:
     """Multimodal `NativeToolReturnPart.content` rides inline in `ToolMessage.content` and round-trips with no flag."""
     original: list[ModelMessage] = [
@@ -7724,6 +7920,7 @@ The page the user is on.
             id='no-such-item',
         ),
         pytest.param('[' * 100_000 + ']' * 100_000, id='deeply-nested'),
+        pytest.param('{"a": ' + '1' * 5_000 + '}', id='oversized-integer'),
     ],
 )
 @pytest.mark.parametrize('content', [pytest.param('Hi', id='str'), pytest.param('list', id='list')])
@@ -9603,6 +9800,11 @@ async def test_frontend_tool_calls_are_pending_on_success(
         pytest.param('next', {'type': 'cancelled'}, id='unreadable'),
         pytest.param('0.9-next', {'type': 'cancelled'}, id='suffixed'),
         pytest.param('1.1', {'type': 'cancelled'}, id='newer'),
+        pytest.param('0001.0', {'type': 'cancelled'}, id='leading-zeros'),
+        pytest.param('\u0661.\u0660', {'type': 'cancelled'}, id='non-ascii-digits'),
+        # Past the 4,300 digits `int()` converts.
+        pytest.param('0' * 4301 + '.9', None, id='long-older'),
+        pytest.param('1' + '0' * 4300 + '.0', {'type': 'cancelled'}, id='long-newer'),
     ],
 )
 async def test_client_protocol_version_decides_1_0_outcomes(
@@ -9610,7 +9812,7 @@ async def test_client_protocol_version_decides_1_0_outcomes(
 ) -> None:
     """A client declaring no version, or one before 1.0, gets the pre-1.0 shapes. One newer than the SDK speaks, or outside the
     `MAJOR.MINOR` grammar, is handled like a newer one, as the spec requires, and gets the 1.0 shapes without a warning:
-    the server operator can't change what the client declares."""
+    the server operator can't change what the client declares. The numbers compare by value, however many digits they have."""
     agent = _cancelling_agent()
 
     events = await _collect_adapter_events(
@@ -10014,6 +10216,217 @@ async def test_run_finished_interrupt_outcome_carries_metadata() -> None:
     run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
     interrupt = run_finished['outcome']['interrupts'][0]
     assert interrupt['metadata'] == snapshot({'risk': 'high', 'scope': 'filesystem'})
+
+
+class AddAccount(AbstractCapability[Any]):
+    """A validation hook that adds an argument the model didn't send."""
+
+    async def after_tool_validate(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {**args, 'account': 'acct-server-side'}
+
+
+class AddPath(AbstractCapability[Any]):
+    """A validation hook that extends a list argument the model sent."""
+
+    async def after_tool_validate(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {**args, 'paths': [*args['paths'], '/srv/secret']}
+
+
+class Deletion(BaseModel):
+    path: str
+    force: bool
+    backup_dir: str = '/srv/backups'
+
+
+class Force(BaseModel):
+    force: bool
+    path: str
+
+
+class Command(BaseModel):
+    command: dict[str, str]
+
+
+class Named(BaseModel):
+    name: str = 'server-token'
+    path: str
+
+
+class Target(BaseModel):
+    path: str
+    retries: int
+    token: str = 'server-token'
+
+
+class AliasedTarget(BaseModel):
+    path: str = Field(validation_alias='filePath')
+
+
+# The tools' bodies never run: the test asserts the pending approval's interrupt.
+def delete_file(path: str, force: bool, backup_dir: str = '/srv/backups') -> None: ...  # pragma: no cover
+
+
+def delete_deletion(deletion: Deletion) -> None: ...  # pragma: no cover
+
+
+def delete_forced(force: Force) -> None: ...  # pragma: no cover
+
+
+def execute(command: Command) -> None: ...  # pragma: no cover
+
+
+def sync_named(name: Named) -> None: ...  # pragma: no cover
+
+
+def delete_target(target: AliasedTarget, force: bool) -> None: ...  # pragma: no cover
+
+
+def delete_aliased(file_path: Annotated[str, Field(alias='filePath')], force: bool) -> None: ...  # pragma: no cover
+
+
+def sync_mirrors(target: Target, mirrors: list[Target]) -> None: ...  # pragma: no cover
+
+
+def sync_paths(paths: list[str], target: Json[Target]) -> None: ...  # pragma: no cover
+
+
+@dataclass(frozen=True)
+class InterruptMessageCase:
+    id: str
+    tool: Callable[..., None]
+    json_args: str
+    message: str
+    capabilities: tuple[AbstractCapability[Any], ...] = ()
+
+
+INTERRUPT_MESSAGE_CASES = [
+    # A default and an argument a hook added stay on the server; the model's arguments show validated.
+    InterruptMessageCase(
+        id='default-and-hook-added-key-left-out',
+        tool=delete_file,
+        json_args='{"path": ".env", "force": "false"}',
+        message=snapshot('Approve delete_file({"path":".env","force":false})?'),
+        capabilities=(AddAccount(),),
+    ),
+    # A tool whose only parameter is a model takes its fields unwrapped; they're matched inside the validated model.
+    InterruptMessageCase(
+        id='single-model-parameter',
+        tool=delete_deletion,
+        json_args='{"path": ".env", "force": "false"}',
+        message=snapshot('Approve delete_deletion({"path":".env","force":false})?'),
+    ),
+    # A field named like the parameter, sent beside other fields, is still read as unwrapped.
+    InterruptMessageCase(
+        id='model-field-named-like-its-parameter',
+        tool=delete_forced,
+        json_args='{"force": "false", "path": ".env"}',
+        message=snapshot('Approve delete_forced({"force":false,"path":".env"})?'),
+    ),
+    # `{"<name>": {...}}` is a field or the wrapped model, which only the tool's schema tells apart: it's shown as
+    # sent. `execute` reads it as `Command.command`, `sync_named` as a wrapped `Named`, whose default stays out.
+    InterruptMessageCase(
+        id='only-key-is-an-object-field',
+        tool=execute,
+        json_args='{"command": {"action": "delete", "path": "/srv/data"}}',
+        message=snapshot('Approve execute({"command":{"action":"delete","path":"/srv/data"}})?'),
+    ),
+    InterruptMessageCase(
+        id='only-key-is-the-wrapped-model',
+        tool=sync_named,
+        json_args='{"name": {"path": "/srv/data"}}',
+        message=snapshot('Approve sync_named({"name":{"path":"/srv/data"}})?'),
+    ),
+    # A validated model is dumped under its field names, so a key sent under a validation alias keeps its value.
+    InterruptMessageCase(
+        id='nested-validation-alias',
+        tool=delete_target,
+        json_args='{"target": {"filePath": "/srv/data"}, "force": "true"}',
+        message=snapshot('Approve delete_target({"target":{"filePath":"/srv/data"},"force":true})?'),
+    ),
+    # Validated arguments are keyed by Python parameter name, so a parameter's alias keeps the model's value.
+    InterruptMessageCase(
+        id='parameter-alias',
+        tool=delete_aliased,
+        json_args='{"filePath": ".env", "force": "false"}',
+        message=snapshot('Approve delete_aliased({"filePath":".env","force":false})?'),
+    ),
+    # A default inside an object or a list item the model sent stays on the server too.
+    InterruptMessageCase(
+        id='nested-defaults-left-out',
+        tool=sync_mirrors,
+        json_args='{"target": {"path": ".env", "retries": "2"}, "mirrors": [{"path": "a", "retries": "1"}]}',
+        message=snapshot(
+            'Approve sync_mirrors({"target":{"path":".env","retries":2},"mirrors":[{"path":"a","retries":1}]})?'
+        ),
+    ),
+    # A list a hook extended, and a JSON string validated into a model with a default, keep the model's values.
+    InterruptMessageCase(
+        id='shape-changed-by-validation',
+        tool=sync_paths,
+        json_args='{"paths": ["a"], "target": "{\\"path\\": \\".env\\", \\"retries\\": 2}"}',
+        message=snapshot('Approve sync_paths({"paths":["a"],"target":"{\\"path\\": \\".env\\", \\"retries\\": 2}"})?'),
+        capabilities=(AddPath(),),
+    ),
+]
+
+
+@pytestmark_interrupts
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in INTERRUPT_MESSAGE_CASES])
+async def test_run_finished_interrupt_message_shows_validated_args(case: InterruptMessageCase) -> None:
+    """The interrupt's `message` shows each argument the model sent with the value the tool will receive.
+
+    A default and an argument a validation hook added stay on the server, at any depth, since the message goes to
+    the client. Where a validated value can't be matched to what the model sent, the message keeps the model's value.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name=case.tool.__name__, json_args=case.json_args)}
+
+    agent = Agent(
+        model=FunctionModel(stream_function=stream_function),
+        output_type=[str, DeferredToolRequests],
+        toolsets=[FunctionToolset([case.tool], requires_approval=True)],
+        capabilities=list(case.capabilities),
+    )
+
+    events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='go')))
+
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    assert run_finished['outcome']['interrupts'][0]['message'] == case.message
+
+
+@pytestmark_interrupts
+async def test_run_finished_interrupt_message_without_validated_args() -> None:
+    """A request without `validated_args`, such as one built by hand, shows the model's arguments.
+
+    Not a run through the adapter: the adapter runs the agent with `run_stream_events()`, whose requests always carry them.
+    """
+
+    async def event_generator():
+        yield AgentRunResultEvent(
+            result=AgentRunResult(
+                output=DeferredToolRequests(
+                    approvals=[ToolCallPart('delete_file', '{"path": ".env"}', tool_call_id='call_0')]
+                )
+            )
+        )
+
+    run_input = create_input(UserMessage(id='m1', content='delete .env'))
+    event_stream = AGUIEventStream(run_input, ag_ui_version=_INTERRUPTS_AG_UI_VERSION)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    interrupt = run_finished['outcome']['interrupts'][0]
+    assert interrupt['message'] == snapshot('Approve delete_file({"path":".env"})?')
 
 
 @pytestmark_interrupts
@@ -10875,8 +11288,8 @@ async def test_compaction_stream_matches_dumped_activity_message() -> None:
 def _reduce_events(events: list[dict[str, Any]]) -> list[Message]:
     """The messages `@ag-ui/client`'s default reducer appends for these events.
 
-    A minimal port covering the event types the enqueued-messages tests produce: text messages, tool
-    calls and results, and activity snapshots, each appended at its stream position.
+    A minimal port covering the event types the enqueued-messages and stream round-trip tests produce: text and
+    reasoning messages, tool calls and results, and activity snapshots, each appended at its stream position.
     """
     messages: list[dict[str, Any]] = []
     by_id: dict[str, dict[str, Any]] = {}
@@ -10917,6 +11330,13 @@ def _reduce_events(events: list[dict[str, Any]]) -> list[Message]:
                         'content': event['content'],
                     }
                 )
+            case 'REASONING_MESSAGE_START':
+                by_id[event['messageId']] = {'id': event['messageId'], 'role': event['role'], 'content': ''}
+                messages.append(by_id[event['messageId']])
+            case 'REASONING_MESSAGE_CONTENT':
+                by_id[event['messageId']]['content'] += event['delta']
+            case 'REASONING_ENCRYPTED_VALUE' if event['subtype'] == 'message':
+                by_id[event['entityId']]['encryptedValue'] = event['encryptedValue']
             case _:
                 pass
     return TypeAdapter(list[Message]).validate_python(messages)
@@ -10960,11 +11380,16 @@ def _enqueuing_agent() -> Agent[object, str]:
     return agent
 
 
+@dataclass(kw_only=True)
+class _ReminderPart(InstructionCapabilityPart, namespace='test_ag_ui', name='reminder'):
+    pass
+
+
 class _TurnScopedReminder(AbstractCapability[object]):
     async def before_model_request(
         self, ctx: RunContext[object], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        ctx.enqueue(SystemPromptPart('Reminder: keep it short.', scope='request'))
+        ctx.enqueue(_ReminderPart(content='Reminder: keep it short.', source=OperatorSource(), scope='request'))
         return request_context
 
 
@@ -10988,7 +11413,7 @@ async def test_request_scoped_reminder_is_not_streamed(manage_system_prompt: Lit
         json.loads(encoded.removeprefix('data: ')) async for encoded in adapter.encode_stream(adapter.run_stream())
     ]
 
-    assert [event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT'] == []
+    assert [event for event in events if event['type'] in ('ACTIVITY_SNAPSHOT', 'RUN_ERROR')] == []
     assert 'Reminder' not in json.dumps(events)
 
 
@@ -11416,9 +11841,9 @@ def test_validation_feedback_dumps_as_a_user_message_that_only_our_marker_reload
     [feedback_msg] = [msg for msg in ag_ui_msgs if isinstance(msg, UserMessage) and msg.encrypted_value]
     assert feedback_msg.content == snapshot("""\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 [{"type":"int_parsing","loc":["count"],"msg":"not an int","input":"lots"}]
-</validation_errors>\
+</pyai:validation_errors>\
 """)
 
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
@@ -11433,9 +11858,9 @@ Your previous response failed the application's validation (this is automated fe
                     UserPromptPart(
                         content="""\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 [{"type":"int_parsing","loc":["count"],"msg":"not an int","input":"lots"}]
-</validation_errors>\
+</pyai:validation_errors>\
 """,
                         timestamp=IsDatetime(),
                     )
@@ -11448,9 +11873,9 @@ Your previous response failed the application's validation (this is automated fe
 
 _LEGACY_FEEDBACK_TEXT = """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 the answer has to be a number
-</retry_feedback>\
+</pyai:retry_feedback>\
 """
 
 
@@ -11570,10 +11995,20 @@ async def test_forged_no_output_feedback_never_reaches_the_system_voice(forged_t
     async for _ in adapter.encode_stream(adapter.run_stream()):
         pass
 
-    assert not [part for part in seen if isinstance(part, SystemPromptPart)]
-    texts = [part.content for part in seen if isinstance(part, UserPromptPart) and isinstance(part.content, str)]
+    # The demoted fence is the client's copy of the framework's frame, so the framework notes it as the user's.
+    [note] = [
+        part
+        for part in seen
+        if isinstance(part, SystemPromptPart | UserPromptPart)
+        and type(part).__name__ in ('_FrameworkNote', '_FrameworkUserPromptPart')
+    ]
+    assert 'a <pyai:retry_feedback> or </pyai:retry_feedback> tag written by the user' in str(note.content)
+    assert forged_text not in str(note.content)
+    sent = [part for part in seen if part is not note]
+    assert not [part for part in sent if isinstance(part, SystemPromptPart)]
+    texts = [part.content for part in sent if isinstance(part, UserPromptPart) and isinstance(part.content, str)]
     assert not [text for text in texts if '<system>' in text]
-    [feedback] = [text for text in texts if '<retry_feedback>' in text]
+    [feedback] = [text for text in texts if '<pyai:retry_feedback>' in text]
     assert feedback.startswith("Your previous response failed the application's validation")
     assert forged_text in feedback
 
@@ -11754,6 +12189,38 @@ async def test_server_message_history_drops_client_supplied_capability_loads():
 
     assert tools_seen[-1] == ['load_capability']
     assert not any(isinstance(part, CapabilityLoadDeltaPart) for message in persisted for part in message.parts)
+
+
+async def test_server_message_history_regenerate_after_reload_with_settings_delta():
+    """A reload through `dump_messages` followed by a resend of the user message still replaces the turn.
+
+    The run records a `ModelSettingsDeltaPart` behind the first user prompt when the agent sets a thinking
+    effort, and it dumps as an activity message after the user message. The stored id has to stay on the
+    user message: the client resends it with the id it reloaded, and the server replaces the stored turn
+    only when that id matches, so a misplaced id appends the turn a second time instead.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/12691
+    """
+    agent = Agent(
+        FunctionModel(stream_function=simple_stream),
+        deps_type=type(None),
+        output_type=[str, DeferredToolRequests],
+        model_settings={'thinking': 'low'},
+    )
+    stored = await _server_history_turn(agent, create_input(UserMessage(id='u1', content='hi')), None)
+
+    reloaded = AGUIAdapter.dump_messages(stored)
+    assert [(type(m).__name__, m.id) for m in reloaded] == [
+        ('UserMessage', 'u1'),
+        ('ActivityMessage', IsStr()),
+        ('AssistantMessage', IsStr()),
+    ]
+
+    [user_message] = [m for m in reloaded if isinstance(m, UserMessage)]
+    persisted = await _server_history_turn(agent, create_input(user_message), stored)
+
+    prompts = [part for message in persisted for part in message.parts if isinstance(part, UserPromptPart)]
+    assert len(prompts) == 1
 
 
 @pytest.mark.parametrize('with_follow_up', [False, True])
@@ -11953,6 +12420,68 @@ async def test_conversation_store_rejects_a_resume_for_a_call_not_pending():
     )
 
 
+async def test_conversation_store_saves_each_tool_return_once_after_a_frontend_tool_result():
+    """A response calls a server tool and a frontend tool; the store gets each return once after the client sends the frontend result.
+
+    See https://github.com/pydantic/pydantic-ai/issues/13547.
+    """
+    requests: list[list[ModelMessage]] = []
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        requests.append(messages)
+        if len(requests) == 1:
+            yield {0: DeltaToolCall(name='lookup', json_args='{}', tool_call_id='srv-1')}
+            yield {1: DeltaToolCall(name='pick_file', json_args='{}', tool_call_id='front-1')}
+        else:
+            yield 'ok'
+
+    agent: Agent[None, str | DeferredToolRequests] = Agent(
+        FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
+    )
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'server value'
+
+    store = InMemoryConversationStore()
+    tools = [Tool(name='pick_file', description='Pick a file.', parameters={'type': 'object', 'properties': {}})]
+    await _stored_turn(agent, store, create_input(UserMessage(id='u1', content='go'), tools=tools, thread_id='thread'))
+    called = AssistantMessage(
+        id='a1', tool_calls=[ToolCall(id='front-1', function=FunctionCall(name='pick_file', arguments='{}'))]
+    )
+    picked = ToolMessage(id='t1', tool_call_id='front-1', content='a.txt')
+    await _stored_turn(agent, store, create_input(called, picked, tools=tools, thread_id='thread'))
+
+    conversation = await store.load('thread')
+    assert conversation is not None
+    assert conversation_view(conversation.messages) == snapshot(
+        [
+            'user-prompt: go',
+            'call srv-1',
+            'call front-1',
+            'return srv-1: server value',
+            'return front-1: a.txt',
+            'text: ok',
+        ]
+    )
+
+    await _stored_turn(
+        agent, store, create_input(UserMessage(id='u2', content='and now?'), tools=tools, thread_id='thread')
+    )
+
+    assert conversation_view(requests[-1]) == snapshot(
+        [
+            'user-prompt: go',
+            'call srv-1',
+            'call front-1',
+            'return srv-1: server value',
+            'return front-1: a.txt',
+            'text: ok',
+            'user-prompt: and now?',
+        ]
+    )
+
+
 async def test_conversation_store_failure_warns_on_the_server_not_to_the_client():
     class FailingStore(InMemoryConversationStore):
         async def load(
@@ -12015,3 +12544,36 @@ async def test_dispatch_request_forwards_manage_message_history():
     await response.stream_response(send)
 
     assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
+
+
+def test_dump_messages_keeps_the_reserved_namespace_of_tool_return_text_server_side():
+    """The reserved namespace of `TextContent` metadata never reaches the client; the application's own keys do."""
+    reserved = {'__pydantic_ai__': {'framework_frame': True}}
+    marked = TextContent('<pyai:tool_result tool_name="t">\nDone.\n</pyai:tool_result>', metadata=reserved)
+    with_origin = TextContent('<report>\nDone.\n</report>', metadata={**reserved, 'origin': 'app'})
+    content = [marked, {'nested': with_origin}, TextContent('plain', metadata={'tag': 1}), 'text']
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Go.')]),
+        ModelResponse(parts=[ToolCallPart('t', {}, tool_call_id='c1')]),
+        ModelRequest(parts=[ToolReturnPart('t', content, tool_call_id='c1')]),
+        # The error channel renders the content as text, which includes each `TextContent`'s metadata.
+        ModelResponse(parts=[ToolCallPart('t', {}, tool_call_id='c2'), ToolCallPart('t', {}, tool_call_id='c3')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('t', content, tool_call_id='c2', outcome='failed'),
+                ToolReturnPart('t', content, tool_call_id='c3', outcome='denied'),
+            ]
+        ),
+    ]
+
+    ag_ui_messages = AGUIAdapter.dump_messages(messages)
+    errors = [m.error for m in ag_ui_messages if isinstance(m, ToolMessage) and m.error is not None]
+    assert len(errors) == 2
+    assert all('origin' in error and '__pydantic_ai__' not in error for error in errors)
+    dumped = json.dumps([m.model_dump(mode='json') for m in ag_ui_messages])
+
+    assert '__pydantic_ai__' not in dumped
+    assert 'origin' in dumped
+    assert 'tag' in dumped
+    # The caller's own objects are not mutated.
+    assert marked.metadata == reserved

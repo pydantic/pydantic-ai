@@ -7,11 +7,13 @@ import random
 import wave
 from collections.abc import Awaitable, Callable, MutableMapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Literal, assert_never, overload
+from typing import TYPE_CHECKING, Literal, assert_never, overload
 
 import anyio
 
-from .._framing import SYSTEM_TAG, wrap
+from .. import _model_errors
+from .._capability_parts import render_capability_parts_for_live_channel
+from .._framing import SYSTEM_TAG, frame
 from .._instrumentation import get_instructions
 from ..exceptions import UserError
 from ..messages import (
@@ -49,12 +51,20 @@ from ..models import (
     _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
     _wrap_non_leading_system_prompts,  # pyright: ignore[reportPrivateUsage]
     download_item,
+    prepare_return_schemas,
+    resolve_request_tools,
 )
 from ..models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from ..settings import ToolChoice
 from ..tools import ToolDefinition
 from .codec import TextContext
+from .profiles import RealtimeModelProfile
 from .settings import ReconnectPolicy
+
+if TYPE_CHECKING:
+    from websockets.exceptions import InvalidStatus
+
+    from ..native_tools import AbstractNativeTool
 
 
 def _standing_system_prompt(messages: Sequence[ModelMessage]) -> list[SystemPromptPart]:
@@ -74,7 +84,7 @@ def session_instructions(messages: Sequence[ModelMessage], model_request_paramet
     recorded in `messages` are never read: only `model_request_parameters.instruction_parts` count.
 
     Both are rendered as a standard model renders them: append-mode blocks and appending dynamic system
-    prompts as tagged `<context>` elements, so the changes a session delivers later can name them.
+    prompts as tagged `<pyai:context>` elements, so the changes a session delivers later can name them.
     """
     standing = _standing_system_prompt(messages)
     if any(part.context_id is not None for part in standing):
@@ -116,7 +126,8 @@ def render_instruction_change(
 def wrap_seeded_system_prompts(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
     """Turn the mid-conversation `SystemPromptPart`s in seeded history into `<system>`-tagged user text.
 
-    The standing system prompt is left for the seeders to skip, as `session_instructions` carries it.
+    The standing system prompt is left for the seeders to skip, as `session_instructions` carries it. Capability parts
+    are rendered in place, after the standing prompt is counted: none is ever part of it.
     A later system prompt stays where it was in the conversation, and a request-scoped one whose request
     has been answered is left out: what `Model.prepare_messages` does for a model without inline or
     request-scoped system prompts.
@@ -124,8 +135,11 @@ def wrap_seeded_system_prompts(messages: Sequence[ModelMessage]) -> list[ModelMe
     # Counted on the history as authored, as `prepare_messages` does: dropping a leading request-scoped
     # prompt mustn't promote the system prompt after it into the standing one `session_instructions` skips.
     standing_prompt_count = len(_standing_system_prompt(messages))
+    messages = render_capability_parts_for_live_channel(list(messages))
     messages = _drop_superseded_request_scoped_prompts(list(messages))
-    return _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count)
+    return _wrap_non_leading_system_prompts(
+        messages, standing_prompt_count=standing_prompt_count, sealed=False, keep_request_scoped=False
+    )
 
 
 def replay_recorded_system_prompts_in_place(messages: Sequence[ModelMessage]) -> Sequence[ModelMessage]:
@@ -144,12 +158,38 @@ def replay_recorded_system_prompts_in_place(messages: Sequence[ModelMessage]) ->
     if not (standing_count := _standing_system_prompt_count(first_request)):
         return messages
     parts = [
-        UserPromptPart(content=wrap(SYSTEM_TAG, part.content), timestamp=part.timestamp)
+        UserPromptPart(content=frame(SYSTEM_TAG, part.content), timestamp=part.timestamp)
         if position < standing_count and isinstance(part, SystemPromptPart)
         else part
         for position, part in enumerate(first_request.parts)
     ]
     return [*messages[:index], replace(first_request, parts=parts), *messages[index + 1 :]]
+
+
+def resolve_realtime_request_tools(
+    parameters: ModelRequestParameters,
+    profile: RealtimeModelProfile,
+    *,
+    unsupported_settings: Callable[[AbstractNativeTool], frozenset[str]] | None = None,
+) -> ModelRequestParameters:
+    """Resolve the tools a realtime session gives the model: when it opens, and when a tool call reveals more.
+
+    Return schemas resolve as `Model.prepare_request` resolves them: cleared on tools that didn't opt in, kept for a
+    model that renders them natively (Gemini Live's function-declaration `response` schema), and put in the
+    description elsewhere. Then the native tool <-> local tool swap a standard request applies drops an unsupported
+    native tool for its local fallback, or the local tool for a supported native one, and raises the shared
+    `UserError` when an unsupported native tool has no fallback. A realtime model supports no native tools unless its
+    profile says so.
+
+    A realtime connection can't withhold a schema or announce a tool in history, so a deferred tool is `'withheld'`
+    until revealed, and `'visible'` after.
+    """
+    parameters = prepare_return_schemas(
+        parameters, supports_tool_return_schema=profile.get('supports_tool_return_schema', False)
+    )
+    return resolve_request_tools(
+        parameters, profile.get('supported_native_tools', frozenset()), unsupported_settings=unsupported_settings
+    )
 
 
 def resolve_advertised_tools(
@@ -193,7 +233,7 @@ class SystemPromptText(str):
     """The prompt as written, without the tags."""
 
     def __new__(cls, system_prompt: str) -> SystemPromptText:
-        text = super().__new__(cls, wrap(SYSTEM_TAG, system_prompt))
+        text = super().__new__(cls, frame(SYSTEM_TAG, system_prompt))
         text.system_prompt = system_prompt
         return text
 
@@ -238,6 +278,13 @@ async def reconnect_with_backoff(
     return False
 
 
+def read_rejected_upgrade(error: InvalidStatus) -> tuple[str, dict[str, str]]:
+    """The body, or the reason phrase when it has none, and the headers of a rejected WebSocket upgrade's response."""
+    response = error.response
+    body = response.body.decode(errors='replace') if response.body else response.reason_phrase
+    return body, _model_errors.joined_headers(response.headers)
+
+
 def inject_trace_context(headers: MutableMapping[str, str]) -> None:
     """Add the current W3C trace context to WebSocket handshake headers."""
     from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
@@ -252,48 +299,57 @@ async def seed_user_content(
     content: Sequence[UserContent] = [part.content] if isinstance(part.content, str) else part.content
     result: list[str | BinaryContent] = []
     for item in content:
-        if isinstance(item, str):
-            result.append(item)
-        elif isinstance(item, TextContent):
-            result.append(item.content)
-        elif isinstance(item, CachePoint):
-            continue
-        elif isinstance(item, ImageUrl):
-            if not supports_images:
+        match item:
+            case str():
+                result.append(item)
+            case TextContent():
+                result.append(item.content)
+            case CachePoint():
+                continue
+            case ImageUrl():
+                result.append(await _seed_image_url(item, provider_name=provider_name, supports_images=supports_images))
+            case BinaryContent():
+                result.append(_seed_binary_content(item, provider_name=provider_name, supports_images=supports_images))
+            case AudioUrl() | VideoUrl() | DocumentUrl() | UploadedFile():
+                content_type = item.__class__.__name__
                 raise UserError(
-                    f'{provider_name} realtime sessions do not support images in seeded history or tool results. '
-                    'Remove the image, or use a realtime provider that supports images.'
+                    f'`{content_type}` cannot be sent to {provider_name} in a realtime session. '
+                    'Convert it to text or an inline image, or remove it from `message_history` or the tool result.'
                 )
-            downloaded = await download_item(item, data_format='bytes')
-            image = BinaryContent(data=downloaded['data'], media_type=downloaded['data_type'])
-            if not image.is_image:
-                raise UserError(
-                    f'`ImageUrl` resolved to unsupported media type {image.media_type!r} in a '
-                    f'{provider_name} realtime session. Use a URL that returns an image, or remove it.'
-                )
-            result.append(image)
-        elif isinstance(item, BinaryContent):
-            if not item.is_image:
-                raise UserError(
-                    f'`BinaryContent` with media type {item.media_type!r} cannot be sent to {provider_name} '
-                    'in a realtime session. Convert it to text or an image, or remove it '
-                    'from `message_history` or the tool result.'
-                )
-            if not supports_images:
-                raise UserError(
-                    f'{provider_name} realtime sessions do not support images in seeded history or tool results. '
-                    'Remove the image, or use a realtime provider that supports images.'
-                )
-            result.append(item)
-        elif isinstance(item, (AudioUrl, VideoUrl, DocumentUrl, UploadedFile)):
-            content_type = item.__class__.__name__
-            raise UserError(
-                f'`{content_type}` cannot be sent to {provider_name} in a realtime session. '
-                'Convert it to text or an inline image, or remove it from `message_history` or the tool result.'
-            )
-        else:
-            assert_never(item)
+            case _:
+                assert_never(item)
     return result
+
+
+async def _seed_image_url(item: ImageUrl, *, provider_name: str, supports_images: bool) -> BinaryContent:
+    if not supports_images:
+        raise UserError(
+            f'{provider_name} realtime sessions do not support images in seeded history or tool results. '
+            'Remove the image, or use a realtime provider that supports images.'
+        )
+    downloaded = await download_item(item, data_format='bytes')
+    image = BinaryContent(data=downloaded['data'], media_type=downloaded['data_type'])
+    if not image.is_image:
+        raise UserError(
+            f'`ImageUrl` resolved to media type {image.media_type!r}, which cannot be sent to {provider_name} '
+            'in a realtime session. Use a URL that returns an image, or remove it.'
+        )
+    return image
+
+
+def _seed_binary_content(item: BinaryContent, *, provider_name: str, supports_images: bool) -> BinaryContent:
+    if not item.is_image:
+        raise UserError(
+            f'`BinaryContent` with media type {item.media_type!r} cannot be sent to {provider_name} '
+            'in a realtime session. Convert it to text or an image, or remove it '
+            'from `message_history` or the tool result.'
+        )
+    if not supports_images:
+        raise UserError(
+            f'{provider_name} realtime sessions do not support images in seeded history or tool results. '
+            'Remove the image, or use a realtime provider that supports images.'
+        )
+    return item
 
 
 def seed_retry_feedback_text(part: RetryFeedbackPart) -> str:
@@ -305,7 +361,7 @@ def seed_retry_feedback_text(part: RetryFeedbackPart) -> str:
     model from reading it as something a person said (https://github.com/pydantic/pydantic-ai/issues/6404).
     """
     text = part.model_response()
-    return wrap(SYSTEM_TAG, text) if _retry_feedback_speaks_for_the_harness(part) else text
+    return frame(SYSTEM_TAG, text) if _retry_feedback_speaks_for_the_harness(part) else text
 
 
 @overload
@@ -341,26 +397,38 @@ def seed_speech_content(*, part: SpeechPart, provider_name: str, supports_audio:
 
 
 def seed_pcm_audio(*, audio: BinaryContent, provider_name: str, sample_rate: int) -> bytes:
-    """Extract mono PCM16 bytes from retained WAV audio."""
+    """Extract mono PCM16 bytes from retained WAV audio seeded into history."""
     if audio.media_type != 'audio/wav':
         raise UserError(
             f'`SpeechPart.audio` with media type {audio.media_type!r} cannot be seeded into '
             f'{provider_name} realtime history. Use WAV audio matching the target session input format.'
         )
+    return pcm_from_wav(
+        audio.data,
+        sample_rate=sample_rate,
+        error_prefix=f'Cannot seed retained audio into {provider_name} realtime history',
+    )
+
+
+def pcm_from_wav(data: bytes, *, sample_rate: int, error_prefix: str) -> bytes:
+    """Extract mono PCM16 bytes from WAV data recorded at `sample_rate`.
+
+    `error_prefix` opens each error and says what the caller was doing with the audio.
+    """
     try:
-        with wave.open(io.BytesIO(audio.data), 'rb') as wav:
+        with wave.open(io.BytesIO(data), 'rb') as wav:
             source_rate = wav.getframerate()
             channels = wav.getnchannels()
             sample_width = wav.getsampwidth()
             compression = wav.getcomptype()
             if source_rate != sample_rate:
                 raise UserError(
-                    f'Cannot seed retained audio recorded at {source_rate} Hz into a {provider_name} realtime session '
-                    f'expecting {sample_rate} Hz. Resample it before passing `message_history`.'
+                    f'{error_prefix}: it was recorded at {source_rate} Hz, but the session expects {sample_rate} Hz. '
+                    'Resample it first.'
                 )
             if channels != 1 or sample_width != 2 or compression != 'NONE':
                 raise UserError(
-                    f'Cannot seed retained audio into {provider_name} realtime history: expected mono 16-bit PCM WAV, '
+                    f'{error_prefix}: expected mono 16-bit PCM WAV, '
                     f'got {channels} channel(s), {sample_width * 8}-bit samples, compression {compression!r}.'
                 )
             frame_count = wav.getnframes()
@@ -368,9 +436,7 @@ def seed_pcm_audio(*, audio: BinaryContent, provider_name: str, sample_rate: int
             if len(pcm) != frame_count * channels * sample_width:
                 raise wave.Error('truncated audio data')
     except (EOFError, wave.Error) as e:
-        raise UserError(
-            f'`SpeechPart.audio` cannot be seeded into {provider_name} realtime history because it is not valid WAV audio.'
-        ) from e
+        raise UserError(f'{error_prefix}: it is not valid WAV audio.') from e
     return pcm
 
 
@@ -480,20 +546,9 @@ def without_media(message: ModelMessage) -> ModelMessage | None:
     a marker saying the user spoke.
     """
     if isinstance(message, ModelRequest):
-        request_parts: list[ModelRequestPart] = []
-        for part in message.parts:
-            if isinstance(part, SpeechPart):
-                if part.transcript:
-                    request_parts.append(replace(part, audio=None))
-                else:
-                    request_parts.append(UserPromptPart(content=_TRANSCRIPTLESS_SPEECH_MARKER))
-            elif isinstance(part, UserPromptPart) and not isinstance(part.content, str):
-                if text := [item for item in part.content if isinstance(item, (str, TextContent))]:
-                    request_parts.append(replace(part, content=text))
-            elif isinstance(part, ToolReturnPart) and part.files:
-                request_parts.append(replace(part, content=part.model_response_str(wrap_if_error=False)))
-            else:
-                request_parts.append(part)
+        request_parts: list[ModelRequestPart] = [
+            replayable for part in message.parts if (replayable := _request_part_without_media(part)) is not None
+        ]
         return replace(message, parts=request_parts) if request_parts else None
     response_parts = [
         replace(part, audio=None) if isinstance(part, SpeechPart) else part
@@ -501,3 +556,15 @@ def without_media(message: ModelMessage) -> ModelMessage | None:
         if not isinstance(part, FilePart)
     ]
     return replace(message, parts=response_parts) if response_parts else None
+
+
+def _request_part_without_media(part: ModelRequestPart) -> ModelRequestPart | None:
+    """`part` as `without_media` replays it, or `None` when nothing of it is left to replay."""
+    if isinstance(part, SpeechPart):
+        return replace(part, audio=None) if part.transcript else UserPromptPart(content=_TRANSCRIPTLESS_SPEECH_MARKER)
+    if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+        text = [item for item in part.content if isinstance(item, (str, TextContent))]
+        return replace(part, content=text) if text else None
+    if isinstance(part, ToolReturnPart) and part.files:
+        return replace(part, content=part.model_response_str(wrap_if_error=False))
+    return part

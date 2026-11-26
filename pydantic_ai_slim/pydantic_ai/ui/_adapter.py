@@ -38,6 +38,7 @@ from pydantic_ai.conversation_store import ConversationConflict, ConversationEnt
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     CompactionPart,
     ForceDownloadMode,
     InstructionBaselinePart,
@@ -47,6 +48,8 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponse,
     ModelSettingsDeltaPart,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryFeedbackPart,
     RetryInfo,
     StructuredContent,
@@ -54,24 +57,30 @@ from pydantic_ai.messages import (
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolRetryCause,
+    ToolUIVisibility,
     UserPromptPart,
     _dangling_tool_calls_by_response,  # pyright: ignore[reportPrivateUsage]
     _drop_compaction_parts,  # pyright: ignore[reportPrivateUsage]
     _is_tool_result_part,  # pyright: ignore[reportPrivateUsage]
     _sanitize_messages,  # pyright: ignore[reportPrivateUsage]
 )
-from pydantic_ai.models import KnownModelName, Model
+from pydantic_ai.models import KnownModelName, Model, ModelRequestContext
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 from ._event_stream import NativeEvent, OnCancelFunc, OnCompleteFunc, UIEventStream, dispatch_callback
 from ._messages_builder import MessagesBuilder
-from ._utils import get_ui_message_id, set_ui_message_id, without_ui_message_id
+from ._utils import (
+    get_ui_message_id,
+    set_ui_message_id,
+    warn_client_held_history_with_hidden_tools,
+    without_ui_message_id,
+)
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -243,24 +252,26 @@ def enqueued_messages_for_client(
     frontend's copy would be stripped on the way back in anyway, so sending it would only disclose it.
     Request-scoped ones stay on the server either way, as in `dump_messages`: they're for the model's
     current request only, and loaded back they'd become lasting system prompts. So do instruction changes
-    and baselines, which are server-side operator state.
+    and baselines, which are server-side operator state, and capability parts, which `dump_messages` keeps on
+    the server too.
     """
     kept: list[ModelMessage] = []
     for message in messages:
-        if isinstance(message, ModelRequest):
-            parts = [
-                part
-                for part in message.parts
-                if not isinstance(part, (InstructionDeltaPart, InstructionBaselinePart))
-                and (
-                    not isinstance(part, SystemPromptPart)
-                    or (manage_system_prompt == 'client' and part.scope != 'request')
-                )
-            ]
-            if not parts:
-                continue
-            if len(parts) != len(message.parts):
-                message = replace(message, parts=parts)
+        if not isinstance(message, ModelRequest):
+            kept.append(message)
+            continue
+        parts = [
+            part
+            for part in message.parts
+            if not isinstance(part, (InstructionDeltaPart, InstructionBaselinePart, CapabilityPart))
+            and (
+                not isinstance(part, SystemPromptPart) or (manage_system_prompt == 'client' and part.scope != 'request')
+            )
+        ]
+        if not parts:
+            continue
+        if len(parts) != len(message.parts):
+            message = replace(message, parts=parts)
         kept.append(message)
     return kept
 
@@ -599,25 +610,11 @@ def _take_new_turn(
     new_turn = client_messages[last_response + 1 :]
 
     history = list(message_history)
-    cut_at: int | None = None
     resubmitted_results: set[str] = set()
     ui_message_id = get_ui_message_id(new_turn[0]) if new_turn else None
-    if ui_message_id is not None:
-        cut_at = next(
-            (
-                i
-                for i, m in enumerate(history)
-                if isinstance(m, ModelRequest)
-                and get_ui_message_id(m) == ui_message_id
-                and any(isinstance(part, UserPromptPart) for part in m.parts)
-            ),
-            None,
-        )
+    cut_at = _resubmitted_request_index(history, ui_message_id)
     if cut_at is not None:
-        cut, history = history[cut_at], history[:cut_at]
-        if results := [part for part in cut.parts if _is_tool_result_part(part)]:
-            history.append(ModelRequest(parts=results))
-            resubmitted_results = {part.tool_call_id for part in results}
+        history, resubmitted_results = _cut_history(history, cut_at)
     elif regenerate:
         raise UserError(
             f'The message to regenerate ({ui_message_id!r}) is not in the stored conversation. Either the server never '
@@ -632,17 +629,8 @@ def _take_new_turn(
     dropped = 0
     for message in new_turn:
         assert isinstance(message, ModelRequest)
-        parts: list[ModelRequestPart] = []
-        for part in message.parts:
-            if isinstance(part, CapabilityLoadDeltaPart):
-                continue
-            if _is_tool_result_part(part):
-                if part.tool_call_id not in answerable:
-                    dropped += part.tool_call_id not in resubmitted_results
-                    continue
-                answerable.discard(part.tool_call_id)
-                pending.discard(part.tool_call_id)
-            parts.append(part)
+        parts, message_dropped = _answering_parts(message, answerable, pending, resubmitted_results)
+        dropped += message_dropped
         if len(parts) == len(message.parts):
             kept.append(message)
         elif parts:
@@ -650,6 +638,56 @@ def _take_new_turn(
     if dropped:
         warn_dropped_tool_results(dropped, stacklevel=5)
     return _ServerHeldTurn(history, _drop_compaction_parts(kept), cut_at, pending)
+
+
+def _resubmitted_request_index(history: Sequence[ModelMessage], ui_message_id: str | None) -> int | None:
+    """The index of the stored request with a user prompt that the message with `ui_message_id` resubmits, if any."""
+    if ui_message_id is None:
+        return None
+    return next(
+        (
+            i
+            for i, m in enumerate(history)
+            if isinstance(m, ModelRequest)
+            and get_ui_message_id(m) == ui_message_id
+            and any(isinstance(part, UserPromptPart) for part in m.parts)
+        ),
+        None,
+    )
+
+
+def _cut_history(history: list[ModelMessage], cut_at: int) -> tuple[list[ModelMessage], set[str]]:
+    """`history` cut before the resubmitted request at `cut_at`, and the call ids of the tool results it keeps from it.
+
+    The tool results the cut request carries, if any, stay as a request of their own at the end.
+    """
+    cut, history = history[cut_at], history[:cut_at]
+    if results := [part for part in cut.parts if _is_tool_result_part(part)]:
+        history.append(ModelRequest(parts=results))
+        return history, {part.tool_call_id for part in results}
+    return history, set()
+
+
+def _answering_parts(
+    message: ModelRequest, answerable: set[str], pending: set[str], resubmitted_results: set[str]
+) -> tuple[list[ModelRequestPart], int]:
+    """The parts of a new-turn `message` that `_take_new_turn` keeps, and how many tool results it drops with a warning.
+
+    Each kept tool result answers its call, so the call is discarded from `answerable` and `pending`.
+    """
+    parts: list[ModelRequestPart] = []
+    dropped = 0
+    for part in message.parts:
+        if isinstance(part, CapabilityLoadDeltaPart):
+            continue
+        if _is_tool_result_part(part):
+            if part.tool_call_id not in answerable:
+                dropped += part.tool_call_id not in resubmitted_results
+                continue
+            answerable.discard(part.tool_call_id)
+            pending.discard(part.tool_call_id)
+        parts.append(part)
+    return parts, dropped
 
 
 def _waiting_for_results(pending: set[str], waiting_on: DeferredToolRequests | None) -> set[str]:
@@ -742,6 +780,50 @@ def warn_dropped_tool_results(dropped: int, *, stacklevel: int) -> None:
         UserWarning,
         stacklevel=stacklevel,
     )
+
+
+@dataclass
+class _DefaultUIVisibility(AbstractCapability[AgentDepsT]):
+    """Writes an adapter's non-public `default_ui_visibility` onto the tools and tool parts that have no `ui_visibility`.
+
+    The parts are then stamped with the default itself, so a reload that dumps them without it is sent what the
+    stream sent.
+    """
+
+    # It adds no toolsets or durable operations, so a durable workflow has nothing to register for it.
+    _safe_at_runtime: ClassVar[bool] = True
+
+    visibility: ToolUIVisibility
+
+    async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        return [
+            replace(tool_def, ui_visibility=self.visibility) if tool_def.ui_visibility is None else tool_def
+            for tool_def in tool_defs
+        ]
+
+    async def prepare_output_tools(
+        self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
+    ) -> list[ToolDefinition]:
+        # An output tool's arguments are the run's answer.
+        return [
+            replace(tool_def, ui_visibility='public') if tool_def.ui_visibility is None else tool_def
+            for tool_def in tool_defs
+        ]
+
+    async def after_model_request(
+        self, ctx: RunContext[AgentDepsT], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        # A call to a tool the run doesn't know, and a native tool's parts, have no definition to take the default
+        # from. The stream already sent them by its own default, which is this one.
+        parts = [
+            replace(part, ui_visibility=self.visibility)
+            if isinstance(part, (ToolCallPart, NativeToolCallPart, NativeToolReturnPart)) and part.ui_visibility is None
+            else part
+            for part in response.parts
+        ]
+        if all(new is old for new, old in zip(parts, response.parts)):
+            return response
+        return replace(response, parts=parts)
 
 
 @runtime_checkable
@@ -865,6 +947,24 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     - The new turn is sanitized as usual.
 
     See [Keeping the history on the server](https://pydantic.dev/docs/ai/integrations/ui/overview/#keeping-the-history-on-the-server).
+    """
+
+    default_ui_visibility: ToolUIVisibility = 'public'
+    """What the client is sent for a tool with no [`ui_visibility`][pydantic_ai.tools.ToolDefinition.ui_visibility] of its own.
+
+    `'public'` (default) sends every call and result. `'redacted'` sends the calls and a placeholder instead of
+    each result, and `'private'` sends neither. A run writes this onto the tools without a setting, so their call
+    and return parts are stamped with it and a conversation reloaded from the stored history with `dump_messages`
+    is sent the way it was streamed. The protocols don't carry the stamps, so a history the client sends back has
+    none. External (frontend) tools and output tools are always `'public'`, and native tools and calls to tools
+    the run doesn't know take this default. The stored history always keeps the full results.
+
+    A non-public tool needs the history held on the server, with
+    [`manage_message_history='server'`][pydantic_ai.ui.UIAdapter.manage_message_history] or a
+    [`conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store]: a client holding the history would send
+    back the placeholder as the result. Under client-held history, a run warns.
+
+    See [Tool visibility](../../ui/overview.md#tool-visibility).
     """
 
     conversation_store: ConversationStore | None = None
@@ -997,6 +1097,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         agent: AbstractAgent[AgentDepsT, OutputDataT],
         manage_system_prompt: Literal['server', 'client'] = 'server',
         manage_message_history: Literal['client', 'server'] = 'client',
+        default_ui_visibility: ToolUIVisibility = 'public',
         conversation_store: ConversationStore | None = None,
         conversation_scope: str | None = None,
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
@@ -1019,6 +1120,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             manage_message_history: Who owns the conversation history. Ignored with a `conversation_store`,
                 which always holds it on the server. See
                 [`UIAdapter.manage_message_history`][pydantic_ai.ui.UIAdapter.manage_message_history].
+            default_ui_visibility: What the client is sent for a tool with no `ui_visibility` of its own. See
+                [`UIAdapter.default_ui_visibility`][pydantic_ai.ui.UIAdapter.default_ui_visibility].
             conversation_store: A store to load and save the conversation with. See
                 [`UIAdapter.conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store].
             conversation_scope: The scope to load and save the conversation with, such as the authenticated user. See
@@ -1047,6 +1150,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             accept=request.headers.get('accept'),
             manage_system_prompt=manage_system_prompt,
             manage_message_history=manage_message_history,
+            default_ui_visibility=default_ui_visibility,
             conversation_store=conversation_store,
             conversation_scope=conversation_scope,
             allowed_file_url_schemes=allowed_file_url_schemes,
@@ -1406,7 +1510,18 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         """
         if self.conversation_store is not None:
             on_complete = self._announce_saved_entries(on_complete)
-        return self.build_event_stream().transform_stream(stream, on_complete=on_complete, on_cancel=on_cancel)
+        event_stream = self.build_event_stream()
+        event_stream.default_ui_visibility = self.default_ui_visibility
+        # A run with a non-public default warns when it starts. Events this adapter didn't run, such as those of a
+        # durable run in another process, are encoded like a stream used on its own: they don't warn.
+        event_stream._warns_on_hidden_tools = (  # pyright: ignore[reportPrivateUsage]
+            self._client_holds_history and self.default_ui_visibility == 'public'
+        )
+        return event_stream.transform_stream(stream, on_complete=on_complete, on_cancel=on_cancel)
+
+    @property
+    def _client_holds_history(self) -> bool:
+        return self.conversation_store is None and self.manage_message_history == 'client'
 
     def _announce_saved_entries(self, on_complete: OnCompleteFunc[EventT] | None) -> OnCompleteFunc[EventT]:
         """Wrap `on_complete` so the stored entries reach the client before whatever it sends."""
@@ -1554,6 +1669,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             # error, and silently supersede an agent-level one. Server mode stays authoritative
             # either way: this instance always runs, deriving a distinct id when it has to.
             run_capabilities.append(ReinjectSystemPrompt(replace_existing=True, id=None))
+        run_capabilities.extend(self._ui_visibility_capabilities())
         if capabilities:
             run_capabilities.extend(capabilities)
 
@@ -1584,6 +1700,17 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                     yield event
 
         return stream_events()
+
+    def _ui_visibility_capabilities(self) -> list[AbstractCapability[AgentDepsT]]:
+        """The run capability that writes a non-public `default_ui_visibility` onto the tools without a setting.
+
+        Warns when the client holds the history.
+        """
+        if self.default_ui_visibility == 'public':
+            return []
+        if self._client_holds_history:
+            warn_client_held_history_with_hidden_tools(stacklevel=4)
+        return [_DefaultUIVisibility(self.default_ui_visibility)]
 
     def run_stream(
         self,
@@ -1694,6 +1821,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         on_cancel: OnCancelFunc[EventT] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         manage_message_history: Literal['client', 'server'] = 'client',
+        default_ui_visibility: ToolUIVisibility = 'public',
         conversation_store: ConversationStore | None = None,
         conversation_scope: str | None = None,
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
@@ -1744,6 +1872,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             manage_message_history: Who owns the conversation history. Ignored with a `conversation_store`,
                 which always holds it on the server. See
                 [`UIAdapter.manage_message_history`][pydantic_ai.ui.UIAdapter.manage_message_history].
+            default_ui_visibility: What the client is sent for a tool with no `ui_visibility` of its own. See
+                [`UIAdapter.default_ui_visibility`][pydantic_ai.ui.UIAdapter.default_ui_visibility].
             conversation_store: A store to load and save the conversation with. See
                 [`UIAdapter.conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store].
             conversation_scope: The scope to load and save the conversation with, such as the authenticated user. See
@@ -1781,6 +1911,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                     agent=cast(AbstractAgent[AgentDepsT, OutputDataT], agent),
                     manage_system_prompt=manage_system_prompt,
                     manage_message_history=manage_message_history,
+                    default_ui_visibility=default_ui_visibility,
                     conversation_store=conversation_store,
                     conversation_scope=conversation_scope,
                     allowed_file_url_schemes=allowed_file_url_schemes,

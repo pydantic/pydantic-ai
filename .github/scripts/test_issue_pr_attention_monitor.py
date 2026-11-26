@@ -331,7 +331,7 @@ def test_snapshot_skips_active_recent_and_escalated_items():
 
 
 def test_snapshot_skips_signed_operational_incidents_but_keeps_human_items_and_bot_prs():
-    incident = item(9, labels=['agentic-workflows', 'pydanty:meta'])
+    incident = item(9, labels=['area:agentic-workflows', 'pydanty:meta'])
     incident['body'] = (
         '<!-- pydantic-ai-provider-health:v1 '
         '{"version":1,"scope":"provider","key":"minimax","kind":"balance",'
@@ -339,7 +339,7 @@ def test_snapshot_skips_signed_operational_incidents_but_keeps_human_items_and_b
     )
     human_issue = item(10, labels=['pydanty:meta'])
     bot_pr = {
-        **item(11, labels=['agentic-workflows', 'pydanty:meta']),
+        **item(11, labels=['area:agentic-workflows', 'pydanty:meta']),
         'pull_request': {'url': 'https://api.github.test/pulls/11'},
     }
     client = SnapshotClient({9: incident, 10: human_issue, 11: bot_pr})
@@ -361,7 +361,7 @@ def test_snapshot_skips_signed_operational_incidents_but_keeps_human_items_and_b
     ],
 )
 def test_operational_labels_without_a_valid_controller_marker_are_not_filtered(marker: str):
-    issue = item(9, labels=['agentic-workflows', 'pydanty:meta'])
+    issue = item(9, labels=['area:agentic-workflows', 'pydanty:meta'])
     issue['body'] = f'<!-- pydantic-ai-provider-health:v1 {marker} -->'
 
     assert not monitor._is_provider_health_incident(issue)
@@ -371,7 +371,7 @@ def test_operational_labels_without_a_valid_controller_marker_are_not_filtered(m
 
 def test_deeply_nested_operational_marker_does_not_abort_snapshot():
     nested = '[' * 10_000 + '0' + ']' * 10_000
-    issue = item(9, labels=['agentic-workflows', 'pydanty:meta'])
+    issue = item(9, labels=['area:agentic-workflows', 'pydanty:meta'])
     issue['body'] = (
         '<!-- pydantic-ai-provider-health:v1 '
         '{"version":1,"scope":"provider","key":"minimax","kind":"balance",'
@@ -2240,6 +2240,7 @@ def test_healthy_census_does_not_require_a_slack_mention(
     monkeypatch.setattr(monitor, 'GitHubClient', lambda token: CensusClient(CENSUS_COUNTS))
     monkeypatch.setattr(sys, 'argv', ['issue_pr_attention_monitor.py', 'census'])
     monkeypatch.setenv('GITHUB_TOKEN', 'token')
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'pydantic/pydantic-ai')
     monkeypatch.setenv('GITHUB_OUTPUT', str(tmp_path / 'github-output'))
     if mentions is None:
         monkeypatch.delenv('PYDANTIC_AI_TRIAGE_SLACK_MENTIONS', raising=False)

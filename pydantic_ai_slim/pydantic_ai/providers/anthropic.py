@@ -11,15 +11,18 @@ from pydantic import SecretStr
 from pydantic_ai import ModelProfile
 from pydantic_ai._http import AsyncHTTPClient, create_async_httpx2_client
 from pydantic_ai._utils import secret_value
+from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.anthropic import (
     _COUNTING_STRICT_SCHEMAS,  # pyright: ignore[reportPrivateUsage]
     _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
+    AnthropicComputerToolVersion,
     AnthropicModelProfile,
     anthropic_model_profile,
 )
 from pydantic_ai.providers import Provider, missing_api_key_error
 from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
+from pydantic_ai.providers._model_deprecations import ANTHROPIC_MODEL_DEPRECATIONS
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 
@@ -55,13 +58,33 @@ _TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES = (
 )
 """Models that accept `tool_addition` / `tool_removal` blocks on a `{'role': 'system'}` entry.
 
-The list Anthropic publishes for the `mid-conversation-tool-changes-2026-07-01` beta, and it happens
-to match `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES` — the two remain separate settings because they're
-separate features, one GA and one beta, that could diverge again. Models predating the beta reject
+The list Anthropic publishes for the `mid-conversation-tool-changes-2026-07-01` beta. It matches the published list
+for `{'role': 'system'}` entries, but not `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES`, which leaves out `claude-haiku-5-5`
+for its sealed `<system>` rendering: the two are separate features, one GA and one beta. Haiku 5.5 keeps these
+blocks, which were measured alongside that rendering. Models predating the beta reject
 the blocks with `requires a model that supports ...`, and `claude-sonnet-5` rejects them outright
 (`tool_addition/tool_removal is not supported on this model`) rather than accepting and ignoring them
 the way it does a plain system entry. Verified live per model, including `claude-haiku-5-5`, except
 `claude-mythos-5`, which isn't reachable with our credentials and is included on the strength of the published list.
+"""
+
+
+_REQUEST_SCOPED_SYSTEM_PROMPT_MODEL_PREFIXES = (
+    'claude-fable-5',
+    'claude-mythos-5',
+    'claude-opus-4-8',
+    'claude-opus-5',
+    'claude-sonnet-5-5',
+    'claude-haiku-5-5',
+)
+"""Models that take a request-scoped `{'role': 'system'}` entry with `clear_at`.
+
+The list Anthropic publishes for the `mid-conversation-system-clear-at-2026-08-21` beta. It's separate from
+`_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES`, which leaves out `claude-sonnet-5-5` and `claude-haiku-5-5` for their sealed
+`<system>` rendering of lasting system messages. Both bind thinking blocks, and a block that's gone from the next
+request invalidates every thinking block after it, while a cleared entry left in place doesn't. So these two get the
+entry, with the sealed block inside it. `claude-sonnet-5` accepts and clears these entries too (verified live), but it's
+left out because it ignores the role: see `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES`.
 """
 
 
@@ -106,6 +129,50 @@ and Microsoft Foundry are documented as supported, but weren't reachable with ou
 """
 
 
+_COMPUTER_TOOLSET_MODEL_PREFIXES = (
+    'claude-fable-5',
+    'claude-mythos-5',
+    'claude-opus-5',
+    'claude-sonnet-5',
+    'claude-haiku-5',
+    'claude-opus-4-8',
+)
+"""The models that take Anthropic's `computer_toolset_20260801`."""
+
+
+def _computer_tool_version(model_name: str) -> AnthropicComputerToolVersion | None:
+    """The model's computer use tool from Anthropic's compatibility table, or `None` if it gets the function tool.
+
+    Claude 5.5 and later take only the toolset. Retired and retiring models (Opus 4 and 4.1, Sonnet 4 and 4.5) get the
+    function tool.
+    https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#earlier-tool-versions
+    """
+    if model_name.startswith(_COMPUTER_TOOLSET_MODEL_PREFIXES):
+        return 'computer_toolset_20260801'
+    if model_name.startswith(('claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-opus-4-5')):
+        return 'computer_20251124'
+    if model_name.startswith('claude-haiku-4-5'):
+        return 'computer_20250124'
+    return None
+
+
+def _computer_use_profile(model_name: str, profile: ModelProfile | None) -> AnthropicModelProfile:
+    """The computer use facts to merge onto `profile`, the model's profile from `anthropic_model_profile()`.
+
+    Only `AnthropicProvider` adds these, since the tool is part of Anthropic's own request format. The Bedrock Converse
+    API and OpenAI-compatible gateways that share `anthropic_model_profile()` get the `computer` function tool.
+    """
+    computer_tool_version = _computer_tool_version(model_name)
+    if computer_tool_version is None:
+        return AnthropicModelProfile()
+    # `anthropic_model_profile()` always sets `supported_native_tools`, so the empty fallback is never used.
+    supported_native_tools = (profile or {}).get('supported_native_tools', frozenset())
+    return AnthropicModelProfile(
+        supported_native_tools=supported_native_tools | {ComputerTool},
+        anthropic_computer_tool_version=computer_tool_version,
+    )
+
+
 class AnthropicProvider(Provider[AsyncAnthropicClient]):
     """Provider for Anthropic API."""
 
@@ -129,6 +196,8 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
+        # The Claude API's deprecations are looked up by the unstripped name, so a Bedrock id never matches one.
+        deprecation = ANTHROPIC_MODEL_DEPRECATIONS.get(model_name)
         # When the underlying client is `AsyncAnthropicBedrock`/`AsyncAnthropicBedrockMantle`, the model
         # name carries a Bedrock `anthropic.` provider segment (and, on the legacy InvokeModel API, a
         # `-v<n>(:<m>)?` version suffix and optional cross-region geo prefix), e.g.
@@ -149,11 +218,9 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             # rendering, as it did before this was supported anywhere.
             AnthropicModelProfile(
                 supports_inline_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
-                # Request-scoped (`clear_at`) entries are published for the same models and transports as
-                # the role itself, under the `mid-conversation-system-clear-at-2026-08-21` beta.
-                # `claude-sonnet-5` accepts and clears them too (verified live), but it's left out for
-                # the same reason it's left out above.
-                supports_request_scoped_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
+                supports_request_scoped_system_prompts=model_name.startswith(
+                    _REQUEST_SCOPED_SYSTEM_PROMPT_MODEL_PREFIXES
+                ),
             ),
             # Prompt caching is likewise a fact about the Messages API rather than the model family.
             # `AnthropicModel` narrows `supports_auto_cache` per client and model (the legacy Bedrock SDK client only
@@ -179,12 +246,15 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             AnthropicModelProfile(
                 anthropic_supports_on_demand_compaction=model_name.startswith(_ON_DEMAND_COMPACTION_MODEL_PREFIXES)
             ),
+            _computer_use_profile(model_name, profile),
             AnthropicModelProfile(
                 # Anthropic-managed caches have a 5-minute minimum TTL refreshed on use across the direct,
                 # Bedrock, and Vertex SDK paths. Paid 1-hour cache points are handled by `prompt_cache_outlook`.
                 # https://platform.claude.com/docs/en/docs/build-with-claude/prompt-caching#cache-lifetime
                 default_cache_retention=timedelta(minutes=5)
             ),
+            # `AnthropicModel` drops it for the clients of platforms that retire Claude models on their own schedule.
+            AnthropicModelProfile() if deprecation is None else AnthropicModelProfile(deprecation=deprecation),
         )
 
     @overload
@@ -321,10 +391,11 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
 def _const_to_typed_enum(schema: JsonSchema) -> None:
     """Rewrite a scalar `const` as a typed one-value `enum`, which Anthropic's `transform_schema()` keeps.
 
-    `transform_schema()` moves a `const` into the description, which would leave the value unconstrained, while
-    it keeps an `enum`. Pydantic emits a typed `const` for a single-value `Literal`, such as a discriminator field.
-    A described `Enum`, `Choices()` and `BoolCriteria` render their options as `anyOf` of untyped `const`s, which
-    get the type of their value, as `transform_schema()` rejects a node without a `type`.
+    Before SDK 2.7.0, `transform_schema()` moves a `const` into the description, leaving the value unconstrained,
+    while it keeps an `enum`. Pydantic emits a typed `const` for a single-value `Literal`, such as a discriminator
+    field. A described `Enum`, `Choices()` and `BoolCriteria` render their options as `anyOf` of untyped `const`s,
+    which get the type of their value, as older SDKs reject a node without a `type`. SDK 2.7.0 and later keep
+    the `enum` and drop its redundant `type`; retain this conversion for supported older SDKs.
     """
     const = schema.get('const')
     # `bool` before `int`, which it subclasses.

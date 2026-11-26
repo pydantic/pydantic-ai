@@ -4,20 +4,36 @@ Give an agent a tool that locates and returns Pydantic AI documentation on deman
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/pydantic_ai_docs/)
 
-![The model calls read_pyai_docs with one of six topics. The tool first looks for the page in a docs checkout inside the run workspace, and otherwise fetches it from the main branch on GitHub. It then replaces model aliases using model_aliases/aliases.json and returns the full page to the model. If neither source has the page, the tool returns an error naming the path and URL it tried.](https://pydantic.dev/docs/ai/img/harness/pydantic-ai-docs.svg)
+```mermaid
+flowchart TB
+    accTitle: Pydantic AI Docs: read the current docs page on demand
+    accDescr: The model calls read_pyai_docs(topic) on the PydanticAIDocs capability and gets the full page, with model aliases replaced. The capability first reads the workspace checkout at local_docs_path, when the page exists there, and otherwise GitHub at the installed pydantic-ai release tag. If neither has the page, the capability returns an error naming the path and URL it tried.
+    model(["model"])
+    docs["PydanticAIDocs()<br/>read_pyai_docs(topic)<br/>replaces model aliases"]:::capability
+    checkout["workspace<br/>checkout at<br/>local_docs_path"]
+    github["pydantic-ai on GitHub<br/>at the installed<br/>release tag"]:::external
+    error["error naming<br/>the path and URL<br/>it tried"]:::blocked
+    model <-->|"topic, full page"| docs
+    docs -->|"first, when<br/>the page exists"| checkout
+    docs -->|"otherwise"| github
+    docs -.-x|"neither has the page"| error
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## The problem
 
 An agent that authors Pydantic AI capabilities, hooks, tools, or toolsets needs the
 current docs for those APIs. Preloading the docs into the system prompt spends context
-the agent rarely needs in full and pins a snapshot that drifts from `main`.
+the agent rarely needs in full and pins a snapshot that drifts from the installed version.
 
 ## The solution
 
 `PydanticAIDocs` exposes one tool, `read_pyai_docs(topic)`, that locates the requested page and
 returns it in full, with its model aliases resolved -- nothing is bundled into context up front.
 Each call resolves the topic from a configured local checkout first, then falls back to fetching
-the page from `pydantic/pydantic-ai:main` (the remote fallback needs network access).
+the page from GitHub at the installed `pydantic_ai` release tag (the remote fallback needs network access).
 
 Topics: `capabilities`, `hooks`, `tools`, `tools-advanced`, `toolsets`, `agent`.
 
@@ -48,7 +64,7 @@ Each call resolves in this order:
    (`{path}/{topic}.md`, or `{path}/capabilities/overview.md` for `capabilities`), that file is
    read and returned.
 2. **Remote fetch** -- otherwise the page is fetched from the same path under
-   `https://raw.githubusercontent.com/pydantic/pydantic-ai/main/docs/`.
+   `https://raw.githubusercontent.com/pydantic/pydantic-ai/{remote_ref}/docs/`. `remote_ref` defaults to the installed `pydantic_ai` release tag, such as `v2.69.0`, so the page describes the APIs you have; a dev build without a release tag reads `main`. Pass `remote_ref='main'` to read the latest docs instead.
 3. **Neither resolves** -- a descriptive error naming the local path tried and the URL.
 
 Docs pages name models through aliases, which the docs site replaces with current models. Before
@@ -57,8 +73,7 @@ same order and replaces each alias with the model it names. An alias the file do
 left as written, and so is every alias when neither source can provide the file. A page without
 aliases reads nothing else, so a checkout from before the alias file existed keeps working.
 
-The capability never runs git. Keep the local checkout current yourself; the remote path
-always reads `main`, so it is the fresh fallback.
+The capability never runs git. Keep the local checkout current yourself.
 
 `local_docs_path` takes precedence over the `PYDANTIC_AI_HARNESS_DOCS_PATH` environment variable.
 `~` is not expanded -- use an absolute workspace path or a path relative to its working
@@ -70,6 +85,7 @@ directory.
 | --- | --- | --- |
 | `local_docs_path` | `None` | Pyai docs checkout inside the run workspace. Relative paths use the workspace working directory. Falls back to the `PYDANTIC_AI_HARNESS_DOCS_PATH` environment variable, then to the remote source. |
 | `cache` | `True` | Memoize each returned doc for one agent run, so repeated reads within that run do not repeat workspace or network I/O. |
+| `remote_ref` | `None` | Git ref of `pydantic/pydantic-ai` the remote fetch reads. `None` uses the installed `pydantic_ai` release tag, or `main` for a dev build. Keyword-only. |
 
 Caching is isolated per run so content read from one workspace is not reused in another. Set
 `cache=False` to re-read or re-fetch on every call within a run.

@@ -18,8 +18,12 @@ runs:
         echo "image=${ImageOS}-${ImageVersion}" >> "$GITHUB_OUTPUT"
         echo "python=$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')" >> "$GITHUB_OUTPUT"
 
+    # A pull request run searches its own `refs/pull/<number>/merge` cache scope first, and the PR's
+    # own `CI` run can write there. These tools run beside provider keys, so restore only on `main`,
+    # whose scope only `main` runs write.
     - name: Restore fallback tools
       id: restore
+      if: github.ref == 'refs/heads/main'
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/douwebot-tools
@@ -32,14 +36,15 @@ runs:
         set -euo pipefail
         tools="$RUNNER_TEMP/douwebot-tools"
         mkdir -p "$tools/bin"
-        if ! command -v rg >/dev/null; then
-          sudo apt-get update && sudo apt-get install -y ripgrep
-        fi
-        cp "$(command -v rg)" "$tools/bin/rg"
+        # OpenCode 2.2.5 downloads this ripgrep build, with this sha256, when `rg` is not on PATH.
+        rg_release=ripgrep-15.1.0-x86_64-unknown-linux-musl
+        curl -fsSL --retry 3 -o "$RUNNER_TEMP/$rg_release.tar.gz" \
+          "https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/$rg_release.tar.gz"
+        echo "1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599  $RUNNER_TEMP/$rg_release.tar.gz" | sha256sum --check --strict
+        tar -xzf "$RUNNER_TEMP/$rg_release.tar.gz" -C "$tools/bin" --strip-components=1 "$rg_release/rg"
         npm install --prefix "$tools/opencode" @opencode/cli@2.2.5
         python3 -m pip install --quiet --target "$tools/python" 'pydantic==2.13.4'
 
-    # A pull_request_target run can restore the default-branch cache but cannot populate it.
     # Save only on push, before a reviewer processes any PR content.
     - name: Save fallback tools
       if: inputs.save-cache == 'true' && github.event_name == 'push' && steps.restore.outputs.cache-hit != 'true'

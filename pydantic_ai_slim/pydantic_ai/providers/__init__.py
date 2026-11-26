@@ -317,7 +317,7 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
             from .azure import AzureProvider
 
             return AzureProvider
-        case 'google':
+        case 'google' | 'google-interactions' | 'google-decisions':
             from .google import GoogleProvider
 
             return GoogleProvider
@@ -417,6 +417,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
             from .nebius import NebiusProvider
 
             return NebiusProvider
+        case 'otari':
+            from .otari import OtariProvider
+
+            return OtariProvider
         case 'ovhcloud':
             from .ovhcloud import OVHcloudProvider
 
@@ -429,6 +433,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
             from .sambanova import SambaNovaProvider
 
             return SambaNovaProvider
+        case 'stav':
+            from .stav import StavProvider
+
+            return StavProvider
         case 'sentence-transformers':
             from .sentence_transformers import SentenceTransformersProvider
 

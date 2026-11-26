@@ -36,6 +36,7 @@ from .history_invariants import (
     duplicate_call_id_violations,
     empty_message_violations,
     empty_text_violations,
+    google_interactions_wire,
     google_wire,
     idempotence_violations,
     openai_responses_wire,
@@ -165,6 +166,24 @@ class WireCase:
 
 
 WIRE_CASES = [
+    WireCase(
+        'google-interactions',
+        google_interactions_wire,
+        [
+            {'type': 'user_input', 'content': [{'type': 'text', 'text': 'Look it up'}, {'type': 'image'}]},
+            {'type': 'thought', 'signature': 'opaque'},
+            {'type': 'function_call', 'id': 'call_1', 'name': 'lookup', 'arguments': {}},
+            {'type': 'function_result', 'call_id': 'call_1', 'result': [{'type': 'text', 'text': 'a'}]},
+            {'type': 'model_output', 'content': [{'type': 'text', 'text': 'Found it'}]},
+        ],
+        [
+            WireMessage('user_input', [WireBlock('text', 'Look it up'), WireBlock('other')]),
+            WireMessage('thought', [WireBlock('other')]),
+            WireMessage('function_call', [WireBlock('call', 'call_1')]),
+            WireMessage('function_result', [WireBlock('result', 'call_1')]),
+            WireMessage('model_output', [WireBlock('text', 'Found it')]),
+        ],
+    ),
     WireCase(
         'chat-completions',
         chat_completions_wire,

@@ -8,8 +8,13 @@ from pydantic import SecretStr
 from pydantic_ai import ModelProfile
 from pydantic_ai._utils import secret_value
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.openai import (
+    OpenAIModelProfile,
+    is_openai_computer_use_model,
+    openai_model_profile,
+)
 from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
 
 try:
@@ -56,14 +61,14 @@ def bedrock_mantle_model_profile(model_name: str) -> ModelProfile:
     else:
         interface = 'openai-responses'
     # Mantle GPT-5.x on the `/openai/v1` Responses endpoint resets tool-call IDs to `call_0` across
-    # separate responses (verified live on 5.5 and 5.6); qualify them with the response ID at ingestion
+    # separate responses (verified live on 5.5 and 5.6); qualify them per response at ingestion
     # so pydantic-ai keeps its history-wide-unique invariant. GPT-OSS on `/v1/responses` is unaffected
     # (globally-unique IDs), so this keys on the endpoint family rather than the model version — the
     # reset follows the endpoint, and a per-version allowlist would silently miss future GPT-5.x. See #6536.
     response_scoped = interface == 'openai-responses'
     mantle_profile = BedrockMantleModelProfile(
         bedrock_mantle_interface=interface,
-        openai_responses_tool_call_ids_are_response_scoped=response_scoped,
+        tool_call_ids_are_response_scoped=response_scoped,
         # Bedrock Mantle does not serve image output for these models, unlike the direct OpenAI API
         # the base profile is resolved from (per the AWS model cards). Without this override the
         # image-output guard is bypassed and the request fails with an opaque provider error.
@@ -72,8 +77,11 @@ def bedrock_mantle_model_profile(model_name: str) -> ModelProfile:
         # represented by Pydantic AI (web search, code interpreter, file search, image generation, ...):
         # https://docs.aws.amazon.com/bedrock/latest/userguide/tool-use-server-side.html
         # Disable the base profile's native tools to fail with a clean UserError rather than an opaque
-        # provider error.
-        supported_native_tools=frozenset(),
+        # provider error. The exception is OpenAI's native computer tool, which works on the `/openai/v1` endpoint
+        # for the same models as on OpenAI's API.
+        supported_native_tools=frozenset({ComputerTool})
+        if interface == 'openai-responses' and is_openai_computer_use_model(base_model_name)
+        else frozenset(),
     )
     if interface == 'responses':
         # Mantle's `/v1/responses` endpoint rejects `tool_choice='required'` for GPT-OSS ("Supported options:

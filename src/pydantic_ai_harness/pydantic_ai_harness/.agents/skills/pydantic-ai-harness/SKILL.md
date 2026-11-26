@@ -1,6 +1,6 @@
 ---
 name: pydantic-ai-harness
-description: Extend Pydantic AI agents with capabilities from pydantic-ai-harness -- the Coder coding agent, file and shell tools in local or sandboxed workspaces (Modal, E2B, Render, Sprites, Daytona, boxd, smolvm, BoxLite), Code Mode, sub-agents and planning, memory and skills, context compaction, guardrails and spend limits, web research and browsers, hosted SaaS integrations, step persistence, and background agents on Render Workflows. Use when the user mentions pydantic-ai-harness or pydantic_ai_harness, imports a harness capability such as Coder, CodeMode, FileSystem, Shell, SubAgents, Memory, or ToolGuardrail, or wants a Pydantic AI agent that edits files, runs commands or agent-written Python, delegates, remembers, manages long context, stays within limits, or runs model and tool operations as chained Render task runs.
+description: Extend Pydantic AI agents with capabilities from pydantic-ai-harness -- the Coder coding agent, file and shell tools in local or sandboxed workspaces (Modal, E2B, Render, Sprites, Daytona, boxd, smolvm, BoxLite), Code Mode, sub-agents and planning, model routing, memory and skills, context compaction, guardrails and spend limits, web research and browsers, hosted SaaS integrations, step persistence, and background agents on Render Workflows. Use when the user mentions pydantic-ai-harness or pydantic_ai_harness, imports a harness capability such as Coder, CodeMode, FileSystem, Shell, SubAgents, ModelRouter, Memory, or ToolGuardrail, or wants a Pydantic AI agent that edits files, runs commands or agent-written Python, delegates, routes work between models, remembers, manages long context, stays within limits, or runs model and tool operations as chained Render task runs.
 license: MIT
 compatibility: Requires Python 3.11+
 metadata:
@@ -26,7 +26,8 @@ Invoke this skill when:
 - The user mentions `pydantic-ai-harness`, or code imports `pydantic_ai_harness`
 - The user wants a coding agent, or an agent that reads and edits files or runs shell commands, locally or in a sandbox
 - An agent should run model-written Python that calls its tools (Code Mode)
-- The user wants sub-agents, planning, a model-written workflow over sub-agents, or a stronger model to advise a cheaper one
+- The user wants sub-agents, planning, peer-session messaging, a model-written workflow over sub-agents, or a stronger model to advise a cheaper one
+- The user wants another model to choose the main agent's model from a named menu
 - A long-running agent needs memory across sessions, context compaction, tool output limits, or `SKILL.md` skills loaded on demand
 - The user wants guardrails, prompt-injection screening, model-based tool-call decisions, spend limits, human questions mid-run, or a second model reviewing the run
 - The user wants web research beyond core web search (Exa, You.com), a real browser, or a hosted integration such as GitHub, Linear, Notion, Slack, or Google Workspace
@@ -84,7 +85,7 @@ from pydantic_ai_harness.modal_sandbox import ModalSandbox
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()])
 ```
 
-`E2BSandbox`, `RenderSandbox`, `SpritesSandbox`, `DaytonaSandbox`, `BoxdSandbox`, `SmolSandbox` and `BoxLiteSandbox` (local microVMs), `DockerSandbox(image='python:3.13-slim')` (a local Docker or Podman container), and `OpenSandbox(image='python:3.13-slim')` (a sandbox on your own OpenSandbox server, on Docker or Kubernetes) work the same way. See
+`E2BSandbox`, `RenderSandbox`, `SpritesSandbox`, `DaytonaSandbox`, `BoxdSandbox`, `KubernetesSandbox` (a pod from a Kubernetes agent-sandbox warm pool), `SmolSandbox` and `BoxLiteSandbox` (local microVMs), `DockerContainer(image='python:3.13-slim')` (a local Docker or Podman container), and `OpenSandbox(image='python:3.13-slim')` (a sandbox on your own OpenSandbox server, on Docker or Kubernetes) work the same way. See
 [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) for credentials, lifetimes, and sharing a
 workspace between runs.
 
@@ -172,15 +173,15 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace, WebSearch
 
 from pydantic_ai_harness import Coder, Memory
-from pydantic_ai_harness.memory import FileStore
+from pydantic_ai_harness.memory import FileMemoryStore
 
 agent = Agent(
     'anthropic:claude-opus-5-5',
     capabilities=[
-        LocalWorkspace('.'),  # FileStore also writes into the run's workspace
+        LocalWorkspace('.'),  # FileMemoryStore also writes into the run's workspace
         Coder(),
         WebSearch(),  # core
-        Memory(FileStore('.agent-memory')),  # notes that persist across sessions
+        Memory(FileMemoryStore('.agent-memory')),  # notes that persist across sessions
     ],
 )
 ```
@@ -197,20 +198,22 @@ network-backed ones. See [Testing and Debugging](./references/TESTING-AND-DEBUGG
 
 ## Task Routing Table
 
-Load the references for the capabilities the task uses; each is self-contained.
+Load the references for the capabilities the task uses; each is self-contained. When the task names a
+problem but not a capability, load the reference whose row covers the problem and pick from the
+chooser table at its top.
 
 | I want to... | Reference |
 |---|---|
-| Build a coding agent, give an agent file or shell tools, run it in a Modal/E2B/Render/Sprites/Daytona/boxd/smolvm/BoxLite sandbox, or load repo instructions | [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) |
+| Build a coding agent, give an agent file or shell tools, work in a specific directory, run it in a Modal/E2B/Render/Sprites/Daytona/boxd/smolvm/BoxLite sandbox, or load repo instructions | [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) |
 | Let the model run Python that calls tools, or sandbox model-written code | [Code Mode](./references/CODE-MODE.md) |
-| Add sub-agents, planning, a model-written workflow over sub-agents, an advisor model, or background tools | [Delegation and Planning](./references/DELEGATION-AND-PLANNING.md) |
+| Add sub-agents, peer-session messaging, planning, a model-written workflow over sub-agents, an advisor model, or background tools | [Delegation and Planning](./references/DELEGATION-AND-PLANNING.md) |
 | Keep a long run within its context window, trim or summarize history, limit large tool outputs, or catch prompt-cache busts | [Context Management](./references/CONTEXT-MANAGEMENT.md) |
-| Give the agent persistent memory, Pixeltable catalog access, conversation search, `SKILL.md` skills, or Pydantic AI docs lookup | [Knowledge and Memory](./references/KNOWLEDGE-AND-MEMORY.md) |
-| Add guardrails, prompt-injection screening, model-based tool-call decisions, spend limits, questions to the user, reminders, loop detection, or a trajectory judge; repair malformed tool arguments | [Control and Safety](./references/CONTROL-AND-SAFETY.md) |
+| Give the agent persistent memory, Pixeltable catalog access, conversation search, `SKILL.md` skills, Pydantic AI docs lookup, or the current date | [Knowledge and Memory](./references/KNOWLEDGE-AND-MEMORY.md) |
+| Add guardrails, a goal an unattended run must meet, prompt-injection screening, model-based tool-call decisions, spend limits, questions to the user, reminders, loop detection, or a trajectory judge; repair malformed tool arguments, or report tool exceptions to the model | [Control and Safety](./references/CONTROL-AND-SAFETY.md) |
 | Research the web with Exa or You.com, use the `Researcher` stack, or drive a browser | [Research and Browsing](./references/RESEARCH-AND-BROWSING.md) |
 | Connect GitHub, Linear, Notion, Slack, Google Workspace, PostHog, Logfire, or another hosted service | [Hosted Integrations](./references/HOSTED-INTEGRATIONS.md) |
 | Use or evaluate Render Workflows for background agents with separate model and tool task policies | [Render Workflows](./references/RUNTIME-AND-EXTENSION.md#renderworkflows); retrying the task that calls `agent.run()` starts the agent again |
-| Save, resume, or fork runs; run under AWS Lambda, Absurd, pgtask, or Durable Task; use managed prompts, runtime-created capabilities, ACP, GitHub Agentic Workflows, or agent specs | [Runtime and Extension](./references/RUNTIME-AND-EXTENSION.md) |
+| Route each run or request step to a model; save, resume, or fork runs; run under AWS Lambda, Absurd, pgtask, or Durable Task; use managed prompts, runtime-created capabilities, ACP, GitHub Agentic Workflows, or agent specs | [Runtime and Extension](./references/RUNTIME-AND-EXTENSION.md) |
 | Test an agent that uses harness capabilities, or debug a failing one | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
 
 ## Install
@@ -223,7 +226,7 @@ This installs `pydantic-ai-slim` at the matching version, so no separate Pydanti
 The `anthropic` and `cli` extras pass through to Pydantic AI; for another provider add its
 `pydantic-ai-slim` extra, for example `uv add "pydantic-ai-slim[openai]"`. Capabilities
 with optional dependencies declare their own extra, for example `[coder]`, `[codemode]`, `[modal]`,
-`[ipython]`, `[e2b]`, `[sprites]`, `[daytona]`, `[boxd]`, `[smol]`, `[boxlite]`, `[dynamic-workflow]`, `[skills]`, `[researcher]`, `[exa]`, `[playwright]`, or `[github]`.
+`[ipython]`, `[e2b]`, `[sprites]`, `[daytona]`, `[boxd]`, `[smol]`, `[boxlite]`, `[dynamic-workflow]`, `[skills]`, `[researcher]`, `[exa]`, `[playwright]`, `[cdp-browser]`, or `[github]`.
 Each reference gives the exact install line.
 
 ## Imports
@@ -235,13 +238,13 @@ Some are submodule-only, including `GitHub`, `Linear`, `Notion`, `Slack`, `Googl
 the [Task-Family References](#task-family-references) table gives the import path that works for every
 capability. Top-level imports are lazy, so importing one capability does not pull in another's optional
 dependencies. Supporting types such as stores and policies are only in the submodule, for example
-`pydantic_ai_harness.memory.FileStore`.
+`pydantic_ai_harness.memory.FileMemoryStore`.
 
 ## Key Practices
 
 - **Check whether core is enough first.** Web search, web fetch, MCP, thinking, tool search, and workspaces are core capabilities in `pydantic_ai.capabilities`, and provider-native compaction is core too (`OpenAICompaction`, `AnthropicCompaction`), as is `ProcessHistory(processor)` for hand-rolled history trimming. Reach for the harness when the agent should edit files, run commands or code, delegate, remember, or run long.
 - **Attach a workspace for workspace capabilities.** `Coder`, `FileSystem`, `Shell`, `RepoContext`, and `Macroscope` act in the run's workspace, and none picks one for you. Add `LocalWorkspace(...)` from `pydantic_ai.capabilities` or a sandbox capability, or the run fails at its start with a message naming what to attach.
-- **Use a sandbox for untrusted work.** `LocalWorkspace` isolates nothing, and `Coder`'s shell is unrestricted. Use `ModalSandbox`, `E2BSandbox`, `RenderSandbox`, `SpritesSandbox`, `DaytonaSandbox`, `BoxdSandbox`, `SmolSandbox`, `BoxLiteSandbox`, `OpenSandbox` (with `allow_internet_access=False` and server `dns+nft` egress enforcement), or `DockerSandbox` (with `allow_internet_access=False`, since Docker's default network reaches this machine's services) when the agent's commands must not reach the host.
+- **Use a sandbox for untrusted work.** `LocalWorkspace` isolates nothing, and `Coder`'s shell is unrestricted. Use `ModalSandbox`, `E2BSandbox`, `RenderSandbox`, `SpritesSandbox`, `DaytonaSandbox`, `BoxdSandbox`, `SmolSandbox`, `BoxLiteSandbox`, or `OpenSandbox` (with `allow_internet_access=False` and server `dns+nft` egress enforcement) when the agent's commands must not reach the host. `DockerContainer` is not a sandbox: its container shares this machine's kernel, and its commands run as the image's user, usually root. If you use it, set `allow_internet_access=False`, since Docker's default network reaches this machine's services.
 - **Read the reference before writing code.** Each capability has its own parameters, extras, and limits; load the matching reference from the routing table first.
 - **Combine instead of rebuilding.** `Coder` and `Researcher` are combined capabilities; start from one and add capabilities next to it, or rebuild it from its parts when a setting must change.
 - **Plan for long runs.** For multi-hour agents pair a workspace stack with context management (`ClearToolResults`, `SummarizingCompaction`, `ToolOutputLimits`) and, where runs must survive restarts, durable execution or `StepPersistence`.
@@ -251,7 +254,7 @@ dependencies. Supporting types such as stores and policies are only in the submo
 
 These mistakes cause confusing errors or wrong behavior at run time.
 
-- **Missing extra.** For most extras, importing the capability without it raises `ImportError` with the install line; install `pydantic-ai-harness[<extra>]`, not just the bare package. Some dependencies are executables or drivers that the import does not check: the `coder` extra installs `ripgrep` (without it, file search falls back to slower POSIX tools), and `PlaywrightBrowser` needs `playwright install chromium`. Those gaps show only when a tool runs.
+- **Missing extra.** For most extras, importing the capability without it raises `ImportError` with the install line; install `pydantic-ai-harness[<extra>]`, not just the bare package. Some dependencies are executables or drivers that the import does not check: the `coder` extra installs `ripgrep` (without it, file search falls back to slower POSIX tools), `PlaywrightBrowser` needs `playwright install chromium`, and `CDPBrowser` needs Chrome or Chromium installed (or `CHROME_PATH`). Those gaps show only when a run starts or a tool runs.
 - **`Coder(workspace=...)` is ignored.** The project directory comes from the workspace capability: use `LocalWorkspace('./repo')` next to `Coder()`.
 - **`FileSystem(root_dir=...)` limits only the file tools.** `Shell` commands can still reach any path the workspace can.
 - **`Coder` must be bound on the agent for delegation.** `delegate_task` re-runs the agent `Coder` is attached to; pass `Coder()` in `Agent(capabilities=[...])`, not to `agent.run(...)`.
@@ -267,15 +270,15 @@ any:
 
 | Reference | Capabilities |
 |---|---|
-| [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) | `Coder` (`.coder`, `[coder]`); `FileSystem` (`.filesystem`); `SmartSearch` (`.smart_search`); `Shell` (`.shell`); `ModalSandbox` (`.modal_sandbox`, `[modal]`); `E2BSandbox` (`.e2b_sandbox`, `[e2b]`); `RenderSandbox` (`.render_sandbox`, `[render]`); `SpritesSandbox` (`.sprites_sandbox`, `[sprites]`); `DaytonaSandbox` (`.daytona_sandbox`, `[daytona]`); `BoxdSandbox` (`.boxd_sandbox`, `[boxd]`); `SmolSandbox` (`.smol_sandbox`, `[smol]`); `BoxLiteSandbox` (`.boxlite_sandbox`, `[boxlite]`); `DockerSandbox` (`.docker_sandbox`); `OpenSandbox` (`.opensandbox_sandbox`, `[opensandbox]`); `SSHWorkspace` (`.ssh_workspace`); `BubblewrapSandbox` (`.bubblewrap_sandbox`); `RepoContext` (`.repo_context`); `Macroscope` (`.macroscope`); `LocalStack` (`.localstack`) |
+| [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) | `Coder`, `BenchmarkInstructions` (`.coder`, `[coder]`); `FileSystem` (`.file_system`); `SmartSearch` (`.smart_search`); `Shell` (`.shell`); `AnnounceWorkingDirectory` (`.announce_working_directory`); `ModalSandbox` (`.modal_sandbox`, `[modal]`); `E2BSandbox` (`.e2b_sandbox`, `[e2b]`); `RenderSandbox` (`.render_sandbox`, `[render]`); `SpritesSandbox` (`.sprites_sandbox`, `[sprites]`); `DaytonaSandbox` (`.daytona_sandbox`, `[daytona]`); `BoxdSandbox` (`.boxd_sandbox`, `[boxd]`); `KubernetesSandbox` (`.kubernetes_sandbox`, `[kubernetes]`); `SmolSandbox` (`.smol_sandbox`, `[smol]`); `BoxLiteSandbox` (`.boxlite_sandbox`, `[boxlite]`); `DockerContainer` (`.docker_container`); `OpenSandbox` (`.opensandbox_sandbox`, `[opensandbox]`); `SSHWorkspace` (`.ssh_workspace`); `BubblewrappedWorkspace` (`.bubblewrap_sandbox`); `RepoContext` (`.repo_context`); `ReportStaleFiles` (`.report_stale_files`); `Macroscope` (`.macroscope`); `LocalStack` (`.localstack`) |
 | [Code Mode](./references/CODE-MODE.md) | `CodeMode` (`.code_mode`, `[codemode]`); `IPythonCodeMode` (`.ipython_code_mode`, `[ipython]`) |
-| [Delegation and Planning](./references/DELEGATION-AND-PLANNING.md) | `Planning` (`.planning`); `SubAgents`, `SubAgent`, `DelegationReports` (`.subagents`); `DynamicWorkflow` (`.dynamic_workflow`, `[dynamic-workflow]`); `Advisor` (`.advisor`); `BackgroundTools` (`.background_tools`) |
-| [Context Management](./references/CONTEXT-MANAGEMENT.md) | `ClearToolResults`, `SlidingWindowCompaction`, `SummarizingCompaction`, `RelevanceCompaction`, `TieredCompaction`, `FallbackCompaction`, `CompactOnRequest`, `ClampOversizedMessages`, `DeduplicateFileReads`, `WarnNearLimits`, `ReportContextUsage` (`.compaction`); `ToolOutputLimits` (`.tool_output_limits`); `WarnOnCacheBusts` (`.warn_on_cache_busts`); media stores, not a capability (`.media`) |
-| [Knowledge and Memory](./references/KNOWLEDGE-AND-MEMORY.md) | `Memory` (`.memory`); `Pixeltable` (`.pixeltable`, `[pixeltable]`); `ConversationSearch` (`.conversation_search`); `Skills` (`.skills`, `[skills]`); `PydanticAIDocs` (`.pydantic_ai_docs`) |
-| [Control and Safety](./references/CONTROL-AND-SAFETY.md) | `RepairToolArguments` (`.repair_tool_arguments`, `[repair-tool-arguments]`); `InputGuardrail`, `OutputGuardrail`, `ToolGuardrail` (`.guardrails`); `PromptInjectionDefender` (`.prompt_injection_defender`, `[prompt-injection-defender]`); `ArtifactScanner` (`.artifact_scanning`); `ToolCallJudge` (`.tool_call_judge`); `ApprovalReviewer` (`.approval_reviewer`); `Permissions` (`.permissions`); `SpendLimits` (`.spend`); `AskUser` (`.ask_user`); `SystemReminders` (`.system_reminders`); `TrajectoryJudge` (`.trajectory_judge`); `DetectLoops` (`.detect_loops`) |
-| [Research and Browsing](./references/RESEARCH-AND-BROWSING.md) | `Researcher` (`.researcher`, `[researcher]`); `ExaSearch`, `ExaAgent` (`.exa`, `[exa]`); `YouSearch`, `YouResearch` (`.youdotcom`, `[youdotcom]`); `KeenableSearch` (`.keenable`); `BrowserUse` (`.browser_use`, `[browser-use]`); `PlaywrightBrowser` (`.playwright`, `[playwright]`) |
+| [Delegation and Planning](./references/DELEGATION-AND-PLANNING.md) | `Planning` (`.planning`); `SubAgents`, `SubAgent`, `DelegationReports` (`.sub_agents`); `Peers` (`.peers`); `DynamicWorkflow` (`.dynamic_workflow`, `[dynamic-workflow]`); `Advisor` (`.advisor`); `BackgroundTools` (`.background_tools`) |
+| [Context Management](./references/CONTEXT-MANAGEMENT.md) | `ClearToolResults`, `SlidingWindowCompaction`, `SummarizingCompaction`, `RelevanceCompaction`, `TieredCompaction`, `FallbackCompaction`, `CompactOnRequest`, `PruneToolResults`, `ClampOversizedMessages`, `DeduplicateFileReads`, `WarnNearLimits`, `ReportContextUsage` (`.compaction`); `ToolOutputLimits` (`.tool_output_limits`); `ToolBridge` (`.tool_bridge`); `WarnOnCacheBusts` (`.warn_on_cache_busts`); `LabelCrossModelHistory` (`.label_cross_model_history`); media stores, not a capability (`.media`) |
+| [Knowledge and Memory](./references/KNOWLEDGE-AND-MEMORY.md) | `Memory` (`.memory`); `Pixeltable` (`.pixeltable`, `[pixeltable]`); `ConversationSearch` (`.conversation_search`); `Skills` (`.skills`, `[skills]`); `PydanticAIDocs` (`.pydantic_ai_docs`); `CurrentTime` (`.current_time`) |
+| [Control and Safety](./references/CONTROL-AND-SAFETY.md) | `RepairToolArguments` (`.repair_tool_arguments`, `[repair-tool-arguments]`); `InputGuardrail`, `OutputGuardrail`, `StreamGuardrail`, `ToolGuardrail` (`.guardrails`); `Goal` (`.goal`); `PromptInjectionDefender` (`.prompt_injection_defender`, `[prompt-injection-defender]`); `ArtifactScanner` (`.artifact_scanning`); `ToolCallJudge` (`.tool_call_judge`); `ApprovalReviewer` (`.approval_reviewer`); `Permissions` (`.permissions`); `SpendLimits` (`.spend_limits`); `AskUser` (`.ask_user`); `DenyUnanswered` (`.deny_unanswered`); `SystemReminders` (`.system_reminders`); `TrajectoryJudge` (`.trajectory_judge`); `DetectLoops` (`.detect_loops`); `ToolBudgets` (`.tool_budgets`); `ReportToolErrors` (`.report_tool_errors`); `ReportRemainingBudget` (`.report_remaining_budget`); `RefineOutput` (`.refine_output`); `WrapUpAtLimits` (`.wrap_up_at_limits`); `RequireVerification` (`.require_verification`) |
+| [Research and Browsing](./references/RESEARCH-AND-BROWSING.md) | `Researcher` (`.researcher`, `[researcher]`); `ExaSearch`, `ExaAgent` (`.exa`, `[exa]`); `YouSearch`, `YouResearch` (`.youdotcom`, `[youdotcom]`); `KeenableSearch` (`.keenable`); `BrowserUse` (`.browser_use`, `[browser-use]`); `PlaywrightBrowser` (`.playwright`, `[playwright]`); `CDPBrowser` (`.cdp_browser`, `[cdp-browser]`); `ComputerUse` (`.computer_use`) |
 | [Hosted Integrations](./references/HOSTED-INTEGRATIONS.md) | `GitHub` (`.github`, `[github]`); `Linear` (`.linear`, `[linear]`); `Notion` (`.notion`, `[notion]`); `GoogleWorkspace` (`.google_workspace`, `[google-workspace]`); `Slack` (`.slack`, `[slack]`); `StackOne` (`.stackone`, `[stackone]`); `Ordinal` (`.ordinal`, `[ordinal]`); `Grain` (`.grain`, `[grain]`); `DayAI` (`.day_ai`, `[day-ai]`); `PostHog` (`.posthog`, `[posthog]`); `Pylon` (`.pylon`, `[pylon]`); `LogfireMCP` (`.logfire_mcp`, `[logfire-mcp]`) |
-| [Runtime and Extension](./references/RUNTIME-AND-EXTENSION.md) | `StepPersistence` (`.step_persistence`, `[mongodb]` for MongoDB); `AWSLambdaDurability` (`.aws_lambda`, `[aws-lambda]`); `AbsurdDurability` (`.absurd`, `[absurd]`); `PGTaskDurability` (`.pgtask`, `[pgtask]`); `AzureDurableTaskDurability` (`.azure_durable_task`, `[azure-durable-task]`); `RenderWorkflows` (`.render`, `[render]`); `ManagedPrompt` (`.logfire`, `[logfire]`); `CapabilityCreation` (`.capability_creation`); experimental ACP server `run_acp_stdio` (`.experimental.acp`, `[acp]`) |
+| [Runtime and Extension](./references/RUNTIME-AND-EXTENSION.md) | `ModelRouter`, `ModelChoice` (`.model_router`); `StepPersistence` (`.step_persistence`, `[mongodb]` for MongoDB); `AWSLambdaDurability` (`.aws_lambda`, `[aws-lambda]`); `AbsurdDurability` (`.absurd`, `[absurd]`); `PGTaskDurability` (`.pgtask`, `[pgtask]`); `AzureDurableTaskDurability` (`.azure_durable_task`, `[azure-durable-task]`); `RenderWorkflows` (`.render`, `[render]`); `ManagedPrompt` (`.logfire`, `[logfire]`); `CapabilityCreation` (`.capability_creation`); experimental ACP server `run_acp_stdio` (`.experimental.acp`, `[acp]`) |
 
 For offline tests and debugging of any of these, load [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md).
 
@@ -284,7 +287,7 @@ The full capability list, grouped by what each gives an agent, is on the
 
 ## Managed subagent lifetime
 
-For background subagents, use `DelegationTasks` from `pydantic_ai_harness.subagents`.
+For background subagents, use `DelegationTasks` from `pydantic_ai_harness.sub_agents`.
 Keep `async with tasks.opened()` outside parent turns and inside the lifetime of all
 shared workspace/plugin resources. Bind with `with tasks.bind()` and add
 `DelegationReports(tasks, conversation_id=...)` to parent runs. `SubAgents` then

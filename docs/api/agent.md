@@ -14,6 +14,8 @@
             - EndStrategy
             - RunOutputDataT
             - capture_run_messages
+            - capture_run_conversation
+            - CapturedConversation
             - InstrumentationSettings
             - EventStreamHandler
             - AgentSpec

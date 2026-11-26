@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+import re
 from typing import overload
 
 from pydantic import SecretStr
@@ -13,6 +14,7 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import (
     OpenAIJsonSchemaTransformer,
     OpenAIModelProfile,
@@ -35,6 +37,9 @@ else:
     )
 
 
+_FIREWORKS_P_VERSION_RE = re.compile(r'(?<=\d)p(?=\d)')
+
+
 class FireworksProvider(_OpenAISDKProvider):
     """Provider for Fireworks AI API."""
 
@@ -44,7 +49,7 @@ class FireworksProvider(_OpenAISDKProvider):
 
     @property
     def base_url(self) -> str:
-        return 'https://api.fireworks.ai/inference/v1'
+        return self._base_url
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -72,10 +77,13 @@ class FireworksProvider(_OpenAISDKProvider):
                     profile = profile_func(model_name)
                     break
 
-        # Fireworks spells GLM-5.3 `glm-5p3`, and also serves it through routers, e.g. `accounts/fireworks/routers/glm-5p3-fast`.
+        # Fireworks spells version dots as `p` (`glm-5p3`, `kimi-k2p6`), and also serves models through routers,
+        # e.g. `accounts/fireworks/routers/glm-5p3-fast`. The name sent on the wire keeps Fireworks' spelling.
         model_name = model_name.removeprefix('accounts/fireworks/routers/')
         if model_name.startswith('glm-5p3'):
             profile = _glm_5_3_schema_profile(model_name.replace('glm-5p3', 'glm-5.3', 1))
+        elif model_name.startswith('kimi-'):
+            profile = moonshotai_model_profile(_FIREWORKS_P_VERSION_RE.sub('.', model_name))
 
         # As the Fireworks API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
         # unless json_schema_transformer is set explicitly.
@@ -89,13 +97,15 @@ class FireworksProvider(_OpenAISDKProvider):
         )
 
     @overload
-    def __init__(self) -> None: ...
+    def __init__(self, *, base_url: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str | SecretStr) -> None: ...
+    def __init__(self, *, api_key: str | SecretStr, base_url: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str | SecretStr, http_client: _OpenAIHTTPClient) -> None: ...
+    def __init__(
+        self, *, api_key: str | SecretStr, base_url: str | None = None, http_client: _OpenAIHTTPClient
+    ) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -104,6 +114,7 @@ class FireworksProvider(_OpenAISDKProvider):
         self,
         *,
         api_key: str | SecretStr | None = None,
+        base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
@@ -115,6 +126,8 @@ class FireworksProvider(_OpenAISDKProvider):
                 ' to use the Fireworks AI provider.'
             )
 
+        assert openai_client is None or base_url is None, 'Cannot provide both `openai_client` and `base_url`'
+        self._base_url = base_url or 'https://api.fireworks.ai/inference/v1'
         if openai_client is not None:
             self._client = openai_client
         else:

@@ -15,6 +15,7 @@ import asyncio
 import re
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -27,8 +28,13 @@ from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
+    AgentInstructionSource,
     AgentRunResult,
     AgentStreamEvent,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
+    InstructionId,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -42,6 +48,7 @@ from pydantic_ai import (
     exceptions,
     messages as _messages,
 )
+from pydantic_ai._fallback import SpecModelError
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import (
     AbstractCapability,
@@ -55,20 +62,23 @@ from pydantic_ai.capabilities import (
     WrapModelRequestHandler,
     WrapperCapability,
 )
-from pydantic_ai.capabilities.model_fallback import _SpecFallbackError  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.exceptions import (
     ContentFilterError,
     FallbackExceptionGroup,
+    IncompleteToolCall,
     ModelAPIError,
+    ModelEmptyResponseError,
     ModelRateLimitError,
     ModelRetry,
+    OutputTokenLimitExceeded,
     RetryModelRequest,
     RunCancelled,
     RunTimedOut,
+    UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.messages import CompactionPart, ModelRequestAttempt, ToolReturnPart
+from pydantic_ai.messages import CompactionPart, ModelRequestAttempt, ModelResponsePart, ToolReturnPart
 from pydantic_ai.models import (
     Model,
     ModelRequestContext,
@@ -77,13 +87,13 @@ from pydantic_ai.models import (
     StreamedResponse,
 )
 from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingEffort
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
@@ -161,6 +171,21 @@ async def success_stream(messages: list[ModelMessage], info: AgentInfo) -> Async
 async def test_streaming_open_failure_falls_back():
     agent = Agent(
         FunctionModel(stream_function=failure_stream),
+        capabilities=[ModelFallback(FunctionModel(stream_function=success_stream))],
+    )
+    async with agent.run_stream('x') as stream:
+        assert await stream.get_output() == 'hello'
+
+
+async def test_streaming_empty_response_falls_back_by_default():
+    """A stream that ends before its first event, which adapters raise as `ModelEmptyResponseError`, falls back."""
+
+    async def empty_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        raise ModelEmptyResponseError('primary', 'Streamed response ended without content or tool calls')
+        yield ''  # pragma: no cover
+
+    agent = Agent(
+        FunctionModel(stream_function=empty_stream),
         capabilities=[ModelFallback(FunctionModel(stream_function=success_stream))],
     )
     async with agent.run_stream('x') as stream:
@@ -1891,29 +1916,36 @@ async def test_settings_a_hook_sets_reach_every_candidate():
         assert seen == [('first', 3, 0.5), ('last', 3, 0.9)]
 
 
-async def test_callable_model_settings_resolve_once_per_step():
-    """A callable `model_settings` layer is resolved once per step, even when an attempt moves to another model."""
-    calls: list[int] = []
+async def test_callable_model_settings_resolve_again_for_another_model():
+    """A callable `model_settings` layer is resolved again, with that model as `ctx.model`, when an attempt moves to
+    another model, and not again when the step's own model serves it."""
+    calls: list[tuple[int, str]] = []
 
     def settings(ctx: RunContext[Any]) -> ModelSettings:
-        calls.append(ctx.run_step)
+        calls.append((ctx.run_step, ctx.model.model_name))
         return {'temperature': 0.2}
 
     temperatures: list[float | None] = []
 
-    def respond(fail: bool) -> FunctionModel:
+    def respond(name: str, fail: bool) -> FunctionModel:
         def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             temperatures.append((info.model_settings or {}).get('temperature'))
             if fail:
-                raise ModelAPIError(model_name='m', message='boom')
+                raise ModelAPIError(model_name=name, message='boom')
             return ModelResponse(parts=[TextPart('hello')])
 
-        return FunctionModel(fn)
+        return FunctionModel(fn, model_name=name)
 
-    agent = Agent(respond(True), model_settings=settings, capabilities=[ModelFallback(respond(False))])
+    agent = Agent(
+        respond('primary', True), model_settings=settings, capabilities=[ModelFallback(respond('backup', False))]
+    )
     assert (await agent.run('x')).output == 'hello'
-    assert calls == [1]
+    assert calls == [(1, 'primary'), (1, 'backup')]
     assert temperatures == [0.2, 0.2]
+
+    calls.clear()
+    assert (await Agent(respond('primary', False), model_settings=settings).run('x')).output == 'hello'
+    assert calls == [(1, 'primary')]
 
 
 async def test_a_streamed_request_a_wrapper_answers_without_calling_the_model():
@@ -2558,13 +2590,13 @@ async def test_spec_fallback_on_names_only_fall_back_on_those_errors(fallback_on
 
 
 def test_spec_fallback_on_names_every_public_model_api_error():
-    """Every public `ModelAPIError` class, and `ContentFilterError`, can be named in a spec, and nothing else can."""
+    """Every public `ModelAPIError` class, `ContentFilterError` and `OutputTokenLimitExceeded` can be named in a spec."""
     public_errors = {
         name
         for name in exceptions.__all__
         if isinstance(cls := getattr(exceptions, name), type) and issubclass(cls, ModelAPIError)
     }
-    assert set(get_args(_SpecFallbackError)) == public_errors | {'ContentFilterError'}
+    assert set(get_args(SpecModelError)) == public_errors | {'ContentFilterError', 'OutputTokenLimitExceeded'}
 
 
 @pytest.mark.parametrize(
@@ -2572,8 +2604,8 @@ def test_spec_fallback_on_names_every_public_model_api_error():
     [
         pytest.param(
             {'ModelFallback': {'models': ['working'], 'fallback_on': ['ModelRateLimitError', 'UserError']}},
-            '`ModelFallback` `fallback_on` in an agent spec takes names of `ModelAPIError` classes and '
-            "`ContentFilterError`, got ['UserError']. Valid names: ModelAPIError, ModelHTTPError, ",
+            '`ModelFallback` `fallback_on` in an agent spec takes names of `ModelAPIError` classes, '
+            "`ContentFilterError` and `OutputTokenLimitExceeded`, got ['UserError']. Valid names: ModelAPIError, ",
             id='not-a-model-api-error',
         ),
         pytest.param(
@@ -2808,7 +2840,8 @@ async def test_sticky_stays_on_the_model_that_answered_a_refusal():
         pytest.param(
             lambda: ModelFallback(FunctionModel(success), fallback_on=[]),
             '`ModelFallback` created with an empty `fallback_on`: all exceptions will propagate and all responses '
-            'will be accepted. Use `fallback_on=(ModelAPIError, ContentFilterError)` for the default behavior.',
+            'will be accepted. Use `fallback_on=(ModelAPIError, ContentFilterError, OutputTokenLimitExceeded)` for the '
+            'default behavior.',
             id='ModelFallback',
         ),
         pytest.param(
@@ -2823,3 +2856,741 @@ def test_an_empty_fallback_on_suggests_the_owners_default(make: Callable[[], obj
     with pytest.raises(UserError) as exc_info:
         make()
     assert str(exc_info.value) == message
+
+
+# --- Responses cut off by the output token limit ---
+
+
+def _cut_off(name: str, calls: list[str], parts: list[ModelResponsePart] | None = None) -> FunctionModel:
+    """A model whose every response reaches the output token limit."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append(name)
+        return ModelResponse(
+            parts=[TextPart('The three largest cities are Tokyo, Delhi and')] if parts is None else parts,
+            finish_reason='length',
+            usage=RequestUsage(input_tokens=10, output_tokens=20),
+        )
+
+    return FunctionModel(respond, model_name=name)
+
+
+@pytest.mark.parametrize(
+    'parts',
+    [
+        pytest.param(None, id='text'),
+        pytest.param([], id='empty'),
+        pytest.param([ToolCallPart('get_city', '{"name": "Tok')], id='incomplete-tool-call'),
+        pytest.param([ToolCallPart('get_city', '{"name": "Tokyo"}')], id='complete-tool-call'),
+    ],
+)
+async def test_falls_back_when_the_output_is_cut_off_by_default(parts: list[ModelResponsePart] | None):
+    """A response that reached the output token limit falls back to the next model, whatever it holds."""
+    calls: list[str] = []
+    agent = Agent(_cut_off('primary', calls, parts), capabilities=[ModelFallback(_answering('backup', calls))])
+
+    @agent.tool_plain
+    def get_city(name: str) -> str:
+        raise AssertionError('The cut-off response is rejected, so its tool call is never run.')  # pragma: no cover
+
+    result = await agent.run('x')
+    assert result.output == 'backup answered'
+    assert calls == ['primary', 'backup']
+    assert [(a.model_name, a.outcome) for a in result.response.failed_attempts or []] == [('primary', 'rejected')]
+    # The cut-off response was billed.
+    assert result.usage.output_tokens == 20 + 2
+
+
+async def test_cut_off_text_is_the_output_when_opted_out():
+    """Without `OutputTokenLimitExceeded` in `fallback_on`, cut-off text is the run's output, as without `ModelFallback`."""
+    calls: list[str] = []
+    agent = Agent(
+        _cut_off('primary', calls),
+        capabilities=[ModelFallback(_answering('backup', calls), fallback_on=(ModelAPIError, ContentFilterError))],
+    )
+    result = await agent.run('x')
+    assert result.output == 'The three largest cities are Tokyo, Delhi and'
+    assert result.response.finish_reason == 'length'
+    assert calls == ['primary']
+
+
+async def test_an_empty_cut_off_response_raises_when_opted_out():
+    calls: list[str] = []
+    agent = Agent(
+        _cut_off('primary', calls, []),
+        capabilities=[ModelFallback(_answering('backup', calls), fallback_on=(ModelAPIError,))],
+    )
+    with pytest.raises(OutputTokenLimitExceeded, match=r'Model token limit \(provider default\) exceeded before any'):
+        await agent.run('x')
+    assert calls == ['primary']
+
+
+@pytest.mark.parametrize('fallback_on', [UnexpectedModelBehavior, IncompleteToolCall])
+async def test_only_output_token_limit_exceeded_names_cut_off_responses(fallback_on: type[Exception]):
+    """A supertype doesn't name cut-off responses, and nor does `IncompleteToolCall`, which names a cut-off tool call."""
+    calls: list[str] = []
+    agent = Agent(
+        _cut_off('primary', calls),
+        capabilities=[ModelFallback(_answering('backup', calls), fallback_on=fallback_on)],
+    )
+    assert (await agent.run('x')).output == 'The three largest cities are Tokyo, Delhi and'
+    assert calls == ['primary']
+
+
+async def test_every_model_cut_off_raises_the_group():
+    calls: list[str] = []
+    agent = Agent(_cut_off('primary', calls), capabilities=[ModelFallback(_cut_off('backup', calls))])
+    with pytest.raises(FallbackExceptionGroup) as exc_info:
+        await agent.run('x')
+    assert [(a.model_name, a.outcome) for a in exc_info.value.attempts] == [
+        ('primary', 'rejected'),
+        ('backup', 'rejected'),
+    ]
+
+
+async def test_fallback_model_falls_back_on_cut_off_responses_only_when_named():
+    """`FallbackModel` keeps its `(ModelAPIError,)` default, and falls back on cut-off responses when told to."""
+    calls: list[str] = []
+    result = await Agent(FallbackModel(_cut_off('primary', calls), _answering('backup', calls))).run('x')
+    assert result.output == 'The three largest cities are Tokyo, Delhi and'
+    assert calls == ['primary']
+
+    calls.clear()
+    model = FallbackModel(
+        _cut_off('primary', calls), _answering('backup', calls), fallback_on=(ModelAPIError, OutputTokenLimitExceeded)
+    )
+    assert (await Agent(model).run('x')).output == 'backup answered'
+    assert calls == ['primary', 'backup']
+
+
+async def test_spec_falls_back_on_cut_off_responses_by_default_and_can_opt_out():
+    calls: list[str] = []
+    models = {'primary': _cut_off('primary', calls), 'backup': _answering('backup', calls)}
+    resolve = ResolveModelId(lambda ctx, model_id: models.get(model_id))
+
+    agent = Agent.from_spec({'capabilities': [{'ModelFallback': ['backup']}]}, model='primary', capabilities=[resolve])
+    assert (await agent.run('x')).output == 'backup answered'
+
+    calls.clear()
+    agent = Agent.from_spec(
+        {'capabilities': [{'ModelFallback': {'models': ['backup'], 'fallback_on': ['ModelAPIError']}}]},
+        model='primary',
+        capabilities=[resolve],
+    )
+    assert (await agent.run('x')).output == 'The three largest cities are Tokyo, Delhi and'
+    assert calls == ['primary']
+
+    calls.clear()
+    agent = Agent.from_spec(
+        {'capabilities': [{'ModelFallback': {'models': ['backup'], 'fallback_on': 'OutputTokenLimitExceeded'}}]},
+        model='primary',
+        capabilities=[resolve],
+    )
+    assert (await agent.run('x')).output == 'backup answered'
+
+
+@dataclass
+class _PerModel(AbstractCapability[Any]):
+    """Instructions and a `temperature` tailored to `ctx.model`, logging the model each hook saw."""
+
+    seen: list[tuple[str, str]]
+
+    def get_instructions(self):
+        def instructions(ctx: RunContext[Any]) -> str:
+            self.seen.append(('instructions', ctx.model.model_name))
+            return f'You are {ctx.model.model_name}.'
+
+        return instructions
+
+    def get_model_settings(self):
+        def settings(ctx: RunContext[Any]) -> ModelSettings:
+            self.seen.append(('settings', ctx.model.model_name))
+            return {'temperature': 0.9 if ctx.model.model_name == 'backup' else 0.1}
+
+        return settings
+
+
+def _sent(name: str, sent: list[tuple[str, str | None, float | None]], *, fails: bool = False) -> FunctionModel:
+    """A model that logs the instructions and `temperature` it was sent, and calls `noop` to answer a prompt."""
+
+    def log(messages: list[ModelMessage], info: AgentInfo) -> None:
+        sent.append((name, info.instructions, (info.model_settings or {}).get('temperature')))
+        if fails:
+            raise ModelAPIError(model_name=name, message='down')
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        log(messages, info)
+        if any(isinstance(part, UserPromptPart) for part in messages[-1].parts):
+            return ModelResponse(parts=[ToolCallPart('noop')])
+        return ModelResponse(parts=[TextPart(name)])
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        log(messages, info)
+        if any(isinstance(part, UserPromptPart) for part in messages[-1].parts):
+            yield {0: DeltaToolCall(name='noop', json_args='{}')}
+        else:
+            yield name
+
+    return FunctionModel(respond, stream_function=stream, model_name=name)
+
+
+def _recorded_instructions(messages: list[ModelMessage]) -> list[str | None]:
+    return [message.instructions for message in messages if isinstance(message, ModelRequest)]
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_instructions_and_settings_resolve_for_the_model_fallen_back_to(stream: bool):
+    """An attempt at another model is sent the instructions and settings resolved for it, and history records them."""
+    seen: list[tuple[str, str]] = []
+    sent: list[tuple[str, str | None, float | None]] = []
+    agent = _with_noop(
+        Agent(
+            _sent('primary', sent, fails=True),
+            capabilities=[_PerModel(seen), ModelFallback(_sent('backup', sent))],
+        )
+    )
+    if stream:
+        async with agent.run_stream('x') as result:
+            assert await result.get_output() == 'backup'
+        messages = result.all_messages()
+    else:
+        run_result = await agent.run('x')
+        assert run_result.output == 'backup'
+        messages = run_result.all_messages()
+    # Each step starts from the primary again, as without `sticky`.
+    assert sent == snapshot(
+        [
+            ('primary', 'You are primary.', 0.1),
+            ('backup', 'You are backup.', 0.9),
+            ('primary', 'You are primary.', 0.1),
+            ('backup', 'You are backup.', 0.9),
+        ]
+    )
+    assert _recorded_instructions(messages) == snapshot(['You are backup.', 'You are backup.'])
+    assert seen == snapshot(
+        [
+            ('instructions', 'primary'),
+            ('settings', 'primary'),
+            ('instructions', 'backup'),
+            ('settings', 'backup'),
+            ('instructions', 'primary'),
+            ('settings', 'primary'),
+            ('instructions', 'backup'),
+            ('settings', 'backup'),
+        ]
+    )
+
+
+async def test_sticky_resolves_instructions_and_settings_for_the_model_it_stays_on():
+    """Later steps of a sticky conversation are sent the instructions and settings of the model they stay on."""
+    seen: list[tuple[str, str]] = []
+    sent: list[tuple[str, str | None, float | None]] = []
+    agent = _with_noop(
+        Agent(
+            _sent('primary', sent, fails=True),
+            capabilities=[_PerModel(seen), ModelFallback(_sent('backup', sent), sticky=True)],
+        )
+    )
+    result = await agent.run('x')
+    assert result.output == 'backup'
+    assert sent == snapshot(
+        [('primary', 'You are primary.', 0.1), ('backup', 'You are backup.', 0.9), ('backup', 'You are backup.', 0.9)]
+    )
+    assert _recorded_instructions(result.all_messages()) == snapshot(['You are backup.', 'You are backup.'])
+
+
+async def test_instructions_and_settings_resolve_once_when_the_step_model_answers():
+    """Without a fallback, the instructions and settings are resolved once per step, for the step's model."""
+    seen: list[tuple[str, str]] = []
+    sent: list[tuple[str, str | None, float | None]] = []
+    agent = _with_noop(
+        Agent(_sent('primary', sent), capabilities=[_PerModel(seen), ModelFallback(_sent('backup', sent))])
+    )
+    result = await agent.run('x')
+    assert result.output == 'primary'
+    assert sent == snapshot([('primary', 'You are primary.', 0.1), ('primary', 'You are primary.', 0.1)])
+    assert seen == snapshot(
+        [('instructions', 'primary'), ('settings', 'primary'), ('instructions', 'primary'), ('settings', 'primary')]
+    )
+
+
+async def test_instruction_parts_a_hook_changed_reach_every_model():
+    """Instruction parts a `before_model_request` hook changed are sent to every model as the hook left them.
+
+    The model settings are still resolved for each model, with the hook's settings on top.
+    """
+
+    @dataclass
+    class Rewrite(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            parts = request_context.model_request_parameters.instruction_parts or []
+            request_context.model_request_parameters = replace(
+                request_context.model_request_parameters,
+                instruction_parts=[*parts, _messages.InstructionPart('Be brief.')],
+            )
+            request_context.model_settings = {**(request_context.model_settings or {}), 'max_tokens': 10}
+            return request_context
+
+    seen: list[tuple[str, str]] = []
+    sent: list[tuple[str, str | None, float | None]] = []
+    max_tokens: list[int | None] = []
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        max_tokens.append((info.model_settings or {}).get('max_tokens'))
+        sent.append(('primary', info.instructions, (info.model_settings or {}).get('temperature')))
+        raise ModelAPIError(model_name='primary', message='down')
+
+    def backup(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        max_tokens.append((info.model_settings or {}).get('max_tokens'))
+        sent.append(('backup', info.instructions, (info.model_settings or {}).get('temperature')))
+        return ModelResponse(parts=[TextPart('backup')])
+
+    agent = Agent(
+        FunctionModel(primary, model_name='primary'),
+        capabilities=[_PerModel(seen), Rewrite(), ModelFallback(FunctionModel(backup, model_name='backup'))],
+    )
+    result = await agent.run('x')
+    assert sent == snapshot(
+        [
+            (
+                'primary',
+                """\
+You are primary.
+
+Be brief.\
+""",
+                0.1,
+            ),
+            (
+                'backup',
+                """\
+You are primary.
+
+Be brief.\
+""",
+                0.9,
+            ),
+        ]
+    )
+    assert max_tokens == [10, 10]
+    assert _recorded_instructions(result.all_messages()) == snapshot(['You are primary.\n\nBe brief.'])
+
+
+async def test_returning_to_the_step_model_records_its_own_instructions_again():
+    """An attempt back at the step's model, after one at another, is sent and records what was resolved for it."""
+    seen: list[tuple[str, str]] = []
+    sent: list[tuple[str, str | None, float | None]] = []
+    backup = _sent('backup', sent, fails=True)
+
+    @dataclass
+    class BackAndForth(AbstractCapability[Any]):
+        async def on_model_request_error(
+            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            if request_context.attempt == 1:
+                raise RetryModelRequest(backup)
+            raise RetryModelRequest(primary_model)
+
+    attempts = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal attempts
+        attempts += 1
+        sent.append(('primary', info.instructions, (info.model_settings or {}).get('temperature')))
+        if attempts == 1:
+            raise ModelAPIError(model_name='primary', message='down')
+        return ModelResponse(parts=[TextPart('primary')])
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    agent = Agent(primary_model, capabilities=[_PerModel(seen), BackAndForth()])
+    result = await agent.run('x')
+    assert result.output == 'primary'
+    assert sent == snapshot(
+        [('primary', 'You are primary.', 0.1), ('backup', 'You are backup.', 0.9), ('primary', 'You are primary.', 0.1)]
+    )
+    # The step's own model is resolved for once, at the start of the step.
+    assert seen == snapshot(
+        [('instructions', 'primary'), ('settings', 'primary'), ('instructions', 'backup'), ('settings', 'backup')]
+    )
+    assert _recorded_instructions(result.all_messages()) == snapshot(['You are primary.'])
+
+
+async def test_a_model_without_instructions_of_its_own_is_sent_none():
+    """A model the instructions resolve to nothing for is sent none, and history records none, on every step."""
+    sent: list[tuple[str, str | None, float | None]] = []
+
+    def instructions(ctx: RunContext[Any]) -> str | None:
+        return 'Be brief.' if ctx.model.model_name == 'primary' else None
+
+    agent = _with_noop(
+        Agent(
+            _sent('primary', sent, fails=True),
+            instructions=instructions,
+            capabilities=[ModelFallback(_sent('backup', sent))],
+        )
+    )
+    result = await agent.run('x')
+    assert result.output == 'backup'
+    assert sent == snapshot(
+        [
+            ('primary', 'Be brief.', None),
+            ('backup', None, None),
+            ('primary', 'Be brief.', None),
+            ('backup', None, None),
+        ]
+    )
+    assert _recorded_instructions(result.all_messages()) == [None, None]
+
+
+@pytest.mark.parametrize('edit', ['redact', 'clear'])
+async def test_instruction_parts_a_hook_edited_in_place_stay_edited_for_every_model(edit: str):
+    """Instruction parts a `before_model_request` hook redacted or cleared in place stay so for a model fallen back to."""
+
+    @dataclass
+    class Redact(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            parts = request_context.model_request_parameters.instruction_parts
+            assert parts is not None
+            if edit == 'redact':
+                for part in parts:
+                    part.content = part.content.replace('secret', '[redacted]')
+            else:
+                parts.clear()
+            return request_context
+
+    sent: list[tuple[str, str | None, float | None]] = []
+
+    def instructions(ctx: RunContext[Any]) -> str:
+        return f'The secret is 42, {ctx.model.model_name}.'
+
+    agent = _with_noop(
+        Agent(
+            _sent('primary', sent, fails=True),
+            instructions=instructions,
+            capabilities=[Redact(), ModelFallback(_sent('backup', sent))],
+        )
+    )
+    result = await agent.run('x')
+    expected = 'The [redacted] is 42, primary.' if edit == 'redact' else None
+    assert {instructions for _, instructions, _ in sent} == {expected}
+    assert _recorded_instructions(result.all_messages()) == [expected, expected]
+
+
+async def test_a_nested_setting_a_hook_removed_in_place_stays_removed_for_every_model():
+    """A header a `before_model_request` hook removed in place from `extra_headers` isn't sent to a model fallen back to,
+    even when the settings are resolved again for it."""
+
+    def settings(ctx: RunContext[Any]) -> ModelSettings:
+        return {'extra_headers': {'X-Internal-Token': 'secret', 'X-Model': ctx.model.model_name}}
+
+    @dataclass
+    class DropToken(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            headers = (request_context.model_settings or {}).get('extra_headers')
+            assert headers is not None
+            headers.pop('X-Internal-Token')
+            return request_context
+
+    headers: list[tuple[str, dict[str, str] | None]] = []
+
+    def respond(name: str, fail: bool) -> FunctionModel:
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            headers.append((name, (info.model_settings or {}).get('extra_headers')))
+            if fail:
+                raise ModelAPIError(model_name=name, message='down')
+            return ModelResponse(parts=[TextPart(name)])
+
+        return FunctionModel(fn, model_name=name)
+
+    agent = Agent(
+        respond('primary', True),
+        model_settings=settings,
+        capabilities=[DropToken(), ModelFallback(respond('backup', False))],
+    )
+    assert (await agent.run('x')).output == 'backup'
+    # The hook's edit is applied to the step's `extra_headers` as a whole, so the backup gets those.
+    assert headers == snapshot([('primary', {'X-Model': 'primary'}), ('backup', {'X-Model': 'primary'})])
+
+
+@pytest.mark.parametrize(
+    ('backup_effort', 'recorded'),
+    [
+        ('high', [_messages.ModelSettingsDeltaPart(settings={'thinking': 'high'}, top_level=True)]),
+        # The backup's effort is the one already in effect, none, so nothing is recorded or emitted.
+        (None, []),
+    ],
+)
+async def test_the_thinking_effort_recorded_is_the_one_the_model_fallen_back_to_was_sent(
+    backup_effort: ThinkingEffort | None, recorded: list[_messages.ModelSettingsDeltaPart]
+):
+    """The thinking effort history records, and the events announce, are the ones of the model that answered."""
+
+    def respond(name: str, fail: bool) -> FunctionModel:
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if fail:
+                raise ModelAPIError(model_name=name, message='down')
+            return ModelResponse(parts=[TextPart(name)])
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            if fail:
+                raise ModelAPIError(model_name=name, message='down')
+            yield name
+
+        return FunctionModel(fn, stream_function=stream, model_name=name, profile=ModelProfile(supports_thinking=True))
+
+    def settings(ctx: RunContext[Any]) -> ModelSettings:
+        effort: ThinkingEffort | None = backup_effort if ctx.model.model_name == 'backup' else 'low'
+        return {'thinking': effort} if effort is not None else {}
+
+    events: list[_messages.ModelSettingsDeltaEvent] = []
+
+    async def handler(ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, _messages.ModelSettingsDeltaEvent):
+                events.append(event)
+
+    agent = Agent(
+        respond('primary', True), model_settings=settings, capabilities=[ModelFallback(respond('backup', False))]
+    )
+    result = await agent.run('x')
+    assert result.output == 'backup'
+    assert [
+        part
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, _messages.ModelSettingsDeltaPart)
+    ] == recorded
+
+    result = await agent.run('x', event_stream_handler=handler)
+    assert result.output == 'backup'
+    assert [event.part for event in events] == recorded
+
+
+async def test_hooks_resolved_again_see_the_model_id_of_the_model_fallen_back_to():
+    """Native tool factories, instructions and settings resolved again for a model see its `ctx.model_id`."""
+    seen: list[tuple[str, str | None]] = []
+    sent: list[tuple[str, str | None, float | None]] = []
+    models = {'primary': _sent('primary', sent, fails=True), 'backup': _sent('backup', sent)}
+
+    def instructions(ctx: RunContext[Any]) -> str:
+        seen.append(('instructions', ctx.model_id))
+        return 'Be brief.'
+
+    def settings(ctx: RunContext[Any]) -> ModelSettings:
+        seen.append(('settings', ctx.model_id))
+        return {}
+
+    def web_search(ctx: RunContext[Any]) -> None:
+        seen.append(('native tool', ctx.model_id))
+
+    agent = _with_noop(
+        Agent(
+            'primary',
+            instructions=instructions,
+            model_settings=settings,
+            capabilities=[
+                ResolveModelId(lambda ctx, model_id: models.get(model_id)),
+                NativeTool(web_search),
+                ModelFallback('backup'),
+            ],
+        )
+    )
+    assert (await agent.run('x')).output == 'backup'
+    assert seen[:6] == snapshot(
+        [
+            ('instructions', 'primary'),
+            ('native tool', 'primary'),
+            ('settings', 'primary'),
+            ('native tool', 'backup'),
+            ('instructions', 'backup'),
+            ('settings', 'backup'),
+        ]
+    )
+
+
+async def test_an_appended_instruction_change_is_recorded_for_the_model_fallen_back_to():
+    """In an open `on_change='append'` window, the change recorded is the one the model fallen back to was sent."""
+    calls: list[str] = []
+
+    def respond(name: str, *, fail_on_step_two: bool = False) -> FunctionModel:
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            calls.append(name)
+            last = messages[-1]
+            assert isinstance(last, ModelRequest)
+            if not any(isinstance(part, ToolReturnPart) for part in last.parts):
+                return ModelResponse(parts=[ToolCallPart('noop')])
+            if fail_on_step_two:
+                raise ModelAPIError(model_name=name, message='down')
+            return ModelResponse(parts=[TextPart(name)])
+
+        return FunctionModel(fn, model_name=name)
+
+    agent = _with_noop(
+        Agent(respond('primary', fail_on_step_two=True), capabilities=[ModelFallback(respond('backup'))])
+    )
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[None]) -> str:
+        return f'{ctx.model.model_name} at step {ctx.run_step}'
+
+    result = await agent.run('x')
+    assert result.output == 'backup'
+    assert calls == ['primary', 'primary', 'backup']
+    first, second = [message for message in result.all_messages() if isinstance(message, ModelRequest)]
+    assert first.parts[-1] == snapshot(
+        InstructionBaselinePart(
+            instructions=[
+                InstructionPart(
+                    content='primary at step 1',
+                    dynamic=True,
+                    on_change='append',
+                    name='state',
+                    id=InstructionId(source=AgentInstructionSource(), name='state'),
+                )
+            ]
+        )
+    )
+    # Only the backup's change, in the window the first step opened.
+    assert second.parts[1:] == snapshot(
+        [
+            InstructionDeltaPart(
+                id=InstructionId(source=AgentInstructionSource(), name='state'),
+                content='backup at step 2',
+                base_hash='711de19569bb61d127d7be80aad2a86ebc1ac030566d585a7bc729b371014900',
+            )
+        ]
+    )
+
+
+async def test_a_resumed_continuation_that_falls_back_gets_its_own_settings_and_the_recorded_instructions():
+    """A failed continuation's fallback is sent the settings resolved for it, and the instructions the turn was sent."""
+    sent: list[tuple[str, str | None, float | None]] = []
+
+    def respond(name: str, *, fail: bool) -> FunctionModel:
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append((name, info.instructions, (info.model_settings or {}).get('temperature')))
+            if fail:
+                raise ModelAPIError(model_name=name, message='down')
+            return ModelResponse(parts=[TextPart('fresh')])
+
+        return FunctionModel(fn, model_name=name)
+
+    def settings(ctx: RunContext[Any]) -> ModelSettings:
+        return {'temperature': {'step': 0.1, 'pinned': 0.5, 'next': 0.9}[ctx.model.model_name]}
+
+    def instructions(ctx: RunContext[Any]) -> str:
+        return f'You are {ctx.model.model_name}.'  # pragma: no cover
+
+    pinned = respond('pinned', fail=True)
+    agent = Agent(
+        FunctionModel(failure, model_name='step'),
+        instructions=instructions,
+        model_settings=settings,
+        capabilities=[ModelFallback(pinned, respond('next', fail=False))],
+    )
+    suspended = _suspended_history(pinned.model_id)[-1]
+    history = [ModelRequest(parts=[UserPromptPart('x')], instructions='Recorded.'), suspended]
+    result = await agent.run(message_history=history)
+    assert result.output == 'fresh'
+    assert sent == snapshot([('pinned', 'Recorded.', 0.5), ('next', 'Recorded.', 0.9)])
+
+
+@pytest.mark.parametrize('case', ['after_a_tool_return', 'copied_messages'])
+async def test_a_model_without_instructions_is_not_sent_the_step_models_recorded_ones(case: str):
+    """A model the instructions resolve to nothing for is sent none, not the ones a request in its messages records.
+
+    Instruction parts left unset would make the model fall back to the instructions recorded on the request it's sent,
+    which are the step model's after a tool return, or on a copy a `before_model_request` hook made of the messages.
+    """
+    sent: list[tuple[str, str | None]] = []
+
+    def respond(name: str, *, fail_on_step: int | None) -> FunctionModel:
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            step = sum(isinstance(message, ModelRequest) for message in messages)
+            sent.append((name, info.instructions))
+            if fail_on_step is not None and step >= fail_on_step:
+                raise ModelAPIError(model_name=name, message='down')
+            if case == 'after_a_tool_return' and step == 1:
+                return ModelResponse(parts=[ToolCallPart('noop')])
+            return ModelResponse(parts=[TextPart(name)])
+
+        return FunctionModel(fn, model_name=name)
+
+    @dataclass
+    class CopyMessages(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            request_context.messages = [deepcopy(message) for message in request_context.messages]
+            return request_context
+
+    def instructions(ctx: RunContext[Any]) -> str | None:
+        return 'Be brief.' if ctx.model.model_name == 'primary' else None
+
+    agent = _with_noop(
+        Agent(
+            respond('primary', fail_on_step=2 if case == 'after_a_tool_return' else 1),
+            instructions=instructions,
+            capabilities=[
+                *([CopyMessages()] if case == 'copied_messages' else []),
+                ModelFallback(respond('backup', fail_on_step=None)),
+            ],
+        )
+    )
+    result = await agent.run('x')
+    assert result.output == 'backup'
+    assert sent[-1] == ('backup', None)
+    assert _recorded_instructions(result.all_messages())[-1] is None
+
+
+async def test_instruction_parts_a_prepare_hook_edits_in_place_stay_with_their_attempt():
+    """A `prepare_model_request` hook editing the instruction parts in place doesn't change the next attempt's."""
+
+    @dataclass
+    class TagAttempt(AbstractCapability[Any]):
+        async def prepare_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            parts = request_context.model_request_parameters.instruction_parts
+            assert parts is not None
+            parts.append(_messages.InstructionPart(f'Attempt {request_context.attempt}.'))
+            return request_context
+
+    sent: list[tuple[str, str | None, float | None]] = []
+
+    def instructions(ctx: RunContext[Any]) -> str:
+        return 'You are the primary.' if ctx.model.model_name == 'primary' else 'You are a fallback.'
+
+    agent = _with_noop(
+        Agent(
+            _sent('primary', sent, fails=True),
+            instructions=instructions,
+            capabilities=[TagAttempt(), ModelFallback(_sent('b', sent, fails=True), _sent('c', sent))],
+        )
+    )
+    assert (await agent.run('x')).output == 'c'
+    assert [instructions for _, instructions, _ in sent[:3]] == snapshot(
+        [
+            """\
+You are the primary.
+
+Attempt 1.\
+""",
+            """\
+You are a fallback.
+
+Attempt 2.\
+""",
+            """\
+You are a fallback.
+
+Attempt 3.\
+""",
+        ]
+    )

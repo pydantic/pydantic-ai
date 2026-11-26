@@ -8,15 +8,15 @@ from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from functools import cache
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeAlias, cast
 from urllib.parse import urlparse
 
 from opentelemetry import context as otel_context
-from opentelemetry.baggage import get_baggage
+from opentelemetry.baggage import get_baggage, remove_baggage
 from opentelemetry.trace import INVALID_SPAN, Span, SpanKind, Status, StatusCode, Tracer, get_current_span
 from opentelemetry.util.types import AttributeValue
-from pydantic import ConfigDict, TypeAdapter
+from pydantic import ConfigDict, PydanticUserError, TypeAdapter
 from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_graph._utils import get_traceparent
@@ -45,6 +45,8 @@ DEFAULT_INSTRUMENTATION_VERSION = 5
 AGENT_NAME_BAGGAGE_KEY = 'gen_ai.agent.name'
 RUN_ID_BAGGAGE_KEY = 'gen_ai.agent.call.id'
 CONVERSATION_ID_BAGGAGE_KEY = 'gen_ai.conversation.id'
+ROOT_CONVERSATION_ID_ATTRIBUTE = 'pydantic_ai.root_conversation_id'
+"""The top-level run's `conversation_id`, set on the spans of a run started inside it whose own differs."""
 
 GEN_AI_SYSTEM_ATTRIBUTE = 'gen_ai.system'
 GEN_AI_REQUEST_MODEL_ATTRIBUTE = 'gen_ai.request.model'
@@ -173,6 +175,13 @@ def current_model_request_span() -> Span | None:
     return policy.span
 
 
+def add_input_transformations_event(provider: str, reported: Sequence[Mapping[str, object]]) -> None:
+    """Record the replayed items a provider withheld as an event on the model request span."""
+    if (span := current_model_request_span()) is not None:
+        key = f'{provider}.input_transformations'
+        span.add_event(key, attributes={key: to_json(reported).decode()})
+
+
 @contextmanager
 def request_policy_scope(policy: ContentPolicy | None) -> Generator[None]:
     """Install `policy` for the scope, for a durable unit that runs outside the context that opened the request."""
@@ -261,7 +270,11 @@ unsupported (see `MessageHistoryMutatedWarning`).
 
 
 def get_agent_run_baggage_attributes() -> dict[str, Any]:
-    """Read agent name, run ID, and conversation ID from OTel baggage and return as span attributes."""
+    """Return the current agent run's name, run ID and conversation IDs as span attributes.
+
+    The name, run ID and `conversation_id` come from OTel baggage. The top-level run's
+    `conversation_id` comes from `_top_level_conversation_id` instead (see there for why).
+    """
     attrs: dict[str, Any] = {}
     agent_name = get_baggage(AGENT_NAME_BAGGAGE_KEY)
     if agent_name is not None:
@@ -272,7 +285,48 @@ def get_agent_run_baggage_attributes() -> dict[str, Any]:
     conversation_id = get_baggage(CONVERSATION_ID_BAGGAGE_KEY)
     if conversation_id is not None:
         attrs[CONVERSATION_ID_BAGGAGE_KEY] = conversation_id
+    attrs.update(root_conversation_attributes(conversation_id))
     return attrs
+
+
+_top_level_conversation_id: ContextVar[str | None] = ContextVar('pydantic_ai.top_level_conversation_id', default=None)
+"""The top-level run's `conversation_id`, while an instrumented agent run is running.
+
+A run started inside it, such as a sub-agent, reads this to find the conversation it belongs to.
+It is a context variable rather than OTel baggage because baggage is also filled from the headers
+of incoming requests, which would let any HTTP client choose the value.
+"""
+
+
+def root_conversation_attributes(conversation_id: object) -> dict[str, str]:
+    """Return the top-level run's `conversation_id` as a span attribute, or nothing.
+
+    A run started inside another run, such as a sub-agent, gets its own `conversation_id`, so its
+    cost is missed when cost is added up by `gen_ai.conversation.id`. Returns nothing outside an
+    agent run, for a top-level run, and for a run that shares the top-level run's `conversation_id`.
+    """
+    top_level_conversation_id = _top_level_conversation_id.get()
+    if not top_level_conversation_id or top_level_conversation_id == conversation_id:
+        return {}
+    return {ROOT_CONVERSATION_ID_ATTRIBUTE: top_level_conversation_id}
+
+
+@contextmanager
+def track_top_level_conversation(conversation_id: str | None) -> Generator[None]:
+    """Make the top-level run's `conversation_id` visible to the runs started inside this one.
+
+    Also removes `pydantic_ai.root_conversation_id` from the OTel baggage for the run, so that no
+    span started inside it can take that attribute from the baggage. Logfire copies every baggage
+    key onto each span, and a web app fills baggage from the `baggage` header of each request, so
+    without this any client could choose the value on the spans of a top-level run.
+    """
+    token = _top_level_conversation_id.set(_top_level_conversation_id.get() or conversation_id)
+    baggage_token = otel_context.attach(remove_baggage(ROOT_CONVERSATION_ID_ATTRIBUTE))
+    try:
+        yield
+    finally:
+        otel_context.detach(baggage_token)
+        _top_level_conversation_id.reset(token)
 
 
 CIRCULAR_REFERENCE_PLACEHOLDER = '<circular reference>'
@@ -347,6 +401,10 @@ def _redact_binary_content(value: Any, active: set[int]) -> object:
                 'calls': _redact_binary_content(value.calls, active),
                 'approvals': _redact_binary_content(value.approvals, active),
                 'metadata': _redact_binary_content(value.metadata, active),
+                # `validated_args` is left out: it's already dumped to JSON, where a validation hook's
+                # `BinaryContent` or `bytes` is base64 text that can't be told apart from other text.
+                # Kind names, so never binary; serialized only when there are questions, as the type does.
+                **({'_kinds': value._kinds} if value._kinds else {}),  # pyright: ignore[reportPrivateUsage]
             }
         if isinstance(value, Mapping):
             return {  # pyright: ignore[reportUnknownVariableType]
@@ -605,11 +663,13 @@ def mcp_telemetry_history_ids(messages: Iterable[ModelMessage], known_ids: froze
 def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, Any] | None:
     """Drop the prompt text the user wrote, or `None` when the shape cannot be redacted.
 
-    Two fields here are that text: the instructions, whose dynamic parts can be built from deps, and
-    the prompted-output template. Instruction parts keep their origin and ids, so what the parts are
-    and how they cache stays visible. Tool and output *schemas* stay too -- they are the request's
-    structure rather than message content, and `include_model_request_parameters=False` drops the
-    whole attribute for anyone who wants them gone as well.
+    Three fields here are that text: the instructions, whose dynamic parts can be built from deps, the
+    prompted-output template, and the descriptions in the deferred capability catalog, which the catalog
+    in the instructions repeats. Instruction parts keep their origin and ids, and catalog entries their
+    ids and whether they're active, so what the parts are and how they cache stays visible. Tool and
+    output *schemas* stay too -- they are the request's structure rather than message content, and
+    `include_model_request_parameters=False` drops the whole attribute for anyone who wants them gone
+    as well.
 
     `_serialize_model_request_parameters` falls back to inferring a shape, which for a value it cannot
     walk -- a tool whose `metadata` holds an arbitrary object, say -- is the request's string
@@ -626,6 +686,9 @@ def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, An
             part.pop('content', None)
     if parameters.get('prompted_output_template') is not None:
         parameters['prompted_output_template'] = None
+    for entry in cast('list[dict[str, Any]]', parameters.get('deferred_capabilities', [])):
+        # The deferred capability catalog's descriptions, the same text as the catalog instruction part.
+        entry.pop('description', None)
     return parameters
 
 
@@ -638,8 +701,9 @@ def _serialize_model_request_parameters(model_request_parameters: ModelRequestPa
     `id` identically and drops the agent's source to `{}`. The declared schema renders the id as
     the same flat key it serializes to everywhere else.
     """
-    from pydantic_ai.native_tools import MCPServerTool
+    from pydantic_ai.native_tools import NATIVE_TOOL_TYPES, MCPServerTool
 
+    native_tool_types = tuple(NATIVE_TOOL_TYPES.values())
     url_ids = model_request_telemetry_url_ids(model_request_parameters)
     toolset_ids = model_request_parameters._telemetry_mcp_url_toolset_ids  # pyright: ignore[reportPrivateUsage]
     tool_names = model_request_parameters._telemetry_mcp_url_tool_names  # pyright: ignore[reportPrivateUsage]
@@ -649,7 +713,9 @@ def _serialize_model_request_parameters(model_request_parameters: ModelRequestPa
         # Keep the established serializer, including its fallback, byte-for-byte for requests
         # outside the affected MCP paths.
         try:
-            return _model_request_parameters_adapter().dump_python(model_request_parameters, mode='json')
+            return _model_request_parameters_adapter(native_tool_types).dump_python(
+                model_request_parameters, mode='json'
+            )
         except Exception:
             return serialize_any(model_request_parameters)
 
@@ -681,7 +747,7 @@ def _serialize_model_request_parameters(model_request_parameters: ModelRequestPa
         _telemetry_mcp_url_tool_names=set(),
     )
     try:
-        return _model_request_parameters_adapter().dump_python(safe_parameters, mode='json')
+        return _model_request_parameters_adapter(native_tool_types).dump_python(safe_parameters, mode='json')
     except Exception:
         # A tool definition carrying something unserializable must not take the span down with it.
         return serialize_any(safe_parameters)
@@ -743,11 +809,25 @@ def _redact_mcp_instruction_parts(
     return redacted_parts
 
 
-@cache
-def _model_request_parameters_adapter() -> TypeAdapter[ModelRequestParameters]:
+@lru_cache(maxsize=1)
+def _model_request_parameters_adapter(
+    native_tool_types: tuple[type[AbstractNativeTool], ...],
+) -> TypeAdapter[ModelRequestParameters]:
+    """Build the adapter from `NATIVE_TOOL_TYPES`, whose current contents `native_tool_types` passes as the cache key.
+
+    The parameters' native tools serialize through a union of the registered types. A type registers when its class
+    is defined, which can be after the first request, and an adapter built before then can't serialize its instances
+    through their own schema. The cache keeps only the adapter for the registry's current contents.
+
+    A registered type pydantic can't build a schema for fails the whole build. The parameters then serialize by
+    inference, as the `serialize_any` fallback does, without retrying the build on every request.
+    """
     from pydantic_ai.models import ModelRequestParameters
 
-    return TypeAdapter(ModelRequestParameters)
+    try:
+        return TypeAdapter(ModelRequestParameters)
+    except PydanticUserError:
+        return ANY_ADAPTER
 
 
 def model_settings_attributes(model_settings: ModelSettings | None) -> dict[str, AttributeValue]:
@@ -881,7 +961,7 @@ class _FinishModelRequestSpan(Protocol):
 
 
 def _prepare_model_request_span_context(
-    settings: InstrumentationSettings, request_context: ModelRequestContext
+    settings: InstrumentationSettings, request_context: ModelRequestContext, span: Span
 ) -> tuple[ModelRequestContext, dict[str, AttributeValue]]:
     # The model warns about ignored settings when it prepares the request to send it.
     with suppress_unsupported_setting_warnings():
@@ -890,6 +970,9 @@ def _prepare_model_request_span_context(
         )
     prepared = replace(request_context, model_settings=prepared_settings, model_request_parameters=prepared_parameters)
     attributes: dict[str, AttributeValue] = model_attributes(prepared.model)
+    # A sampled-out span drops its attributes; metrics need only the model attributes above.
+    if not span.is_recording():
+        return prepared, attributes
     json_schema_properties: dict[str, dict[str, str]] = {}
     if settings.include_model_request_parameters:
         attributes.update(
@@ -1035,7 +1118,7 @@ def open_model_request_span(
 
             def set_request_attributes(context: ModelRequestContext) -> ModelRequestContext:
                 nonlocal prepared_request_context
-                prepared, request_attributes = _prepare_model_request_span_context(settings, context)
+                prepared, request_attributes = _prepare_model_request_span_context(settings, context, span)
 
                 # Keep attributes set on the span since it opened, but describe the model this request
                 # is now made to: a hook can move it on to another model for a later attempt (#7018).
@@ -1182,10 +1265,10 @@ def get_instructions(
     `model_request_parameters` is not available (e.g. OTel span attributes).
     """
     from pydantic_ai.messages import InstructionPart
-    from pydantic_ai.models import Model
+    from pydantic_ai.models import _instruction_parts_of  # pyright: ignore[reportPrivateUsage]
 
     if model_request_parameters:
-        parts = Model._get_instruction_parts(messages, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+        parts = _instruction_parts_of(messages, model_request_parameters)
         return InstructionPart.join(parts) if parts else None
 
     # Fallback: read from message history (used by OTel when model_request_parameters is unavailable)

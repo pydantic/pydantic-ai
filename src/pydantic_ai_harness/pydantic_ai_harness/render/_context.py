@@ -9,7 +9,7 @@ from contextvars import ContextVar
 from render import TaskContext
 
 _task_contexts: ContextVar[tuple[tuple[object, TaskContext], ...]] = ContextVar(
-    'pydantic_ai_harness_render_task_contexts', default=()
+    'pydantic_ai_harness.render.task_contexts', default=()
 )
 
 

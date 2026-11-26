@@ -1,0 +1,87 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.mistral.ai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "231"
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    body:
+      type: json
+      content:
+        model: mistral-large-4
+        messages:
+        - content: What is 2+2? Reply with just the number.
+          role: user
+        top_p: 1.0
+        stream: false
+        stop: null
+        presence_penalty: null
+        frequency_penalty: null
+        "n": 1
+        reasoning_effort: medium
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 01a1da88-6eb6-79ce-a0a3-a4d84f085368
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: a8f753e823e04216af52b0442947dac9
+        created: 1794667736
+        model: mistral-large-4
+        usage:
+          prompt_tokens: 28
+          total_tokens: 99
+          completion_tokens: 71
+          prompt_tokens_details:
+            cached_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 67
+          service_tier: standard
+        object: chat.completion
+        choices:
+        - index: 0
+          finish_reason: stop
+          message:
+            role: assistant
+            tool_calls: null
+            content:
+            - type: thinking
+              thinking:
+              - type: text
+                text: |-
+                  The user is asking a simple math question: "What is 2+2?" and specifically requests to "Reply with just the number."
+
+                   The answer is 4.
+
+                   I need to make sure I only output the number and nothing else, as per the instruction "Reply with just the number."
+
+                   So the response should be: 4
+              closed: true
+            - type: text
+              text: "4"
+  recorded_at: 2026-11-14T14:48:58.540047+00:00

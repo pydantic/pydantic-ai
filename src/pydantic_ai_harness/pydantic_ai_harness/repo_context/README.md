@@ -4,7 +4,29 @@ Discover and load a repo's accumulated coding-assistant context engineering (CE)
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/repo_context/)
 
-![RepoContext has three strategies. On by default, autoload puts one instruction file per directory, AGENTS.md or else CLAUDE.md, into the instructions: the working directory's, plus each ancestor's when walk_up is set, broadest first, once per run. Off by default, the inventory_agent_context tool reports where the .claude, .agents, .codex and .grok roots keep skills, agents and hooks. On by default, nested traversal reacts to FileSystem reading or listing a directory, such as src/api, and queues the contents of that directory's AGENTS.md before the next model request.](https://pydantic.dev/docs/ai/img/harness/repo-context.svg)
+```mermaid
+flowchart TB
+    accTitle: Repo Context: load the instruction files a repo already has
+    accDescr: On by default, RepoContext instruction autoload loads AGENTS.md or CLAUDE.md in the working directory as instructions once, at run start, and nested traversal adds AGENTS.md in src/api to the message tail after a read or listing. Off by default, asset inventory answers the model's inventory_agent_context() with skills, agents and hooks from .claude, .agents, .codex and .grok.
+    subgraph workspace["Workspace"]
+        files["AGENTS.md or<br/>CLAUDE.md in the<br/>working directory"]
+        roots[".claude, .agents,<br/>.codex, .grok"]
+        nested["AGENTS.md<br/>in src/api"]
+    end
+    subgraph repo["RepoContext()"]
+        autoload["instruction<br/>autoload<br/>on by default"]:::capability
+        inventory["asset<br/>inventory<br/>off by default"]:::capability
+        traversal["nested<br/>traversal<br/>on by default"]:::capability
+    end
+    model(["model"])
+    files -->|"once, at run start"| autoload
+    roots -->|"skills, agents, hooks"| inventory
+    nested -->|"after a read or listing"| traversal
+    autoload -->|"instructions"| model
+    inventory <-->|"inventory_agent_context()"| model
+    traversal -->|"message tail"| model
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 ## The problem
 
@@ -36,7 +58,7 @@ print(result.output)
 
 ### 1. Instruction autoload (on by default)
 
-Loads the working directory's instruction file at run start. Each directory contributes one file: the first of `filenames` that exists there, `AGENTS.md` and then `CLAUDE.md` by default, as Codex picks one per directory. Pass `filenames=('CLAUDE.md', 'AGENTS.md')` to prefer `CLAUDE.md`. Where the workspace can resolve symlinks, a same-directory symlink is labeled with its target's name, so `CLAUDE.md -> AGENTS.md` reaches the model as `AGENTS.md`.
+Loads the working directory's instruction file at run start. Each directory contributes one file: the first of `filenames` that exists there, `AGENTS.md` and then `CLAUDE.md` by default, as Codex picks one per directory. Pass `filenames=('CLAUDE.md', 'AGENTS.md')` to prefer `CLAUDE.md`. Where the workspace can resolve symlinks, a same-directory symlink is labeled with its target's name, so `CLAUDE.md -> AGENTS.md` reaches the model as `AGENTS.md`. A `filenames` entry with a directory part, such as `.github/copilot-instructions.md`, loads only when that directory resolves inside the scanned one.
 
 A same-directory link loads only when it points to another instruction file,
 one named in `filenames` or `AGENTS.md`/`CLAUDE.md`: `CLAUDE.md -> AGENTS.md`
@@ -135,13 +157,25 @@ message history before the next model request. A directory counts as surfaced wh
 is still in the conversation: a later run of the same conversation doesn't
 repeat it, and once compaction summarizes the note away, the next traversal
 surfaces it again. The working directory's files are not surfaced again when
-the walk-up already loaded them. Every part of a note carries
-`{'origin': 'pydantic-ai-harness.repo_context.nested_note.v1', 'directory': ...}`
-in its `metadata`, which is how `RepoContext` and compaction recognize it.
+the walk-up already loaded them. A note is a `ContextFilePathPart` (pointer) or
+a `ContextFilePart` (contents), [capability parts](https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts) whose `directory`
+field names the surfaced directory, which is how `RepoContext` recognizes it.
 Same-directory instruction symlinks are named after their targets, and load
 only when the target is itself an instruction file, as in the walk-up. Where the
 backend resolves symlinks, external instruction symlinks are skipped, even when
 `autoload_symlink_roots` authorizes their targets for autoload.
+
+`nested_exclude` skips directories whose instruction files are written for
+someone else: by default `node_modules`, `.venv`, `venv` and `site-packages`,
+where package managers install dependencies. Without it, reading a file in an
+installed package would surface that package's `AGENTS.md`, and as the deeper
+file it would take precedence over the project's. Each entry is an `fnmatch`
+pattern matched against every directory name below the working directory, both
+as written and after resolving symlinks, so a link such as
+`libs/dep -> node_modules/dep` is skipped too. Everything beneath a match is
+skipped, while the directories above it are still surfaced. `vendor/` and
+`third_party/` aren't in the default because projects often commit and own
+them; add them if yours doesn't.
 
 With nested traversal on, the instructions also tell the model how instruction
 files relate: each applies to its own directory and everything below it, the
@@ -150,7 +184,7 @@ over all of them. The statement is static, so it stays in the cached prefix.
 
 `FileSystem` emits these events directly. Hosts with other file tools can emit
 the same types by importing `FileReadEvent`, `DirectoryListedEvent` and
-`FileWrittenEvent` from `pydantic_ai_harness.filesystem`; set `root_dir` to the
+`FileWrittenEvent` from `pydantic_ai_harness.file_system`; set `root_dir` to the
 directory the event's `path` is relative to.
 
 The traversed location is `root_dir / path`, so a `FileSystem` rooted at a
@@ -173,6 +207,30 @@ the same weight as the instructions you write yourself. That is what the strateg
 is for, and it means the working directory and every directory the walk-up reaches (`home_dir`, the repository root for `walk_up='repo_root'`, or every ancestor for `'all'`) should hold only
 instruction files you would put in your own instructions.
 
+Whatever the workspace's
+[authority](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority),
+the walk-up reads each file at its own level, `Workspace.authority_of(path)`. A
+file above the working directory gets the level of the `path_authority` entry
+covering it, or else the workspace's own level, so a plain workspace loads its
+ancestors' files as before. Only files at `'operator'` go in the instructions:
+
+- The working directory's own file below `'operator'` is named in the
+  instructions, by its configured name, and the model reads it with its file
+  tools, so its contents reach it as tool output.
+- An ancestor's file below `'operator'`, which the file tools can't reach, is
+  sent as a `ContextFilePart` with the run's first request: repository data on
+  the user channel, with a note saying who wrote it. It's sent again when its
+  text changed, and put back on the next request when a compaction drops it.
+- When the workspace or a `path_authority` entry puts any file in the working
+  directory below `'operator'`, or the walk-up loads an instruction file below
+  it, the instructions leave out the sentence on how nested
+  instruction files relate ("the more deeply nested one takes precedence"),
+  which would rank repository files over the operator's.
+
+Give the operator's own files above an untrusted checkout their level with
+`path_authority`, such as
+`LocalWorkspace('./checkout', authority='none', path_authority={'~/AGENTS.md': 'operator'})`.
+
 Authorize a directory containing only trusted instruction files, such as
 `/opt/agent-context`, rather than `/` or your entire home directory. A repository's
 instruction symlinks can select any readable file beneath an authorized root,
@@ -180,17 +238,63 @@ not just the file you originally linked.
 
 Nested files are different: the model chooses which directories to read, and
 those can include vendored code or a checkout someone else wrote. Their contents
-and paths reach the model as a user message, not as instructions. The
-`'pointer'` note's own wording is the framework's, so it is a `SystemPromptPart`
-(a system message where the model supports one mid-conversation, and
-`<system>`-tagged user text otherwise), followed by the file's path as a
-user-message `<context-file path="..." />` tag.
+and paths are data read from the workspace, so they reach the model as a user
+message, not as instructions. A `'pointer'` note is a `ContextFilePathPart`
+that sends the file's path in a `<context_file_path>` tag, with a note in the
+application's voice asking the model to read the file if it's relevant (a system
+message where the model supports one mid-conversation, and `<system>`-tagged
+user text otherwise). Both kinds of note carry a `WorkspaceSource`: for a
+workspace the operator doesn't control, it has no authority, and the note also
+says the file was written by its author, not by the user or the application.
 
-Each file is wrapped in `<context-file path="...">` tags. The `<` of every
-opening or closing `<context-file>` tag inside a file, and of every framing tag
-Pydantic AI writes (`<system>`, `<context>`, `<tool_result>` and the rest), is
-escaped as `&lt;`, and the path is HTML-escaped, so a file stays inside its own
-block.
+Walk-up files are wrapped in `<context-file path="...">` tags in the
+instructions. The `<` of every opening or closing `<context-file>` tag inside a
+file, and of every framing tag Pydantic AI writes (`<system>`, `<pyai:context>`,
+`<pyai:tool_result>` and the rest), is escaped as `&lt;`, and the path is HTML-
+escaped, so a file stays inside its own block.
+
+A `'contents'` note is a `ContextFilePart` that sends the file in a
+`<context_file path="...">` tag, with the path HTML-escaped. The file goes out
+as written: an opening or closing `<context_file>` tag in it, or text that looks
+like one of Pydantic AI's frames, such as a `<system>` tag, gets a note saying
+the file's author wrote it, so a file stays inside its own block. Find either
+kind of note in history by its type.
+
+### Pinning accepted files
+
+An app that asks the user to accept a workspace's instruction files, skills or
+sub-agent definitions before trusting them can pin what was accepted. Record
+`file_digest(workspace, path)` when the user accepts a file, and before each run
+pass the recorded digests to `pin_accepted_files`. A file whose content no
+longer matches is capped at `changed` (`'none'` by default) through an
+`AuthorityWorkspace`, so `Workspace.authority_of` reports the lower level until
+the user accepts the new content and the app records its new digest. Showing the
+user what changed is up to the app, which holds the accepted content.
+
+```python {test="skip"}
+from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
+from pydantic_ai_harness.repo_context import file_digest, pin_accepted_files
+
+workspace = Workspace(LocalWorkspaceBackend('./project'))
+accepted = {'AGENTS.md': await file_digest(workspace, 'AGENTS.md')}  # when the user accepts it
+
+# Later, after AGENTS.md changed:
+pinned = await pin_accepted_files(workspace, accepted)
+print(await pinned.authority_of('AGENTS.md'))
+#> none
+# Pass `pinned` as the run's `workspace=`.
+```
+
+A changed file never rises above the level the workspace already gives it, and
+files not in `accepted` keep the workspace's level. Files are compared when
+`pin_accepted_files` is called, not when they are read later in the run.
+
+The lower level changes what reaches the model only in capabilities that check
+`authority_of` (see
+[Marking who wrote the files](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#workspace-authority)).
+`RepoContext` and `Skills` check it, so a changed instruction file or skill stays
+out of the instructions. `SubAgents` doesn't check it yet, so on its own it still
+loads a changed agent definition as before.
 
 ## Cache cost
 
@@ -221,6 +325,7 @@ RepoContext(
     inventory_tool_name='inventory_agent_context',
     nested_traversal=True,          # Strategy 3
     nested_inject='contents',       # 'contents' | 'pointer'
+    nested_exclude=('node_modules', '.venv', 'venv', 'site-packages'),  # fnmatch patterns Strategy 3 skips
     nested_max_chars=32_000,        # int | None -- cap on inlined nested contents per conversation
     traversal_tool_names=frozenset({'list_directory', 'read_file'}),  # deprecated fallback
     traversal_path_arg='path',                                       # deprecated fallback
@@ -239,6 +344,8 @@ files once per run, so mid-run edits to those files are not reloaded.
 ## Upgrading
 
 `RepoContext()` now loads one instruction file per directory, `AGENTS.md` first and `CLAUDE.md` as the fallback, and surfaces nested instruction files by default, inlining up to 32,000 characters of their contents per conversation before surfacing the rest as pointers (`nested_max_chars=None` removes the cap). To get close to the old behavior, pass `RepoContext(filenames=('CLAUDE.md', 'AGENTS.md'), nested_traversal=False)`. It only approximates it: no setting loads both files from one directory any more, so a directory holding both loads only `CLAUDE.md`. Durable runs started before the upgrade record fewer workspace calls than a new run makes, so let them finish or version the deployment first.
+
+Nested traversal no longer surfaces instruction files under `node_modules`, `.venv`, `venv` or `site-packages` below the working directory, nor anything beneath them; pass `nested_exclude=()` to surface them again. It also skips the workspace calls it used to make for those directories, so a durable run that read a file under one of them before the upgrade records more workspace calls than its replay makes: let such runs finish or version the deployment first.
 
 ## Further reading
 

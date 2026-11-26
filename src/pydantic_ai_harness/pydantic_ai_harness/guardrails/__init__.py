@@ -19,6 +19,7 @@ from pydantic_ai_harness.guardrails._exceptions import (
     ToolBlocked,
 )
 from pydantic_ai_harness.guardrails._shared import GuardrailResult
+from pydantic_ai_harness.guardrails._stream_guardrail import StreamGuardrail, StreamGuardrailFunc, StreamGuardrailPart
 from pydantic_ai_harness.guardrails._tool_guardrail import (
     ToolCallInfo,
     ToolGuardrail,
@@ -36,6 +37,9 @@ __all__ = [
     'OutputBlocked',
     'OutputGuardrail',
     'OutputGuardrailFunc',
+    'StreamGuardrail',
+    'StreamGuardrailFunc',
+    'StreamGuardrailPart',
     'ToolBlocked',
     'ToolCallInfo',
     'ToolGuardrail',

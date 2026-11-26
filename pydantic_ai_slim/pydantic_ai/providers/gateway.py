@@ -36,7 +36,7 @@ _HTTPClientT = TypeVar('_HTTPClientT', bound=AsyncHTTPClient)
 
 @overload
 def gateway_provider(
-    upstream_provider: Literal['openai', 'openai-chat', 'openai-responses', 'chat', 'responses'],
+    upstream_provider: Literal['openai', 'openai-chat', 'openai-responses', 'chat', 'responses', 'doubleword'],
     /,
     *,
     route: str | None = None,
@@ -165,7 +165,7 @@ def gateway_provider(
     canonical = normalize_gateway_provider(upstream_provider)
     if route is None:
         # Use the implied providerId as the default route.
-        route = _gateway_route(canonical)
+        route = _gateway_route(upstream_provider, canonical)
 
     base_url = _merge_url_path(base_url, route)
 
@@ -395,9 +395,21 @@ _GATEWAY_ROUTE_REMAP: dict[str, str] = {
 }
 
 
-def _gateway_route(provider: str) -> str:
-    """Translate a canonical provider name into the Gateway URL route segment."""
-    return _GATEWAY_ROUTE_REMAP.get(provider, provider)
+def _gateway_route(provider: str, canonical: str) -> str:
+    """The Gateway URL route segment for a `gateway/` provider name and its canonical name."""
+    name = provider.removeprefix('gateway/')
+    if name in _GATEWAY_ROUTE_APIS:
+        # A route with no provider of its own keeps its name.
+        return name
+    return _GATEWAY_ROUTE_REMAP.get(canonical, canonical)
+
+
+# Gateway routes with no Pydantic AI provider of their own, mapped to the canonical
+# class-lookup name of the API they speak. Unlike `_GATEWAY_PROVIDER_ALIASES`, the
+# URL route keeps the route name rather than following the API's default route.
+_GATEWAY_ROUTE_APIS: dict[str, str] = {
+    'doubleword': 'openai-chat',
+}
 
 
 # User-facing aliases resolved to canonical class-lookup names. `gateway/google` collapses
@@ -417,6 +429,8 @@ def normalize_gateway_provider(provider: str) -> str:
     Wire-value remapping for the Gateway URL belongs in `_gateway_route`.
     """
     provider = provider.removeprefix('gateway/')
+    if provider in _GATEWAY_ROUTE_APIS:
+        return _GATEWAY_ROUTE_APIS[provider]
     return _GATEWAY_PROVIDER_ALIASES.get(provider, provider)
 
 

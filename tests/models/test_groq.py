@@ -23,6 +23,7 @@ from pydantic_ai import (
     ImageUrl,
     ModelAPIError,
     ModelConnectionError,
+    ModelEmptyResponseError,
     ModelHTTPError,
     ModelOverloadedError,
     ModelRequest,
@@ -141,9 +142,7 @@ class MockGroq:
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], Sequence):
-                response = MockAsyncStream(  # pragma: no cover
-                    iter(cast(list[MockChatCompletionChunk], self.stream[self.index]))
-                )
+                response = MockAsyncStream(iter(cast(list[MockChatCompletionChunk], self.stream[self.index])))
             else:
                 response = MockAsyncStream(iter(cast(list[MockChatCompletionChunk], self.stream)))
         else:
@@ -807,7 +806,11 @@ async def test_image_as_binary_content_tool_response(
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
-                provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
+                provider_details={
+                    'finish_reason': 'tool_calls',
+                    'timestamp': IsDatetime(),
+                    'service_tier': 'on_demand',
+                },
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -834,7 +837,7 @@ async def test_image_as_binary_content_tool_response(
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
-                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime(), 'service_tier': 'on_demand'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1328,6 +1331,7 @@ It's worth noting that the weather in San Francisco can be quite variable, and t
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 9, 17, 21, 14, 13, tzinfo=UTC),
+                    'service_tier': 'on_demand',
                 },
                 provider_response_id='stub',
                 finish_reason='stop',
@@ -5637,7 +5641,11 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
-                provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
+                provider_details={
+                    'finish_reason': 'tool_calls',
+                    'timestamp': IsDatetime(),
+                    'service_tier': 'on_demand',
+                },
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -5679,7 +5687,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
-                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime(), 'service_tier': 'on_demand'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -5927,7 +5935,11 @@ The user wants me to fix the errors. They attempted to get plain "maybe" but sys
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
-                provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
+                provider_details={
+                    'finish_reason': 'tool_calls',
+                    'timestamp': IsDatetime(),
+                    'service_tier': 'on_demand',
+                },
                 provider_response_id='chatcmpl-9fc28492-a04d-4b0f-b9a0-a9149d048b37',
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -6123,6 +6135,7 @@ async def test_groq_native_output(allow_model_requests: None, groq_api_key: str)
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 9, 2, 20, 1, 5, tzinfo=UTC),
+                    'service_tier': 'on_demand',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -6174,6 +6187,7 @@ async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: st
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 9, 2, 20, 1, 6, tzinfo=UTC),
+                    'service_tier': 'on_demand',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -6417,3 +6431,29 @@ async def test_text_plain_response_body_raises_model_api_error(allow_model_reque
 
     assert type(exc_info.value) is ModelAPIError
     assert exc_info.value.message == snapshot("Expected a JSON response, got: 'upstream connect error'")
+
+
+async def test_empty_choices_raise_model_empty_response_error(allow_model_requests: None):
+    """A completion without choices is a model error rather than an `IndexError`.
+
+    Mocked because no provider returns a completion without choices on demand.
+    """
+    response = completion_message(ChatCompletionMessage(content='unused', role='assistant'))
+    response.choices = []
+    model = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=MockGroq.create_mock(response)))
+
+    with pytest.raises(ModelEmptyResponseError, match='Empty response from groq: no choices') as exc_info:
+        await Agent(model).run('hello')
+    assert exc_info.value.model_name == 'llama-3.3-70b-versatile'
+    # `ChatCompletion` gains fields across the supported `groq` versions, so compare with its own dump.
+    assert exc_info.value.body == response.model_dump()
+
+
+async def test_empty_stream_raises_model_empty_response_error(allow_model_requests: None):
+    """Mocked because no provider sends an empty stream on demand."""
+    mock_client = MockGroq.create_mock_stream([[]])
+    model = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
+
+    with pytest.raises(ModelEmptyResponseError, match='Streamed response ended without content or tool calls'):
+        async with Agent(model).run_stream('hello'):
+            pass
