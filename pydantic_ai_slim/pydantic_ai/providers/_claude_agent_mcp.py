@@ -1,6 +1,6 @@
 """Claude Code's own MCP tool calls, as the Messages API's MCP connector blocks that `AnthropicModel` reads.
 
-With `claude_code_inherit_mcp_servers`, Claude Code also offers the model the user's own MCP servers and claude.ai
+With `claude_agent_inherit_mcp_servers`, Claude Code also offers the model the user's own MCP servers and claude.ai
 connectors, and runs their tools itself: a turn that calls one is several API calls inside Claude Code, the tool's
 result coming in between as a user message. `ResponseEvents` turns those into the events of one response, with each
 call and result as the `mcp_tool_use` and `mcp_tool_result` blocks of Anthropic's MCP connector, which `AnthropicModel`

@@ -1,4 +1,4 @@
-"""The live Claude Code sessions behind `ClaudeCodeProvider`'s in-memory Messages API transport.
+"""The live Claude Code sessions behind `ClaudeAgentProvider`'s in-memory Messages API transport.
 
 `AnthropicModel` builds each request as usual and sends it to an `httpx2` transport that never opens a socket. The
 transport hands the request to a Claude Code process, started through the Claude Agent SDK with the user's own,
@@ -33,7 +33,7 @@ import httpx2
 from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError
 
 from .. import __version__
-from ._claude_code_mcp import MCP_PREFIX, ResponseEvents, replay_blocks, server_and_tool, tool_name_server
+from ._claude_agent_mcp import MCP_PREFIX, ResponseEvents, replay_blocks, server_and_tool, tool_name_server
 
 try:
     from anthropic.types.beta import (
@@ -70,17 +70,17 @@ try:
     from claude_agent_sdk.types import EffortLevel, ThinkingConfig
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
-        'Please install `claude-agent-sdk` to use the Claude Code provider, '
-        'you can use the `claude-code` optional group — `pip install "pydantic-ai-slim[claude-code]"`'
+        'Please install `claude-agent-sdk` to use the Claude Agent provider, '
+        'you can use the `claude-agent` optional group — `pip install "pydantic-ai-slim[claude-agent]"`'
     ) from _import_error
 
 __all__ = ('ClaudeCodeSessions', 'ClaudeCodeTransport', 'CONVERSATION_HEADER', 'INHERIT_MCP_SERVERS_HEADER')
 
 CONVERSATION_HEADER = 'x-pydantic-ai-conversation-id'
-"""Carries the request's `conversation_id` from `ClaudeCodeModel` to the transport. It never leaves the process."""
+"""Carries the request's `conversation_id` from `ClaudeAgentModel` to the transport. It never leaves the process."""
 
-INHERIT_MCP_SERVERS_HEADER = 'x-pydantic-ai-claude-code-inherit-mcp-servers'
-"""Carries `claude_code_inherit_mcp_servers`, as JSON, from `ClaudeCodeModel` to the transport, like the above."""
+INHERIT_MCP_SERVERS_HEADER = 'x-pydantic-ai-claude-agent-inherit-mcp-servers'
+"""Carries `claude_agent_inherit_mcp_servers`, as JSON, from `ClaudeAgentModel` to the transport, like the above."""
 
 _MCP_SERVER = 'pydantic_ai'
 _TOOL_PREFIX = f'mcp__{_MCP_SERVER}__'
@@ -141,7 +141,7 @@ _ERROR_STATUS: Mapping[str, tuple[int, str]] = {
 
 
 class ClaudeCodeMcpServerNotFound(Exception):
-    """`claude_code_inherit_mcp_servers` names an MCP server Claude Code doesn't have."""
+    """`claude_agent_inherit_mcp_servers` names an MCP server Claude Code doesn't have."""
 
     def __init__(self, unknown: list[str], known: list[str]) -> None:
         self.unknown, self.known = unknown, known
@@ -204,7 +204,7 @@ class _MessagesRequest(BaseModel):
     output_config: _OutputConfig | None = None
     stream: bool = False
     inherit_mcp_servers: bool | list[str] = False
-    """`claude_code_inherit_mcp_servers`, from its header: the user's own MCP servers Claude Code may bring."""
+    """`claude_agent_inherit_mcp_servers`, from its header: the user's own MCP servers Claude Code may bring."""
 
     @property
     def callable_tools(self) -> list[_Tool]:
@@ -257,7 +257,7 @@ class _SessionConfig:
 
 @dataclass(frozen=True)
 class ClaudeCodeOptions:
-    """How `ClaudeCodeProvider` starts Claude Code."""
+    """How `ClaudeAgentProvider` starts Claude Code."""
 
     cli_path: str | Path | None = None
     cwd: str | Path | None = None
@@ -426,7 +426,7 @@ class _Session:
         if (external := server_and_tool(input_data['tool_name'], _TOOL_PREFIX)) is None:
             return {}
         if self.allowed_servers is not None and external[0] not in self.allowed_servers:
-            reason = 'This MCP server is not one of `claude_code_inherit_mcp_servers`.'
+            reason = 'This MCP server is not one of `claude_agent_inherit_mcp_servers`.'
             return {
                 'hookSpecificOutput': {
                     'hookEventName': 'PreToolUse',
@@ -637,7 +637,7 @@ class ClaudeCodeSessions:
             system_prompt=config.system_prompt,
             tools=[],
             mcp_servers={_MCP_SERVER: server},
-            # Only `claude_code_inherit_mcp_servers` lets Claude Code bring the user's own MCP servers and connectors.
+            # Only `claude_agent_inherit_mcp_servers` lets Claude Code bring the user's own MCP servers and connectors.
             strict_mcp_config=not request.inherit_mcp_servers,
             disallowed_tools=disallowed_tools,
             setting_sources=[],
@@ -921,7 +921,7 @@ class ClaudeCodeTransport(httpx2.AsyncBaseTransport):
             body = _MessagesRequest.model_validate_json(await request.aread())
         except ValidationError as e:
             return _error_response(400, 'invalid_request_error', f"Claude Code can't serve this request: {e}")
-        # `ClaudeCodeModel` streams every request, and a request's history ends with the user's turn.
+        # `ClaudeAgentModel` streams every request, and a request's history ends with the user's turn.
         assert body.stream and body.messages[-1].role == 'user'
         if (inherit := request.headers.get(INHERIT_MCP_SERVERS_HEADER)) is not None:
             body.inherit_mcp_servers = _inherit_ta.validate_json(inherit)

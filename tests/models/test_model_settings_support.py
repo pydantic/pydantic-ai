@@ -110,9 +110,9 @@ with try_import() as anthropic_available:
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
-with try_import() as claude_code_available:
-    from pydantic_ai.models.claude_code import ClaudeCodeModel
-    from pydantic_ai.providers.claude_code import ClaudeCodeProvider
+with try_import() as claude_agent_available:
+    from pydantic_ai.models.claude_agent import ClaudeAgentModel
+    from pydantic_ai.providers.claude_agent import ClaudeAgentProvider
 
     from .claude_code_fake import FakeClaudeCode, FakeResponse
 
@@ -450,14 +450,14 @@ def http_probe(build: Callable[[httpx2.AsyncClient], Model]) -> Probe:
     return probe
 
 
-async def claude_code_probe(settings: ModelSettings) -> ProbeResult:
-    """Probe `ClaudeCodeModel` by what reaches Claude Code: the options its session starts with and the frames it's
+async def claude_agent_probe(settings: ModelSettings) -> ProbeResult:
+    """Probe `ClaudeAgentModel` by what reaches Claude Code: the options its session starts with and the frames it's
     sent. Its Messages API request never leaves the process, and the transport keeps only what Claude Code takes, so
     a diff of the HTTP body would credit it with settings it drops."""
     fake = FakeClaudeCode([FakeResponse(error='invalid_request')])
-    provider = ClaudeCodeProvider()
+    provider = ClaudeAgentProvider()
     provider._sessions.transport_factory = fake  # pyright: ignore[reportPrivateUsage]
-    observed = await run_probe_request(ClaudeCodeModel('claude-sonnet-4-5', provider=provider), settings)
+    observed = await run_probe_request(ClaudeAgentModel('claude-sonnet-4-5', provider=provider), settings)
     recorder = Recorder()
     for session in fake.sessions:
         options = session.options
@@ -779,7 +779,7 @@ CASES = [
         _needs(openai_available, 'openai'),
     ),
     Case('OpenAIResponsesModel', ('OpenAI',), http_probe(_openai_responses), _needs(openai_available, 'openai')),
-    Case('ClaudeCodeModel', ('Claude Code',), claude_code_probe, _needs(claude_code_available, 'claude-agent-sdk')),
+    Case('ClaudeAgentModel', ('Claude Agent',), claude_agent_probe, _needs(claude_agent_available, 'claude-agent-sdk')),
     # `temperature`/`top_p` provoke the reasoning-model sampling warning, which the suite's
     # `filterwarnings = error` would otherwise turn into a request that never sends.
     Case(
@@ -1077,12 +1077,12 @@ def _anthropic_vertex(client: httpx2.AsyncClient) -> Model:
     return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=vertex))
 
 
-def _claude_code_with_client(client: httpx2.AsyncClient) -> Model:
-    """`ClaudeCodeModel` retries through its Anthropic client, as Claude Code itself is set not to: count that client's
-    attempts. `test_a_failed_request_is_retried` in `test_claude_code.py` covers the retry reaching a new session."""
-    provider = ClaudeCodeProvider()
+def _claude_agent_with_client(client: httpx2.AsyncClient) -> Model:
+    """`ClaudeAgentModel` retries through its Anthropic client, as Claude Code itself is set not to: count that client's
+    attempts. `test_a_failed_request_is_retried` in `test_claude_agent.py` covers the retry reaching a new session."""
+    provider = ClaudeAgentProvider()
     provider._client = provider.client.with_options(http_client=client)  # pyright: ignore[reportPrivateUsage]
-    return ClaudeCodeModel('claude-sonnet-4-5', provider=provider)
+    return ClaudeAgentModel('claude-sonnet-4-5', provider=provider)
 
 
 def _no_backoff(response: object, retries: int) -> float:
@@ -1138,11 +1138,11 @@ RETRY_CASES = [
     ),
     RetryCase('AnthropicModel', ('Anthropic',), _anthropic, (3, 1, 2), marks=_needs(anthropic_available, 'anthropic')),
     RetryCase(
-        'ClaudeCodeModel',
-        ('Claude Code',),
-        _claude_code_with_client,
+        'ClaudeAgentModel',
+        ('Claude Agent',),
+        _claude_agent_with_client,
         (3, 1, 2),
-        marks=_needs(claude_code_available, 'claude-agent-sdk'),
+        marks=_needs(claude_agent_available, 'claude-agent-sdk'),
     ),
     # Below anthropic 2.6, a copy of `AsyncAnthropicBedrock` builds its own HTTP client unless handed this one, which
     # would send the retries past the mock transport; `AsyncAnthropicVertex` has to keep its region and project.

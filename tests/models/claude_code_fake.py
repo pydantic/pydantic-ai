@@ -20,8 +20,8 @@ from typing import Any, Literal
 
 from claude_agent_sdk import ClaudeAgentOptions, CLIConnectionError, CLINotFoundError, ProcessError, Transport
 
-from pydantic_ai.models.claude_code import ClaudeCodeModel
-from pydantic_ai.providers.claude_code import ClaudeCodeProvider
+from pydantic_ai.models.claude_agent import ClaudeAgentModel
+from pydantic_ai.providers.claude_agent import ClaudeAgentProvider
 
 
 @dataclass
@@ -56,10 +56,10 @@ def thinking(content: str, signature: str) -> dict[str, Any]:
     return {'type': 'thinking', 'thinking': content, 'signature': signature}
 
 
-def restart(model: ClaudeCodeModel) -> None:
+def restart(model: ClaudeAgentModel) -> None:
     """As after a restart, or with a history from storage: the provider knows no session to fork."""
     provider = model._provider  # pyright: ignore[reportPrivateUsage]
-    assert isinstance(provider, ClaudeCodeProvider)
+    assert isinstance(provider, ClaudeAgentProvider)
     provider._sessions.fork_points.clear()  # pyright: ignore[reportPrivateUsage]
 
 
@@ -354,8 +354,11 @@ class FakeSession(Transport):
                 # Claude Code's final usage repeats the input counts, as the Messages API's does.
                 {'type': 'message_delta', 'delta': stop, 'usage': response.usage}
             )
-        for event in events:
+        for index, event in enumerate(events):
             self._send({'type': 'stream_event', 'uuid': 'u', 'session_id': 'fake-session', 'event': event})
+            if index == 0:
+                # Claude Code reports its status between a response's events.
+                self._send({'type': 'system', 'subtype': 'status', 'session_id': self.session_id})
         if cut:
             return
         # Claude Code reports the whole message before its `message_stop` event.

@@ -17,9 +17,9 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.claude_code import ClaudeCodeModel
-    from pydantic_ai.providers import _claude_code_sessions
-    from pydantic_ai.providers.claude_code import ClaudeCodeProvider
+    from pydantic_ai.models.claude_agent import ClaudeAgentModel
+    from pydantic_ai.providers import _claude_agent_sessions
+    from pydantic_ai.providers.claude_agent import ClaudeAgentProvider
 
     from .claude_code_fake import FakeClaudeCode, FakeResponse, FakeSession, text, tool_use
 
@@ -29,11 +29,11 @@ pytestmark = [
 ]
 
 
-def claude_code(*responses: FakeResponse) -> tuple[Agent[None, str], FakeClaudeCode]:
+def claude_agent(*responses: FakeResponse) -> tuple[Agent[None, str], FakeClaudeCode]:
     fake = FakeClaudeCode(list(responses))
-    provider = ClaudeCodeProvider()
+    provider = ClaudeAgentProvider()
     provider._sessions.transport_factory = fake  # pyright: ignore[reportPrivateUsage]
-    model = ClaudeCodeModel('claude-sonnet-5-5', provider=provider, settings={'max_retries': 0})
+    model = ClaudeAgentModel('claude-sonnet-5-5', provider=provider, settings={'max_retries': 0})
     return Agent(model), fake
 
 
@@ -43,9 +43,9 @@ def forked_from(session: FakeSession) -> tuple[str | None, str | None]:
 
 def fork_points(agent: Agent[None, str]) -> list[tuple[str, str]]:
     model = agent.model
-    assert isinstance(model, ClaudeCodeModel)
+    assert isinstance(model, ClaudeAgentModel)
     provider = model._provider  # pyright: ignore[reportPrivateUsage]
-    assert isinstance(provider, ClaudeCodeProvider)
+    assert isinstance(provider, ClaudeAgentProvider)
     points = provider._sessions.fork_points.values()  # pyright: ignore[reportPrivateUsage]
     return [(point.session_id, point.message_uuid) for point in points]
 
@@ -59,7 +59,7 @@ def frame_shape(session: FakeSession) -> list[tuple[str, list[str], bool]]:
 
 async def test_the_next_run_forks_the_last_ones_transcript():
     """Without an outer scope each run gets its own session, which forks the last one's and is sent the new message."""
-    agent, fake = claude_code(
+    agent, fake = claude_agent(
         FakeResponse([text('One.')]), FakeResponse([text('Two.')]), FakeResponse([text('Three.')])
     )
 
@@ -78,7 +78,7 @@ async def test_the_next_run_forks_the_last_ones_transcript():
 
 
 async def test_a_rewind_forks_at_the_answer_it_goes_on_from():
-    agent, fake = claude_code(
+    agent, fake = claude_agent(
         FakeResponse([text('One.')]), FakeResponse([text('Two.')]), FakeResponse([text('Other.')])
     )
 
@@ -92,7 +92,7 @@ async def test_a_rewind_forks_at_the_answer_it_goes_on_from():
 
 async def test_the_fork_point_is_the_runs_answer_not_its_tool_call():
     """A response that calls a tool goes on in the same session, so only the answer after it is a fork point."""
-    agent, fake = claude_code(
+    agent, fake = claude_agent(
         FakeResponse([tool_use('toolu_1', 'get_city', {})], stop_reason='tool_use'),
         FakeResponse([text('Lisbon.')]),
         FakeResponse([text('Portugal.')]),
@@ -117,7 +117,7 @@ def edit_last_answer(messages: list[ModelMessage]) -> list[ModelMessage]:
 
 
 async def test_an_edited_answer_forks_from_the_one_before_it():
-    agent, fake = claude_code(
+    agent, fake = claude_agent(
         FakeResponse([text('One.')]), FakeResponse([text('Two.')]), FakeResponse([text('Three.')])
     )
 
@@ -133,7 +133,7 @@ async def test_an_edited_answer_forks_from_the_one_before_it():
 
 
 async def test_history_no_session_ended_is_replayed():
-    agent, fake = claude_code(FakeResponse([text('One.')]), FakeResponse([text('Two.')]))
+    agent, fake = claude_agent(FakeResponse([text('One.')]), FakeResponse([text('Two.')]))
 
     first = await agent.run('Count.')
     await agent.run('Again.', message_history=edit_last_answer(first.all_messages()))
@@ -146,7 +146,7 @@ async def test_history_no_session_ended_is_replayed():
 
 async def test_a_transcript_claude_code_no_longer_has_is_replayed():
     """As when the transcript was deleted: the fork fails, and the history is replayed into a new session instead."""
-    agent, fake = claude_code(
+    agent, fake = claude_agent(
         FakeResponse([text('One.')]), FakeResponse([text('Two.')]), FakeResponse([text('Three.')])
     )
 
@@ -168,8 +168,8 @@ async def test_a_transcript_claude_code_no_longer_has_is_replayed():
 
 
 async def test_the_oldest_fork_points_make_room(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(_claude_code_sessions, '_MAX_FORK_POINTS', 1)
-    agent, fake = claude_code(FakeResponse([text('One.')]), FakeResponse([text('Two.')]), FakeResponse([text('Two.')]))
+    monkeypatch.setattr(_claude_agent_sessions, '_MAX_FORK_POINTS', 1)
+    agent, fake = claude_agent(FakeResponse([text('One.')]), FakeResponse([text('Two.')]), FakeResponse([text('Two.')]))
 
     first = await agent.run('Count.')
     await agent.run('Again.', message_history=first.all_messages())

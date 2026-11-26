@@ -3939,13 +3939,13 @@ def infer_model(  # noqa: C901
             from .anthropic import AnthropicModel
 
             return AnthropicModel(model_name, provider=provider)
-        case 'claude-code':
-            from ..providers.claude_code import ClaudeCodeProvider
-            from .claude_code import ClaudeCodeModel
+        case 'claude-agent':
+            from ..providers.claude_agent import ClaudeAgentProvider
+            from .claude_agent import ClaudeAgentModel
 
-            if not isinstance(provider, ClaudeCodeProvider):
-                raise UserError('Claude Code models require a `ClaudeCodeProvider`.')
-            return ClaudeCodeModel(model_name, provider=provider)
+            if not isinstance(provider, ClaudeAgentProvider):
+                raise UserError('Claude Code models require a `ClaudeAgentProvider`.')
+            return ClaudeAgentModel(model_name, provider=provider)
         case 'bedrock':
             from .bedrock import BedrockConverseModel
 

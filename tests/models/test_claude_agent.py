@@ -1,7 +1,7 @@
-"""`ClaudeCodeModel` against a scripted Claude Code process.
+"""`ClaudeAgentModel` against a scripted Claude Code process.
 
 Claude Code is a subprocess the Claude Agent SDK talks to over stdin and stdout, so its traffic can't be recorded as a
-cassette. These tests run the real SDK and the real `ClaudeCodeModel` in-process against `FakeClaudeCode`, which plays
+cassette. These tests run the real SDK and the real `ClaudeAgentModel` in-process against `FakeClaudeCode`, which plays
 Claude Code's side of the stream-json protocol (see `claude_code_fake.py`), and assert what each session was started
 with and sent.
 """
@@ -34,10 +34,10 @@ with try_import() as imports_successful:
     from claude_agent_sdk import ProcessError
 
     from pydantic_ai.models.anthropic import AnthropicModelSettings
-    from pydantic_ai.models.claude_code import ClaudeCodeModel
-    from pydantic_ai.providers import _claude_code_sessions
+    from pydantic_ai.models.claude_agent import ClaudeAgentModel
+    from pydantic_ai.providers import _claude_agent_sessions
     from pydantic_ai.providers.anthropic import AnthropicProvider
-    from pydantic_ai.providers.claude_code import ClaudeCodeProvider
+    from pydantic_ai.providers.claude_agent import ClaudeAgentProvider
 
     from .claude_code_fake import FakeClaudeCode, FakeResponse, FakeSession, restart, text, thinking, tool_use
 
@@ -47,12 +47,12 @@ pytestmark = [
 ]
 
 
-def claude_code(*responses: FakeResponse) -> tuple[ClaudeCodeModel, FakeClaudeCode]:
+def claude_agent(*responses: FakeResponse) -> tuple[ClaudeAgentModel, FakeClaudeCode]:
     fake = FakeClaudeCode(list(responses))
-    provider = ClaudeCodeProvider()
+    provider = ClaudeAgentProvider()
     provider._sessions.transport_factory = fake  # pyright: ignore[reportPrivateUsage]
     # Each test scripts every request it expects; `test_a_failed_request_is_retried` covers the default retries.
-    return ClaudeCodeModel('claude-sonnet-5-5', provider=provider, settings={'max_retries': 0}), fake
+    return ClaudeAgentModel('claude-sonnet-5-5', provider=provider, settings={'max_retries': 0}), fake
 
 
 def frame_shape(session: FakeSession) -> list[tuple[str, list[str], bool]]:
@@ -64,9 +64,9 @@ def frame_shape(session: FakeSession) -> list[tuple[str, list[str], bool]]:
 
 
 def test_infer_model():
-    model = infer_model('claude-code:claude-sonnet-5-5')
-    assert isinstance(model, ClaudeCodeModel)
-    assert model.system == 'claude-code'
+    model = infer_model('claude-agent:claude-sonnet-5-5')
+    assert isinstance(model, ClaudeAgentModel)
+    assert model.system == 'claude-agent'
     assert model.provider is not None and model.provider.canonical_system == 'anthropic'
     profile = model.profile
     assert (
@@ -82,7 +82,7 @@ def test_infer_model():
 
 async def test_safe_options_and_our_prompt():
     """Claude Code gets our instructions as its whole system prompt, and none of its own tools, settings or MCP."""
-    model, fake = claude_code(FakeResponse([text('PAX> hi')]))
+    model, fake = claude_agent(FakeResponse([text('PAX> hi')]))
     agent = Agent(model, instructions='You are Pax.')
 
     result = await agent.run('Hello')
@@ -140,7 +140,7 @@ async def test_safe_options_and_our_prompt():
 
 async def test_tool_calls_continue_the_same_session():
     """Claude Code runs our tools one at a time after the response; each waits for the next request's result."""
-    model, fake = claude_code(
+    model, fake = claude_agent(
         FakeResponse(
             [
                 tool_use('toolu_1', 'get_weather', {'city': 'Lisbon'}),
@@ -186,10 +186,10 @@ async def test_tool_calls_continue_the_same_session():
                 ],
                 usage=IsInstance(RequestUsage),
                 model_name='claude-sonnet-5-5',
-                model_id='claude-code:claude-sonnet-5-5',
+                model_id='claude-agent:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
-                provider_name='claude-code',
-                provider_url='https://claude-code.invalid',
+                provider_name='claude-agent',
+                provider_url='https://claude-agent.invalid',
                 canonical_system='anthropic',
                 provider_details={'finish_reason': 'tool_use'},
                 provider_response_id='msg_fake',
@@ -217,10 +217,10 @@ async def test_tool_calls_continue_the_same_session():
                 parts=[TextPart(content='Sunny at 14:05.')],
                 usage=IsInstance(RequestUsage),
                 model_name='claude-sonnet-5-5',
-                model_id='claude-code:claude-sonnet-5-5',
+                model_id='claude-agent:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
-                provider_name='claude-code',
-                provider_url='https://claude-code.invalid',
+                provider_name='claude-agent',
+                provider_url='https://claude-agent.invalid',
                 canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_fake',
@@ -234,7 +234,7 @@ async def test_tool_calls_continue_the_same_session():
 
 async def test_outer_scope_keeps_the_session_across_runs():
     """Inside `async with agent:`, a run that continues the conversation sends only its new user message."""
-    model, fake = claude_code(FakeResponse([text('One.')]), FakeResponse([text('Two.')]))
+    model, fake = claude_agent(FakeResponse([text('One.')]), FakeResponse([text('Two.')]))
     agent = Agent(model)
 
     async with agent:
@@ -249,7 +249,7 @@ async def test_outer_scope_keeps_the_session_across_runs():
 
 async def test_a_new_session_replays_the_history():
     """Without an outer scope each run gets its own session, which is sent the history without querying the model."""
-    model, fake = claude_code(
+    model, fake = claude_agent(
         FakeResponse([tool_use('toolu_1', 'get_weather', {'city': 'Lisbon'})], stop_reason='tool_use'),
         FakeResponse([text('Sunny.')]),
         FakeResponse([text('Still sunny.')]),
@@ -283,7 +283,7 @@ async def test_a_new_session_replays_the_history():
 
 async def test_changed_instructions_start_a_new_session():
     """A session's system prompt is fixed when it starts, so new instructions fork its transcript into a new one."""
-    model, fake = claude_code(FakeResponse([text('One.')]), FakeResponse([text('Two.')]))
+    model, fake = claude_agent(FakeResponse([text('One.')]), FakeResponse([text('Two.')]))
 
     async with model:
         first = await Agent(model, instructions='Be terse.').run('Count.')
@@ -297,7 +297,7 @@ async def test_changed_instructions_start_a_new_session():
 
 
 async def test_image_tool_result_goes_through_mcp():
-    model, fake = claude_code(
+    model, fake = claude_agent(
         FakeResponse([tool_use('toolu_1', 'snapshot', {})], stop_reason='tool_use'),
         FakeResponse([text('A pixel.')]),
     )
@@ -315,7 +315,7 @@ async def test_image_tool_result_goes_through_mcp():
 
 
 async def test_not_signed_in():
-    model, _ = claude_code(FakeResponse(error='authentication_failed', error_text='Not logged in · Please run /login'))
+    model, _ = claude_agent(FakeResponse(error='authentication_failed', error_text='Not logged in · Please run /login'))
 
     with pytest.raises(ModelHTTPError) as exc_info:
         await Agent(model).run('Hello')
@@ -328,7 +328,7 @@ async def test_not_signed_in():
 
 
 async def test_subscription_limit():
-    model, _ = claude_code(
+    model, _ = claude_agent(
         FakeResponse(error='rate_limit', error_text="You've hit your limit", rate_limit_resets_at=4_000_000_000)
     )
 
@@ -339,7 +339,7 @@ async def test_subscription_limit():
 
 
 async def test_count_tokens_is_not_supported():
-    model, _ = claude_code()
+    model, _ = claude_agent()
 
     with pytest.raises(NotImplementedError, match='Claude Code does not count tokens'):
         await model.count_tokens([ModelRequest.user_text_prompt('Hello')], None, ModelRequestParameters())
@@ -347,7 +347,7 @@ async def test_count_tokens_is_not_supported():
 
 async def test_thinking_response_continues_the_session():
     """A response with signed thinking still matches the history that comes back, so the session continues."""
-    model, fake = claude_code(
+    model, fake = claude_agent(
         FakeResponse([thinking('Count up.', 'sig-1'), text('One.')]),
         FakeResponse([text('Two.')]),
     )
@@ -364,7 +364,7 @@ async def test_thinking_response_continues_the_session():
 @pytest.mark.parametrize('edit', ['answer', 'prompt', 'extra turn'])
 async def test_edited_history_replays_into_a_new_session(edit: str):
     """History that isn't what the session saw, followed by one user message, never continues it."""
-    model, fake = claude_code(FakeResponse([text('One.')]), FakeResponse([text('Two.')]))
+    model, fake = claude_agent(FakeResponse([text('One.')]), FakeResponse([text('Two.')]))
     agent = Agent(model)
 
     async with agent:
@@ -392,7 +392,7 @@ async def test_edited_history_replays_into_a_new_session(edit: str):
 async def test_a_run_ended_by_an_output_tool_replays_the_next_run():
     """A run that ends on an output tool call leaves Claude Code waiting for its result, which the next run's
     history sends together with a new prompt; that can't continue the waiting turn, so it's replayed."""
-    model, fake = claude_code(
+    model, fake = claude_agent(
         FakeResponse([tool_use('toolu_1', 'final_result', {'city': 'Lisbon'})], stop_reason='tool_use'),
         FakeResponse([tool_use('toolu_2', 'final_result', {'city': 'Porto'})], stop_reason='tool_use'),
     )
@@ -415,7 +415,7 @@ class City:
 
 async def test_concurrent_requests_of_one_conversation_get_their_own_sessions():
     release = asyncio.Event()
-    model, fake = claude_code(
+    model, fake = claude_agent(
         FakeResponse([text('One.')]), FakeResponse([text('A.')], hold=release), FakeResponse([text('B.')])
     )
     agent = Agent(model)
@@ -436,8 +436,8 @@ async def test_concurrent_requests_of_one_conversation_get_their_own_sessions():
 
 
 async def test_the_least_recently_used_idle_session_makes_room(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(_claude_code_sessions, '_MAX_SESSIONS', 1)
-    model, fake = claude_code(FakeResponse([text('One.')]), FakeResponse([text('Two.')]))
+    monkeypatch.setattr(_claude_agent_sessions, '_MAX_SESSIONS', 1)
+    model, fake = claude_agent(FakeResponse([text('One.')]), FakeResponse([text('Two.')]))
     agent = Agent(model)
 
     async with agent:
@@ -450,9 +450,9 @@ async def test_the_least_recently_used_idle_session_makes_room(monkeypatch: pyte
 
 
 async def test_a_new_conversation_is_not_kept_while_every_session_is_busy(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(_claude_code_sessions, '_MAX_SESSIONS', 1)
+    monkeypatch.setattr(_claude_agent_sessions, '_MAX_SESSIONS', 1)
     release = asyncio.Event()
-    model, fake = claude_code(FakeResponse([text('One.')], hold=release), FakeResponse([text('Two.')]))
+    model, fake = claude_agent(FakeResponse([text('One.')], hold=release), FakeResponse([text('Two.')]))
     agent = Agent(model)
 
     async with agent:
@@ -467,7 +467,7 @@ async def test_a_new_conversation_is_not_kept_while_every_session_is_busy(monkey
 
 
 async def test_a_session_whose_process_exited_is_replaced():
-    model, fake = claude_code(FakeResponse([text('One.')]), FakeResponse(exit=True), FakeResponse([text('Two.')]))
+    model, fake = claude_agent(FakeResponse([text('One.')]), FakeResponse(exit=True), FakeResponse([text('Two.')]))
     agent = Agent(model)
 
     async with agent:
@@ -481,7 +481,7 @@ async def test_a_session_whose_process_exited_is_replaced():
 
 
 async def test_a_process_that_exits_between_turns_is_replaced():
-    model, fake = claude_code(FakeResponse([text('One.')]), FakeResponse([text('Two.')]))
+    model, fake = claude_agent(FakeResponse([text('One.')]), FakeResponse([text('Two.')]))
     agent = Agent(model)
 
     async with agent:
@@ -495,9 +495,9 @@ async def test_a_process_that_exits_between_turns_is_replaced():
 
 async def test_a_process_that_exits_during_replay():
     fake = FakeClaudeCode([FakeResponse([text('One.')])], exit_on_history=True)
-    provider = ClaudeCodeProvider()
+    provider = ClaudeAgentProvider()
     provider._sessions.transport_factory = fake  # pyright: ignore[reportPrivateUsage]
-    model = ClaudeCodeModel('claude-sonnet-5-5', provider=provider)
+    model = ClaudeAgentModel('claude-sonnet-5-5', provider=provider)
     agent = Agent(model)
     first = await agent.run('Count.')
     restart(model)
@@ -509,7 +509,7 @@ async def test_a_process_that_exits_during_replay():
 
 
 async def test_a_response_cut_short():
-    model, fake = claude_code(FakeResponse([text('One.')], cut='error'))
+    model, fake = claude_agent(FakeResponse([text('One.')], cut='error'))
 
     with pytest.raises(ModelAPIError, match='Connection error'):
         await Agent(model).run('Count.')
@@ -518,7 +518,7 @@ async def test_a_response_cut_short():
 
 
 async def test_a_crash_while_waiting_for_the_response():
-    model, fake = claude_code(FakeResponse(crash=RuntimeError('Claude Code crashed')))
+    model, fake = claude_agent(FakeResponse(crash=RuntimeError('Claude Code crashed')))
 
     with pytest.raises(ModelAPIError):
         await Agent(model).run('Count.')
@@ -527,7 +527,7 @@ async def test_a_crash_while_waiting_for_the_response():
 
 
 async def test_a_claude_code_failure_while_waiting_for_the_response():
-    model, fake = claude_code(FakeResponse(crash=ProcessError('Command failed', exit_code=1)))
+    model, fake = claude_agent(FakeResponse(crash=ProcessError('Command failed', exit_code=1)))
 
     with pytest.raises(ModelHTTPError, match='Claude Code failed: Command failed') as exc_info:
         await Agent(model).run('Count.')
@@ -537,7 +537,7 @@ async def test_a_claude_code_failure_while_waiting_for_the_response():
 
 
 async def test_claude_code_that_fails_to_start():
-    model, fake = claude_code()
+    model, fake = claude_agent()
     fake.missing = True
 
     with pytest.raises(ModelHTTPError, match='Claude Code failed: Claude Code not found') as exc_info:
@@ -548,7 +548,7 @@ async def test_claude_code_that_fails_to_start():
 
 
 async def test_a_claude_code_failure_after_the_response_started():
-    model, fake = claude_code(FakeResponse([text('Partial')], cut='crash'))
+    model, fake = claude_agent(FakeResponse([text('Partial')], cut='crash'))
 
     with pytest.raises(ModelAPIError, match='Claude Code failed: Command failed'):
         await Agent(model).run('Count.')
@@ -558,7 +558,7 @@ async def test_a_claude_code_failure_after_the_response_started():
 
 async def test_an_event_newer_than_the_anthropic_types_replays_the_next_request():
     """A stop reason the installed `anthropic` types don't know still reaches the response, but isn't recorded."""
-    model, fake = claude_code(FakeResponse([text('One.')], stop_reason='a_new_reason'), FakeResponse([text('Two.')]))
+    model, fake = claude_agent(FakeResponse([text('One.')], stop_reason='a_new_reason'), FakeResponse([text('Two.')]))
     agent = Agent(model)
 
     async with agent:
@@ -573,7 +573,7 @@ async def test_an_event_newer_than_the_anthropic_types_replays_the_next_request(
 
 
 async def test_a_block_newer_than_the_anthropic_types_replays_the_next_request():
-    model, fake = claude_code(FakeResponse([{'type': 'a_new_block'}, text('One.')]), FakeResponse([text('Two.')]))
+    model, fake = claude_agent(FakeResponse([{'type': 'a_new_block'}, text('One.')]), FakeResponse([text('Two.')]))
     agent = Agent(model)
 
     async with agent:
@@ -586,7 +586,7 @@ async def test_a_block_newer_than_the_anthropic_types_replays_the_next_request()
 
 
 async def test_a_process_that_fails_between_turns_is_replaced():
-    model, fake = claude_code(FakeResponse([text('One.')]), FakeResponse([text('Two.')]))
+    model, fake = claude_agent(FakeResponse([text('One.')]), FakeResponse([text('Two.')]))
     agent = Agent(model)
 
     async with agent:
@@ -600,7 +600,7 @@ async def test_a_process_that_fails_between_turns_is_replaced():
 
 async def test_tool_choice_none_offers_no_tools():
     """Claude Code has no `tool_choice`, so a request that allows no tool call gets a session without tools."""
-    model, fake = claude_code(FakeResponse([text('Sunny.')]), FakeResponse([text('Rainy.')]))
+    model, fake = claude_agent(FakeResponse([text('Sunny.')]), FakeResponse([text('Rainy.')]))
     agent = Agent(model)
 
     @agent.tool_plain
@@ -615,7 +615,7 @@ async def test_tool_choice_none_offers_no_tools():
 
 async def test_thinking_off_on_a_model_whose_api_turns_it_off_between_tools():
     """Claude Code has its own flag to turn thinking off, so Claude Sonnet 5.5 doesn't get `between_tools`."""
-    model, fake = claude_code(FakeResponse([text('391')]))
+    model, fake = claude_agent(FakeResponse([text('391')]))
 
     await Agent(model, model_settings={'thinking': False}).run('17*23?')
 
@@ -623,7 +623,7 @@ async def test_thinking_off_on_a_model_whose_api_turns_it_off_between_tools():
 
 
 async def test_a_thinking_config_claude_code_cant_take():
-    model, fake = claude_code()
+    model, fake = claude_agent()
 
     with pytest.raises(ModelHTTPError, match="Claude Code can't serve this request") as exc_info:
         await Agent(model, model_settings=AnthropicModelSettings(anthropic_thinking={'type': 'between_tools'})).run(
@@ -635,7 +635,7 @@ async def test_a_thinking_config_claude_code_cant_take():
 
 
 async def test_anthropic_settings_claude_code_doesnt_send_are_reported():
-    model, _ = claude_code(FakeResponse([text('Hi.')]))
+    model, _ = claude_agent(FakeResponse([text('Hi.')]))
     settings = AnthropicModelSettings(anthropic_effort='low', anthropic_metadata={'user_id': 'u'})
 
     with pytest.warns(UnsupportedSettingWarning, match='`anthropic_metadata` setting is not supported'):
@@ -643,7 +643,7 @@ async def test_anthropic_settings_claude_code_doesnt_send_are_reported():
 
 
 async def test_the_cache_setting_is_reported():
-    model, _ = claude_code(FakeResponse([text('Hi.')]))
+    model, _ = claude_agent(FakeResponse([text('Hi.')]))
 
     with pytest.warns(UnsupportedSettingWarning, match='`cache` setting is not supported'):
         await Agent(model, model_settings={'cache': True}).run('Hello')
@@ -651,7 +651,7 @@ async def test_the_cache_setting_is_reported():
 
 async def test_a_failed_request_is_retried():
     """Claude Code is set not to retry, so Pydantic AI retries a request that failed, in a new session."""
-    model, fake = claude_code(FakeResponse(error='server_error', error_text='Overloaded'), FakeResponse([text('Hi.')]))
+    model, fake = claude_agent(FakeResponse(error='server_error', error_text='Overloaded'), FakeResponse([text('Hi.')]))
 
     result = await Agent(model).run('Hello', model_settings={'max_retries': 1})
 
@@ -661,7 +661,7 @@ async def test_a_failed_request_is_retried():
 
 async def test_a_plan_limit_is_not_retried():
     """A plan's usage limit resets hours later, so it fails at once, whatever `max_retries` allows."""
-    model, fake = claude_code(
+    model, fake = claude_agent(
         FakeResponse(error='rate_limit', error_text="You've hit your limit", rate_limit_resets_at=4_000_000_000)
     )
 
@@ -673,7 +673,7 @@ async def test_a_plan_limit_is_not_retried():
 
 
 async def test_an_error_claude_code_has_no_status_for():
-    model, _ = claude_code(FakeResponse(error='a_new_kind', error_text='Something new went wrong'))
+    model, _ = claude_agent(FakeResponse(error='a_new_kind', error_text='Something new went wrong'))
 
     with pytest.raises(ModelHTTPError, match='Something new went wrong') as exc_info:
         await Agent(model).run('Hello')
@@ -683,7 +683,7 @@ async def test_an_error_claude_code_has_no_status_for():
 
 async def test_the_api_requests_own_status_wins():
     """Claude Code reports the failed API request's status, which is more precise than its error kind's."""
-    model, _ = claude_code(FakeResponse(error='server_error', error_text='Overloaded', api_error_status=529))
+    model, _ = claude_agent(FakeResponse(error='server_error', error_text='Overloaded', api_error_status=529))
 
     with pytest.raises(ModelHTTPError, match='Overloaded') as exc_info:
         await Agent(model).run('Hello')
@@ -692,7 +692,7 @@ async def test_the_api_requests_own_status_wins():
 
 
 async def test_a_session_that_fails_to_continue_is_closed(monkeypatch: pytest.MonkeyPatch):
-    model, fake = claude_code(FakeResponse([text('One.')]), FakeResponse([text('Two.')]))
+    model, fake = claude_agent(FakeResponse([text('One.')]), FakeResponse([text('Two.')]))
     agent = Agent(model)
 
     async def fail(self: object, message: object) -> bool:
@@ -701,7 +701,7 @@ async def test_a_session_that_fails_to_continue_is_closed(monkeypatch: pytest.Mo
     async with agent:
         first = await agent.run('Count.')
         with monkeypatch.context() as patch:
-            patch.setattr(_claude_code_sessions._Session, 'send', fail)  # pyright: ignore[reportPrivateUsage]
+            patch.setattr(_claude_agent_sessions._Session, 'send', fail)  # pyright: ignore[reportPrivateUsage]
             with pytest.raises(ModelAPIError):
                 await agent.run('Again.', message_history=first.all_messages())
         assert fake.sessions[0].closed
@@ -712,7 +712,7 @@ async def test_a_session_that_fails_to_continue_is_closed(monkeypatch: pytest.Mo
 
 
 async def test_a_process_that_exits_mid_response():
-    model, fake = claude_code(
+    model, fake = claude_agent(
         FakeResponse([tool_use('toolu_1', 'get_weather', {'city': 'Lisbon'})], stop_reason='tool_use'),
         FakeResponse(exit=True),
     )
@@ -729,7 +729,7 @@ async def test_a_process_that_exits_mid_response():
 
 
 async def test_an_abandoned_stream_closes_its_session():
-    model, fake = claude_code(FakeResponse([text('One.')]))
+    model, fake = claude_agent(FakeResponse([text('One.')]))
 
     async with model.request_stream([ModelRequest.user_text_prompt('Count.')], None, ModelRequestParameters()):
         pass
@@ -739,7 +739,7 @@ async def test_an_abandoned_stream_closes_its_session():
 
 async def test_a_direct_request_uses_a_session_of_its_own():
     """Without an agent run or an entered model there's no lease, so the session closes with the response."""
-    model, fake = claude_code(FakeResponse([text('Hi.')]))
+    model, fake = claude_agent(FakeResponse([text('Hi.')]))
 
     response = await model_request(model, [ModelRequest.user_text_prompt('Hello')])
 
@@ -748,7 +748,7 @@ async def test_a_direct_request_uses_a_session_of_its_own():
 
 
 async def test_other_endpoints_are_not_served():
-    client = ClaudeCodeProvider().client
+    client = ClaudeAgentProvider().client
     assert isinstance(client, anthropic.AsyncAnthropic)
 
     with pytest.raises(anthropic.NotFoundError):
@@ -757,18 +757,18 @@ async def test_other_endpoints_are_not_served():
         )
 
 
-def test_infer_model_needs_a_claude_code_provider():
-    with pytest.raises(UserError, match='Claude Code models require a `ClaudeCodeProvider`'):
-        infer_model('claude-code:claude-sonnet-5-5', provider_factory=lambda _: AnthropicProvider(api_key='key'))
+def test_infer_model_needs_a_claude_agent_provider():
+    with pytest.raises(UserError, match='Claude Code models require a `ClaudeAgentProvider`'):
+        infer_model('claude-agent:claude-sonnet-5-5', provider_factory=lambda _: AnthropicProvider(api_key='key'))
 
 
 def test_default_provider():
-    model = ClaudeCodeModel('sonnet')
-    assert isinstance(model.provider, ClaudeCodeProvider)
+    model = ClaudeAgentModel('sonnet')
+    assert isinstance(model.provider, ClaudeAgentProvider)
 
 
 async def test_a_process_that_exits_after_the_response_started():
-    model, fake = claude_code(FakeResponse([text('One.')], cut='exit'))
+    model, fake = claude_agent(FakeResponse([text('One.')], cut='exit'))
 
     with pytest.raises(ModelAPIError):
         await Agent(model).run('Count.')
@@ -778,7 +778,7 @@ async def test_a_process_that_exits_after_the_response_started():
 
 async def test_a_retry_prompt_continues_the_session():
     """A tool's retry prompt reaches Claude Code as the call's error result, in the same session."""
-    model, fake = claude_code(
+    model, fake = claude_agent(
         FakeResponse(
             [text('Let me check.'), tool_use('toolu_1', 'get_weather', {'city': 'Atlantis'})], stop_reason='tool_use'
         ),
@@ -804,7 +804,7 @@ async def test_a_retry_prompt_continues_the_session():
 
 async def test_an_image_url_tool_result_replays_into_a_new_session():
     """MCP can't carry an image by URL, so its result is sent as part of the history of a new session."""
-    model, fake = claude_code(
+    model, fake = claude_agent(
         FakeResponse([tool_use('toolu_1', 'snapshot', {})], stop_reason='tool_use'),
         FakeResponse([text('A kiwi.')]),
     )
@@ -824,7 +824,7 @@ async def test_an_image_url_tool_result_replays_into_a_new_session():
 
 
 async def test_an_empty_tool_result_continues_the_session():
-    model, fake = claude_code(
+    model, fake = claude_agent(
         FakeResponse([tool_use('toolu_1', 'list_alerts', {})], stop_reason='tool_use'),
         FakeResponse([text('No alerts.')]),
     )

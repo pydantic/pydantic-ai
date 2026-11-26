@@ -1,6 +1,6 @@
-"""`claude_code_inherit_mcp_servers`: Claude Code brings the user's own MCP servers and runs their tools itself.
+"""`claude_agent_inherit_mcp_servers`: Claude Code brings the user's own MCP servers and runs their tools itself.
 
-Like `test_claude_code.py`, these run the real Claude Agent SDK against `claude_code_fake.py`, as Claude Code's traffic
+Like `test_claude_agent.py`, these run the real Claude Agent SDK against `claude_code_fake.py`, as Claude Code's traffic
 is a subprocess's, not HTTP that a cassette could record.
 """
 
@@ -18,9 +18,9 @@ from pydantic_ai.messages import ModelResponse, NativeToolReturnPart
 from ..conftest import IsDatetime, try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.claude_code import ClaudeCodeModel, ClaudeCodeModelSettings
-    from pydantic_ai.providers import _claude_code_sessions
-    from pydantic_ai.providers.claude_code import ClaudeCodeProvider
+    from pydantic_ai.models.claude_agent import ClaudeAgentModel, ClaudeAgentModelSettings
+    from pydantic_ai.providers import _claude_agent_sessions
+    from pydantic_ai.providers.claude_agent import ClaudeAgentProvider
 
     from .claude_code_fake import (
         NOTHING,
@@ -39,21 +39,21 @@ pytestmark = [
 ]
 
 SERVERS = ['claude.ai Docs', 'claude.ai Gmail']
-ALL = ClaudeCodeModelSettings(claude_code_inherit_mcp_servers=True)
-DOCS = ClaudeCodeModelSettings(claude_code_inherit_mcp_servers=['claude.ai Docs'])
+ALL = ClaudeAgentModelSettings(claude_agent_inherit_mcp_servers=True)
+DOCS = ClaudeAgentModelSettings(claude_agent_inherit_mcp_servers=['claude.ai Docs'])
 
 
 @pytest.fixture(autouse=True)
 def no_status_wait(monkeypatch: pytest.MonkeyPatch) -> None:
     """Claude Code's servers load in a few seconds; the fake's load in a given number of status requests."""
-    monkeypatch.setattr(_claude_code_sessions, '_MCP_STATUS_POLL', 0)
+    monkeypatch.setattr(_claude_agent_sessions, '_MCP_STATUS_POLL', 0)
 
 
-def claude_code(*responses: FakeResponse, **script: Any) -> tuple[ClaudeCodeModel, FakeClaudeCode]:
+def claude_agent(*responses: FakeResponse, **script: Any) -> tuple[ClaudeAgentModel, FakeClaudeCode]:
     fake = FakeClaudeCode(list(responses), mcp_servers=SERVERS, **script)
-    provider = ClaudeCodeProvider()
+    provider = ClaudeAgentProvider()
     provider._sessions.transport_factory = fake  # pyright: ignore[reportPrivateUsage]
-    return ClaudeCodeModel('claude-sonnet-5-5', provider=provider, settings={'max_retries': 0}), fake
+    return ClaudeAgentModel('claude-sonnet-5-5', provider=provider, settings={'max_retries': 0}), fake
 
 
 def frame_shape(session: FakeSession) -> list[tuple[str, list[str], bool]]:
@@ -73,7 +73,7 @@ def guide_call() -> FakeResponse:
 
 async def test_claude_codes_own_tool_calls_come_back_as_native_tool_parts():
     """Claude Code runs the call in the same turn, and the response holds the call, its result and the answer."""
-    model, fake = claude_code(
+    model, fake = claude_agent(
         guide_call(), FakeResponse([text('It covers docs.')], usage={'input_tokens': 20, 'output_tokens': 7})
     )
     fake.external_results['guide'] = 'Docs are living documents.'
@@ -88,7 +88,7 @@ async def test_claude_codes_own_tool_calls_come_back_as_native_tool_parts():
                 tool_name='mcp_server:claude.ai Docs',
                 args='{"action":"call_tool","tool_name":"guide","tool_args":{"items": ["index"]}}',
                 tool_call_id='toolu_1',
-                provider_name='claude-code',
+                provider_name='claude-agent',
             ),
             NativeToolReturnPart(
                 tool_name='mcp_server:claude.ai Docs',
@@ -98,7 +98,7 @@ async def test_claude_codes_own_tool_calls_come_back_as_native_tool_parts():
                 },
                 tool_call_id='toolu_1',
                 timestamp=IsDatetime(),
-                provider_name='claude-code',
+                provider_name='claude-agent',
             ),
             TextPart(content='It covers docs.'),
         ]
@@ -110,7 +110,7 @@ async def test_claude_codes_own_tool_calls_come_back_as_native_tool_parts():
 
 async def test_named_servers_alone_are_offered():
     """The other servers' tools are disallowed, and a call to one anyway is denied."""
-    model, fake = claude_code(
+    model, fake = claude_agent(
         FakeResponse([external_tool_use('toolu_1', 'claude_ai_Gmail', 'search', {})], stop_reason='tool_use'),
         FakeResponse([text('I have no access to your mail.')]),
     )
@@ -128,7 +128,7 @@ async def test_named_servers_alone_are_offered():
 
 
 async def test_a_result_with_no_content():
-    model, fake = claude_code(guide_call(), FakeResponse([text('Nothing there.')]))
+    model, fake = claude_agent(guide_call(), FakeResponse([text('Nothing there.')]))
     fake.external_results['guide'] = NOTHING
 
     result = await Agent(model).run('Guide?', model_settings=ALL)
@@ -140,10 +140,12 @@ async def test_a_result_with_no_content():
 
 
 async def test_a_server_claude_code_doesnt_have():
-    model, fake = claude_code()
+    model, fake = claude_agent()
 
     with pytest.raises(ModelHTTPError, match='no MCP server named') as exc_info:
-        await Agent(model).run('Hi', model_settings=ClaudeCodeModelSettings(claude_code_inherit_mcp_servers=['Notion']))
+        await Agent(model).run(
+            'Hi', model_settings=ClaudeAgentModelSettings(claude_agent_inherit_mcp_servers=['Notion'])
+        )
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.body == snapshot(
@@ -159,7 +161,7 @@ async def test_a_server_claude_code_doesnt_have():
 
 
 async def test_the_servers_are_found_once_after_they_load():
-    model, fake = claude_code(FakeResponse([text('One.')]), FakeResponse([text('Two.')]), pending_polls=2)
+    model, fake = claude_agent(FakeResponse([text('One.')]), FakeResponse([text('Two.')]), pending_polls=2)
     agent = Agent(model, model_settings=DOCS)
 
     await agent.run('First.')
@@ -172,8 +174,8 @@ async def test_the_servers_are_found_once_after_they_load():
 
 
 async def test_servers_that_never_finish_loading(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(_claude_code_sessions, '_MCP_STATUS_WAIT', 0.05)
-    model, fake = claude_code(FakeResponse([text('One.')]), pending_polls=10**9)
+    monkeypatch.setattr(_claude_agent_sessions, '_MCP_STATUS_WAIT', 0.05)
+    model, fake = claude_agent(FakeResponse([text('One.')]), pending_polls=10**9)
 
     result = await Agent(model, model_settings=ALL).run('Hi')
 
@@ -184,7 +186,7 @@ async def test_servers_that_never_finish_loading(monkeypatch: pytest.MonkeyPatch
 
 async def test_native_tool_parts_continue_and_replay():
     """The next request continues the session; once it's gone, the history is replayed as Claude Code's own blocks."""
-    model, fake = claude_code(
+    model, fake = claude_agent(
         guide_call(),
         FakeResponse([text('It covers docs.')]),
         FakeResponse([text('Index.')]),
@@ -217,7 +219,7 @@ async def test_native_tool_parts_continue_and_replay():
 
 async def test_a_call_beside_one_of_ours():
     """When the model also calls an agent tool, the response ends there, and Claude Code's result comes in the next."""
-    model, fake = claude_code(
+    model, fake = claude_agent(
         FakeResponse(
             [
                 external_tool_use('toolu_1', 'claude_ai_Docs', 'guide', {}),
