@@ -164,6 +164,7 @@ function Choose({
             autoFocus
             value={query}
             placeholder="Filter"
+            aria-label="Filter"
             onChange={(event) => {
               setQuery(event.target.value)
               setCursor(0)
