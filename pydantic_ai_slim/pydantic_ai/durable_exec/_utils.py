@@ -14,7 +14,7 @@ integrations.
 import sys
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal, TypeAlias, TypeVar
 
 from pydantic_ai._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
@@ -301,11 +301,12 @@ class DurableModel(WrapperModel):
             # inside the unit; the unit's model already warned about the settings it ignores. A completed stream from
             # a model that answers through others, like a `FallbackModel`, comes with the mode the answering model
             # resolved `'auto'` to, as preparing the request again here wouldn't resolve it.
-            parameters = (
-                model_request_parameters
-                if output_mode is None
-                else model_request_parameters.with_default_output_mode(output_mode)
-            )
+            parameters = model_request_parameters
+            if output_mode is not None:
+                parameters = parameters.with_default_output_mode(output_mode)
+                if output_mode != 'tool':
+                    # As the answering model sent them: Native and Prompted Output don't offer the output tools.
+                    parameters = replace(parameters, output_tools=[])
             with suppress_unsupported_setting_warnings():
                 return self.wrapped.prepare_request(model_settings, parameters)[1]
 

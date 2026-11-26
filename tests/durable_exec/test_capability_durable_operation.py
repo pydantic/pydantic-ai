@@ -846,6 +846,45 @@ async def test_durable_stream_replay_classifies_parts_as_the_fallback_candidate_
     assert durable == await plain_run_and_stream()
 
 
+async def _prompted_output(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+    yield '{"response": "Paris"}'
+
+
+async def test_durable_stream_replay_prepares_a_fallback_candidates_prompted_output() -> None:
+    """Behind a `FallbackModel` whose candidate resolves `'auto'` to Prompted Output, the replay takes its text as output.
+
+    The replay prepares its parameters with the candidate's mode, without the output tools Prompted Output doesn't
+    offer, and finds the same final result as a plain run.
+    """
+
+    async def output_and_final_result_tool_names(
+        capabilities: list[AbstractCapability[object]],
+    ) -> tuple[StructuredOutput, list[str | None]]:
+        tool_names: list[str | None] = []
+
+        async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                if isinstance(event, FinalResultEvent):
+                    tool_names.append(event.tool_name)
+
+        agent = Agent(
+            FallbackModel(
+                FunctionModel(
+                    stream_function=_prompted_output, profile=ModelProfile(default_structured_output_mode='prompted')
+                )
+            ),
+            name='durability_fallback_prompted_output',
+            output_type=StructuredOutput,
+            capabilities=capabilities,
+        )
+        result = await agent.run('hello', event_stream_handler=handler)
+        return result.output, tool_names
+
+    durable = await output_and_final_result_tool_names([RecordingDurability()])
+    assert durable == await output_and_final_result_tool_names([])
+    assert durable == snapshot((StructuredOutput(response='Paris'), [None]))
+
+
 async def test_durable_stream_unit_returns_the_output_mode_only_for_a_model_answering_through_others() -> None:
     """A streamed request's unit returns the output mode `'auto'` resolved to only when its model answers through others.
 

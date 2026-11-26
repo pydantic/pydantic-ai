@@ -5641,6 +5641,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._model_request_stream_operation"
       ]
     },
+    "ModelRequestParameters.output_tools": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request_stream.replay_request_parameters"
+      ]
+    },
     "ModelRequestParameters.with_default_output_mode": {
       "engines": [
         "durable_exec"
