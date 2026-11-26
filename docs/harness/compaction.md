@@ -514,6 +514,18 @@ agent = Agent(
 
 Some endpoints reject non-streaming requests and others reject streaming ones, so this is a choice, not a default. The handler receives the summary run's own `RunContext` and event stream; the outer `Agent.run(...)` handler is not inherited and never sees the summary's token deltas.
 
+### A history larger than the summarizer's window
+
+A summarizer with a smaller context window than the run's model, such as a cheap model summarizing for a large one, can be handed more history than it accepts. When the summary request wouldn't fit the summarizer model's window with room left for the summary, the history is summarized in chunks instead of in one request. Chunks end on message boundaries, each tool call kept with its returns. The oldest chunk is summarized first, and each next request updates the summary so far the way an [incremental](#anchored-incremental-summarization-and-the-cross-model-bridge) compaction updates an earlier summary, until the rest fits in one request. No message is left out, and a history that fits is still summarized in one request, as before.
+
+- The window is the summarizer model's own `context_window`: its profile's (set `profile={'context_window': ...}` on the model to correct it), else the pricing registry's. When neither knows it, the request goes out whole.
+- The room left for the summary is the summarizer's `max_tokens` model setting, from `model_settings` or the model's own settings, else a quarter of the window, at most 8,192 tokens.
+- Requests are measured with the `tokenizer`, or the [text estimate](#triggers) without one, as the triggers are.
+- A single message, or a tool call with its returns, too large for a request on its own has its tool output and harness data cut further, with the truncation marker, until it fits. It is never dropped.
+- When the request's fixed part (the prompt template, `instructions` and the summary so far) doesn't fit on its own, the request goes out whole, for the provider to accept or reject.
+
+Each chunk is a summary request of the run, counted in its [usage](#usage-accounting), and the `compact_messages` [span](#tracing) records how many there were as `compaction.summary_calls`. A `RelevanceCompaction` summarizer fits its request the same way.
+
 ### A summary that isn't smaller
 
 System prompts, the first user turn, the recent tail, pinned parts and receipts are kept, so with a short summarized span or a long summary, the result can be larger than the original. On its own trigger, `SummarizingCompaction` keeps the result only if it is estimated smaller, using the `tokenizer` of the capability whose trigger fired (`FallbackCompaction`'s inside a chain) or the [text estimate](#triggers). Otherwise the request goes out unchanged, any receipt the attempt wrote is dropped, and a `compact_messages` span with `compaction.skipped` set to `not_smaller` records the attempt and its estimated size. The summary call's usage still counts, and while the trigger stays exceeded, each next request in the run makes another summary call. Inside `FallbackCompaction` the next strategy runs instead, so a `SlidingWindowCompaction` after the summarizer bounds both the history and that cost. A direct `compact()`, `compact_now()`, or a `TieredCompaction` tier returns the summary either way.
@@ -625,6 +637,7 @@ The span name is always `compact_messages`, with the strategy as an attribute, t
 | `compaction.background` | str | Only with `background_start`: `used`, `stale`, or `failed`, what became of the background result |
 | `compaction.skipped` | str | `tier_failed` when a `TieredCompaction` tier raised and was skipped, or `not_smaller` when an automatic summary was discarded for not being smaller; with `not_smaller`, the `*_after` attributes describe the discarded result. Absent otherwise |
 | `error.type` | str | With `compaction.skipped='tier_failed'`: the exception's fully qualified class name |
+| `compaction.summary_calls` | int | When the summarized history was [split into chunks](#a-history-larger-than-the-summarizers-window) to fit the summarizer's window: the number of summary requests. Absent when one request was enough |
 | `compaction.target_unreached` | bool | `TieredCompaction` only: `true` when every tier ran and the history is still estimated above the target. Absent otherwise |
 | `compaction.target_tokens` | int | With `compaction.target_unreached`: the resolved target |
 | `compaction.estimate` | int | With `compaction.target_unreached`: the estimate the stop decision used, anchored on provider-reported usage when there is any |

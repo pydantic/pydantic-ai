@@ -6,11 +6,12 @@ import copy
 import html
 import re
 import warnings
+from bisect import bisect_left
 from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import UTC, datetime
 from string import Formatter
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, TypeGuard, cast
 
 # `EventStreamHandler` holds the forward reference `'AsyncIterable[_messages.AgentStreamEvent]'`, which the
 # `AgentSpec` schema resolves against this module's globals.
@@ -39,7 +40,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import TextOutput
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._message_text import capability_part_text, tool_return_text, user_prompt_text, with_text
 from pydantic_ai_harness._provenance import harness_origin
@@ -50,7 +51,7 @@ from pydantic_ai_harness.compaction._capability_loads import (
     is_load_part,
     keep_loaded_state,
 )
-from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
+from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW, resolve_context_window
 from pydantic_ai_harness.compaction._pinning import is_pinned, reinject_pinned
 from pydantic_ai_harness.compaction._receipts import (
     ReceiptInfo,
@@ -65,6 +66,7 @@ from pydantic_ai_harness.compaction._shared import (
     compact_if_smaller,
     compact_with_span,
     context_for_request,
+    estimate_text_tokens,
     estimate_token_count,
     exceeds,
     find_safe_cutoff,
@@ -73,9 +75,11 @@ from pydantic_ai_harness.compaction._shared import (
     is_harness_data,
     is_realtime_model,
     record_compaction_reclaim,
+    record_span_attributes,
     require_trigger,
     resolve_token_trigger,
     split_legacy_memory,
+    tool_pair_boundaries,
     validate_token_trigger,
 )
 from pydantic_ai_harness.compaction._summary import (
@@ -1132,25 +1136,12 @@ async def write_summary(
 
     `SummarizingCompaction._summarize` wraps this in its durable operation; another strategy that
     reuses a summarizer's settings calls it inside an operation of its own.
+
+    When the request doesn't fit the summarizer model's context window, *messages* are summarized in chunks,
+    oldest first, each next request updating the summary so far (see `_SummaryRequests`). The number of
+    requests is then recorded on the `compact_messages` span as `compaction.summary_calls`.
     """
     from pydantic_ai import Agent
-
-    formatted = format_transcript(
-        messages,
-        skip_previous_summary=previous_summary is not None,
-        tool_return_max_chars=summarizer.tool_return_max_chars,
-    )
-    prompt = summarizer.summary_prompt.format(messages=formatted)
-    if any(
-        _is_transcript_data(part) for message in messages if isinstance(message, ModelRequest) for part in message.parts
-    ):
-        prompt = f'{prompt}\n\n{_HARNESS_DATA_INSTRUCTION}'
-
-    if previous_summary is not None:
-        prompt = (
-            f'{prompt}\n\n{_INCREMENTAL_UPDATE_INSTRUCTION}\n\n'
-            f'<previous-summary>\n{_neutralize_transcript_tags(previous_summary)}\n</previous-summary>'
-        )
 
     model = summarizer.model if summarizer.model is not None else ctx.model
     # `ctx.model` is an `AbstractModel`; summarization needs a request-response model. A
@@ -1183,12 +1174,128 @@ async def write_summary(
         capabilities=list(summarizer.summarization_capabilities),
         retries=summarizer.retries,
     )
-    with second_model_prompt():
-        result = await agent.run(
-            prompt,
-            conversation_id=ctx.conversation_id,
-            usage=ctx.usage,
-            usage_limits=reserved_usage_limits(ctx.usage_limits),
-            event_stream_handler=summarizer.event_stream_handler,
+    requests = _SummaryRequests(
+        summarizer, _summary_input_budget(summarizer, model), skip_previous_summary=previous_summary is not None
+    )
+    summary = previous_summary
+    remaining = messages
+    calls = 0
+    while True:
+        prompt, summarized = requests.next(remaining, summary)
+        with second_model_prompt():
+            result = await agent.run(
+                prompt,
+                conversation_id=ctx.conversation_id,
+                usage=ctx.usage,
+                usage_limits=reserved_usage_limits(ctx.usage_limits),
+                event_stream_handler=summarizer.event_stream_handler,
+            )
+        summary = result.output
+        calls += 1
+        remaining = remaining[summarized:]
+        if not remaining:
+            break
+    if calls > 1:
+        record_span_attributes({'compaction.summary_calls': calls})
+    return summary
+
+
+_DEFAULT_SUMMARY_RESERVE_TOKENS = 8_192
+"""The most tokens a summary request leaves for the summary when the summarizer's `max_tokens` setting isn't set.
+
+Without that setting, a quarter of the summarizer's context window is left for it, up to this many tokens.
+"""
+
+
+def _summary_input_budget(
+    summarizer: SummarizingCompaction[AgentDepsT], model: Model | AbstractModel | str
+) -> int | None:
+    """The tokens a summary request's prompt can take in the summarizer's context window, or `None` when it isn't known.
+
+    The window is the summarizer model's own (its profile's, else the pricing registry's). What's left for the
+    summary is the summarizer's `max_tokens` setting, else `_DEFAULT_SUMMARY_RESERVE_TOKENS` or a quarter of the
+    window, whichever is smaller. The instructions are sent with every request, so they're taken off too.
+    """
+    window = resolve_context_window(model)
+    if window is None:
+        return None
+    settings = merge_model_settings(model.settings if isinstance(model, Model) else None, summarizer.model_settings)
+    reserve = (settings or {}).get('max_tokens') or min(_DEFAULT_SUMMARY_RESERVE_TOKENS, window // 4)
+    return window - reserve - estimate_text_tokens(summarizer.instructions, summarizer.tokenizer)
+
+
+@dataclass
+class _SummaryRequests(Generic[AgentDepsT]):
+    """Splits a summary into requests that each fit the summarizer's context window.
+
+    The oldest messages that fit go first, and each next request updates the summary so far through the
+    incremental `<previous-summary>` path, until the rest fits in one request. Chunks end on message
+    boundaries that keep each tool call with its replies, so no message goes unsummarized.
+    """
+
+    summarizer: SummarizingCompaction[AgentDepsT]
+    budget: int | None
+    """The tokens a request's prompt can take; `None` sends everything in one request."""
+    skip_previous_summary: bool
+    """Whether the transcript leaves out earlier summaries, as the caller's anchor already carries the newest one."""
+
+    def next(self, remaining: list[ModelMessage], summary: str | None) -> tuple[str, int]:
+        """The prompt of the next request, updating *summary*, and how many of *remaining* it summarizes.
+
+        Everything goes in one request when it fits, when the window isn't known, or when the request's fixed
+        part (prompt template, instructions and *summary*) alone doesn't fit, for the provider to decide.
+        """
+        whole = self._prompt(remaining, summary, self.summarizer.tool_return_max_chars)
+        if self.budget is None or self._fits(whole) or not self._fits(self._prompt([], summary, None)):
+            return whole, len(remaining)
+        boundaries = tool_pair_boundaries(remaining)
+        # A longer prefix never renders shorter, so the prefixes that fit come first.
+        fitting = bisect_left(
+            boundaries,
+            True,
+            key=lambda end: (
+                not self._fits(self._prompt(remaining[:end], summary, self.summarizer.tool_return_max_chars))
+            ),
         )
-    return result.output
+        if fitting:
+            end = boundaries[fitting - 1]
+            return self._prompt(remaining[:end], summary, self.summarizer.tool_return_max_chars), end
+        return self._truncated(remaining[: boundaries[0]], summary), boundaries[0]
+
+    def _truncated(self, messages: list[ModelMessage], summary: str | None) -> str:
+        """The prompt for *messages*, too large for one request, with its tool output cut until it fits.
+
+        Only tool output and harness data are cut, so a request whose other content alone doesn't fit is sent
+        with them at one character, for the provider to decide.
+        """
+        longest = self.summarizer.tool_return_max_chars or len(self._prompt(messages, summary, None))
+        fitting = bisect_left(
+            range(1, longest + 1),
+            True,
+            key=lambda max_chars: not self._fits(self._prompt(messages, summary, max_chars)),
+        )
+        return self._prompt(messages, summary, max(fitting, 1))
+
+    def _fits(self, prompt: str) -> bool:
+        assert self.budget is not None
+        return estimate_text_tokens(prompt, self.summarizer.tokenizer) <= self.budget
+
+    def _prompt(self, messages: list[ModelMessage], summary: str | None, tool_return_max_chars: int | None) -> str:
+        """The summary request's prompt for *messages*, updating *summary* when there is one."""
+        formatted = format_transcript(
+            messages, skip_previous_summary=self.skip_previous_summary, tool_return_max_chars=tool_return_max_chars
+        )
+        prompt = self.summarizer.summary_prompt.format(messages=formatted)
+        if any(
+            _is_transcript_data(part)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        ):
+            prompt = f'{prompt}\n\n{_HARNESS_DATA_INSTRUCTION}'
+        if summary is not None:
+            prompt = (
+                f'{prompt}\n\n{_INCREMENTAL_UPDATE_INSTRUCTION}\n\n'
+                f'<previous-summary>\n{_neutralize_transcript_tags(summary)}\n</previous-summary>'
+            )
+        return prompt

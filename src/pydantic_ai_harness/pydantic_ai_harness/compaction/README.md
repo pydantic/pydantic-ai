@@ -849,6 +849,27 @@ See the [token-retention
 guide](https://pydantic.dev/docs/ai/harness/compaction/#token-retention-after-automatic-compaction)
 for the automatic-compaction example, tokenizer accounting, and fallback/budget guidance.
 
+## A history larger than the summarizer's window
+
+When the summary request wouldn't fit the summarizer model's context window with room left for the
+summary, the history is summarized in chunks, oldest first. Chunks end on message boundaries, each
+tool call kept with its returns, and each next request updates the summary so far as an incremental
+compaction does, until the rest fits in one request. No message is left out; a history that fits is
+still one request.
+
+- The window is the summarizer model's own `context_window` (its profile's, else the pricing
+  registry's). When neither knows it, the request goes out whole.
+- The room left for the summary is the summarizer's `max_tokens` model setting, else a quarter of
+  the window, at most 8,192 tokens.
+- Requests are measured with the `tokenizer`, or the text estimate, as the triggers are.
+- A message (or a tool call with its returns) too large for a request alone has its tool output and
+  harness data cut further, with the truncation marker, until it fits. It is never dropped.
+- When the prompt template, `instructions` and summary so far don't fit on their own, the request
+  goes out whole, for the provider to decide.
+
+Each chunk is a summary request of the run, and the `compact_messages` span records how many there
+were as `compaction.summary_calls`. A `RelevanceCompaction` summarizer fits its request the same way.
+
 ## A summary that isn't smaller
 
 System prompts, the first user turn, the recent tail, pinned parts and receipts are kept, so with a
@@ -927,6 +948,7 @@ cardinality low:
 | `compaction.background` | str | Only with `background_start`: `used`, `stale`, or `failed`, what became of the background result |
 | `compaction.skipped` | str | `tier_failed` when a `TieredCompaction` tier raised and was skipped, or `not_smaller` when an automatic summary was discarded for not being smaller; with `not_smaller`, the `*_after` attributes describe the discarded result. Absent otherwise |
 | `error.type` | str | With `compaction.skipped='tier_failed'`: the exception's fully qualified class name |
+| `compaction.summary_calls` | int | When the summarized history was split into chunks to fit the summarizer's window: the number of summary requests. Absent when one request was enough |
 | `compaction.target_unreached` | bool | `TieredCompaction` only: `true` when every tier ran and the history is still estimated above the target. Absent otherwise |
 | `compaction.target_tokens` | int | With `compaction.target_unreached`: the resolved target |
 | `compaction.estimate` | int | With `compaction.target_unreached`: the estimate the stop decision used, anchored on provider-reported usage when there is any |
