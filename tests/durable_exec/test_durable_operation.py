@@ -274,11 +274,17 @@ async def test_cancelled_model_stream_unit_fails_unless_the_engine_returns_its_o
             pass
 
     agent = Agent(
-        FunctionModel(stream_function=stream_then_block), name='cancelled_stream', capabilities=[JournalDurability()]
+        FunctionModel(stream_function=stream_then_block),
+        name='cancelled_stream',
+        # The durability's handler has the run stream its model request through the unit.
+        capabilities=[JournalDurability(event_stream_handler=drain)],
     )
     token = CancellationToken()
-    run = asyncio.create_task(agent.run('Hello', cancellation_token=token, event_stream_handler=drain))
-    await streamed.wait()
+    run = asyncio.create_task(agent.run('Hello', cancellation_token=token))
+    # Also stop waiting if the run ends first, so a run that never streams fails below rather than hanging here.
+    streaming = asyncio.create_task(streamed.wait())
+    await asyncio.wait({run, streaming}, return_when=asyncio.FIRST_COMPLETED)
+    streaming.cancel()
     token.cancel()
 
     with pytest.raises(RunCancelled) as exc_info:

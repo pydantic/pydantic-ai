@@ -124,8 +124,8 @@ from ..span_utils import drop_fastmcp_client_spans
 
 try:
     from temporalio import activity, workflow
-    from temporalio.activity import _Definition as ActivityDefinition
-    from temporalio.api.history.v1 import ActivityTaskScheduledEventAttributes  # pyright: ignore[reportPrivateUsage]
+    from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
+    from temporalio.api.history.v1 import ActivityTaskScheduledEventAttributes
     from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
     from temporalio.common import RetryPolicy
     from temporalio.contrib.pydantic import pydantic_data_converter
