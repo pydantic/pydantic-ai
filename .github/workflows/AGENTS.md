@@ -100,7 +100,7 @@ nothing more.
 
 All three matter because `workflow_run` puts the workflow in base-repository context
 with full access to repository secrets, and the agent job checks out contributor-authored
-code and runs workspace scripts over it. Weaken any one of them and that checkout starts
+code and runs default-branch scripts over it. Weaken any one of them and that checkout starts
 accepting code the remaining gates do not cover. gh-aw will not backstop you: its
 "Restore agent config folders from base branch" step is gated on gh-aw's *own* PR
 checkout succeeding, which never happens under `workflow_run`. Under an approval or
@@ -144,8 +144,9 @@ what a same-repository run may trust:
   with the `workflows` permission, such as Dependabot. That author can already run any workflow
   with the repository's secrets through a `push` trigger.
 - `pydanty[bot]` lacks the `workflows` permission, so it cannot change a workflow file.
-- `pydanty[bot]` can push `.github/scripts/` and `.github/actions/`. So every job that runs a
-  script or a local action checks out the default branch, or fetches the script from it.
+- `pydanty[bot]` can push `.github/scripts/`, `.github/actions/` and the root `scripts/`. So every
+  job that runs a script or a local action checks out the default branch, or fetches the script
+  from it.
 
 Give every `actions/checkout` step `ref: ${{ github.event.repository.default_branch }}`, except one
 that checks out the head as data. Without `ref:`, the checkout is the PR's merge commit. Never use
