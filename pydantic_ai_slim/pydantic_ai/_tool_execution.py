@@ -779,6 +779,15 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             # Tracked like an output tool's status part, so retry-wins can replace it.
             self.winning_output_part = part
 
+    def _raise_if_cut_off(self, validated: ValidatedToolCall[DepsT]) -> None:
+        """Raise `IncompleteToolCall` for a function tool call whose arguments the token limit cut off.
+
+        Re-prompting the model with the same token limit would only cut the arguments off again, so the call isn't
+        retried, as an output tool call isn't.
+        """
+        if not validated.args_valid:
+            self.ctx.state.check_incomplete_tool_call(validated.call)
+
     def _skip_function_call(self, call: _messages.ToolCallPart) -> Iterator[_messages.HandleResponseEvent]:
         """Record a 'not executed' stub for a call skipped because a final result was already processed.
 
@@ -828,6 +837,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 self.ctx.state.check_incomplete_tool_call()
                 yield _messages.FunctionToolCallEvent(call, args_valid=False)
                 raise
+            self._raise_if_cut_off(validated)
             validated_calls[call.tool_call_id] = validated
             yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
 
@@ -1248,6 +1258,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     self.ctx.state.check_incomplete_tool_call()
                     yield _messages.FunctionToolCallEvent(call, args_valid=False)
                     raise
+                self._raise_if_cut_off(validated)
 
                 yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
 

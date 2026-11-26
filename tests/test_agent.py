@@ -5166,8 +5166,8 @@ def test_deferred_tool_cutoff_raises_incomplete_tool_call(external: bool):
         'resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt '
         'to result in a shorter response that will fit within the limit.'
     )
-    # An external tool gets no retries; an approval-required tool gets the default one retry first.
-    assert requests == (1 if external else 2)
+    # Neither is retried: re-prompting the model with the same token limit would only cut the arguments off again.
+    assert requests == 1
 
 
 def test_tool_exceeds_token_limit_error():
@@ -5225,6 +5225,58 @@ def test_tool_exceeds_token_limit_but_complete_non_object_args():
     with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'dummy_tool' exceeded max retries count of 1") as exc_info:
         agent.run_sync('Hello')
     assert not isinstance(exc_info.value, IncompleteToolCall)
+
+
+def test_function_tool_args_that_parse_but_are_rejected_with_finish_reason_length_are_retried():
+    """Only arguments cut off before they're complete are blamed on the token limit: arguments that parse are retried."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('get_weather', '{"town": "Paris"}')], finish_reason='length')
+        if len(messages) == 3:
+            return ModelResponse(parts=[ToolCallPart('get_weather', '{"city": "Paris"}')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond))
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return 'sunny'
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'done'
+    assert [part.outcome for part in result.all_messages()[2].parts if isinstance(part, ToolReturnPart)] == snapshot(
+        ['retried']
+    )
+
+
+def test_cut_off_function_tool_call_that_is_not_the_last_part_is_retried():
+    """Only the response's last part can have been cut off by the token limit, so an earlier invalid call is retried."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('get_weather', '{"city": "Par', tool_call_id='invalid'),
+                    ToolCallPart('get_weather', '{"city": "Lyon"}', tool_call_id='valid'),
+                ],
+                finish_reason='length',
+            )
+        if len(messages) == 3:
+            return ModelResponse(parts=[ToolCallPart('get_weather', '{"city": "Paris"}', tool_call_id='retried')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond))
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return f'sunny in {city}'
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'done'
+    assert [
+        (part.tool_call_id, part.outcome) for part in result.all_messages()[2].parts if isinstance(part, ToolReturnPart)
+    ] == snapshot([('invalid', 'retried'), ('valid', 'success')])
 
 
 def test_empty_response_with_finish_reason_length():
