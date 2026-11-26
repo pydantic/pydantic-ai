@@ -336,6 +336,7 @@ class FileUrl(ABC):
 
     Supported by:
     - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing, `vendor_metadata['media_processing']` is forwarded as the per-Part `media_processing` field: https://ai.google.dev/gemini-api/docs/video-understanding#agentic-video-understanding, and `vendor_metadata['media_resolution']` is forwarded as the per-Part `media_resolution` field for any file type: https://ai.google.dev/gemini-api/docs/media-resolution
+    - `GoogleInteractionsModel`: video `start_offset`, `end_offset` and `fps` map to static `processing`; `vendor_metadata['media_processing']` replaces that processing, including its offsets and fps. `vendor_metadata['media_resolution']` sets per-file resolution, overriding `google_video_resolution`.
     - `OpenAIChatModel`, `OpenAIResponsesModel`, `OpenAIDecisionsModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     - `GoogleDecisionsModel`: `ImageUrl.vendor_metadata['media_resolution']`, as `GoogleModel` takes it, sets the image's `resolution`: `{'level': 'MEDIA_RESOLUTION_LOW'}` is sent as `'low'`
     - `XaiModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
@@ -809,6 +810,7 @@ class BinaryContent:
 
     Supported by:
     - `GoogleModel`: `BinaryContent.vendor_metadata` is used as `video_metadata` for video files: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing, `vendor_metadata['media_processing']` is forwarded as the per-Part `media_processing` field: https://ai.google.dev/gemini-api/docs/video-understanding#agentic-video-understanding, and `BinaryContent.vendor_metadata['media_resolution']` is forwarded as the per-Part `media_resolution` field: https://ai.google.dev/gemini-api/docs/media-resolution
+    - `GoogleInteractionsModel`: video `start_offset`, `end_offset` and `fps` map to static `processing`; `vendor_metadata['media_processing']` replaces that processing, including its offsets and fps. `vendor_metadata['media_resolution']` sets per-file resolution, overriding `google_video_resolution`.
     - `OpenAIChatModel`, `OpenAIResponsesModel`, `OpenAIDecisionsModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     - `GoogleDecisionsModel`: `BinaryContent.vendor_metadata['media_resolution']`, as `GoogleModel` takes it, sets the image's `resolution`: `{'level': 'MEDIA_RESOLUTION_LOW'}` is sent as `'low'`
     - `XaiModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
@@ -1077,6 +1079,7 @@ class UploadedFile:
     - [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]
     - [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel]
     - [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Gemini API: [Files API](https://ai.google.dev/gemini-api/docs/files) URIs, Google Cloud: GCS `gs://` URIs)
+    - [`GoogleInteractionsModel`][pydantic_ai.models.google_interactions.GoogleInteractionsModel] (Gemini API: [Files API](https://ai.google.dev/gemini-api/docs/files) URIs, Google Cloud: GCS `gs://` URIs)
     - [`XaiModel`][pydantic_ai.models.xai.XaiModel]
     """
 
@@ -1086,6 +1089,7 @@ class UploadedFile:
     For most providers, this is the file ID returned by the provider's upload API.
     For GoogleModel (Google Cloud), this must be a GCS URI (`gs://bucket/path`).
     For GoogleModel (Gemini API), this must be a Google Files API URI (`https://generativelanguage.googleapis.com/...`).
+    `GoogleInteractionsModel` takes the same URIs as `GoogleModel` on each transport.
     For BedrockConverseModel, this must be an S3 URI (`s3://bucket/key`).
     """
 
@@ -1107,6 +1111,7 @@ class UploadedFile:
 
     Supported by:
     - `GoogleModel`: used as `video_metadata` for video files, `vendor_metadata['media_processing']` is forwarded as the per-Part `media_processing` field: https://ai.google.dev/gemini-api/docs/video-understanding#agentic-video-understanding, and `UploadedFile.vendor_metadata['media_resolution']` is forwarded as the per-Part `media_resolution` field: https://ai.google.dev/gemini-api/docs/media-resolution
+    - `GoogleInteractionsModel`: video `start_offset`, `end_offset` and `fps` map to static `processing`; `vendor_metadata['media_processing']` replaces that processing, including its offsets and fps. `vendor_metadata['media_resolution']` sets per-file resolution, overriding `google_video_resolution`.
     - `OpenAIResponsesModel`: `UploadedFile.vendor_metadata['detail']` is used as `detail` setting for image files
     """
 

@@ -1,0 +1,126 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "217"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        store: false
+        tools:
+        - type: google_maps
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: Use Google Maps to find the street address of the Eiffel Tower in Paris.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=7065
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 180
+          total_input_tokens: 57
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 57
+          total_cached_tokens: 0
+          total_output_tokens: 31
+          total_tool_use_tokens: 0
+          total_thought_tokens: 92
+          grounding_tool_count:
+          - type: google_maps
+            count: 1
+          initial_input_tokens: 509
+        created: 2026-11-05T15:44:01Z
+        updated: 2026-11-05T15:44:01Z
+        service_tier: standard
+        steps:
+        - id: call_6057418470864205109
+          signature: >-
+            EoIDCv8CCAIS+gIBaRR9Ey0EmLaqxaO6gPWWUzjlWFiPwuICWE4276drqrxaDiUv82dVXiKf0kLXPyHc5PARd6/7ietzqBhLBNALOFeLzDnqRp4KARyfPoIj6UV2y2/Em6SMLwBnWJbi0bwQEYd2moTIVGoDnPsfvfeUhcczfNG36y0WEf2AoPLKgvRN58FPIFw7tpr6X8df8GDySqQo9exZwyXPE2HnVm3jcD3bUbtBskTg/KRykamJkMiGlC8H2smdbjUFGcgevqLhZDzjtSY13oFJ9mZ0xVZvkR81RyNgHcnDjW5IpwwioQbAbEKgePc5ptlD4z/w7Djz3CUcHivlrG4kTYtBzbo5WcYHJEc6kdMzXOj3zYyrWGx7lFrKhmjcWDn+jVMjSI2S8wHd1aXqukZie3uqY4QWPeVGQSZm6jnVOgsPRijHgjkpebfnnVEzF5IB2j/j6/op0Ms5P4bQEWWgoJro8hPIEnQkvQRRhhPZ/i/Ei+hXMplIHUxFhS9po5A=
+          type: google_maps_call
+          arguments:
+            queries:
+            - Eiffel Tower, Paris
+        - call_id: call_6057418470864205109
+          signature: >-
+            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
+          type: google_maps_result
+          result:
+          - places:
+            - place_id: ChIJLU7jZClu5kcR4PcOOO6p3I0
+              name: Eiffel Tower - Google Maps
+              url: https://maps.google.com/maps?cid=10222232094831998944
+            - place_id: ChIJLU7jZClu5kcR4PcOOO6p3I0
+              name: Review of Eiffel Tower - Google Maps
+              url: >-
+                https://www.google.com/maps/reviews/data=!4m6!14m5!1m4!2m3!1sCi9DQUlRQUNvZENodHljRjlvT2s5RlUzUlhRVzUyYW5NM2J6TmhWa3h6VEhGd05HYxAB!2m1!1s0x47e66e2964e34e2d:0x8ddca9ee380ef7e0
+            - place_id: ChIJLU7jZClu5kcR4PcOOO6p3I0
+              name: Review of Eiffel Tower - Google Maps
+              url: >-
+                https://www.google.com/maps/reviews/data=!4m6!14m5!1m4!2m3!1sCi9DQUlRQUNvZENodHljRjlvT2kxTWVGbFlWbmR5UkhWWVYwZGhjM1IxYVc1UWExRRAB!2m1!1s0x47e66e2964e34e2d:0x8ddca9ee380ef7e0
+            - place_id: ChIJLU7jZClu5kcR4PcOOO6p3I0
+              name: Review of Eiffel Tower - Google Maps
+              url: >-
+                https://www.google.com/maps/reviews/data=!4m6!14m5!1m4!2m3!1sCi9DQUlRQUNvZENodHljRjlvT2psWlpIRjZUMHQ1WDJOeGNFZE5iWFJNUzJ3NWRGRRAB!2m1!1s0x47e66e2964e34e2d:0x8ddca9ee380ef7e0
+            - place_id: ChIJLU7jZClu5kcR4PcOOO6p3I0
+              name: Review of Eiffel Tower - Google Maps
+              url: >-
+                https://www.google.com/maps/reviews/data=!4m6!14m5!1m4!2m3!1sCi9DQUlRQUNvZENodHljRjlvT2twTldXdEhPV3h2TWw5emNuSjRMVU5EU1ZoNE9VRRAB!2m1!1s0x47e66e2964e34e2d:0x8ddca9ee380ef7e0
+            - place_id: ChIJLU7jZClu5kcR4PcOOO6p3I0
+              name: Review of Eiffel Tower - Google Maps
+              url: >-
+                https://www.google.com/maps/reviews/data=!4m6!14m5!1m4!2m3!1sChZDSUhNMG9nS0VOM2E3Y1NpNmVMb2V3EAE!2m1!1s0x47e66e2964e34e2d:0x8ddca9ee380ef7e0
+            - place_id: ChIJD7fiBh9u5kcRYJSMaMOCCwQ
+              name: Paris - Google Maps
+              url: https://maps.google.com/maps?cid=291470376679806048
+        - signature: >-
+            EqICCp8CAWkUfRMD/A84fGzBZcpzuw3ZmokidgZe0PZdruKkuKYtv1fdOYEgo7VL+P5qYYm1cIgs0qKVhAKMm47mmc10nC3TckuNLLpid6P9sj9HOvk3hnIQFkyj59YoRO8Rd4OApaVWi9phxk2EtR9+j05kVuQthq7s54ZJtTml4Duers0Z7Nd+dFRtXw5hYTXbJKxeurwptYVYzC5Cqzsbq0QBsgfb1U+9WhNpkQ4y/m4eB7x4bN6ElpbFNyTnpCaWroarBGQNRAPqUfk21ldi9I7nCmh1JHddl0o/mhzCUQOVpFxUPgHJC0mKvMAxbI/gnVIIQ/U9v3zdeUpZt2w0vvyLGNIrEKlFgTNW/n9TeB0Bw1vXEeFnWQKxFGv8AIt40A4=
+          type: thought
+        - content:
+          - text: |-
+              The street address of the Eiffel Tower is:
+
+              **Av. Gustave Eiffel, 75007 Paris, France**
+            annotations:
+            - start_index: 50
+              end_index: 87
+              place_id: ChIJLU7jZClu5kcR4PcOOO6p3I0
+              name: Eiffel Tower - Google Maps
+              url: https://maps.google.com/maps?cid=10222232094831998944
+              type: place_citation
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-05T15:44:01.145509+00:00
