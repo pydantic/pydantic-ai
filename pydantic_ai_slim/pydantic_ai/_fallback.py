@@ -35,6 +35,10 @@ from .exceptions import (
     FallbackExceptionGroup,
     IncompleteToolCall,
     ModelAPIError,
+    ModelConnectionError,
+    ModelRateLimitError,
+    ModelServerError,
+    ModelUnavailableError,
     OutputTokenLimitExceeded,
     UserError,
 )
@@ -54,6 +58,7 @@ if TYPE_CHECKING:
     from .settings import ModelSettings
 
 __all__ = (
+    'TRANSIENT_MODEL_ERRORS',
     'ExceptionHandler',
     'ResponseHandler',
     'FallbackOn',
@@ -72,6 +77,24 @@ __all__ = (
     'continuation_pin',
     'FALLBACK_MODEL_PIN_KEY',
 )
+
+TRANSIENT_MODEL_ERRORS: tuple[type[ModelAPIError], ...] = (
+    ModelRateLimitError,
+    ModelUnavailableError,
+    ModelServerError,
+    ModelConnectionError,
+)
+"""The model errors that waiting may fix, which [`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors]
+retries by default.
+
+[`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError],
+[`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] (including an overloaded model),
+[`ModelServerError`][pydantic_ai.exceptions.ModelServerError] and
+[`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] (including a transport timeout or an HTTP
+408). Extend it to retry another error too, as in `retry_on=(*TRANSIENT_MODEL_ERRORS, MyError)`, or check an error
+against it with `isinstance(error, TRANSIENT_MODEL_ERRORS)`.
+"""
+
 
 FALLBACK_MODEL_PIN_KEY = 'fallback_model_id'
 """Where `FallbackModel` pins a suspended response to the inner model that started it."""

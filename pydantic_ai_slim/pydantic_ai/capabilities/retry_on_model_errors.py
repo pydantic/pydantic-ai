@@ -11,6 +11,7 @@ from pydantic_ai._agent_graph import (
     _unwrap_model,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai._fallback import (
+    TRANSIENT_MODEL_ERRORS,
     FallbackOn,
     FallbackPredicates,
     SpecModelError,
@@ -21,11 +22,7 @@ from pydantic_ai._fallback import (
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.exceptions import (
     ModelAPIError,
-    ModelConnectionError,
     ModelHTTPError,
-    ModelRateLimitError,
-    ModelServerError,
-    ModelUnavailableError,
     RetryModelRequest,
     UsageLimitExceeded,
     UserError,
@@ -43,22 +40,6 @@ if TYPE_CHECKING:
 
 __all__ = ('TRANSIENT_MODEL_ERRORS', 'RetryOnModelErrors')
 
-TRANSIENT_MODEL_ERRORS: tuple[type[ModelAPIError], ...] = (
-    ModelRateLimitError,
-    ModelUnavailableError,
-    ModelServerError,
-    ModelConnectionError,
-)
-"""The model errors that waiting may fix, which [`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors]
-retries by default.
-
-[`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError],
-[`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] (including an overloaded model),
-[`ModelServerError`][pydantic_ai.exceptions.ModelServerError] and
-[`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] (including a transport timeout or an HTTP
-408). Extend it to retry another error too, as in `retry_on=(*TRANSIENT_MODEL_ERRORS, MyError)`, or check an error
-against it with `isinstance(error, TRANSIENT_MODEL_ERRORS)`.
-"""
 # `TRANSIENT_MODEL_ERRORS` by name, for the spec schema.
 _DEFAULT_SPEC_RETRY_ON: tuple[SpecModelError, ...] = (
     'ModelRateLimitError',

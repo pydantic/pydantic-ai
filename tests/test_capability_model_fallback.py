@@ -68,8 +68,11 @@ from pydantic_ai.exceptions import (
     IncompleteToolCall,
     ModelAPIError,
     ModelEmptyResponseError,
+    ModelHTTPError,
     ModelRateLimitError,
     ModelRetry,
+    ModelServerError,
+    ModelUnavailableError,
     OutputTokenLimitExceeded,
     RetryModelRequest,
     RunCancelled,
@@ -3600,12 +3603,12 @@ Attempt 3.\
 
 
 def _fails_then_answers(name: str, failures: int, calls: list[str], retry_after: float | None = None) -> FunctionModel:
-    """A model that fails its first `failures` requests, with `retry_after` if given, then answers."""
+    """A model that is unavailable for its first `failures` requests, with `retry_after` if given, then answers."""
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         calls.append(name)
         if calls.count(name) <= failures:
-            raise ModelAPIError(model_name=name, message='down', retry_after=retry_after)
+            raise ModelUnavailableError(model_name=name, message='down', retry_after=retry_after)
         return ModelResponse(parts=[TextPart(f'{name} answered')])
 
     return FunctionModel(respond, model_name=name)
@@ -3719,7 +3722,7 @@ async def test_only_the_last_pass_s_retry_after_counts():
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         calls.append('a')
         if len(calls) <= 2:
-            raise ModelAPIError(model_name='a', message='down', retry_after=next(retry_afters))
+            raise ModelUnavailableError(model_name='a', message='down', retry_after=next(retry_afters))
         return ModelResponse(parts=[TextPart('a answered')])
 
     model = FunctionModel(respond, model_name='a')
@@ -3746,17 +3749,59 @@ async def test_no_pass_is_started_that_would_outlast_the_run_timeout():
 
 async def test_a_usage_limit_stops_the_passes():
     """Every pass's rejected responses count toward the run's token limit, which ends the run mid-pass."""
+    calls: list[str] = []
     agent = Agent(
         FunctionModel(_rejected_with_usage, model_name='a'),
         capabilities=[
-            ModelFallback(FunctionModel(_rejected_with_usage, model_name='b'), fallback_on=reject_nope, passes=5)
+            ModelFallback(
+                _fails_then_answers('b', 5, calls),
+                fallback_on=(ModelAPIError, reject_nope),
+                passes=5,
+            )
         ],
     )
     async with _recorded_sleeps() as delays:
         with pytest.raises(UsageLimitExceeded, match='input_tokens_limit of 25'):
             await agent.run('x', usage_limits=UsageLimits(input_tokens_limit=25))
-    # The second pass started, and its first attempt took the run past the limit.
-    assert len(delays) == 1
+    # Each pass's rejected response from `a` cost 10 input tokens; the third pass's took the run past the limit.
+    assert calls == ['b', 'b']
+    assert len(delays) == 2
+
+
+@pytest.mark.parametrize(
+    'error',
+    [
+        pytest.param(ModelHTTPError(401, 'b'), id='auth'),
+        pytest.param(ContentFilterError('refused'), id='refusal'),
+        pytest.param(
+            ModelHTTPError.for_category(
+                ModelServerError, status_code=500, model_name='b', headers={'x-should-retry': 'false'}
+            ),
+            id='server-error-the-provider-says-not-to-retry',
+        ),
+    ],
+)
+async def test_a_pass_that_waiting_cant_fix_raises_at_once(error: Exception):
+    """A pass whose models all failed on errors waiting won't fix, or on rejected responses, isn't gone through again."""
+
+    def fails(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise error
+
+    agent = Agent(
+        FunctionModel(_rejected_with_usage, model_name='a'),
+        capabilities=[
+            ModelFallback(
+                FunctionModel(fails, model_name='b'),
+                fallback_on=(ModelAPIError, ContentFilterError, reject_nope),
+                passes=3,
+            )
+        ],
+    )
+    async with _recorded_sleeps() as delays:
+        with pytest.raises(FallbackExceptionGroup) as exc_info:
+            await agent.run('x')
+    assert delays == []
+    assert _attempted(exc_info.value.attempts) == [('a', 'fallback'), ('b', 'fallback')]
 
 
 def test_passes_and_delays_are_validated():

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic_ai._agent_graph import _agent_graph_sleep  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._fallback import (
+    TRANSIENT_MODEL_ERRORS,
     FallbackChain,
     FallbackOn,
     FallbackPredicates,
@@ -18,6 +19,7 @@ from pydantic_ai._utils import replace_no_init
 from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
+    ModelHTTPError,
     OutputTokenLimitExceeded,
     RetryModelRequest,
     UsageLimitExceeded,
@@ -178,12 +180,15 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                 `SelectModel`, is still attempted first. If the sticky candidate fails, the chain moves on
                 to the models after it, then the step's own model and the models before it.
             passes: How many times a request goes through the whole chain, the first time included. When every model
-                in the chain failed, the next pass starts over from the model the first pass started with, after a
-                wait, and tries every model again. The default `1` gives up after one pass. Once the last pass
+                in the chain failed, and at least one with an error waiting may fix, one in
+                [`TRANSIENT_MODEL_ERRORS`][pydantic_ai.capabilities.TRANSIENT_MODEL_ERRORS], the next pass starts
+                over from the model the first pass started with, after a wait, and tries every model again. A pass
+                that failed only on other errors, like an authentication error or a refusal, would fail the same way
+                again, so it isn't followed by another. The default `1` gives up after one pass. Once the last pass
                 fails, the agent raises what a single pass would, such as a
                 [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup], holding the errors of
-                every pass and listing all their attempts. The agent attempts a request at most 100 times across all its models and passes, after
-                which it raises a `UserError` rather than the last error.
+                every pass and listing all their attempts. The agent attempts a request at most 100 times across all
+                its models and passes, after which it raises a `UserError` rather than the last error.
             initial_delay: Seconds to wait before the second pass. The wait doubles for each pass after it, up to
                 `max_delay`, and a random part of up to half of it is taken off, as
                 [`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors] does between attempts. When a
@@ -402,7 +407,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             if not self._already_attempted(candidate):
                 self._moved = True
                 return RetryModelRequest(candidate)
-        if self._pass < self.passes and (delay := self._pass_delay(ctx)) is not None:
+        if self._pass < self.passes and self._waiting_may_help() and (delay := self._pass_delay(ctx)) is not None:
             # Through the agent graph's sleep, which a durable execution engine replaces with its own durable timer.
             await _agent_graph_sleep(delay)
             self._pass += 1
@@ -415,6 +420,19 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         # The attempts are the agent's to list, as it made them: it records each failed one, and
         # lists them on this group once it ends the request.
         self._chain.exhausted()
+
+    def _waiting_may_help(self) -> bool:
+        """Whether a model in the pass that failed raised an error that waiting may fix, so another pass may succeed.
+
+        A pass that failed only on errors like an authentication error, a refusal or a rejected response would fail
+        the same way again.
+        """
+        return any(
+            isinstance(error, TRANSIENT_MODEL_ERRORS)
+            # The provider said retrying won't help, as `RetryOnModelErrors` heeds too.
+            and not (isinstance(error, ModelHTTPError) and error.provider_retry_hint is False)
+            for error in self._chain.exceptions[self._pass_errors :]
+        )
 
     def _pass_delay(self, ctx: RunContext[AgentDepsT]) -> float | None:
         """How long to wait before the next pass, or `None` if the run would time out first."""
