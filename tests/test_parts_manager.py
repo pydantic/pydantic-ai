@@ -338,7 +338,7 @@ def test_tool_call_buffer_changes_are_atomic_when_typed_promotion_fails(mocker: 
     manager.handle_tool_call_delta(vendor_part_id='tool', tool_name='tool', args='initial', tool_call_id='call')
     manager.handle_tool_call_delta(vendor_part_id='tool', args=' buffered')
 
-    promotion = mocker.patch.object(manager, '_typed_call_part', side_effect=RuntimeError('typed promotion failed'))
+    promotion = mocker.patch.object(manager, '_stamp_and_type', side_effect=RuntimeError('typed promotion failed'))
     with pytest.raises(RuntimeError, match='typed promotion failed'):
         manager.handle_tool_call_delta(vendor_part_id='tool', args=' discarded')
     mocker.stop(promotion)

@@ -1,0 +1,190 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "385"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: >-
+              Use the get_file tool now to retrieve a video file, then describe what you
+              received.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=2061
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: requires_action
+        usage:
+          total_tokens: 113
+          total_input_tokens: 36
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 36
+          total_cached_tokens: 0
+          total_output_tokens: 10
+          total_tool_use_tokens: 0
+          total_thought_tokens: 67
+          initial_input_tokens: 29
+        created: 2026-11-06T02:56:37Z
+        updated: 2026-11-06T02:56:37Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            EtcCCtQCAWkUfRO89bcMGqB+sSSBa9l38WACDWt1wX8BYjb/4RCWjPKYav1vT7eIYVH+pbGA0WkRbmPT7sGu+jiReMTXlRV5ul7kSW4JdK/5T1QP2nGpiisgxIarc9k9qjh64xELzUuBHZi+dykXSchAxR0LwF93G25sepP/8hFflAw2nwguRH79UsV4dSmDxqDtfNuOJtma4uBZMB+FtpCxQqFXDTfLffyV63T8VhcHn0jjPcMooMcjRLeARqTUQY8GbUsEyija66yJcVBj+NMTs33d3VLC2No/B2cZTeRXQ9Ye19D1C/+vV/niE8EaSEtGDm9dpGRrnko0KsBuiYcQxtz07FuvHnkz33HhRt7NmMieqUebEWSWeAPHs4AcrXKWQNvpobyW9mh8HNHULn+RjkRqoIRMZOKIL06tX8cOIq+YG+ITdL6ScQiFnhQqj1wiGfwpkpurkA==
+          type: thought
+        - id: call_935122481632977101
+          type: function_call
+          name: get_file
+          arguments: {}
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:56:37.527596+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1198"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: >-
+              Use the get_file tool now to retrieve a video file, then describe what you
+              received.
+        - signature: >-
+            EtcCCtQCAWkUfRO89bcMGqB+sSSBa9l38WACDWt1wX8BYjb/4RCWjPKYav1vT7eIYVH+pbGA0WkRbmPT7sGu+jiReMTXlRV5ul7kSW4JdK/5T1QP2nGpiisgxIarc9k9qjh64xELzUuBHZi+dykXSchAxR0LwF93G25sepP/8hFflAw2nwguRH79UsV4dSmDxqDtfNuOJtma4uBZMB+FtpCxQqFXDTfLffyV63T8VhcHn0jjPcMooMcjRLeARqTUQY8GbUsEyija66yJcVBj+NMTs33d3VLC2No/B2cZTeRXQ9Ye19D1C/+vV/niE8EaSEtGDm9dpGRrnko0KsBuiYcQxtz07FuvHnkz33HhRt7NmMieqUebEWSWeAPHs4AcrXKWQNvpobyW9mh8HNHULn+RjkRqoIRMZOKIL06tX8cOIq+YG+ITdL6ScQiFnhQqj1wiGfwpkpurkA==
+          type: thought
+        - id: call_935122481632977101
+          name: get_file
+          type: function_call
+          arguments: {}
+        - type: function_result
+          name: get_file
+          call_id: call_935122481632977101
+          is_error: false
+          result:
+          - mime_type: video/mp4
+            type: video
+            uri: https://generativelanguage.googleapis.com/v1beta/files/9jg9bjrl56hb
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=5410
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 574
+          total_input_tokens: 187
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 121
+          - modality: video
+            tokens: 66
+          total_cached_tokens: 0
+          total_output_tokens: 166
+          total_tool_use_tokens: 0
+          total_thought_tokens: 221
+          initial_input_tokens: 184
+        created: 2026-11-06T02:56:42Z
+        updated: 2026-11-06T02:56:42Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            EvwICvkIAWkUfRMQKnBz/YgL2ZoOlBp7bKQgc3W4EkNBkjbtzeiQhts7E9KoQrXdwnC7VbrpmCubz4HdDjeNE/eM7yAYuVs3cwtd+F63mnLXNpKVNjjvbfluDAkkimTiuPWs8zraLWWLVrWKQdFDzqXafA/iB2w6oqdyNixarlbUrYUIfYIFfVgwhANP3HAvNqvCXAkcj8Hb5cDi5WqP5BQSbGU90ZWhi0Jbjmc4Y5/H0paT8SKJEiaklbnvL/3XhZCR5Pw8sbUYqNhIVbnEXARMg4bQ8aNfhXuUqW9gjqCo0d6qa/O/IIuOphIhpigymOTNOxwZYsNylYsqnOsLDv4T54w2mSr8vvCm7nn495uTU0BAl4cy28r+lALQds1B8DdoBcT+1WQ7Mt8WCIY2Adb1+5XfyCFIWpzBwgm8Ui0Rf4aPLP3XcuYr0YwdrbTfExiXH+hkXCIa8PnuF7800tQzOuVKPVJHNOc9ofY9j4ajyd1z0fyOsvei3uH151dqWZx7jNNYBLOILLvjcVUI2QQHctvw0MPFjQWW00KyxqRyPM/p73zeERmgMus/087cOyra6ElsynQUKFYQUflZK+fKSceL0zL4Nj193JFKesB0CzYQ9aE1zGcm++c5/m1G7FdTozgXyIr6QJnSUtvOCTbHns/KteEKCss+ZmLz+qHNEthTiBmGtaA90Xr22kDrhnEaOjLwXSFkrh6EIjwFz23UuCpQ00hUXEz+m9+ibZEj+EE5H5euemraQpiq5VLJajc/QrsOqRnpxzQU0Cuj8NIDV/9LdbZ1+LGeAvawWpWiYkmK6WMjEofUS4cpZ/Q6H2Y9ZVDcRHA5tQX2Ql/7imnEam28EsvG+xepQIdEo5FhWrn4+1v8Fb4nJYjcnlkgE6uqMx73KI6JyWqnMzi97VQjvbhJitaRSWaawqUvbDCqq8R03sam1Kb6xS4JkTzaIRGf/hLzjKSDe34UDvj/kGAiLwhvJUCvqFjoSSbiXCwuZGUcl26oxpDQZBHxB2A8aps3/lsW2x6S2I1H4no3pMc0bMPx9TZJlWgAYF4TfFtNFsaKqQFVnzlswwqu4KHO7lhXReibyRKPfQ9hN/JzR85k0DbE5/vVwWp87Z4zDWK0b7TJ5sqbL/dIt/SU4C7+I5Kpz2eP+LdWZyJa0UNrrAnSuMqmZErDcfy+vYmLigYFIRfeOKu6MhrqV3q+8QBKtjcDfC+zdEqoRzgLh9jXjWrc7CBhgQotWKt/m+WPAaxgn7sjGl2pwTdz6hmNxghbl59OGiLDQUGE6wckmuqqNRCed9sc4W7RsieFMoRzbDWrwXMOzAHeJ1mbu4EhpbMBr9sr9uThIBp356owaoVaW4W0gAKypQ9AieQX4I1qStwa2k5cLcatZXUjO9CtEA6xTWCs2iAyxFhOzxQgPQj0/ByjCAbur3m74vmvvI8EO9lZqTM9JD3niQS3rzAXUnNO1yZ+xN16CP7Ldi2rZpks1Uck45pfJrhlRJa/jKCiYKO9l0WiD6t/0YODnp53quw=
+          type: thought
+        - content:
+          - text: |-
+              I have retrieved the video file. Here is a description of what is shown:
+
+              * **Foreground:** A professional camera monitor (or digital camera screen) mounted on a tripod head/gimbal. The focus is sharp on the display and mounting hardware.
+              * **Camera Screen Content:** The monitor displays a composition featuring rugged, dark canyon cliff walls framing a dirt path that leads toward distant mountains under a cool-toned twilight or dawn sky.
+              * **Background:** An out-of-focus, warm-toned desert or canyon landscape bathed in soft golden-hour sunlight, showing an unpaved road stretching into the distance between blurred rock formations.
+
+              The shot creates a striking visual contrast between the crisp, cool-toned framing captured on the monitor screen and the warm, golden bokeh of the surrounding desert environment.
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:56:42.963427+00:00

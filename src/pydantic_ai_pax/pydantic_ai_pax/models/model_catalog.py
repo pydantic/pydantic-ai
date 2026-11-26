@@ -4,6 +4,7 @@ genai-prices is the first source. Add another (models.dev, a provider API) as on
 function returning `CatalogModel`s and merge it in `catalog()`.
 """
 
+import re
 import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -35,6 +36,9 @@ CODEX_MODELS = tuple(
 EXTRA_PROVIDERS = frozenset({'github-copilot', 'openai-codex'})
 """Provider prefixes core can run but does not list in `known_model_names()`."""
 
+_SLIM_EXTRA = re.compile(r'pydantic-ai-slim\[([\w-]+)\]')
+"""The extra core's missing-SDK `ImportError` names."""
+
 
 @dataclass(frozen=True, kw_only=True)
 class CatalogModel:
@@ -64,12 +68,16 @@ def check_installed(name: str) -> None:
         return  # Not a core provider, like Pax's own `vllm:`; the turn resolves or reports it.
     except ImportError as exc:
         where = f'the Python Pax runs on ({sys.executable})'
-        if provider not in (metadata('pydantic-ai-pax').get_all('Provides-Extra') or ()):
+        # Core's error names the `pydantic-ai-slim` extra, which differs from the prefix for `gateway/groq` and the like.
+        named = _SLIM_EXTRA.search(str(exc))
+        if named is None or named[1] not in (metadata('pydantic-ai-pax').get_all('Provides-Extra') or ()):
             raise ValueError(f'Cannot use {name} with {where}: {exc}') from exc
+        extra = named[1]
         raise ValueError(
-            f'Cannot use {name}: the `{provider}` extra is not installed in {where}. '
-            f'Install it there with `pip install "pydantic-ai-slim[{provider}]"`, '
-            f'or from a pydantic-ai checkout run `uv run --package pydantic-ai-pax --extra {provider} pax`.'
+            f'Cannot use {name}: the `{extra}` extra is not installed in {where}. '
+            f"Install Pax with it: `uv tool install 'pydantic-ai-pax[{extra}]'`, "
+            f'or install it there with `pip install "pydantic-ai-slim[{extra}]"`, '
+            f'or from a pydantic-ai checkout run `uv run --package pydantic-ai-pax --extra {extra} pax`.'
         ) from exc
 
 

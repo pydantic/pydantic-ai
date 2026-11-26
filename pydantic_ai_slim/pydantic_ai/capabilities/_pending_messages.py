@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai._agent_graph import ModelRequestNode, mark_deferred_pause
+from pydantic_ai._appended_messages import append_to_history
 from pydantic_ai._enqueue import (
     PendingMessage,
     deliver_asap_messages,
@@ -90,7 +91,7 @@ def _record_at_pause(ctx: RunContext[Any], recorded: list[PendingMessage]) -> No
         for message in pending_messages:
             assert isinstance(message, ModelRequest)  # `drain_at_pause` leaves a queued response queued.
             mark_deferred_pause(message)
-        ctx.messages.extend(pending_messages)
+        append_to_history(ctx, *pending_messages)
         ctx._emit_event(  # pyright: ignore[reportPrivateUsage]
             EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(pending_messages))
         )
@@ -174,7 +175,7 @@ def _redirect_with(ctx: RunContext[Any], drained: list[PendingMessage]) -> Model
     for pending, pending_messages in stamped:
         for message in pending_messages:
             if message is not final:
-                ctx.messages.append(message)
+                append_to_history(ctx, message)
         ctx._emit_event(  # pyright: ignore[reportPrivateUsage]
             EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(pending_messages))
         )

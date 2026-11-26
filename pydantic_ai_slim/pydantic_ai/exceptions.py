@@ -63,6 +63,8 @@ __all__ = (
     'ModelAuthenticationError',
     'ModelNotFoundError',
     'ModelRequestTimeout',
+    'ModelEmptyResponseError',
+    'ModelInvalidResponseError',
     'ContentFilterError',
     'OutputTokenLimitExceeded',
     'IncompleteToolCall',
@@ -947,6 +949,67 @@ class ModelRequestTimeout(ModelAPIError):
         self.args = (self.message,)
 
 
+class _ModelResponseError(ModelAPIError, UnexpectedModelBehavior):
+    """A response the model layer couldn't use, which is a model error and, until v3, an `UnexpectedModelBehavior`."""
+
+    # TODO(v3): drop the `UnexpectedModelBehavior` base, which only keeps existing `except` clauses working, and raise
+    # these from the sites that raise a plain `ModelAPIError` for the same kind of response (`check_json_response`,
+    # `map_decode_errors`, OpenRouter's `null` `choices`). Until then, the base would make those non-retryable on
+    # Temporal and change which `except` clause catches them.
+
+    body: object | None
+    """The response the provider sent, if available, as the SDK built it (which may fill in fields it left out)."""
+
+    def __init__(self, model_name: str, message: str, *, body: object | None = None):
+        super().__init__(model_name, message, body=body)
+        # `ModelAPIError.__init__` reaches `UnexpectedModelBehavior.__init__` on its way to `AgentRunError`, which
+        # resets `body` as it isn't passed along. It's the `ModelAPIError` field, which takes any body, not just a
+        # string.
+        self.body = body  # pyright: ignore[reportIncompatibleVariableOverride]
+
+    def __str__(self) -> str:
+        # Like every other `ModelAPIError`, not `UnexpectedModelBehavior`, which appends the body: a response body can
+        # hold the whole completion, which doesn't belong in logs or error messages. It stays on `body`, so, like an
+        # HTTP error's body, it still crosses a Temporal activity boundary in the `ApplicationError`'s details.
+        return self.message
+
+
+class ModelEmptyResponseError(_ModelResponseError):
+    """Raised when the provider answered a request successfully but sent no response in it.
+
+    For example a stream that ended before its first event, or a completion whose `choices` are empty. It's often a
+    transient glitch on the provider's side, so sending the request again, or to another model, may well succeed.
+
+    A [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] and
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] fall back on it by default. These responses used to
+    raise a plain [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], which this class still
+    subclasses so `except UnexpectedModelBehavior` keeps catching it.
+
+    Some adapters still raise a plain `ModelAPIError` for the same kind of response, so to handle all of them, catch
+    `ModelAPIError`.
+    """
+
+
+class ModelInvalidResponseError(_ModelResponseError):
+    """Raised when the provider answered a request successfully but its response couldn't be used.
+
+    For example a completion that doesn't match the API's schema, or a response the API doesn't allow, like an MCP
+    sampling result that's not from the assistant. Unlike a
+    [`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError], sending the same request again
+    often gets the same response, but another model or provider may answer it.
+
+    A [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] and
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] fall back on it by default. These responses used to
+    raise a plain [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], which this class still
+    subclasses so `except UnexpectedModelBehavior` keeps catching it.
+
+    Some adapters still raise a plain `ModelAPIError` for the same kind of response, so to handle all of them, catch
+    `ModelAPIError`.
+    """
+
+
 def _request_timeout_message(model_name: str, timeout: float, setting: RequestTimeoutSetting) -> str:
     message = f'Request to model {model_name!r} timed out after {timeout:g} seconds'
     if setting == 'first_event_timeout':
@@ -1428,11 +1491,13 @@ class DeprecatedModelWarning(UserWarning):
 
     It's emitted each time a model prepares a request it sends, streamed or not, for a model whose profile has a
     [`deprecation`][pydantic_ai.profiles.ModelProfile.deprecation]. The message names the model, its retirement
-    date and the replacement the provider recommends, and links the provider's announcement. Creating the model
-    doesn't warn. Python's warning filters decide how often it's shown.
+    date, the model the provider routes its requests to from then, if any, and the replacement the provider
+    recommends, and links the provider's announcement. Creating the model doesn't warn. Python's warning filters
+    decide how often it's shown.
 
-    The profile is set for models on the Anthropic and OpenAI APIs, including through the Pydantic AI Gateway, and
-    not where another platform, such as Amazon Bedrock, Google Cloud's Vertex AI or Azure, serves the same model on a
+    The profile is set for models on the Anthropic and OpenAI APIs and, for some Google models, on the Gemini API and
+    Google Cloud, each with that API's dates, including through the Pydantic AI Gateway. It isn't set where another
+    platform, such as Amazon Bedrock, Google Cloud's Vertex AI for Claude models or Azure, serves the same model on a
     schedule of its own. See [Deprecated models](../models/overview.md#deprecated-models).
 
     To turn it into an error, use a warnings filter:

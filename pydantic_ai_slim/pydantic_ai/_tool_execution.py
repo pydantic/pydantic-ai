@@ -133,6 +133,7 @@ def cancelled_sub_agent_return(
         content=f'The sub-agent run was cancelled: {error}',
         tool_call_id=call.tool_call_id,
         tool_kind=call.tool_kind,
+        ui_visibility=call.ui_visibility,
         outcome='failed',
     )
 
@@ -155,6 +156,7 @@ def build_tool_return_part(
                 content=tool_result.message,
                 tool_call_id=call.tool_call_id,
                 tool_kind=tool_kind,
+                ui_visibility=call.ui_visibility,
                 outcome='denied',
             ),
             None,
@@ -188,6 +190,7 @@ def build_tool_return_part(
         content=tool_return.return_value,
         metadata=tool_return.metadata,
         tool_kind=tool_kind,
+        ui_visibility=call.ui_visibility,
     )
     return _messages.ToolReturnPart.narrow_type(return_part), tool_return.content or None, tools
 
@@ -382,6 +385,11 @@ def _segment_by_barriers(indices: list[int], *, is_barrier: Callable[[int], bool
     return segments
 
 
+def last_response_index(history: Sequence[_messages.ModelMessage]) -> int | None:
+    """The index of the last `ModelResponse` in `history`, or `None` if it has none."""
+    return next((i for i in range(len(history) - 1, -1, -1) if isinstance(history[i], _messages.ModelResponse)), None)
+
+
 async def process_tool_calls(
     tool_manager: ToolManager[DepsT],
     *,
@@ -498,6 +506,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     retry_wins_triggered: bool = dataclasses.field(default=False, init=False)
     output_retries_increment: int = dataclasses.field(default=0, init=False)
     winning_output_part: _messages.ToolReturnPart | None = dataclasses.field(default=None, init=False)
+    # `submission_exhausted`: the first `RunContext.submit_output` (by emission order) that ran out of
+    # output retries, raised once the strategy has run if no output became the final result.
+    submission_exhausted: exceptions.UnexpectedModelBehavior | None = dataclasses.field(default=None, init=False)
     deferred_calls: dict[_DeferredBucket, list[_messages.ToolCallPart]] = dataclasses.field(init=False)
     deferred_metadata: dict[str, dict[str, Any]] = dataclasses.field(init=False)
     deferred_validated_args: dict[str, dict[str, Any]] = dataclasses.field(init=False)
@@ -586,14 +597,30 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             projected_usage.tool_calls += len(self.function_indices)
             self.ctx.deps.usage_limits.check_before_tool_call(projected_usage)
 
-        async with aclosing(self._run_strategy()) as events:
-            async for event in events:
-                yield event
+        try:
+            async with aclosing(self._run_strategy()) as events:
+                async for event in events:
+                    yield event
+            self._raise_if_submission_exhausted()
 
-        self._apply_retry_wins()
-        async with aclosing(self._finalize_deferred()) as events:
-            async for event in events:
-                yield event
+            self._apply_retry_wins()
+            async with aclosing(self._finalize_deferred()) as events:
+                async for event in events:
+                    yield event
+            # A tool a deferred-call handler approved inline runs here, so it can submit too: a sibling's
+            # retry still wins over its submission, though not over the calls left deferred.
+            if self.final_result is not None and not isinstance(self.final_result.output, DeferredToolRequests):
+                self._apply_retry_wins()
+            self._raise_if_submission_exhausted()
+        finally:
+            # Each submission is taken by the call that made it. Drop any a call made without settling
+            # (it raised, or a sibling did), so a later step can't mistake them for its own. Not done
+            # up front: Code Mode's eager execution submits while the response is still streaming.
+            self.ctx.deps.output_submissions.clear()
+
+    def _raise_if_submission_exhausted(self) -> None:
+        if self.final_result is None and self.submission_exhausted is not None:
+            raise self.submission_exhausted
 
     @abstractmethod
     def _run_strategy(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
@@ -608,6 +635,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             tool_name=call.tool_name,
             content=content,
             tool_call_id=call.tool_call_id,
+            ui_visibility=call.ui_visibility,
         )
 
     def _record_output_part(
@@ -727,6 +755,31 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
     # --- Function tool helpers ----------------------------------------------
 
+    def _take_submission(
+        self, call: _messages.ToolCallPart, part: _messages.ToolReturnPart | _messages.ToolAvailabilityDeltaPart
+    ) -> None:
+        """Make the output `call` submitted with `RunContext.submit_output`, if any, the final result.
+
+        A call that submitted counts as an output tool call at its position: it wins when no earlier
+        output did, and only if it went on to return successfully. A submission that ran out of output
+        retries is kept, to be raised if no output wins (see `run`).
+        """
+        submission = self.ctx.deps.output_submissions.get(call.tool_call_id)
+        if submission is None:
+            return
+        if submission.exhausted is not None and self.submission_exhausted is None:
+            self.submission_exhausted = submission.exhausted
+        if submission.status != 'accepted':
+            return
+        if not (isinstance(part, _messages.ToolReturnPart) and part.outcome == 'success'):
+            # The call didn't return successfully, so its submission is void. Dropped, so a call in a later batch of
+            # a `'graceful'` response that reuses its `tool_call_id` can't take it.
+            del self.ctx.deps.output_submissions[call.tool_call_id]
+        elif self.final_result is None:
+            self.final_result = result.FinalResult(submission.output, call.tool_name, call.tool_call_id)
+            # Tracked like an output tool's status part, so retry-wins can replace it.
+            self.winning_output_part = part
+
     def _skip_function_call(self, call: _messages.ToolCallPart) -> Iterator[_messages.HandleResponseEvent]:
         """Record a 'not executed' stub for a call skipped because a final result was already processed.
 
@@ -738,6 +791,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             tool_name=call.tool_name,
             content=TOOL_SKIPPED_FINAL_ALREADY_PROCESSED,
             tool_call_id=call.tool_call_id,
+            ui_visibility=call.ui_visibility,
         )
         self.output_parts.append(part)
         yield _messages.FunctionToolCallEvent(call)
@@ -857,6 +911,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     content=tool_call_result.message,
                     tool_call_id=call.tool_call_id,
                     tool_kind=call.tool_kind,
+                    ui_visibility=call.ui_visibility,
                     outcome='failed',
                 )
                 raise ToolFailedError(m)
@@ -867,6 +922,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                         tool_name=call.tool_name,
                         tool_call_id=call.tool_call_id,
                         tool_kind=call.tool_kind,
+                        ui_visibility=call.ui_visibility,
                     )
                 )
             # TODO(v3): remove `RetryPromptPart`
@@ -877,6 +933,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                         tool_name=call.tool_name,
                         tool_call_id=call.tool_call_id,
                         tool_kind=call.tool_kind,
+                        ui_visibility=call.ui_visibility,
                     )
                 )
             else:
@@ -1081,6 +1138,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             self.output_parts.extend([user_parts_by_index[k] for k in sorted(user_parts_by_index)])
 
         for index in sorted(tool_parts_by_index):
+            self._take_submission(tool_calls[index], tool_parts_by_index[index][0])
             for part in tool_parts_by_index[index]:
                 if isinstance(part, _messages.ToolAvailabilityDeltaPart):
                     yield _messages.ToolAvailabilityDeltaEvent(part=part)
@@ -1133,7 +1191,12 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         on `outcome == 'retried'` to skip a tool-def lookup per settled return, so widening the set of
         outcomes that trigger retry-wins means widening that check too.
         """
-        return kind == 'function' and isinstance(part, _messages.ToolReturnPart) and part.outcome == 'retried'
+        if not (kind == 'function' and isinstance(part, _messages.ToolReturnPart) and part.outcome == 'retried'):
+            return False
+        # A rejected `RunContext.submit_output` is a failed output, not a failed function call: like a
+        # model's failed output tool call, it doesn't keep another output from being the final result.
+        submission = self.ctx.deps.output_submissions.get(part.tool_call_id)
+        return submission is None or submission.status != 'rejected'
 
     def _apply_retry_wins(self) -> None:
         """Suppress the output result if a function tool retried (graceful + exhaustive).
@@ -1269,8 +1332,51 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             if isinstance(results.get(tool_call_id), _messages.ToolReturn)
         }
 
+    def _show_private_deferred_calls_redacted(self) -> None:
+        """Show each `'private'` deferred call as `'redacted'`: a UI client has to see the call it's asked to answer.
+
+        The calls are replaced with copies, in the deferred buckets, the questions and the response in history, so the
+        `DeferredToolRequests`, the event streams and the returns that later answer the calls all carry the new stamp.
+        A part already in history is never changed in place.
+        """
+        redacted: dict[str, _messages.ToolCallPart] = {}
+        for bucket in _DEFERRED_BUCKETS:
+            calls = self.deferred_calls[bucket]
+            for index, call in enumerate(calls):
+                if call.ui_visibility == 'private':
+                    calls[index] = redacted[call.tool_call_id] = dataclasses.replace(call, ui_visibility='redacted')
+        if not redacted:
+            return
+        for tool_call_id in redacted.keys() & self.question_calls.keys():
+            self.question_calls[tool_call_id] = dataclasses.replace(
+                self.question_calls[tool_call_id], call=redacted[tool_call_id]
+            )
+        history = self.ctx.state.message_history
+        index = last_response_index(history)
+        assert index is not None, 'deferred calls come from a response in the history'
+        response = history[index]
+        assert isinstance(response, _messages.ModelResponse)
+        # A response can repeat a `tool_call_id` across `'graceful'` batches, so only the deferred call itself, the
+        # `'private'` call to the same tool, is swapped, for a copy of itself.
+        shown = dataclasses.replace(
+            response,
+            parts=[
+                dataclasses.replace(part, ui_visibility='redacted')
+                if isinstance(part, _messages.ToolCallPart)
+                and part.ui_visibility == 'private'
+                and (call := redacted.get(part.tool_call_id)) is not None
+                and part.tool_name == call.tool_name
+                else part
+                for part in response.parts
+            ],
+        )
+        history[index] = shown
+        # The run's `conversation` is built from its own record of the messages it appended, so it gets the copy too.
+        self.ctx.state.appended_messages.replace(response, shown)
+
     async def _resolve_deferred_calls(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         """Resolve collected deferred calls via capability handlers, else set the `DeferredToolRequests` result."""
+        self._show_private_deferred_calls_redacted()
         # Deferred calls are returned to the caller and later matched back to results by `tool_call_id`.
         # Duplicate ids would make that matching ambiguous, so reject them before handing the requests out.
         if duplicate_ids := _duplicate_tool_call_ids(
@@ -1431,6 +1537,26 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
     stream as each task completes.
     """
 
+    def _pick_winner(
+        self,
+        executable_indices: list[int],
+        output_results: dict[int, _OutputCallResult[NodeRunEndT]],
+        function_parts: dict[int, _FunctionCallParts],
+    ) -> None:
+        """Make the first valid output by emission order the final result.
+
+        A function call that submitted an output with `RunContext.submit_output` counts as an output.
+        """
+        for i in executable_indices:
+            if self.call_kinds[i] == 'output':
+                r = output_results.get(i)
+                if r is not None and r.final_result is not None:
+                    self.final_result = r.final_result
+            elif i in function_parts:
+                self._take_submission(self.tool_calls[i], function_parts[i][0])
+            if self.final_result is not None:
+                return
+
     async def _run_strategy(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:  # noqa: C901
         externally_won_id = self.final_result.tool_call_id if self.final_result is not None else None
 
@@ -1525,18 +1651,15 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                                     yield result_event
                 except asyncio.CancelledError as e:
                     await cancel_and_drain(*tasks, msg=e.args[0] if len(e.args) != 0 else None)
+                    self._record_completed_results(tasks, function_parts, function_user_parts)
                     raise
                 except BaseException:
                     await cancel_and_drain(*tasks)
+                    self._record_completed_results(tasks, function_parts, function_user_parts)
                     raise
 
-            # Pick the winner: first valid output by emission order (or the streamed-in result).
             if self.final_result is None:
-                for i in self.output_indices:
-                    r = output_results.get(i)
-                    if r is not None and r.final_result is not None:
-                        self.final_result = r.final_result
-                        break
+                self._pick_winner(executable_indices, output_results, function_parts)
 
             # If no output produced a valid result but one hit max retries, surface that error.
             if self.final_result is None:
@@ -1608,3 +1731,19 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
             deferred_validated_args=self.deferred_validated_args,
         )
         self.ctx.state.output_retries_used += self.output_retries_increment
+
+    def _record_completed_results(
+        self,
+        tasks: list[asyncio.Task[tuple[int, _ToolCallPayload[NodeRunEndT]]]],
+        function_parts: dict[int, _FunctionCallParts],
+        function_user_parts: dict[int, _messages.ModelRequestPart],
+    ) -> None:
+        """Record payloads of tasks that finished before a sibling failed or the run was cancelled."""
+        for task in tasks:
+            if task.done() and not task.cancelled() and task.exception() is None:
+                index, payload = task.result()
+                if index not in function_parts and isinstance(payload, tuple):
+                    tool_parts, tool_user_content = payload
+                    function_parts[index] = tool_parts
+                    if tool_user_content:
+                        function_user_parts[index] = self._tool_user_part(self.tool_calls[index], tool_user_content)
