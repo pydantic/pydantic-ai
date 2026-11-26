@@ -85,8 +85,8 @@ openai = ["openai>=3.50.0,<4", "tiktoken>=0.12.0"]
 cohere = ["cohere>=5.20.6,<8; platform_system != 'Emscripten'"]
 # `google-genai>=2.34.0` is the first release that continues an Interactions API long decode, and raises
 # `ContinuationInterruptedError` when a continued request fails, which `GoogleInteractionsModel` maps.
-# `GoogleModel` alone needs 2.30.0, the first release that continues a `generateContent` long decode past the
-# per-request output cap (`automatic_continuation`) and reports the first request's prompt size
+# Below that, `GoogleModel` would still need 2.30.0, the first release that continues a `generateContent` long
+# decode past the per-request output cap (`automatic_continuation`) and reports the first request's prompt size
 # (`initial_prompt_token_count`).
 # `<3` until we migrate: 3.0.0 moves the Gemini API default from `v1beta` to `v1`, which `GoogleProvider` does not
 # pin, and its `types.py` has an invalid `\/` escape whose `SyntaxWarning` fails any import under `-W error`.
