@@ -27,8 +27,10 @@ class ModalProvider:
     title: str = 'Modal'
     working_dir: str = '/root/workspace'
     token_in_sandbox: bool = True
+    desktop_at_create: bool = True
 
-    def missing(self) -> str | None:
+    def missing(self, *, desktop: bool = False) -> str | None:
+        del desktop
         if find_spec('modal') is None:
             return "Modal support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[modal]'."
         # Checked without importing Modal, which reads its config file as it loads; a file without a token
@@ -40,20 +42,24 @@ class ModalProvider:
             return 'Sign in to Modal first: run uvx modal token new, then try again.'
         return None
 
-    async def create(self, *, github: GitHubCredential | None) -> tuple[WorkspaceRef, SandboxBackend]:
+    async def create(
+        self, *, github: GitHubCredential | None, desktop: bool = False
+    ) -> tuple[WorkspaceRef, SandboxBackend]:
         from pydantic_ai_harness.modal_sandbox import ModalSandboxBackend
 
         # Modal's longest lifetime, 24 hours, and no idle timeout: Modal would end an idle sandbox, not pause it.
-        backend = ModalSandboxBackend(working_dir=self.working_dir, env=SANDBOX_ENV, sandbox_timeout=86_400)
+        backend = ModalSandboxBackend(
+            working_dir=self.working_dir, env=SANDBOX_ENV, sandbox_timeout=86_400, desktop=desktop
+        )
         # Nothing after Modal creates the sandbox can fail, so there is nothing here to clean up.
         await backend.get_sandbox()
         assert backend.ref is not None
         return backend.ref, backend
 
-    def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
+    def reopen(self, ref: WorkspaceRef, *, desktop: bool = False) -> SandboxBackend:
         from pydantic_ai_harness.modal_sandbox import ModalSandboxBackend
 
-        return ModalSandboxBackend(ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV)
+        return ModalSandboxBackend(ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV, desktop=desktop)
 
     async def close(self, backend: SandboxBackend) -> None:
         del backend  # Modal's own client is shared by the process, and closes with it.

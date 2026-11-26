@@ -344,7 +344,7 @@ _PROJECT_ROW = FieldRow(
             '  Its write token is saved in /keys; only the',
             '  key name and your email are kept here.',
             'R: forget it, and use LOGFIRE_TOKEN or the',
-            '  credentials file in pydantic-clai2/logfire/',
+            '  credentials file in pydantic-ai-pax/logfire/',
             '  under ~/.config (or $XDG_CONFIG_HOME).',
         ]
     ),
