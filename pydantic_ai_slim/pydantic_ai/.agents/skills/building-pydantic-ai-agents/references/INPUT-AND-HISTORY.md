@@ -105,7 +105,7 @@ Each message carries two identifiers:
 - `run_id` — unique per `Agent.run` call (including deferred-tool resume). Surfaces on `RunContext.run_id`, `AgentRunResult.run_id`, message stamps, and OTel `gen_ai.agent.call.id`.
 - `conversation_id` — shared across turns that pass the same `message_history`. Surfaces on `AgentRunResult.conversation_id`, message stamps, and OTel `gen_ai.conversation.id`.
 
-When one run starts another (a sub-agent, an agent called from a tool) and the inner run has a different `conversation_id`, the inner run's spans also get OTel `pydantic_ai.root_conversation_id`: the `conversation_id` of the top-level run, the one not inside any other run. It is only set for runs started in the same Python process as the top-level run. To add up a conversation's cost including its sub-agents, group by `pydantic_ai.root_conversation_id`, and use `gen_ai.conversation.id` for spans without it.
+When one run starts another (a sub-agent, an agent called from a tool) and the inner run has a different `conversation_id`, the inner run's spans also get OTel `pydantic_ai.root_conversation_id`: the `conversation_id` of the top-level run, the one not inside any other run. It is passed in a Python context variable, so it is missing on a sub-agent in another process and on model requests and tools that Temporal runs as activities. To add up a conversation's cost including its sub-agents, group by `pydantic_ai.root_conversation_id`, and use `gen_ai.conversation.id` for spans without it.
 
 ```python
 from pydantic_ai import Agent

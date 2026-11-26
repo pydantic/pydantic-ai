@@ -668,7 +668,7 @@ When one agent run starts another, for example a sub-agent called from a tool, t
 
 So the inner run's spans also get a `pydantic_ai.root_conversation_id` attribute, set to the top-level run's `conversation_id`. The top-level run's own spans don't get it, and neither does an inner run that uses the same `conversation_id` as the top-level run. To get the full cost of a conversation, sub-agents included, add up cost by `pydantic_ai.root_conversation_id`, and use `gen_ai.conversation.id` for spans that don't have it.
 
-Pydantic AI tracks the top-level run inside one Python process, so a sub-agent that runs in another process, such as on a remote worker, doesn't get the attribute.
+Pydantic AI passes the top-level `conversation_id` to inner runs in a Python context variable, which only code running inside the top-level run can see. So the attribute is missing on a sub-agent that runs in another process, such as on a remote worker, and on model requests and tools that [Temporal](durable_execution/temporal.md) runs as activities.
 
 ### Which model answered
 

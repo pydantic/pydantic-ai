@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Awaitable, Callable, Generator
-from contextlib import contextmanager
-from contextvars import ContextVar
+from collections.abc import Awaitable, Callable
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from opentelemetry.baggage import remove_baggage as _otel_remove_baggage, set_baggage as _otel_set_baggage
+from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import Context, attach as _otel_attach, detach as _otel_detach
 from opentelemetry.trace import StatusCode, get_current_span
 from pydantic_core import ValidationError, to_json
@@ -21,7 +19,6 @@ from pydantic_ai._instrumentation import (
     AGENT_NAME_BAGGAGE_KEY,
     CONVERSATION_ID_BAGGAGE_KEY,
     DEFAULT_INSTRUMENTATION_VERSION,
-    ROOT_CONVERSATION_ID_BAGGAGE_KEY,
     RUN_ID_BAGGAGE_KEY,
     InstrumentationNames,
     MessageJsonCache,
@@ -36,8 +33,10 @@ from pydantic_ai._instrumentation import (
     record_exception as _record_exception,
     record_uncaught_errors as _record_uncaught_errors,
     redact_binary_content,
+    root_conversation_attributes,
     safe_to_json,
     serialize_any,
+    track_top_level_conversation,
 )
 from pydantic_ai._output import build_retried_tool_return
 from pydantic_ai._utils import UNSET, Unset
@@ -109,53 +108,15 @@ _conversation_cache_marks = ConversationCacheMarkStore()
 `Agent(instrument=...)` and `Agent.instrument_all()` inject is built afresh for every run."""
 
 
-_top_level_conversation_id: ContextVar[str | None] = ContextVar('pydantic_ai.top_level_conversation_id', default=None)
-"""The top-level run's `conversation_id`, while an instrumented agent run is running.
-
-A run started inside it, such as a sub-agent, reads this to find the conversation it belongs to.
-It is a context variable rather than OTel baggage because baggage is also filled from the headers
-of incoming requests, which would let any HTTP client choose the value.
-"""
-
-
-def _root_conversation_attributes(conversation_id: str | None) -> dict[str, str]:
-    """Return the top-level run's `conversation_id` as a span attribute, or nothing.
-
-    A run started inside another run, such as a sub-agent, gets its own `conversation_id`, so its
-    cost is missed when cost is added up by `gen_ai.conversation.id`. Returns nothing for a
-    top-level run, and for a run that shares the top-level run's `conversation_id`.
-    """
-    top_level_conversation_id = _top_level_conversation_id.get()
-    if not top_level_conversation_id or top_level_conversation_id == conversation_id:
-        return {}
-    return {ROOT_CONVERSATION_ID_BAGGAGE_KEY: top_level_conversation_id}
-
-
-@contextmanager
-def _track_top_level_conversation(conversation_id: str | None) -> Generator[None]:
-    """Make the top-level run's `conversation_id` visible to the runs started inside this one."""
-    token = _top_level_conversation_id.set(_top_level_conversation_id.get() or conversation_id)
-    try:
-        yield
-    finally:
-        _top_level_conversation_id.reset(token)
-
-
-def _agent_run_baggage(agent_name: str, ctx: RunContext[Any], root_conversation: dict[str, str]) -> Context:
+def _agent_run_baggage(agent_name: str, ctx: RunContext[Any]) -> Context:
     """Return the OTel context to run an agent in.
 
-    It holds the agent name, run ID and conversation IDs as baggage, so the model request and tool
-    spans started inside the run can copy them as attributes. The top-level `conversation_id` is
-    removed when this run has none to record, so a value that came in with a request never reaches
-    a span.
+    It holds the agent name, run ID and conversation ID as baggage, so the model request and tool
+    spans started inside the run can copy them as attributes.
     """
     otel_ctx = _otel_set_baggage(AGENT_NAME_BAGGAGE_KEY, agent_name)
     otel_ctx = _otel_set_baggage(RUN_ID_BAGGAGE_KEY, ctx.run_id or '', context=otel_ctx)
-    otel_ctx = _otel_set_baggage(CONVERSATION_ID_BAGGAGE_KEY, ctx.conversation_id or '', context=otel_ctx)
-    root_conversation_id = root_conversation.get(ROOT_CONVERSATION_ID_BAGGAGE_KEY)
-    if root_conversation_id is None:
-        return _otel_remove_baggage(ROOT_CONVERSATION_ID_BAGGAGE_KEY, context=otel_ctx)
-    return _otel_set_baggage(ROOT_CONVERSATION_ID_BAGGAGE_KEY, root_conversation_id, context=otel_ctx)
+    return _otel_set_baggage(CONVERSATION_ID_BAGGAGE_KEY, ctx.conversation_id or '', context=otel_ctx)
 
 
 def _default_settings() -> InstrumentationSettings:
@@ -345,8 +306,7 @@ class Instrumentation(AbstractCapability[Any]):
             'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': f'{agent_name} run',
         }
-        root_conversation = _root_conversation_attributes(ctx.conversation_id)
-        span_attributes.update(root_conversation)
+        span_attributes.update(root_conversation_attributes(ctx.conversation_id))
 
         if (workspace_ref := ctx.workspace.ref) is not None:
             span_attributes['pydantic_ai.workspace.provider'] = workspace_ref.provider
@@ -366,12 +326,12 @@ class Instrumentation(AbstractCapability[Any]):
                 set_status_on_exception=False,
             ) as span,
             _record_uncaught_errors(span, include_content=settings.include_content),
-            _track_top_level_conversation(ctx.conversation_id),
+            track_top_level_conversation(ctx.conversation_id),
             # Entered with the span and exited with it, so `_run_usage` ends up holding exactly
             # the usage this run recorded — nested runs report their own on their own spans.
             _usage_attribution.accumulate(self._run_usage),
         ):
-            token = _otel_attach(_agent_run_baggage(agent_name, ctx, root_conversation))
+            token = _otel_attach(_agent_run_baggage(agent_name, ctx))
             result: AgentRunResult[Any] | None = None
             try:
                 result = await handler()
