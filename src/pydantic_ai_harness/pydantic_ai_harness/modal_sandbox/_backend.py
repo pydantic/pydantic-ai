@@ -57,6 +57,9 @@ from pydantic_ai_harness._workspace_provider import (
     safe_credential_reason,
     stop_shielded,
 )
+from pydantic_ai_harness.computer_use import Display, SupportsDisplay
+from pydantic_ai_harness.computer_use._display import checked_desktop_size
+from pydantic_ai_harness.computer_use._x11 import DESKTOP_PACKAGES, DISPLAY, x11_display
 
 # Checked without importing: importing Modal reads `~/.modal.toml`, so the import itself is
 # deferred to a worker thread on first use. A `None` entry in `sys.modules` blocks the import.
@@ -216,7 +219,7 @@ def _check_image(image: str | modal.Image | None) -> None:
 
 
 # Subclassing the structural protocols makes a signature drift fail the type check on this class.
-class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
+class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsDisplay):
     """A Modal sandbox implementing Pydantic AI's `WorkspaceBackend` protocol.
 
     Construction performs no I/O. The first operation creates or attaches to a sandbox, and the
@@ -225,6 +228,9 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
 
     Commands run in isolated process groups. Cancellation and command deadlines attempt to stop
     the foreground group without terminating the sandbox shared by other commands.
+
+    With `desktop`, the sandbox gets a desktop on first use. The default image has the programs it needs; another
+    image gets them installed then, if it can.
 
     Args:
         sandbox: A live `modal.Sandbox` you already have. Whoever created it owns terminating it.
@@ -243,6 +249,9 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             applied to every command, including in an attached sandbox. `None` (the default) is
             `/root` on the default image, otherwise the image's own working directory.
         env: Environment variables every command gets; a command's own `env` is layered on top.
+        desktop: Whether the sandbox has a display for
+            [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for 1280x800, or its
+            `(width, height)`.
     """
 
     def __init__(
@@ -258,6 +267,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         idle_timeout: int | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        desktop: bool | tuple[int, int] = False,
     ) -> None:
         if ref is not None:
             check_provider(ref, 'modal')
@@ -281,7 +291,12 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         self._sandbox_timeout = sandbox_timeout
         self._idle_timeout = idle_timeout
         self._working_dir = absolute_path('working_dir', working_dir)
-        self._env = dict(env) if env is not None else {}
+        self._display = x11_display(
+            self._run_argv,
+            checked_desktop_size(desktop),
+            lambda: f'Modal sandbox {self._ref.id if self._ref else "(not created)"}',
+        )
+        self._env = {**({'DISPLAY': DISPLAY} if self._display else {}), **(env or {})}
         # `_working_dir` is what was configured (`None` for the image's); the protocol needs the
         # canonical absolute path, which only `pwd -P` in the sandbox can give.
         self._resolved_working_dir: str | None = None
@@ -356,6 +371,11 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
     def ref(self) -> WorkspaceRef | None:
         """Identity of the sandbox, or `None` before one has been created."""
         return self._ref
+
+    @property
+    def display(self) -> Display | None:
+        """The sandbox's desktop, when created with `desktop=True`."""
+        return self._display
 
     @asynccontextmanager
     async def _mapped_errors(
@@ -497,7 +517,9 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
                 )
                 if self._image is None:
                     # Built on create, not at import: Modal caches it per workspace after the first build.
-                    built = modal.Image.debian_slim(python_version='3.12').apt_install('git', 'ripgrep')
+                    built = modal.Image.debian_slim(python_version='3.12').apt_install(
+                        'git', 'ripgrep', *(DESKTOP_PACKAGES if self._display else ())
+                    )
                 elif isinstance(self._image, str):
                     built = modal.Image.from_registry(self._image)  # pyright: ignore[reportUnknownMemberType]
                 else:
@@ -624,16 +646,26 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         A shell command runs as `/bin/sh -c <command>`. Cancellation and command deadlines
         stop its foreground process group, without terminating the shared sandbox.
         """
+        check_timeout(timeout)
         # Modal executes argv and never a shell string, so shell interpretation is requested
         # explicitly through `/bin/sh -c`, the one shell every sandbox image carries.
         argv = command_argv(command, shell)
+        if self._display is not None:
+            # Started after the command is checked, so a bad one doesn't create a sandbox, and before it runs, so a
+            # program the command opens shows on the screen.
+            await self._display.start()
+        return await self._run_argv(argv, env=env or {}, timeout=timeout, shell=shell)
+
+    async def _run_argv(
+        self, argv: list[str], *, env: Mapping[str, str], timeout: float | None, shell: bool = False
+    ) -> CommandResult:
+        """Run `argv` without starting the display, as the display's own commands do."""
         if not shell:
             # Through `sh`, so a program that can't start exits 127 or 126 as it does in `sh`.
             argv = ['/bin/sh', '-c', 'exec "$@"', 'sh', *argv]
         # Given per command, not only at creation, so an attached sandbox honors it too.
         workdir = self._working_dir
-        check_timeout(timeout)
-        variables: dict[str, str | None] | None = {**self._env, **(env or {})} or None
+        variables: dict[str, str | None] | None = {**self._env, **env} or None
         # Acquiring the sandbox and probing for setsid have their own bounds; the timeout is the command's alone.
         sandbox = await self.get_sandbox()
         # Without setsid, only the wrapper leader can be signalled, not its descendants.

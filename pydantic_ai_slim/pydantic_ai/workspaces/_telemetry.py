@@ -1,4 +1,4 @@
-"""OpenTelemetry spans for workspace calls, on the calling run's telemetry (`pydantic_ai._telemetry`).
+"""OpenTelemetry spans for workspace calls, on the calling run's telemetry (`pydantic_ai.telemetry`).
 
 - `operation_span`: `workspace {operation}`, one per `Workspace` call, skipped inside another workspace span.
 - `acquire_span`: `workspace create` or `workspace attach`, around a backend getting its environment.
@@ -16,8 +16,9 @@ from typing import Literal, TypeAlias
 from opentelemetry.trace import INVALID_SPAN, Span
 from opentelemetry.util.types import AttributeValue
 
-from .._telemetry import RunTelemetry, current_run_telemetry, open_span, set_content_attribute
+from .._instrumentation import record_exception
 from ..messages import WorkspaceRef
+from ..telemetry import RunTelemetry, current_run_telemetry, open_span, records_content, set_content_attribute
 from .protocol import WorkspaceBackend, WorkspaceCommand
 
 __all__ = (
@@ -73,8 +74,7 @@ def operation_span(operation: Operation, workspace: WorkspaceBackend) -> Abstrac
     # By identity: each run publishes a new `RunTelemetry`, so a run started inside this one is never taken for it.
     if (telemetry := current_run_telemetry()) is not None and _opened_by.get() is telemetry:
         return nullcontext(INVALID_SPAN)
-    not_errors = (FileNotFoundError,) if operation in _LOOKUPS else ()
-    return _span(operation, backend=workspace, not_errors=not_errors)
+    return _span(operation, backend=workspace, missing_is_answer=operation in _LOOKUPS)
 
 
 def acquire_span(action: Literal['create', 'attach'], backend: WorkspaceBackend) -> AbstractContextManager[Span]:
@@ -106,7 +106,7 @@ def set_command(span: Span, command: WorkspaceCommand) -> None:
     if isinstance(command, str):
         set_content_attribute(current_run_telemetry(), span, 'process.command_line', command)
     else:
-        set_content_attribute(current_run_telemetry(), span, 'process.command_args', list(command))
+        set_content_attribute(current_run_telemetry(), span, 'process.command_args', command)
 
 
 @contextmanager
@@ -115,13 +115,14 @@ def _span(
     *,
     attributes: Mapping[str, AttributeValue] | None = None,
     backend: WorkspaceBackend | None = None,
-    not_errors: tuple[type[Exception], ...] = (),
+    missing_is_answer: bool = False,
 ) -> Generator[Span]:
     """Open `workspace {name}`, naming the environment it ran in when given `backend`."""
     telemetry = current_run_telemetry()
     token = _opened_by.set(telemetry)
+    missing: FileNotFoundError | None = None
     try:
-        with open_span(telemetry, f'workspace {name}', attributes=attributes, not_errors=not_errors) as span:
+        with open_span(telemetry, f'workspace {name}', attributes=attributes) as span:
             # The ref is read only when recording, so an untraced call never touches it.
             traced = backend if span.is_recording() else None
             if traced is not None:
@@ -129,12 +130,20 @@ def _span(
                 span.set_attributes(_ref_attributes(traced.ref))
             try:
                 yield span
+            except FileNotFoundError as error:
+                if not missing_is_answer:
+                    raise
+                # Recorded, then raised once the span has ended, so `open_span` doesn't mark it ERROR.
+                record_exception(span, error, include_content=records_content(telemetry), escaped=False)
+                missing = error
             finally:
                 if traced is not None:
                     # Read at the end too: a lazy backend creates its environment during its first operation.
                     span.set_attributes(_ref_attributes(traced.ref))
     finally:
         _opened_by.reset(token)
+    if missing is not None:
+        raise missing
 
 
 def _ref_attributes(ref: WorkspaceRef | None) -> dict[str, AttributeValue]:

@@ -121,6 +121,16 @@ The run leaves a backend you built open, so close it with `aclose()`. That close
 
 For boxd features the workspace API doesn't cover, such as snapshots and public URLs, `await backend.get_sandbox()` returns the machine's `boxd.Machine` record. Use its `id` with your own `boxd.AsyncBoxd`.
 
+## Give the agent a desktop
+
+Pass `desktop=True` and add [`ComputerUse`](../computer_use/):
+`capabilities=[BoxdSandbox(desktop=True), ComputerUse()]`. The screen is 1280x800; pass a size such as
+`desktop=(1440, 900)` for another.
+
+Machines on boxd's current default image come with a desktop, with a panel that opens a terminal and boxd's Chromium browser. A fork or snapshot of an older image has none, so use a fresh machine. On an attached machine, the first screen call installs the panel and terminal if they are missing, with `apt-get` and passwordless `sudo`. If the panel can't start, the run only logs a warning, and the reason is in `/tmp/pydantic-ai-desktop.log` in the machine. With `desktop` set, every command gets `DISPLAY=:100`, so `agent-browser open <url>` from a shell opens the page on the desktop.
+
+Anyone in your boxd organization can watch the desktop live in the boxd console's Desktop view.
+
 ## Clean up
 
 Delete a machine with the ref you stored, whatever state it is in:
@@ -248,6 +258,7 @@ Destroy each machine when you are done. The copy isn't tied to the original, so 
 
 - Machines `BoxdSandbox` creates, and copies `fork` makes, are isolated: code the agent runs holds no boxd credentials and can't reach your other boxd machines.
 - They can reach the internet, and like every boxd machine have a public HTTPS address that serves the port their code listens on.
+- With `desktop=True`, anyone in your boxd organization can also watch the agent's screen in the boxd console. See [Give the agent a desktop](#give-the-agent-a-desktop).
 - `BoxdSandbox` refuses to attach to or fork a machine that isn't isolated or is on a named boxd network, and `destroy` refuses one that isn't isolated.
 - A machine from a snapshot keeps the networks of the machine the snapshot was saved from, so save snapshots from a machine on no network.
 - A ref can name any isolated machine your credentials can see, so keep refs server-side.
@@ -266,8 +277,9 @@ Destroy each machine when you are done. The copy isn't tied to the original, so 
 | `secrets` | Names of existing boxd secrets a new machine gets. Default: `None`. An attached machine keeps the ones it was created with. See [Keep a token out of the machine](#keep-a-token-out-of-the-machine). |
 | `authority` | Who wrote the machine's files. A capability that puts a file's text in the prompt gives it no more [authority](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#workspace-authority) than this. Default: `'operator'`, your own files. Use `'user'` for the user's files, and `'none'` for files nobody on your side wrote, such as a cloned third-party repository. |
 | `path_authority` | Levels for some directories and files, overriding `authority` under them. The longest matching path wins. Paths are in the machine, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
+| `desktop` | Give the agent the machine's desktop for [`ComputerUse`](../computer_use/): `True` for 1280x800, or a `(width, height)`. Default: `False`. |
 
-`client`, `working_dir`, `env`, `authority` and `path_authority` also apply when you reattach, and `destroy` uses `client`. The other options only shape a new machine. An attached machine keeps the `secrets` it was created with.
+`client`, `working_dir`, `env`, `desktop`, `authority` and `path_authority` also apply when you reattach, and `destroy` uses `client`. The other options only shape a new machine. An attached machine keeps the `secrets` it was created with.
 
 ## Limits
 

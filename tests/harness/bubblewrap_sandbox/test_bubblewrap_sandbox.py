@@ -18,6 +18,7 @@ from pathlib import Path
 
 import anyio
 import pytest
+from inline_snapshot import snapshot
 
 import pydantic_ai_harness
 import pydantic_ai_harness.bubblewrap_sandbox as bubblewrap_sandbox
@@ -726,10 +727,18 @@ async def test_a_traced_command_shows_the_callers_command_not_the_launcher(
     ]
     assert [(span.attributes or {})['process.command_args'] for span in runs] == [('printf', '%s', 'hi')]
     # A file operation runs as sandboxed shell commands: one span each, inside the operation's.
-    assert {span.name for span in spans if span.name.startswith('workspace ')} == {
-        'workspace run',
-        'workspace write_bytes',
-    }
+    names = {span.context.span_id: span.name for span in spans if span.context is not None}
+    assert [
+        ((span.attributes or {})['pydantic_ai.workspace.command.step'], span.parent and names[span.parent.span_id])
+        for span in spans
+        if 'pydantic_ai.workspace.command.step' in (span.attributes or {})
+    ] == snapshot(
+        [
+            ('realpath', 'workspace write_bytes'),
+            ('write_chunk', 'workspace write_bytes'),
+            ('commit', 'workspace write_bytes'),
+        ]
+    )
     assert not any('SENTINEL-env' in str(span.attributes) for span in spans)
 
 

@@ -147,6 +147,16 @@ The `finally` deletes the VM even when setup or the run fails, or is cancelled m
 
 For features the workspace API doesn't cover, `backend.get_sandbox()` returns the SDK's `smol.AsyncMachine`.
 
+## Give the agent a desktop
+
+Pass `desktop=True` and add [`ComputerUse`](../computer_use/):
+`capabilities=[SmolSandbox(desktop=True, allow_internet_access=True), ComputerUse()]`. The screen is 1280x800; pass
+a size such as `desktop=(1440, 900)` for another.
+
+Without an `image`, a new VM runs `debian:bookworm-slim`, and its first start installs [the display's programs](../computer_use/#what-the-display-needs), with no web browser. That needs `allow_internet_access=True`: creating a new VM without it raises `UserError`. For a VM without network access, pass an `image` that has the programs.
+
+The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
+
 ## Clean up
 
 Delete a VM and its disk with the ref you stored. A VM that is already gone returns quietly. A stopped VM is booted briefly first, because smolmachines can't delete a local VM without attaching to it:
@@ -223,16 +233,17 @@ Whoever passes a ref runs commands in the VM it names. smolmachines can open any
 
 | Option | What it does |
 | --- | --- |
-| `image` | OCI image for a new VM. Default: `None`, smolvm's own Alpine Linux. |
+| `image` | OCI image for a new VM. Default: `None`, smolvm's own Alpine Linux, or `debian:bookworm-slim` with `desktop`. |
 | `cpus` | vCPUs for a new VM. Default: `None`, smolvm's default. |
 | `memory_mb` | Memory for a new VM in MiB. Default: `None`, smolvm's default. |
 | `allow_internet_access` | Whether a new VM has unrestricted outbound network access, from this machine's network. Default: `False`. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created if missing. Default: `/workspace`. `None` uses the VM's own, `/` without an image. |
 | `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the VM. The agent's commands can read these, so leave out secrets it shouldn't see. |
+| `desktop` | Give the VM a graphical display for [`ComputerUse`](../computer_use/): `True` for 1280x800, or its `(width, height)`. The size applies when the display first starts. Default: `False`. |
 | `authority` | Who wrote the VM's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, or `'user'` for the user's own. Capabilities that put a file into the prompt give it no more [authority](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#workspace-authority) than this. Default: `'operator'`, files you wrote. |
 | `path_authority` | An `authority` level for specific directories and files, overriding `authority` under them. The longest matching path wins. Paths are VM paths, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
 
-`image`, `cpus`, `memory_mb` and `allow_internet_access` only shape a new VM. `working_dir` and `env` apply to every command, including after you reattach.
+`image`, `cpus`, `memory_mb` and `allow_internet_access` only shape a new VM. `working_dir` and `env` apply to every command. They and `desktop` also apply after you reattach.
 
 ## Limits
 

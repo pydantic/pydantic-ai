@@ -22,6 +22,7 @@ from pydantic_ai_harness._workspace_provider import (
     reject_defer_loading,
 )
 from pydantic_ai_harness.boxd_sandbox._backend import BoxdSandboxBackend, destroy_machine
+from pydantic_ai_harness.computer_use._display import checked_desktop_size
 
 if TYPE_CHECKING:
     from boxd import AsyncBoxd
@@ -108,12 +109,17 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
     agent's commands can send it without it being in their environment; a secret without domains is set
     as its real value. An attached machine keeps the ones it was created with."""
 
+    desktop: bool | tuple[int, int] = False
+    """Give the agent the machine's desktop for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]:
+    `True` for 1280x800, or a `(width, height)`."""
+
     def __post_init__(self) -> None:
         reject_defer_loading('BoxdSandbox', self.defer_loading)
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
         check_working_dir(self.working_dir)
         check_path_authority(self.path_authority)
         check_integer('auto_suspend_timeout', self.auto_suspend_timeout, minimum=0, optional=True)
+        checked_desktop_size(self.desktop)
         if self.vcpu is not None and (type(self.vcpu) is not int or self.vcpu not in _VCPUS):
             raise UserError(f'vcpu must be 1, 2, 4, 8 or None, got {self.vcpu!r}.')
         if self.snapshot is not None and self.vcpu is not None:
@@ -138,6 +144,7 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
         authority: Authority = 'operator',
         path_authority: Mapping[str, Authority] | None = None,
         secrets: Sequence[str] | None = None,
+        desktop: bool | tuple[int, int] = False,
     ) -> BoxdSandbox[Any]:
         """Build from an agent spec, naming the fields a spec can express.
 
@@ -158,11 +165,14 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
             authority=authority,
             path_authority=path_authority,
             secrets=secrets,
+            desktop=desktop,
         )
 
     def backend(self, ref: WorkspaceRef) -> BoxdSandboxBackend:
         """Construct a lazy backend for an existing machine."""
-        return BoxdSandboxBackend(client=self.client, ref=ref, working_dir=self.working_dir, env=self.env)
+        return BoxdSandboxBackend(
+            client=self.client, ref=ref, working_dir=self.working_dir, env=self.env, desktop=self.desktop
+        )
 
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Delete a machine by id, whatever state it is in.
@@ -207,6 +217,7 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
             working_dir=self.working_dir,
             env=self.env,
             secrets=self.secrets,
+            desktop=self.desktop,
         )
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:

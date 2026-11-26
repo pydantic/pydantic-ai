@@ -18,7 +18,7 @@ from typing_extensions import get_protocol_members
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import Authority
 
-from .._telemetry import current_run_telemetry, set_content_attribute
+from ..telemetry import current_run_telemetry, set_content_attribute
 from ._authority_paths import AuthorityLayer, is_within, layer_authority, lowest_authority, merge_path_authority
 from ._telemetry import Operation, Step, command_span, operation_span, set_command
 from .protocol import (
@@ -39,7 +39,7 @@ from .protocol import (
 )
 from .unavailable import UnavailableWorkspace
 
-__all__ = ('Workspace', 'WorkspacePaths', 'WrapperWorkspace')
+__all__ = ('Workspace', 'WorkspacePaths', 'WrapperWorkspace', 'lowest_authority_under')
 
 
 class WorkspacePaths(Protocol):
@@ -487,14 +487,21 @@ class Workspace(WorkspaceBackend):
         rather than asking again when the text is sent.
         """
         root = await self.working_dir()
+        layers = await self._resolved_authority_layers(root)
+        written = await self.resolve(path)
+        target = await self.realpath(written)
+        return await self._authority_at(written, target, root, layers)
+
+    async def _resolved_authority_layers(self, root: str) -> list[AuthorityLayer]:
         layers: list[AuthorityLayer] = []
         for level, path_authority in self._authority_layers():
             layers.append((level, await self._resolve_path_authority(path_authority, level, root)))
-        zones = [root, *(key for _, path_authority in layers for key in path_authority)]
+        return layers
 
+    async def _authority_at(self, written: str, target: str, root: str, layers: list[AuthorityLayer]) -> Authority:
+        """The level of a path resolved to `written`, which leads to `target`; see `authority_of`."""
+        zones = [root, *(key for _, path_authority in layers for key in path_authority)]
         paths = self.paths
-        written = await self.resolve(path)
-        target = await self.realpath(written)
         if not any(is_within(target, zone, sep=paths.sep) for zone in zones):
             return 'none'
         locations = [target]
@@ -511,6 +518,31 @@ class Workspace(WorkspaceBackend):
         return lowest_authority(
             layer_authority(location, layer, sep=paths.sep) for location in locations for layer in layers
         )
+
+    async def _lowest_authority_under(self, directory: str) -> Authority:
+        """See [`lowest_authority_under`][pydantic_ai.workspaces.lowest_authority_under]."""
+        paths = self.paths
+        root = await self.working_dir()
+        written = await self.resolve(directory)
+        target = await self.realpath(written)
+        lowers = any(
+            level != 'operator' or lowest_authority(entries.values()) != 'operator'
+            for level, entries in self._authority_layers()
+        )
+        if not lowers and all(is_within(location, root, sep=paths.sep) for location in (written, target)):
+            # No wrapper lowers any path, and the directory is in the working directory where it's written and where it
+            # leads, so it's at `'operator'`.
+            return 'operator'
+        resolved_layers = await self._resolved_authority_layers(root)
+        locations = {written.casefold(), target.casefold()}
+        levels: list[Authority] = [await self._authority_at(written, target, root, resolved_layers)]
+        for _, resolved in resolved_layers:
+            levels.extend(
+                entry_level
+                for entry, entry_level in resolved.items()
+                if any(is_within(entry.casefold(), location, sep=paths.sep) for location in locations)
+            )
+        return lowest_authority(levels)
 
     def durable_policy(self) -> tuple[object, ...]:
         """Configuration a durable unit must rebuild with this wrapper.
@@ -777,3 +809,20 @@ def workspace_layers(workspace: Workspace) -> list[type[object]]:
             layers.append(type(layer))
         layer = layer._backend  # pyright: ignore[reportPrivateUsage]
     return [*layers, type(layer)]
+
+
+async def lowest_authority_under(workspace: Workspace, directory: str) -> Authority:
+    """The lowest [authority][pydantic_ai.messages.Authority] `workspace` gives any path at or under `directory`.
+
+    For a capability that hands a directory to something that reads it with one level, such as a delegate rooted
+    there or a check that decides whether to trust the files under it: every file it reads there gets no more than
+    `workspace` gives it. It's [`authority_of(directory)`][pydantic_ai.workspaces.Workspace.authority_of], lowered by
+    every wrapper's `path_authority` entry at or under `directory`, both where the entry is written and where it
+    leads, at the level `authority_of` caps a link's target at. Entries match ignoring case, as `authority_of` does,
+    keeping the lower level.
+
+    A directory outside the working directory that no `path_authority` entry contains is outside the workspace, at
+    `'none'`, as `authority_of` puts it. Symlinks under `directory` that no entry names aren't followed: the answer
+    comes from the workspace's levels, not from listing the files.
+    """
+    return await workspace._lowest_authority_under(directory)  # pyright: ignore[reportPrivateUsage]

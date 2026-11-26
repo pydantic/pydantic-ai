@@ -17,7 +17,6 @@ from ._spec import TEMPORAL_ENGINE_SPEC
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
-    from pydantic_ai.models.instrumented import InstrumentationSettings
 
 AgentDepsT = TypeVar('AgentDepsT', default=object, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
@@ -84,18 +83,15 @@ def deserialize_run_context(
     know about the agent.
     """
     ctx = run_context_type.restore(serialized, deps=deps, agent=agent, engine_spec=TEMPORAL_ENGINE_SPEC)
-    settings = agent_instrumentation_settings(agent) if agent is not None else None
-    _restore_tracer(ctx, settings)
-    # A context that didn't carry the run's content flag leaves the activity untraced, as `ctx`-based spans are.
-    if 'trace_include_content' not in ctx.__dataclass_fields__:
-        return ctx
-    # Workspace calls in the activity have no `ctx` to trace with, so publish its tracer and content flag for
-    # them, whether or not the activity itself is traced, as the tool's own spans are.
-    publish_run_telemetry(ctx.tracer, include_content=ctx.trace_include_content)
+    _restore_tracer(ctx, agent)
+    # Code in the activity that has no `ctx`, such as a workspace call, traces with the run's published
+    # telemetry, so publish it here as `Instrumentation` does in the run. A context that didn't carry the
+    # tracer and content flag publishes none.
+    publish_run_telemetry(ctx)
     return ctx
 
 
-def _restore_tracer(ctx: RunContext[Any], settings: InstrumentationSettings | None) -> None:
+def _restore_tracer(ctx: RunContext[Any], agent: AbstractAgent[Any, Any] | None) -> None:
     """Give `ctx.tracer` the tracer the worker's agent would trace a run with.
 
     A run always has a tracer, a no-op one when it isn't instrumented, so tools open spans without checking
@@ -108,6 +104,7 @@ def _restore_tracer(ctx: RunContext[Any], settings: InstrumentationSettings | No
     """
     if 'tracer' in ctx.__dict__:
         return
+    settings = agent_instrumentation_settings(agent) if agent is not None else None
     if 'trace_include_content' in ctx.__dataclass_fields__:
         ctx.trace_include_content = ctx.trace_include_content and settings is not None and settings.include_content
     ctx.__dict__['tracer'] = settings.tracer if settings is not None else NoOpTracer()

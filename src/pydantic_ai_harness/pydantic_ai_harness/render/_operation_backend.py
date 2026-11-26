@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Generic, TypeVar
 from render import Options, Retry, TaskContext, Workflows
 from render.workflows import TaskDefinition
 
-from pydantic_ai._telemetry import RunTelemetry, run_telemetry_scope
+from pydantic_ai._telemetry import run_telemetry_scope
 from pydantic_ai.durable_exec import (
     JournalOperationNamer,
     ParameterTransports,
@@ -219,14 +219,10 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
                 # Retrying cannot repair persisted request bytes or worker-side decoding.
                 return permanent_error('invalid-request', exc)
 
-            ctx = operation_run_context(params)
-            assert ctx is not None, 'every installed operation carries a run context'
             try:
                 # Workspace calls trace like the task's tools, with its rebuilt run context's tracer and content flag.
-                with (
-                    self._runtime.activate(context),
-                    run_telemetry_scope(RunTelemetry(ctx.tracer, ctx.trace_include_content)),
-                ):
+                # An operation without one, such as a cancellation sent without a context, traces none.
+                with self._runtime.activate(context), run_telemetry_scope(operation_run_context(params)):
                     value = await operation.handler(params)
             except RenderProtocolError as exc:
                 return permanent_error('invalid-result', exc)

@@ -36,7 +36,8 @@ class BoxLiteSandbox(AbstractCapability[AgentDepsT]):
     """
 
     image: str | None = None
-    """OCI image a new box runs, such as `'python:3.12-slim'`; BoxLite's default, Alpine Linux, when `None`."""
+    """OCI image a new box runs, such as `'python:3.12-slim'`; BoxLite's default, Alpine Linux, when `None`, unless
+    `desktop` is set."""
 
     cpus: int | None = None
     """vCPUs for a new box; BoxLite's default when `None`."""
@@ -63,6 +64,11 @@ class BoxLiteSandbox(AbstractCapability[AgentDepsT]):
     its deprecated `auto_remove`), so passing one of those here raises `UserError`.
     """
 
+    desktop: bool | tuple[int, int] = False
+    """Give the box a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for
+    1280x800, or its `(width, height)`. Without an `image`, a new box runs `debian:bookworm-slim`, and the first start
+    installs the display programs, which needs `allow_internet_access`."""
+
     authority: Authority = 'operator'
     """The [authority][pydantic_ai.messages.Authority] of the sandbox's files: `'none'` for files nobody on the
     application's side wrote, such as a cloned third-party repository, and `'user'` for the user's own files.
@@ -88,7 +94,7 @@ class BoxLiteSandbox(AbstractCapability[AgentDepsT]):
     def backend(self, ref: WorkspaceRef) -> BoxLiteSandboxBackend:
         """Attach lazily to an existing box, one `BoxLiteSandbox` created."""
         _backend.check_ref(ref)
-        return BoxLiteSandboxBackend(ref=ref, working_dir=self.working_dir, env=self.env)
+        return BoxLiteSandboxBackend(ref=ref, working_dir=self.working_dir, env=self.env, desktop=self.desktop)
 
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Delete a box by ref; one that is already gone returns quietly.
@@ -126,4 +132,5 @@ class BoxLiteSandbox(AbstractCapability[AgentDepsT]):
             working_dir=self.working_dir,
             env=self.env,
             box_options=self.box_options,
+            desktop=self.desktop,
         )

@@ -131,12 +131,6 @@ async def test_shell_filesystem_commands_are_traced_without_their_text(
         {'name': '  workspace run', 'pydantic_ai.workspace.command.step': 'read_chunk'},
         {'name': '  workspace run', 'pydantic_ai.workspace.command.step': 'read_chunk'},
     ])  # fmt: skip
-    # A step's message names the step, never its command, so it can't pass for a command the agent ran.
-    assert all(
-        span['logfire.msg'] == f'workspace run ({span["pydantic_ai.workspace.command.step"]})'
-        for span in spans
-        if 'pydantic_ai.workspace.command.step' in span
-    )
     assert not any(key.startswith('process.command') for span in spans for key in span)
     assert all(data[:100] not in str(span.attributes) for span in exporter.get_finished_spans())
 

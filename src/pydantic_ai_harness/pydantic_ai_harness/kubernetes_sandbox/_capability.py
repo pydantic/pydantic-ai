@@ -20,6 +20,7 @@ from pydantic_ai_harness._workspace_provider import (
     check_working_dir,
     reject_defer_loading,
 )
+from pydantic_ai_harness.computer_use._display import checked_desktop_size
 from pydantic_ai_harness.kubernetes_sandbox._backend import (
     DEFAULT_SANDBOX_TIMEOUT,
     PROVIDER,
@@ -98,12 +99,19 @@ class KubernetesSandbox(AbstractCapability[AgentDepsT]):
     path wins. Paths are sandbox paths: relative ones resolve against the working directory, and `~` isn't expanded.
     See [`Workspace.authority_of`][pydantic_ai.workspaces.Workspace.authority_of]."""
 
+    desktop: bool | tuple[int, int] = False
+    """Give the sandbox a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True`
+    for 1280x800, or its `(width, height)`. Without root or passwordless `sudo` in the pod, its `SandboxTemplate`
+    image must already have the display's programs, listed under "What the display needs" in the `ComputerUse`
+    docs."""
+
     def __post_init__(self) -> None:
         reject_defer_loading('KubernetesSandbox', self.defer_loading)
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
         check_integer('sandbox_timeout', self.sandbox_timeout, optional=True)
         check_working_dir(self.working_dir)
         check_path_authority(self.path_authority)
+        checked_desktop_size(self.desktop)
         try:
             check_env_types(self.env)
         except TypeError:
@@ -125,6 +133,7 @@ class KubernetesSandbox(AbstractCapability[AgentDepsT]):
         env: Mapping[str, str] | None = None,
         authority: Authority = 'operator',
         path_authority: Mapping[str, Authority] | None = None,
+        desktop: bool | tuple[int, int] = False,
         **kwargs: Any,
     ) -> KubernetesSandbox[Any]:
         """Build from an agent spec, naming the fields a spec can express.
@@ -146,13 +155,16 @@ class KubernetesSandbox(AbstractCapability[AgentDepsT]):
             env=env,
             authority=authority,
             path_authority=path_authority,
+            desktop=desktop,
             **kwargs,
         )
 
     def backend(self, ref: WorkspaceRef) -> KubernetesSandboxBackend:
         """Construct a lazy backend for a claim this capability made; close its connection with `aclose()`."""
         check_capability_ref(ref, self.namespace)
-        return KubernetesSandboxBackend(ref=ref, connection=self.connection, working_dir=self.working_dir, env=self.env)
+        return KubernetesSandboxBackend(
+            ref=ref, connection=self.connection, working_dir=self.working_dir, env=self.env, desktop=self.desktop
+        )
 
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Delete the claim, and with it the sandbox, without running anything in it.
@@ -183,6 +195,7 @@ class KubernetesSandbox(AbstractCapability[AgentDepsT]):
             sandbox_timeout=self.sandbox_timeout,
             working_dir=self.working_dir,
             env=self.env,
+            desktop=self.desktop,
         )
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:

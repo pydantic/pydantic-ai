@@ -2446,7 +2446,13 @@ class TestTaskControlEdges:
                 )
                 task_id = task_id_in(receipt)
                 await owner.asking.wait()
-                # Another process opening the same directory finds the task as a process exit left it.
+                # Another process opening the same directory finds the task as a process exit left it: saved
+                # running, by a process that is gone (a PID no process has).
+                saved = tmp_path / f'{task_id}.json'
+                adapter = TypeAdapter(DelegationTask)
+                saved.write_bytes(
+                    adapter.dump_json(replace(adapter.validate_json(saved.read_bytes()), owner_pid=2**22 + 12345))
+                )
                 restarted = DelegationTasks(directory=tmp_path)
                 async with restarted.opened():
                     interrupted = restarted.records[task_id]

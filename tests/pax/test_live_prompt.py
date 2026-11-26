@@ -39,8 +39,10 @@ from pydantic_ai_pax.ui.prompt.image_input import ImageInput
 from pydantic_ai_pax.ui.prompt.interrupts import Interrupts
 from pydantic_ai_pax.ui.prompt.live_prompt import IDLE_REPAINT, LivePrompt, PromptWakeup
 from pydantic_ai_pax.ui.prompt.prompt_completion import CompletionWorker
+from pydantic_ai_pax.ui.prompt.prompt_selection import LINK_END, LINK_START, hyperlink
 from pydantic_ai_pax.ui.prompt.prompt_surface import ENTER, KEYS_ON, LEAVE, MODES_OFF, WHEEL_ROWS
 from pydantic_ai_pax.ui.rendering import theme
+from pydantic_ai_pax.ui.rendering.status import Status, StatusLink
 from tests.conftest import no_leaked_tasks
 from tests.pax.surface_terminal import SurfaceTerminal
 
@@ -54,6 +56,7 @@ async def editor(
     panel: Callable[[str], Sequence[str]] = lambda _: (),
     key_wait_limit: float = 5,
     inline: bool = False,
+    width: int = 80,
 ) -> AsyncGenerator[tuple[LivePrompt, PipeInput, io.StringIO]]:
     """An opened editor on a pipe; `key_wait_limit` fails a test left waiting for keys that never come.
 
@@ -62,7 +65,7 @@ async def editor(
     A test that feeds no keys and writes to a real store passes a limit no stall reaches: a slow disk is no hang.
     """
     output = output if output is not None else io.StringIO()
-    console = Console(file=output, force_terminal=True, width=80, height=24)
+    console = Console(file=output, force_terminal=True, width=width, height=24)
     commands = Commands()
     commands.register(Command(name='help', description='Help', handler=lambda args: 'help'))
     with (
@@ -625,7 +628,7 @@ async def test_completion_iteration_is_bounded_before_materializing() -> None:
             assert live.buffer.text == '/many '
 
 
-async def test_recalled_history_gets_completions_and_completed_draft_survives_navigation() -> None:
+async def test_recalled_completion_preserves_the_nonempty_draft_and_is_undoable() -> None:
     ready = anyio.Event()
 
     class Output(io.StringIO):
@@ -642,10 +645,12 @@ async def test_recalled_history_gets_completions_and_completed_draft_survives_na
         live.feed('tab')
         assert live.buffer.text == '/help'
         live.feed('escape')
-        live.feed('up')
-        assert live.buffer.text == '/he'
         live.feed('down')
+        assert live.buffer.text == 'original draft'
+        live.feed('ctrl-z')
         assert live.buffer.text == '/help'
+        live.feed('ctrl-y')
+        assert live.buffer.text == 'original draft'
 
 
 async def popup_shows(live: LivePrompt, text: str) -> None:
@@ -712,6 +717,66 @@ async def test_history_walk_keeps_arrows_through_recalled_commands() -> None:
         assert live.buffer.text == 'newest'
         live.feed('down')
         assert live.buffer.text == 'draft'
+
+
+async def test_edited_recalled_command_keeps_history_arrows_until_tab_selects() -> None:
+    async with editor() as (live, _, _):
+        live.commands.register(Command(name='hello', description='Hello command', handler=lambda args: 'hi'))
+        live.buffer.history = ['oldest', '/h']
+        live.buffer.insert('draft')
+        live.feed('up')
+        live.feed('e')
+        await popup_shows(live, 'Hello command')
+        assert highlighted(live) == []
+        live.feed('up')
+        assert live.buffer.text == 'oldest'
+        live.feed('down')
+        live.feed('down')
+        assert live.buffer.text == 'draft'
+
+    async with editor() as (live, _, _):
+        live.commands.register(Command(name='hello', description='Hello command', handler=lambda args: 'hi'))
+        live.buffer.history = ['/h']
+        live.buffer.insert('draft')
+        live.feed('up')
+        live.feed('e')
+        await popup_shows(live, 'Hello command')
+        live.feed('tab')
+        assert highlighted(live)[0].startswith('/help ')
+        live.feed('down')
+        assert live.buffer.text == '/he'
+        assert highlighted(live)[0].startswith('/hello ')
+        live.feed('escape')
+        live.feed('down')
+        assert live.buffer.text == 'draft'
+        live.feed('ctrl-z')
+        assert live.buffer.text == '/he'
+
+
+async def test_edited_multiline_recall_restores_draft_only_at_the_boundary() -> None:
+    async with editor() as (live, _, _):
+        live.buffer.history = ['first\nsecond']
+        live.buffer.insert('draft')
+        live.feed('up')
+        live.feed('x')
+        live.feed('up')
+        assert (live.buffer.text, live.buffer.cursor) == ('first\nsecondx', 5)
+        live.feed('down')
+        assert live.buffer.text == 'first\nsecondx'
+        live.feed('down')
+        assert live.buffer.text == 'draft'
+        live.feed('ctrl-z')
+        assert live.buffer.text == 'first\nsecondx'
+        live.feed('ctrl-y')
+        live.feed('enter')
+        assert await live.read() == 'draft'
+        for key in ('ctrl-z', 'ctrl-y'):
+            live.feed(key)
+            assert live.buffer.text == ''
+        live.feed('up')
+        live.feed('x')
+        live.feed('down')
+        assert live.buffer.text == 'draftx'
 
 
 async def test_tab_hands_arrows_to_popup_during_history_walk() -> None:
@@ -916,6 +981,47 @@ async def test_wheel_reports_arrive_through_the_decoder() -> None:
                 await anyio.sleep(0.01)
 
 
+@pytest.mark.parametrize('inline', [False, True])
+async def test_clicking_a_status_row_link_opens_it(inline: bool) -> None:
+    """Full screen, a click opens it; inline, the mouse is the terminal's, so the row carries an OSC 8 hyperlink."""
+    url = 'https://desktop.example/vnc.html?token=t'
+    status = Status(
+        model='m',
+        fields=lambda: ('plugins',),
+        status_segments=(lambda: 'docker sandbox', lambda: StatusLink(text='watch live', url=url)),
+    )
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal, toolbar=status.toolbar, inline=inline) as (live, _, _):
+        opened: list[str] = []
+        live.output.open_url = opened.append
+        live.paint()
+        if inline:
+            assert hyperlink('watch live ↗', url=url) in terminal.getvalue()
+            return
+        footer = terminal.lines()[-1]
+        assert footer.strip() == 'docker sandbox | watch live ↗'
+        column = footer.index('watch') + 1
+        live.feed('mouse', f'\x1b[<0;{column};24M')
+        live.feed('mouse', f'\x1b[<0;{column};24m')
+        assert opened == [url]
+
+
+async def test_a_footer_cut_inside_a_link_closes_it() -> None:
+    """Otherwise the terminal would link everything printed after the footer."""
+    url = 'https://desktop.example/vnc.html'
+    status = Status(
+        model='m',
+        fields=lambda: ('plugins',),
+        status_segments=(lambda: 'docker sandbox', lambda: StatusLink(text='watch live', url=url)),
+    )
+    terminal = SurfaceTerminal(width=24, height=24)
+    async with editor(output=terminal, toolbar=status.toolbar, inline=True, width=24) as (live, _, _):
+        live.paint()
+    cut = terminal.getvalue().rpartition(f'{LINK_START};{url}\x1b\\')[2]
+    row = cut.partition('\r')[0]
+    assert row.startswith('watch …') and LINK_END in row
+
+
 async def test_a_mouse_drag_copies_the_transcript_without_touching_the_draft() -> None:
     terminal = SurfaceTerminal(width=80, height=24)
     async with editor(output=terminal) as (live, pipe, _):
@@ -1004,7 +1110,7 @@ async def test_windows_ctrl_enter_steers_and_shift_enter_inserts_a_newline(shift
         if windows:
             assert await live.read() == 'one\ntwo'
         else:
-            # Ctrl+Enter is Enter and Ctrl-J a newline, as before.
+            # Ctrl+Enter is Enter and Ctrl+J a newline, as before.
             assert await live.read() == 'steer'
             assert await live.read() == 'LF\none\ntwo'
     assert steered == (['steer', 'LF'] if windows else [])

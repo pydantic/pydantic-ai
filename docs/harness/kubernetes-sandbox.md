@@ -176,6 +176,23 @@ async def run_in_prepared_sandbox() -> str:
 
 The run leaves a backend you built open, so close it with `aclose()`. That closes the connection, including any `kubectl port-forward`, not the sandbox. To keep the sandbox, store `backend.ref` instead of destroying it.
 
+## Give the agent a desktop
+
+Pass `desktop=True` and add [`ComputerUse`](computer-use.md):
+`capabilities=[KubernetesSandbox(warm_pool='desktop-pool', desktop=True), ComputerUse()]`. The screen is 1280x800;
+pass a size such as `desktop=(1440, 900)` for another.
+
+The template above runs as a non-root user, so nothing is installed for you: build [the display's programs](computer-use.md#what-the-display-needs) into the image, along with the programs the agent should use. Without them, every command and file operation in the sandbox raises `WorkspaceUnavailableError` naming what is missing. Then copy the template and its pool under new names, `desktop` and `desktop-pool`, with that image in place of `python:3.12`:
+
+```dockerfile
+FROM python:3.12
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends xvfb xdotool x11-utils scrot util-linux fluxbox tint2 xterm firefox-esr \
+ && rm -rf /var/lib/apt/lists/*
+```
+
+The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
+
 ## Clean up
 
 Delete a sandbox with the ref you stored. This deletes the claim, and with it the pod:
@@ -273,10 +290,11 @@ sandbox = KubernetesSandbox(
 | `sandbox_timeout` | Seconds after which a newly claimed sandbox is deleted. Default: `86_400`, 24 hours. `None` keeps it until `destroy(ref)`. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, sandboxd's root directory. Created on a new claim; on an attached one it must exist. |
 | `env` | Environment variables every command gets, on top of the container's own. Default: `None`. The agent's commands can read these, so leave out secrets it shouldn't see. |
+| `desktop` | Give the sandbox a graphical display for [`ComputerUse`](computer-use.md): `True` for 1280x800, or its `(width, height)`. Without root or passwordless `sudo` in the pod, its image must have [the display's programs](computer-use.md#what-the-display-needs). The size applies when the display first starts. Default: `False`. |
 | `authority` | Who wrote the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, or `'user'` for the user's own. Capabilities that put a file into the prompt give it no more [authority](../workspace-custom.md#workspace-authority) than this. Default: `'operator'`, files you wrote. |
 | `path_authority` | An `authority` level for specific directories and files, overriding `authority` under them. The longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
 
-`connection`, `working_dir`, `env`, `authority` and `path_authority` also apply when you reattach; the other options only shape a new claim.
+`connection`, `working_dir`, `env`, `authority`, `path_authority` and `desktop` also apply when you reattach; the other options only shape a new claim.
 
 ## Limits
 

@@ -89,7 +89,7 @@ If the Sprite has been deleted, the run raises `WorkspaceUnavailableError`, as d
 
 The ref holds no credentials, so the process that reattaches needs `SPRITE_TOKEN` or a `client=` too.
 
-Already have a `sprites.AsyncSprite`? Pass `workspace=SpritesSandboxBackend(sandbox=sprite, working_dir=..., env=...)` to a run. `SpritesSandbox`'s settings don't apply to it. A backend's `get_sandbox()` returns its `sprites.AsyncSprite` for Sprites features the workspace API doesn't cover. On a backend with no Sprite yet, it creates one, which Sprites bills.
+Already have a `sprites.AsyncSprite`? Pass `workspace=SpritesSandboxBackend(sandbox=sprite, working_dir=..., env=..., desktop=...)` to a run. `SpritesSandbox`'s settings don't apply to it. A backend's `get_sandbox()` returns its `sprites.AsyncSprite` for Sprites features the workspace API doesn't cover. On a backend with no Sprite yet, it creates one, which Sprites bills.
 
 ## Prepare a Sprite before the run
 
@@ -118,6 +118,17 @@ async def run_in_prepared_sprite() -> str:
 ```
 
 The run leaves a backend you built open, so close it with `aclose()`. That closes the client it opened from `SPRITE_TOKEN`, not the Sprite. A `client=` or `sandbox=` you passed is never closed. To keep the Sprite, store `backend.ref` instead of destroying it.
+
+## Give the agent a desktop
+
+Pass `desktop=True` and add [`ComputerUse`](../computer_use/):
+`capabilities=[SpritesSandbox(desktop=True), ComputerUse()]`. The screen is 1280x800; pass a size such as
+`desktop=(1440, 900)` for another.
+
+The first use installs [the display's programs](../computer_use/#what-the-display-needs) with `apt-get`, which can take a minute. There's no web browser.
+
+- A [cold wake](https://docs.fly.io/sprites/concepts/lifecycle.md) stops the display and closes the agent's windows; files on disk are kept. The display restarts on the agent's next screenshot or action; until then, a program started from the shell can't open a window.
+- The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
 
 ## Clean up
 
@@ -182,10 +193,11 @@ Then delete it: `await SpritesSandbox().destroy(WorkspaceRef(provider='sprites',
 | `runtime` | Runtime for a new Sprite. Default: `None`, Sprites' default. An unknown runtime fails on first use with `WorkspaceUnavailableError`. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, `/home/sprite`. Created on a new Sprite. On an attached one, it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine reaches the Sprite. The agent's commands can read these, so leave out secrets it shouldn't see. |
+| `desktop` | Give the Sprite a graphical display for [`ComputerUse`](../computer_use/): `True` for 1280x800, or its `(width, height)`. The size applies when the display first starts. Default: `False`. |
 | `authority` | Who wrote the Sprite's files. A capability that puts a file's text in the prompt gives it no more [authority](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#workspace-authority) than this. Default: `'operator'`, your own files. Use `'user'` for the user's files, and `'none'` for files nobody on your side wrote, such as a cloned third-party repository. |
 | `path_authority` | Levels for some directories and files, overriding `authority` under them. The longest matching path wins. Paths are in the Sprite, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
 
-`client`, `working_dir`, `env`, `authority` and `path_authority` also apply when you reattach, and `destroy` uses `client`. `runtime` only shapes a new Sprite.
+`client`, `working_dir`, `env`, `desktop`, `authority` and `path_authority` also apply when you reattach, and `destroy` uses `client`. `runtime` only shapes a new Sprite.
 
 ## Limits
 

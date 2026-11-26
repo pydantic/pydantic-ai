@@ -128,7 +128,12 @@ def canonical_prefix_blocks(body: dict[str, Any], url: str) -> tuple[str, list[P
         # (`/responses/compact`, `/responses/input_tokens`, `/responses/{id}`) have unrelated bodies and
         # must not be pooled with it, so match the endpoint exactly rather than as a substring. The
         # trailing segment keeps every host's create endpoint (`api.openai.com`, Azure, OpenRouter).
-        add('system', body.get('instructions'))
+        # Imported here because the benchmarks load this module and must not depend on the OpenAI profile.
+        from pydantic_ai.profiles.openai import _GPT_6_2_MODEL_PREFIXES  # pyright: ignore[reportPrivateUsage]
+
+        # `gpt-6.2-sol` and `gpt-6.2-astra` put the top-level `instructions` after `input`, outside the cached prefix.
+        if not str(body.get('model', '')).startswith(_GPT_6_2_MODEL_PREFIXES):
+            add('system', body.get('instructions'))
         add('tools', body.get('tools'))
         input_ = body.get('input')
         add('messages', input_ if isinstance(input_, list) else [input_] if input_ is not None else None)

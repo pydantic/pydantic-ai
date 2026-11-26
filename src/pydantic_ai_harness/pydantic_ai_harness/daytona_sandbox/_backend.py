@@ -30,6 +30,7 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
     WorkspaceOutputLimitError,
     WorkspaceRef,
+    WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
 from pydantic_ai.workspaces._telemetry import acquire_span
@@ -47,9 +48,10 @@ from pydantic_ai_harness._workspace_provider import (
     safe_credential_reason,
     stop_shielded,
 )
+from pydantic_ai_harness.computer_use import Display, SupportsDisplay, UnsupportedActionError
 
 if TYPE_CHECKING:
-    from daytona import AsyncDaytona, AsyncSandbox
+    from daytona import AsyncComputerUse, AsyncDaytona, AsyncSandbox
 
     from pydantic_ai.workspaces import WorkspaceCommand
 
@@ -57,8 +59,17 @@ __all__ = ('DaytonaSandboxBackend',)
 
 try:
     import daytona
+    from daytona.common.errors import SOURCE_PROXY
 except ImportError as error:
     raise ImportError('Install `pydantic-ai-harness[daytona]` to use DaytonaSandbox.') from error
+
+from pydantic_ai_harness.computer_use._display import LazyDisplay, checked_desktop_size
+from pydantic_ai_harness.daytona_sandbox._desktop import (
+    ADD_CHROMIUM_NO_SANDBOX_FLAG,
+    DISPLAY,
+    REQUEST_TIMEOUT as _REQUEST_TIMEOUT,
+    DaytonaDisplayDriver,
+)
 
 _AUTH_MESSAGE = (
     'Daytona rejected the credentials. Set DAYTONA_API_KEY, or pass a configured `AsyncDaytona` as `client=`.'
@@ -69,7 +80,6 @@ _MISSING_CREDENTIALS_MESSAGE = (
 _OUTPUT_LIMIT_MESSAGE = (
     'Daytona command output exceeded the 10 MiB limit; redirect it to a file and read part of it instead'
 )
-_REQUEST_TIMEOUT = 30
 # Bound sandbox creation and attachment so a wedged control plane cannot hang acquisition.
 _CREATE_TIMEOUT = 120
 # For create, start, and delete.
@@ -412,7 +422,13 @@ class _DaytonaProcess:
         await self._remove_output_files()
 
 
-class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsRealpath):
+class DaytonaSandboxBackend(
+    WorkspaceBackend,
+    SupportsCommands,
+    SupportsFilesystem,
+    SupportsRealpath,
+    SupportsDisplay,
+):
     """A [Daytona](https://www.daytona.io) sandbox as a Pydantic AI [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend].
 
     Commands and file operations run inside a Daytona sandbox, so the host is never exposed.
@@ -447,6 +463,10 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             unchanged: environment variable name to Secret name. The variable holds a placeholder, and
             Daytona swaps in the real value in HTTPS request headers as requests leave for the Secret's
             `hosts` (any host if it has none). An attached sandbox keeps the ones it was created with.
+        desktop: Whether the sandbox has a display for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse],
+            started on first use: `True` for 1280x800, or its `(width, height)`. The size applies to a new sandbox,
+            since Daytona can't resize a running one. The snapshot needs Daytona's desktop packages, which the default
+            snapshot has.
     """
 
     def __init__(
@@ -461,6 +481,7 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
         secrets: Mapping[str, str] | None = None,
+        desktop: bool | tuple[int, int] = False,
     ) -> None:
         if ref is not None:
             check_provider(ref, 'daytona')
@@ -479,7 +500,16 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         self._create_name: str | None = None
         self._auto_stop_interval = auto_stop_interval
         self._allow_internet_access = allow_internet_access
-        self._env = dict(env or {})
+        self._desktop_size = checked_desktop_size(desktop)
+        # Commands see the desktop too, so a program the agent starts from the shell opens on it.
+        self._env = {**({'DISPLAY': DISPLAY} if self._desktop_size else {}), **(env or {})}
+        self._display = (
+            None
+            if self._desktop_size is None
+            else LazyDisplay(
+                DaytonaDisplayDriver(self._computer_use_api), self._start_display, operation=self._display_operation
+            )
+        )
         self._secrets = dict(secrets) if secrets is not None else None
         self._working_dir = absolute_path('working_dir', working_dir)
         # `working_dir()` must return a canonical absolute path, resolved once with `pwd -P`.
@@ -551,10 +581,14 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         name = self._create_name
         if (existing := await self._find_created(client, name)) is not None:
             return existing
+        env_vars = dict(self._env)
+        if self._desktop_size is not None:
+            width, height = self._desktop_size
+            env_vars['VNC_RESOLUTION'] = f'{width}x{height}'
         params = daytona.CreateSandboxFromSnapshotParams(
             name=name,
             snapshot=self._snapshot,
-            env_vars=self._env or None,
+            env_vars=env_vars or None,
             secrets=self._secrets,
             auto_stop_interval=self._auto_stop_interval,
             network_block_all=not self._allow_internet_access,
@@ -651,6 +685,7 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             # Under the lock, so a sandbox still being created is recorded before its client closes.
             async with self._lock:
                 client, self._client, self._sandbox, self._resolved_working_dir = self._client, None, None, None
+                self._mark_display_stopped()
             if client is not None:
                 await _close_quietly(client)
 
@@ -666,6 +701,7 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             if self._operations == 0 and self._close_after_operation and self._owns_client and self._client is not None:
                 # Detached before any await, so an operation starting meanwhile opens its own client.
                 client, self._client, self._sandbox, self._resolved_working_dir = self._client, None, None, None
+                self._mark_display_stopped()
                 await run_to_completion(lambda: _close_quietly(client))
 
     async def working_dir(self) -> str:
@@ -696,6 +732,8 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             argv = command_argv(command, shell)
             # Acquiring the sandbox has its own bound; the timeout is the command's alone.
             sandbox = await self.get_sandbox()
+            if self._display is not None:
+                await self._display.start()
             process = _DaytonaProcess(sandbox)
             line = process.command_line(argv, cwd=self._working_dir, env={**self._env, **(env or {})})
             async with command_deadline(timeout, stop=process.kill, output=lambda: (process.stdout, process.stderr)):
@@ -834,6 +872,68 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                     return False
                 raise
             return True
+
+    @property
+    def display(self) -> Display | None:
+        """The sandbox's desktop, when created with `desktop=True`."""
+        return self._display
+
+    def _mark_display_stopped(self) -> None:
+        # The sandbox may stop before it is attached again, and its desktop with it.
+        if self._display is not None:
+            self._display.mark_stopped()
+
+    @asynccontextmanager
+    async def _display_operation(self) -> AsyncGenerator[None]:
+        async with self._operation():
+            sandbox = await self.get_sandbox()
+            try:
+                async with _mapped_errors('The Daytona desktop failed', sandbox=sandbox):
+                    try:
+                        yield
+                    except (WorkspaceUnavailableError, UnsupportedActionError):
+                        raise
+                    except WorkspaceError as error:
+                        # Such as keys it couldn't let go of, which may come from a lost sandbox.
+                        if (gone := await _probe(sandbox)) is not None:
+                            raise gone from error
+                        raise
+            except daytona.DaytonaTimeoutError as error:
+                raise WorkspaceTimeoutError(f'The Daytona desktop did not answer in time: {error}') from error
+            except daytona.DaytonaRateLimitError:
+                raise  # temporary, so a durable execution engine can retry it
+            except daytona.DaytonaError as error:
+                # Such as a desktop that stopped with its sandbox. The next call starts the display again.
+                raise WorkspaceError(f'The Daytona desktop failed: {error}') from error
+
+    def _computer_use_api(self) -> AsyncComputerUse:
+        # The display calls it inside `_display_operation`, which attaches the sandbox and keeps it attached.
+        assert self._sandbox is not None
+        return self._sandbox.computer_use
+
+    async def _start_display(self) -> None:
+        sandbox = await self.get_sandbox()
+        computer_use = sandbox.computer_use
+        try:
+            status = await computer_use.get_status(request_timeout=_REQUEST_TIMEOUT)
+            if status.status != 'active':
+                await computer_use.start(request_timeout=_REQUEST_TIMEOUT)
+        except daytona.DaytonaServiceUnavailableError as error:
+            if not _is_desktop_broken(error):
+                raise
+            raise WorkspaceUnavailableError(
+                f'The desktop of the Daytona sandbox {sandbox.id!r} stopped answering. Stop and start the sandbox '
+                f'to bring it back. ({error})'
+            ) from error
+        await sandbox.process.exec(ADD_CHROMIUM_NO_SANDBOX_FLAG, timeout=_REQUEST_TIMEOUT)
+
+
+def _is_desktop_broken(error: daytona.DaytonaServiceUnavailableError) -> bool:
+    """Whether a 503 error comes from a broken desktop, not from Daytona's proxy briefly refusing traffic.
+
+    A desktop that took input before it started answers every request with `connection is shut down`.
+    """
+    return error.source != SOURCE_PROXY and 'connection is shut down' in error.message
 
 
 def _check_path(path: str) -> None:
