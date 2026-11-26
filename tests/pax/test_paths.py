@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from pydantic_ai_pax.builtin_plugins.workspaces.manager import works_in
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.paths import DIRECTORY_NAME, config_dir, state_dir
 
@@ -186,3 +187,18 @@ def test_open_database_survives_the_move(config: Path) -> None:
         with closing(sqlite3.connect(config / DIRECTORY_NAME / 'config.db')) as fresh:
             rows = fresh.execute('SELECT key FROM settings ORDER BY key').fetchall()
     assert rows == [('after',), ('before',), ('display.splash',)]
+
+
+def test_a_workspace_recorded_before_the_move_still_matches(tmp_path: Path) -> None:
+    """A workspace cloned under the old state folder is recorded by its resolved path there; a session working in it
+    after the move resolves to the new folder, and still works in that workspace.
+    """
+    recorded = tmp_path / 'state' / 'pydantic-clai2' / 'workspaces' / 'clones' / 'repo' / '.worktrees' / 'repo-abc123'
+    recorded.mkdir(parents=True)
+    recorded = recorded.resolve()
+
+    moved = state_dir() / 'workspaces' / 'clones' / 'repo' / '.worktrees' / 'repo-abc123'
+
+    assert moved.is_dir()
+    assert works_in(moved / 'src', recorded)
+    assert not works_in(tmp_path, recorded)
