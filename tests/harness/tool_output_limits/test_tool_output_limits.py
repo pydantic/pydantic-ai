@@ -287,7 +287,7 @@ class TestPayloadHelpers:
         rendered = json_lines([{'text': 'a\N{LINE SEPARATOR}b'}, {'ok': True}])
         assert rendered.splitlines() == ['{"text":"a\\u2028b"}', '{"ok":true}']
         indented = indented_json({'text': 'a\N{PARAGRAPH SEPARATOR}b\x85c'})
-        assert indented.splitlines() == ['{', '  "text": "a\\u2029b\\^Ec"', '}']
+        assert indented.splitlines() == ['{', '  "text": "a\\u2029b\\u0085c"', '}']
 
     def test_measure_chars_and_tokens(self):
         assert measure('x' * 100, over_tokens=False, tokenizer=None) == 100
