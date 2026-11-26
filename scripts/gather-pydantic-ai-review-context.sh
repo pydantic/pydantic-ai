@@ -535,8 +535,11 @@ fi
 
 # Gather AGENTS.md files relevant to the PR — the repo-root file (always,
 # when present), any per-directory AGENTS.md whose directory has changed
-# files in this PR, and the durable_exec one when the PR touches a contract entry.
-echo "  - AGENTS.md files (repo-root + changed directories + touched durable-exec contract)"
+# files in this PR, the durable_exec one when the PR touches a contract entry,
+# and the capability conformance checklist when the PR changes a capability or its case.
+echo "  - AGENTS.md files (repo-root + changed directories + touched durable-exec contract + capability conformance)"
+CAPABILITY_CONFORMANCE=agent_docs/capability-conformance.md
+CAPABILITY_PATHS='^(pydantic_ai_slim/pydantic_ai/capabilities/|pydantic_ai_slim/pydantic_ai/models/(anthropic/__init__|openai/_compaction)\.py$|src/pydantic_ai_harness/pydantic_ai_harness/|tests/(harness/)?capability_cases\.py$)'
 > "$CTX/agents-md.txt"
 {
   if [ -f ./AGENTS.md ]; then
@@ -554,6 +557,12 @@ echo "  - AGENTS.md files (repo-root + changed directories + touched durable-exe
       echo ""
     fi
   done
+  # Not `grep -q`: exiting at the first match could fail `cut` with SIGPIPE, which `pipefail` reports.
+  if [ -n "$(cut -f1 "$CTX/changed-files.txt" | grep -E "$CAPABILITY_PATHS")" ] && [ -f "$CAPABILITY_CONFORMANCE" ]; then
+    echo "=== ${CAPABILITY_CONFORMANCE} ==="
+    cat "$CAPABILITY_CONFORMANCE"
+    echo ""
+  fi
 } >> "$CTX/agents-md.txt"
 [ -s "$CTX/agents-md.txt" ] || echo "(No AGENTS.md files relevant to this PR)" > "$CTX/agents-md.txt"
 

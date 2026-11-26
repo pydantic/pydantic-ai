@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import inspect
+import logging
 import os
 import re
 import sys
@@ -421,6 +423,59 @@ async def test_wait_for_nonstreaming_agent_timeout_does_not_livelock(client: Cli
         )
 
     assert result == 'clean-timeout'
+
+
+@workflow.defn
+class CancelledActivityErrorRetrievedWorkflow:
+    def __init__(self) -> None:
+        self.timed_out = False
+        self.finish = False
+
+    @workflow.run
+    async def run(self) -> None:
+        try:
+            # real-wait: the issue's shape, a workflow timer that cancels the in-flight model request activity
+            await asyncio.wait_for(_wait_for_nonstreaming_agent.run('say hi'), timeout=0.5)
+        except TimeoutError:
+            self.timed_out = True
+        # Stay open: once the workflow ends, Temporal discards anything its event loop would still log.
+        await workflow.wait_condition(lambda: self.finish)
+
+    @workflow.update
+    async def wait_for_timeout(self) -> None:
+        await workflow.wait_condition(lambda: self.timed_out)
+
+    @workflow.signal
+    def finish_run(self) -> None:
+        self.finish = True
+
+
+async def test_cancelled_activity_error_is_not_logged(client: Client, caplog: pytest.LogCaptureFixture) -> None:
+    """Cancelling a model request activity must not leave its `ActivityError` for asyncio to log (#13459).
+
+    asyncio logs an unread handle error when the handle is garbage collected, so the test collects
+    while the workflow is still open.
+    """
+    caplog.set_level(logging.ERROR)
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CancelledActivityErrorRetrievedWorkflow],
+        plugins=[AgentPlugin(_wait_for_nonstreaming_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            CancelledActivityErrorRetrievedWorkflow.run,
+            id=f'{CancelledActivityErrorRetrievedWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        await handle.execute_update(CancelledActivityErrorRetrievedWorkflow.wait_for_timeout)  # pyright: ignore[reportUnknownMemberType]
+        gc.collect()
+        await handle.signal(CancelledActivityErrorRetrievedWorkflow.finish_run)
+        await handle.result()
+
+    logged = [record.getMessage() for record in caplog.records if record.levelno >= logging.ERROR]
+    assert [m for m in logged if 'never retrieved' in m or 'shielded future' in m] == []
 
 
 async def _wait_for_timeout_stream_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:

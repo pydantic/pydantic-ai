@@ -83,6 +83,7 @@ from pydantic_ai.workspaces import Workspace
 from pydantic_ai.workspaces.workspace import workspace_layers
 
 from .. import _usage_attribution
+from .._run_context import durable_unit_scope, in_durable_unit
 from ..models.wrapper import serving_wrapper_scope
 from ._capability_operation import (
     CapabilityBoundOperation,
@@ -106,6 +107,7 @@ from ._operation import (
     DynamicToolsetCallToolParams,
     EventStreamHandlerId,
     EventStreamHandlerParams,
+    IdentityParameterTransport,
     ModelCancelSuspendedResponseId,
     ModelCancelSuspendedResponseParams,
     ModelCompactMessagesId,
@@ -126,8 +128,6 @@ from ._operation_backend import (
     BoundDurableOperation,
     DurableOperationBackend,
     RegisteredOperationBackend,
-    durable_unit_scope,
-    in_durable_unit,
 )
 from ._runtime_toolsets import (
     cancellation_token_unsupported_error,
@@ -346,6 +346,20 @@ def _as_capability(value: object, capability: AbstractCapability[Any]) -> object
     if isinstance(value, RunContext):
         return replace(cast(RunContext[Any], value), _capability=capability)
     return value
+
+
+def _project_request_context(args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    """Replace a model request context among the arguments with its projection, which can cross a durable boundary."""
+    request_context = next(
+        (value for value in (*args, *kwargs.values()) if isinstance(value, ModelRequestContext)), None
+    )
+    if request_context is None:
+        return args, kwargs
+    projection = ModelRequestContextProjection.from_context(request_context)
+    return (
+        tuple(projection if value is request_context else value for value in args),
+        {key: projection if value is request_context else value for key, value in kwargs.items()},
+    )
 
 
 def _operation_capability_id(capability: AbstractCapability[Any]) -> str | None:
@@ -787,13 +801,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             kwargs = {key: _as_capability(value, capability) for key, value in kwargs.items()}
             return await bind_declaration_body(declaration, capability)(*args, **kwargs)
 
-        request_context = next(
-            (value for value in (*args, *kwargs.values()) if isinstance(value, ModelRequestContext)), None
-        )
-        if request_context is not None:
-            projection = ModelRequestContextProjection.from_context(request_context)
-            args = tuple(projection if value is request_context else value for value in args)
-            kwargs = {key: projection if value is request_context else value for key, value in kwargs.items()}
+        args, kwargs = _project_request_context(args, kwargs)
         arguments = bind_arguments(declaration, ctx=ctx, args=args, kwargs=kwargs)
         model = ctx.model
         if not isinstance(model, Model):
@@ -1009,6 +1017,15 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     @abstractmethod
     def in_durable_context(self) -> bool:
         """Whether execution is currently inside this engine's durable container (workflow or flow)."""
+
+    @property
+    def in_durable_unit(self) -> bool:
+        """Whether execution is currently inside a unit whose result this engine records, like a step or task.
+
+        Engines whose units the user can also create around a tool, like a DBOS step or Prefect task,
+        check for those too.
+        """
+        return in_durable_unit()
 
     def _register_toolsets(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         """Wrap the agent's leaf toolsets in engine wrappers and index them by toolset `id`."""
@@ -1556,6 +1573,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             resolve_tool_config=resolve_tool_config,
             resolve_validation_config=resolve_validation_config,
             lifecycle=self.engine_spec.toolset_lifecycles['dynamic'],
+            # Identity transports hand every unit the run's own `RunContext`, so the units reach a
+            # toolset the run holds. Transports that carry the context in another form mean the
+            # units run elsewhere and resolve their own.
+            units_share_run_context=all(
+                isinstance(operation.parameter_transport, IdentityParameterTransport)
+                for operation in (get_tools.operation, call_operation)
+            ),
             durable_registrations=self._bound_operation_registrations(get_tools, call_tool, validate_args),
             durable_config=base_config,
         )
