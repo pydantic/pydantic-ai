@@ -372,8 +372,8 @@ def _runs_user_code(node: object, seen: set[int]) -> bool:
         return False
     seen.add(id(node))
     # Before the container checks: a callable can subclass `list` or `dict`.
-    if callable(node):
-        return not _is_trusted_callable(node)
+    if callable(node) and not _is_trusted_callable(node):
+        return True
     if is_list_tuple_or_set(node):
         return any(_runs_user_code(item, seen) for item in node)
     return is_str_dict(node) and any(_entry_runs_user_code(node, key, value, seen) for key, value in node.items())
