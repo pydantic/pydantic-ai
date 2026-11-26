@@ -43,6 +43,7 @@ with try_import() as imports_successful:
     from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
     from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
+    from pydantic_ai.providers.vllm import VLLMProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -275,6 +276,28 @@ async def test_a_continued_response_keeps_the_instructions_in_the_top_level_fiel
     assert body['input'] == [{'role': 'user', 'content': 'What color is the sky?'}]
 
 
+async def test_adding_to_a_conversation_keeps_the_instructions_in_the_top_level_field():
+    """A request adding to an `openai_conversation_id` conversation sends its instructions in the top-level field.
+
+    The conversation may already hold the leading system message, so the instructions don't join a new one, while a
+    leading system prompt still merges with the announcement. Not a VCR test: the claim is the request body, which
+    cassette matching doesn't check.
+    """
+    body = await run_and_capture(
+        GPT_OSS_ROUTES['mantle-responses'],
+        system_prompt=SYSTEM_PROMPT,
+        instructions=INSTRUCTIONS,
+        model_settings=OpenAIResponsesModelSettings(openai_conversation_id='conv_1'),
+    )
+
+    assert body['instructions'] == INSTRUCTIONS
+    assert body['conversation'] == 'conv_1'
+    assert body['input'] == [
+        {'role': 'system', 'content': f'{ANNOUNCEMENT}\n\n{SYSTEM_PROMPT}'},
+        {'role': 'user', 'content': 'What color is the sky?'},
+    ]
+
+
 async def test_an_auto_chain_starts_with_the_one_system_message():
     """With `openai_previous_response_id='auto'`, the request that starts the chain holds the instructions in it.
 
@@ -462,6 +485,60 @@ async def test_other_models_send_the_same_request(route: str):
     body = await run_and_capture(UNFLAGGED_ROUTES[route], system_prompt=SYSTEM_PROMPT, instructions=INSTRUCTIONS)
 
     assert body == UNFLAGGED_BODIES[route]
+
+
+def vllm_provider(client: httpx2.AsyncClient) -> VLLMProvider:
+    return VLLMProvider(base_url='http://localhost:8000/v1', api_key='test', http_client=client)
+
+
+VLLM_QWEN_BODIES: dict[str, dict[str, Any]] = {
+    'chat': snapshot(
+        {
+            'model': 'Qwen/Qwen3-32B',
+            'stream': False,
+            'messages': [
+                {
+                    'role': 'system',
+                    'content': """\
+You are a terse assistant.
+
+End every answer with the code word ZEBRA.\
+""",
+                },
+                {'role': 'user', 'content': 'What color is the sky?'},
+            ],
+        }
+    ),
+    'responses': snapshot(
+        {
+            'model': 'Qwen/Qwen3-32B',
+            'stream': False,
+            'input': [
+                {'role': 'system', 'content': 'You are a terse assistant.'},
+                {'role': 'user', 'content': 'What color is the sky?'},
+            ],
+            'instructions': 'End every answer with the code word ZEBRA.',
+        }
+    ),
+}
+
+
+@pytest.mark.parametrize('api', list(VLLM_QWEN_BODIES))
+async def test_vllm_merges_other_models_on_chat_only(api: str):
+    """`VLLMProvider` merges the leading system messages on Chat Completions for every model, as before.
+
+    On Responses, a model other than gpt-oss keeps its instructions in the top-level field: the one leading system
+    message there is gpt-oss's alone. Not a VCR test: the claim is the request body, which cassette matching doesn't
+    check.
+    """
+    model_class = OpenAIChatModel if api == 'chat' else OpenAIResponsesModel
+    body = await run_and_capture(
+        lambda client: model_class('Qwen/Qwen3-32B', provider=vllm_provider(client)),
+        system_prompt=SYSTEM_PROMPT,
+        instructions=INSTRUCTIONS,
+    )
+
+    assert body == VLLM_QWEN_BODIES[api]
 
 
 @pytest.mark.vcr

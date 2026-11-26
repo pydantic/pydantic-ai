@@ -341,10 +341,14 @@ class OpenAIModelProfile(ModelProfile, total=False):
     """The role to use for the system prompt message. If not provided, defaults to `'system'`."""
 
     openai_chat_supports_multiple_system_messages: bool
-    """Deprecated: use [`honors_only_first_system_message`][pydantic_ai.profiles.ModelProfile.honors_only_first_system_message] instead, with the opposite value.
+    """Whether the Chat Completions API accepts more than one system-role message at the start of the conversation. Default: `True`.
 
-    Translated (with a deprecation warning) whenever profiles are merged.
-    """
+    OpenAI itself and most compatible providers accept multiple system messages, so this defaults to `True`.
+    Set to `False` for strict OpenAI-compatible backends (e.g. some LiteLLM/vLLM deployments) that require
+    exactly one initial system message; consecutive system messages at the start will be merged into one
+    (joined with two newlines) before being sent. Supported by `OpenAIChatModel` only: to also send the
+    instructions in that one message on the Responses API, set
+    [`honors_only_first_system_message`][pydantic_ai.profiles.ModelProfile.honors_only_first_system_message]."""
 
     openai_chat_streaming_requires_finish_reason: bool
     """Whether a streamed Chat Completions response must include a non-null `finish_reason`. Default: `False`.
@@ -768,7 +772,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         profile['default_framing_announcement'] = 'always'
         # The announcement is a system message of its own ahead of the instructions, and OpenAI's reference gpt-oss
         # chat template keeps only the first system message as the developer message and drops any other, so the
-        # instructions would be lost: send one leading system message holding them all, as `VLLMProvider` does.
+        # instructions would be lost: send one leading system message holding them all.
         # Bedrock Mantle's Responses endpoint also ignores the top-level `instructions` for `gpt-oss-120b` and
         # follows them as that one leading system message (#14451).
         # https://huggingface.co/openai/gpt-oss-120b/raw/main/chat_template.jinja

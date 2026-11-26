@@ -1272,6 +1272,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if send_back_thinking == 'auto':
             backfill_sent_thinking_field(openai_messages, profile.get('openai_chat_thinking_field', None))
         system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
+        # `openai_chat_supports_multiple_system_messages=False` asks for the same merge, on Chat Completions only.
+        merges_leading_system_messages = profile.get('honors_only_first_system_message', False) or not profile.get(
+            'openai_chat_supports_multiple_system_messages', True
+        )
         system_prompt_count = leading_system_message_count(openai_messages, system_prompt_role)
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
         openai_messages[system_prompt_count:system_prompt_count] = [
@@ -1284,7 +1288,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             # A `'user'` system prompt role can't be told apart from a real user turn, and merging
             # the leading messages collapses the boundary into one block, so neither can carry it.
             and system_prompt_role != 'user'
-            and not profile.get('honors_only_first_system_message', False)
+            and not merges_leading_system_messages
             # A dynamic system prompt changes between requests, so it can't sit in the cached prefix.
             and not has_dynamic_system_prompt(messages)
         ):
@@ -1303,7 +1307,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 )
                 add_openai_prompt_cache_breakpoint(content_parts)
                 target['content'] = content_parts
-        if profile.get('honors_only_first_system_message', False):
+        if merges_leading_system_messages:
             openai_messages = merge_leading_system_messages(openai_messages, system_prompt_role, text_type='text')
         # After instructions are inserted and system messages merged: the breakpoint may land on a system
         # message, whose string content it turns into a list, and the merge only joins strings.

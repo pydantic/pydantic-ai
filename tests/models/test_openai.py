@@ -1216,14 +1216,14 @@ async def test_system_prompt_role(
 
 
 async def test_merge_leading_system_messages(allow_model_requests: None) -> None:
-    """When `honors_only_first_system_message=True`, consecutive system messages at the start are merged."""
+    """When `openai_chat_supports_multiple_system_messages=False`, consecutive system messages at the start are merged."""
 
     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIChatModel(
         'gpt-4o',
         provider=OpenAIProvider(openai_client=mock_client),
-        profile=OpenAIModelProfile(honors_only_first_system_message=True),
+        profile=OpenAIModelProfile(openai_chat_supports_multiple_system_messages=False),
     )
     agent = Agent(m, system_prompt='static prompt', instructions='dynamic instructions')
 
@@ -1248,7 +1248,7 @@ async def test_merge_leading_system_messages_single_system_message(allow_model_r
     m = OpenAIChatModel(
         'gpt-4o',
         provider=OpenAIProvider(openai_client=mock_client),
-        profile=OpenAIModelProfile(honors_only_first_system_message=True),
+        profile=OpenAIModelProfile(openai_chat_supports_multiple_system_messages=False),
     )
     agent = Agent(m, system_prompt='only one')
 
@@ -1269,7 +1269,7 @@ async def test_merge_leading_system_messages_user_role_unchanged(allow_model_req
         'gpt-4o',
         provider=OpenAIProvider(openai_client=mock_client),
         profile=OpenAIModelProfile(
-            honors_only_first_system_message=True,
+            openai_chat_supports_multiple_system_messages=False,
             openai_system_prompt_role='user',
         ),
     )

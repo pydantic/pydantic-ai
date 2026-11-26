@@ -97,7 +97,8 @@ def merge_leading_system_messages(
 ) -> list[_InputItemT]:
     """Merge the system messages at the start of `items` into one, their texts joined with two newlines.
 
-    For a model whose profile sets `honors_only_first_system_message`. A breakpoint a leading `CachePoint`
+    For a model whose profile sets `honors_only_first_system_message`, or, on Chat Completions,
+    `openai_chat_supports_multiple_system_messages=False`. A breakpoint a leading `CachePoint`
     left on one of them goes at the end of the merged message. With the `'user'` role, a system prompt can't be told
     apart from a real user turn, so nothing is merged. An `additional_tools` item also has the `'developer'` role,
     but it's not a system prompt, so it ends the run.

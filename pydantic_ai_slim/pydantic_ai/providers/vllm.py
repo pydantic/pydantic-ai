@@ -108,7 +108,9 @@ class VLLMProvider(_OpenAISDKProvider):
         #   injected into the instructions. See https://github.com/pydantic/pydantic-ai/issues/3490.
         # - File content parts and native tool return schemas are not supported.
         # - Some chat templates served by vLLM reject more than one leading system message.
-        #   See https://github.com/pydantic/pydantic-ai/issues/5812.
+        #   See https://github.com/pydantic/pydantic-ai/issues/5812. The merge is Chat Completions only: Responses
+        #   requests keep the top-level `instructions`, except for gpt-oss, whose family profile sets
+        #   `honors_only_first_system_message`.
         # The gpt-oss family opt-out for `supports_forced_tool_choice` survives the merge because
         # vLLM ignores `tool_choice='required'` for gpt-oss.
         # See https://github.com/vllm-project/vllm/issues/44216.
@@ -119,7 +121,7 @@ class VLLMProvider(_OpenAISDKProvider):
             qwen3_coder_profile,
             OpenAIModelProfile(
                 openai_chat_supports_document_input=False,
-                honors_only_first_system_message=True,
+                openai_chat_supports_multiple_system_messages=False,
                 supports_tool_return_schema=False,
                 supports_json_schema_output=True,
                 supports_json_object_output=True,

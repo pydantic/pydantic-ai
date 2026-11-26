@@ -238,8 +238,10 @@ class ModelProfile(TypedDict, total=False):
 
     Set for gpt-oss, whose reference chat template keeps only the first system message as the developer message and
     drops the rest. Some of its hosts drop the `instructions` field too: Bedrock Mantle's Responses endpoint ignored
-    `gpt-oss-120b`'s instructions there, and followed them as one leading system message. Also set by
-    `VLLMProvider`, as some vLLM chat templates reject more than one leading system message.
+    `gpt-oss-120b`'s instructions there, and followed them as one leading system message. To merge the leading system
+    messages on Chat Completions only, and leave Responses requests as they are, set
+    [`openai_chat_supports_multiple_system_messages=False`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_supports_multiple_system_messages]
+    instead, as `VLLMProvider` does, since some vLLM chat templates reject more than one leading system message.
 
     Supported by [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] and
     [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].
@@ -622,23 +624,17 @@ _LEGACY_PROVIDER_PROFILE_KEYS: dict[str, str] = {
 """Provider-prefixed profile keys that moved to `ModelProfile`, mapped to their current spelling."""
 
 
-_RENAMED_PROFILE_KEYS = frozenset(
-    {'tool_additions', 'deferred_tools_require_tool_search', 'openai_chat_supports_multiple_system_messages'}
-)
-"""Deprecated profile keys whose value changes shape on translation, so `_translate_legacy_profile_keys` handles each."""
-
-
-def _has_legacy_profile_keys(profile: ModelProfile) -> bool:
-    return not (_RENAMED_PROFILE_KEYS.isdisjoint(profile) and _LEGACY_PROVIDER_PROFILE_KEYS.keys().isdisjoint(profile))
-
-
 def _translate_legacy_profile_keys(profile: ModelProfile, base: ModelProfile | None = None) -> ModelProfile:
     """Translate keys renamed after their release into their current spellings, warning.
 
     A current spelling in the same profile wins, unless `profile` was derived from `base` (as a callable
     `ModelProfileSpec`'s result is) and it only carries `base`'s value over.
     """
-    if not _has_legacy_profile_keys(profile):
+    if (
+        'tool_additions' not in profile
+        and 'deferred_tools_require_tool_search' not in profile
+        and _LEGACY_PROVIDER_PROFILE_KEYS.keys().isdisjoint(profile)
+    ):
         return profile
     translated: dict[str, object] = dict(profile)
 
@@ -674,16 +670,6 @@ def _translate_legacy_profile_keys(profile: ModelProfile, base: ModelProfile | N
         )
         if translated.pop('deferred_tools_require_tool_search'):
             set_translated('tool_deferral_mode', 'with_tool_search')
-    if 'openai_chat_supports_multiple_system_messages' in translated:
-        warnings.warn(
-            '`ModelProfile` key `openai_chat_supports_multiple_system_messages` is deprecated, use '
-            '`honors_only_first_system_message` (with the opposite value) instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=3,
-        )
-        set_translated(
-            'honors_only_first_system_message', not translated.pop('openai_chat_supports_multiple_system_messages')
-        )
     return cast('ModelProfile', translated)
 
 

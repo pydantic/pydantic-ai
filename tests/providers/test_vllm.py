@@ -154,7 +154,9 @@ def test_vllm_provider_profile_overrides() -> None:
     ):
         profile = provider.model_profile(model)
         assert profile is not None
-        assert profile.get('honors_only_first_system_message', False) is True
+        assert profile.get('openai_chat_supports_multiple_system_messages', True) is False
+        # The one leading system message on Responses too is gpt-oss's alone.
+        assert profile.get('honors_only_first_system_message', False) is model.startswith('gpt-oss')
         assert profile.get('openai_chat_supports_document_input', True) is False
         assert profile.get('supports_tool_return_schema', True) is False
         assert profile.get('native_output_requires_schema_in_instructions', False) is True
