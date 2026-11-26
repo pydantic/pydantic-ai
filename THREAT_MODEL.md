@@ -217,6 +217,7 @@ Canonical guidance: [workflow rules](.github/workflows/AGENTS.md) and [securing 
 A workspace's authority (`AuthorityWorkspace`, or `authority` and `path_authority` on a workspace capability) decides the channel a file-reading capability sends a file's text on, not what the agent can do in the workspace. `Skills` keeps a skill whose `SKILL.md` is below `'operator'` out of its catalog, which the model reads as the application's instructions, and offers it through `list_skills` and `load_skill`, whose results are tool output. A stock workspace runs at `'operator'`, so there a repository's skills still reach the model as instructions. See [workspace authority](docs/workspace.md#workspace-authority) and [Skills](docs/harness/skills.md#skills-from-files-you-didnt-write).
 
 Code Mode pool creation, connection, and checkout errors go to the application caller, not the model.
+Under DBOS and AWS Lambda (SDK 2.0+), a nested call that detects replay divergence fails the durable run without exposing the engine error to sandbox code or the model.
 When a remote sandbox's turns run as durable activities, the activity worker reads and writes the
 configured mounts, and each turn's prints and result, cut to 1 MiB, are kept in workflow history before
 any model-facing output limit applies. Errors from building or reaching the pool are recorded there by type only.

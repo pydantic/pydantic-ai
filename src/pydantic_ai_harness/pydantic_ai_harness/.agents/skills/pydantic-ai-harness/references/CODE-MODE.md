@@ -146,6 +146,8 @@ from retries because they may contain pool URLs or credentials; the original exc
 the cause for application-side diagnostics. Retries list nested calls that already started so
 the model can avoid repeating their side effects.
 
+DBOS and AWS Lambda (SDK 2.0+) replay-divergence errors from nested calls end the durable run. A snippet cannot catch the error and the model gets no retry.
+
 State does not carry over to the next agent run unless `repl_store` is set: an object with async
 `load(ctx) -> bytes | None` and `save(ctx, state: bytes | None)` methods
 (`pydantic_ai_harness.code_mode.CodeModeReplStore`), usually

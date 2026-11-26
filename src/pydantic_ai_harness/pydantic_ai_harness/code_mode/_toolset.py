@@ -211,6 +211,16 @@ def in_durable_execution(ctx: RunContext[object]) -> bool:
     )
 
 
+def _nondeterminism_error_types(ctx: RunContext[object]) -> tuple[type[BaseException], ...]:
+    """Replay failures that must escape the sandbox and terminate the durable run."""
+    return tuple(
+        error_type
+        for capability in ctx.capabilities.values()
+        if isinstance(capability, BaseDurabilityCapability) and capability.in_durable_context
+        for error_type in capability.engine_spec.nondeterminism_error_types
+    )
+
+
 def _exhausted_sandbox_limit(error: MontyFailure) -> str | None:
     """Which `CodeModeResourceLimits` limit this runtime error reports, or `None` for anything else.
 
@@ -1375,6 +1385,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             completed = await executor.run(start)
         except MontyStoresNoSessions:
             raise
+        except executor.reraise:
+            await run_state.reset()
+            raise
         except BaseException as exc:
             retry = await self._feed_failure_retry(exc, run_state, execution, fresh_repl=fresh_repl)
             if retry is None:
@@ -1454,6 +1467,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             max_sleep_seconds=configured.get('max_feed_duration_secs'),
             # Already converted in `__post_init__`; this narrows the field's type.
             os_handler=as_os_handler(self.os_access),
+            reraise=_nondeterminism_error_types(ctx),
         )
 
         async def run_feed() -> MontyComplete | TurnComplete:
@@ -1638,7 +1652,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         Returns the serialized tool result on success. On failure, the exception propagates:
         the execution loop passes it back into Monty via `ExternalException` so the sandbox
-        sees it at the `await` site.
+        sees it at the `await` site, except for durable replay failures.
         """
         execution.nested_calls[call_part.tool_call_id] = call_part
         speculation = self.speculation

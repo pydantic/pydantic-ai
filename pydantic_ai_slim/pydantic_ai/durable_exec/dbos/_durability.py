@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from weakref import WeakKeyDictionary
 
 from dbos import DBOS, SetWorkflowTimeout
-from dbos._error import DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError
+from dbos._error import DBOSUnexpectedStepError, DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai._cancel import provide_run_deadline
@@ -104,6 +104,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         # aborted), and, since dbos 3.2, `DBOSWorkflowConflictIDError` when a step that was running as
         # the workflow was cancelled tries to record its result after the cancel handed ownership off.
         cancellation_error_types=(DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError),
+        nondeterminism_error_types=(DBOSUnexpectedStepError,),
     )
     # No `tool_config_key`: DBOS takes no per-tool step config, and tool metadata other than
     # `{'dbos': {'child_workflow': ...}}` is ignored (as it was before this capability existed). It

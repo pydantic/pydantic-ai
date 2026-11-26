@@ -93,6 +93,13 @@ class DurabilityEngineSpec:
     [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation] can recover it.
     """
 
+    nondeterminism_error_types: tuple[type[BaseException], ...] = ()
+    """Exceptions the engine raises in the durable container to fail a replay that diverged from its history.
+
+    Code that turns a tool's error into something the model sees, such as Code Mode's sandbox,
+    re-raises these instead, so they fail the run as they do for a direct tool call.
+    """
+
     accepts_cancellation_token: bool = False
     """Whether a run inside the durable container may take a [`CancellationToken`][pydantic_ai.CancellationToken].
 

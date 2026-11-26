@@ -232,6 +232,8 @@ When a nested tool returns a [`ToolReturn`](https://pydantic.dev/docs/ai/tools-t
 
 A nested tool that raises [`ToolFailed`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-failed) the snippet doesn't catch ends `run_code` with a failed tool result instead of a retry, as for a direct call, and doesn't spend `run_code`'s retries. The result is the tool's message, after any printed output and followed by a summary of the other nested calls, if the snippet made any. A hook on the nested tool receives the tool's exception; the `ToolFailed` that `run_code` raises is a new one carrying the extra text, with the tool's exception as its `__cause__`, so a hook around `run_code` that needs a `ToolFailed` subclass's attributes walks the `__cause__` chain one step further than for a direct call. An uncaught nested `ModelRetry` is still a retry.
 
+When DBOS or AWS Lambda (SDK 2.0+) rejects a replay because a nested step diverged from its history, `run_code` discards its sandbox session and propagates the engine exception. The snippet cannot catch it, and the model gets no retry.
+
 Printed output over 10 MiB makes `run_code` return a model retry.
 
 ### Resource limits

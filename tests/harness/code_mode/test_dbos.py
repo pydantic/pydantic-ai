@@ -26,12 +26,13 @@ import pytest
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
+    from dbos._error import DBOSUnexpectedStepError
 
     from pydantic_ai.durable_exec.dbos import DBOSDurability
 except ImportError:  # pragma: lax no cover
     pytest.skip('dbos not installed', allow_module_level=True)
 
-from pydantic_ai import Agent, ToolDefinition
+from pydantic_ai import Agent, Tool, ToolDefinition
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelRequest,
@@ -207,6 +208,93 @@ def run_gather_agent(prompt: str) -> str:
     return gather_agent.run_sync(prompt).output
 
 
+class _ReplayCrash(BaseException):
+    """Leave the workflow pending after its first step is recorded, so recovery replays it."""
+
+
+_lookups = 0
+_lookup_finished = asyncio.Event()
+_replay_model_calls: list[list[str]] = []
+
+
+@DBOS.step(name='code_mode_lookup_v1')
+async def _lookup_v1() -> str:
+    return 'v1'
+
+
+@DBOS.step(name='code_mode_lookup_v2')
+async def _lookup_v2() -> str:
+    return 'v2'  # pragma: no cover -- DBOS fails the replay before running this step
+
+
+async def lookup() -> str:
+    """Look up a value. The first attempt crashes, and the recovery calls a differently named step."""
+    global _lookups
+    _lookups += 1
+    try:
+        if _lookups == 1:
+            await _lookup_v1()
+            raise _ReplayCrash
+        return await _lookup_v2()
+    finally:
+        _lookup_finished.set()
+
+
+async def wait_for_lookup() -> None:
+    """Wait until the ignored lookup has completed; crash the original workflow attempt."""
+    await asyncio.wait_for(_lookup_finished.wait(), timeout=10)
+    if _lookups == 1:
+        raise _ReplayCrash
+
+
+def _replay_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
+    seen = [str(part.content) for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+    _replay_model_calls.append(seen)
+    if seen:
+        return ModelResponse(parts=[TextPart(content='final answer')])
+    prompt = next(part.content for part in messages[0].parts if isinstance(part, UserPromptPart))
+    code = f"try:\n    r = await {prompt}()\nexcept Exception:\n    r = 'caught'\nr"
+    if prompt == 'ignored':
+        code = "future = lookup()\nawait wait_for_lookup()\n'ignored'"
+    elif prompt == 'ignored_then_error':
+        code = "future = lookup()\nawait wait_for_lookup()\nraise ValueError('snippet bug')"
+    elif prompt == 'lookup_in_order':
+        code = f"try:\n    r = {prompt}()\nexcept Exception:\n    r = 'caught'\nr"
+    return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code}, tool_call_id='replay')])
+
+
+replay_agent = Agent(
+    FunctionModel(_replay_model),
+    name='code_mode_dbos_replay_agent',
+    toolsets=[
+        FunctionToolset(
+            tools=[lookup, wait_for_lookup, Tool(lookup, name='lookup_in_order', sequential=True)], id='lookup'
+        )
+    ],
+    capabilities=[CodeMode(), DBOSDurability()],
+)
+
+
+async def diverge() -> str:
+    """Fail as a diverged replay would."""
+    raise DBOSUnexpectedStepError('wf', 1, 'v2', 'v1')
+
+
+outside_workflow_agent = Agent(
+    FunctionModel(_replay_model),
+    name='code_mode_dbos_outside_workflow_agent',
+    toolsets=[FunctionToolset(tools=[diverge], id='diverge')],
+    capabilities=[CodeMode(), DBOSDurability()],
+)
+
+
+@DBOS.workflow()
+def run_replay_agent(prompt: str) -> str:
+    global _lookup_finished
+    _lookup_finished = asyncio.Event()
+    return asyncio.run(replay_agent.run(prompt)).output
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -353,3 +441,28 @@ def test_gathered_calls_overlap_in_dbos_workflow(dbos_instance: DBOS) -> None:
         output = run_gather_agent('Gather three fetches.')
 
     assert output == "done: ['a', 'b', 'c']"
+
+
+@pytest.mark.parametrize('tool_name', ['lookup', 'lookup_in_order', 'ignored', 'ignored_then_error'])
+def test_replay_divergence_in_nested_call_fails_the_workflow(dbos_instance: DBOS, tool_name: str) -> None:
+    """DBOS's error for a diverged replay fails the workflow, as it does for a native tool call.
+
+    It must not reach the sandbox, where a `try/except` would hide it and the run would succeed.
+    """
+    global _lookups
+    _lookups = 0
+    _replay_model_calls.clear()
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id), pytest.raises(_ReplayCrash):
+        run_replay_agent(tool_name)
+
+    handle = DBOS.resume_workflow(workflow_id)
+    with pytest.raises(DBOSUnexpectedStepError, match='code_mode_lookup_v1 was recorded when code_mode_lookup_v2'):
+        handle.get_result()
+    assert _replay_model_calls == [[]]
+
+
+def test_snippet_still_catches_the_error_outside_a_workflow(dbos_instance: DBOS) -> None:
+    """Outside a workflow `DBOSDurability` is transparent, so the snippet handles the error as before."""
+    assert outside_workflow_agent.run_sync('diverge').output == 'final answer'
+    assert _replay_model_calls[-1] == ['caught']

@@ -17,7 +17,7 @@ from aws_durable_execution_sdk_python import (
     durable_execution,  # pyright: ignore[reportUnknownVariableType]
 )
 from aws_durable_execution_sdk_python.config import Duration, StepConfig, StepSemantics
-from aws_durable_execution_sdk_python.exceptions import ExecutionError, SerDesError
+from aws_durable_execution_sdk_python.exceptions import ExecutionError, NonDeterministicExecutionError, SerDesError
 from aws_durable_execution_sdk_python.retries import RetryDecision, RetryPresets
 from aws_durable_execution_sdk_python.serdes import DEFAULT_JSON_SERDES
 from inline_snapshot import snapshot
@@ -52,6 +52,7 @@ from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import ExternalToolset
+from pydantic_ai_harness import CodeMode
 from pydantic_ai_harness.aws_lambda import (
     AWSLambdaDurability,
     _bridge,  # pyright: ignore[reportPrivateUsage]
@@ -1723,8 +1724,40 @@ class TestReplayFidelity:
         other.tool_plain(act)
         resumed = FakeDurableContext(journal=first.operations)
 
-        with pytest.raises(AssertionError, match='replay divergence'):
+        with pytest.raises(NonDeterministicExecutionError, match='replay divergence'):
             run_durable(lambda: other.run('go'), context=resumed)
+
+    def test_a_diverging_step_inside_run_code_fails_the_execution(self) -> None:
+        """A snippet's `try/except` must not hide the divergence, as for a direct tool call (#12539)."""
+        picks = iter(['first', 'second'])
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) > 1:
+                return ModelResponse(parts=[TextPart('done')])
+            code = "try:\n    r = await first() if await pick() == 'first' else await second()\nexcept Exception:\n    r = 'caught'\nr"
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
+
+        def pick() -> str:
+            return next(picks)
+
+        def first() -> str:
+            return 'first'
+
+        def second() -> str:  # pragma: no cover -- the replay fails before running this step
+            return 'second'
+
+        toolset = FunctionToolset(id='lookups')
+        toolset.add_function(pick, metadata={'aws_lambda': False})
+        toolset.add_function(first)
+        toolset.add_function(second)
+        agent = Agent(
+            FunctionModel(model_fn), name='a', toolsets=[toolset], capabilities=[CodeMode(), AWSLambdaDurability()]
+        )
+        first_run = FakeDurableContext()
+        run_durable(lambda: agent.run('go'), context=first_run)
+
+        with pytest.raises(NonDeterministicExecutionError, match='replay divergence'):
+            run_durable(lambda: agent.run('go'), context=FakeDurableContext(journal=first_run.operations))
 
     def test_a_recorded_step_failure_is_raised_again_on_resume(self) -> None:
         # Once a step's retries are exhausted the failure is checkpointed, and resuming the

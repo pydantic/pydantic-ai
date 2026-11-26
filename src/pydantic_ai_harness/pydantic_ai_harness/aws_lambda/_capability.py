@@ -23,7 +23,7 @@ from datetime import timedelta
 from typing import Any, ClassVar
 
 from aws_durable_execution_sdk_python.config import CallbackConfig, Duration, StepConfig
-from aws_durable_execution_sdk_python.exceptions import CallbackError, ExecutionError
+from aws_durable_execution_sdk_python.exceptions import CallbackError, ExecutionError, NonDeterministicExecutionError
 from pydantic import JsonValue
 from pydantic_core import from_json, to_json
 
@@ -100,6 +100,8 @@ class AWSLambdaDurability(BaseDurabilityCapability[AgentDepsT]):
         sequential_tools_in_durable_context=True,
         unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
         tool_config_key=_TOOL_CONFIG_KEY,
+        # Raised by SDK 2.0 and later only; SDK 1.x does not check a replayed step's identity.
+        nondeterminism_error_types=(NonDeterministicExecutionError,),
     )
 
     def __init__(
