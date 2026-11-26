@@ -764,7 +764,7 @@ def _openai_decisions(client: httpx2.AsyncClient) -> Model:
     return OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIProvider(api_key=PROBE_KEY, http_client=client))
 
 
-DECISION_HOLDS_WITHOUT_SENDING = frozenset({'max_tokens', 'stop_sequences', 'parallel_tool_calls', 'citations'})
+DECISION_HOLDS_WITHOUT_SENDING = frozenset({'max_tokens', 'stop_sequences', 'parallel_tool_calls'})
 """A decision model writes no text and makes at most one tool call, so these hold whether or not they're sent."""
 
 CASES = [
