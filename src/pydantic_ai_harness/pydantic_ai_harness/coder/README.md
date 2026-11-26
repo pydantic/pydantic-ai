@@ -293,7 +293,7 @@ so, whatever the level, it is told to choose sensible defaults and finish, and t
 target the task states.
 
 Tool descriptions supply tool usage; `RepoContext` supplies repository instructions and structure.
-The instructions also name the workspace's working directory as the project, where shell commands start and the file tools work.
+The instructions also name the workspace's working directory, through [`AnnounceWorkingDirectory`](../announce_working_directory/).
 `Coder(instructions='...')` appends project-specific guidance rather than replacing defaults.
 Use it for additional policy, such as file-size limits or a preferred verification workflow.
 
@@ -362,6 +362,8 @@ Pillow is now in the `coder` extra too, because `Coder` downscales the images `r
 
 `Coder` now loads the repository's instruction files from the repository root (the nearest directory with a `.git` entry) down to the working directory at run start, one per directory with `AGENTS.md` ahead of `CLAUDE.md`, and inlines a subdirectory's instruction file the first time the agent reads, lists, writes or edits something under it, up to 32,000 characters per conversation. Its bundled `RepoContext` is now `RepoContext(walk_up='repo_root')`. This adds workspace `exists` and `stat` calls at run start, so Temporal and DBOS runs started before the upgrade no longer replay: let them finish or version the deployment first. To get close to the old behavior, pass `Coder(repo_context=RepoContext(filenames=('CLAUDE.md', 'AGENTS.md'), nested_traversal=False))`. It only approximates it: a directory holding both files now loads only `CLAUDE.md`, where it used to load both.
 
+`Coder`'s instructions name the working directory in one line (The working directory is `/repo`.), from [`AnnounceWorkingDirectory`](../announce_working_directory/), in place of the line that also said where commands start and which paths the file tools accept. It is there with `repo_context=False` too, so a lazily created sandbox is now created before the first request (outside durable execution; durable runs already did this).
+
 `Coder`'s default instructions no longer ask for self-contained deliverables checked from a clean directory, or for a solution that uses every field of the provided data. Bind `BenchmarkInstructions()` next to `Coder` to keep them (see [Benchmarking](#benchmarking)).
 
 `Coder` now turns on prompt caching; pass `caching=False` or set `cache` yourself to keep the old behavior (see [Prompt caching](#prompt-caching)).
@@ -389,7 +391,7 @@ When retaining `result.workspace` after a run with a provider backend that expos
 
 Sandbox refs identify existing environments; provider-specific cleanup should use an ID-only delete API for refs your application owns (where that provider offers one). Do not create or attach a backend merely to delete a sandbox. Directory upload and preview URLs depend on the provider SDK.
 
-With a remote sandbox such as `ModalSandbox(working_dir='/workspace')`, `Coder` loads repo instructions at run start, which creates the sandbox before the model's first tool call. Use `Coder(repo_context=False)` if the sandbox should be created lazily; the instructions then do not name the working directory. A new sandbox creates its `working_dir` for you.
+With a remote sandbox such as `ModalSandbox(working_dir='/workspace')`, `Coder` names the working directory and loads repo instructions at run start, which creates the sandbox before the model's first request. A new sandbox creates its `working_dir` for you.
 
 ## Benchmarking
 
