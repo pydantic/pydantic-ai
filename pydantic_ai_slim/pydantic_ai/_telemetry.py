@@ -14,7 +14,7 @@ settings to another's calls. `None` means no run: nothing is traced.
 
 Pass `ctx` whenever there is one: the run publishes its telemetry only once its `agent run` span is
 open, so a `for_run` hook, or a `wrap_run` ordered outside `Instrumentation`, that read it would find
-nothing, or in a nested run its parent's.
+nothing, even in a nested run.
 """
 
 from __future__ import annotations as _annotations
@@ -178,8 +178,8 @@ def current_span(ctx: RunContext[Any] | RunTelemetry | None, /) -> Span:
     own `agent run` span, where the run publishes its telemetry, so a run doesn't write to a span it
     doesn't own: it returns `INVALID_SPAN` when the run isn't traced, in `for_run`, in a `wrap_run`
     ordered outside `Instrumentation`, and in a durable unit that runs out of process, such as a Temporal
-    activity. A sub-agent's `for_run` runs inside its parent's tool call and sees
-    its parent's telemetry, so it gets the parent's span when its tracer and content setting are the parent's.
+    activity. A sub-agent's `for_run` runs inside its parent's tool call, but with no telemetry published,
+    so it doesn't get the parent's span either.
     """
     if (telemetry := _telemetry_of(ctx)) is None or _telemetry_of(_current.get()) != telemetry:
         return INVALID_SPAN
