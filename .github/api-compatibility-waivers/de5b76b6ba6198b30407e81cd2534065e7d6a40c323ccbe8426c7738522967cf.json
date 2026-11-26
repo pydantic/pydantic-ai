@@ -1,0 +1,5 @@
+{
+  "against": "v2.75.0",
+  "reason": "Pax 0.x: adds the `permissions` footer field; every existing field and step is unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/14700"
+}
