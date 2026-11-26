@@ -224,42 +224,11 @@ async def batch_results_iter(model: GoogleModel, batch: Batch) -> AsyncGenerator
     _validate_batch_group(model, batch.group, collecting=True)
     client = _batch_client(model)
     job = await client.aio.batches.get(name=batch.id)
-    if _STATUSES.get(job.state or JobState.JOB_STATE_UNSPECIFIED) == 'ended' and (
-        input_file := _UPLOADED_INPUT_FILES.pop((batch_credential(model), batch.id), None)
-    ):
-        # The job has ended, so its input file isn't needed again; it would otherwise count against the project's
-        # file storage until it expires. The handle's `input_file` isn't trusted: see `_UPLOADED_INPUT_FILES`.
-        with suppress(errors.APIError, httpx2.TransportError, httpx2.HTTPStatusError):
-            await client.aio.files.delete(name=input_file)
+    await _delete_input_file_of_ended_job(model, client, batch, job)
     if job.dest is None or job.dest.file_name is None:
-        # A job that expired, or was canceled or failed before it ran a request, writes no results. The job doesn't
-        # say which requests it held, so its outcome fails all of them with its own reason.
-        match job.state:
-            case JobState.JOB_STATE_FAILED:
-                error = job.error
-                code = error.code if error is not None else None
-                raise BatchJobError(
-                    status_code=_RPC_STATUSES[code][1] if code in _RPC_STATUSES else 500,
-                    model_name=model.model_name,
-                    body={'error': error.model_dump(exclude_none=True) if error is not None else None},
-                )
-            case JobState.JOB_STATE_CANCELLED:
-                raise BatchJobError(
-                    status_code=_RPC_STATUSES[1][1],
-                    model_name=model.model_name,
-                    body={
-                        'error': {'code': 1, 'message': 'The batch job was canceled before the model ran the request.'}
-                    },
-                )
-            case JobState.JOB_STATE_EXPIRED:
-                # Ended by the provider rather than anyone's intent, like a live request's deadline.
-                raise BatchJobError(
-                    status_code=_RPC_STATUSES[4][1],
-                    model_name=model.model_name,
-                    body={'error': {'code': 4, 'message': 'The batch job expired before the model ran the request.'}},
-                )
-            case _:
-                return
+        if (error := _error_of_job_without_results(model, job)) is not None:
+            raise error
+        return
     # The SDK writes the download to the file in chunks, so the results are never in memory all at once. The file is
     # written and read through `anyio`, which does the disk I/O in a thread, so the event loop isn't blocked. The
     # directory holding it is removed however iteration ends.
@@ -269,14 +238,61 @@ async def batch_results_iter(model: GoogleModel, batch: Batch) -> AsyncGenerator
             # The SDK awaits a destination's `write` when it returns an awaitable, but types the destination as `io.IOBase`.
             await client.aio.files.download(file=job.dest.file_name, destination=destination)  # pyright: ignore[reportCallIssue, reportArgumentType]
         async with await anyio.open_file(path, encoding='utf-8') as file:
-            async for line in file:
-                item = _RESULT_LINE_ADAPTER.validate_json(line)
-                if 'response' in item:
-                    yield BatchResult(
-                        custom_id=item['key'], status='succeeded', body=to_json(item['response']).decode()
-                    )
-                else:
-                    yield BatchResult(custom_id=item['key'], status='errored', body=to_json(item.get('error')).decode())
+            # Lines are read in chunks of about 1 MiB, so there's one thread hop per chunk rather than per line.
+            while lines := await anyio.to_thread.run_sync(file.wrapped.readlines, 1 << 20):
+                for line in lines:
+                    yield _result_of_line(line)
+
+
+async def _delete_input_file_of_ended_job(model: GoogleModel, client: Client, batch: Batch, job: BatchJob) -> None:
+    """Delete the input file of a job that has ended, if this process uploaded it."""
+    if _STATUSES.get(job.state or JobState.JOB_STATE_UNSPECIFIED) == 'ended' and (
+        input_file := _UPLOADED_INPUT_FILES.pop((batch_credential(model), batch.id), None)
+    ):
+        # The job has ended, so its input file isn't needed again; it would otherwise count against the project's
+        # file storage until it expires. The handle's `input_file` isn't trusted: see `_UPLOADED_INPUT_FILES`.
+        with suppress(errors.APIError, httpx2.TransportError, httpx2.HTTPStatusError):
+            await client.aio.files.delete(name=input_file)
+
+
+def _error_of_job_without_results(model: GoogleModel, job: BatchJob) -> BatchJobError | None:
+    """The error of a job that ended without a results file, or `None` if it has none to report.
+
+    A job that expired, or was canceled or failed before it ran a request, writes no results. The job doesn't say
+    which requests it held, so its outcome fails all of them with its own reason.
+    """
+    match job.state:
+        case JobState.JOB_STATE_FAILED:
+            error = job.error
+            code = error.code if error is not None else None
+            return BatchJobError(
+                status_code=_RPC_STATUSES[code][1] if code in _RPC_STATUSES else 500,
+                model_name=model.model_name,
+                body={'error': error.model_dump(exclude_none=True) if error is not None else None},
+            )
+        case JobState.JOB_STATE_CANCELLED:
+            return BatchJobError(
+                status_code=_RPC_STATUSES[1][1],
+                model_name=model.model_name,
+                body={'error': {'code': 1, 'message': 'The batch job was canceled before the model ran the request.'}},
+            )
+        case JobState.JOB_STATE_EXPIRED:
+            # Ended by the provider rather than anyone's intent, like a live request's deadline.
+            return BatchJobError(
+                status_code=_RPC_STATUSES[4][1],
+                model_name=model.model_name,
+                body={'error': {'code': 4, 'message': 'The batch job expired before the model ran the request.'}},
+            )
+        case _:
+            return None
+
+
+def _result_of_line(line: str) -> BatchResult:
+    """The result a line of a job's results file holds."""
+    item = _RESULT_LINE_ADAPTER.validate_json(line)
+    if 'response' in item:
+        return BatchResult(custom_id=item['key'], status='succeeded', body=to_json(item['response']).decode())
+    return BatchResult(custom_id=item['key'], status='errored', body=to_json(item.get('error')).decode())
 
 
 async def batch_cancel(model: GoogleModel, batch: Batch) -> Batch:

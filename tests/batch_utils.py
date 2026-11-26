@@ -6,12 +6,13 @@ any other helper, while activities keep using the instance the test module built
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import replace
 from datetime import timedelta
 
 import anyio
 import anyio.lowlevel
+import httpx2
 from typing_extensions import TypedDict
 
 from pydantic_ai.exceptions import ModelHTTPError
@@ -21,6 +22,21 @@ from pydantic_ai.models.batch import Batch, BatchRequest, EncodedBatchRequest
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from tests._timeouts import READINESS_WAIT_TIMEOUT
+
+
+class LineStream(httpx2.AsyncByteStream):
+    """A response body sent a line at a time, which says when it was closed."""
+
+    def __init__(self, content: bytes, on_close: Callable[[], None]) -> None:
+        self._lines = content.splitlines(keepends=True)
+        self._on_close = on_close
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for line in self._lines:
+            yield line
+
+    async def aclose(self) -> None:
+        self._on_close()
 
 
 class FastPolling(TypedDict):

@@ -6,7 +6,6 @@ Submission and results are recorded in `test_anthropic_batch_vcr.py`.
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Callable
 from contextlib import aclosing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -40,7 +39,7 @@ from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
-from ..batch_utils import UNRUN_MESSAGES
+from ..batch_utils import UNRUN_MESSAGES, LineStream
 from ..conftest import try_import
 from .conftest import anthropic_2023_06_01_client
 
@@ -350,21 +349,6 @@ def _batch_json(batch_id: str, status: str = 'ended') -> dict[str, Any]:
     }
 
 
-class _LineStream(httpx2.AsyncByteStream):
-    """A response body sent a line at a time, which says when it was closed."""
-
-    def __init__(self, content: bytes, on_close: Callable[[], None]) -> None:
-        self._lines = content.splitlines(keepends=True)
-        self._on_close = on_close
-
-    async def __aiter__(self) -> AsyncIterator[bytes]:
-        for line in self._lines:
-            yield line
-
-    async def aclose(self) -> None:
-        self._on_close()
-
-
 @dataclass
 class _FakeBatchAPI:
     """Serves Message Batches, answering each batch's requests with the next of `results` for their `custom_id`.
@@ -409,7 +393,7 @@ class _FakeBatchAPI:
         if path.endswith('/results'):
             results = self.results[int(batch_id.removeprefix('batch_')) - 1]
             lines = [json.dumps({'custom_id': custom_id, 'result': result}) for custom_id, result in results.items()]
-            return httpx2.Response(200, stream=_LineStream('\n'.join(lines).encode(), self.close_results))
+            return httpx2.Response(200, stream=LineStream('\n'.join(lines).encode(), self.close_results))
         return httpx2.Response(200, json=_batch_json(batch_id, self.status))
 
     def close_results(self) -> None:
@@ -563,9 +547,7 @@ async def test_anthropic_batch_results_iter_closes_the_stream_when_the_caller_st
     batch = await model.batch_status(batch)
 
     async with aclosing(model.batch_results_iter(batch)) as results:
-        async for result in results:
-            assert result.custom_id == 'one'
-            break
+        assert (await anext(results)).custom_id == 'one'
 
     assert api.closed_results == 1
 

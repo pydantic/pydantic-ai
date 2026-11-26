@@ -8,7 +8,7 @@ on demand (an expired or failed batch, error lines), which are served by an in-p
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Callable
+from collections.abc import Callable
 from contextlib import aclosing
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -39,7 +39,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.tools import ToolDefinition
-from tests.batch_utils import UNRUN_MESSAGES
+from tests.batch_utils import UNRUN_MESSAGES, LineStream
 from tests.conftest import try_import
 from tests.models.mock_openai import with_history_digests
 
@@ -437,21 +437,6 @@ async def test_batch_rejects_an_http_client_auth() -> None:
         await model.batch_encode(_request())
 
 
-class _LineStream(httpx2.AsyncByteStream):
-    """A response body sent a line at a time, which says when it was closed."""
-
-    def __init__(self, content: bytes, on_close: Callable[[], None]) -> None:
-        self._lines = content.splitlines(keepends=True)
-        self._on_close = on_close
-
-    async def __aiter__(self) -> AsyncIterator[bytes]:
-        for line in self._lines:
-            yield line
-
-    async def aclose(self) -> None:
-        self._on_close()
-
-
 @dataclass
 class _FakeBatchAPI:
     """Serves the Files and Batches endpoints a batch round trip uses."""
@@ -508,7 +493,7 @@ class _FakeBatchAPI:
         if path.startswith('/files/') and path.endswith('/content'):
             file_id = path.split('/')[2]
             return httpx2.Response(
-                200, stream=_LineStream(self.files[file_id].encode(), lambda: self.closed.append(file_id))
+                200, stream=LineStream(self.files[file_id].encode(), lambda: self.closed.append(file_id))
             )
         if path == '/batches/batch_missing':
             return httpx2.Response(404, json={'error': {'message': 'No batch found', 'type': 'invalid_request_error'}})
@@ -763,9 +748,7 @@ async def test_batch_results_iter_deletes_the_input_file_and_closes_the_stream_w
     batch = await model.batch_status(batch)
 
     async with aclosing(model.batch_results_iter(batch)) as results:
-        async for result in results:
-            assert result.custom_id == 'one'
-            break
+        assert (await anext(results)).custom_id == 'one'
 
     assert ('DELETE', '/files/file-input') in api.requests
     assert api.closed == ['file-output']

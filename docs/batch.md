@@ -448,6 +448,8 @@ async with aclosing(model.batch_results_iter(batch)) as results:  # (1)!
 
 The Anthropic, OpenAI and Gemini models read their results from a stream, so the iterator doesn't collect them into a list. Gemini serves the results as a single file, which the model downloads to a temporary file on disk and removes when iteration ends. A model that only implements `batch_results` yields the results of that list, so `batch_results_iter` works with every model that has a batch API, but only saves memory where the provider streams.
 
+Under a durable execution engine such as [Temporal](durable_execution/temporal.md), [DBOS](durable_execution/dbos.md), [Prefect](durable_execution/prefect.md) or [Apache Airflow](durable_execution/airflow.md), an activity, step or task can't return a generator, so iterate `batch_results_iter` and store the results inside a single activity, step or task. [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] already collects them that way.
+
 [`batch_cancel`][pydantic_ai.models.Model.batch_cancel] asks the provider to cancel a batch. `batch_create` doesn't retry a failed submission, because the provider may have created the batch before the connection failed: check the provider's batches before submitting the requests again. A retrying transport does send it again after an error response, unless its `validate_response` [skips batch creates](#retrying-transports).
 
 ## Details

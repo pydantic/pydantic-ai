@@ -1182,17 +1182,14 @@ async def test_a_wrapper_model_closes_the_wrapped_results_iterator_when_the_call
     class StreamingModel(TestModel):
         async def batch_results_iter(self, batch: Batch) -> AsyncGenerator[BatchResult]:
             try:
-                for custom_id in ('a', 'b', 'c'):
-                    yield BatchResult(custom_id=custom_id, status='expired')
+                yield BatchResult(custom_id='a', status='expired')
             finally:
                 closed.append(True)
 
     inner = StreamingModel()
     batch = await inner.batch_create([])
     async with aclosing(WrapperModel(inner).batch_results_iter(batch)) as results:
-        async for result in results:
-            assert result.custom_id == 'a'
-            break
+        assert (await anext(results)).custom_id == 'a'
     assert closed == [True]
 
 
