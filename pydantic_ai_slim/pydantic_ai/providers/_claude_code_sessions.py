@@ -21,16 +21,18 @@ import asyncio
 import json
 import math
 import time
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, cast
 
+import anyio
 import httpx2
 from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError
 
 from .. import __version__
+from ._claude_code_mcp import MCP_PREFIX, ResponseEvents, replay_blocks, server_and_tool, tool_name_server
 
 try:
     from anthropic.types.beta import (
@@ -59,7 +61,9 @@ try:
         ResultMessage,
         SdkMcpTool,
         StreamEvent,
+        ToolResultBlock,
         Transport,
+        UserMessage,
         create_sdk_mcp_server,
     )
     from claude_agent_sdk.types import EffortLevel, ThinkingConfig
@@ -69,10 +73,13 @@ except ImportError as _import_error:  # pragma: no cover
         'you can use the `claude-code` optional group — `pip install "pydantic-ai-slim[claude-code]"`'
     ) from _import_error
 
-__all__ = ('ClaudeCodeSessions', 'ClaudeCodeTransport', 'CONVERSATION_HEADER')
+__all__ = ('ClaudeCodeSessions', 'ClaudeCodeTransport', 'CONVERSATION_HEADER', 'INHERIT_MCP_SERVERS_HEADER')
 
 CONVERSATION_HEADER = 'x-pydantic-ai-conversation-id'
 """Carries the request's `conversation_id` from `ClaudeCodeModel` to the transport. It never leaves the process."""
+
+INHERIT_MCP_SERVERS_HEADER = 'x-pydantic-ai-claude-code-inherit-mcp-servers'
+"""Carries `claude_code_inherit_mcp_servers`, as JSON, from `ClaudeCodeModel` to the transport, like the above."""
 
 _MCP_SERVER = 'pydantic_ai'
 _TOOL_PREFIX = f'mcp__{_MCP_SERVER}__'
@@ -127,6 +134,13 @@ _ERROR_STATUS: Mapping[str, tuple[int, str]] = {
     'server_error': (500, 'api_error'),
     'unknown': (500, 'api_error'),
 }
+
+
+class ClaudeCodeMcpServerNotFound(Exception):
+    """`claude_code_inherit_mcp_servers` names an MCP server Claude Code doesn't have."""
+
+    def __init__(self, unknown: list[str], known: list[str]) -> None:
+        self.unknown, self.known = unknown, known
 
 
 class ClaudeCodeExited(Exception):
@@ -185,6 +199,8 @@ class _MessagesRequest(BaseModel):
     """Claude Code takes only the thinking configs it has a CLI flag for: a request with another can't be served."""
     output_config: _OutputConfig | None = None
     stream: bool = False
+    inherit_mcp_servers: bool | list[str] = False
+    """`claude_code_inherit_mcp_servers`, from its header: the user's own MCP servers Claude Code may bring."""
 
     @property
     def callable_tools(self) -> list[_Tool]:
@@ -193,6 +209,7 @@ class _MessagesRequest(BaseModel):
 
 
 _stream_event_ta: TypeAdapter[BetaRawMessageStreamEvent] = TypeAdapter(BetaRawMessageStreamEvent)
+_inherit_ta: TypeAdapter[bool | list[str]] = TypeAdapter(bool | list[str])
 _tool_result_content_ta: TypeAdapter[str | list[dict[str, JsonValue]]] = TypeAdapter(str | list[dict[str, JsonValue]])
 
 
@@ -217,6 +234,7 @@ class _SessionConfig:
     thinking: str
     effort: EffortLevel | None
     max_tokens: int
+    inherit_mcp_servers: str
 
     @classmethod
     def of(cls, request: _MessagesRequest) -> _SessionConfig:
@@ -229,6 +247,7 @@ class _SessionConfig:
             thinking=json.dumps(request.thinking, sort_keys=True),
             effort=request.output_config.effort if request.output_config else None,
             max_tokens=request.max_tokens,
+            inherit_mcp_servers=json.dumps(request.inherit_mcp_servers),
         )
 
 
@@ -358,6 +377,14 @@ class _Session:
     busy: bool = False
     broken: bool = False
     last_used: float = field(default_factory=time.monotonic)
+    allowed_servers: frozenset[str] | None = None
+    """The user's own MCP servers whose tools Claude Code may run, by their names in its tool names; `None` for all."""
+    server_names: dict[str, str] = field(default_factory=dict[str, str])
+    """The configured name of each of the user's own MCP servers, by its name in Claude Code's tool names."""
+    external_calls: set[str] = field(default_factory=set[str])
+    """The IDs of the tool calls Claude Code ran itself."""
+    pending_results: list[ToolResultBlock] = field(default_factory=list[ToolResultBlock])
+    """Results of Claude Code's own tool calls that came after the response with the call had ended."""
 
     def result(self, tool_use_id: str) -> asyncio.Future[dict[str, JsonValue]]:
         if (future := self.results.get(tool_use_id)) is None:
@@ -373,6 +400,34 @@ class _Session:
         key = _claim_key(input_data['tool_name'], input_data['tool_input'])
         self.claims.setdefault(key, []).append(tool_use_id)
         return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'allow'}}
+
+    async def pre_external_tool_use(
+        self, input_data: HookInput, tool_use_id: str | None, context: HookContext
+    ) -> HookJSONOutput:
+        """Let Claude Code run a tool of one of the user's own MCP servers that the model may use."""
+        assert input_data['hook_event_name'] == 'PreToolUse'
+        if (external := server_and_tool(input_data['tool_name'], _TOOL_PREFIX)) is None:
+            return {}
+        if self.allowed_servers is not None and external[0] not in self.allowed_servers:
+            reason = 'This MCP server is not one of `claude_code_inherit_mcp_servers`.'
+            return {
+                'hookSpecificOutput': {
+                    'hookEventName': 'PreToolUse',
+                    'permissionDecision': 'deny',
+                    'permissionDecisionReason': reason,
+                }
+            }
+        return {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'allow'}}
+
+    def external_result(self, message: Message) -> list[ToolResultBlock]:
+        """The results in `message` of tool calls Claude Code ran itself."""
+        if not isinstance(message, UserMessage) or not isinstance(message.content, list):
+            return []
+        return [
+            block
+            for block in message.content
+            if isinstance(block, ToolResultBlock) and block.tool_use_id in self.external_calls
+        ]
 
     def tool(self, tool: _Tool) -> SdkMcpTool[dict[str, JsonValue]]:
         async def call(arguments: dict[str, JsonValue]) -> dict[str, JsonValue]:
@@ -417,13 +472,16 @@ class _Session:
 
     async def replay(self, messages: list[_Message]) -> None:
         """Send a new session the request's history, all of it but the last message without querying the model."""
-        for index, message in enumerate(messages):
-            frame = _frame(message.role, [_with_mcp_tool_name(block) for block in message.blocks()])
-            last = index == len(messages) - 1
-            if message.role == 'user' and not last:
+        frames = [
+            frame for message in messages for frame in replay_blocks(message.role, message.blocks(), _TOOL_PREFIX)
+        ]
+        for index, (role, blocks) in enumerate(frames):
+            frame = _frame(role, blocks)
+            last = index == len(frames) - 1
+            if role == 'user' and not last:
                 frame['shouldQuery'] = False
             await self.client.query(_one_frame(frame))
-            if message.role == 'user' and not last:
+            if role == 'user' and not last:
                 # Claude Code acknowledges a message it doesn't query the model for with a result of zero turns.
                 await self.read_result()
 
@@ -442,12 +500,6 @@ class _Session:
 
 def _claim_key(tool_name: str, arguments: Mapping[str, object]) -> str:
     return f'{tool_name}\0{json.dumps(arguments, sort_keys=True)}'
-
-
-def _with_mcp_tool_name(block: dict[str, JsonValue]) -> dict[str, JsonValue]:
-    if block.get('type') == 'tool_use':
-        return {**block, 'name': f'{_TOOL_PREFIX}{block.get("name")}'}
-    return block
 
 
 def _frame(role: Literal['user', 'assistant'], blocks: list[dict[str, JsonValue]]) -> dict[str, JsonValue]:
@@ -469,6 +521,8 @@ class ClaudeCodeSessions:
     leases: int = 0
     transport_factory: Callable[[ClaudeAgentOptions], Transport] | None = None
     """Replaces the Claude Code process, for tests."""
+    user_mcp_servers: dict[str, str] | None = None
+    """The user's own MCP servers and claude.ai connectors, by their names in Claude Code's tool names, once found."""
 
     def acquire(self) -> None:
         """Keep each conversation's session alive until the matching `release_lease`."""
@@ -492,20 +546,27 @@ class ClaudeCodeSessions:
         finally:
             await self.release_lease()
 
-    def _client_options(self, session: _Session, request: _MessagesRequest) -> ClaudeAgentOptions:
+    def _client_options(
+        self, session: _Session, request: _MessagesRequest, disallowed_tools: list[str]
+    ) -> ClaudeAgentOptions:
         config = session.config
         server = create_sdk_mcp_server(_MCP_SERVER, tools=[session.tool(tool) for tool in request.callable_tools])
+        hooks = [HookMatcher(matcher=f'^{_TOOL_PREFIX}', hooks=[session.pre_tool_use])]
+        if request.inherit_mcp_servers:
+            hooks.append(HookMatcher(matcher=f'^{MCP_PREFIX}', hooks=[session.pre_external_tool_use]))
         return ClaudeAgentOptions(
             model=config.model,
             system_prompt=config.system_prompt,
             tools=[],
             mcp_servers={_MCP_SERVER: server},
-            strict_mcp_config=True,
+            # Only `claude_code_inherit_mcp_servers` lets Claude Code bring the user's own MCP servers and connectors.
+            strict_mcp_config=not request.inherit_mcp_servers,
+            disallowed_tools=disallowed_tools,
             setting_sources=[],
             skills=[],
             verbatim_prompts=True,
             include_partial_messages=True,
-            hooks={'PreToolUse': [HookMatcher(matcher=f'^{_TOOL_PREFIX}', hooks=[session.pre_tool_use])]},
+            hooks={'PreToolUse': hooks},
             thinking=request.thinking,
             effort=config.effort,
             cli_path=self.options.cli_path,
@@ -514,13 +575,54 @@ class ClaudeCodeSessions:
             env={**_ENV, 'CLAUDE_CODE_MAX_OUTPUT_TOKENS': str(config.max_tokens)},
         )
 
+    async def _find_user_mcp_servers(self) -> dict[str, str]:
+        """The user's own MCP servers, found once from a Claude Code process that's asked for nothing else."""
+        if self.user_mcp_servers is None:
+            options = ClaudeAgentOptions(
+                tools=[],
+                strict_mcp_config=False,
+                setting_sources=[],
+                skills=[],
+                cli_path=self.options.cli_path,
+                cwd=self.options.cwd,
+                client_app=f'pydantic-ai/{__version__}',
+                env=_ENV,
+            )
+            transport = self.transport_factory(options) if self.transport_factory is not None else None
+            client = ClaudeSDKClient(options=options, transport=transport)
+            await client.connect()
+            try:
+                servers = await _settled_mcp_servers(client)
+            finally:
+                await client.disconnect()
+            self.user_mcp_servers = {tool_name_server(name): name for name in servers if name != _MCP_SERVER}
+        return self.user_mcp_servers
+
+    async def _inherited_servers(self, session: _Session, inherit: bool | list[str]) -> list[str]:
+        """Set which of the user's own MCP servers the session offers. Returns the tools to disallow for the rest."""
+        if not inherit:
+            return []
+        session.server_names = servers = await self._find_user_mcp_servers()
+        if inherit is True:
+            return []
+        allowed = {tool_name_server(name) for name in inherit}
+        if unknown := sorted(name for name in inherit if tool_name_server(name) not in servers):
+            raise ClaudeCodeMcpServerNotFound(unknown, sorted(servers.values()))
+        session.allowed_servers = frozenset(allowed)
+        return [f'{MCP_PREFIX}{server}' for server in servers if server not in allowed]
+
     async def _start(self, request: _MessagesRequest) -> _Session:
         session = _Session(config=_SessionConfig.of(request), loop=asyncio.get_running_loop())
-        options = self._client_options(session, request)
+        disallowed_tools = await self._inherited_servers(session, request.inherit_mcp_servers)
+        options = self._client_options(session, request, disallowed_tools)
         transport = self.transport_factory(options) if self.transport_factory is not None else None
         session.client = ClaudeSDKClient(options=options, transport=transport)
         try:
             await session.client.connect()
+            if request.inherit_mcp_servers:
+                # Claude Code loads the user's servers and connectors in the background: without them, its first
+                # request would offer the model none of their tools.
+                await _settled_mcp_servers(session.client)
             session.messages = aiter(session.client.receive_messages())
             await session.replay(request.messages)
         except BaseException:
@@ -588,6 +690,23 @@ class ClaudeCodeSessions:
         await session.close()
 
 
+_MCP_STATUS_POLL = 0.25
+_MCP_STATUS_WAIT = 10.0
+
+
+async def _settled_mcp_servers(client: ClaudeSDKClient) -> list[str]:
+    """The names of Claude Code's MCP servers, once they've loaded: claude.ai connectors take a few seconds."""
+    servers: list[str] = []
+    with anyio.move_on_after(_MCP_STATUS_WAIT):
+        while True:
+            status = (await client.get_mcp_status())['mcpServers']
+            servers = [server['name'] for server in status]
+            if servers and not any(server['status'] == 'pending' for server in status):
+                break
+            await anyio.sleep(_MCP_STATUS_POLL)
+    return servers
+
+
 class _TurnStream(httpx2.AsyncByteStream):
     """The server-sent events of one response, read from the session as `AnthropicModel` decodes them."""
 
@@ -600,31 +719,57 @@ class _TurnStream(httpx2.AsyncByteStream):
         self._first = first
         self._turn = _Turn()
         self._done = False
+        self._ended = False
+        self._events = ResponseEvents(
+            own_prefix=_TOOL_PREFIX, server_names=session.server_names, external_calls=session.external_calls
+        )
 
     async def __aiter__(self) -> AsyncIterator[bytes]:
-        for event in self._first:
-            yield self._event(event)
+        for chunk in self._opening():
+            yield chunk
         try:
             async for message in self._session.messages:
-                if isinstance(message, StreamEvent) and message.parent_tool_use_id is None:
-                    yield self._event(message.event)
-                    if self._done:
-                        return
-                elif isinstance(message, ResultMessage):
-                    # The turn ended before the response did, as when the API request fails partway.
-                    yield _stream_error(message.result or f'Claude Code ended with `{message.subtype}`.')
+                for chunk in self._message(message):
+                    yield chunk
+                if self._done or self._ended:
                     return
         except ClaudeSDKError as e:
             yield _stream_error(f'Claude Code failed: {e}')
         else:
             yield _stream_error('Claude Code exited before the response ended.')
 
-    def _event(self, event: dict[str, JsonValue]) -> bytes:
-        event = _with_pydantic_ai_tool_name(event)
-        self._turn.record(event)
-        if event.get('type') == 'message_stop':
-            self._finish()
-        return _sse(event)
+    def _opening(self) -> Iterator[bytes]:
+        """The events read before the response was returned, then the results left over from an earlier response."""
+        session = self._session
+        for event in self._first:
+            yield from self._event(event)
+        # Results of Claude Code's own calls from an earlier response, which ended with a call of ours.
+        pending, session.pending_results = session.pending_results, []
+        for block in pending:
+            yield from self._result(block)
+
+    def _message(self, message: Message) -> Iterator[bytes]:
+        if isinstance(message, StreamEvent) and message.parent_tool_use_id is None:
+            yield from self._event(message.event)
+        elif results := self._session.external_result(message):
+            for block in results:
+                yield from self._result(block)
+        elif isinstance(message, ResultMessage):
+            # The turn ended before the response did, as when the API request fails partway.
+            self._ended = True
+            yield _stream_error(message.result or f'Claude Code ended with `{message.subtype}`.')
+
+    def _event(self, event: dict[str, JsonValue]) -> Iterator[bytes]:
+        for out in self._events.stream_event(_with_pydantic_ai_tool_name(event)):
+            self._turn.record(out)
+            if out.get('type') == 'message_stop':
+                self._finish()
+            yield _sse(out)
+
+    def _result(self, block: ToolResultBlock) -> Iterator[bytes]:
+        for out in self._events.tool_result(block.tool_use_id, block.content, block.is_error):
+            self._turn.record(out)
+            yield _sse(out)
 
     def _finish(self) -> None:
         self._done = True
@@ -666,11 +811,16 @@ class ClaudeCodeTransport(httpx2.AsyncBaseTransport):
             return _error_response(400, 'invalid_request_error', f"Claude Code can't serve this request: {e}")
         # `ClaudeCodeModel` streams every request, and a request's history ends with the user's turn.
         assert body.stream and body.messages[-1].role == 'user'
+        if (inherit := request.headers.get(INHERIT_MCP_SERVERS_HEADER)) is not None:
+            body.inherit_mcp_servers = _inherit_ta.validate_json(inherit)
 
         try:
             session, kept = await self.sessions.open(request.headers.get(CONVERSATION_HEADER), body)
         except ClaudeCodeExited:
             return _error_response(500, 'api_error', 'Claude Code exited while it was sent the history.')
+        except ClaudeCodeMcpServerNotFound as e:
+            message = f'Claude Code has no MCP server named {", ".join(map(repr, e.unknown))}; it has: {", ".join(map(repr, e.known)) or "none"}.'
+            return _error_response(400, 'invalid_request_error', message, retry=False)
         except ClaudeSDKError as e:
             return _error_response(500, 'api_error', f'Claude Code failed: {e}')
         try:
@@ -697,6 +847,7 @@ async def _first_events(session: _Session) -> tuple[list[dict[str, JsonValue]], 
     async for message in session.messages:
         if isinstance(message, StreamEvent) and message.parent_tool_use_id is None:
             return [message.event], None
+        session.pending_results.extend(session.external_result(message))
         if isinstance(message, AssistantMessage) and message.error is not None:
             error_kind = message.error
         elif isinstance(message, RateLimitEvent) and message.rate_limit_info.status == 'rejected':

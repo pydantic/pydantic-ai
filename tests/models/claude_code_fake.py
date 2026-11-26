@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -54,14 +55,38 @@ def tool_use(tool_use_id: str, name: str, arguments: dict[str, Any]) -> dict[str
     return {'type': 'tool_use', 'id': tool_use_id, 'name': f'mcp__pydantic_ai__{name}', 'input': arguments}
 
 
+def external_tool_use(tool_use_id: str, server: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """A call to a tool of one of the user's own MCP servers, which Claude Code runs itself."""
+    return {'type': 'tool_use', 'id': tool_use_id, 'name': f'mcp__{server}__{tool}', 'input': arguments}
+
+
+NOTHING = '<nothing>'
+"""An `external_results` value for a tool whose result has no content."""
+_NOTHING = NOTHING
+
+
+def _ours(block: dict[str, Any]) -> bool:
+    return block['name'].startswith('mcp__pydantic_ai__')
+
+
 @dataclass
 class FakeClaudeCode:
     """The scripted responses, shared by every session a test starts, and what each session was sent."""
 
     responses: list[FakeResponse]
     sessions: list[FakeSession] = field(default_factory=list['FakeSession'])
+    discoveries: list[FakeSession] = field(default_factory=list['FakeSession'])
+    """The processes started only to find the user's own MCP servers."""
     exit_on_history: bool = False
     """Each process exits when it's sent history to replay."""
+    mcp_servers: list[str] = field(default_factory=list[str])
+    """The user's own MCP servers and connectors, which Claude Code offers when MCP config isn't strict."""
+    pending_polls: int = 0
+    """How many `mcp_status` requests of each process see its servers still loading."""
+    external_results: dict[str, str | list[dict[str, Any]]] = field(
+        default_factory=dict[str, 'str | list[dict[str, Any]]']
+    )
+    """What each of the user's own MCP tools returns when Claude Code runs it, by tool name."""
     holding: asyncio.Event = field(default_factory=asyncio.Event)
     """Set once a response waits on its `hold`."""
     missing: bool = False
@@ -69,7 +94,8 @@ class FakeClaudeCode:
 
     def __call__(self, options: ClaudeAgentOptions) -> FakeSession:
         session = FakeSession(self, options)
-        self.sessions.append(session)
+        # A process with no MCP server of Pydantic AI's is the one that finds the user's own servers.
+        (self.sessions if options.mcp_servers else self.discoveries).append(session)
         return session
 
 
@@ -87,7 +113,9 @@ class FakeSession(Transport):
         """Writing to the process fails with this error, as when it fails between requests."""
         self._outbox: asyncio.Queue[dict[str, Any] | BaseException | None] = asyncio.Queue()
         self._pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
-        self._hook_ids: list[str] = []
+        self._hooks: list[tuple[str, list[str]]] = []
+        """Each `PreToolUse` matcher the SDK registered, with its callback IDs."""
+        self._status_polls = 0
         self._counter = 0
         self._tasks: set[asyncio.Task[None]] = set()
 
@@ -123,11 +151,15 @@ class FakeSession(Transport):
         match message['type']:
             case 'control_request':
                 request = message['request']
-                assert request['subtype'] == 'initialize'
-                hooks: dict[str, list[dict[str, Any]]] = request.get('hooks') or {}
-                for matcher in hooks.get('PreToolUse', []):
-                    self._hook_ids.extend(matcher['hookCallbackIds'])
-                self._send({'type': 'control_response', 'response': self._success(message['request_id'], {})})
+                response: dict[str, Any] = {}
+                if request['subtype'] == 'mcp_status':
+                    response = {'mcpServers': self._mcp_status()}
+                else:
+                    assert request['subtype'] == 'initialize'
+                    hooks: dict[str, list[dict[str, Any]]] = request.get('hooks') or {}
+                    for matcher in hooks.get('PreToolUse', []):
+                        self._hooks.append((matcher['matcher'], matcher['hookCallbackIds']))
+                self._send({'type': 'control_response', 'response': self._success(message['request_id'], response)})
             case 'control_response':
                 response = message['response']
                 self._pending.pop(response['request_id']).set_result(response)
@@ -292,7 +324,8 @@ class FakeSession(Transport):
         else:
             stop = {'stop_reason': response.stop_reason, 'stop_sequence': None}
             events.append(
-                {'type': 'message_delta', 'delta': stop, 'usage': {'output_tokens': response.usage['output_tokens']}}
+                # Claude Code's final usage repeats the input counts, as the Messages API's does.
+                {'type': 'message_delta', 'delta': stop, 'usage': response.usage}
             )
         for event in events:
             self._send({'type': 'stream_event', 'uuid': 'u', 'session_id': 'fake-session', 'event': event})
@@ -305,6 +338,14 @@ class FakeSession(Transport):
             {'type': 'stream_event', 'uuid': 'u', 'session_id': 'fake-session', 'event': {'type': 'message_stop'}}
         )
 
+    def _mcp_status(self) -> list[dict[str, str]]:
+        self._status_polls += 1
+        status = 'pending' if self._status_polls <= self.script.pending_polls else 'connected'
+        servers = (
+            [*self.options.mcp_servers, *self.script.mcp_servers] if isinstance(self.options.mcp_servers, dict) else []
+        )
+        return [{'name': name, 'status': status} for name in servers]
+
     async def _call_tool(self, block: dict[str, Any]) -> None:
         hook_input = {
             'hook_event_name': 'PreToolUse',
@@ -315,16 +356,32 @@ class FakeSession(Transport):
             'tool_input': block['input'],
             'tool_use_id': block['id'],
         }
-        for callback_id in self._hook_ids:
-            output = await self._request(
-                {
-                    'subtype': 'hook_callback',
-                    'callback_id': callback_id,
-                    'input': hook_input,
-                    'tool_use_id': block['id'],
-                }
-            )
-            assert output['hookSpecificOutput']['permissionDecision'] == 'allow'
+        decisions: list[str] = []
+        for matcher, callback_ids in self._hooks:
+            if not re.search(matcher, block['name']):
+                continue
+            for callback_id in callback_ids:
+                output = await self._request(
+                    {
+                        'subtype': 'hook_callback',
+                        'callback_id': callback_id,
+                        'input': hook_input,
+                        'tool_use_id': block['id'],
+                    }
+                )
+                if specific := output.get('hookSpecificOutput'):
+                    decisions.append(specific['permissionDecision'])
+        if not _ours(block):
+            # Claude Code runs a tool of the user's own servers itself, and reports its result as a user message.
+            denied = 'deny' in decisions or 'allow' not in decisions
+            tool = block['name'].rpartition('__')[2]
+            content = 'Permission denied' if denied else self.script.external_results.get(tool, 'ok')
+            if content is _NOTHING:
+                content = None
+            result = {'type': 'tool_result', 'tool_use_id': block['id'], 'content': content, 'is_error': denied}
+            self._send({'type': 'user', 'message': {'role': 'user', 'content': [result]}, 'parent_tool_use_id': None})
+            return
+        assert decisions == ['allow']
         name = block['name'].removeprefix('mcp__pydantic_ai__')
         result = await self._mcp('tools/call', {'name': name, 'arguments': block['input']})
         self.tool_results.append({'tool_use_id': block['id'], **result['result']})

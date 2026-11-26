@@ -46,7 +46,7 @@ agent = Agent(ClaudeCodeModel('{{ anthropic:medium.name }}', provider=provider))
 
 ## How it works
 
-Each request goes to a Claude Code process. Your agent's [instructions](../agent.md#instructions) replace Claude Code's system prompt, and its [function tools](../tools.md) reach Claude Code as tools of an in-process MCP server: when the model calls one, Pydantic AI runs it, as with any other model. Claude Code's own tools, settings files, `CLAUDE.md` files, skills, hooks, MCP servers and claude.ai connectors are turned off, and so are its side requests, memory and automatic compaction.
+Each request goes to a Claude Code process. Your agent's [instructions](../agent.md#instructions) replace Claude Code's system prompt, and its [function tools](../tools.md) reach Claude Code as tools of an in-process MCP server: when the model calls one, Pydantic AI runs it, as with any other model. Claude Code's own tools, settings files, `CLAUDE.md` files, skills, hooks, side requests, memory and automatic compaction are turned off, and so are your MCP servers and claude.ai connectors unless you [bring them](#your-own-mcp-servers-and-connectors).
 
 A conversation keeps its Claude Code process for the length of an agent run, so the requests of one run continue in the same process and read from its prompt cache. To keep each conversation's process across runs too, for example one run per chat message, enter the agent (or the model) for as long as you serve the conversation:
 
@@ -66,6 +66,26 @@ async def main():
 A request whose history the process hasn't seen, such as one with different instructions or tools, edited history, or a conversation picked up from storage, starts a new process and sends it the history first. That's always correct, but it doesn't read from the earlier process's prompt cache. At most eight conversations keep a process at a time: the one used least recently makes room, and when all eight are busy, a new conversation's process stops after its request. When the agent, model, or run that holds them exits, the processes are stopped.
 
 Like any Claude Code session, each one leaves its transcript in Claude Code's configuration directory, under `~/.claude/projects/` by default, so it also shows up in `claude --resume` in the directory it ran in. Claude Code writes its prompt cache entries for 5 minutes, as the [`anthropic` provider](anthropic.md) asks for, rather than the hour it uses by default on a plan.
+
+## Your own MCP servers and connectors
+
+By default, Claude Code offers the model only your agent's tools. To let it also offer the MCP servers you set up for Claude Code and your Claude account's claude.ai connectors, set [`claude_code_inherit_mcp_servers`][pydantic_ai.models.claude_code.ClaudeCodeModelSettings.claude_code_inherit_mcp_servers] to `True` for all of them, or to the names of the ones to use, as `claude mcp list` shows them:
+
+```python {title="claude_code_mcp.py" test="skip - requires a Claude Code sign-in"}
+from pydantic_ai import Agent
+from pydantic_ai.models.claude_code import ClaudeCodeModelSettings
+
+agent = Agent(
+    'claude-code:{{ anthropic:medium.name }}',
+    model_settings=ClaudeCodeModelSettings(claude_code_inherit_mcp_servers=['claude.ai Google Calendar']),
+)
+result = agent.run_sync('What do I have on tomorrow?')
+print(result.output)
+```
+
+Claude Code runs those tools itself, as it would in a Claude Code session, and each call and its result come back in the response as a [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and a [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart], like those of Anthropic's own [MCP connector](../native-tools.md#mcp-server-tool), so they're in the message history and your UI and traces show them. A tool result is data from that server, given to the model as a tool result. A request with a server name Claude Code doesn't have fails with a 400 that lists the ones it has.
+
+Every one of a server's tools goes into each request, so bringing all of a large account's connectors can add tens of thousands of tokens; name the servers you need. The servers in a project's `.mcp.json` aren't brought, since Claude Code loads them only with the project's own settings, which could also run its hooks. When the model calls one of your agent's tools and one of Claude Code's in the same response, the result of Claude Code's comes at the start of the next response.
 
 ## What Claude Code adds to the request
 

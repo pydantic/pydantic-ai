@@ -1,9 +1,10 @@
 from __future__ import annotations as _annotations
 
+import json
 import warnings
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
-from typing import Literal
+from typing import Literal, cast
 
 from typing_extensions import override
 
@@ -17,7 +18,7 @@ from . import ModelRequestParameters
 try:
     from anthropic.types.beta import BetaCompactionConfigParam
 
-    from ..providers._claude_code_sessions import CONVERSATION_HEADER
+    from ..providers._claude_code_sessions import CONVERSATION_HEADER, INHERIT_MCP_SERVERS_HEADER
     from ..providers.claude_code import ClaudeCodeProvider
     from .anthropic import AnthropicModel, AnthropicModelName, AnthropicModelSettings
     from .anthropic._request_params import PreparedMessagesCreate
@@ -40,6 +41,22 @@ _HONORED_ANTHROPIC_SETTINGS = frozenset(
     }
 )
 """The `anthropic_*` settings Claude Code takes, or that `AnthropicModel` already reports as unsupported."""
+
+
+class ClaudeCodeModelSettings(AnthropicModelSettings, total=False):
+    """Settings used for a Claude Code model request."""
+
+    # ALL FIELDS MUST BE `claude_code_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+
+    claude_code_inherit_mcp_servers: bool | list[str]
+    """Let Claude Code offer the model the MCP servers and claude.ai connectors the user set up for it.
+
+    `True` brings all of them, and a list of names, as `claude mcp list` shows them, brings those alone. Claude Code
+    runs their tools itself, and each call and its result come back as a
+    [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and a
+    [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart], as with Anthropic's own MCP connector.
+    Defaults to `False`: Claude Code offers only the agent's own tools.
+    """
 
 
 class ClaudeCodeModel(AnthropicModel):
@@ -168,4 +185,7 @@ class ClaudeCodeModel(AnthropicModel):
         # in-memory transport.
         if conversation_id := next((m.conversation_id for m in reversed(messages) if m.conversation_id), None):
             prepared.extra_headers = {**prepared.extra_headers, CONVERSATION_HEADER: conversation_id}
+        claude_code_settings = cast(ClaudeCodeModelSettings, model_settings)
+        if inherit := claude_code_settings.get('claude_code_inherit_mcp_servers'):
+            prepared.extra_headers = {**prepared.extra_headers, INHERIT_MCP_SERVERS_HEADER: json.dumps(inherit)}
         return prepared

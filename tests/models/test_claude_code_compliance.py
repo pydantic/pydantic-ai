@@ -8,7 +8,8 @@ signed-in Claude Code through the Claude Agent SDK, and these tests pin each par
 - Claude Code is the SDK's own process for the user's `claude` executable, unmodified and with no extra CLI flags.
 - Pydantic AI never reads, holds or forwards a Claude credential, and never opens Claude Code's configuration directory.
 - Every Claude Code process identifies the client as Pydantic AI.
-- Claude Code's own tools, MCP servers, claude.ai connectors, settings and skills are off, and nothing can turn them on.
+- Claude Code's own tools, settings and skills are off, and nothing can turn them on. The user's own MCP servers and
+  claude.ai connectors are off unless the user's code opts in with `claude_code_inherit_mcp_servers`.
 - The environment Claude Code gets can't switch it from the user's login to an API key, proxy or cloud provider.
 
 Don't change, skip or delete these tests to make a change pass. A failure here means the change moves `ClaudeCodeModel`
@@ -41,8 +42,8 @@ with try_import() as imports_successful:
     import pydantic_ai.profiles.claude_code
     import pydantic_ai.providers.claude_code
     from pydantic_ai import __version__
-    from pydantic_ai.models.claude_code import ClaudeCodeModel
-    from pydantic_ai.providers import _claude_code_sessions
+    from pydantic_ai.models.claude_code import ClaudeCodeModel, ClaudeCodeModelSettings
+    from pydantic_ai.providers import _claude_code_mcp, _claude_code_sessions
     from pydantic_ai.providers._claude_code_sessions import ClaudeCodeTransport
     from pydantic_ai.providers.claude_code import ClaudeCodeProvider
 
@@ -144,6 +145,21 @@ async def test_claude_code_identifies_the_client_as_pydantic_ai():
     assert fake.sessions[0].options.client_app == f'pydantic-ai/{__version__}'
 
 
+async def test_only_the_opt_in_brings_the_users_own_mcp_servers():
+    """`claude_code_inherit_mcp_servers` loosens strict MCP config alone: tools, settings and skills stay off."""
+    provider = ClaudeCodeProvider()
+    fake = fake_claude_code(provider, FakeResponse([text('Hi.')]))
+    fake.mcp_servers = ['claude.ai Docs']
+    settings = ClaudeCodeModelSettings(claude_code_inherit_mcp_servers=True)
+
+    await Agent(ClaudeCodeModel('claude-sonnet-5-5', provider=provider), model_settings=settings).run('Hello')
+
+    options = fake.sessions[0].options
+    assert (options.strict_mcp_config, options.tools, options.setting_sources, options.skills) == snapshot(
+        (False, [], [], [])
+    )
+
+
 def test_claude_code_is_the_sdk_process_for_the_users_own_executable():
     """Outside tests, the SDK starts the `claude` executable it bundles, or the one the user names, as is."""
     assert ClaudeCodeProvider()._sessions.transport_factory is None  # pyright: ignore[reportPrivateUsage]
@@ -230,6 +246,7 @@ def test_the_source_never_reaches_for_a_credential():
     blanked = {name for name, value in _claude_code_sessions._ENV.items() if value == ''}  # pyright: ignore[reportPrivateUsage]
     modules = [
         _claude_code_sessions,
+        _claude_code_mcp,
         pydantic_ai.providers.claude_code,
         pydantic_ai.models.claude_code,
         pydantic_ai.profiles.claude_code,

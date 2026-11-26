@@ -413,17 +413,23 @@ class City:
 
 
 async def test_concurrent_requests_of_one_conversation_get_their_own_sessions():
-    model, fake = claude_code(FakeResponse([text('One.')]), FakeResponse([text('A.')]), FakeResponse([text('B.')]))
+    release = asyncio.Event()
+    model, fake = claude_code(
+        FakeResponse([text('One.')]), FakeResponse([text('A.')], hold=release), FakeResponse([text('B.')])
+    )
     agent = Agent(model)
 
     async with agent:
         first = await agent.run('Count.')
         history = first.all_messages()
-        results = await asyncio.gather(
-            agent.run('Again.', message_history=history), agent.run('Again.', message_history=history)
-        )
+        # The first continuation keeps the conversation's session busy while the second is sent.
+        continued = asyncio.create_task(agent.run('Again.', message_history=history))
+        await fake.holding.wait()
+        other = await agent.run('Again.', message_history=history)
+        release.set()
+        results = [await continued, other]
 
-    assert sorted(result.output for result in results) == ['A.', 'B.']
+    assert [result.output for result in results] == ['A.', 'B.']
     assert len(fake.sessions) == 2
     assert all(session.closed for session in fake.sessions)
 

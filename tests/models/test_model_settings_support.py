@@ -1066,6 +1066,14 @@ def _anthropic_vertex(client: httpx2.AsyncClient) -> Model:
     return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=vertex))
 
 
+def _claude_code_with_client(client: httpx2.AsyncClient) -> Model:
+    """`ClaudeCodeModel` retries through its Anthropic client, as Claude Code itself is set not to: count that client's
+    attempts. `test_a_failed_request_is_retried` in `test_claude_code.py` covers the retry reaching a new session."""
+    provider = ClaudeCodeProvider()
+    provider._client = provider.client.with_options(http_client=client)  # pyright: ignore[reportPrivateUsage]
+    return ClaudeCodeModel('claude-sonnet-4-5', provider=provider)
+
+
 def _no_backoff(response: object, retries: int) -> float:
     return 0
 
@@ -1118,6 +1126,13 @@ RETRY_CASES = [
         'OpenAIDecisionsModel', ('OpenAI Decisions',), _openai_decisions, (3, 1, 2), decision=True, marks=_OPENAI
     ),
     RetryCase('AnthropicModel', ('Anthropic',), _anthropic, (3, 1, 2), marks=_needs(anthropic_available, 'anthropic')),
+    RetryCase(
+        'ClaudeCodeModel',
+        ('Claude Code',),
+        _claude_code_with_client,
+        (3, 1, 2),
+        marks=_needs(claude_code_available, 'claude-agent-sdk'),
+    ),
     # Below anthropic 2.6, a copy of `AsyncAnthropicBedrock` builds its own HTTP client unless handed this one, which
     # would send the retries past the mock transport; `AsyncAnthropicVertex` has to keep its region and project.
     RetryCase(
