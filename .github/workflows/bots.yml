@@ -1,9 +1,11 @@
 # description: Sets a pull request's size, category and durable-exec review labels, and runs douwebot when the douwebot or douwebot:review-agent-config label is applied.
 name: PR Bots
 
+# Only same-repository pull requests: a fork's run holds no secrets and a read-only token.
+# The labelling jobs run on a pull request whose author has write access, or once such a
+# user applies `trusted:ci-run`; the review labels are requests from such a user.
 on:
-  # zizmor: ignore[dangerous-triggers] -- pull_request_target is needed for fork PRs; inputs are validated before use
-  pull_request_target:
+  pull_request:
     types: [opened, synchronize, edited, labeled, unlabeled]
 
 permissions: {}
@@ -14,16 +16,53 @@ concurrency:
   cancel-in-progress: ${{ github.event.action == 'synchronize' || (github.event.action == 'unlabeled' && github.event.label.name == 'douwebot:review-agent-config') }}
 
 jobs:
+  # The same trust decision as the `PR Review Checks` gate, from default-branch code. A run Dependabot
+  # starts gets Dependabot's secrets, not the Actions secrets these jobs use, so it labels nothing.
+  trust:
+    name: Trusted Pull Request
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+      && (github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'edited'
+      || (github.event.action == 'labeled' && github.event.label.name == 'trusted:ci-run'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      trusted: ${{ steps.trust.outputs.trusted }}
+    steps:
+      - name: Checkout trusted default-branch check
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts/publish_pr_review_checks.py
+            .github/scripts/pr_gates.py
+            .github/scripts/check_api_compatibility.py
+          sparse-checkout-cone-mode: false
+      - name: Install pinned script dependencies
+        run: python3 -m pip install --quiet 'pydantic==2.13.4'
+      - name: Check the author and the `trusted:ci-run` labeler
+        id: trust
+        run: python3 .github/scripts/publish_pr_review_checks.py trusted
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+
   size-label:
     name: Size Label
-    if: github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'edited'
+    needs: trust
+    if: needs.trust.outputs.trusted == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       issues: write
       pull-requests: write
     steps:
-      # pull_request_target must only read generated-file declarations from trusted base code.
+      # The size calculator must only read generated-file declarations from trusted base code.
       - name: Checkout trusted size calculator
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -77,11 +116,12 @@ jobs:
   # user with write access carries the current fingerprint of the pull request's own durable
   # changes, which merging the base branch in leaves unchanged.
   # Nothing here checks out or runs the pull request's files: the classifier and the manifest are
-  # fetched at `github.sha`, the base branch commit this workflow runs from, and the classifier
-  # reads the pull request's files and comments through the API and only parses them.
+  # fetched from the default branch, the pull request's base commit is only compared, and the
+  # classifier reads the pull request's files and comments through the API and only parses them.
   durable-exec-label:
     name: Durable-Exec Review Label
-    if: github.event.action == 'opened' || github.event.action == 'synchronize'
+    needs: trust
+    if: needs.trust.outputs.trusted == 'true' && github.event.action != 'edited'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -94,7 +134,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          BASE_SHA: ${{ github.sha }}
+          TRUSTED_REF: ${{ github.event.repository.default_branch }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           LABEL: needs-durable-exec-review
         run: |
@@ -103,7 +144,7 @@ jobs:
           GATE="$RUNNER_TEMP/durable-exec-gate"
           mkdir -p "$GATE/scripts"
           for path in scripts/durable_exec_contract.py scripts/durable_exec_contract.json; do
-            gh api -H 'Accept: application/vnd.github.raw+json' "repos/${REPO}/contents/${path}?ref=${BASE_SHA}" > "$GATE/$path"
+            gh api -H 'Accept: application/vnd.github.raw+json' "repos/${REPO}/contents/${path}?ref=${TRUSTED_REF}" > "$GATE/$path"
           done
           # `-I` keeps the fetched directory off `sys.path`; the classifier validates its arguments.
           TOUCHED=$(python3 -I "$GATE/scripts/durable_exec_contract.py" --touched "$REPO" "$PR_NUMBER" "$BASE_SHA" "$HEAD_SHA")
@@ -136,7 +177,8 @@ jobs:
   # This prevents prompt injection from adding arbitrary labels (e.g. 'douwebot' to trigger the review job).
   category-classify:
     name: Category Classify
-    if: github.event.action == 'opened' || github.event.action == 'synchronize'
+    needs: trust
+    if: needs.trust.outputs.trusted == 'true' && github.event.action != 'edited'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -170,6 +212,7 @@ jobs:
         if: steps.check-label.outputs.has_label == 'false'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
       - name: Install bubblewrap and socat
@@ -215,7 +258,7 @@ jobs:
         env:
           EXECUTION_FILE: ${{ steps.classify.outputs.execution_file }}
           GH_TOKEN: ${{ github.token }}
-          TRUSTED_REF: ${{ github.sha }}
+          TRUSTED_REF: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
           gh api -H 'Accept: application/vnd.github.raw+json' "repos/${GITHUB_REPOSITORY}/contents/.github/scripts/douwebot_usage_limit.py?ref=${TRUSTED_REF}" > "$RUNNER_TEMP/douwebot_usage_limit.py"
@@ -253,6 +296,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
       # Saves the output of each `gh` command the Claude prompt runs, under the names
@@ -328,7 +372,9 @@ jobs:
   # findings already keep that head from passing the gate.
   prior-findings:
     name: Earlier douwebot findings on this head
-    if: github.event.action == 'labeled' && (github.event.label.name == 'douwebot' || github.event.label.name == 'douwebot:review-agent-config')
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository
+      && github.event.action == 'labeled' && (github.event.label.name == 'douwebot' || github.event.label.name == 'douwebot:review-agent-config')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -384,6 +430,7 @@ jobs:
     needs: prior-findings
     if: >-
       !cancelled() && needs.prior-findings.outputs.review_url == ''
+      && github.event.pull_request.head.repo.full_name == github.repository
       && github.event.action == 'labeled' && (github.event.label.name == 'douwebot' || github.event.label.name == 'douwebot:review-agent-config')
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -396,15 +443,42 @@ jobs:
       result: ${{ steps.review.outputs.structured_output }}
       fallback: ${{ steps.usage-limit.outputs.fallback }}
     steps:
+      # Triage, below write, can add labels too. `douwebot:review-agent-config`
+      # has its own, stricter request check below.
+      - &douwebot-request-guard
+        name: Verify a maintainer requested the review
+        if: github.event.label.name == 'douwebot'
+        run: |
+          if [[ "$SENDER_TYPE" != 'User' ]]; then
+            echo '::error::Only a GitHub User can request a douwebot review.'
+            exit 1
+          fi
+          if ! PERMISSION=$(gh api "repos/${REPOSITORY}/collaborators/${SENDER}/permission" --jq '.permission' 2>/dev/null); then
+            echo '::error::Could not verify the request sender permission.'
+            exit 1
+          fi
+          case "$PERMISSION" in
+            write | admin) ;;
+            *)
+              echo '::error::The request sender must have write or admin permission.'
+              exit 1
+              ;;
+          esac
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SENDER: ${{ github.event.sender.login }}
+          SENDER_TYPE: ${{ github.event.sender.type }}
+
       # Two checkouts, and the split is the security design, not a convenience.
       #
-      # `pull_request_target` runs with the base repo's secrets, so whatever sits
+      # This job holds the API keys, so whatever sits
       # at the workspace root is what `claude-code-action` treats as the project:
       # its `CLAUDE.md` becomes the system prompt, its `.claude/` its settings.
-      # Put the fork there and the fork writes the reviewer's instructions. So the
-      # BASE ref owns the root, and the untrusted head is confined to `pr-head/`,
+      # Put the head there and the head writes the reviewer's instructions. So the
+      # default branch owns the root, and the untrusted head is confined to `pr-head/`,
       # reachable only through `--add-dir` as material under review. This is the
-      # pattern `claude-code-action` documents for this trigger:
+      # pattern `claude-code-action` documents for untrusted code:
       # https://github.com/anthropics/claude-code-action/blob/main/docs/security.md
       #
       # Be precise about what remains, because it is not "no pwn-request risk":
@@ -414,7 +488,7 @@ jobs:
       # attacker-authored text IS this job's purpose (the diff, code comments,
       # docstrings, plus the PR and issue bodies gathered below), so assume the
       # reviewer can be steered. What bounds the damage instead:
-      #   - the fork cannot reach the instruction layer (this split, plus the
+      #   - the head cannot reach the instruction layer (this split, plus the
       #     guard below for anything `--add-dir` might still autoload);
       #   - no step builds, installs or runs the checked-out code;
       #   - the token cannot publish reviews or push code; a separate trusted
@@ -423,13 +497,14 @@ jobs:
       #   - `allowed_non_write_users` makes the action scrub Anthropic/cloud/
       #     Actions secrets from subprocess envs and run them under bubblewrap
       #     PID-namespace isolation, so a read of `/proc/<pid>/environ` -- say via
-      #     a fork-committed absolute symlink, which does survive checkout -- does
+      #     a committed absolute symlink, which does survive checkout -- does
       #     not recover them. The action's own install is best-effort; the step
       #     below installs bubblewrap first from pinned packages.
       # See https://gh.io/securely-using-pull_request_target.
-      - name: Checkout base ref (trusted; owns the workspace root)
+      - name: Checkout default branch (trusted; owns the workspace root)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
       - name: Checkout PR head (untrusted; confined to pr-head/)
@@ -442,14 +517,12 @@ jobs:
           # function-context diffs.
           fetch-depth: 0
           persist-credentials: false
-          # v7 refuses a fork ref under `pull_request_target` without this.
-          allow-unsafe-pr-checkout: true
 
       - &douwebot-config-guard
         name: Check for modified config files
         if: github.event.action == 'labeled' && github.event.label.name == 'douwebot'
         # Backstop to the checkout split above, which is the primary defence: the
-        # base ref owns the workspace root, so the fork's config is no longer the
+        # default branch owns the workspace root, so the head's config is no longer the
         # project config. This still runs because `--add-dir pr-head` may let some
         # of that tree autoload anyway, and because the gather step reads guidance
         # files by path.
@@ -461,9 +534,9 @@ jobs:
         # review, where injected text carries the authority of the system prompt
         # instead of having to argue against it.
         #
-        # Runs for all PRs not authored by a repository maintainer: a same-repo
+        # Runs for all PRs not authored by a repository maintainer: an app's
         # branch (e.g. an automated agent's branch built from an untrusted issue)
-        # can carry a poisoned instruction file just as a fork can. Resolve the
+        # can carry a poisoned instruction file. Resolve the
         # actual repository permission rather than trusting `author_association`,
         # which can report `CONTRIBUTOR` for maintainers with private org
         # membership. The API's `.permission` maps maintain and custom roles onto
@@ -508,14 +581,14 @@ jobs:
         # files it collects (the per-directory `AGENTS.md`) and the context it
         # writes both come from and land in trusted territory. Only the diff needs
         # the untrusted tree, which `PR_HEAD_DIR` points the script's git commands
-        # at. Fetch the script itself from the base repo, never from the fork.
+        # at. Fetch the script itself from the base repo, never from the head.
         run: |
-          gh api "repos/${REPO}/contents/scripts/gather-review-context.sh?ref=${BASE_REF}" --jq .content | base64 -d > /tmp/gather-review-context.sh
+          gh api "repos/${REPO}/contents/scripts/gather-review-context.sh?ref=${TRUSTED_REF}" --jq .content | base64 -d > /tmp/gather-review-context.sh
           bash /tmp/gather-review-context.sh "$PR_NUMBER" "$REPO"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          TRUSTED_REF: ${{ github.event.repository.default_branch }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_DIR: pr-head
 
@@ -604,7 +677,7 @@ jobs:
           # `[1m]` is Claude Code CLI syntax, not part of the model id — the CLI strips it
           # and sends the canonical `claude-opus-5-5` with the 1M context window enabled.
           # https://code.claude.com/docs/en/model-config.md
-          # This job reviews untrusted fork code and must be assumed steerable by
+          # This job reviews untrusted code and must be assumed steerable by
           # prompt injection, so no entry here may reach arbitrary execution.
           # `Bash(rg:*)` and `Bash(git grep:*)` are deliberately absent: `rg --pre`
           # and `git grep -O` both run a command of the caller's choosing, and
@@ -737,7 +810,7 @@ jobs:
         env:
           EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
           GH_TOKEN: ${{ github.token }}
-          TRUSTED_REF: ${{ github.sha }}
+          TRUSTED_REF: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
           gh api -H 'Accept: application/vnd.github.raw+json' "repos/${GITHUB_REPOSITORY}/contents/.github/scripts/douwebot_usage_limit.py?ref=${TRUSTED_REF}" > "$RUNNER_TEMP/douwebot_usage_limit.py"
@@ -758,9 +831,12 @@ jobs:
       result: ${{ steps.result.outputs.result }}
       engine: ${{ steps.opencode.outputs.engine }}
     steps:
-      - name: Checkout base ref
+      - *douwebot-request-guard
+
+      - name: Checkout default branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
       - name: Checkout PR head
@@ -771,19 +847,18 @@ jobs:
           path: pr-head
           fetch-depth: 0
           persist-credentials: false
-          allow-unsafe-pr-checkout: true
 
       - *douwebot-config-guard
       - *douwebot-approval-guard
 
       - name: Gather PR context
         run: |
-          gh api "repos/${REPO}/contents/scripts/gather-review-context.sh?ref=${BASE_REF}" --jq .content | base64 -d > /tmp/gather-review-context.sh
+          gh api "repos/${REPO}/contents/scripts/gather-review-context.sh?ref=${TRUSTED_REF}" --jq .content | base64 -d > /tmp/gather-review-context.sh
           bash /tmp/gather-review-context.sh "$PR_NUMBER" "$REPO"
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          TRUSTED_REF: ${{ github.event.repository.default_branch }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_DIR: pr-head
 

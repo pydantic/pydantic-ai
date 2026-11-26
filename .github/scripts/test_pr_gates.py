@@ -385,7 +385,7 @@ if (data.scenario === 'foreign-workflow-repository') serverRun.repository.full_n
 if (data.scenario === 'observer-bot-event') serverRun.event = 'pull_request_target';
 if (['producer', 'producer-review-event'].includes(data.scenario)) {
   serverRun.name = 'PR Bots'; serverRun.path = '.github/workflows/bots.yml';
-  serverRun.event = 'pull_request_target';
+  serverRun.event = 'pull_request';
 }
 if (data.scenario === 'producer-review-event') serverRun.event = 'pull_request_review';
 // GitHub reports the base repository as a review run's head repository, even for a fork PR.
@@ -538,6 +538,11 @@ class ReviewGitHub:
     head: str = HEAD
     repository: int = 888
     closed: bool = False
+    author: tuple[str, str] = ('maintainer', 'User')
+    author_permission: str = 'write'
+    files: list[ChangedFile] = field(
+        default_factory=lambda: [ChangedFile(filename='pydantic_ai_slim/pydantic_ai/agent.py')]
+    )
     statuses: list[tuple[str, review_gates.ReviewGate, review_gates.CommitStatus]] = field(
         default_factory=list[tuple[str, review_gates.ReviewGate, review_gates.CommitStatus]]
     )
@@ -546,14 +551,22 @@ class ReviewGitHub:
         return review_gates.ReviewPullRequest.model_validate(
             {
                 'state': 'closed' if self.closed else 'open',
+                'user': {'id': 1, 'login': self.author[0], 'type': self.author[1]},
                 'head': {'sha': self.head, 'repo': {'id': self.repository}},
-                'base': {'sha': OLD_HEAD},
+                'base': {'sha': OLD_HEAD, 'repo': {'id': 888}},
                 'changed_files': 1,
                 'labels': [{'name': label} for label in self.labels if label]
                 if self.labels is not None
                 else [{'name': self.size_label}],
             }
         )
+
+    def changed_files(self) -> list[ChangedFile]:
+        return self.files.copy()
+
+    def permission(self, login: str) -> str:
+        assert login == self.author[0]
+        return self.author_permission
 
     def size(self, pull: review_gates.ReviewPullRequest) -> review_gates.Size:
         return self.size_label
@@ -588,14 +601,35 @@ def test_review_bar_by_size(size: review_gates.Size):
     github = ReviewGitHub(size_label=size, current_reviews=[])
     result = verdicts(github)
     assert bool(result['douwebot'].failures) is (size != 'size: S')
-    assert set(result) == {'douwebot'}
+    assert set(result) == {'douwebot', 'github-dir'}
     github.current_reviews = [review()]
     assert all(not item.failures for item in verdicts(github).values())
 
 
+def test_a_missing_size_label_names_the_activation_label():
+    """PR Bots labels only a trusted PR, so an app PR waiting for `trusted:ci-run` has no size label."""
+    failures = verdicts(ReviewGitHub(labels=[]))['douwebot'].failures
+    assert failures == [
+        'No size label (computed `size: M`): PR Bots labels a PR whose author has write access, or with `trusted:ci-run`.'
+    ]
+
+
+@pytest.mark.parametrize('size', ['size: M', 'size: XL'])
+def test_a_fork_pr_without_a_size_label_is_recreated(size: review_gates.Size):
+    """PR Bots never labels a fork PR, and `trusted:ci-run` cannot change that."""
+    failures = verdicts(ReviewGitHub(size_label=size, labels=[], repository=999))['douwebot'].failures
+    assert failures == [
+        f'No size label (computed `{size}`): PR Bots skips fork PRs. A maintainer recreates the change as a same-repository PR.'
+    ]
+    assert len(failures[0]) <= 140
+
+
 @pytest.mark.parametrize('labels', [[], ['size: S'], ['size: M', 'size: L']])
 def test_size_must_match_exactly_one_recomputed_label(labels: list[str]):
-    assert all(item.failures for item in verdicts(ReviewGitHub(labels=labels)).values())
+    result = verdicts(ReviewGitHub(labels=labels))
+    assert result['douwebot'].failures
+    # The `.github/` gate applies at every size, so a size label cannot fail it.
+    assert not result['github-dir'].failures
 
 
 @pytest.mark.parametrize(
@@ -789,12 +823,14 @@ ENV = {
 def test_reevaluation_replaces_a_failure_with_success_on_the_live_head():
     github = ReviewGitHub(current_reviews=[])
     assert review_gates.reconcile_reviews(github, ENV) == 0
-    assert github.statuses == [(HEAD, 'douwebot', 'failure')]
+    assert github.statuses == [(HEAD, 'douwebot', 'failure'), (HEAD, 'github-dir', 'success')]
     github.current_reviews = [review()]
     assert review_gates.reconcile_reviews(github, ENV) == 0
     assert github.statuses == [
         (HEAD, 'douwebot', 'failure'),
+        (HEAD, 'github-dir', 'success'),
         (HEAD, 'douwebot', 'success'),
+        (HEAD, 'github-dir', 'success'),
     ]
 
 
@@ -809,7 +845,7 @@ def test_errors_and_changing_snapshots_fail_closed(error: Exception):
 
     github = Unreachable()
     assert review_gates.reconcile_reviews(github, ENV) == 1
-    assert github.statuses == [(HEAD, 'douwebot', 'failure')]
+    assert github.statuses == [(HEAD, 'douwebot', 'failure'), (HEAD, 'github-dir', 'failure')]
 
     class Moving(ReviewGitHub):
         def pull_request(self) -> review_gates.ReviewPullRequest:
@@ -818,7 +854,7 @@ def test_errors_and_changing_snapshots_fail_closed(error: Exception):
 
     moving = Moving(current_reviews=[])
     assert review_gates.reconcile_reviews(moving, ENV) == 1
-    assert moving.statuses == [(HEAD, 'douwebot', 'failure')]
+    assert moving.statuses == [(HEAD, 'douwebot', 'failure'), (HEAD, 'github-dir', 'failure')]
 
 
 def test_review_status_publication_errors_propagate():
@@ -859,14 +895,48 @@ def test_no_snapshot_cannot_write_to_an_unverified_environment_head():
     assert github.statuses == []
 
 
-def test_merge_group_skips_metadata_and_reports_douwebot_context():
+def test_merge_group_skips_metadata_and_reports_every_gate():
     class NoMetadata(ReviewGitHub):
         def pull_request(self) -> review_gates.ReviewPullRequest:
             raise AssertionError('Merge groups do not inspect queue members')
 
     github = NoMetadata()
     assert review_gates.reconcile_reviews(github, {**ENV, 'MERGE_GROUP_SHA': OLD_HEAD}) == 0
-    assert github.statuses == [(OLD_HEAD, 'douwebot', 'success')]
+    assert github.statuses == [(OLD_HEAD, 'douwebot', 'success'), (OLD_HEAD, 'github-dir', 'success')]
+
+
+@pytest.mark.parametrize(
+    ('author', 'permission', 'files', 'allowed'),
+    [
+        (('maintainer', 'User'), 'write', ['.github/workflows/ci.yml'], True),
+        (('owner', 'User'), 'admin', ['.github/scripts/pr_gates.py'], True),
+        (('contributor', 'User'), 'read', ['.github/workflows/ci.yml'], False),
+        (('contributor', 'User'), 'none', ['.github/workflows/ci.yml'], False),
+        (('pydanty[bot]', 'Bot'), 'write', ['.github/scripts/pr_gates.py'], False),
+        (('dependabot[bot]', 'Bot'), 'none', ['.github/workflows/ci.yml'], True),
+        (('contributor', 'User'), 'read', ['docs/agents.md', 'pydantic_ai_slim/pydantic_ai/agent.py'], True),
+    ],
+    ids=['write', 'admin', 'read', 'none', 'app', 'dependabot', 'nothing-protected'],
+)
+def test_only_a_maintainer_may_change_the_github_directory(
+    author: tuple[str, str], permission: str, files: list[str], allowed: bool
+) -> None:
+    """A fork can edit its own copy of `protect-github-dir.yml`, so the default-branch gate decides."""
+    github = ReviewGitHub(
+        author=author, author_permission=permission, files=[ChangedFile(filename=name) for name in files]
+    )
+    assert (not verdicts(github)['github-dir'].failures) is allowed
+
+
+def test_a_rename_out_of_the_github_directory_needs_a_maintainer() -> None:
+    github = ReviewGitHub(
+        author=('contributor', 'User'),
+        author_permission='read',
+        files=[ChangedFile(filename='tools/ci.yml', previous_filename='.github/workflows/ci.yml')],
+    )
+    assert verdicts(github)['github-dir'].failures == [
+        'Only a maintainer may change `.github/`; this PR changes .github/workflows/ci.yml.'
+    ]
 
 
 def test_publisher_binds_inline_comments_to_one_marked_review():
@@ -1044,12 +1114,13 @@ def test_review_publication_errors_fail_closed(
 @pytest.mark.parametrize(
     ('path', 'event', 'run_head', 'conclusion', 'job_conclusion', 'valid'),
     [
+        ('.github/workflows/bots.yml', 'pull_request', HEAD, 'success', 'success', True),
+        ('.github/workflows/other.yml', 'pull_request', HEAD, 'success', 'success', False),
         ('.github/workflows/bots.yml', 'pull_request_target', HEAD, 'success', 'success', True),
-        ('.github/workflows/other.yml', 'pull_request_target', HEAD, 'success', 'success', False),
-        ('.github/workflows/bots.yml', 'pull_request', HEAD, 'success', 'success', False),
-        ('.github/workflows/bots.yml', 'pull_request_target', OLD_HEAD, 'success', 'success', False),
-        ('.github/workflows/bots.yml', 'pull_request_target', HEAD, 'failure', 'success', False),
-        ('.github/workflows/bots.yml', 'pull_request_target', HEAD, 'success', 'failure', False),
+        ('.github/workflows/bots.yml', 'workflow_dispatch', HEAD, 'success', 'success', False),
+        ('.github/workflows/bots.yml', 'pull_request', OLD_HEAD, 'success', 'success', False),
+        ('.github/workflows/bots.yml', 'pull_request', HEAD, 'failure', 'success', False),
+        ('.github/workflows/bots.yml', 'pull_request', HEAD, 'success', 'failure', False),
     ],
 )
 def test_gh_cli_verifies_both_jobs_and_originating_run(
