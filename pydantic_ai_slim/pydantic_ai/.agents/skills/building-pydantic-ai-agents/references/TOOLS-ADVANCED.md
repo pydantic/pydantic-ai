@@ -80,20 +80,21 @@ Not every failure is a retry. Choose the exception by what you want the model to
 - `ToolFailed` — the call is **done and failed** (resource missing, operation unsupported, definitive upstream error). The model should **see the result and adapt**. Does **not** consume the retry budget — bound repeated failures with `UsageLimits` at the run level.
 - Any other exception propagates and aborts the run.
 
-```python
-from pathlib import Path
+Read project files through `ctx.workspace` so the tool respects the selected workspace's access rules, including in a sandbox.
+[Attach a workspace](WORKSPACES.md) to the agent or pass one with `workspace=` when running it.
 
-from pydantic_ai import Agent, ToolFailed
+```python
+from pydantic_ai import Agent, RunContext, ToolFailed
 
 agent = Agent('openai:gpt-5.2')
 
 
-@agent.tool_plain
-def read_file(path: str) -> str:
-    file_path = Path(path)
-    if not file_path.is_file():
-        raise ToolFailed(f'File not found: {path}')
-    return file_path.read_text()
+@agent.tool
+async def read_file(ctx: RunContext, path: str) -> str:
+    try:
+        return await ctx.workspace.read_text(path)
+    except OSError as exc:
+        raise ToolFailed(f'Could not read {path!r}: {exc}') from exc
 ```
 
 The failure is recorded in message history as a `ToolReturnPart` with `outcome='failed'` — the other error outcome beside `'retried'` — and traced as an error in telemetry. Pydantic AI uses the provider's native error field where one exists; otherwise model-visible content is JSON-framed as `{"error": ...}` so the failure remains explicit.
