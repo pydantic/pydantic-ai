@@ -1,0 +1,5 @@
+{
+  "against": "v2.75.0",
+  "reason": "`COMPUTER_KIND` now declares `allowed_callers={'direct'}`, the new `ToolKind` argument, so its repr includes it. Its id and shapes are unchanged, and `CodeMode` and `IPythonCodeMode` already kept its tool out of `run_code` through a hard-coded list that this replaces.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/14747"
+}
