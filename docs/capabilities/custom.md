@@ -1306,7 +1306,7 @@ For application code that just needs to plug in a handler, use the dedicated [`H
 
 ## Tracing what your capability does {#tracing}
 
-When a run is [instrumented](../logfire.md), its trace shows each model request and tool call. To add what your capability does, such as a check that blocked a call or slow work it ran, use the helpers in [`pydantic_ai.telemetry`][pydantic_ai.telemetry]. Each takes the run's `ctx`, so it uses the run's tracer and does nothing when the run isn't instrumented. Pass anything that can quote the run's data, such as tool arguments, prompts, paths or error messages, as `content`: it is recorded only when the run's [`include_content`][pydantic_ai.models.instrumented.InstrumentationSettings.include_content] setting allows it.
+When a run is [instrumented](../logfire.md), its trace shows each model request and tool call. To add what your capability does, such as a check that blocked a call or slow work it ran, use the helpers in [`pydantic_ai.telemetry`][pydantic_ai.telemetry]: [`record_decision`][pydantic_ai.telemetry.record_decision] for a choice that changed the run, and [`open_span`][pydantic_ai.telemetry.open_span] around work that takes time. Each takes the run's `ctx`, so it uses the run's tracer and does nothing when the run isn't instrumented. Pass anything that can quote the run's data, such as tool arguments, prompts, paths or error messages, as `content`: it is recorded only when the run's [`include_content`][pydantic_ai.models.instrumented.InstrumentationSettings.include_content] setting allows it.
 
 ```python {title="tracing_capability.py"}
 from dataclasses import dataclass
@@ -1357,7 +1357,7 @@ print(result.output)
 #> {"delete_file":"Deleting is not allowed."}
 ```
 
-`open_span` marks the span as failed if the work raises, and records the error's message only when content is allowed. `current_span(ctx)` returns the span already open around your hook, such as the tool call's span, so you can add attributes to it instead of opening a new one. Code that runs during a run but isn't given a `ctx`, such as a [workspace](../workspace-custom.md), passes `current_run_telemetry()` instead.
+[`open_span`][pydantic_ai.telemetry.open_span] marks the span as failed if the work raises, and records the error's message only when content is allowed. [`current_span(ctx)`][pydantic_ai.telemetry.current_span] returns the span already open around your hook, such as the tool call's span, so you can add attributes to it instead of opening a new one. Code that runs during a run but isn't given a `ctx`, such as a [workspace](../workspace-custom.md), passes [`current_run_telemetry()`][pydantic_ai.telemetry.current_run_telemetry] instead.
 
 ## Durable capability operations {#durable-capability-operations}
 

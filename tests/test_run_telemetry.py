@@ -1,4 +1,4 @@
-"""`pydantic_ai._telemetry`: spans that follow the right run's tracer and content policy.
+"""`pydantic_ai.telemetry`: spans that follow the right run's tracer and content policy.
 
 These are unit tests, not VCR tests: what they check is span attributes and the `INVALID_SPAN` and
 `NoOpTracer` branches, which no provider response can show, so the runs use `TestModel` or no model.
@@ -185,6 +185,31 @@ async def test_current_span_in_an_uninstrumented_sub_agent_leaves_the_parents_sp
     await parent.run('go')
 
     assert [span.name for span in exporter.get_finished_spans() if (span.attributes or {}).get('example.marked')] == []
+
+
+@dataclass
+class MarkWhenPrepared(AbstractCapability[object]):
+    async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+        set_content_attribute(ctx, current_span(ctx), 'example.prompt', 'secret')
+        return self
+
+
+async def test_a_sub_agents_for_run_does_not_write_to_its_parents_span(instrumented: Instrumented):
+    """In a sub-agent's `for_run` the open span is the parent's tool call, which records no content here."""
+    parent_instrumentation, parent_exporter = instrumented(False)
+    child_instrumentation, _ = instrumented(True)
+    child = Agent(TestModel(), capabilities=[MarkWhenPrepared(), child_instrumentation])
+    parent = Agent(TestModel(call_tools=['delegate']), capabilities=[parent_instrumentation])
+
+    @parent.tool_plain
+    async def delegate() -> str:
+        return (await child.run('go')).output
+
+    await parent.run('go')
+
+    assert [
+        span.name for span in parent_exporter.get_finished_spans() if 'example.prompt' in (span.attributes or {})
+    ] == []
 
 
 def test_a_durable_unit_that_did_not_carry_the_tracer_is_untraced():

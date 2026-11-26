@@ -24,7 +24,7 @@ Verify that the PR links an issue.
   runtime behavior.
 - The change states what it emits to OpenTelemetry. A decision point an operator
   needs (a refusal, a budget stop, a rewritten history) carries a span from
-  `record_decision` or `open_span` in `pydantic_ai._telemetry`, not from
+  `record_decision` or `open_span` in `pydantic_ai.telemetry`, not from
   `ctx.tracer` directly; emitting nothing is documented with its reason. See
   `capability-authoring.md` "Telemetry".
 - Capability ordering is justified when present.

@@ -1,7 +1,7 @@
 """Spans on a run's tracer that record content only when the run allows it.
 
 - `open_span(ctx, name)`: a span around work that takes time and can fail.
-- `record_decision(ctx, name)`: a decision that changed the run's course, currently a zero-duration span.
+- `record_decision(ctx, name)`: a decision that changed the run's course, recorded as a zero-duration span.
 - `current_span(ctx)`: the span already open where the caller runs, such as a tool hook's `execute_tool`.
 - `set_content_attribute(ctx, span, key, value)`: an attribute that can quote content, set only when
   the run captures content.
@@ -141,8 +141,8 @@ def record_decision(
 ) -> None:
     """Record that a capability decided something that changed the run's course, such as a guard blocking a value.
 
-    The record is currently a zero-duration span named `name`, on the run's tracer. `attributes` are
-    always recorded; `content`, which can quote what the decision was about, only when the run captures
+    It is recorded as a zero-duration span named `name`, on the run's tracer. A later release may record
+    it as a span event instead, under the same name and attributes. `attributes` are always recorded; `content`, which can quote what the decision was about, only when the run captures
     content.
     """
     if (telemetry := _telemetry_of(ctx)) is not None:
@@ -170,10 +170,17 @@ def current_span(ctx: RunContext[Any] | RunTelemetry | None) -> Span:
 
     In a tool hook that is the call's `execute_tool` span, and in `before_model_request` the request's
     `chat` span. Unlike `opentelemetry.trace.get_current_span()`, it returns `INVALID_SPAN` when the run
-    isn't traced, so an uninstrumented run doesn't write to the application's own span. In `for_run`, or
-    in a capability ordered outside `Instrumentation`, the open span is the one around the run.
+    isn't traced, so an uninstrumented run doesn't write to the application's own span. In a capability
+    ordered outside `Instrumentation`, the open span is the one around the run. In a sub-agent's `for_run`,
+    which runs before the sub-agent publishes its telemetry, the open span belongs to the parent run, whose
+    content setting can differ, so it returns `INVALID_SPAN` there.
     """
-    return get_current_span() if _telemetry_of(ctx) is not None else INVALID_SPAN
+    if (telemetry := _telemetry_of(ctx)) is None:
+        return INVALID_SPAN
+    published = _current.get()
+    if published is not None and published != telemetry:
+        return INVALID_SPAN
+    return get_current_span()
 
 
 _TRACE_FIELDS = frozenset({'tracer', 'trace_include_content'})

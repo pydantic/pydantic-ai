@@ -396,8 +396,8 @@ What to record, and where:
 - Holding a `RunTelemetry` for one operation and clearing it in `finally` is not storing a tracer.
 - Give a decision its own `record_decision` when there's no span to put it on, when one span can see
   several decisions (guards in a chain), or when operators should find it by name across capabilities
-  (`guardrail blocked input`, `spend budget exhausted`). It is currently a zero-duration span and may
-  become an OpenTelemetry event (#11562) without changing the call.
+  (`guardrail blocked input`, `spend budget exhausted`). It is a zero-duration span today; its public
+  docstring says a later release may record it as a span event (#11562) under the same name and attributes.
 - Open a span for work with its own duration, and give slow setup, such as starting a sandbox or a
   browser, its own child span, so it isn't mistaken for the work that triggered it.
 - Record what was acted on and what happened (ids, counts, sizes, outcomes) as plain attributes, so
