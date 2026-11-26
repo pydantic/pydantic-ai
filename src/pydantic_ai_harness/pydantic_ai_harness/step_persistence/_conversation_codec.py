@@ -30,7 +30,10 @@ def dump_record(record: ConversationRecord) -> str:
 
 
 def dump_metadata(metadata: dict[str, Any] | None) -> str | None:
-    return None if metadata is None else _METADATA_ADAPTER.dump_json(metadata).decode()
+    """The metadata's JSON with its keys sorted, so `write_details` can compare it with what's stored."""
+    return (
+        None if metadata is None else json.dumps(_METADATA_ADAPTER.dump_python(metadata, mode='json'), sort_keys=True)
+    )
 
 
 def load_record(record: object, title: object, metadata: object) -> ConversationRecord:
@@ -71,5 +74,5 @@ async def load_message(text: str, *, media_store: MediaStore | None) -> ModelMes
 
 
 def missing_entries_error(head_id: str) -> LookupError:
-    """Raised when a history's chain of entries is broken, which only a store modified by hand can be."""
+    """The error for a history whose chain of entries is broken, by a concurrent delete or a store modified by hand."""
     return LookupError(f'The history ending in entry {head_id!r} references entries or messages that are missing.')

@@ -23,7 +23,7 @@ from tests.harness._postgres_sqlite import SqlitePool
 from tests.harness.step_persistence._conversation_store_contract import Backend, ConversationStoreContract
 
 
-def _sqlite_backend(store: SqliteConversationStore, db: Callable[[], sqlite3.Connection]) -> Backend:
+def _sqlite_backend(store: SqliteConversationStore, db: Callable[[], sqlite3.Connection], *, owned: bool) -> Backend:
     def query(sql: str, *params: object) -> int:
         conn = db()
         try:
@@ -31,7 +31,7 @@ def _sqlite_backend(store: SqliteConversationStore, db: Callable[[], sqlite3.Con
             conn.commit()
             return row[0] if row is not None and row[0] is not None else 0
         finally:
-            if conn is not store._connection:  # pyright: ignore[reportPrivateUsage]
+            if owned:
                 conn.close()
 
     async def count_entries() -> int:
@@ -57,15 +57,27 @@ class TestSqliteConversationStoreOnAFile(ConversationStoreContract):
     def backend(self, tmp_path: Path) -> Backend:
         database = tmp_path / 'conversations.db'
         store = SqliteConversationStore(database=database)
-        return _sqlite_backend(store, lambda: sqlite3.connect(database))
+        return _sqlite_backend(store, lambda: sqlite3.connect(database), owned=True)
 
 
 class TestSqliteConversationStoreOnACallerConnection(ConversationStoreContract):
     @pytest.fixture
     def backend(self) -> Iterator[Backend]:
         connection = sqlite3.connect(':memory:', check_same_thread=False, isolation_level=None)
-        yield _sqlite_backend(SqliteConversationStore(connection=connection), lambda: connection)
+        yield _sqlite_backend(SqliteConversationStore(connection=connection), lambda: connection, owned=False)
         connection.close()
+
+
+async def test_an_update_on_a_caller_connection_commits(tmp_path: Path) -> None:
+    """A connection with Python's default isolation level opens a transaction before an `UPDATE`, which the store closes."""
+    database = tmp_path / 'conversations.db'
+    with closing(sqlite3.connect(database, check_same_thread=False)) as connection:
+        store = SqliteConversationStore(connection=connection)
+        conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+        await store.save(conversation)
+        await store.update(conversation.conversation_id, title='Trip')
+        with closing(sqlite3.connect(database)) as other:
+            assert other.execute('SELECT title FROM conversation_records').fetchall() == [('Trip',)]
 
 
 async def test_sqlite_rejects_a_record_whose_history_was_released() -> None:
@@ -270,28 +282,6 @@ async def test_postgres_a_write_that_loses_a_race_with_a_delete_conflicts(monkey
             ConversationRecord(conversation_id='c', head_id=entry.id), new_entries=[entry], expected_revision=None
         )
     pool.close()
-
-
-async def test_postgres_a_write_continuing_from_a_released_entry_conflicts() -> None:
-    pool = SqlitePool()
-    store = PostgresConversationStore(pool, media_store=None)
-    entry = ConversationEntry(parent_id='released', message=_prompt('one'))
-
-    with pytest.raises(ConversationConflict):
-        await store.write_record(
-            ConversationRecord(conversation_id='c', head_id=entry.id), new_entries=[entry], expected_revision=None
-        )
-    pool.close()
-
-
-async def test_sqlite_a_write_continuing_from_a_released_entry_conflicts(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'c.db', media_store=None)
-    entry = ConversationEntry(parent_id='released', message=_prompt('one'))
-
-    with pytest.raises(ConversationConflict):
-        await store.write_record(
-            ConversationRecord(conversation_id='c', head_id=entry.id), new_entries=[entry], expected_revision=None
-        )
 
 
 def test_sqlite_store_rejects_an_in_memory_database_path() -> None:

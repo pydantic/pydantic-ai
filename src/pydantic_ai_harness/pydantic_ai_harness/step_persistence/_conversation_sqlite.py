@@ -295,14 +295,14 @@ class SqliteConversationStore(ConversationStore):
             'RETURNING record, title, metadata'
         )
         row = await anyio.to_thread.run_sync(
-            self._sync_fetch_one, query, (*columns.values(), conversation_id, expected_revision, *checks.values())
+            self._sync_write_one, query, (*columns.values(), conversation_id, expected_revision, *checks.values())
         )
         if row is None:
             raise ConversationConflict(conversation_id)
         return load_record(*row)
 
-    def _sync_fetch_one(self, query: str, args: Sequence[object]) -> tuple[object, ...] | None:
-        with self._connected() as conn:
+    def _sync_write_one(self, query: str, args: Sequence[object]) -> tuple[object, ...] | None:
+        with self._connected() as conn, _atomically(conn, store_owned=self._connection is None):
             return conn.execute(query, args).fetchone()
 
     async def delete_record(self, conversation_id: str, *, expected_revision: str) -> None:

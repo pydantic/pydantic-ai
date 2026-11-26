@@ -133,21 +133,24 @@ class ConversationStoreContract:
         conversation = Conversation(messages=[_prompt('one')])
         await store.save(conversation)
 
-        updated = await store.update(
-            conversation.conversation_id, title='Trip', metadata={'days': 3}, expected_title=None
-        )
+        await store.update(conversation.conversation_id, title='Trip', expected_title=None)
+        updated = await store.update(conversation.conversation_id, metadata={'days': 3, 'from': 'Oslo'})
         assert updated == await store.read_record(conversation.conversation_id)
         conversation.messages.append(ModelResponse(parts=[TextPart('two')]))
         saved = await _saved(store, conversation)
 
-        assert (saved.title, saved.metadata) == ('Trip', {'days': 3})
+        assert (saved.title, saved.metadata) == ('Trip', {'days': 3, 'from': 'Oslo'})
         with pytest.raises(ConversationConflict):
-            await store.write_details(
-                conversation.conversation_id,
-                {'metadata': None},
-                expected_revision=saved.revision,
-                expected={'title': None},
-            )
+            await store.write_details(conversation.conversation_id, {'title': 'Oslo'}, expected_revision='stale')
+        with pytest.raises(ConversationConflict):
+            await store.update(conversation.conversation_id, metadata=None, expected_title=None)
+        renamed = await store.write_details(
+            conversation.conversation_id,
+            {'title': 'Oslo'},
+            expected_revision=saved.revision,
+            expected={'metadata': {'from': 'Oslo', 'days': 3}},
+        )
+        assert renamed.title == 'Oslo'
 
     async def test_conversations_list_newest_first_by_scope_and_limit(self, backend: Backend) -> None:
         store = backend.store
@@ -250,6 +253,16 @@ class ConversationStoreContract:
             await backend.store.load(conversation.conversation_id)
         with pytest.raises(LookupError):
             await backend.store.read_entry(record.head_id)
+
+    async def test_a_write_continuing_from_a_released_entry_conflicts(self, backend: Backend) -> None:
+        if not backend.atomic:
+            pytest.skip('A store without transactions never releases entries.')
+        entry = ConversationEntry(parent_id='released', message=_prompt('one'))
+
+        with pytest.raises(ConversationConflict):
+            await backend.store.write_record(
+                ConversationRecord(conversation_id='c', head_id=entry.id), new_entries=[entry], expected_revision=None
+            )
 
     async def test_deleting_a_conversation_saved_since_it_was_read_conflicts(self, backend: Backend) -> None:
         store = backend.store

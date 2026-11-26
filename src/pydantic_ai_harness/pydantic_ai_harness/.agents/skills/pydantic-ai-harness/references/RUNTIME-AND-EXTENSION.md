@@ -170,7 +170,8 @@ Conversation stores:
   `conversation = await store.load(id) or Conversation(conversation_id=id)`, run with
   `conversation=conversation`, then `await store.save(result.conversation)`.
 - `save` raises `ConversationConflict` when the conversation was saved by someone else since it was loaded
-  (it checks `Conversation.revision`, which `load` sets and a run carries through), so reload and retry.
+  (it checks `Conversation.revision`, which `load` sets and a run carries through). Load it again, and run the
+  turn again only if repeating its tool calls is safe.
   `save` advances that revision on the conversation it's given, so keep that object to save again.
 - `list_conversations(scope=..., limit=...)` lists the most recently saved first.
 - `fork(conversation_id, at=...)` starts a new conversation sharing the kept history. `delete` also removes
