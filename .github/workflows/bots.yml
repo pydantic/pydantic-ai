@@ -1,9 +1,11 @@
 # description: Sets a pull request's size, category and durable-exec review labels, and runs douwebot when the douwebot or douwebot:review-agent-config label is applied.
 name: PR Bots
 
+# Only same-repository pull requests: a fork's run holds no secrets and a read-only token.
+# The labelling jobs run on a pull request whose author has write access, or once such a
+# user applies `trusted:ci-run`; the review labels are requests from such a user.
 on:
-  # zizmor: ignore[dangerous-triggers] -- pull_request_target is needed for fork PRs; inputs are validated before use
-  pull_request_target:
+  pull_request:
     types: [opened, synchronize, edited, labeled, unlabeled]
 
 permissions: {}
@@ -14,16 +16,53 @@ concurrency:
   cancel-in-progress: ${{ github.event.action == 'synchronize' || (github.event.action == 'unlabeled' && github.event.label.name == 'douwebot:review-agent-config') }}
 
 jobs:
+  # The same trust decision as the `PR Review Checks` gate, from default-branch code. A run Dependabot
+  # starts gets Dependabot's secrets, not the Actions secrets these jobs use, so it labels nothing.
+  trust:
+    name: Trusted Pull Request
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+      && (github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'edited'
+      || (github.event.action == 'labeled' && github.event.label.name == 'trusted:ci-run'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      trusted: ${{ steps.trust.outputs.trusted }}
+    steps:
+      - name: Checkout trusted default-branch check
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts/publish_pr_review_checks.py
+            .github/scripts/pr_gates.py
+            .github/scripts/check_api_compatibility.py
+          sparse-checkout-cone-mode: false
+      - name: Install pinned script dependencies
+        run: python3 -m pip install --quiet 'pydantic==2.13.4'
+      - name: Check the author and the `trusted:ci-run` labeler
+        id: trust
+        run: python3 .github/scripts/publish_pr_review_checks.py trusted
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+
   size-label:
     name: Size Label
-    if: github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'edited'
+    needs: trust
+    if: needs.trust.outputs.trusted == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       issues: write
       pull-requests: write
     steps:
-      # pull_request_target must only read generated-file declarations from trusted base code.
+      # The size calculator must only read generated-file declarations from trusted base code.
       - name: Checkout trusted size calculator
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -72,12 +111,17 @@ jobs:
 
   # Labels a pull request that changes a core definition the durable engines depend on
   # (`scripts/durable_exec_contract.json`), and unlabels it once a later push no longer does.
+  # A durable-exec reviewer who signs off comments the line `--signoff-marker` prints and removes
+  # the label; it then stays off while `--signed-off` finds that the newest marker comment by a
+  # user with write access carries the current fingerprint of the pull request's own durable
+  # changes, which merging the base branch in leaves unchanged.
   # Nothing here checks out or runs the pull request's files: the classifier and the manifest are
-  # fetched at `github.sha`, the base branch commit this workflow runs from, and the classifier
-  # reads the pull request's files through the API and only parses them.
+  # fetched from the default branch, the pull request's base commit is only compared, and the
+  # classifier reads the pull request's files and comments through the API and only parses them.
   durable-exec-label:
     name: Durable-Exec Review Label
-    if: github.event.action == 'opened' || github.event.action == 'synchronize'
+    needs: trust
+    if: needs.trust.outputs.trusted == 'true' && github.event.action != 'edited'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -90,7 +134,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          BASE_SHA: ${{ github.sha }}
+          TRUSTED_REF: ${{ github.event.repository.default_branch }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           LABEL: needs-durable-exec-review
         run: |
@@ -99,7 +144,7 @@ jobs:
           GATE="$RUNNER_TEMP/durable-exec-gate"
           mkdir -p "$GATE/scripts"
           for path in scripts/durable_exec_contract.py scripts/durable_exec_contract.json; do
-            gh api -H 'Accept: application/vnd.github.raw+json' "repos/${REPO}/contents/${path}?ref=${BASE_SHA}" > "$GATE/$path"
+            gh api -H 'Accept: application/vnd.github.raw+json' "repos/${REPO}/contents/${path}?ref=${TRUSTED_REF}" > "$GATE/$path"
           done
           # `-I` keeps the fetched directory off `sys.path`; the classifier validates its arguments.
           TOUCHED=$(python3 -I "$GATE/scripts/durable_exec_contract.py" --touched "$REPO" "$PR_NUMBER" "$BASE_SHA" "$HEAD_SHA")
@@ -117,7 +162,12 @@ jobs:
           HAS_LABEL=$(jq --arg label "$LABEL" 'index($label) != null' <<<"$LABELS")
 
           if [ "$COUNT" -gt 0 ] && [ "$HAS_LABEL" = false ]; then
-            gh api "repos/${REPO}/issues/${PR_NUMBER}/labels" --method POST -f "labels[]=$LABEL"
+            # Any failure, like no covering sign-off, adds the label.
+            if SIGNOFF=$(python3 -I "$GATE/scripts/durable_exec_contract.py" --signed-off "$REPO" "$PR_NUMBER" "$BASE_SHA" "$HEAD_SHA"); then
+              printf '%s\n' "$SIGNOFF" >> "$GITHUB_STEP_SUMMARY"
+            else
+              gh api "repos/${REPO}/issues/${PR_NUMBER}/labels" --method POST -f "labels[]=$LABEL"
+            fi
           elif [ "$COUNT" -eq 0 ] && [ "$HAS_LABEL" = true ]; then
             gh api "repos/${REPO}/issues/${PR_NUMBER}/labels/${LABEL}" --method DELETE
           fi
@@ -127,8 +177,9 @@ jobs:
   # This prevents prompt injection from adding arbitrary labels (e.g. 'douwebot' to trigger the review job).
   category-classify:
     name: Category Classify
-    if: github.event.action == 'opened' || github.event.action == 'synchronize'
-    runs-on: ubuntu-latest
+    needs: trust
+    if: needs.trust.outputs.trusted == 'true' && github.event.action != 'edited'
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -136,12 +187,14 @@ jobs:
     outputs:
       category: ${{ steps.extract.outputs.category }}
       skip: ${{ steps.check-label.outputs.has_label }}
+      fallback: ${{ steps.usage-limit.outputs.fallback }}
     steps:
       - name: Check if category label already exists
         id: check-label
         run: |
           LABELS=$(gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --json labels --jq '.labels[].name')
-          CATEGORY_LABELS=("bug" "feature" "docs" "chore" "dependency")
+          # The PR author applies `bug:unreleased`; the classifier never picks it, so `ALLOWED` leaves it out.
+          CATEGORY_LABELS=("bug" "bug:unreleased" "feature" "docs" "chore" "dependency")
 
           for label in "${CATEGORY_LABELS[@]}"; do
             if echo "$LABELS" | grep -q "^${label}$"; then
@@ -159,16 +212,20 @@ jobs:
         if: steps.check-label.outputs.has_label == 'false'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
-      - name: Install bubblewrap
+      - name: Install bubblewrap and socat
         if: steps.check-label.outputs.has_label == 'false'
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+        uses: ./.github/actions/install-subprocess-isolation-deps
 
+      # continue-on-error keeps the job alive only long enough to classify this step.
+      # The next step fails the job unless the execution file is a subscription-limit rejection.
       - name: Classify PR with Claude Code
         if: steps.check-label.outputs.has_label == 'false'
         id: classify
-        uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1.0.262
+        continue-on-error: true
+        uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1.0.271
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
@@ -177,7 +234,7 @@ jobs:
           claude_args: |
             --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*)"
             --json-schema '{"type":"object","properties":{"category":{"type":"string"}},"required":["category"]}'
-          prompt: |
+          prompt: &category-prompt |
             Classify PR #${{ github.event.pull_request.number }} in ${{ github.repository }}.
 
             Run `gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }}` for the title and description.
@@ -195,8 +252,20 @@ jobs:
 
             Return your classification as JSON with a "category" field set to one of: bug, feature, docs, chore, dependency.
 
+      - id: usage-limit
+        name: Detect Claude subscription limit
+        if: steps.classify.outcome == 'failure'
+        env:
+          EXECUTION_FILE: ${{ steps.classify.outputs.execution_file }}
+          GH_TOKEN: ${{ github.token }}
+          TRUSTED_REF: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          gh api -H 'Accept: application/vnd.github.raw+json' "repos/${GITHUB_REPOSITORY}/contents/.github/scripts/douwebot_usage_limit.py?ref=${TRUSTED_REF}" > "$RUNNER_TEMP/douwebot_usage_limit.py"
+          python3 -I "$RUNNER_TEMP/douwebot_usage_limit.py"
+
       - name: Extract and validate category
-        if: steps.check-label.outputs.has_label == 'false'
+        if: steps.classify.outcome == 'success'
         id: extract
         run: |
           CATEGORY=$(echo "$STRUCTURED_OUTPUT" | jq -r .category | tr -d '[:space:]')
@@ -210,10 +279,69 @@ jobs:
         env:
           STRUCTURED_OUTPUT: ${{ steps.classify.outputs.structured_output }}
 
+  # Reruns the classification when the Claude subscription refused it. A fresh runner keeps
+  # anything the Claude run wrote out of reach, and OpenCode reads only the prefetched context.
+  category-classify-opencode:
+    name: Category Classify (OpenCode)
+    needs: category-classify
+    if: needs.category-classify.result == 'success' && needs.category-classify.outputs.fallback == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      category: ${{ steps.classify.outputs.category }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      # Saves the output of each `gh` command the Claude prompt runs, under the names
+      # `category_classify_opencode.py` gives the model.
+      - name: Prefetch PR context
+        run: |
+          set -euo pipefail
+          mkdir "$RUNNER_TEMP/category-context"
+          cd "$RUNNER_TEMP/category-context"
+          gh pr view "$PR_NUMBER" --repo "$REPO" > pr-view.txt
+          gh pr diff "$PR_NUMBER" --repo "$REPO" --name-only > changed-files.txt
+          if grep -qE '(^|/)pyproject\.toml$' changed-files.txt; then
+            gh pr diff "$PR_NUMBER" --repo "$REPO" > pr.diff
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+
+      - name: Set up OpenCode
+        uses: ./.github/actions/setup-douwebot-tools
+
+      - name: Classify PR with OpenCode
+        id: classify
+        run: |
+          export PATH="$RUNNER_TEMP/douwebot-tools/bin:$RUNNER_TEMP/douwebot-tools/opencode/node_modules/.bin:$PATH"
+          python3 .github/scripts/category_classify_opencode.py
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          # Serve the classification on both Coding Plan accounts when OpenCode Go refuses it before its first step.
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }}
+          # A write-only ingest token for OpenCode's own telemetry; OpenCode has no tool that reads its environment.
+          LOGFIRE_TOKEN: ${{ secrets.LOGFIRE_TOKEN }}
+          LOGFIRE_URL: ${{ vars.LOGFIRE_URL }}
+          CLASSIFY_PROMPT: *category-prompt
+          PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
+
   category-apply:
     name: Category Apply
-    needs: category-classify
-    if: needs.category-classify.outputs.skip != 'true' && needs.category-classify.outputs.category != ''
+    needs: [category-classify, category-classify-opencode]
+    # `!cancelled()` lets this run when the fallback job is skipped because Claude classified the PR.
+    if: >-
+      !cancelled() && needs.category-classify.outputs.skip != 'true'
+      && (needs.category-classify.outputs.category != '' || needs.category-classify-opencode.outputs.category != '')
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -221,7 +349,7 @@ jobs:
     steps:
       - name: Validate and apply category label
         run: |
-          CATEGORY="${NEEDS_CATEGORY_CLASSIFY_OUTPUTS_CATEGORY}"
+          CATEGORY="${CLASSIFIED_CATEGORY}"
           ALLOWED="bug feature docs chore dependency"
 
           if ! echo "$ALLOWED" | grep -Fqw "$CATEGORY"; then
@@ -234,16 +362,19 @@ jobs:
           echo "Applied label: $CATEGORY"
         env:
           GH_TOKEN: ${{ github.token }}
-          NEEDS_CATEGORY_CLASSIFY_OUTPUTS_CATEGORY: ${{ needs.category-classify.outputs.category }}
+          CLASSIFIED_CATEGORY: ${{ needs.category-classify.outputs.category || needs.category-classify-opencode.outputs.category }}
 
-  # A head that already has douwebot findings can never pass `review_gates.py`
-  # `douwebot_approval`, so reviewing it again buys no gate value. A head with a
+  # A new review cannot clear douwebot findings already on a head: `review_gates.py`
+  # `douwebot_approval` passes it only once each is an approval's optional finding
+  # in a resolved thread, so reviewing it again buys no gate value. A head with a
   # clean approval, an incomplete review or a failed run is reviewed again. An
   # incomplete review is reviewed again to complete its coverage, even when its
   # findings already keep that head from passing the gate.
   prior-findings:
     name: Earlier douwebot findings on this head
-    if: github.event.action == 'labeled' && (github.event.label.name == 'douwebot' || github.event.label.name == 'douwebot:review-agent-config')
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository
+      && github.event.action == 'labeled' && (github.event.label.name == 'douwebot' || github.event.label.name == 'douwebot:review-agent-config')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -265,14 +396,18 @@ jobs:
             | [$reviews[0][][]
                 | select(.user.login == "github-actions[bot]" and .user.type == "Bot" and .commit_id == $head)
                 | (.body // "") as $body
-                | select($body | test("\n\n<!-- douwebot:review run=[1-9][0-9]* head=" + $head + "( engine=(claude|opencode))? -->\\z"))
-                | (($body | capture(" engine=(?<engine>claude|opencode) -->\\z") | .engine) // "") as $engine
-                | ($body | sub("\n\n<!-- douwebot:review run=[0-9]+ head=[a-f0-9]{40}( engine=(claude|opencode))? -->\\z"; "")) as $marked
-                | (if $engine == "claude" then "\n\nReviewer: Claude Code (claude-opus-5-5)"
-                   elif $engine == "opencode" then "\n\nReviewer: OpenCode (opencode-go/deepseek-v4.1-flash)"
-                   else "" end) as $attribution
-                | (if $attribution == "" then $marked
-                   elif $marked | endswith($attribution) then $marked | rtrimstr($attribution)
+                | select($body | test("\n\n<!-- douwebot:review run=[1-9][0-9]* head=" + $head + "( engine=(claude|opencode|opencode-zai|opencode-deepinfra))? -->\\z"))
+                | (($body | capture(" engine=(?<engine>claude|opencode|opencode-zai|opencode-deepinfra) -->\\z") | .engine) // "") as $engine
+                | ($body | sub("\n\n<!-- douwebot:review run=[0-9]+ head=[a-f0-9]{40}( engine=(claude|opencode|opencode-zai|opencode-deepinfra))? -->\\z"; "")) as $marked
+                # Each engine attribution, then those of its earlier models (`EARLIER_REVIEW_ATTRIBUTIONS`).
+                | (if $engine == "claude" then ["\n\nReviewer: Claude Code (claude-opus-5-5)"]
+                   elif $engine == "opencode" then ["\n\nReviewer: OpenCode (opencode-go/deepseek-v4.1-flash)"]
+                   elif $engine == "opencode-zai" then ["\n\nReviewer: OpenCode (zai-coding-plan/glm-5.4)", "\n\nReviewer: OpenCode (zai-coding-plan/glm-5.3-flash)"]
+                   elif $engine == "opencode-deepinfra" then ["\n\nReviewer: OpenCode (deepinfra/deepseek-ai/DeepSeek-V4.1-Flash)"]
+                   else [] end) as $attributions
+                | (first($attributions[] | select(. as $text | $marked | endswith($text))) // "") as $attribution
+                | (if $attributions == [] then $marked
+                   elif $attribution != "" then $marked | rtrimstr($attribution)
                    else $marked + "\nMissing engine attribution" end) as $verdict
                 | select($verdict | startswith("Review incomplete.") | not)
                 | select(.id as $id | any($commented[]; . == $id) or ($verdict != "No blocking findings." and $verdict != "Blocking findings are recorded inline."))
@@ -295,8 +430,9 @@ jobs:
     needs: prior-findings
     if: >-
       !cancelled() && needs.prior-findings.outputs.review_url == ''
+      && github.event.pull_request.head.repo.full_name == github.repository
       && github.event.action == 'labeled' && (github.event.label.name == 'douwebot' || github.event.label.name == 'douwebot:review-agent-config')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read
@@ -307,15 +443,42 @@ jobs:
       result: ${{ steps.review.outputs.structured_output }}
       fallback: ${{ steps.usage-limit.outputs.fallback }}
     steps:
+      # Triage, below write, can add labels too. `douwebot:review-agent-config`
+      # has its own, stricter request check below.
+      - &douwebot-request-guard
+        name: Verify a maintainer requested the review
+        if: github.event.label.name == 'douwebot'
+        run: |
+          if [[ "$SENDER_TYPE" != 'User' ]]; then
+            echo '::error::Only a GitHub User can request a douwebot review.'
+            exit 1
+          fi
+          if ! PERMISSION=$(gh api "repos/${REPOSITORY}/collaborators/${SENDER}/permission" --jq '.permission' 2>/dev/null); then
+            echo '::error::Could not verify the request sender permission.'
+            exit 1
+          fi
+          case "$PERMISSION" in
+            write | admin) ;;
+            *)
+              echo '::error::The request sender must have write or admin permission.'
+              exit 1
+              ;;
+          esac
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SENDER: ${{ github.event.sender.login }}
+          SENDER_TYPE: ${{ github.event.sender.type }}
+
       # Two checkouts, and the split is the security design, not a convenience.
       #
-      # `pull_request_target` runs with the base repo's secrets, so whatever sits
+      # This job holds the API keys, so whatever sits
       # at the workspace root is what `claude-code-action` treats as the project:
       # its `CLAUDE.md` becomes the system prompt, its `.claude/` its settings.
-      # Put the fork there and the fork writes the reviewer's instructions. So the
-      # BASE ref owns the root, and the untrusted head is confined to `pr-head/`,
+      # Put the head there and the head writes the reviewer's instructions. So the
+      # default branch owns the root, and the untrusted head is confined to `pr-head/`,
       # reachable only through `--add-dir` as material under review. This is the
-      # pattern `claude-code-action` documents for this trigger:
+      # pattern `claude-code-action` documents for untrusted code:
       # https://github.com/anthropics/claude-code-action/blob/main/docs/security.md
       #
       # Be precise about what remains, because it is not "no pwn-request risk":
@@ -325,7 +488,7 @@ jobs:
       # attacker-authored text IS this job's purpose (the diff, code comments,
       # docstrings, plus the PR and issue bodies gathered below), so assume the
       # reviewer can be steered. What bounds the damage instead:
-      #   - the fork cannot reach the instruction layer (this split, plus the
+      #   - the head cannot reach the instruction layer (this split, plus the
       #     guard below for anything `--add-dir` might still autoload);
       #   - no step builds, installs or runs the checked-out code;
       #   - the token cannot publish reviews or push code; a separate trusted
@@ -334,13 +497,14 @@ jobs:
       #   - `allowed_non_write_users` makes the action scrub Anthropic/cloud/
       #     Actions secrets from subprocess envs and run them under bubblewrap
       #     PID-namespace isolation, so a read of `/proc/<pid>/environ` -- say via
-      #     a fork-committed absolute symlink, which does survive checkout -- does
-      #     not recover them. The action installs bubblewrap itself; the step below
-      #     only front-runs it, since the action's own install is best-effort.
+      #     a committed absolute symlink, which does survive checkout -- does
+      #     not recover them. The action's own install is best-effort; the step
+      #     below installs bubblewrap first from pinned packages.
       # See https://gh.io/securely-using-pull_request_target.
-      - name: Checkout base ref (trusted; owns the workspace root)
+      - name: Checkout default branch (trusted; owns the workspace root)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
       - name: Checkout PR head (untrusted; confined to pr-head/)
@@ -353,14 +517,12 @@ jobs:
           # function-context diffs.
           fetch-depth: 0
           persist-credentials: false
-          # v7 refuses a fork ref under `pull_request_target` without this.
-          allow-unsafe-pr-checkout: true
 
       - &douwebot-config-guard
         name: Check for modified config files
         if: github.event.action == 'labeled' && github.event.label.name == 'douwebot'
         # Backstop to the checkout split above, which is the primary defence: the
-        # base ref owns the workspace root, so the fork's config is no longer the
+        # default branch owns the workspace root, so the head's config is no longer the
         # project config. This still runs because `--add-dir pr-head` may let some
         # of that tree autoload anyway, and because the gather step reads guidance
         # files by path.
@@ -372,9 +534,9 @@ jobs:
         # review, where injected text carries the authority of the system prompt
         # instead of having to argue against it.
         #
-        # Runs for all PRs not authored by a repository maintainer: a same-repo
+        # Runs for all PRs not authored by a repository maintainer: an app's
         # branch (e.g. an automated agent's branch built from an untrusted issue)
-        # can carry a poisoned instruction file just as a fork can. Resolve the
+        # can carry a poisoned instruction file. Resolve the
         # actual repository permission rather than trusting `author_association`,
         # which can report `CONTRIBUTOR` for maintainers with private org
         # membership. The API's `.permission` maps maintain and custom roles onto
@@ -419,19 +581,19 @@ jobs:
         # files it collects (the per-directory `AGENTS.md`) and the context it
         # writes both come from and land in trusted territory. Only the diff needs
         # the untrusted tree, which `PR_HEAD_DIR` points the script's git commands
-        # at. Fetch the script itself from the base repo, never from the fork.
+        # at. Fetch the script itself from the base repo, never from the head.
         run: |
-          gh api "repos/${REPO}/contents/scripts/gather-review-context.sh?ref=${BASE_REF}" --jq .content | base64 -d > /tmp/gather-review-context.sh
+          gh api "repos/${REPO}/contents/scripts/gather-review-context.sh?ref=${TRUSTED_REF}" --jq .content | base64 -d > /tmp/gather-review-context.sh
           bash /tmp/gather-review-context.sh "$PR_NUMBER" "$REPO"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          TRUSTED_REF: ${{ github.event.repository.default_branch }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_DIR: pr-head
 
-      - name: Install bubblewrap
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - name: Install bubblewrap and socat
+        uses: ./.github/actions/install-subprocess-isolation-deps
 
       - &douwebot-approval-guard
         name: Validate one-head maintainer request
@@ -491,7 +653,7 @@ jobs:
       # The next step fails the job unless the execution file is a subscription-limit rejection.
       - id: review
         continue-on-error: true
-        uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1.0.262
+        uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1.0.271
         env:
           # Native tracing exports from Claude itself, retaining subprocess credential scrubbing.
           # https://code.claude.com/docs/en/monitoring-usage#traces-beta
@@ -515,7 +677,7 @@ jobs:
           # `[1m]` is Claude Code CLI syntax, not part of the model id — the CLI strips it
           # and sends the canonical `claude-opus-5-5` with the 1M context window enabled.
           # https://code.claude.com/docs/en/model-config.md
-          # This job reviews untrusted fork code and must be assumed steerable by
+          # This job reviews untrusted code and must be assumed steerable by
           # prompt injection, so no entry here may reach arbitrary execution.
           # `Bash(rg:*)` and `Bash(git grep:*)` are deliberately absent: `rg --pre`
           # and `git grep -O` both run a command of the caller's choosing, and
@@ -558,6 +720,8 @@ jobs:
             - Any line of code that violates the concrete guidelines/rules laid out in the relevant `AGENTS.md` file(s): the top-level guidelines apply to all changes, while directory-specific guidelines affect only the changes in that directory.
             - Anything else that the responsibilities you are assigned in `AGENTS.md` suggest that you should be calling out: use your best judgment.
             - A new test file or test that belongs in an existing file. Before accepting any new test file or test, search `pr-head/tests/` for an existing file that covers the same concern.
+            - When a finding shows a boundary mishandling one piece of state, check every other piece of state that crosses that boundary. A boundary is a point such as a resume, a retry or a second request in one stream.
+            - When a finding shows two sibling functions disagreeing on one field, compare every other field they both handle.
 
             Generally, the priority in terms of "crucial to get right" and "what to focus on first in a new PR" is public API > concepts and behavior > documentation > tests > code style.
             If the PR has high level problems that will likely require significant changes at lower levels, hold off on looking for or commenting on lower level problems until the higher level problems are addressed, so that the PR author (and your context window) don't get overwhelmed.
@@ -582,7 +746,7 @@ jobs:
             A Python hunk covers its enclosing function or method, not the whole class.
             When a hunk changes a method of a class in a sibling family, read the full class from `pr-head/` to see its sibling methods.
             The sibling families are `models/`, `providers/`, `profiles/`, `toolsets/`, `native_tools/`, `capabilities/`, `embeddings/`, `images/`, `realtime/`, `ui/` and `durable_exec/` under `pydantic_ai_slim/pydantic_ai/`;
-            under `src/pydantic_ai_harness/pydantic_ai_harness/`, the `*_sandbox/` and `ssh_workspace/` backends and every directory with an `_operation_backend.py`; and `src/pydantic_clai2/pydantic_clai2/builtin_plugins/`.
+            under `src/pydantic_ai_harness/pydantic_ai_harness/`, the `*_sandbox/`, `ssh_workspace/` and `docker_container/` backends and every directory with an `_operation_backend.py`; and `src/pydantic_ai_pax/pydantic_ai_pax/builtin_plugins/`.
             Each commentable line in the diff is prefixed with its source line number: `NL:<number>` for new or context lines, `OL:<number>` for deleted lines.
             For newly added files, the diff contains the complete file contents — do not re-read these from disk.
             The diff file paths are listed in the third column of `changed-files.txt`.
@@ -646,7 +810,7 @@ jobs:
         env:
           EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
           GH_TOKEN: ${{ github.token }}
-          TRUSTED_REF: ${{ github.sha }}
+          TRUSTED_REF: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
           gh api -H 'Accept: application/vnd.github.raw+json' "repos/${GITHUB_REPOSITORY}/contents/.github/scripts/douwebot_usage_limit.py?ref=${TRUSTED_REF}" > "$RUNNER_TEMP/douwebot_usage_limit.py"
@@ -665,10 +829,14 @@ jobs:
       actions: read
     outputs:
       result: ${{ steps.result.outputs.result }}
+      engine: ${{ steps.opencode.outputs.engine }}
     steps:
-      - name: Checkout base ref
+      - *douwebot-request-guard
+
+      - name: Checkout default branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
       - name: Checkout PR head
@@ -679,31 +847,37 @@ jobs:
           path: pr-head
           fetch-depth: 0
           persist-credentials: false
-          allow-unsafe-pr-checkout: true
 
       - *douwebot-config-guard
       - *douwebot-approval-guard
 
       - name: Gather PR context
         run: |
-          gh api "repos/${REPO}/contents/scripts/gather-review-context.sh?ref=${BASE_REF}" --jq .content | base64 -d > /tmp/gather-review-context.sh
+          gh api "repos/${REPO}/contents/scripts/gather-review-context.sh?ref=${TRUSTED_REF}" --jq .content | base64 -d > /tmp/gather-review-context.sh
           bash /tmp/gather-review-context.sh "$PR_NUMBER" "$REPO"
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          TRUSTED_REF: ${{ github.event.repository.default_branch }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_DIR: pr-head
 
       - name: Set up OpenCode and review tools
         uses: ./.github/actions/setup-douwebot-tools
 
-      - name: Review with OpenCode Go
+      - name: Review with OpenCode
+        id: opencode
         run: |
           export PATH="$RUNNER_TEMP/douwebot-tools/bin:$RUNNER_TEMP/douwebot-tools/opencode/node_modules/.bin:$PATH"
           python3 .github/scripts/douwebot_opencode_run.py
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          # Serve the review on both Coding Plan accounts when OpenCode Go refuses it before its first step.
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }}
+          # A write-only ingest token for OpenCode's own telemetry; OpenCode has no tool that reads its environment.
+          LOGFIRE_TOKEN: ${{ secrets.LOGFIRE_TOKEN }}
+          LOGFIRE_URL: ${{ vars.LOGFIRE_URL }}
           REVIEW_PROMPT: *douwebot-prompt
           PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
 
@@ -731,7 +905,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TRUSTED_REF: ${{ github.event.repository.default_branch }}
           REVIEW_RESULT: ${{ needs.review.outputs.fallback == 'true' && needs.douwebot-opencode.outputs.result || needs.review.outputs.result }}
-          REVIEW_ENGINE: ${{ needs.review.outputs.fallback == 'true' && 'opencode' || 'claude' }}
+          # An empty fallback engine reaches the publisher, which rejects it, rather than becoming `claude`.
+          REVIEW_ENGINE: ${{ needs.review.outputs.fallback != 'true' && 'claude' || needs.douwebot-opencode.outputs.engine }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
@@ -750,7 +925,7 @@ jobs:
         if: needs.prior-findings.outputs.review_url != ''
         run: |
           gh pr comment "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --body \
-            "\`douwebot\` did not review this head again: [an earlier review](${REVIEW_URL}) left findings on it, and any finding, optional ones included, keeps a head from a clean douwebot approval. Push a new commit, then request a new review."
+            "\`douwebot\` did not review this head again: [an earlier review](${REVIEW_URL}) left findings on it, and a new review cannot clear them. An approval's optional findings stop blocking a clean douwebot approval once their threads are resolved; for any other finding, push a new commit, then request a new review."
         env:
           GH_TOKEN: ${{ github.token }}
           REVIEW_URL: ${{ needs.prior-findings.outputs.review_url }}

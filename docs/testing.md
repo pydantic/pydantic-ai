@@ -30,6 +30,7 @@ The simplest and fastest way to exercise most of your application code is using 
     There's no ML or AI in `TestModel`, it's just plain old procedural Python code that tries to generate data that satisfies the JSON schema of a tool.
 
     The resulting data won't look pretty or relevant, but it should pass Pydantic's validation in most cases.
+    It doesn't generate strings that match a `pattern`, or values that avoid what a `not` rejects, so such a field can get a value its schema rejects. A string `format` it doesn't know gets an ordinary string.
     If you want something more sophisticated, use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] and write your own data generation logic.
 
 !!! note "Testing agents with native tools"
@@ -271,6 +272,8 @@ async def test_forecast_future():
 3. We use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to replace the agent's model with our custom function.
 
 If your replacement model needs to carry state between requests, `FunctionModel` also accepts a callable instance with an `async def __call__` in place of a function; see the [`FunctionModel` API docs](api/models/function.md) for an example.
+
+A `FunctionModel` built with only a `function` answers only non-streamed requests. A run streams every model request whenever something consumes its events, even when you call `agent.run()` or `agent.run_sync()`: an event listener registered with [`@agent.on_event`](hooks.md#listening-without-a-hooks-capability), an `event_stream_handler`, or a capability that listens through [`on_event`][pydantic_ai.capabilities.AbstractCapability.on_event] or [`wrap_run_event_stream`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream], such as the harness's [`Coder`](harness/coder.md) and [`RepoContext`](harness/repo-context.md). So do runs started with `agent.run_stream()`, `agent.run_stream_sync()` or `agent.run_stream_events()`, and `agent.iter()` runs whose nodes you stream. To test those, pass a [`stream_function`][pydantic_ai.models.function.StreamFunctionDef] too, or instead: an async generator taking the same arguments that yields text as a `str`, and tool calls as a [`DeltaToolCalls`][pydantic_ai.models.function.DeltaToolCalls] dict.
 
 ### Testing batch processing
 

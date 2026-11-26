@@ -7,10 +7,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-import httpx
+import httpx2
 import pytest
 from pydantic import TypeAdapter
 
+import pydantic_ai
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
@@ -41,13 +42,19 @@ async def _call_docs_tool(
     return result
 
 
+@pytest.fixture(autouse=True)
+def dev_build(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin a dev build, which has no release tag, so remote fetches read `main` whatever is installed."""
+    monkeypatch.setattr(pydantic_ai, '__version__', '2.69.1.dev17+gc6ea71910b')
+
+
 @pytest.fixture
 def workspace(tmp_path: Path) -> Workspace:
     return Workspace(LocalWorkspaceBackend(working_dir=tmp_path))
 
 
 class _FakeClient:
-    """Stand-in for `httpx.AsyncClient` that returns a canned response or raises.
+    """Stand-in for `httpx2.AsyncClient` that returns a canned response or raises.
 
     `text` is the body for every URL, or a body per URL.
     """
@@ -57,7 +64,7 @@ class _FakeClient:
         *,
         text: str | Mapping[str, str] = '',
         status: int = 200,
-        error: httpx.HTTPError | None = None,
+        error: httpx2.HTTPError | None = None,
         requested: list[str],
     ) -> None:
         self._text = text
@@ -71,12 +78,12 @@ class _FakeClient:
     async def __aexit__(self, *exc: object) -> bool:
         return False
 
-    async def get(self, url: str) -> httpx.Response:
+    async def get(self, url: str) -> httpx2.Response:
         self._requested.append(url)
         if self._error is not None:
             raise self._error
         text = self._text if isinstance(self._text, str) else self._text[url]
-        return httpx.Response(self._status, text=text, request=httpx.Request('GET', url))
+        return httpx2.Response(self._status, text=text, request=httpx2.Request('GET', url))
 
 
 def _install_fake_httpx(
@@ -84,15 +91,15 @@ def _install_fake_httpx(
     *,
     text: str | Mapping[str, str] = '',
     status: int = 200,
-    error: httpx.HTTPError | None = None,
+    error: httpx2.HTTPError | None = None,
 ) -> list[str]:
-    """Replace `httpx.AsyncClient` with a factory yielding a `_FakeClient`; return the URLs it is asked for."""
+    """Replace `httpx2.AsyncClient` with a factory yielding a `_FakeClient`; return the URLs it is asked for."""
     requested: list[str] = []
 
     def factory(*args: object, **kwargs: object) -> _FakeClient:
         return _FakeClient(text=text, status=status, error=error, requested=requested)
 
-    monkeypatch.setattr(httpx, 'AsyncClient', factory)
+    monkeypatch.setattr(httpx2, 'AsyncClient', factory)
     return requested
 
 
@@ -166,7 +173,7 @@ class TestPydanticAIDocsToolset:
         assert result == '# Agent remote'
 
     async def test_remote_error_without_local_checkout(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _install_fake_httpx(monkeypatch, error=httpx.ConnectError('boom'))
+        _install_fake_httpx(monkeypatch, error=httpx2.ConnectError('boom'))
         toolset = PydanticAIDocsToolset[object](local_docs_path=None, cache=None)
 
         with pytest.raises(RuntimeError, match='no local checkout configured'):
@@ -223,6 +230,22 @@ class TestPydanticAIDocsToolset:
             f'https://raw.githubusercontent.com/pydantic/pydantic-ai/main/docs/{_UPSTREAM_DOCS_LAYOUT[topic]}'
         ]
 
+    @pytest.mark.parametrize(
+        ('version', 'ref'),
+        [('2.69.0', 'v2.69.0'), ('2.0.0b7', 'v2.0.0b7'), ('2.69.1.dev17+gc6ea71910b', 'main')],
+    )
+    async def test_fetches_from_the_installed_release_tag(
+        self, version: str, ref: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Not a VCR test: the URL depends on the patched installed version, so a fake client records it."""
+        monkeypatch.setattr(pydantic_ai, '__version__', version)
+        requested = _install_fake_httpx(monkeypatch, text='# remote')
+        toolset = PydanticAIDocsToolset[object](local_docs_path=None, cache=None)
+
+        await _call_docs_tool(toolset, None, 'read_pyai_docs', topic=PydanticAIDocsTopic.hooks)
+
+        assert requested == [f'https://raw.githubusercontent.com/pydantic/pydantic-ai/{ref}/docs/hooks.md']
+
     async def test_resolves_model_aliases_like_the_docs_site(self) -> None:
         # The repository's own docs, so a moved alias file or a changed alias syntax fails here.
         root = Path(__file__).parents[3]
@@ -259,7 +282,7 @@ class TestPydanticAIDocsToolset:
     async def test_returns_aliases_as_written_without_the_alias_file(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, workspace: Workspace
     ) -> None:
-        requested = _install_fake_httpx(monkeypatch, error=httpx.ConnectError('offline'))
+        requested = _install_fake_httpx(monkeypatch, error=httpx2.ConnectError('offline'))
         (tmp_path / 'agent.md').write_text(_ALIASED_PAGE, encoding='utf-8')
         toolset = PydanticAIDocsToolset[object](local_docs_path=tmp_path, cache=None)
 
@@ -352,6 +375,22 @@ class TestThroughAgent:
             if isinstance(part, ToolReturnPart) and part.tool_name == 'read_pyai_docs'
         ]
         assert returns == ['# Capabilities doc']
+
+    async def test_remote_ref_overrides_the_installed_release(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Not a VCR test: the assertion is the requested URL, which a fake client records without network."""
+        monkeypatch.setattr(pydantic_ai, '__version__', '2.69.0')
+        monkeypatch.delenv('PYDANTIC_AI_HARNESS_DOCS_PATH', raising=False)
+        requested = _install_fake_httpx(monkeypatch, text='# remote')
+
+        def call_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('read_pyai_docs', {'topic': 'agent'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(call_then_finish), capabilities=[PydanticAIDocs(remote_ref='main')])
+
+        assert (await agent.run('go')).output == 'done'
+        assert requested == [f'{_REMOTE_DOCS}/agent.md']
 
     async def test_local_path_without_workspace_fails_the_run(self, tmp_path: Path) -> None:
         agent = Agent(TestModel(call_tools=[]), capabilities=[PydanticAIDocs(local_docs_path=tmp_path)])

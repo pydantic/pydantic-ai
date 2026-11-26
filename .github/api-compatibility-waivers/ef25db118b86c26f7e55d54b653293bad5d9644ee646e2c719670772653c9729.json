@@ -1,0 +1,5 @@
+{
+  "against": "v2.69.0",
+  "reason": "The `jwt` entry's header segment now ends at a `-` directly before `eyJ`, so a header segment containing `-eyJ` is no longer matched; every other entry is unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13770"
+}

@@ -8,7 +8,16 @@ import dataclasses
 import warnings
 import weakref
 from collections import deque
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterable,
+    Mapping,
+    Sequence,
+)
 from copy import copy
 from dataclasses import dataclass, field, replace
 from functools import partial
@@ -23,9 +32,12 @@ from opentelemetry.context import Context
 from typing_extensions import TypeAliasType
 
 from .. import _agent_graph, _instructions, _system_prompt
+from .._capability_parts import render_capability_parts_for_live_channel
+from .._deferred_capabilities import LoadCapabilityCallPart, registered_loaded_capability_ids
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
-from .._framing import SYSTEM_TAG, wrap
+from .._framing import SYSTEM_TAG, frame
 from .._instrumentation import annotate_tool_call_otel_metadata
+from .._parts_manager import tool_def_ui_visibility
 from .._run_context import (
     _CURRENT_RUN_CONTEXT,  # pyright: ignore[reportPrivateUsage]
     RealtimeEventBuffer,
@@ -55,6 +67,7 @@ from ..messages import (
     BinaryContent,
     BinaryImage,
     CapabilityEvent,
+    CapabilityPart,
     CustomEvent,
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
@@ -82,8 +95,12 @@ from ..messages import (
     SpeechPartDelta,
     SystemPromptPart,
     TextContent,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
+    ToolPartKind,
     ToolReturnPart,
+    ToolSearchReturnPart,
+    ToolUIVisibility,
     UserContent,
     UserPromptPart,
 )
@@ -93,6 +110,7 @@ from ..models import (
 from ..native_tools import SUPPORTED_NATIVE_TOOLS
 from ..run import AgentRunResult
 from ..tool_manager import ToolManager
+from ..toolsets._tool_search import parse_discovered_tools
 from ..usage import RequestUsage, RunUsage, UsageLimits
 from ._core import (
     MAX_CUTTABLE_OUTPUT_ITEMS,
@@ -118,21 +136,25 @@ from ._core import (
     ToolRoundsOver,
     TranscriptOverdue,
     UsageCounted,
+    tool_call_part,
 )
 from ._instrumentation import (
     SessionInstrumentation,
 )
-from ._lifecycle import LifecycleEvent, ResponseStarted, StaleEvent
+from ._lifecycle import LifecycleEvent, RealtimeFrame, ResponseStarted, StaleEvent
 from ._retained_audio import RetainedAudioBudget
 from ._utils import (
     InstructionChangeContext,
     SystemPromptContext,
     SystemPromptText,
+    pcm_from_wav,
     render_instruction_change,
     replay_recorded_system_prompts_in_place,
-    seed_pcm_audio,
+    resolve_advertised_tools,
+    resolve_realtime_request_tools,
 )
 from .codec import (
+    AppendVoiceInstructions,
     AudioDelta,
     CancelResponse,
     ClearAudio,
@@ -155,6 +177,7 @@ from .codec import (
     ToolCallCancelled,
     ToolResult,
     TruncateOutput,
+    UpdateTools,
 )
 from .model import RealtimeError
 from .profiles import DEFAULT_AUDIO_SAMPLE_RATE, RealtimeModelProfile
@@ -163,7 +186,7 @@ from .settings import AudioRetention, RealtimeModelSettings
 if TYPE_CHECKING:
     from ..messages import AgentStreamEvent
     from ..models.instrumented import InstrumentationSettings
-    from ..tools import DeferredToolRequests, DeferredToolResults, RunContext
+    from ..tools import DeferredToolRequests, DeferredToolResults, RunContext, ToolDefinition
     from ..toolsets import AbstractToolset
     from .model import RealtimeModel, RealtimeProviderSession
 
@@ -275,6 +298,7 @@ _FULL_PROFILE = RealtimeModelProfile(
     supports_interruption=True,
     supports_output_truncation=True,
     supports_session_seeding=True,
+    supports_tool_updates=True,
     supported_native_tools=SUPPORTED_NATIVE_TOOLS,
     audio_input_sample_rate=DEFAULT_AUDIO_SAMPLE_RATE,
     audio_output_sample_rate=DEFAULT_AUDIO_SAMPLE_RATE,
@@ -316,7 +340,7 @@ _TapItem = TypeVar('_TapItem')
 _Tap = TypeVar('_Tap')
 
 
-def _put_tap(queue: asyncio.Queue[_TapItem], item: _TapItem) -> _TapItem | None:
+def _put_tap(queue: asyncio.Queue[_TapItem], item: _TapItem) -> _TapItem | None:  # noqa: TID251  (not converted to anyio yet)
     """Put without blocking the pump, retaining the newest bounded window.
 
     The queue is sized one over its data window so the completion sentinel always fits. Returns the
@@ -371,7 +395,7 @@ class _AudioTap:
     so a device-side playback position can be mapped back into those coordinates.
     """
 
-    queue: asyncio.Queue[bytes | object]
+    queue: asyncio.Queue[bytes | object]  # noqa: TID251  (not converted to anyio yet)
     subscribed_at_bytes: int
     max_buffered_bytes: int
     """How much audio the queue may hold before the oldest chunks are dropped to make room."""
@@ -388,7 +412,7 @@ class _AudioTap:
     """
     played_bytes: int = 0
     """Chunks the consumer finished with — counted when it resumes the iterator for the next one."""
-    progress: asyncio.Event = field(default_factory=asyncio.Event)
+    progress: asyncio.Event = field(default_factory=asyncio.Event)  # noqa: TID251  (not converted to anyio yet)
     """Set when playback advances or the view ends, waking `wait_for_playback()`."""
     ended: bool = False
 
@@ -440,28 +464,49 @@ _TranslatableEvent: TypeAlias = (
     | PartEndEvent
     | RealtimeSessionErrorEvent
 )
-_SettledToolResult: TypeAlias = tuple[ToolReturnPart, str | Sequence[UserContent] | None]
+_SettledToolResult: TypeAlias = tuple[ToolReturnPart, str | Sequence[UserContent] | None, list[str]]
+"""A settled call's history part, the content it follows its result with, and the tools it revealed (`ToolReturn.tools`)."""
+
+
+def _tool_kinds(tools: Sequence[ToolDefinition]) -> dict[str, ToolPartKind]:
+    """The `tool_kind` of each tool that has one, by name."""
+    return {tool.name: tool.tool_kind for tool in tools if tool.tool_kind is not None}
+
+
+def _tool_ui_visibilities(tools: Sequence[ToolDefinition]) -> dict[str, ToolUIVisibility]:
+    """The `ui_visibility` a call to each tool that sets one is stamped with, by name."""
+    return {tool.name: visibility for tool in tools if (visibility := tool_def_ui_visibility(tool)) is not None}
 
 
 def _build_session_tool_return(
     tool_result: Any, call_part: ToolCallPart, tool_manager: ToolManager[Any]
-) -> tuple[ToolReturnPart, str | Sequence[UserContent] | None]:
-    """Translate a settled session tool result into its history part, rejecting mid-session reveals."""
+) -> _SettledToolResult:
+    """Translate a settled session tool result into its history part, and the tools it reveals."""
     tool_def = tool_manager.get_tool_def(call_part.tool_name)
     result_part, user_content, tools_added = build_tool_return_part(
         tool_result,
         call=call_part,
         tool_kind=tool_def.tool_kind if tool_def else None,
     )
-    if tools_added:
-        # Mirrors the graph (`_tool_execution._call_tool`), which rejects only a name owned by an
-        # unloaded capability and treats every other name — a typo, an already-visible tool — as a
-        # silent no-op. Killing the session over any reveal at all was harsher than the graph *and*
-        # unreachable-by-design harshness: a session refuses `defer_loading=True` tools and
-        # tool-contributing deferred capabilities when it opens, so it holds nothing that a reveal
-        # could have surfaced. Nothing is silently lost by dropping the request here.
-        _reject_unloaded_capability_reveals(tools_added, tool_manager)
-    return result_part, user_content
+    if not tools_added:
+        return result_part, user_content, []
+    # As in the graph (`_tool_execution._call_tool`): `load_capability` reveals its own capability's tools, a name
+    # another capability owns is refused until that capability loads, and any other name (a typo, a tool the model
+    # can already call) changes nothing.
+    _reject_unloaded_capability_reveals(
+        tools_added,
+        tool_manager,
+        activating_capability_id=call_part.capability_id if isinstance(call_part, LoadCapabilityCallPart) else None,
+    )
+    return result_part, user_content, list(dict.fromkeys(tools_added))
+
+
+def _check_image_retention(retain_images_every_n: int, retain_images_max: int | None) -> None:
+    """Refuse the image retention settings `RealtimeSession` can't apply."""
+    if retain_images_every_n < 1:
+        raise UserError('`retain_images_every_n` must be at least 1.')
+    if retain_images_max is not None and retain_images_max < 0:
+        raise UserError('`retain_images_max` must be at least 0, or `None` for no limit.')
 
 
 def _chain_context(error: BaseException, context: BaseException) -> None:
@@ -506,6 +551,7 @@ def _unsettled_call_return(call: ToolCallPart, error: BaseException) -> ToolRetu
         content=content,
         tool_call_id=call.tool_call_id,
         tool_kind=call.tool_kind,
+        ui_visibility=call.ui_visibility,
         outcome='failed',
     )
 
@@ -531,8 +577,10 @@ def _pending_message_text(pending: PendingMessage) -> str:
     Text-only parts join across messages. System prompts alone become a `SystemPromptText`, which the
     connection delivers on its channel for the operator's own text, as `send(SystemPromptPart(...))` does;
     next to user text they're `<system>`-tagged within the user turn, as `Model.prepare_messages` does for a
-    standard run's non-leading system prompts on a model without a system role. Anything else can't cross
-    the live input channel.
+    standard run's non-leading system prompts on a model without a system role. A
+    [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] goes as the parts it renders to, with no lookalike
+    notes, as the live channel has neither those nor their announcement for any text. Anything else can't cross the
+    live input channel.
     """
     error = UserError(
         '`RealtimeSession.enqueue()` and `RunContext.enqueue()` in a realtime session support text prompts '
@@ -542,7 +590,7 @@ def _pending_message_text(pending: PendingMessage) -> str:
     texts: list[str] = []
     system_prompts: list[str] = []
     from_user = False
-    for message in pending.messages:
+    for message in render_capability_parts_for_live_channel(list(pending.messages)):
         if not isinstance(message, ModelRequest):
             raise error
         for part in message.parts:
@@ -551,7 +599,7 @@ def _pending_message_text(pending: PendingMessage) -> str:
                 # User-channel text, including content a capability added such as a task report: never system voice.
                 from_user = True
             elif isinstance(part, SystemPromptPart):
-                texts.append(wrap(SYSTEM_TAG, part.content))
+                texts.append(frame(SYSTEM_TAG, part.content))
                 system_prompts.append(part.content)
             else:
                 raise error
@@ -561,15 +609,18 @@ def _pending_message_text(pending: PendingMessage) -> str:
 
 
 def _pending_message_record(pending: PendingMessage) -> list[ModelRequestPart] | None:
-    """The parts to record for a delivered message of system prompts alone, or one that carries `TextContent`.
+    """The parts to record for a delivered message of system prompts alone, or one that carries capability content.
 
-    System prompts alone are delivered as system prompts, so they're recorded as they were. A capability
-    recognizes content it enqueued, such as a background task's report, by its `TextContent` metadata, so
-    the history keeps those enqueued user prompt parts as they were too. Any other message is recorded as the
-    one text part it was sent as, with its system prompts `<system>`-tagged in it.
+    System prompts alone are delivered as system prompts, so they're recorded as they were. A capability recognizes
+    content it enqueued, such as a background task's report, by its type or by its `TextContent` metadata, so the
+    history keeps a message with a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] or such user prompt parts
+    as it was too. Any other message is recorded as the one text part it was sent as, with its system prompts
+    `<system>`-tagged in it.
     """
     parts = [part for message in pending.messages if isinstance(message, ModelRequest) for part in message.parts]
-    if all(isinstance(part, SystemPromptPart) for part in parts):
+    if all(isinstance(part, SystemPromptPart) for part in parts) or any(
+        isinstance(part, CapabilityPart) for part in parts
+    ):
         return parts
     if all(isinstance(part, UserPromptPart) for part in parts) and any(
         isinstance(part, UserPromptPart)
@@ -715,6 +766,9 @@ class RealtimeSession:
         self._tool_manager = tool_manager
         self._tool_run_step = 0
         self._tool_manager_lock = Lock()
+        # Held from taking up a call's reveal until its result is sent, so updates go out in the order they're taken
+        # up, each with every tool the ones before it gave the model.
+        self._reveal_lock = Lock()
         self._instrumentation = instrumentation
         self._profile = profile if profile is not None else model.profile if model is not None else _FULL_PROFILE
         self._responses_are_requests = self._profile.get('responses_are_requests', True)
@@ -749,6 +803,18 @@ class RealtimeSession:
         # `model_request_parameters` is what makes the session's configured native tools inspectable.
         self._model_request_parameters = model_request_parameters
         self._model_settings = model_settings
+        # The function tools the model can call: the ones the connection opened with, then each revealed since (see
+        # `_reveal_tools`). Only grows, and only by a reveal: the tools of each turn otherwise change only locally.
+        self._advertised_tools: list[ToolDefinition] = list(
+            (model_request_parameters or ModelRequestParameters()).function_tools
+        )
+        # The `tool_kind` of each of those tools that has one, which the core promotes calls to their typed part with.
+        # Deliberately shared with the core by reference and updated in place by `_reveal_tools`, so a call to a tool
+        # revealed mid-session is promoted too: don't copy it on either side.
+        self._tool_kinds: dict[str, ToolPartKind] = _tool_kinds(self._advertised_tools)
+        # The `ui_visibility` each of those tools stamps its calls with, shared with the core the same way.
+        self._tool_ui_visibilities: dict[str, ToolUIVisibility] = _tool_ui_visibilities(self._advertised_tools)
+        self._warned_undelivered_reveal = False
         self._wrap_event_stream = wrap_event_stream
         self._instructions = instructions
         # What the agent's instructions resolve to, re-resolved before each model turn (see `_refresh_instructions`), and
@@ -779,7 +845,11 @@ class RealtimeSession:
             instructions=instructions,
             metadata=metadata,
             model_request_parameters=model_request_parameters,
-            model_settings=model_settings,
+            model_settings=(
+                model._recorded_model_settings(model_settings)  # pyright: ignore[reportPrivateUsage]
+                if model is not None and model_settings
+                else model_settings
+            ),
             output_type='speech' if output_modality == 'audio' else 'text',
         )
         self._usage_limits = usage_limits
@@ -792,11 +862,8 @@ class RealtimeSession:
         self._retain_input = audio_retention in ('input_audio', 'all') and self._audio_budget.retains_audio
         self._retain_output = audio_retention in ('output_audio', 'all') and self._audio_budget.retains_audio
         self._handle_barge_in = handle_barge_in
-        if retain_images_every_n < 1:
-            raise UserError('`retain_images_every_n` must be at least 1.')
+        _check_image_retention(retain_images_every_n, retain_images_max)
         self._retain_images_every_n = retain_images_every_n
-        if retain_images_max is not None and retain_images_max < 0:
-            raise UserError('`retain_images_max` must be at least 0, or `None` for no limit.')
         self._retain_images_max = retain_images_max
         # Retained image requests in arrival order, so the cap can evict the oldest.
         self._retained_image_requests: list[ModelRequest] = []
@@ -826,6 +893,8 @@ class RealtimeSession:
 
         # The conversation the session was opened with: the core's history starts from it.
         self._seeded: list[ModelMessage] = list(message_history or [])
+        # Every tool name history has revealed, so a reveal is recorded once, by the call that made it first.
+        self._revealed_tool_names: set[str] = parse_discovered_tools(self._seeded)
         # The request holding the agent's system prompt that the agent opens a fresh conversation with (and
         # already configured the connection with), recorded first as a standard run's first request holds it.
         self._opening = _opening_request
@@ -842,7 +911,7 @@ class RealtimeSession:
         # guards is a property of the response, not of how long the user kept talking. Released
         # when the next response opens, and by a reconnect that discards the one it referred to.
         self._server_cancelled_the_response_on_speech = False
-        self._exchange_progress = asyncio.Event()
+        self._exchange_progress = asyncio.Event()  # noqa: TID251  (not converted to anyio yet)
         # Whether the frame being handled lost a response under way (a reconnect that didn't carry it).
         self._frame_lost_response = False
         # Answered calls of tool rounds that are over, which the connection may delete from the provider's
@@ -859,7 +928,7 @@ class RealtimeSession:
         # abandon the reader generator without affecting resource lifetime, and `__aexit__` still
         # drains everything before the connection and toolset close.
         self._queue: deque[RealtimeEvent | object] = deque()
-        self._queue_event = asyncio.Event()
+        self._queue_event = asyncio.Event()  # noqa: TID251  (not converted to anyio yet)
         self._queue_delta_count = 0
         self._queue_dropped_deltas = 0
         self._queue_structural_count = 0
@@ -867,8 +936,8 @@ class RealtimeSession:
         self._queue_changed = object()
         self._tap_finished = object()
         self._audio_taps: set[_AudioTap] = set()
-        self._transcript_taps: set[asyncio.Queue[SpeechPart | object]] = set()
-        self._transcript_delta_taps: set[asyncio.Queue[TranscriptUpdate | object]] = set()
+        self._transcript_taps: set[asyncio.Queue[SpeechPart | object]] = set()  # noqa: TID251  (not converted to anyio yet)
+        self._transcript_delta_taps: set[asyncio.Queue[TranscriptUpdate | object]] = set()  # noqa: TID251  (not converted to anyio yet)
         self._audio_tap_drops = 0
         self._transcript_tap_drops = 0
         # Emitted-audio coordinates for `interrupt(played_bytes=...)`: cumulative output audio bytes,
@@ -896,14 +965,7 @@ class RealtimeSession:
         self._send_lock = Lock()
         if self._tool_manager.ctx is not None:
             self._tool_manager.ctx.pending_messages = self._pending_messages
-        # Shared by reference with every copy of the run's context, so it must be the one the run was
-        # created with (`before_run` may have emitted into it already); a session built around a context
-        # that has none gets its own.
-        ctx = self._tool_manager.ctx
-        buffer = ctx._event_stream_buffer if ctx is not None else None  # pyright: ignore[reportPrivateUsage]
-        self._event_buffer = buffer if isinstance(buffer, RealtimeEventBuffer) else RealtimeEventBuffer()
-        if ctx is not None:
-            ctx._event_stream_buffer = self._event_buffer  # pyright: ignore[reportPrivateUsage]
+        self._event_buffer = self._run_event_buffer()
         # In-flight tool tasks keyed by tool call id, so a `ToolCallCancelled` can cancel the specific
         # calls the model abandoned (e.g. on barge-in) without touching the others.
         self._pending_tool_calls: dict[str, tuple[asyncio.Task[None], ToolCallPart]] = {}
@@ -911,8 +973,8 @@ class RealtimeSession:
         # transcripts, and cancellations. A barrier snapshots every unfinished predecessor; an ordinary
         # call only waits for the latest barrier. Completion events are released from `_run_tool`'s
         # `finally`, including cancellation and failure paths.
-        self._tool_completion_events: set[asyncio.Event] = set()
-        self._last_tool_barrier: asyncio.Event | None = None
+        self._tool_completion_events: set[asyncio.Event] = set()  # noqa: TID251  (not converted to anyio yet)
+        self._last_tool_barrier: asyncio.Event | None = None  # noqa: TID251  (not converted to anyio yet)
         # `ToolManager` adds a call to `usage.tool_calls` only once it *succeeds*, so calls still
         # running aren't visible there. Reserved when a `ToolCall` passes `_check_tool_call_limit`,
         # released the moment `handle_call` settles (the same event-loop segment that records a
@@ -963,7 +1025,21 @@ class RealtimeSession:
             opening=self._opening,
             usage=self.usage,
             annotate_response=self._annotate_response,
+            tool_kinds=self._tool_kinds,
+            tool_ui_visibilities=self._tool_ui_visibilities,
         )
+
+    def _run_event_buffer(self) -> RealtimeEventBuffer:
+        """The event buffer of the run the session belongs to, which its context then shares."""
+        # Shared by reference with every copy of the run's context, so it must be the one the run was
+        # created with (`before_run` may have emitted into it already); a session built around a context
+        # that has none gets its own.
+        ctx = self._tool_manager.ctx
+        buffer = ctx._event_stream_buffer if ctx is not None else None  # pyright: ignore[reportPrivateUsage]
+        event_buffer = buffer if isinstance(buffer, RealtimeEventBuffer) else RealtimeEventBuffer()
+        if ctx is not None:
+            ctx._event_stream_buffer = event_buffer  # pyright: ignore[reportPrivateUsage]
+        return event_buffer
 
     def _replayable_messages(self) -> Sequence[ModelMessage]:
         """The conversation for a reconnect to replay, with a system prompt sent mid-session kept where it was sent."""
@@ -1067,12 +1143,12 @@ class RealtimeSession:
                 return
             request = self._new_request([*statements, *update.parts])
             text = self._render_instruction_change(history, request)
-            frame: RealtimeInput = (
-                InstructionChangeContext(wrap(SYSTEM_TAG, text), system_prompt=text)
+            instruction_frame: RealtimeInput = (
+                InstructionChangeContext(frame(SYSTEM_TAG, text), system_prompt=text)
                 if self._profile.get('supports_system_messages', False)
-                else TextContext(wrap(SYSTEM_TAG, text))
+                else TextContext(frame(SYSTEM_TAG, text))
             )
-            await self._send_frame(frame, request=request)
+            await self._send_frame(instruction_frame, request=request)
             self._instruction_changes.append(request)
 
     async def __aenter__(self) -> RealtimeSession:
@@ -1517,7 +1593,7 @@ class RealtimeSession:
         self._ensure_streamable()
         # The queue itself is unbounded: `_AudioTap.put` bounds it by bytes, and the completion
         # sentinel always fits behind a full buffer without discarding audio or blocking teardown.
-        queue: asyncio.Queue[bytes | object] = asyncio.Queue()
+        queue: asyncio.Queue[bytes | object] = asyncio.Queue()  # noqa: TID251  (not converted to anyio yet)
         tap = _AudioTap(
             queue=queue,
             subscribed_at_bytes=self._emitted_audio_bytes,
@@ -1699,7 +1775,7 @@ class RealtimeSession:
         # Each kind gets its own subscription, so a consumer's window is never spent on items it
         # would discard: sharing one queue let a burst of deltas evict the finalized part a
         # `delta=False` consumer was waiting for, and the two speakers' transcripts interleave.
-        queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=_TRANSCRIPT_TAP_SIZE + 1)
+        queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=_TRANSCRIPT_TAP_SIZE + 1)  # noqa: TID251  (not converted to anyio yet)
         taps: set[Any] = self._transcript_delta_taps if delta else self._transcript_taps
         taps.add(queue)
         if self._pump_finished:
@@ -1814,41 +1890,49 @@ class RealtimeSession:
         profile's image-input support and raises `UserError` when it is unsupported.
 
         `send()` accepts session content only. Turn-control verbs (`CommitAudio`, `ClearAudio`,
-        `CreateResponse`, `CancelResponse`, `TruncateOutput`) are driven through the dedicated methods
-        (`commit_audio()`, `clear_audio()`, `create_response()`, `interrupt()`), and
+        `CreateResponse`, `CancelResponse`, `TruncateOutput`) and `AppendVoiceInstructions` are driven through
+        the dedicated methods (`commit_audio()`, `clear_audio()`, `create_response()`, `interrupt()`,
+        `append_voice_instructions()`), and
         [`ToolResult`][pydantic_ai.realtime.codec.ToolResult] is sent by the session itself as each tool
         completes (see `_execute_tool`) — neither is accepted here.
         """
         self._ensure_can_send()
-        if isinstance(content, str):
-            await self._send_text(content, respond=respond is not False)
-        elif isinstance(content, SystemPromptPart):
-            await self._send_text(SystemPromptText(content.content), respond=respond is not False, parts=[content])
-        elif isinstance(content, BinaryContent):
-            if content.is_image:
-                await self._send_image(content, respond=respond is True)
-            else:
-                if respond is True and content.media_type in (_WAV_MEDIA_TYPE, 'audio/pcm'):
-                    # Audio never solicits a reply on its own (VAD or `commit_audio()` ends the turn), so
-                    # `respond=False` is a no-op for it and only `respond=True` is a mistake.
-                    raise UserError(
-                        '`respond=True` cannot be used with audio sent via `session.send()`: a spoken turn is '
-                        'ended by voice activity detection, or by `commit_audio()` and `create_response()`.'
-                    )
-                await self._send_audio_content(content)
-        elif isinstance(content, (bytes, bytearray)):
-            # `bytes` is a `Sequence[int]`, so guard it before the sequence branch below — otherwise it
-            # iterates into a confusing per-byte error. Raw input audio goes through `send_audio()`.
+        match content:
+            case str():
+                await self._send_text(content, respond=respond is not False)
+            case SystemPromptPart():
+                await self._send_text(SystemPromptText(content.content), respond=respond is not False, parts=[content])
+            case BinaryContent():
+                await self._send_binary(content, respond=respond)
+            case Sequence():
+                await self._send_sequence(content, respond=respond)
+            case _:
+                assert_never(content)
+
+    async def _send_binary(self, content: BinaryContent, *, respond: bool | None) -> None:
+        if content.is_image:
+            await self._send_image(content, respond=respond is True)
+            return
+        if respond is True and content.media_type in (_WAV_MEDIA_TYPE, 'audio/pcm'):
+            # Audio never solicits a reply on its own (VAD or `commit_audio()` ends the turn), so
+            # `respond=False` is a no-op for it and only `respond=True` is a mistake.
+            raise UserError(
+                '`respond=True` cannot be used with audio sent via `session.send()`: a spoken turn is '
+                'ended by voice activity detection, or by `commit_audio()` and `create_response()`.'
+            )
+        await self._send_audio_content(content)
+
+    async def _send_sequence(self, content: Sequence[RealtimeSessionInput], *, respond: bool | None) -> None:
+        if isinstance(content, (bytes, bytearray)):
+            # `bytes` is a `Sequence[int]`, so it is refused before it iterates into a confusing per-byte error. Raw
+            # input audio goes through `send_audio()`.
             raise UserError('Raw audio bytes cannot be sent via `session.send()`; use `session.send_audio(...)`.')
-        elif isinstance(content, Sequence):
-            if respond is None:
-                for item in content:
-                    await self.send(item)
-            else:
-                for index, item in enumerate(content):
-                    await self.send(item, respond=respond if index == len(content) - 1 else False)
+        if respond is None:
+            for item in content:
+                await self.send(item)
         else:
-            assert_never(content)
+            for index, item in enumerate(content):
+                await self.send(item, respond=respond if index == len(content) - 1 else False)
 
     async def _send_text(
         self, content: str, *, respond: bool, parts: list[ModelRequestPart] | None = None
@@ -1958,10 +2042,10 @@ class RealtimeSession:
             # raw PCM — matching the seeding path — so a natural round-trip (retain a turn's audio,
             # then `send()` it back) doesn't stream the WAV header into the buffer as noise.
             await self.send_audio(
-                seed_pcm_audio(
-                    audio=content,
-                    provider_name=self._provider_name or 'realtime',
+                pcm_from_wav(
+                    content.data,
                     sample_rate=self.audio_input_sample_rate,
+                    error_prefix='Cannot send WAV audio through `session.send()`',
                 )
             )
         elif content.media_type == 'audio/pcm':
@@ -2082,6 +2166,38 @@ class RealtimeSession:
         self._ensure_can_send()
         self._require_capability('supports_manual_turn_control', method='create_response', feature='manual turn-taking')
         await self._send_frame(CreateResponse())
+
+    async def append_voice_instructions(self, text: str) -> None:
+        """Add to the instructions of the voice model the caller hears, steering how it speaks from now on.
+
+        For a model whose voice model takes instructions of its own, apart from the agent's: its profile sets
+        [`supports_appending_voice_instructions`][pydantic_ai.realtime.RealtimeModelProfile.supports_appending_voice_instructions].
+        OpenAI GPT-Live does: the agent's instructions go to its delegated backend, and the voice model starts with
+        `openai_live_instructions`, which this adds to. On any other model the agent's instructions are the voice
+        model's, so [changing them](../realtime/capabilities.md#instructions-that-change) is how to steer it, and this
+        raises [`UserError`][pydantic_ai.exceptions.UserError].
+
+        The instructions aren't part of the conversation, so history doesn't record them. The provider's
+        acknowledgement isn't waited for: one that refuses them reports a recoverable
+        [`RealtimeSessionErrorEvent`][pydantic_ai.messages.RealtimeSessionErrorEvent]. Send only instructions you
+        wrote: text from the caller, a tool, or a document doesn't earn the operator's authority by being sent here.
+
+        GPT-Live takes at most 500 tokens per call, and longer `text` raises `UserError` before anything is sent.
+        A [reconnect](../realtime/lifecycle.md#reconnecting) that forks a stored session keeps the instructions
+        added so far. One that starts a new session starts it with `openai_live_instructions` followed by those
+        instructions, as many of the newest as fit in the 16,384 tokens a session can start with: the oldest are
+        dropped first.
+
+        Args:
+            text: The instructions to add.
+        """
+        self._ensure_can_send()
+        self._require_capability(
+            'supports_appending_voice_instructions',
+            method='append_voice_instructions',
+            feature='voice instructions of its own',
+        )
+        await self._send_frame(AppendVoiceInstructions(text))
 
     @overload
     async def interrupt(self, *, played_ms: int | None = None) -> None: ...
@@ -2356,12 +2472,7 @@ class RealtimeSession:
                         )
                     )
                     if settled := await self._connection.send(content):
-                        # What the send itself settled (where the input joined the conversation, say), applied before
-                        # anything the connection reads next.
-                        for event in settled:
-                            self._core.apply(event)
-                        self._emit_effects(self._core.take_effects())
-                        self._core_advanced(self._core)
+                        self._apply_settled(settled)
                     if isinstance(content, BinaryAudio):
                         # Under the lock, so the core takes audio in the order it goes out; only once it has
                         # gone out, as a turn the provider ended while it was on its way (which the pump can
@@ -2379,6 +2490,16 @@ class RealtimeSession:
                     model_name=self._error_model_name,
                     message=f'Realtime connection failed while sending: {e}',
                 ) from e
+
+    def _apply_settled(self, settled: Sequence[LifecycleEvent]) -> None:
+        """Apply what a send itself settled (where the input joined the conversation, say).
+
+        Applied before anything the connection reads next.
+        """
+        for event in settled:
+            self._core.apply(event)
+        self._emit_effects(self._core.take_effects())
+        self._core_advanced(self._core)
 
     def _asks_reply(self, content: RealtimeInput) -> bool:
         """Whether sending `content` asks for a response the core doesn't count ahead yet (see `requests_ahead`)."""
@@ -2510,8 +2631,14 @@ class RealtimeSession:
         call_part: ToolCallPart,
         result_part: ToolReturnPart,
         content: str | Sequence[UserContent] | None = None,
+        tools_added: Sequence[str] = (),
     ) -> list[RealtimeEvent]:
         request_parts: list[ModelRequestPart] = [result_part]
+        if tools_added:
+            # Where the graph records a reveal, so history continued by a standard run reveals the same tools.
+            request_parts.append(
+                ToolAvailabilityDeltaPart(tools_added=list(tools_added), tool_call_id=call_part.tool_call_id)
+            )
         if content:
             request_parts.append(UserPromptPart(content=content))
         request = self._new_request(request_parts)
@@ -2573,6 +2700,7 @@ class RealtimeSession:
                 content=INTERRUPTED_TOOL_RETURN_CONTENT,
                 tool_call_id=call_part.tool_call_id,
                 tool_kind=call_part.tool_kind,
+                ui_visibility=call_part.ui_visibility,
                 outcome='interrupted',
             )
             events.extend(self._complete_tool_call(call_part, cancelled_part))
@@ -2675,8 +2803,8 @@ class RealtimeSession:
         self,
         call_part: ToolCallPart,
         *,
-        validation_done: asyncio.Event,
-        execution_prerequisites: tuple[asyncio.Event, ...],
+        validation_done: asyncio.Event,  # noqa: TID251  (not converted to anyio yet)
+        execution_prerequisites: tuple[asyncio.Event, ...],  # noqa: TID251  (not converted to anyio yet)
         response_usage_follows: bool,
         response_continues: bool,
         run_step: int,
@@ -2698,6 +2826,8 @@ class RealtimeSession:
         async def on_inline_deferred(requests: DeferredToolRequests, results: DeferredToolResults) -> None:
             self._queue_put(DeferredToolResultsEvent(results))
 
+        # Replaced by the step-synchronized manager below, before the call runs.
+        tool_manager = self._tool_manager
         try:
             async with self._tool_manager_lock:
                 ctx = self._tool_manager.ctx
@@ -2712,11 +2842,19 @@ class RealtimeSession:
                     # A run step here is one model turn: `_tool_run_step` increments when a
                     # `ModelResponse` is finalized, so this re-prepares the *local* manager once per
                     # turn — refreshing prepare hooks, availability filters, and retry state exactly
-                    # as the graph does per model request. It never re-advertises tools mid-call: the
-                    # tool list the provider sees is fixed at connect (`session.update` is sent
-                    # once), so a prepare filter changing here only affects whether a call the model
-                    # makes is accepted or settled as unknown-tool.
+                    # as the graph does per model request. It doesn't change the tools the model has:
+                    # only a reveal does (`_reveal_tools`), so a prepare filter changing here only
+                    # affects whether a call the model makes is accepted or settled as unknown-tool.
                     if ctx.run_step < run_step:
+                        # What the model has loaded and had revealed is read off history, as the graph reads
+                        # it before each request, so the tools a reveal gave the model can be called.
+                        # In place: every copy of the context shares these sets.
+                        ctx.loaded_capability_ids.clear()
+                        ctx.loaded_capability_ids.update(
+                            registered_loaded_capability_ids(ctx.messages, ctx.capabilities.keys())
+                        )
+                        ctx.discovered_tool_names.clear()
+                        ctx.discovered_tool_names.update(parse_discovered_tools(ctx.messages))
                         self._tool_manager = await self._tool_manager.for_run_step(replace(ctx, run_step=run_step))
                 # Pin the step-synchronized manager for this call: a concurrent tool task can swap
                 # `self._tool_manager` (its own `for_run_step` advance) between here and the calls below,
@@ -2732,6 +2870,7 @@ class RealtimeSession:
         except ToolRetryError as e:
             result_part = tool_bound_retry_part(e)
             user_content = None
+            tools_added = []
         except ToolFailedError as e:
             # A tool that raised `ToolFailed` yields a `failed` result rather than a retry. Send it
             # back so the model sees the failure — error-key-wrapped below (via
@@ -2739,11 +2878,13 @@ class RealtimeSession:
             # providers have no native failed-tool flag.
             result_part = e.tool_failed
             user_content = None
+            tools_added = []
         except (ApprovalRequired, CallDeferred, RunCancelled) as e:
             result_part = _unsettled_call_return(call_part, e)
             user_content = None
+            tools_added = []
         else:
-            result_part, user_content = _build_session_tool_return(tool_result, call_part, tool_manager)
+            result_part, user_content, tools_added = _build_session_tool_return(tool_result, call_part, tool_manager)
         finally:
             # The call has settled: on success `handle_call` has already recorded it on
             # `usage.tool_calls` in this same event-loop segment (so no limit check can observe the
@@ -2762,7 +2903,7 @@ class RealtimeSession:
             # The session closed while the tool ran: it hung up with `close()` and then swallowed the
             # `CancelledError`. Its call already has an interrupted return in history and there is no
             # provider left to send to, so the result goes nowhere (`_run_tool` drops it too).
-            return result_part, user_content
+            return result_part, user_content, []
         if not response_usage_follows:
             # A message the tool enqueued goes out ahead of its result. A response that went on past the call isn't
             # waited for: the result ends it.
@@ -2770,16 +2911,104 @@ class RealtimeSession:
         failed = result_part.outcome in ERROR_OUTCOMES
         # The result asks for the next response, so what the tool changed in the instructions goes out ahead of it.
         await self._refresh_instructions()
-        await self._send_tool_result(call_part, output, wire_content, failed=failed)
-        return result_part, user_content
+        if not tools_added and not isinstance(result_part, ToolSearchReturnPart):
+            await self._send_tool_result(call_part, output, wire_content, failed=failed)
+            return result_part, user_content, []
+        # So do the tools it revealed, in the same send as the result, so the model never hears of a tool it can't call
+        # yet.
+        async with self._reveal_lock:
+            recorded, update = await self._reveal_tools(call_part, result_part, tools_added, tool_manager)
+            await self._send_tool_result(call_part, output, wire_content, failed=failed, update=update)
+        return result_part, user_content, recorded
+
+    async def _reveal_tools(
+        self,
+        call_part: ToolCallPart,
+        result_part: ToolReturnPart,
+        tools_added: list[str],
+        tool_manager: ToolManager[Any],
+    ) -> tuple[list[str], UpdateTools | None]:
+        """Take up the tools a settled call reveals: the names its result records, and the update giving them to the model.
+
+        A call reveals tools with `ToolReturn.tools`, which `load_capability` returns its capability's tools in, or as a
+        tool search's matches. Its history records the `ToolReturn.tools` names that history doesn't show revealed yet,
+        as the graph does (a search result records its own matches). A revealed tool the model can't call yet goes out
+        with every other tool it can, when its profile says it takes new tools mid-session; otherwise the session warns
+        once, as the model will never see it.
+        """
+        recorded = [name for name in tools_added if name not in self._revealed_tool_names]
+        revealed = list(tools_added)
+        if isinstance(result_part, ToolSearchReturnPart):
+            revealed.extend(match['name'] for match in result_part.discovered_tools)
+        self._revealed_tool_names.update(revealed)
+        advertised = {tool.name for tool in self._advertised_tools}
+        if not (names := {name for name in revealed if name not in advertised}):
+            return recorded, None
+        if not (added := await self._unadvertised_tools(call_part, names, tool_manager)):
+            return recorded, None
+        if not self._profile.get('supports_tool_updates', False):
+            if not self._warned_undelivered_reveal:
+                self._warned_undelivered_reveal = True
+                formatted_names = ', '.join(repr(tool.name) for tool in added)
+                warnings.warn(
+                    f'A tool call revealed {formatted_names} during a realtime session, but the model keeps the tools '
+                    "the session opened with (its profile's `supports_tool_updates` is `False`), so it can't call "
+                    'them. Reveal them before the session opens, or use a model that supports tool updates.',
+                    UserWarning,
+                    stacklevel=1,
+                )
+            return recorded, None
+        self._advertised_tools = [*self._advertised_tools, *added]
+        self._tool_kinds.update(_tool_kinds(added))
+        self._tool_ui_visibilities.update(_tool_ui_visibilities(added))
+        tools, _ = resolve_advertised_tools(self._advertised_tools, (self._model_settings or {}).get('tool_choice'))
+        return recorded, UpdateTools(tools=tools)
+
+    async def _unadvertised_tools(
+        self, call_part: ToolCallPart, names: set[str], tool_manager: ToolManager[Any]
+    ) -> list[ToolDefinition]:
+        """The deferred tools among `names`, as they'd have gone out when the session opened, had they been revealed then.
+
+        Prepared with what the call revealed already in force, as the graph prepares the next request's tools: a
+        capability `load_capability` just loaded is active, so its `prepare_tools` hook has its say over its own tools.
+        """
+        ctx = tool_manager.ctx
+        assert ctx is not None, 'A session tool runs with the run context its manager was prepared with.'
+        loaded = call_part.capability_id if isinstance(call_part, LoadCapabilityCallPart) else None
+        async with self._tool_manager_lock:
+            prepared = await tool_manager.for_run_step(
+                replace(
+                    ctx,
+                    loaded_capability_ids=ctx.loaded_capability_ids | ({loaded} if loaded else set()),
+                    discovered_tool_names=ctx.discovered_tool_names | names,
+                )
+            )
+        parameters = resolve_realtime_request_tools(
+            ModelRequestParameters(
+                function_tools=prepared.tool_defs,
+                native_tools=self._model_request_parameters.native_tools if self._model_request_parameters else [],
+                revealed_tool_names=names,
+            ),
+            self._profile,
+        )
+        return [tool for tool in parameters.declared_function_tools if tool.name in names and tool.defer_loading]
 
     async def _send_tool_result(
-        self, call_part: ToolCallPart, output: str, wire_content: list[UserContent], *, failed: bool = False
+        self,
+        call_part: ToolCallPart,
+        output: str,
+        wire_content: list[UserContent],
+        *,
+        failed: bool = False,
+        update: UpdateTools | None = None,
     ) -> None:
         result = ToolResult(
             tool_call_id=call_part.tool_call_id, output=output, content=wire_content or None, failed=failed
         )
-        await self._send_frame(result)
+        if update is not None:
+            await self._send_frame(update, result)
+        else:
+            await self._send_frame(result)
 
     async def _send_failed_result(
         self, call_part: ToolCallPart, result_part: ToolReturnPart, error: BaseException
@@ -2914,9 +3143,9 @@ class RealtimeSession:
         self,
         call_part: ToolCallPart,
         *,
-        validation_done: asyncio.Event,
-        execution_prerequisites: tuple[asyncio.Event, ...],
-        completion: asyncio.Event,
+        validation_done: asyncio.Event,  # noqa: TID251  (not converted to anyio yet)
+        execution_prerequisites: tuple[asyncio.Event, ...],  # noqa: TID251  (not converted to anyio yet)
+        completion: asyncio.Event,  # noqa: TID251  (not converted to anyio yet)
         response_usage_follows: bool,
         response_continues: bool,
         run_step: int,
@@ -2926,7 +3155,7 @@ class RealtimeSession:
     ) -> None:
         """Run a tool and feed its completion (or failure) back through the queue."""
         try:
-            result_part, content = await self._execute_tool(
+            result_part, content, tools_added = await self._execute_tool(
                 call_part,
                 validation_done=validation_done,
                 execution_prerequisites=execution_prerequisites,
@@ -2961,7 +3190,7 @@ class RealtimeSession:
             # in history. Reached by a tool that hung up with `close()` and then swallowed the
             # `CancelledError`: recording its result too would leave two returns for one call.
             return
-        events = self._complete_tool_call(call_part, result_part, content)
+        events = self._complete_tool_call(call_part, result_part, content, tools_added)
         if ordered_events:
             # Held until nothing is still running, then released in call order — the graph waits for a
             # whole segment (`ALL_COMPLETED`) and replays it by index for the same reason. The release
@@ -3046,11 +3275,9 @@ class RealtimeSession:
         # its request. Read at execution time instead, a call held behind a `sequential` barrier
         # could observe a later response's advance and land a step ahead of its own batch.
         tool_run_step = self._tool_run_step
-        call_part = ToolCallPart(
-            tool_name=event.tool_name,
-            args=event.args,
-            tool_call_id=event.tool_call_id,
-        )
+        # Promoted to its typed part as the core records it (see `SessionCore`), so a `load_capability` call names the
+        # capability it loads.
+        call_part = tool_call_part(event, self._tool_kinds, self._tool_ui_visibilities)
         mode = self._tool_manager.get_parallel_execution_mode()
         is_barrier = mode == 'sequential' or self._tool_manager.is_sequential(call_part)
         # `parallel_ordered_events` keeps calls concurrent but hands their result events to the
@@ -3061,7 +3288,7 @@ class RealtimeSession:
         # `output_parts` in emission order whatever the mode.
         order_index = self._next_tool_order_index
         self._next_tool_order_index += 1
-        completion = asyncio.Event()
+        completion = asyncio.Event()  # noqa: TID251  (not converted to anyio yet)
         if is_barrier:
             execution_prerequisites = tuple(self._tool_completion_events)
             self._last_tool_barrier = completion
@@ -3070,7 +3297,7 @@ class RealtimeSession:
         else:
             execution_prerequisites = ()
         self._tool_completion_events.add(completion)
-        validation_done = asyncio.Event()
+        validation_done = asyncio.Event()  # noqa: TID251  (not converted to anyio yet)
         task = asyncio.create_task(
             self._run_tool(
                 call_part,
@@ -3140,15 +3367,7 @@ class RealtimeSession:
                     if await self._handle_pump_event(event):
                         return  # a usage limit tripped: stop reading the upstream
                     continue
-                # The frame is handled. What the provider holds of tool rounds that are over can go, and queued
-                # messages waiting for a reply to be over go out now.
-                if self._tool_rounds_over:
-                    await self._prune_tool_calls()
-                if response_done:
-                    await self._drain_pending_messages('asap')
-                    await self._drain_pending_messages('when_idle')
-                elif response_closed and self._asap_drain_deferred:
-                    await self._drain_pending_messages('asap')
+                await self._after_frame(response_done=response_done, response_closed=response_closed)
                 response_done = response_closed = False
         except Exception as e:
             self._pump_error = e
@@ -3164,6 +3383,17 @@ class RealtimeSession:
             self._queue_put(self._queue_changed)
             if token is not None:
                 otel_context.detach(token)
+
+    async def _after_frame(self, *, response_done: bool, response_closed: bool) -> None:
+        # The frame is handled. What the provider holds of tool rounds that are over can go, and queued
+        # messages waiting for a reply to be over go out now.
+        if self._tool_rounds_over:
+            await self._prune_tool_calls()
+        if response_done:
+            await self._drain_pending_messages('asap')
+            await self._drain_pending_messages('when_idle')
+        elif response_closed and self._asap_drain_deferred:
+            await self._drain_pending_messages('asap')
 
     def _apply_core(self, item: CoreInput) -> None:
         """Hand the core an event or a command, stream what it makes, and wake whoever waits on what it owes."""
@@ -3277,24 +3507,7 @@ class RealtimeSession:
             async for frame in frames:  # pragma: no branch
                 # Applied a whole frame at a time, before this session handles any of it: a consumer reacting
                 # to one of its events (and reading the history, say) must find the core as far along as this one.
-                steps: list[tuple[list[Effect], RealtimeCodecEvent | None]] = []
-                effects: list[Effect] = []
-                for event in frame:
-                    if not isinstance(event, StaleEvent):
-                        core.apply(event)
-                        effects.extend(core.take_effects())
-                    report = event.event if isinstance(event, StaleEvent) else event
-                    if isinstance(report, SessionUsage) and report.context_window_used is not None:
-                        # Taken as the frame is applied, with the usage the core counts. (A stale report too: it is
-                        # still the provider's latest reading of its context, though its usage isn't counted.)
-                        self._reported_context_window_used = report.context_window_used
-                    if not isinstance(report, LifecycleEvent):
-                        steps.append((effects, report))
-                        effects = []
-                core.end_frame()
-                steps.append((effects + core.take_effects(), None))
-                self._frame_lost_response = False
-                self._core_advanced(core)
+                steps = self._apply_frame(core, frame)
                 handled = 0
                 try:
                     started = (event.response_id for event in reversed(frame) if isinstance(event, ResponseStarted))
@@ -3316,6 +3529,30 @@ class RealtimeSession:
             if isinstance(frames, AsyncGenerator):
                 await frames.aclose()
 
+    def _apply_frame(
+        self, core: SessionCore, frame: RealtimeFrame
+    ) -> list[tuple[list[Effect], RealtimeCodecEvent | None]]:
+        """Apply a frame to the core: each codec event in it, with the effects ahead of it, then the frame's tail."""
+        steps: list[tuple[list[Effect], RealtimeCodecEvent | None]] = []
+        effects: list[Effect] = []
+        for event in frame:
+            if not isinstance(event, StaleEvent):
+                core.apply(event)
+                effects.extend(core.take_effects())
+            report = event.event if isinstance(event, StaleEvent) else event
+            if isinstance(report, SessionUsage) and report.context_window_used is not None:
+                # Taken as the frame is applied, with the usage the core counts. (A stale report too: it is
+                # still the provider's latest reading of its context, though its usage isn't counted.)
+                self._reported_context_window_used = report.context_window_used
+            if not isinstance(report, LifecycleEvent):
+                steps.append((effects, report))
+                effects = []
+        core.end_frame()
+        steps.append((effects + core.take_effects(), None))
+        self._frame_lost_response = False
+        self._core_advanced(core)
+        return steps
+
     def _ensure_streamable(self) -> None:
         if not self._entered:
             raise UserError('Enter the realtime session with `async with` before streaming it.')
@@ -3331,21 +3568,7 @@ class RealtimeSession:
     def _publish_taps(self, event: RealtimeEvent) -> None:
         if isinstance(event, PartDeltaEvent) and isinstance(delta := event.delta, SpeechPartDelta):
             if delta.audio_chunk:
-                if event.index == self._interrupted_audio_part_index:
-                    # A straggler from a barge-in-flushed part, generated before the provider
-                    # processed the cancel: erased from the taps and their accounting alike, so it
-                    # neither plays as stale audio nor skews the next playback-position mapping.
-                    pass
-                else:
-                    if event.index != self._audio_part_index:
-                        # First audio of a new part: when a playback position is attributed,
-                        # everything before this offset belongs to earlier turns.
-                        self._audio_part_index = event.index
-                        self._turn_audio_start_bytes = self._emitted_audio_bytes
-                        self._audio_items.append((self._emitted_audio_bytes, self._core.part_item(event.index)))
-                    self._emitted_audio_bytes += len(delta.audio_chunk)
-                    for tap in self._audio_taps:
-                        self._audio_tap_drops += tap.put(delta.audio_chunk)
+                self._tap_audio(event.index, delta.audio_chunk)
             if self._transcript_delta_taps and delta.transcript is not None and delta.speaker is not None:
                 # Keyed on the running transcript, not on the added text: a revision adds nothing, and
                 # gating on that would drop the very correction a caption UI needs. An empty transcript
@@ -3356,14 +3579,32 @@ class RealtimeSession:
                     delta=delta.transcript_delta or '',
                     transcript=delta.transcript,
                 )
-                for queue in self._transcript_delta_taps:
-                    if _put_tap(queue, update) is not None:
-                        self._transcript_tap_drops += 1
+                self._put_transcript_taps(self._transcript_delta_taps, update)
         elif isinstance(event, PartEndEvent) and isinstance(part := event.part, SpeechPart):
             if part.transcript:
-                for queue in self._transcript_taps:
-                    if _put_tap(queue, part) is not None:
-                        self._transcript_tap_drops += 1
+                self._put_transcript_taps(self._transcript_taps, part)
+
+    def _tap_audio(self, index: int, chunk: bytes) -> None:
+        """Hand a chunk of the speech part at stream `index` to the audio taps, counting it as emitted."""
+        if index == self._interrupted_audio_part_index:
+            # A straggler from a barge-in-flushed part, generated before the provider
+            # processed the cancel: erased from the taps and their accounting alike, so it
+            # neither plays as stale audio nor skews the next playback-position mapping.
+            return
+        if index != self._audio_part_index:
+            # First audio of a new part: when a playback position is attributed,
+            # everything before this offset belongs to earlier turns.
+            self._audio_part_index = index
+            self._turn_audio_start_bytes = self._emitted_audio_bytes
+            self._audio_items.append((self._emitted_audio_bytes, self._core.part_item(index)))
+        self._emitted_audio_bytes += len(chunk)
+        for tap in self._audio_taps:
+            self._audio_tap_drops += tap.put(chunk)
+
+    def _put_transcript_taps(self, queues: Iterable[asyncio.Queue[_TapItem]], item: _TapItem) -> None:  # noqa: TID251  (not converted to anyio yet)
+        for queue in queues:
+            if _put_tap(queue, item) is not None:
+                self._transcript_tap_drops += 1
 
     def _finish_taps(self, *, discard_pending: bool = False) -> None:
         if discard_pending:
@@ -3389,28 +3630,7 @@ class RealtimeSession:
 
         self._iterator_active = True
         self._start_pump()
-
-        async def queue_events() -> AsyncIterator[RealtimeEvent]:
-            while True:
-                item = await self._queue_get()
-                if item is self._queue_changed:
-                    # A pump error takes priority over stuck background tools. Their cancellation and
-                    # drain belong to `__aexit__`, which runs as this exception leaves the owner block.
-                    if self._pump_error is not None:
-                        self._stream_exhausted = True
-                        if not self._error_was_delivered(self._pump_error):
-                            self._raise_delivered(self._pump_error)
-                    if self._pump_finished and not self._background_tasks and not self._queue:
-                        self._stream_exhausted = True
-                        return
-                    continue
-                if isinstance(item, BaseException):
-                    if self._error_was_delivered(item):
-                        continue
-                    self._raise_delivered(item)
-                yield cast('RealtimeEvent', item)
-
-        source = queue_events()
+        source = self._queue_events()
         stream: AsyncIterable[RealtimeEvent] = source
         if self._wrap_event_stream is not None:
             # The wrapper vocabulary is the `AgentStreamEvent` superset, but a wrapper applied to a
@@ -3426,3 +3646,34 @@ class RealtimeSession:
             self._iterator_active = False
             self._trim_queue()
             await aclose_all((stream_iterator, stream, source))
+
+    async def _queue_events(self) -> AsyncIterator[RealtimeEvent]:
+        """The events on the session queue, raising each error on it not delivered already, until the stream ends."""
+        while True:
+            item = await self._queue_get()
+            if item is self._queue_changed:
+                if self._stream_ends():
+                    return
+                continue
+            if isinstance(item, BaseException):
+                if self._error_was_delivered(item):
+                    continue
+                self._raise_delivered(item)
+            yield cast('RealtimeEvent', item)
+
+    def _stream_ends(self) -> bool:
+        """Whether the event stream ends as the queue changes.
+
+        A pump error marks the stream exhausted, and is raised if it wasn't delivered yet. A finished pump with no
+        background tool running and nothing queued marks it exhausted too, and ends the stream.
+        """
+        # A pump error takes priority over stuck background tools. Their cancellation and
+        # drain belong to `__aexit__`, which runs as this exception leaves the owner block.
+        if self._pump_error is not None:
+            self._stream_exhausted = True
+            if not self._error_was_delivered(self._pump_error):
+                self._raise_delivered(self._pump_error)
+        if self._pump_finished and not self._background_tasks and not self._queue:
+            self._stream_exhausted = True
+            return True
+        return False

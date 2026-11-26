@@ -174,7 +174,7 @@ class EffectRecorder:
 
 
 _EFFECT_RECORDER: ContextVar[EffectRecorder | None] = ContextVar(
-    'pydantic_ai_harness_render_effect_recorder', default=None
+    'pydantic_ai_harness.render.effect_recorder', default=None
 )
 
 

@@ -5,7 +5,28 @@ It is a regular [combined capability](https://pydantic.dev/docs/ai/capabilities/
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-![Researcher combines research instructions with four capabilities. WebSearch and WebFetch use the model provider's native search and fetch, or duckduckgo_search and web_fetch where the model has none. SubAgents adds delegate_task, which hands a sub-question to a 'researcher' sub-agent with its own search, fetch and output limits. ToolOutputLimits spills oversized tool results to the run workspace, where read_tool_result reads them.](https://pydantic.dev/docs/ai/img/harness/researcher.svg)
+```mermaid
+flowchart TB
+    accTitle: Researcher: a ready-made web research stack
+    accDescr: Researcher adds research instructions and tools the model calls. Its WebSearch(local=True) and WebFetch(local=True) search and fetch the web natively, or by duckduckgo_search and web_fetch. SubAgents' delegate_task sends a sub-question to a 'researcher' sub-agent with its own search and fetch, and ToolOutputLimits spills results to the run workspace, read by read_tool_result.
+    model(["model"])
+    researcher["Researcher()<br/>research instructions"]:::capability
+    web["WebSearch(local=True)<br/>WebFetch(local=True)"]:::capability
+    sub["SubAgents<br/>delegate_task"]:::capability
+    limits["ToolOutputLimits<br/>read_tool_result"]:::capability
+    internet["the web"]:::external
+    child["'researcher' sub-agent<br/>own search and fetch"]
+    workspace[("run workspace<br/>spilled results")]:::external
+    model <-->|"tool call, result"| researcher
+    researcher --> web
+    researcher --> sub
+    researcher --> limits
+    web <-->|"native search and fetch,<br/>or duckduckgo_search<br/>and web_fetch"| internet
+    sub -->|"sub-question"| child
+    limits <-->|"spills, reads"| workspace
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Usage
 
@@ -57,7 +78,7 @@ It combines these capabilities, in order:
 
 Pass `subagents=[]` to disable delegation, or supply your own `SubAgent` entries.
 
-Oversized tool results are stored in the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), under `.pydantic-ai-harness/tool-output/` (git-ignored), so a run without one fails at its start. `LocalWorkspace('.')` keeps them in the current directory and a sandbox capability keeps them in the sandbox. To run without a workspace, pass `Researcher(store=LocalFileStore())`; spills then stay on the machine running the agent, including for its default delegate. A custom delegate needs its own store configured.
+Oversized tool results are stored in the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), under `.pydantic-ai-harness/tool-output/` (git-ignored), so a run without one fails at its start. `LocalWorkspace('.')` keeps them in the current directory and a sandbox capability keeps them in the sandbox. To run without a workspace, pass `Researcher(store=LocalFileOverflowStore())`; spills then stay on the machine running the agent, including for its default delegate. A custom delegate needs its own store configured.
 
 ### Instructions
 

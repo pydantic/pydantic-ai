@@ -434,6 +434,7 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         conversation_id: str | None = None,
         replayed_items: list[ConversationItemCreated] | None = None,
         manual_turns: bool = False,
+        session_config: dict[str, Any] | None = None,
         output_speech_timestamps: bool = False,
     ) -> None:
         if replayed_items is not None:
@@ -451,6 +452,7 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             model_name=model_name,
             model_name_getter=model_name_getter,
             manual_turns=manual_turns,
+            session_config=session_config,
         )
         # With turn detection off, xAI doesn't commit audio it heard no speech in, so a commit it never acknowledged
         # is a turn only if it did. With it on, xAI ignores a commit of ours altogether (no acknowledgement, no error;
@@ -717,6 +719,14 @@ def _is_recoverable_max_duration(event: RealtimeCodecEvent) -> bool:
     return isinstance(event, RealtimeSessionErrorEvent) and event.type == 'max_duration' and event.recoverable
 
 
+def _turn_detection(model_settings: XaiRealtimeModelSettings) -> ServerVAD | None:
+    if 'xai_turn_detection' in model_settings:
+        return model_settings['xai_turn_detection']
+    if 'turn_detection' in model_settings:
+        return resolve_base_turn_detection(model_settings['turn_detection'])
+    return {'type': 'server_vad'}
+
+
 @dataclass(init=False)
 class XaiRealtimeModel(RealtimeModel):
     """xAI Grok Voice realtime API model.
@@ -816,15 +826,9 @@ class XaiRealtimeModel(RealtimeModel):
         )
         if transcription_model is not None:
             audio_input['transcription'] = {'model': transcription_model}
-        if 'xai_turn_detection' in model_settings:
-            turn_detection = model_settings['xai_turn_detection']
-        elif 'turn_detection' in model_settings:
-            turn_detection = resolve_base_turn_detection(model_settings['turn_detection'])
-        else:
-            turn_detection: ServerVAD | None = {'type': 'server_vad'}
         config: dict[str, Any] = {
             'instructions': instructions,
-            'turn_detection': turn_detection_config(turn_detection),
+            'turn_detection': turn_detection_config(_turn_detection(model_settings)),
             'audio': {
                 'input': audio_input,
                 'output': {
@@ -914,6 +918,7 @@ class XaiRealtimeModel(RealtimeModel):
                 model_name_getter=model_name_getter,
                 conversation_id=conversation_id,
                 manual_turns=session_config['turn_detection'] is None,
+                session_config=session_config,
                 # Only where the session doesn't warn that it carries none: a profile can say the model reports none.
                 output_speech_timestamps=bool(
                     settings.get('output_speech_timestamps') and self._output_speech_timestamp_granularity(settings)

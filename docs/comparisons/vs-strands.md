@@ -2,7 +2,7 @@
 
 Strands Agents is AWS's open-source agent SDK for Python and TypeScript, model- and cloud-agnostic, with Amazon Bedrock as the default provider: a model-driven agent loop, a ready-made harness, multi-agent patterns, voice agents, evals, and deployment guides for AWS. Pydantic AI starts from one typed [`Agent`][pydantic_ai.Agent] on [any model](../models/overview.md), with [structured output](../output.md#structured-output) validated by Pydantic, [`pydantic-graph`](../graph.md) for workflows, and [capabilities](../capabilities/overview.md) that compose into complete agents such as [`Coder`](https://pydantic.dev/docs/ai/harness/coder/).
 
-Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/ai/harness/) for capabilities and complete agents, [Pydantic Evals](../evals.md) for evaluation, [Pydantic Graph](../graph.md) for graph-based workflows, [Pydantic Logfire](https://pydantic.dev/logfire) for observability, and [Pydantic](https://pydantic.dev/docs/validation/latest/get-started/) itself for validation. The tables below cover the whole of it.
+Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/ai/harness/) for capabilities and complete agents, [Pax](../harness/pax.md) to run any of your agents in a coding terminal, [Pydantic Evals](../evals.md) for evaluation, [Pydantic Graph](../graph.md) for graph-based workflows, [Pydantic Logfire](https://pydantic.dev/logfire) for observability, and [Pydantic](https://pydantic.dev/docs/validation/latest/get-started/) itself for validation. The tables below cover the whole of it.
 
 ## Framework
 
@@ -11,12 +11,12 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Language | Python (also TypeScript) | Python |
 | License | Apache-2.0 | MIT |
 | Model providers | Many | [Many](../models/overview.md) |
-| Extensibility | Tools, hooks, plugins | [Capabilities and toolsets](../extensibility.md); [80+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
+| Extensibility | Tools, hooks, plugins | [Capabilities and toolsets](../extensibility.md); [100+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | Strands harness, or build your own | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Enterprise support | None documented for Strands; [AWS Support](https://aws.amazon.com/premiumsupport/) for the cloud | [For the framework itself](../enterprise-support.md), no platform required |
 | Durable execution | Temporal plugin, maintained by Temporal (public preview) | [Nine integrations](../durable_execution/overview.md) |
-| Interfaces | CLI, A2A; AG-UI via a partner package | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Action and GitHub Agentic Workflows](../github-actions.md) |
+| Interfaces | CLI, A2A; AG-UI via a partner package | [Pax](../harness/pax.md) coding terminal (`pax --agent` runs yours), [legacy CLI](../cli.md) (`clai`), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Action and GitHub Agentic Workflows](../github-actions.md) |
 | Realtime voice | Yes | [Realtime](../realtime/overview.md) |
 | Evals | Yes | [Pydantic Evals](../evals.md) |
 | Image generation | No | [Image Generation](../image-generation.md) |
@@ -31,7 +31,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Memory | Yes | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Yes | [Compaction](../capabilities/compaction.md) |
 | Guardrails | Yes | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
-| Code sandboxes | Yes | [Execution environments](https://pydantic.dev/docs/ai/harness/#execution-environments) |
+| Code sandboxes | Yes | [Workspaces](../workspace.md#supported-workspaces) |
 | Browser use | No; you drive Playwright | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research) |
 
 ## FAQ
@@ -42,7 +42,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 [`Coder()`](https://pydantic.dev/docs/ai/harness/coder/) capability, or assemble your own from the
 same [`Agent`][pydantic_ai.Agent]; the harness repository has a
 [complete coding agent](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/examples/coding_agent.py)
-built from the pieces `Coder` puts together.
+built from the pieces `Coder` puts together. Try it in [Pax](../harness/pax.md) with `pax --agent my_module:agent`.
 
 **Can I run my agents in CI?** Yes. [In GitHub Actions](../github-actions.md), the
 `pydantic/pydantic-ai-action` step runs an agent in a workflow you already have, and

@@ -294,7 +294,7 @@ class EagerCoordinator(Generic[AgentDepsT]):
         stopped, _ = await asyncio.wait({pump}, timeout=CANCEL_TIMEOUT_SECONDS)
         return bool(stopped)
 
-    async def close(self) -> bool:
+    async def aclose(self) -> bool:
         """Cancel all background work owned by this run; report whether every pump stopped."""
         self.calls.clear()
         self.call_ids_by_part_index.clear()
@@ -322,7 +322,7 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
 
     async def __aexit__(self, *args: Any) -> bool | None:
         try:
-            if not await self.execution.close() and self._repl is not None:
+            if not await self.execution.aclose() and self._repl is not None:
                 # A pump that ignored cancellation may still be feeding, so there is no idle REPL to save.
                 self._repl.skip_save()
         finally:
@@ -350,8 +350,8 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
 
         if tool_args.get('restart', False):
             await self.execution.discard(call)
-            if call.execution.usage_limit_exceeded is not None:
-                raise call.execution.usage_limit_exceeded
+            if call.execution.run_ending_error is not None:
+                raise call.execution.run_ending_error
             async with self.execution.feed_lock:
                 return await super().call_tool(name, tool_args, ctx, tool)
 
@@ -361,8 +361,8 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
             run_state = self._run_state
             assert run_state is not None, '`CodeModeToolset` must be entered before calling `run_code`'
             await run_state.reset()
-            if call.execution.usage_limit_exceeded is not None:
-                raise call.execution.usage_limit_exceeded
+            if call.execution.run_ending_error is not None:
+                raise call.execution.run_ending_error
             raise ModelRetry(
                 'The submitted code no longer matches the prefix eager execution already ran, '
                 'so the session was restarted. Send the snippet again.'

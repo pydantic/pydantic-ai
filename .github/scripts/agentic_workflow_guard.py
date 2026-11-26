@@ -137,6 +137,19 @@ AGENT_START_HEALTH_CHECK = re.compile(
     r'python3\s+(?P=path)\s+check\b'
 )
 
+# The agent-start recheck's step id. Its `account` output selects the engine's Z.AI key.
+AGENT_START_HEALTH_STEP_ID = 'agent_start_health'
+# The primary and backup Coding Plan keys, which the gate, the recheck and the host record all receive.
+ZAI_KEYS = {
+    'ZAI_API_KEY': '${{ secrets.ZAI_API_KEY }}',
+    'ZAI_BACKUP_API_KEY': '${{ secrets.ZAI_BACKUP_API_KEY }}',
+}
+# The engine's provider credential: the backup key only when the recheck selected that account.
+ENGINE_CREDENTIAL = (
+    f"${{{{ steps.{AGENT_START_HEALTH_STEP_ID}.outputs.account == 'backup' "
+    '&& secrets.ZAI_BACKUP_API_KEY || secrets.ZAI_API_KEY }}'
+)
+
 NEEDS_REFERENCE = re.compile(r'\bneeds\.([A-Za-z_][A-Za-z0-9_-]*)')
 EXPRESSION_BLOCK = re.compile(r'\$\{\{(.*?)\}\}', re.DOTALL)
 
@@ -557,8 +570,8 @@ def check_compiled_runner_contract(lock: Path) -> list[Violation]:
     missing: list[str] = []
     runtime = str(_as_mapping(agent.get('env')).get('GH_AW_ENGINE_VERSION', ''))
     runtime_match = re.fullmatch(r'(\d+)\.(\d+)\.(\d+)', runtime)
-    if runtime_match is None or tuple(map(int, runtime_match.groups())) < (0, 64, 0):
-        missing.append('a published runtime pin of 0.64.0 or newer')
+    if runtime_match is None or tuple(map(int, runtime_match.groups())) < (0, 70, 0):
+        missing.append('a published runtime pin of 0.70.0 or newer')
     if len(executions) != 1:
         missing.append('exactly one public engine execution')
     else:
@@ -585,13 +598,15 @@ def check_compiled_runner_contract(lock: Path) -> list[Violation]:
             and command[3] == 'clai2'
             for command in harness_commands[-1:]
         ):
-            missing.append('the public CLAI 2 harness')
+            missing.append('the public Pax harness')
         for name, expected, description in (
-            ('XDG_CONFIG_HOME', '/tmp/gh-aw/clai2-config', 'isolated CLAI settings for the workflow budgets'),
+            ('XDG_CONFIG_HOME', '/tmp/gh-aw/clai2-config', 'isolated Pax settings for the workflow budgets'),
             ('PYTHONPATH', '/tmp/gh-aw/workflow-python', 'the staged workflow-policy import path'),
             ('PAI_AGENT', 'pydantic_ai_gh_aw_shim.agent:agent', 'the repository workflow policy'),
             ('PAI_RESULT_METADATA', 'pydantic_ai_gh_aw_shim.agent:result_metadata', 'authenticated workflow metadata'),
             ('PAI_OTEL_EXPORT_PATH', '/tmp/gh-aw/pydantic-ai-private-otel.jsonl', 'credential-free workflow tracing'),
+            # `ai-credits-accounting` holds the fallback's price.
+            ('PYDANTIC_AI_OVERLOAD_FALLBACK_MODEL', 'glm-5.3-flash', 'the priced overload fallback model'),
             ('GH_AW_PROTECTED_SESSION_CAPTURE', '1', 'native protected session capture'),
         ):
             if str(env.get(name)) != expected:
@@ -607,10 +622,10 @@ def check_compiled_runner_contract(lock: Path) -> list[Violation]:
             missing.append('AWF exclusion of the provider credential')
         if not env.get('PYDANTIC_AI_TASK_ID') or 'PYDANTIC_AI_TASK_ID' in exclusions:
             missing.append('task identity available inside the agent sandbox')
-        if env.get('PAI_MODEL') != 'anthropic/${{ vars.GH_AW_MODEL }}':
-            missing.append('the unchanged Z.ai model selected through Anthropic')
-        if env.get('ANTHROPIC_API_KEY') != '${{ secrets.ZAI_API_KEY }}':
-            missing.append('ZAI_API_KEY injection at the provider proxy')
+        if env.get('PAI_MODEL') != 'anthropic/${{ vars.GH_AW_ZAI_MODEL }}':
+            missing.append('the Z.ai model from `vars.GH_AW_ZAI_MODEL`, selected through Anthropic')
+        if env.get('ANTHROPIC_API_KEY') != ENGINE_CREDENTIAL:
+            missing.append('injection of the account-selected Z.ai key at the provider proxy')
     return [Violation(str(lock), 'compiled-runner-contract', 'Missing ' + ', '.join(missing) + '.')] if missing else []
 
 
@@ -709,18 +724,26 @@ def compiled_awf_configs(lock: Path) -> list[Mapping[str, object]]:
 
 
 def check_ai_credits_accounting(lock: Path) -> list[Violation]:
-    """Allow verified GLM prices in USD per token, never per-million overlay values."""
+    """Allow verified GLM prices in USD per token, never per-million overlay values.
+
+    Z.ai published no GLM-5.4 API price as of 2026-11-23, so GLM-5.4 is priced at GLM-5.3's rates.
+    GLM-5.3-Flash, the overload fallback, is priced at its own rates.
+    """
     expected: dict[str, object] = {
         'anthropic': {
-            'models': {'glm-5.3-flash': {'cost': {'input': 0.00000015, 'cache_read': 0.00000003, 'output': 0.00000050}}}
+            'models': {
+                'glm-5.4': {'cost': {'input': 0.0000014, 'cache_read': 0.00000026, 'output': 0.0000044}},
+                'glm-5.3-flash': {'cost': {'input': 0.00000015, 'cache_read': 0.00000003, 'output': 0.0000005}},
+            }
         }
     }
-    fallback: dict[str, float] = {'input': 0.15, 'cachedInput': 0.03, 'output': 0.50}
+    fallback: dict[str, float] = {'input': 1.4, 'cachedInput': 0.26, 'output': 4.4}
     return [
         Violation(
             str(lock),
             'ai-credits-accounting',
-            '`models.providers` must use the verified GLM-5.3-Flash USD-per-token rates; '
+            '`models.providers` must price GLM-5.4 at the verified GLM-5.3 USD-per-token rates, '
+            'and GLM-5.3-Flash at its own; '
             'per-million values incorrectly exhaust the fixed AWF credit cap. '
             '`models.default-ai-credits-pricing` must use the same rates in USD per million tokens.',
         )
@@ -1222,7 +1245,7 @@ def check_provider_health_agent_start(workflows_dir: Path = WORKFLOWS_DIR) -> li
         )
         stop_condition = f"steps.{steps[recheck].get('id')}.outputs.ready != 'true'" if recheck is not None else None
         after_recheck = steps[recheck + 1 : execution] if recheck is not None else []
-        recheck_name, replace_name, stop_name = AGENT_START_HEALTH_STEPS
+        recheck_name, replace_name, stop_name, account_stop_name = AGENT_START_HEALTH_STEPS
         # The monitor recognizes these steps by name, so a renamed step reads as a setup failure.
         named = (
             recheck is not None
@@ -1236,14 +1259,47 @@ def check_provider_health_agent_start(workflows_dir: Path = WORKFLOWS_DIR) -> li
             and not step.get('continue-on-error')
             for step in after_recheck
         )
-        if recheck is None or gate_env is None or steps[recheck].get('env') != gate_env or not named or not stops:
+        keyed = (
+            recheck is not None
+            and steps[recheck].get('id') == AGENT_START_HEALTH_STEP_ID
+            and all(_as_mapping(gate_env).get(key) == value for key, value in ZAI_KEYS.items())
+        )
+        # A failed replacement leaves the gate's account in the artifact; the run must not go on under another one.
+        replace_id = next((step.get('id') for step in after_recheck if step.get('name') == replace_name), None)
+        account_condition = (
+            f"steps.{replace_id}.outcome == 'failure' && steps.{AGENT_START_HEALTH_STEP_ID}.outputs.account "
+            '!= needs.provider_health.outputs.account'
+        )
+        guards_account = (
+            replace_id is not None
+            and _as_mapping(_as_mapping(jobs.get('provider_health')).get('outputs')).get('account')
+            == '${{ steps.health.outputs.account }}'
+            and any(
+                step.get('name') == account_stop_name
+                and _normalized_condition(str(step.get('if', ''))) == _normalized_condition(account_condition)
+                and str(step.get('run', '')).rstrip().endswith('exit 1')
+                and not step.get('continue-on-error')
+                for step in after_recheck
+            )
+        )
+        if (
+            recheck is None
+            or gate_env is None
+            or steps[recheck].get('env') != gate_env
+            or not named
+            or not stops
+            or not keyed
+            or not guards_account
+        ):
             violations.append(
                 Violation(
                     str(lock),
                     'provider-health-agent-start',
                     'The agent job must rerun the default-branch provider-health check with the gate environment '
                     'before engine execution, then fail before inference unless it reports ready. The steps must '
-                    'keep the names in `agent_provider_health.AGENT_START_HEALTH_STEPS`.',
+                    'keep the names in `agent_provider_health.AGENT_START_HEALTH_STEPS`, the recheck its id '
+                    f'`{AGENT_START_HEALTH_STEP_ID}`, and the gate both Z.AI keys and an `account` output. A failed '
+                    "replacement must stop the job when the recheck's account differs from the gate's.",
                 )
             )
     return violations
@@ -1268,7 +1324,7 @@ def check_provider_health_host_result(workflows_dir: Path = WORKFLOWS_DIR) -> li
                     f'The `{HOST_RESULT_JOB}` job must follow the agent job, including a failed one, check out only '
                     "the default-branch controller, and download this run's `agent` artifact and health decision. "
                     'Its record step must run exactly the `record` command, skipped only when a download failed, with '
-                    'the gate identity and the Z.AI key, which nothing else in the job references. It must then '
+                    'the gate identity and the Z.AI keys, which nothing else in the job references. It must then '
                     'upload `run-result.json` with the health decision, and a failed record must not fail the run.',
                 )
             )
@@ -1295,7 +1351,7 @@ def _records_host_result(job: Mapping[str, object], gate_env: Mapping[str, objec
     }
     record_command = (
         f'python3 -I {controller} record --agent-session agent/agent-session.jsonl '
-        '--output provider-health/run-result.json'
+        '--health-artifact provider-health/provider-health.json --output provider-health/run-result.json'
     )
     record = next(
         (
@@ -1328,7 +1384,7 @@ def _records_host_result(job: Mapping[str, object], gate_env: Mapping[str, objec
         # A `shell` or `working-directory` would change what the exact command runs.
         and set(record_step) <= {'name', 'if', 'env', 'run'}
         and _normalized_condition(str(record_step.get('if', ''))) == _normalized_condition(downloaded)
-        and all(record_env.get(key) == gate_env.get(key) for key in (*identity, 'ZAI_API_KEY'))
+        and all(record_env.get(key) == gate_env.get(key) for key in (*identity, *ZAI_KEYS))
         and not SECRETS_CONTEXT.search(str({**job, 'steps': steps[:record] + steps[record + 1 :]}))
         and any(
             str(step.get('uses', '')).startswith('actions/upload-artifact@')
@@ -1552,7 +1608,7 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
                 'Downloaded agent artifacts must be parsed only as input to the trusted controller, never executed as code.',
             )
         )
-    provider_keys: tuple[str, ...] = ('ZAI_API_KEY',)
+    provider_keys = tuple(ZAI_KEYS)
     workflow_env: Mapping[str, object] = _as_mapping(monitor.get('env'))
     job_env: Mapping[str, object] = _as_mapping(monitor_job.get('env'))
     if job_env.get('PYDANTIC_AI_RUN_ATTEMPT') != '${{ github.run_attempt }}':
@@ -1703,6 +1759,50 @@ def check_assigned_alert_metadata_gate(workflows_dir: Path = WORKFLOWS_DIR) -> l
     return []
 
 
+def check_at_claude_maintainer_threads(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
+    """Same-repo @claude must run only on maintainers' threads, with the action's context from their comments only."""
+    source = workflows_dir / 'at-claude.yml'
+    if not source.is_file():
+        return [Violation(str(source), 'at-claude-maintainer-threads', '@claude workflow is missing.')]
+    jobs = _as_mapping(_as_mapping(yaml.safe_load(source.read_text(encoding='utf-8'))).get('jobs'))
+    outputs = _as_mapping(_as_mapping(jobs.get('get-pr-info')).get('outputs'))
+    job = _as_mapping(jobs.get('at-claude'))
+    violations: list[Violation] = []
+    gate = 'contains(fromJSON(\'["write","admin"]\'), needs.get-pr-info.outputs.thread_author_permission)'
+    if not outputs.get('thread_author_permission') or not _condition_is_required(str(job.get('if', '')), gate):
+        violations.append(
+            Violation(
+                str(source),
+                'at-claude-maintainer-threads',
+                '`at-claude` must require `write` or `admin` permission from the thread author.',
+            )
+        )
+    raw_steps = job.get('steps')
+    steps = [_as_mapping(step) for step in raw_steps] if _is_object_sequence(raw_steps) else []
+    actions = [
+        _as_mapping(step.get('with'))
+        for step in steps
+        if str(step.get('uses', '')).startswith('anthropics/claude-code-action@')
+    ]
+    authors = '${{ needs.get-pr-info.outputs.included_comment_authors }}'
+    non_empty = "needs.get-pr-info.outputs.included_comment_authors != ''"
+    if (
+        not outputs.get('included_comment_authors')
+        or not _condition_is_required(str(job.get('if', '')), non_empty)
+        or not actions
+        or any(action.get('include_comments_by_actor') != authors for action in actions)
+    ):
+        violations.append(
+            Violation(
+                str(source),
+                'at-claude-maintainer-threads',
+                '`at-claude` must pass `include_comments_by_actor` from `get-pr-info` and skip when it is empty; '
+                'an empty value includes every commenter.',
+            )
+        )
+    return violations
+
+
 def changed_files(base_ref: str) -> list[str]:
     """Return paths changed relative to `base_ref` (empty if git can't resolve it)."""
     try:
@@ -1758,6 +1858,7 @@ def run_checks(
     violations += check_provider_health_host_result(workflows_dir)
     violations += check_provider_health_monitor(workflows_dir)
     violations += check_assigned_alert_metadata_gate(workflows_dir)
+    violations += check_at_claude_maintainer_threads(workflows_dir)
     if compatibility is not None:
         violations += check_compiler_version_compatibility(locks, compatibility)
     if changed:

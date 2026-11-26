@@ -52,6 +52,8 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('websockets not installed', allow_module_level=True)
 
+pytestmark = [pytest.mark.xdist_group(name='temporal-responses-websocket')]
+
 _agent: Agent[None, str]
 
 
@@ -271,7 +273,7 @@ async def overflow(client: Client) -> None:
     queue = f'overflow-{uuid4()}'
     with (
         patch('openai.lib._websocket._WebSocketConnect', network.connect),
-        patch('pydantic_ai.models._openai_responses_websocket.ACTIVE_RESPONSE_LIMIT', 1),
+        patch('pydantic_ai.models.openai._responses_websocket.ACTIVE_RESPONSE_LIMIT', 1),
     ):
         async with http, model, worker(client, queue, agent):
             first = await client.start_workflow(OneTurn.run, 'first', id=f'overflow-a-{uuid4()}', task_queue=queue)

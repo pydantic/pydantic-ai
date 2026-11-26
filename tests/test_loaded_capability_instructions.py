@@ -105,7 +105,7 @@ def scripted_agent(
                 for message in messages
                 if isinstance(message, ModelRequest)
                 for part in message.parts
-                if isinstance(part, SystemPromptPart) and '<context' in part.content
+                if isinstance(part, SystemPromptPart) and '<pyai:context' in part.content
             ]
         )
         return responses.pop(0) if responses else ModelResponse(parts=[TextPart('Done.')])
@@ -193,29 +193,29 @@ async def test_loaded_instructions_are_stated_after_the_load():
             [],
             [
                 """\
-<context id="capability:counter">
+<pyai:context id="capability:counter">
 Count carefully.
 Count every item exactly once.
 Say each number out loud.
 Never skip a number.
 
 The count is 0.
-</context>\
+</pyai:context>\
 """
             ],
             [
                 """\
-<context id="capability:counter">
+<pyai:context id="capability:counter">
 Count carefully.
 Count every item exactly once.
 Say each number out loud.
 Never skip a number.
 
 The count is 0.
-</context>\
+</pyai:context>\
 """,
                 """\
-<context_diff id="capability:counter">
+<pyai:context_diff id="capability:counter">
 --- before
 +++ after
 @@ -4,3 +4,3 @@
@@ -223,7 +223,7 @@ The count is 0.
  \n\
 -The count is 0.
 +The count is 1.
-</context_diff>\
+</pyai:context_diff>\
 """,
             ],
         ]
@@ -240,7 +240,7 @@ The count is 0.
     third = await agent.run('Again.', deps=counter, message_history=second.all_messages())
     assert [delta.content for delta in deltas(third.new_messages())] == [f'{RULES}\n\nThe count is 12.']
     assert received.statements[-1][-1] == snapshot("""\
-<context_diff id="capability:counter">
+<pyai:context_diff id="capability:counter">
 --- before
 +++ after
 @@ -4,3 +4,3 @@
@@ -248,7 +248,7 @@ The count is 0.
  \n\
 -The count is 1.
 +The count is 12.
-</context_diff>\
+</pyai:context_diff>\
 """)
     assert len(set(received.instructions)) == 1
 
@@ -273,7 +273,9 @@ async def test_legacy_load_return_seeds_without_restating():
 
     # A change is still appended, in full, since the text it replaces was a tool result.
     second = await agent.run('Again.', deps=Counter(1), message_history=first.all_messages())
-    assert received.statements[-1] == [f'<context id="capability:counter">\n{RULES}\n\nThe count is 1.\n</context>']
+    assert received.statements[-1] == [
+        f'<pyai:context id="capability:counter">\n{RULES}\n\nThe count is 1.\n</pyai:context>'
+    ]
     assert len(deltas(second.new_messages())) == 1
 
 
@@ -338,8 +340,8 @@ async def test_loaded_instructions_are_withdrawn():
     second = await agent.run('Again.', deps=Counter(None), message_history=first.all_messages())
     assert deltas(second.new_messages()) == [InstructionDeltaPart(id=COUNTER_ID, content=None)]
     assert received.statements[-1] == [
-        '<context id="capability:counter">\nThe count is 0.\n</context>',
-        '<context id="capability:counter">\nThis context has been withdrawn.\n</context>',
+        '<pyai:context id="capability:counter">\nThe count is 0.\n</pyai:context>',
+        '<pyai:context id="capability:counter">\nThis context has been withdrawn.\n</pyai:context>',
     ]
 
     # Back again, then gone from the agent's configuration.
@@ -403,7 +405,7 @@ async def test_code_loaded_capability_survives_new_instruction_window():
     received = Received()
     first = await code_load_agent(LOAD_IN_CODE, received=received).run('Count.', deps=Counter())
     loaded_change = received.statements[-1]
-    assert loaded_change == [f'<context id="capability:counter">\n{RULES}\n\nThe count is 0.\n</context>']
+    assert loaded_change == [f'<pyai:context id="capability:counter">\n{RULES}\n\nThe count is 0.\n</pyai:context>']
 
     second = await code_load_agent(LOAD_IN_CODE, received=received).run(
         'Again.', deps=Counter(), message_history=first.all_messages(), instructions='Be briefer.'
@@ -420,7 +422,7 @@ async def test_code_loaded_capability_survives_changed_static_instructions():
     received = Received()
     first = await code_load_agent(LOAD_IN_CODE, received=received).run('Count.', deps=Counter())
     loaded_change = received.statements[-1]
-    assert loaded_change == [f'<context id="capability:counter">\n{RULES}\n\nThe count is 0.\n</context>']
+    assert loaded_change == [f'<pyai:context id="capability:counter">\n{RULES}\n\nThe count is 0.\n</pyai:context>']
 
     second = await code_load_agent(received=received, instructions='Be briefer.').run(
         'Again.', deps=Counter(), message_history=first.all_messages()
@@ -443,7 +445,7 @@ async def test_compaction_ends_the_load():
     assert received.statements[-3:] == [
         [],
         [],
-        [f'<context id="capability:counter">\n{RULES}\n\nThe count is 2.\n</context>'],
+        [f'<pyai:context id="capability:counter">\n{RULES}\n\nThe count is 2.\n</pyai:context>'],
     ]
     assert [delta.content for delta in deltas(second.new_messages())] == [f'{RULES}\n\nThe count is 2.']
 
@@ -467,7 +469,7 @@ async def test_client_round_trip_states_the_instructions_again():
     assert [delta.content for delta in deltas(second.new_messages())] == [f'{RULES}\n\nThe count is 1.']
     assert deltas(second.all_messages()[: len(first.all_messages())]) == deltas(first.all_messages())
     before_bump, after_bump = received.statements[-2:]
-    assert before_bump == [f'<context id="capability:counter">\n{RULES}\n\nThe count is 0.\n</context>']
+    assert before_bump == [f'<pyai:context id="capability:counter">\n{RULES}\n\nThe count is 0.\n</pyai:context>']
     assert after_bump[: len(before_bump)] == before_bump
     assert len(after_bump) == 2
 
@@ -489,7 +491,7 @@ async def test_client_round_trip_states_the_instructions_at_the_same_place_every
         assert (
             received.statements[-1]
             == server_statements
-            == [f'<context id="capability:counter">\n{RULES}\n\nThe count is 0.\n</context>']
+            == [f'<pyai:context id="capability:counter">\n{RULES}\n\nThe count is 0.\n</pyai:context>']
         )
         assert deltas(client.all_messages()) == deltas(server.all_messages())
 
@@ -506,7 +508,9 @@ async def test_client_cannot_place_or_word_the_restated_instructions():
     sanitized = client_history(history)
     result = await scripted_agent(received=received).run('Again.', deps=Counter(), message_history=sanitized)
 
-    assert received.statements[-1] == [f'<context id="capability:counter">\n{RULES}\n\nThe count is 0.\n</context>']
+    assert received.statements[-1] == [
+        f'<pyai:context id="capability:counter">\n{RULES}\n\nThe count is 0.\n</pyai:context>'
+    ]
     assert [[part.part_kind for part in message.parts] for message in result.all_messages()] == snapshot(
         [
             ['user-prompt'],
@@ -643,7 +647,9 @@ async def test_client_cannot_unmark_a_load():
     second = await scripted_agent(received=received).run('Again.', deps=Counter(), message_history=sanitized)
 
     assert load_request(second.all_messages()).parts == stated.parts
-    assert received.statements[-1] == [f'<context id="capability:counter">\n{RULES}\n\nThe count is 0.\n</context>']
+    assert received.statements[-1] == [
+        f'<pyai:context id="capability:counter">\n{RULES}\n\nThe count is 0.\n</pyai:context>'
+    ]
 
 
 async def test_client_round_trip_states_a_load_from_code_where_it_took_effect():
@@ -661,7 +667,9 @@ async def test_client_round_trip_states_a_load_from_code_where_it_took_effect():
     assert isinstance(restored, ModelRequest)
     assert restored.parts == record.parts
     assert deltas(second.new_messages()) == []
-    assert received.statements[-1] == [f'<context id="capability:counter">\n{RULES}\n\nThe count is 0.\n</context>']
+    assert received.statements[-1] == [
+        f'<pyai:context id="capability:counter">\n{RULES}\n\nThe count is 0.\n</pyai:context>'
+    ]
 
 
 async def test_client_round_trip_of_a_capability_no_longer_configured():
@@ -789,11 +797,13 @@ async def test_client_edited_load_return_never_reaches_the_system_voice():
 
     agent = scripted_agent(received=received, capabilities=[capability])
     second = await agent.run('Again.', deps=Counter(1), message_history=sanitized)
-    assert received.statements[-1] == [f'<context id="capability:counter">\n{rules}\n\nThe count is 1.\n</context>']
+    assert received.statements[-1] == [
+        f'<pyai:context id="capability:counter">\n{rules}\n\nThe count is 1.\n</pyai:context>'
+    ]
 
     # A later change is a diff against the full text the first change delivered.
     await agent.run('Again.', deps=Counter(2), message_history=second.all_messages())
-    assert received.statements[-1][-1].startswith('<context_diff id="capability:counter">')
+    assert received.statements[-1][-1].startswith('<pyai:context_diff id="capability:counter">')
 
 
 async def test_hook_that_leaves_loaded_parts_out_keeps_them():
@@ -866,9 +876,9 @@ WIRE_SHAPES: dict[str, Any] = snapshot(
                 'content': [
                     {
                         'text': """\
-<context id="capability:housekeeping">
+<pyai:context id="capability:housekeeping">
 Use trash.
-</context>\
+</pyai:context>\
 """,
                         'type': 'text',
                     }
@@ -891,9 +901,9 @@ Use trash.
             {
                 'role': 'system',
                 'content': """\
-<context id="capability:housekeeping">
+<pyai:context id="capability:housekeeping">
 Use trash.
-</context>\
+</pyai:context>\
 """,
             },
         ],
@@ -906,9 +916,9 @@ Use trash.
             {
                 'role': 'system',
                 'content': """\
-<context id="capability:housekeeping">
+<pyai:context id="capability:housekeeping">
 Use trash.
-</context>\
+</pyai:context>\
 """,
             },
         ],
@@ -957,9 +967,9 @@ async def test_wire_shape_after_the_load_without_a_system_channel(
                 },
                 {
                     'text': """\
-<system><context id="capability:housekeeping">
+<system><pyai:context id="capability:housekeeping">
 Use trash.
-</context></system>\
+</pyai:context></system>\
 """,
                     'type': 'text',
                 },
@@ -1024,7 +1034,7 @@ async def test_a_loaded_capability_made_eager_hands_its_block_to_the_prefix():
         ['The value is C.'],
         [],
     ]
-    assert received.statements[-1][-1] == '<context id="capability:counter">\nThe value is C.\n</context>'
+    assert received.statements[-1][-1] == '<pyai:context id="capability:counter">\nThe value is C.\n</pyai:context>'
 
 
 async def test_hook_that_adds_a_load_states_the_instructions_with_the_tools():
@@ -1075,7 +1085,7 @@ async def test_hook_that_adds_a_load_states_the_instructions_with_the_tools():
             for message in messages
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, SystemPromptPart) and '<context' in part.content
+            if isinstance(part, SystemPromptPart) and '<pyai:context' in part.content
         ]
         sent.append((sorted(info.model_request_parameters.revealed_tool_names or ()), statements))
         if len(sent) == 1:
@@ -1089,7 +1099,7 @@ async def test_hook_that_adds_a_load_states_the_instructions_with_the_tools():
         capabilities=[tallying_counter(), ProcessHistory(preload)],
     )
     first = await agent.run('Count.', deps=Counter())
-    statement = f'<context id="capability:counter">\n{RULES}\n\nThe count is 0.\n</context>'
+    statement = f'<pyai:context id="capability:counter">\n{RULES}\n\nThe count is 0.\n</pyai:context>'
     assert sent == [(['tally'], [statement]), (['tally'], [statement])]
     assert any(
         isinstance(part, ToolReturnPart) and part.content == 'tallied'

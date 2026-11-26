@@ -11,7 +11,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai._framing import SYSTEM_TAG, wrap
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, Capability
 from pydantic_ai.messages import (
     AgentInstructionSource,
     CapabilityInstructionSource,
@@ -69,7 +69,7 @@ def _changing_agent() -> tuple[Agent[None, str], dict[str, str | None]]:
 
 
 async def test_named_dynamic_instruction_is_tagged_at_connect() -> None:
-    """A dynamic block with a name goes out as a `<context>` element, as a standard run's append-mode prefix does."""
+    """A dynamic block with a name goes out as a `<pyai:context>` element, as a standard run's append-mode prefix does."""
     agent, _ = _changing_agent()
 
     @agent.instructions
@@ -82,10 +82,10 @@ async def test_named_dynamic_instruction_is_tagged_at_connect() -> None:
     assert model.last_instructions == snapshot("""\
 You are a voice assistant.
 
-<context id="agent:mood">
+<pyai:context id="agent:mood">
 Be cheerful.
-</context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
 
 Unnamed text.\
 """)
@@ -116,9 +116,9 @@ async def test_change_after_a_response_is_delivered_as_a_system_message() -> Non
     (change,) = connection.sent
     assert isinstance(change, InstructionChangeContext)
     assert change.system_prompt == snapshot("""\
-<context id="agent:mood">
+<pyai:context id="agent:mood">
 Be calm.
-</context>\
+</pyai:context>\
 """)
     request = session.all_messages()[-1]
     assert isinstance(request, ModelRequest)
@@ -159,9 +159,9 @@ async def test_change_without_a_system_channel_is_system_tagged_text() -> None:
     (change,) = connection.sent
     assert type(change) is TextContext
     assert change.text == snapshot("""\
-<system><context id="agent:mood">
+<system><pyai:context id="agent:mood">
 Be calm.
-</context></system>\
+</pyai:context></system>\
 """)
 
 
@@ -199,14 +199,14 @@ async def test_later_changes_fold_onto_earlier_ones() -> None:
         snapshot(
             [
                 """\
-<context id="agent:counter">
+<pyai:context id="agent:counter">
 Turn 2.
-</context>\
+</pyai:context>\
 """,
                 """\
-<context id="agent:counter">
+<pyai:context id="agent:counter">
 Turn 3.
-</context>\
+</pyai:context>\
 """,
             ]
         )
@@ -231,9 +231,9 @@ async def test_withdrawn_instruction() -> None:
     (change,) = connection.sent
     assert isinstance(change, InstructionChangeContext)
     assert change.system_prompt == snapshot("""\
-<context id="agent:mood">
+<pyai:context id="agent:mood">
 This context has been withdrawn.
-</context>\
+</pyai:context>\
 """)
 
 
@@ -289,17 +289,17 @@ async def test_appending_system_prompt_is_tagged_at_connect_and_restated_when_it
         _ = [event async for event in session]
 
     assert model.last_instructions == snapshot("""\
-<context id="system_prompt:caller">
+<pyai:context id="system_prompt:caller">
 The caller is unknown.
-</context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """)
     (change,) = connection.sent
     assert isinstance(change, InstructionChangeContext)
     assert change.system_prompt == snapshot("""\
-<context id="system_prompt:caller">
+<pyai:context id="system_prompt:caller">
 The caller is Jamie.
-</context>\
+</pyai:context>\
 """)
     request = session.all_messages()[-1]
     assert isinstance(request, ModelRequest)
@@ -341,10 +341,10 @@ async def test_seeded_appending_system_prompt_is_tagged_at_connect() -> None:
         _ = [event async for event in session]
     # The seeded prompt is the standing one the session opens with, and its current value is what it's sent.
     assert model.last_instructions == snapshot("""\
-<context id="system_prompt:dynamic_prompt">
+<pyai:context id="system_prompt:dynamic_prompt">
 Current value.
-</context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """)
     assert connection.sent == []
 
@@ -499,22 +499,22 @@ async def test_loaded_capability_block_changes_are_delivered_and_left_out_of_the
     assert model.last_instructions == snapshot("""\
 Be helpful.
 
-<context id="capability:deferred_capabilities">
+<pyai:context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
 - accent: Speak with an accent.
-</context>
+</pyai:context>
 
-<context id="capability:accent">
+<pyai:context id="capability:accent">
 Speak like a pirate.
-</context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """)
     (change,) = connection.sent
     assert isinstance(change, InstructionChangeContext)
     assert change.system_prompt == snapshot("""\
-<context id="capability:accent">
+<pyai:context id="capability:accent">
 Speak like a cowboy.
-</context>\
+</pyai:context>\
 """)
     request = session.all_messages()[-1]
     assert isinstance(request, ModelRequest)
@@ -571,3 +571,48 @@ async def test_change_the_provider_refused_is_sent_again() -> None:
         'str',
     ]
     assert len(changes) == 1
+
+
+async def test_lowered_capability_instructions_are_left_out_with_a_warning() -> None:
+    """A session has no channel for instructions below operator authority, so it leaves them out and says so once."""
+    agent: Agent[None, str] = Agent(
+        instructions='Base',
+        deps_type=type(None),
+        capabilities=[Capability[None](id='plugin', instructions='Plugin note.').with_authority('none')],
+    )
+    model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    with pytest.warns(UserWarning, match="capabilities below operator authority \\('plugin'\\) are not sent") as caught:
+        async with agent.realtime(model).session() as session:
+            _ = [event async for event in session]
+    assert len([w for w in caught if 'below operator authority' in str(w.message)]) == 1
+    assert model.last_instructions == 'Base'
+
+
+async def test_a_loaded_capability_below_operator_authority_is_left_out_of_a_session_with_a_warning() -> None:
+    """A load in seeded history doesn't bring a lowered capability's instructions into the session's instructions."""
+    responses = [ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'plugin'}, tool_call_id='load')])]
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return responses.pop(0) if responses else ModelResponse(parts=[TextPart('Done.')])
+
+    class Plugin(AbstractCapability[None]):
+        id = 'plugin'
+        defer_loading = True
+
+        def get_description(self) -> str:
+            return 'A plugin.'
+
+        def get_instructions(self) -> str:
+            return 'Plugin note.'
+
+    agent: Agent[None, str] = Agent(
+        instructions='Base', deps_type=type(None), capabilities=[Plugin().with_authority('none')]
+    )
+    history = (await agent.run('Hi', model=FunctionModel(respond))).all_messages()
+
+    model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    with pytest.warns(UserWarning, match="capabilities below operator authority \\('plugin'\\) are not sent"):
+        async with agent.realtime(model, message_history=history).session() as session:
+            _ = [event async for event in session]
+    assert model.last_instructions is not None
+    assert 'Plugin note.' not in model.last_instructions

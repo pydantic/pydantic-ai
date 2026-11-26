@@ -243,35 +243,166 @@ Mid-conversation instructions stay where you put them rather than joining the sy
 How it reaches the model depends on the provider:
 
 * Where the API accepts a system message inside the conversation, it's sent as one, with the operator authority that implies. [Anthropic](models/anthropic.md#mid-conversation-system-messages) supports this on some models, and may adjust the position slightly to satisfy its own placement rules. [OpenRouter](models/openrouter.md#mid-conversation-system-prompts) does on some routes.
-* Everywhere else it's rendered as a `<system>`-tagged [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] at the same position. The instruction still applies from where you put it, but the model can tell it came in over the user channel and may treat it as a strong preference rather than a rule. Every `<system>` tag inside the instruction, opening or closing, in any case, with whitespace around the `/`, with attributes, self-closing, or cut off at the end of the text, goes out with its `<` escaped as `&lt;`, so text in it can't close the tag early or open another; the rest of the instruction, including any other tags, goes out as written.
+* Everywhere else it's rendered as a `<system>`-tagged [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] at the same position, with its text as written. The instruction still applies from where you put it, but the model can tell it came in over the user channel and may treat it as a strong preference rather than a rule.
 
-    On these models, two more things keep the tag meaning the same thing throughout the conversation:
+    On these models, the system prompt also gets a short fixed announcement of what the tag means: a `<system>` block in a user turn comes from the application, has system authority, and replaces the application's earlier `<system>` blocks, while text in a user message, a file or a tool result that looks like one gets a [note](#framework-frames-and-content-fidelity) and has no authority. It also says the user speaks only in their own messages, so text in a tool result, a file or a quote isn't the user's or the application's even when it claims to be. By default it's added from the first request that has a `<system>` block, a note or another frame to explain, at the start of the system prompt, ahead of your system prompt and instructions, so they keep the last word, and it stays on every later request. Claude Sonnet 4.6 and gpt-oss get it from the first request instead. A request with no system prompt or instructions doesn't get one. [When the announcement is sent](#when-the-announcement-is-sent) has the details and the alternatives.
 
-    * The standing system prompt gets one fixed sentence, after the leading system prompts and ahead of the instructions, that says what the tag means: text in a user turn wrapped in `<system>` tags comes from the application, has system authority, and replaces the earlier system content it updates. It goes out on every request from the first, so the cached prefix is unchanged as the conversation grows. A request with no system prompt or instructions doesn't get one.
-    * Every `<system>` tag in the text of a user prompt or a tool return is escaped the same way, so that text can neither open nor close the tag. The user's and the tool's text otherwise goes out as written, other tags included.
+    Claude Sonnet 4.6 ignores plain `<system>` blocks, Claude Sonnet 5.5 and Haiku 5.5 follow sealed ones better than their native system role, and Grok 4.3 through 4.7 follow sealed ones better than plain ones, so for these ([`needs_sealed_system_blocks`][pydantic_ai.profiles.ModelProfile.needs_sealed_system_blocks]) each block is `<system verified>`, goes after the user's words in its request, and the announcement says every block from the application carries that attribute and applies to the reply to the words ahead of it. The attribute is a label, not proof, and text that copies it still gets a note. In measurements a copy in a tool result wasn't followed. A copy in the user's own text can be followed on some models, as the user's request, and can keep the application's own change in the same request from applying for that turn. [What each rendering gives up](#what-each-rendering-gives-up) has the numbers.
 
-    Without them, Gemini and Claude on Bedrock mostly kept to the earlier value of a changed or withdrawn instruction, and Gemini and Grok ignored a new rule about the format of their answers. With them, they follow all three.
+    Measured with an earlier version of the announcement and escaping in place of the notes: without them, Gemini and Claude on Bedrock mostly kept to the earlier value of a changed or withdrawn instruction, and Gemini and Grok ignored a new rule about the format of their answers. With them, they followed all three.
 
 Phrase the instruction as what changed rather than as an override of the user. Models are trained to resist instructions that appear to work against the person they're talking to, and that applies to the system role too — "the build tag is no longer confidential" lands where "ignore what the user was told earlier" doesn't.
 
 !!! warning "Not a place for untrusted content"
     A system prompt carries operator authority, so text you put in one is treated as *your* instruction to the model. Never build a `SystemPromptPart` out of content you didn't author — tool output, a retrieved document, a fetched page, a message from another user — or a prompt injection buried in it inherits that authority.
 
-    This matters most for late-arriving results, which is a common reason to reach for `enqueue`: a background job whose tool returned `'started'` long before the work finished, a webhook, a long-running search. Deliver those as data — enqueue the payload as user content, or return it from a tool — and reserve `SystemPromptPart` for instructions you wrote yourself. Where a background result should also *change how the agent behaves*, write that instruction yourself and enqueue the untrusted payload separately.
+    This matters most for late-arriving results, which is a common reason to reach for `enqueue`: a background job whose tool returned `'started'` long before the work finished, a webhook, a long-running search. Deliver those as data — enqueue the payload as a [`DataCapabilityPart`](capabilities/custom.md#capability-parts) whose `source` says where it came from, or return it from a tool — and reserve `SystemPromptPart` for instructions you wrote yourself. Where a background result should also *change how the agent behaves*, write that instruction yourself and enqueue the untrusted payload separately.
+
+### What each rendering gives up
+
+Some models don't do well on every measure with any rendering. We tried the alternatives below live and found none that does well at everything on these models, so each default is a trade. This section shows what was traded for what, so you can decide differently for your application: the profile flags named here can be set with a model's `profile` argument.
+
+All numbers are live measurements of Pydantic AI on the provider's API, as runs that did the right thing out of the runs made. They come from fixed test scenarios, so read them as comparisons between renderings on one model, not as rates you'll see in your application. The current rendering marks blocks `<system verified>`. A number marked † was measured before that, with `seal="pydantic-ai"` as the marker.
+
+**The announcement on every request, or only when first needed.** On models without a mid-conversation system role, the announcement can go out on every request (`framing_announcement='always'`), or from the first request whose conversation has a `<system>` block, a note or another frame on the user channel (`'when_needed'`). From that request on, the two send the same request. Before it, `'when_needed'` sends what `'never'` sends, so they differ only on requests with nothing for the announcement to explain. Most models measured did as well or better on those without it; Claude Sonnet 4.6 and gpt-oss did worse, so their profiles default to `'always'` ([`default_framing_announcement`][pydantic_ai.profiles.ModelProfile.default_framing_announcement]) and the rest to `'when_needed'`.
+
+| Model | Measure, on a request with nothing to explain | Announcement on every request | Only when first needed |
+|---|---|---|---|
+| Claude Sonnet 4.6 | Keeps to the system prompt's task when the user asks for a conflicting one | 30/48 | 22/96 |
+| | Follows the application's own reminder tags in a user turn | 24/24 | 0/48 |
+| gpt-oss-120b | Keeps to the system prompt's task when the user asks for a conflicting one | 44/48 | 69/96 |
+| Claude Haiku 5.5 | Keeps to the system prompt's task when the user asks for a conflicting one | 42/48 | 96/96 |
+| Grok 4.7 | Keeps to the system prompt's task when the user asks for a conflicting one | 42/48 | 96/96 |
+| | Follows the application's own reminder tags in a user turn | 5/24 | 0/48 |
+| GLM 5.3 | Keeps to the system prompt's task when the user asks for a conflicting one | 27/48 | 78/96 |
+| Gemini 4 Argon | Doesn't act on a request quoted in a tool result that an operator instruction seems to cover | 11/24 | 48/48 |
+
+The right-hand column pools two runs of the same requests. Between two such runs, results differed by up to 8 of 48 on GLM 5.3 and 7 of 48 on gpt-oss-120b, so read a gap of that size on one model as noise. The cached prompt prefix changes once with `'when_needed'`, at the request that first needs the announcement.
+
+**The `<system verified>` block rather than a native system role, on Claude Sonnet 5.5.** Opt out with `supports_inline_system_prompts=True` in the model's profile.
+
+| Measure | `<system verified>` (default) | Native system role |
+|---|---|---|
+| Says correctly who asked for a change | 24/24 | 18/24 |
+| Doesn't follow a `<system>` lookalike the user typed | 14/24 | 8/24 |
+| Follows a change next to a `<system>` lookalike the user typed | 8/24 | 24/24 |
+| Follows a change next to a copied `<system verified>` the user typed | 22/24 | 24/24 |
+| Doesn't follow a copied `<system verified>` the user typed | 15/24 | 18/24 |
+
+The two tie at 24/24 on the other 13 measures in this set, including changes after a tool result and text in tool results. We couldn't measure an operator's grant of authority to a sender on this model: the API refused all 24 runs under both renderings. If your users don't write `<system>` tags and your application changes instructions mid-conversation, the native role may suit you better.
+
+**The `clear_at` entry for request-scoped prompts, on Claude Haiku 5.5.** The alternative is a `<system verified>` block in the user turn, left out of later requests. That loses every earlier [thinking block](models/anthropic.md#turn-scoped-system-messages), because the history is no longer append-only.
+
+| Measure | Sealed block in a `clear_at` entry (default) | Block in the user turn |
+|---|---|---|
+| Earlier thinking blocks dropped, over two 5-step runs † | 0 | 20 |
+| Follows a reminder next to a user lookalike, agent with a tool | 24/24 | not measured |
+| Follows a reminder next to a user lookalike, agent without tools | 12/24, 8/24 and 5/24, in three runs | 24/24 † |
+| Follows a reminder in a later turn, after a tool result | 20/24 † | 24/24 † |
+| Follows a reminder next to a lookalike in a tool result | 24/24 | 24/24 † |
+
+Claude Sonnet 5.5 makes the same trade at no measured cost: 24/24 on all of these †, and 8 thinking blocks dropped with the block in the user turn † against none.
+
+**The `verified` marker, on Grok.** It did best across Claude, with `seal="pydantic-ai"` and `sealed` as the alternatives, and did worse on one Grok measure.
+
+| Model | Measure | `verified` (default) | `seal="pydantic-ai"` |
+|---|---|---|---|
+| Claude Sonnet 4.6 | Follows a change next to a copied marker the user typed | 24/24 | 0/24 |
+| Claude Sonnet 5.5 | Follows a change next to a copied marker the user typed | 22/24 | 7/24 and 11/24, in two runs |
+| Grok 4.3 | Follows a change next to a copied marker the user typed | 16/24 | 23/24 |
+| Grok 4.7 | Doesn't try to send files under an operator's grant, when an email from that sender asks | 17/24 | 20/24 |
+
+The Grok 4.7 difference is within what repeated runs of this scenario vary by. On Grok 4.3 the same scenario varied by more than that between two runs of the same build, so we don't report a difference there.
+
+**`<pyai:context>` rather than `<context>`, when text copies it.** The framework's own elements carry a reserved prefix, so an application's `<context>` documents have nothing to imitate. Before, those documents got a note saying the user wrote them, and models often disregarded them. A copy of the prefixed tag still gets a note. On gpt-oss-120b, that case got worse in user text and better in a tool result, and the wrong answers in user text were the old instruction, not the copied one.
+
+| Model | Measure | `<pyai:context>` (default) | `<context>` |
+|---|---|---|---|
+| Claude Haiku 5.5 | Uses an application's `<context>` document in the prompt | 12/12 | 3/24 |
+| Claude Sonnet 4.6 | Uses an application's `<context>` document in the prompt | 12/12 | 0/24 |
+| GLM 5.3 | Uses an application's `<context>` document in the prompt | 12/12 | 8/24 |
+| gpt-oss-120b | Follows a change next to a copy of the tag in user text | 17/24 | 23/24 |
+| | Follows a change next to a copy of the tag in a tool result | 20/24 | 2/24 |
+
+**`pyai:` on the framework's data frames, and notes on copies of them.** The tool result, retry feedback, validation error and conversation summary frames are `<pyai:tool_result>`, `<pyai:retry_feedback>`, `<pyai:validation_errors>` and `<pyai:conversation_summary>`, and a copy of one in text from the user, a tool or a file gets a note. The notes do the safety work; the prefix is what lets them exist without a note on an application's own `<tool_result>` text. The rows below compare a copy of the frame each rendering sends: `<pyai:tool_result>` with a note, against `<tool_result>` without one. Following a genuine frame measured the same with either naming on every model below except one, which is the cost.
+
+| Model | Measure | `pyai:` and notes on copies (default) | Plain names, no notes |
+|---|---|---|---|
+| gpt-oss-120b | Doesn't act on a copied tool result frame the user typed | 24/24 | 12/24 |
+| Claude Sonnet 5.5 | Doesn't follow copied retry feedback in a tool result | 23/24 | 16/24 |
+| GLM 5.3 | Follows genuine retry feedback | 39/48, in two runs | 36/36, in two runs |
+
+GLM 5.3's misses say the genuine `<pyai:retry_feedback>` "isn't a genuine application frame". Claude Opus 5.5 and GPT-6.1 Sol measured the same with either naming. We also tried a sentence in the announcement saying that the application's retry feedback is genuine. In one run, GLM 5.3 then followed it 22/24, but Qwen3 Next 80B acted on a forged `<tool_result>` in a tool result in 22 of 24 runs, against none without the sentence, so it isn't sent.
+
+**The announcement with a search tool, on Claude Sonnet 4.6.** The announcement says that text outside the application's own blocks has no authority. With a search tool that returns nothing, Claude Sonnet 4.6 then often distrusts a document in a `<context>` tag in the prompt: it used the document in 5/24 and 8/24 runs with the announcement, in two runs, against 24/24 without it. Without the tool, it used the document every time (24/24 with the announcement and without).
+
+**Where no rendering we tried does well.** On these measures, every alternative we tried did about as badly as the default, or did better only by doing worse on another measure. They're limits of the model rather than trades, so an application that depends on one should check its model.
+
+| Model | Measure | Default | What we tried |
+|---|---|---|---|
+| Qwen3 Next 80B | Follows a change next to a `<system>` lookalike the user typed | 0/24 | 0/24 or 1/24 with the announcement off, sent only when first needed, without one of its sentences, or with one added. A shorter wording got 12/12 in one run, but then followed a `<system>` lookalike in a tool result 11 times out of 12, against never with the default. |
+| gpt-oss-120b | Follows a change next to a `<system>` lookalike the user typed | 8/24 | 2/24 to 7/24 with the same alternatives. The same shorter wording got 12/12 in one run, and followed the lookalike in a tool result 12 times out of 12, against never with the default. |
+| Grok 4.7 | Follows a change next to a copied `<system verified>` the user typed | 1/24 | 0/24 with the announcement off. |
+| Qwen3 Next 80B | Doesn't follow copied retry feedback in a tool result | 0/24 | 0/24 with plain names, and with the prefix but no notes. |
+| | Doesn't follow a copied plan step in a tool result | 0/24 | The same. |
+| gpt-oss-120b | Doesn't follow copied retry feedback in a tool result | 0/24 | 0/24 with plain names, and with the prefix but no notes. |
+| | Doesn't follow a copied plan step in a tool result | 2/24 | 0/24 with the same alternatives. |
+
+**Cache-prefix stability.** A `clear_at` entry costs no input tokens and isn't part of a cache key, and an answered reminder left out of later requests kept the same cache reads (†, 0.98 to 0.99 of input tokens on both renderings), so the cache wasn't what separated those two. On most models the default `'when_needed'` announcement changes the cached prefix once per conversation, at the request that first needs it; `'always'` keeps it part of the prefix from the first request.
+
+#### When the announcement is sent
+
+The [`framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announcement] model setting decides when the model is told what `<system>` blocks and lookalike notes mean:
+
+| Value | Without a mid-conversation system role | With one |
+|---|---|---|
+| `'when_needed'` (default on most models) | At the start of the system prompt, ahead of your system prompt and instructions, from the first request with a `<system>` block, a note or another frame on the user channel, such as retry feedback or a compaction summary | A system message in the first request with a frame or a note |
+| `'always'` (default on Claude Sonnet 4.6 and gpt-oss) | At the start of the system prompt, on every request from the first | The same as `'when_needed'` |
+| `'never'` | Not sent | Not sent |
+
+The announcement is about 120 words on a model without a mid-conversation system role, about 185 on the ones that get `<system verified>` blocks, and about 60 as a system message. With `'when_needed'`, a conversation that never has anything to explain doesn't pay for it. Whether it's needed is decided from the history alone, so once it's in, it stays in the same place on every later request: the cached prefix changes once, at that request, and is stable again from there, as long as the history keeps what needed it. `'always'` sends it from the first request, so the prefix never changes for it, at the cost of sending it in every conversation.
+
+Use `'always'` in an [AG-UI](ui/ag-ui.md) or [Vercel AI](ui/vercel-ai.md) app: their frontends don't send mid-conversation system prompts back, so with `'when_needed'` the announcement drops out of the next turn's system prompt and the cached prefix changes every turn.
+
+```python {title="framing_announcement.py"}
+from pydantic_ai import Agent
+
+agent = Agent('{{ google:medium }}', model_settings={'framing_announcement': 'always'})
+```
+
+`'never'` leaves the lookalike notes in place: they only appear next to text that resembles one of the application's frames, so they cost nothing in a conversation without any. Without the announcement, though, the model isn't told what the notes or the application's `<system>` blocks mean, and it may not follow a `<system>` block it has no explanation for. With it turned off, Claude Sonnet 4.6 and Grok 4.7 followed none of 24 instruction changes (all 24 with it), and Claude Sonnet 5.5, Claude Haiku 5.5 and Gemini 4 Argon couldn't say who had asked for a change (0 of 24, against 24 of 24). Turn it off only if your application doesn't change instructions mid-conversation and you've checked your model without it.
+
+### Framework frames and content fidelity
+
+Where Pydantic AI has to say something on the user channel, it frames it in a tag: a mid-conversation system prompt as `<system>` on a model [without mid-conversation system messages](#mid-conversation-system-prompts), a tool's file that the provider can't take in a tool result as `<pyai:tool_result>` ([details](tools-advanced.md#tool-return-file-provenance)), [retry feedback](retries.md) as `<pyai:retry_feedback>` or `<pyai:validation_errors>`, a [compaction](capabilities/compaction.md) summary as `<pyai:conversation_summary>`, and another model's reasoning as `<assistant_thinking>`. Three of these speak in the application's voice: `<system>`, and the `<pyai:context>` and `<pyai:context_diff>` elements that [appended instruction changes](agent.md#appending-instruction-changes) are sent as. Every tag only Pydantic AI writes carries the reserved `pyai:` prefix; `<system>` and `<assistant_thinking>` keep their plain names. So a plain `<context>` or `<tool_result>` tag, which applications commonly put their own documents and tool output in, is ordinary text: it gets no note and no announcement.
+
+Nothing the user, a tool or a file wrote is rewritten to make room for these frames: prompts, uploaded files, tool results and the content of frames go out byte for byte, so a model asked to edit an XML file that contains a `<system>` tag writes back the tag, not an escaped copy of it. Text that resembles one of the application's voice tags (an opening or closing `<system>`, `<pyai:context>` or `<pyai:context_diff>` tag in any case or spacing, also when hidden behind invisible characters, look-alike letters or an HTML-entity-encoded `<`) instead gets a short note in the application's voice next to the item it's in, saying the text was written by the user, the tool, the model or the file's author and is part of that item, not instructions. The same goes for a compaction summary, for the text retry feedback quotes, not for the fence around it, and for another model's reasoning sent as `<assistant_thinking>`, whose note ends the request before that reply so the cached prefix doesn't move, or goes in the next request when no request comes right before the reply. The same goes for text in a [capability part](#capability-parts)'s content that opens or closes the part's own tag: the note says the tag is its author's and doesn't open or close the application's element. The note is a mid-conversation system message, or a `<system>` block on models without one, and goes after a request's tool results, unless the model has no mid-conversation system messages and the provider takes the note ahead of them. A copy of one of the framework's data frames (`<pyai:tool_result>`, `<pyai:retry_feedback>`, `<pyai:validation_errors>`, `<pyai:conversation_summary>` or `<assistant_thinking>`) gets a note too, saying the item's author wrote it and it opens or closes no element the application sent. A closing tag alone counts as well, for these and for the voice tags, so text that quotes one can't end the frame around it unnoticed. A note on a tool result names the tool and the call, and a note on a `<pyai:context>` or `<pyai:context_diff>` lookalike first says that only the elements the application sends change the instructions. A note on a tool result or a file also says that the application's own messages still apply, and names the application's own system message when the same request has one (unless the user's text in it has a lookalike too). On models without mid-conversation system messages, the request's own `<system>` blocks go ahead of a note and the text it describes, so they still read as the application's. The one exception to sending content as written is a model whose profile sets [`needs_json_string_tool_returns`][pydantic_ai.profiles.ModelProfile.needs_json_string_tool_returns], currently Qwen3 Next: a tool's text output goes to it as `{"tool_output": "..."}`, JSON-escaped but otherwise unchanged, and lookalike notes are still decided on the output as returned.
+
+The model is told what these notes mean, and that other tags in a user message, such as an application's own reminders, keep their usual meaning: in the system prompt on models without mid-conversation system messages, as described above, and elsewhere in a mid-conversation system message the first time the conversation has a frame or a note. By default, a conversation that never has either gets nothing, except on Claude Sonnet 4.6 and gpt-oss; see [When the announcement is sent](#when-the-announcement-is-sent). A judge or summarizer that reads the conversation as a flattened transcript, such as a Pydantic AI Harness judge or compaction summarizer, gets neither the announcement nor notes: it isn't talking to the transcript's authors.
+
+A [realtime session](realtime/overview.md) has neither these notes nor the announcement: on the live channel, text that resembles a frame goes out as written with nothing said about it. A capability part's body still has the note saying who wrote it, and in a body from a source with less than operator authority every framing tag, `<system>` included, is neutralized as `&lt;` on the live channel, since nothing there could say whose the tag is. The stored part keeps the body as written.
+
+!!! warning "A hint to the model, not a guarantee"
+    The notes tell a model where text came from, and frontier models measured across Anthropic, OpenAI and Google follow them. They don't make the text trustworthy, and open-weight models aren't reliably steered by them, or by any prompt-level framing. Keep secrets and tools with effects you can't undo out of reach of content you didn't write, as described under [the trust boundary](#trust-boundary-for-client-supplied-history).
 
 ### Request-scoped system prompts
 
 Some instructions are only true for the model request they're sent with: the budget left right now, a nudge against instruction fade. Give such a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] [`scope='request'`][pydantic_ai.messages.SystemPromptPart.scope]. The model sees a request-scoped prompt only in the model request it's part of: the next request, even the next step of the same run, no longer shows it.
 
-That suits a value that changes from one request to the next and is sent with every request, so each request shows the current value and none of the stale ones. A capability does this from `before_model_request`. Content enqueued there goes into the request being prepared and into the message history, as a `ModelRequest` of its own:
+That suits a value that changes from one request to the next and is sent with every request, so each request shows the current value and none of the stale ones. A capability does this from `before_model_request`, with a [capability part](capabilities/custom.md#capability-parts) in the system voice. Content enqueued there goes into the request being prepared and into the message history, as a `ModelRequest` of its own:
 
 ```python {title="request_scoped_reminder_capability.py"}
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import Agent, RunContext, SystemPromptPart
+from pydantic_ai import Agent, InstructionCapabilityPart, OperatorSource, OperatorText, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
+
+
+@dataclass(kw_only=True)
+class RequestsLeftPart(InstructionCapabilityPart, namespace='requests_left'):
+    pass
 
 
 @dataclass
@@ -283,7 +414,11 @@ class ShowRequestsLeft(AbstractCapability[Any]):
         if limit is not None:
             left = limit - ctx.usage.requests
             ctx.enqueue(
-                SystemPromptPart(f'{left} model request(s) left in this run.', scope='request')
+                RequestsLeftPart(
+                    content=OperatorText(f'{left} model request(s) left in this run.'),
+                    source=OperatorSource(),
+                    scope='request',
+                )
             )
         return request_context
 
@@ -332,6 +467,18 @@ Use a request-scoped prompt for something about the current moment. Something th
 
 !!! note "Histories sent back from a frontend"
     The [UI adapters](ui/overview.md#trust-model-for-client-submitted-messages) leave request-scoped prompts out of the messages they dump for the frontend, since they're only for the model's current request: sent back, one would come back as a lasting system prompt. So a history that round-trips through a frontend loses its request-scoped prompts, whatever `manage_system_prompt` is set to. On a model whose reasoning is tied to the exact conversation, that's an edit to the conversation like any other lost part. Keep the history on the server, for example with [conversation storage](persistence.md), when you need it unchanged.
+
+### Capability parts
+
+A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] is something a capability or your application tells the model mid-conversation, defined as a subclass per kind of record: of [`DataCapabilityPart`][pydantic_ai.messages.DataCapabilityPart] for data in a frame on the user channel, or [`InstructionCapabilityPart`][pydantic_ai.messages.InstructionCapabilityPart] for the application's voice. See [Telling the model things mid-conversation](capabilities/custom.md#capability-parts) for how to define one.
+
+In the message history it stays the part it was enqueued as, so code that reads the history, such as a history processor, a compaction summarizer or a UI, finds it by type and never mistakes it for something the user said. It's rendered into the parts above only on the way to the model, in [`prepare_messages`][pydantic_ai.models.Model.prepare_messages], which every model calls before it maps the history, so a [custom model](models/overview.md#custom-models)'s adapter only ever gets the request parts it already maps. An override of `prepare_messages` sees the typed parts before calling the base implementation. A [`Model.request`][pydantic_ai.models.Model.request] call made outside an agent run calls `prepare_messages` too; a model that maps a capability part it never rendered raises a [`UserError`][pydantic_ai.exceptions.UserError].
+
+The part's [source](capabilities/custom.md#where-the-content-came-from) decides how it's rendered: in the application's voice, in the user's turn labelled as attached on the user's behalf, or as data in a tag with a note naming who wrote it.
+
+Rendering reads only the part's content, the declared attributes and the [rendering facts][pydantic_ai.messages.CapabilityPart.rendering] stored with it, so the same history renders to the same bytes on every request, in every process, and after a round trip through [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter], which keeps the prompt cache warm. History from a client is another matter: the [UI adapters](ui/overview.md) never send capability parts to a frontend, and [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] drops any a client sends.
+
+The instructions of a capability below `'operator'` [authority][pydantic_ai.messages.Authority] are [rendered the same way](capabilities/custom.md#lowered-instructions), from an [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] whose [`authority`][pydantic_ai.messages.InstructionDeltaPart.authority] field stores that authority. The field is `'operator'` for every other instruction change, which reaches the model in the application's voice, and for one stored before the field existed. Like the other instruction records, `sanitize_messages(strip_system_prompts=True)` strips these parts from a client's history whatever their authority, and the next request states the capability's current instructions again.
 
 ### Identifying system prompts
 
@@ -395,9 +542,9 @@ After the invalid parts are handled, consecutive compatible messages are **merge
 
 The repair is deterministic and idempotent: repairing the same history always produces the same output, running a repaired history through another run leaves it untouched, and synthesized parts contain no wall-clock data, so reuse doesn't invalidate provider prompt caches.
 
-Tool calls that can still receive a real result are left alone: when the history ends on a `ModelResponse` with tool calls, running without a new `user_prompt` executes them, and [deferred tool calls](deferred-tools.md) are matched to their `deferred_tool_results` — including when a 'complete' `ModelRequest` with the already-executed results follows the response. Repair of that live frontier only happens when the interruption is evident: a trailing request with [`state='interrupted'`][pydantic_ai.messages.ModelRequest.state] (e.g. from a crash during tool execution), whose response's unanswered calls will never be executed, or a final response with [`state='interrupted'`][pydantic_ai.messages.ModelResponse.state] (e.g. from a [cancelled stream](output.md#cancelling-streams), or one that crossed a token or cost [usage limit](agent.md#usage-limits)) followed by a new user prompt. Without a new prompt, a run executes an interrupted final response's tool calls like any other.
+Tool calls that can still receive a real result are left alone: when the history ends on a `ModelResponse` with tool calls, running without a new `user_prompt` executes them, and [deferred tool calls](deferred-tools.md) are matched to their `deferred_tool_results` — including when a 'complete' `ModelRequest` with the already-executed results follows the response. Resuming that history without a new `user_prompt` or `deferred_tool_results` runs only the calls still waiting, so deferred ones [pause the run](deferred-tools.md#pausing-a-conversation) again. That holds while every request after the response is one the run wrote when it paused, which it records in the request's reserved `__pydantic_ai__` metadata, as in `result.all_messages()`. Any other request there, such as a user's new message a UI adapter adds, continues the run instead, and [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] drops the reserved metadata of client-supplied messages, so a client can't claim a pause. Repair of that live frontier only happens when the interruption is evident: a trailing request with [`state='interrupted'`][pydantic_ai.messages.ModelRequest.state] (e.g. from a crash during tool execution), whose response's unanswered calls will never be executed, or a final response with [`state='interrupted'`][pydantic_ai.messages.ModelResponse.state] (e.g. from a [cancelled stream](output.md#cancelling-streams), or one that crossed a token or cost [usage limit](agent.md#usage-limits)) followed by a new user prompt. Without a new prompt, a run executes an interrupted final response's tool calls like any other.
 
-The one case the repair leaves to you is a new user prompt on top of a history whose final response, not marked `state='interrupted'`, still has unanswered tool calls: those calls can still be answered — by resuming the run, or with `deferred_tool_results` — so Pydantic AI raises rather than abandon them. When you do mean to abandon them, [`repair_messages`][pydantic_ai.messages.repair_messages] runs the same pipeline on demand and closes them out:
+The one case the repair leaves to you is a new user prompt on top of a history whose final response, not marked `state='interrupted'`, still has unanswered tool calls, whether the history ends on that response or on the requests a run wrote when it paused after it: those calls can still be answered — by resuming the run, or with `deferred_tool_results` — so Pydantic AI raises rather than abandon them. When you do mean to abandon them, [`repair_messages`][pydantic_ai.messages.repair_messages] runs the same pipeline on demand and closes them out:
 
 ```python {title="repairing_a_stored_history.py"}
 from pydantic_ai.messages import (
@@ -516,6 +663,14 @@ assert forked.conversation_id != result1.conversation_id
 ```
 
 The [UI adapters](ui/overview.md) auto-populate `conversation_id` from the protocol's own thread/chat ID, so frontends using these protocols get conversation correlation for free. Protocol-level run IDs (for example AG-UI's `runId`) are **not** mapped into the agent's `run_id` — pass `run_id=` explicitly on [`AGUIAdapter.run_stream`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream] / [`dispatch_request`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request] (or a plain `Agent.run`) if you need them to match.
+
+When one agent run starts another, for example a sub-agent called from a tool, the inner run usually gets its own `conversation_id`. Its spans then have a different `gen_ai.conversation.id` from the top-level run (the run that isn't inside any other run), so adding up cost by `gen_ai.conversation.id` leaves the inner run's cost out of the conversation.
+
+So the inner run's spans also get a `pydantic_ai.root_conversation_id` attribute, set to the top-level run's `conversation_id`. The top-level run's own spans don't get it, and neither does an inner run that uses the same `conversation_id` as the top-level run. To get the full cost of a conversation, sub-agents included, add up cost by `pydantic_ai.root_conversation_id`, and use `gen_ai.conversation.id` for spans that don't have it.
+
+Pydantic AI passes the top-level `conversation_id` to inner runs in a Python context variable, which only code running inside the top-level run can see. So the attribute is missing on a sub-agent that runs in another process, such as on a remote worker, and on model requests and tools that [Temporal](durable_execution/temporal.md) runs as activities.
+
+The attribute only ever holds a `conversation_id` your application passed to a run. For as long as a run lasts, Pydantic AI removes `pydantic_ai.root_conversation_id` from the incoming OpenTelemetry baggage, so a client can't set it on the run's spans by sending a `baggage` header. Spans outside an agent run don't get this protection. Logfire copies every baggage key onto each span by default, so if clients you don't trust call your app and you add up cost by span attributes, stop reading incoming trace context with `logfire.configure(distributed_tracing=False)`, or drop the `baggage` header before it reaches your app.
 
 ### Which model answered
 
@@ -682,7 +837,7 @@ async with agent.run_stream('Tell me a joke.') as streamed:
 
 The `message_history` parameter is trusted server-side state. If you load history that came from a browser request or another untrusted boundary, sanitize it before passing it to the agent.
 
-[`sanitize_messages`][pydantic_ai.messages.sanitize_messages] applies the same default message sanitization used by the [UI adapters](ui/overview.md): it strips client-supplied system prompts and request-level [`instructions`][pydantic_ai.messages.ModelRequest.instructions], pins client-returned retry feedback to the voice its cause allows, drops non-HTTP file URL schemes, resets non-allowlisted [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values to `False`, drops uploaded file references, resets [workspace](workspace.md) references so a client can't point your agent at another environment, resets [`ModelResponse.model_id`][pydantic_ai.messages.ModelResponse.model_id] so a client can't pick which of your models a request is routed back to, drops [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] from user prompts so a client can't pass its text off as content your application or a capability added, drops the framework-reserved `__pydantic_ai__` key from message [`metadata`][pydantic_ai.messages.ModelRequest.metadata] (keeping your own keys) so a client can't set state Pydantic AI and its capabilities act on, and removes unresolved tool calls at the end of the history.
+[`sanitize_messages`][pydantic_ai.messages.sanitize_messages] applies the same default message sanitization used by the [UI adapters](ui/overview.md): it strips client-supplied system prompts and request-level [`instructions`][pydantic_ai.messages.ModelRequest.instructions], pins client-returned retry feedback to the voice its cause allows, drops non-HTTP file URL schemes, resets non-allowlisted [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values to `False`, drops uploaded file references, resets [workspace](workspace.md) references so a client can't point your agent at another environment, resets [`ModelResponse.model_id`][pydantic_ai.messages.ModelResponse.model_id] so a client can't pick which of your models a request is routed back to, drops [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] from user prompts and tool return content so a client can't pass its text off as content your application or a capability added, drops the framework-reserved `__pydantic_ai__` key from message [`metadata`][pydantic_ai.messages.ModelRequest.metadata] (keeping your own keys) so a client can't set state Pydantic AI and its capabilities act on, and removes unresolved tool calls at the end of the history.
 
 `strip_system_prompts` strips [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s, and keeps the [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]s that carry Pydantic AI's own [retry feedback](retries.md#feedback-that-belongs-to-no-tool-call), so the model still sees why it corrected itself. The client picks a submitted feedback part's cause, so what the part may say is pinned to that cause: `'validation_error'` and `'model_retry'` feedback reach the model in the user voice, fenced behind a line attributing it to the application, which a client could write as plain user text anyway. `'no_output'` is the one cause in the system voice, and a client can forge the part as easily as a system prompt, so a client-submitted one is demoted to the same fenced, attributed user text, whatever it says. A tool-less legacy [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] is translated into the feedback part it always meant and takes the same rule. If stripping empties a `ModelRequest`, the request is dropped from the history entirely.
 
@@ -701,7 +856,7 @@ message_history = sanitize_messages(loaded_history)
 result = agent.run_sync('Tell me a different joke.', message_history=message_history)
 ```
 
-Most of these sanitizations can be turned off individually when the corresponding parts were created by trusted server-side code: pass `strip_system_prompts=False` to keep both the system prompts and the retry feedback, `strip_instructions=False` to keep request-level instructions, add schemes to `allowed_file_url_schemes`, add values to `allowed_file_url_force_download`, set `allow_uploaded_files=True`, or set `strip_workspace_refs=False`. The others can't: [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] is always dropped from user prompts, `model_id` is always reset on responses, and the framework-reserved `__pydantic_ai__` metadata key from every message, so pass history that should keep them as trusted server-side `message_history` instead. To continue client-supplied history in the same workspace, pass a reference you saved server-side as `workspace=` (see [Continuing in the same workspace](workspace.md#continuing-in-the-same-workspace)). See [file URL input security](input.md#user-side-download-vs-direct-file-url) for the file input trust model.
+Most of these sanitizations can be turned off individually when the corresponding parts were created by trusted server-side code: pass `strip_system_prompts=False` to keep both the system prompts and the retry feedback, `strip_instructions=False` to keep request-level instructions, add schemes to `allowed_file_url_schemes`, add values to `allowed_file_url_force_download`, set `allow_uploaded_files=True`, or set `strip_workspace_refs=False`. The others can't: [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] is always dropped from user prompts and tool return content, `model_id` is always reset on responses, and the framework-reserved `__pydantic_ai__` metadata key from every message, so pass history that should keep them as trusted server-side `message_history` instead. To continue client-supplied history in the same workspace, pass a reference you saved server-side as `workspace=` (see [Continuing in the same workspace](workspace.md#continuing-in-the-same-workspace)). See [file URL input security](input.md#user-side-download-vs-direct-file-url) for the file input trust model.
 
 `sanitize_messages` keeps, as sent, the references to state the model provider holds: [`ModelResponse.provider_response_id`][pydantic_ai.messages.ModelResponse.provider_response_id], the `conversation_id` and `container_id` keys of [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], and [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state]. The UI adapters' protocols don't carry these, so history an adapter loads has none, but history you load yourself keeps whatever the client sent. These provider-generated IDs are enough on their own to reach the state they name, and the settings and the resume path below do so with your provider credentials. An ID a client sends is not proof that it owns that state (see the [threat model](https://github.com/pydantic/pydantic-ai/blob/main/THREAT_MODEL.md#persistent-state-and-tenant-identity)), so with client-held history, save the references you need on your server, bound to the user they belong to, and set each of these as follows:
 
@@ -710,6 +865,7 @@ Most of these sanitizations can be turned off individually when the correspondin
 - [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id]: don't use it, as a response ID in the history can take precedence even over a concrete one. With `openai_transport='websocket'`, where it defaults to `'auto'`, pass a concrete `openai_conversation_id` instead to turn it off.
 - [`openai_prompt_cache_diagnostics`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_diagnostics]: set it to `False`. It is on by default for models that support it, and sends the latest response ID in the history to compare the new request against.
 - [`anthropic_cache_diagnostics`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_diagnostics]: leave it off, its default; it does the same with the latest Anthropic response.
+- [`anthropic_previous_message_id`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_previous_message_id]: pass a secret as the `history_digest_key` argument to [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel], or leave it off. The key makes each thread response's [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest] an HMAC that covers its response ID and `'thread_fingerprint'`, so a client can't swap in another conversation's ID, or another configuration's fingerprint, to continue a thread. Without a key, a client can compute the digest itself.
 - A history that ends in a response with `state='suspended'`: don't accept one from a client. A run without a new prompt resumes it, fetching the stored response or batch result it names, and no setting turns this off, so resume suspended runs only from server-side history.
 
 ## Persisting sessions
@@ -782,15 +938,17 @@ speech in either direction without losing its running total.
 
 For a chat application that is usually the whole design: load a thread's conversation, pass it as `conversation=`, and store the result's `conversation` back once the run finishes, with [`ConversationTypeAdapter`][pydantic_ai.conversation.ConversationTypeAdapter] or as a field on a model of your own. For a long thread, store the messages separately and append each run's [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] instead of rewriting them, which keeps each write proportional to the turn rather than to the conversation; [Persistence](persistence.md#storing-a-conversation-yourself) covers both.
 
-[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) packages that pattern as capabilities you add to an agent, so the load and save calls are not yours to write:
+To keep that history in your database with each message stored once, conflicting saves caught, and forking built in, implement a [`ConversationStore`](persistence.md#using-a-conversation-store) on its five storage primitives. A [UI adapter](ui/overview.md#saving-to-a-conversation-store) given one makes the load and save calls for you.
+
+[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) adds capabilities that keep more than the conversation:
 
 | Capability | What it stores | Scoped by |
 | --- | --- | --- |
-| [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) | Message snapshots taken at settled points in a run, alongside an event log and a tool-effect ledger, so a run that ends early can be continued or forked from its last settled point rather than restarted | `conversation_id` and `run_id` |
+| [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) | A record of each run for recovering it, not a session store: message snapshots taken at settled points in a run, alongside an event log and a tool-effect ledger, so a run that ends early can be continued or forked from its last settled point rather than restarted | `conversation_id` and `run_id` |
 | [`ConversationSearch`](https://pydantic.dev/docs/ai/harness/conversation-search/) | Nothing of its own: it ranks the history `StepPersistence` already stored and gives the model a tool to pull earlier turns back into context on demand, including turns [compaction](capabilities/compaction.md) dropped | `conversation_id` |
 | [`Memory`](https://pydantic.dev/docs/ai/harness/memory/) | Markdown notes the agent writes and reads itself, deliberately outliving any single conversation | A namespace you choose |
 
-`StepPersistence` ships in-memory, file, SQLite, and MongoDB backends, and its store is a protocol you can implement against your own database.
+`StepPersistence` ships in-memory, file, SQLite, PostgreSQL, and MongoDB backends, and its store is a protocol you can implement against your own database.
 
 As an alternative to holding the history yourself, some providers keep conversation state on their side and reconstruct earlier turns from it, so each request carries only what is new. On the OpenAI Responses API that is [`openai_conversation_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_conversation_id], covered under [Using durable conversations](models/openai.md#using-durable-conversations). Weigh it against a store of your own: it is one provider's feature, OpenAI documents that earlier input tokens in a chain are still billed, and it is unavailable to organizations with Zero Data Retention enabled.
 
@@ -805,7 +963,7 @@ Possession of the endpoint is therefore the authorization boundary, so design ar
 - **Authenticate and authorize at the transport layer.** Run the agent inside your own authenticated route handler, and treat every caller that gets through as able to submit any history it likes.
 - **Scope the toolset to the caller.** Expose only the tools the authenticated caller is entitled to use, by [building the toolset per run](toolsets.md#dynamically-building-a-toolset) or [filtering](toolsets.md#filtering-tools) it against the user carried in your [dependencies](dependencies.md).
 - **Re-validate high-stakes effects server-side.** [Approval](deferred-tools.md#human-in-the-loop-tool-approval) guards against the *model* acting without human sign-off, not against the client. Where the stakes demand it, check the caller's authority against server-side state inside the tool function itself, or persist paused runs server-side and resume them with your own `deferred_tool_results` instead of the client's.
-- **Don't read prompt-level framing as proof.** Where a model API can't carry a tool's file in its tool result, Pydantic AI frames it as coming from that call ([Where a returned file is sent](tools-advanced.md#tool-return-file-provenance)), and a mid-conversation system prompt a provider can't send natively is framed as `<system>...</system>`, with any `<system>` tag in user and tool text escaped. Both are ordinary prompt text, and a client that can submit history can still submit system prompts of its own unless you [strip them](#loading-untrusted-history). They tell the model where content came from; they don't attest it.
+- **Don't read prompt-level framing as proof.** Where a model API can't carry a tool's file in its tool result, Pydantic AI frames it as coming from that call ([Where a returned file is sent](tools-advanced.md#tool-return-file-provenance)), and a mid-conversation system prompt a provider can't send natively is framed as `<system>...</system>`. Both are ordinary prompt text, and a client that can submit history can still submit system prompts of its own unless you [strip them](#loading-untrusted-history). They tell the model where content came from; they don't attest it.
 
 !!! note "This is a documented design boundary, not a vulnerability"
     A report that a client can forge an approval, submit a tool call the model never made, or otherwise rewrite the conversation describes this boundary behaving as designed, and is not a vulnerability in Pydantic AI. What *would* be one is a bypass of a check Pydantic AI actually performs — for instance a sanitization default that fails to strip what it documents as stripped.
@@ -919,7 +1077,7 @@ The canonical systems differ from the provider names where providers share a key
 | `google` and `google-cloud` with a Gemini API client | `google` |
 | Every other provider, including `bedrock-mantle`, `openai-chatgpt`, `openrouter` and `snowflake` | its name |
 
-So history from the Codex backend continues on the OpenAI API with its encrypted reasoning and compaction items, and Claude's thinking moves between the Anthropic API and Bedrock with its signatures. A response records its canonical system in [`ModelResponse.canonical_system`][pydantic_ai.messages.ModelResponse.canonical_system] when it differs from `provider_name`, and always when the provider's canonical system depends on its client, as for Google providers and `OpenAIProvider`, which is how a Gemini API response and a Google Cloud one, both named `google`, are told apart: the two reject each other's thought signatures. For a `google` response recorded before Pydantic AI stored the canonical system, its `provider_url` says which: a first-party Gemini API or Google Cloud URL decides, and any other, like a proxy's, keeps the earlier behavior of sending the signatures to a model with the same provider name.
+So history from the Codex backend continues on the OpenAI API with its encrypted reasoning and compaction items, and Claude's thinking moves between the Anthropic API and Bedrock with its signatures. A response records its canonical system in [`ModelResponse.canonical_system`][pydantic_ai.messages.ModelResponse.canonical_system] when it differs from `provider_name`, and always when the provider's canonical system depends on its client, as for Google providers and `OpenAIProvider`, which is how a Gemini API response and a Google Cloud one, both named `google`, are told apart: the two reject each other's thought signatures. For a `google` response recorded before Pydantic AI stored the canonical system, its `provider_url` says which: a first-party Gemini API or Google Cloud URL decides, and any other, like a proxy's, keeps the earlier behavior of sending the signatures to a model with the same provider name. A Bedrock Converse response from a model with OpenAI's encrypted reasoning, like GPT-5.6, records `bedrock` too, so Claude models on Bedrock don't take that reasoning for their own. One recorded by an earlier version has none and keeps the name-based behavior, so its reasoning is still sent to Claude models on Bedrock.
 
 Some providers accept data they can't use: OpenAI ignores encrypted reasoning from another organization, and Claude models with [account-bound thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking#account-bound-thinking) ignore thinking from another account. Neither fails the request.
 
@@ -1020,7 +1178,16 @@ A `priority` controls when the enqueued content is delivered:
 - `'asap'` (default): delivered at the earliest opportunity — added to the next [`ModelRequest`][pydantic_ai.messages.ModelRequest], or, if the agent would otherwise terminate before another request, used to redirect the run into one more request. Use when the new context should reach the model as soon as possible; this is what other frameworks often call **steering** an in-flight agent.
 - `'when_idle'`: delivered only when the agent would otherwise terminate, after any `'asap'` messages. Use when the agent shouldn't be interrupted but should pick up the new work — a follow-up task — once it's done with what it's doing.
 
-A run that pauses for [deferred tools](deferred-tools.md) is not redirected. Content still queued at the pause is added to the message history instead, so a resumed run sees it. This applies when the paused step's tool results end the history. If every call in that step was deferred, the history ends with those calls, so the queued content redirects the run as usual, and so does content that includes a [`ModelResponse`][pydantic_ai.messages.ModelResponse]. With [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], the streamed result's messages don't include it.
+A pause is never redirected, so queued content can't skip an approval or abandon a provider's job.
+
+When a run pauses for [deferred tools](deferred-tools.md), content still queued is added to the message history after the paused step, so a resumed run sees it. It's reported with an [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] like delivered content, to `@on_event` listeners and the run's event stream, though the step's stream has closed. If you stream nodes yourself with [`iter()`][pydantic_ai.agent.AbstractAgent.iter], read it from the history instead.
+
+Content stays queued instead in two cases:
+
+- If any queued content includes a [`ModelResponse`][pydantic_ai.messages.ModelResponse] or an interrupted `ModelRequest`, all of it stays queued, since the response would read as the paused one and the interrupted request would close the paused calls.
+- When a run ends with a [`PendingModelResponse`](batch.md#ending-a-run-while-it-waits), all content stays queued, since the history must end with that response.
+
+Content left queued isn't delivered. When you drive the run with [`iter()`][pydantic_ai.agent.AbstractAgent.iter], you can read it (but not change it) from [`AgentRun.pending_messages`][pydantic_ai.run.AgentRun.pending_messages]. With `run()`, `run_stream()` or a UI adapter, it's dropped. Pydantic AI itself doesn't resend it, for example as the next run's `user_prompt`. Capabilities that track what they queue, like [`SubAgents`](harness/subagents.md) background reports, queue it again in the next run, so don't resubmit theirs, or it arrives twice.
 
 `enqueue` is variadic — each positional argument is one item, and can be:
 
@@ -1210,7 +1377,9 @@ the messages whose [`run_id`][pydantic_ai.messages.ModelRequest.run_id] equals
 
 !!! warning "History processors replace the message history"
     History processors replace the message history in the state with the processed messages, including the new user prompt part.
-    This means that if you want to keep the original message history, you need to make a copy of it.
+    [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages] then returns the processed history, while the result's
+    [`conversation`][pydantic_ai.agent.AgentRunResult.conversation] keeps the original history and every message the run added,
+    so you don't need to copy it yourself to store or continue the whole conversation.
     Later requests in the same run start from the processed messages, so a processor sees its own earlier output, not the original history.
 
     When using deferred tools, preserve their
@@ -1224,6 +1393,8 @@ the messages whose [`run_id`][pydantic_ai.messages.ModelRequest.run_id] equals
     produced during the current run. Messages provided via `message_history` are excluded —
     including the trailing `ModelRequest` when resuming without a user prompt, even though
     the framework may stamp it with the current run's `run_id` for observability.
+    Once a processor drops messages, [`result.conversation`][pydantic_ai.agent.AgentRunResult.conversation] also
+    differs from `all_messages()`: it keeps the messages the processor dropped.
 
     To keep this working when your processor mutates or adds messages:
 
@@ -1431,7 +1602,7 @@ Pydantic AI fills the window size from [genai-prices](https://github.com/pydanti
 
 See [Caching](capabilities/caching.md#prefix-stability-guarantees) for the full prefix-stability contract and monitoring guidance.
 
-History-mutating maintenance (summarizing, pruning, repair) has two costs: the work itself, and a *cache cost* — the next request re-writes the entire prompt prefix at full input price, since a mutated prefix can no longer hit the provider's prompt cache. That cache cost is only real while the cache is still warm. Once a conversation has been idle longer than the provider retains the prefix, the next request pays full price anyway, so that turn is a free moment to run any deferrable maintenance.
+History-mutating maintenance (summarizing, pruning, repair) has two costs: the work itself, and a *cache cost* — the next request re-writes the entire prompt prefix at full input price, since a mutated prefix can no longer hit the provider's prompt cache. That cache cost is only real while the cache is still warm. Once a conversation has been idle longer than the provider retains the prefix, the next request pays full price anyway, so that turn is a free moment to run any deferrable maintenance. Some models also drop their earlier reasoning after a history edit: see [OpenAI](models/openai.md#reasoning-after-history-edits).
 
 Providers publish retention windows for their prompt caches. Pydantic AI records the documented default at the provider layer as [`ModelProfile.default_cache_retention`][pydantic_ai.profiles.ModelProfile.default_cache_retention]: 5 minutes for Anthropic, 30 minutes for OpenAI's GPT-5.6 and later. Where a provider's retention depends on account configuration rather than the model — as OpenAI's does for earlier models, where the default hinges on whether the organization has zero data retention enabled — the default is left unset, and the outlook is `'unknown'` unless you pass `retention=` yourself. [`prompt_cache_outlook()`][pydantic_ai.profiles.prompt_cache_outlook] uses it to predict, from a message history alone, whether the next request is likely to hit a warm cache:
 

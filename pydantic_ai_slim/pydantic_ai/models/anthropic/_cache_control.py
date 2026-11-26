@@ -1,4 +1,4 @@
-"""Placing and checking `cache_control` breakpoints on mapped Anthropic content blocks."""
+"""Placing, checking and recording `cache_control` breakpoints of mapped Anthropic content blocks."""
 
 from __future__ import annotations as _annotations
 
@@ -12,6 +12,7 @@ from anthropic.types.beta import (
     BetaToolUnionParam,
 )
 
+from ..._instrumentation import current_model_request_span
 from ..._utils import is_str_dict
 from ...exceptions import UserError
 from .. import (
@@ -98,6 +99,25 @@ def last_message_content(anthropic_messages: list[BetaMessageParam]) -> list[Bet
     return content if isinstance(content, list) else []
 
 
+def lasting_blocks_at_end(
+    anthropic_messages: list[BetaMessageParam], request_scoped_texts: tuple[str, ...]
+) -> list[BetaContentBlockParam]:
+    """The content blocks of the last message that holds some the next request will send at the same position, up to the last.
+
+    A native request-scoped entry and the trailing blocks rendering `request_scoped_texts` don't count, and neither does
+    a `system` entry behind a text still to be matched: the next request sends it without that text ahead of it. The
+    blocks are the message's own, so `cache_control` added to one lands on the wire.
+    """
+    remaining = request_scoped_texts
+    for message in reversed(anthropic_messages):
+        if message.get('clear_at') == 'next_user_message':
+            continue
+        blocks, remaining = blocks_before_request_scoped_text(message, remaining)
+        if blocks and not (remaining and message['role'] == 'system'):
+            return blocks
+    return []
+
+
 def blocks_before_request_scoped_text(
     message: BetaMessageParam, texts: tuple[str, ...]
 ) -> tuple[list[BetaContentBlockParam], tuple[str, ...]]:
@@ -167,3 +187,12 @@ def last_cacheable_block_has_cache_control(anthropic_messages: list[BetaMessageP
         None,
     )
     return last is not None and 'cache_control' in last
+
+
+def record_cache_breakpoints(breakpoints: tuple[list[str], list[str]] | None) -> None:
+    """Record a request's requested and applied cache breakpoints on its model-request span, if it has any."""
+    span = current_model_request_span()
+    if span is not None and breakpoints is not None:
+        requested, applied = breakpoints
+        span.set_attribute('pydantic_ai.cache.requested_breakpoints', requested)
+        span.set_attribute('pydantic_ai.cache.applied_breakpoints', applied)

@@ -109,6 +109,8 @@ Claude answers a forced [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_
 
 When you ask for thinking explicitly on an `anthropic/` model, an explicit `tool_choice='required'` (or a list of tool names) also raises a [`UserError`][pydantic_ai.exceptions.UserError], where the direct API would send it: OpenRouter doesn't reject that combination but silently drops the `reasoning` field from the request, so the response would come back with no thinking at all. Disable thinking or use `tool_choice='auto'` instead.
 
+`qwen/qwen3.8-flash` rejects a forced `tool_choice` with an error while it reasons, which it does unless you pass `thinking=False`. On it, whenever the request reasons, including without a thinking setting, a choice that Pydantic AI resolved on your behalf falls back to `'auto'`, and an explicit `tool_choice='required'` (or a list of tool names) raises a [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] before the request is sent, which [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] falls back on as it would on the route's 400.
+
 If a resolved choice named a single tool, the available tool list is filtered to that tool while `tool_choice` remains `'auto'`. The model may therefore answer with text instead of calling it; when an output tool is required, Pydantic AI retries with a prompt to call a tool.
 
 ## Mid-conversation system prompts
@@ -116,9 +118,13 @@ If a resolved choice named a single tool, the available tool list is filtered to
 A [mid-conversation system prompt](../message-history.md#mid-conversation-system-prompts) is sent as a `system` message on the routes where OpenRouter keeps one in place:
 
 - `openai/` models, except the open-weight `gpt-oss` models, which other hosts serve.
-- `anthropic/` models that [take the message natively](anthropic.md#mid-conversation-system-messages) on Anthropic's own API: Claude Fable 5 and 5.1, Mythos 5, Opus 4.8, Opus 5 and 5.5, Sonnet 5.5 and Haiku 5.5. OpenRouter keeps the message native only right before the model's turn, so Pydantic AI moves it past the user messages and tool results that follow it, as it does on the [Anthropic API](anthropic.md#mid-conversation-system-messages).
+- `anthropic/` models that [take the message natively](anthropic.md#mid-conversation-system-messages) on Anthropic's own API: Claude Fable 5 and 5.1, Mythos 5, Opus 4.8, and Opus 5 and 5.5. Sonnet 5.5 and Haiku 5.5 take it natively too, but get the [sealed `<system>` rendering](../message-history.md#mid-conversation-system-prompts) instead. OpenRouter keeps the message native only right before the model's turn, so Pydantic AI moves it past the user messages and tool results that follow it, as it does on the [Anthropic API](anthropic.md#mid-conversation-system-messages).
 
-Other routes get a `<system>`-tagged user message instead. On Gemini and older Claude models, OpenRouter moves a mid-conversation system message into the top-level system prompt, which invalidates the cached prefix after it.
+Other routes get a `<system>`-tagged user message instead. This keeps prompt caching effective: on Gemini and older Claude models, a native mid-conversation `system` message doesn't stay where it was sent, which would invalidate the cached prefix after it.
+
+## Video input
+
+OpenRouter answers 404 ("No endpoints found that support input video") when video is sent to a model that doesn't read it, such as Claude, GPT or DeepSeek. Only Gemini and Amazon Nova routes are marked as reading video, except Gemini image models and Nova Micro. For other models, video a tool returns is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance) instead of failing the request. With [`FileUnderstanding`](../capabilities/file-understanding.md) on the agent, such video, including video in the prompt, is described by its understanding model instead. To send it to another model that reads video, pass `profile=ModelProfile(supports_video_input=True)` to [`OpenRouterModel`][pydantic_ai.models.openrouter.OpenRouterModel] (see [`ModelProfile`][pydantic_ai.profiles.ModelProfile]).
 
 ## Prompt Caching
 
@@ -348,3 +354,12 @@ agent = Agent(
 Forwarding the transcript gives the advisor more context, but also sends more input tokens. See the
 [OpenRouter advisor documentation](https://openrouter.ai/docs/guides/features/server-tools/advisor)
 for details.
+
+## Errors
+
+OpenRouter reports some errors from the upstream provider as a generic `Provider returned error` rejection, with
+the provider's own error in the error's `metadata.raw`. When that error says the input exceeds the model's context
+window, Pydantic AI raises a
+[`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] instead, as it does
+for any other overflow. See [Handling Model API Errors](overview.md#handling-model-api-errors) for the other error
+categories.

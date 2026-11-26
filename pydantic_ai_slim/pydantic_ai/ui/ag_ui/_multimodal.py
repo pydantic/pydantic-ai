@@ -146,7 +146,7 @@ def multimodal_input_to_content(
             f'AG-UI file reference {source.value!r} ({got}) was dropped: only file references from providers '
             f'{sorted(_UPLOADED_FILE_PROVIDERS)} can be sent to the model.',
             UserWarning,
-            stacklevel=4,
+            stacklevel=5,
         )
         return None
     return UploadedFile(

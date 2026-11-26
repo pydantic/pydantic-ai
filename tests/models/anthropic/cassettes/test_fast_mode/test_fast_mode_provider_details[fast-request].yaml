@@ -1,0 +1,82 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "164"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 256
+        messages:
+        - role: user
+          content:
+          - text: "Reply with exactly: OK"
+            type: text
+        model: claude-fable-5-2
+        speed: fast
+        stream: false
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=720
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-efb28bf33d2de41bc458b8226033d9a1-9b5f960a387570fe-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-fable-5-2
+        id: msg_011CguadEFNQk3FfjiG6KqXa
+        type: message
+        role: assistant
+        content:
+        - type: thinking
+          thinking: ""
+          signature: >-
+            CAQS0QQKEAgTGAI4AUIIdGhpbmtpbmcSDD47jUuwQjuNpSTIaBoMVIviDYYfz14IEx+4IjDOc5Su8vNdu1qIv7SZ/o8u3DMQpfuYXo4NUMlp2SLNmZYlIY8zYZxWp9kAGoy1/Q0q7gOoqm3mBPx6ADOoasm+TEkVKLylPxMdPUSKpVs5h2fkFH3J8fD5y4BZyXsuCNAeMlOTqnmBsUBi+h418C6GCBdsfWEe4wxADT9x/pdhpaayUZdLIItPXfuiHCsb79rfe3BrtJUowWqi5imZKiqscFSyx24cZZDo63zdfiE7mC0SJMUShQ/np3GJxdN6lx2EUtsvPoGdoRm17ANpAPE2s0i+s5cCKcp8DnXmGJX+s2QzMyoGR61zDSfqtpj2+HalElypinnMrsF9eDQkCBTVJdeHR6uAKE2lPTDpVFKZ0mgffI5Y86jtcTIHtOT9QXSG+VBB2ddx3iCGz/slMTj0WT3L6zpPjbZSUrB9TPeiLGq6OTBHDFe7SL5uPsD0Trt1r9aRNoYBEwTtAM6Ad0BujhHuT2rukQ0bYlnuZksI0zTk3Z+DeFI832Q7iNN2tuFBKOjBGwn7LQUAgtwuXvxID9ajr7fK//ziguepjvG7Wxt8UdcgDkJtXMy76NPdm9rM6BLsFx5IHNGzWYm2hzFuErAnScYVOWAzlvjJFF3qBJwYTYJOsjf2yQ0VMiqKxwbj2s1PGlXV9HfLCjOl3kjUjvW9mwiyjNt5OusuOEXyMef1HqriHHeXDvMgWdhpC3LTZARAf2mnVeRS3i0Inj7/oBgB
+        - type: text
+          text: OK
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 18
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 17
+          output_tokens_details:
+            thinking_tokens: 13
+          service_tier: standard
+          inference_geo: global
+          speed: fast
+        diagnostics: null
+  recorded_at: 2026-11-10T16:41:43.933223+00:00
