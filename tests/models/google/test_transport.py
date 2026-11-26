@@ -436,6 +436,47 @@ def test_flash_lite_minimal_thinking_budget_follows_the_client_transport(
 
 
 @pytest.mark.parametrize(
+    ('model_name', 'make_provider', 'profile', 'expected'),
+    [
+        pytest.param('gemini-2.5-flash', lambda: GoogleProvider(api_key='mock-api-key'), None, 128, id='gemini_api'),
+        pytest.param(
+            'gemini-2.5-flash', lambda: GoogleCloudProvider(api_key='mock-api-key'), None, 0, id='google_cloud'
+        ),
+        pytest.param(
+            'gemini-2.5-flash',
+            lambda: GoogleProvider(client=Client(vertexai=True, project='test-project', location='us-central1')),
+            None,
+            0,
+            id='google_cloud_client_in_google_provider',
+        ),
+        pytest.param(
+            'gemini-2.5-flash',
+            lambda: GoogleProvider(api_key='mock-api-key'),
+            GoogleModelProfile(thinking_always_enabled=False),
+            0,
+            id='gemini_api_user_profile_wins',
+        ),
+        pytest.param(
+            'gemini-2.5-flash-lite', lambda: GoogleProvider(api_key='mock-api-key'), None, 0, id='gemini_api_flash_lite'
+        ),
+    ],
+)
+def test_flash_thinking_off_budget_follows_the_client_transport(
+    model_name: str, make_provider: Callable[[], Provider[Client]], profile: GoogleModelProfile | None, expected: int
+) -> None:
+    """`thinking=False` sends `thinking_budget=128` on `gemini-2.5-flash` only when requests go to the Gemini API.
+
+    From 2026-12-01 the Gemini API routes `gemini-2.5-flash` to `gemini-3.5-flash-lite`, which rejects a budget of 0.
+    Vertex AI isn't named in the reroute and `gemini-2.5-flash-lite` isn't rerouted, so both keep 0. Not a VCR test:
+    the budget is decided before the request is built. The body-matched `google-gemini-25-flash-false-min-budget`
+    cassette in `tests/test_thinking_wire_contract.py` pins the Gemini API side.
+    """
+    m = GoogleModel(model_name, provider=make_provider(), profile=profile)
+    sent = m._translate_thinking(GoogleModelSettings(), ModelRequestParameters(thinking=False))  # pyright: ignore[reportPrivateUsage]
+    assert sent == {'thinking_budget': expected}
+
+
+@pytest.mark.parametrize(
     ('make_provider', 'profile', 'expected'),
     [
         pytest.param(
