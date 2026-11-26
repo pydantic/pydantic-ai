@@ -13,7 +13,7 @@ event-emitting logic.
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Hashable, Iterator
+from collections.abc import Hashable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -33,6 +33,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolPartKind,
+    ToolUIVisibility,
 )
 
 from ._special_tokens import StreamRestorer
@@ -40,11 +41,56 @@ from ._utils import generate_tool_call_id as _generate_tool_call_id
 
 if TYPE_CHECKING:
     from .models import ModelRequestParameters
+    from .tools import ToolDefinition
 
 VendorId = Hashable
 """
 Type alias for a vendor identifier, which can be any hashable type (e.g., a string, UUID, etc.)
 """
+
+
+def tool_def_ui_visibility(tool_def: ToolDefinition, *, approved: bool = False) -> ToolUIVisibility | None:
+    """The `ui_visibility` a call to `tool_def` is stamped with, or `None` when the tool sets none.
+
+    A tool's own [`ui_visibility`][pydantic_ai.tools.ToolDefinition.ui_visibility], except that an external tool's
+    result comes from the client and an output tool's arguments are the run's answer, so both are `'public'`, and a
+    `'private'` call that needs approval, or that the user `approved`, is `'redacted'`, since the user can't approve a
+    call they can't see.
+    """
+    if (visibility := tool_def.ui_visibility) is None:
+        return None
+    if tool_def.kind in ('external', 'output'):
+        return 'public'
+    if visibility == 'private' and (approved or tool_def.kind == 'unapproved'):
+        return 'redacted'
+    return visibility
+
+
+def ui_visibility_stamps(model_request_parameters: ModelRequestParameters) -> dict[str, ToolUIVisibility]:
+    """The `ui_visibility` a call to each function or output tool is stamped with, for the tools that set one."""
+    return {
+        name: visibility
+        for name, tool_def in model_request_parameters.tool_defs.items()
+        if (visibility := tool_def_ui_visibility(tool_def)) is not None
+    }
+
+
+def stamp_and_type_call_part(
+    part: ToolCallPart,
+    tool_kind_by_name: Mapping[str, ToolPartKind],
+    ui_visibility_by_name: Mapping[str, ToolUIVisibility],
+) -> ToolCallPart:
+    """Stamp a call with its tool's `ui_visibility`, and promote a base part to its typed subclass via `tool_kind`.
+
+    Safe no-op for unknown tool names (model hallucinations) and for tool defs
+    without a `ui_visibility` or `tool_kind`.
+    """
+    if part.ui_visibility is None and (visibility := ui_visibility_by_name.get(part.tool_name)) is not None:
+        part = replace(part, ui_visibility=visibility)
+    if part.tool_kind is None and (tool_kind := tool_kind_by_name.get(part.tool_name)) is not None:
+        part = ToolCallPart.narrow_type(part, tool_kind=tool_kind)
+    return part
+
 
 ManagedPart = ModelResponsePart | ToolCallPartDelta
 """
@@ -67,7 +113,8 @@ class ModelResponsePartsManager:
     """Active request context. The manager promotes streamed tool call parts to their typed
     subclasses based on `ToolDefinition.tool_kind` from `function_tools` — so
     `isinstance(part, ToolSearchCallPart)` is true from the first `PartStartEvent` rather
-    than only after a post-stream pass.
+    than only after a post-stream pass — and stamps them with their tool's `ui_visibility`, so a
+    UI adapter can hide a call from its first event.
     """
 
     special_token_restorer: StreamRestorer | None = field(default=None, init=False, repr=False, compare=False)
@@ -83,11 +130,16 @@ class ModelResponsePartsManager:
     """Unmaterialized string deltas, keyed by part index."""
     _tool_kind_by_name: dict[str, ToolPartKind] = field(default_factory=dict[str, ToolPartKind], init=False, repr=False)
     """Cached `{tool_name: tool_kind}` built from `function_tools` at construction time."""
+    _ui_visibility_by_name: dict[str, ToolUIVisibility] = field(
+        default_factory=dict[str, ToolUIVisibility], init=False, repr=False
+    )
+    """Cached `ui_visibility_stamps(model_request_parameters)`, built at construction time."""
 
     def __post_init__(self) -> None:
         self._tool_kind_by_name = {
             td.name: td.tool_kind for td in self.model_request_parameters.function_tools if td.tool_kind is not None
         }
+        self._ui_visibility_by_name = ui_visibility_stamps(self.model_request_parameters)
 
     def __repr__(self) -> str:
         return (
@@ -113,21 +165,17 @@ class ModelResponsePartsManager:
             )
         return NotImplemented
 
-    def _tool_kind_for(self, tool_name: str) -> ToolPartKind | None:
-        return self._tool_kind_by_name.get(tool_name)
+    def _stamp_and_type(self, part: ToolCallPart) -> ToolCallPart:
+        """Stamp a call with its tool's `ui_visibility`, and promote a base part to its typed subclass via `tool_kind`."""
+        return stamp_and_type_call_part(part, self._tool_kind_by_name, self._ui_visibility_by_name)
 
-    def _typed_call_part(self, part: ToolCallPart) -> ToolCallPart:
-        """Promote a base `ToolCallPart` to a typed subclass via `ToolDefinition.tool_kind`.
-
-        Safe no-op for unknown tool names (model hallucinations) and for tool defs
-        without a `tool_kind`.
-        """
-        if part.tool_kind is not None:
-            return part
-        kind = self._tool_kind_for(part.tool_name)
-        if kind is None:
-            return part
-        return ToolCallPart.narrow_type(part, tool_kind=kind)
+    def _stamp_and_type_after_delta(self, part: ToolCallPart, delta: ToolCallPartDelta) -> ToolCallPart:
+        """`_stamp_and_type` for a call that `delta` just changed."""
+        if delta.tool_name_delta:
+            # A name streamed in pieces can first match another tool, whose stamp the grown name mustn't keep:
+            # stamp it again from the tool it names now.
+            part = replace(part, ui_visibility=None)
+        return self._stamp_and_type(part)
 
     def get_parts(self) -> list[ModelResponsePart]:
         """Return only model response parts that are complete (i.e., not ToolCallPartDelta's).
@@ -444,7 +492,7 @@ class ModelResponsePartsManager:
             )
             part = delta.as_part() or delta
             if isinstance(part, ToolCallPart):
-                part = self._typed_call_part(part)
+                part = self._stamp_and_type(part)
             new_part_index = self._append_part(part, vendor_part_id)
             # Only emit a PartStartEvent if we have enough information to produce a full ToolCallPart
             if isinstance(part, ToolCallPart | NativeToolCallPart):
@@ -464,7 +512,7 @@ class ModelResponsePartsManager:
             try:
                 updated_part = self._apply_tool_call_delta(part_index, existing_part, delta)
                 if isinstance(updated_part, ToolCallPart):
-                    updated_part = self._typed_call_part(updated_part)
+                    updated_part = self._stamp_and_type_after_delta(updated_part, delta)
             except Exception:
                 self._parts[part_index] = existing_part
                 if buffer is None:
@@ -565,7 +613,7 @@ class ModelResponsePartsManager:
             provider_name=provider_name,
             provider_details=provider_details,
         )
-        new_part = self._typed_call_part(new_part)
+        new_part = self._stamp_and_type(new_part)
         if vendor_part_id is None:
             # vendor_part_id is None, so we unconditionally append a new ToolCallPart to the end of the list
             new_part_index = self._append_part(new_part)
@@ -758,7 +806,7 @@ class ModelResponsePartsManager:
             assert not isinstance(part.args, dict), 'Cannot materialize string arguments onto dictionary arguments'
             materialized = replace(part, args=value)
             if isinstance(materialized, ToolCallPart):
-                materialized = self._typed_call_part(materialized)
+                materialized = self._stamp_and_type(materialized)
             return materialized
         raise AssertionError(f'Cannot materialize string deltas for {part!r}')  # pragma: no cover
 
