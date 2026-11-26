@@ -142,8 +142,6 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 
 Paths are under `$XDG_CONFIG_HOME/pydantic-ai-pax/`, or `~/.config/pydantic-ai-pax/` by default. State that is not a
 preference, such as workspaces, is under `$XDG_STATE_HOME/pydantic-ai-pax/` (default `~/.local/state/pydantic-ai-pax/`).
-Pax used to keep these folders under the name `pydantic-clai2`; it moves them the first time it
-starts and leaves a link at the old path, so older versions keep finding your data.
 
 | Path | Holds |
 |---|---|

@@ -2,6 +2,7 @@
 
 import errno
 import os
+import shutil
 import sqlite3
 from collections.abc import Callable
 from contextlib import closing
@@ -105,6 +106,23 @@ def test_another_pax_moving_it_first(config: Path, monkeypatch: pytest.MonkeyPat
     assert config_dir() == config / DIRECTORY_NAME
     assert SettingsStore().overrides() == {'display.splash': False}
     assert not legacy.exists()
+
+
+def test_old_folder_gone_before_the_move(config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The old folder disappears between this process's check and its rename, and no new one exists: it uses the new
+    path rather than the old one that is gone.
+    """
+    legacy = make_legacy(config)
+
+    def removed_by_another_process(source: str | os.PathLike[str], target: str | os.PathLike[str]) -> None:
+        shutil.rmtree(source)
+        raise FileNotFoundError(errno.ENOENT, 'gone', str(source))
+
+    monkeypatch.setattr(os, 'rename', removed_by_another_process)
+
+    assert config_dir() == config / DIRECTORY_NAME
+    assert not legacy.exists()
+    assert not (config / DIRECTORY_NAME).exists()
 
 
 def test_new_folder_appearing_during_the_move(config: Path, monkeypatch: pytest.MonkeyPatch) -> None:

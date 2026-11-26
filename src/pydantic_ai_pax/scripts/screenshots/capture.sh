@@ -26,8 +26,8 @@ done
 
 root=$(mktemp -d "${TMPDIR:-/tmp}/pax-shots.XXXXXX")
 root=$(cd "$root" && pwd -P)
-# CLAI_SHOTS_KEEP=1 keeps the throwaway directory for debugging a tape.
-if [ -n "${CLAI_SHOTS_KEEP:-}" ]; then echo "keeping $root"; else trap 'rm -rf "$root"' EXIT; fi
+# PAX_SHOTS_KEEP=1 keeps the throwaway directory for debugging a tape.
+if [ -n "${PAX_SHOTS_KEEP:-}" ]; then echo "keeping $root"; else trap 'rm -rf "$root"' EXIT; fi
 home="$root/home"
 project="$home/code/weather"
 mkdir -p "$home/.config/pydantic-ai-pax/plugins" "$project" "$root/shots"
@@ -153,20 +153,30 @@ ln -s "$HOME/.cache/rod" "$home/.cache/rod"
 # Tapes name each other and their screenshots relative to the directory VHS runs in.
 ln -s "$here/tapes" "$root/tapes"
 
-# Every tape starts Pax with `clai-demo`: the project as committed, and the settings a tape may change reset.
+# Every tape starts Pax with `pax-demo`: the project as committed, and the settings a tape may change reset.
 mkdir -p "$home/bin"
-cat > "$home/bin/clai-demo" <<'EOF'
+cat > "$home/bin/pax-demo" <<'EOF'
 #!/usr/bin/env bash
 set -e
 cd "$PROJECT"
 git checkout -q . && git clean -qfd
+# A clear screen and scrollback: no shell prompt above Pax, and VHS's Wait+Screen reads from the top.
+printf '\033[H\033[2J\033[3J'
 # `pax config` refuses run settings, since the agent can run it too; this is the user's own setup.
 python -c "from pydantic_ai_pax.config.settings_store import SettingsStore as S; s = S(); s.set('model', 'demo:tour'); s.reset('run.speculative_code_mode')"
 pax config reset display.theme > /dev/null
 exec pax "$@"
 EOF
-chmod +x "$home/bin/clai-demo"
-run python -c "from pydantic_ai_pax.config.settings_store import SettingsStore; SettingsStore().set('model', 'demo:tour')"
+chmod +x "$home/bin/pax-demo"
+# Both projects are trusted, as yours would be, so no tape stops at the trust question.
+run python -c "
+from pathlib import Path
+from pydantic_ai_pax.config.settings_store import SettingsStore
+s = SettingsStore()
+s.set('model', 'demo:tour')
+for folder in ('$project', '$other'):
+    s.set_workspace_trust(Path(folder), trusted=True)
+"
 
 # Saved sessions for the browser, made headless in each project.
 (cd "$other" && run pax -p 'Add retry with backoff to the orders client' > /dev/null)

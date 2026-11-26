@@ -100,9 +100,8 @@ renderers, in any combination. The example below deliberately does two
 unrelated things, adding ExaSearch and registering a /greet command, to show
 both shapes side by side; a real plugin would usually pick one purpose. Create
 ~/.config/pydantic-ai-pax/plugins/search.py, or use
-$XDG_CONFIG_HOME/pydantic-ai-pax/plugins/search.py when XDG_CONFIG_HOME is set. (Pax used
-~/.config/pydantic-clai2/ before, and moves that folder to ~/.config/pydantic-ai-pax/ when it
-starts.) With --database, the plugins folder is the one next to that database:
+$XDG_CONFIG_HOME/pydantic-ai-pax/plugins/search.py when XDG_CONFIG_HOME is set. With
+--database, the plugins folder is the one next to that database:
 
 ```python
 from collections.abc import Sequence
