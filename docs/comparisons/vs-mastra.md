@@ -31,7 +31,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Planning | Yes | [Planning](https://pydantic.dev/docs/ai/harness/planning/) |
 | Skills | Yes | [Skills](https://pydantic.dev/docs/ai/harness/skills/) |
 | Memory | Yes | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
-| Compaction | Token limit: truncate or abort | [Compaction](../capabilities/compaction.md) |
+| Compaction | [Observational Memory](https://mastra.ai/docs/memory/observational-memory) (background summaries of older messages); [`TokenLimiterProcessor`](https://mastra.ai/reference/processors/token-limiter-processor) to truncate | [Compaction](../capabilities/compaction.md) |
 | Guardrails | Yes | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
 | Code sandboxes | Yes | [Workspaces](../workspace.md#supported-workspaces) |
 | Browser use | Yes | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research) |
@@ -46,3 +46,5 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 
 - [Mastra documentation](https://mastra.ai/docs)
 - [Mastra observability documentation](https://mastra.ai/docs/observability/overview)
+- [Mastra Observational Memory](https://mastra.ai/docs/memory/observational-memory)
+- [Mastra `TokenLimiterProcessor`](https://mastra.ai/reference/processors/token-limiter-processor)
