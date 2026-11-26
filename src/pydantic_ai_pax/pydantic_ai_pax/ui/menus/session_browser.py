@@ -96,7 +96,6 @@ class SessionBrowser:
         archive: Callable[[ConversationSummary, bool], None],
         importing: Callable[[ConversationSummary], bool] = lambda entry: False,
         changed_since_import: Callable[[ConversationSummary], bool] = lambda entry: False,
-        source: SourceFilter = None,
         output: TextIO | None = None,
         key_source: Callable[[], str] = menu_key,
         size: Callable[[], tuple[int, int]] = terminal_size,
@@ -120,7 +119,7 @@ class SessionBrowser:
         self.key_source = key_source
         self.size = size
         self.now = now
-        self.source = source
+        self.source: SourceFilter = None
         """The one source whose sessions are listed, or `None` for all."""
         self.older: dict[str, frozenset[str]] = {}
         """Each project's checkout roots that the sidebar gathers into one row, as removed or idle."""

@@ -355,7 +355,7 @@ class Sessions(Generic[DepsT, OutputT]):
 
         def browse() -> str:
             # Resolve Git identities on the menu worker, not the application loop.
-            return SessionBrowser(
+            browser = SessionBrowser(
                 entries=self._browser_entries(entries, imports.listing(), limit=200, archived=False),
                 workspace=self.session.workspace,
                 active_id=self.session.summary.id,
@@ -367,8 +367,10 @@ class Sessions(Generic[DepsT, OutputT]):
                 # Saved sessions have a revision; one that is not yet imported has none.
                 importing=lambda entry: not entry.revision,
                 changed_since_import=imports.changed_since_import,
-                source=source,
-            ).run()
+            )
+            # Naming an agent lists its sessions first; `f` reaches the others.
+            browser.source = source
+            return browser.run()
 
         selected = await run_worker(browse)
         # Plugins hear of a rename once the browser has closed, so none of them draws over it.
