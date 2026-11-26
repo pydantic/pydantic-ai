@@ -44,6 +44,9 @@ provider = ClaudeAgentProvider(cli_path='/usr/local/bin/claude', cwd='/srv/my-ap
 agent = Agent(ClaudeAgentModel('{{ anthropic:medium.name }}', provider=provider))
 ```
 
+!!! warning "Use Claude Code 2.1.248 or later"
+    Older versions of Claude Code ignore the setting that keeps the text they're sent verbatim. With one of them as `cli_path`, an `@path` mention in a prompt or tool result puts that local file's contents in the request, and a leading `/command` runs a slash command. Claude Code only logs a warning.
+
 ## How it works
 
 Each request goes to a Claude Code process. Your agent's [instructions](../agent.md#instructions) replace Claude Code's own coding-agent system prompt, after the identity line and billing block Claude Code always puts first (see [what Claude Code adds](#what-claude-code-adds-to-the-request)), and its [function tools](../tools.md) reach Claude Code as tools of an in-process MCP server: when the model calls one, Pydantic AI runs it, as with any other model. Claude Code's own tools, settings files, `CLAUDE.md` files, skills, hooks, side requests, memory and automatic compaction are turned off, and so are your MCP servers and claude.ai connectors unless you [bring them](#your-own-mcp-servers-and-connectors).
@@ -96,6 +99,8 @@ With your instructions as its system prompt, Claude Code still adds:
 - before your instructions, a billing block and the line "You are a Claude agent, built on Anthropic's Claude Agent SDK.";
 - in the first user message, a `<system-reminder>` with the email address of the Claude account;
 - after the latest user message, a system message describing the environment: the working directory, platform, shell, model name and date.
+
+Claude Code has no setting to leave the environment message out. An agent that announces its working directory itself, such as one with [`AnnounceWorkingDirectory`](../harness/announce-working-directory.md), gives the model both.
 
 Compared with the same agent on the [`anthropic` provider](anthropic.md), a request looks like this, with Claude Code's additions marked `+`:
 

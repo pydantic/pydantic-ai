@@ -39,6 +39,11 @@ EXCLUDED: dict[str, str] = {
 }
 """The `pydantic-ai-slim` extras Pax does not mirror, each with the reason."""
 
+OPT_IN: dict[str, str] = {
+    'claude-agent': 'Bundles a Claude Code binary of several hundred MB, for users with a Claude subscription.',
+}
+"""The mirrored extras `all` leaves out, each with the reason: install them by name."""
+
 LOCAL = 'local'
 """The `/sandbox` extra `all` leaves out: its SDKs have no Windows wheel."""
 
@@ -79,14 +84,16 @@ def test_pax_mirrors_every_slim_extra_it_does_not_exclude() -> None:
     )
 
 
-def test_all_installs_every_extra_but_local() -> None:
+def test_all_installs_every_extra_but_local_and_opt_in() -> None:
     sandboxes = sorted(
         name for name, deps in PAX.items() if name != LOCAL and deps[0].startswith('pydantic-ai-harness[')
     )
     assert PAX['all'] == [
-        f'pydantic-ai-slim[{",".join(sorted(MIRRORED))}]{SLIM_PIN}',
+        f'pydantic-ai-slim[{",".join(sorted(set(MIRRORED) - set(OPT_IN)))}]{SLIM_PIN}',
         f'pydantic-ai-harness[{",".join(sandboxes)}]{HARNESS_PIN}',
-    ], "Pax's `all` extra in src/pydantic_ai_pax/pyproject.toml must list every other extra but `local`."
+    ], (
+        f"Pax's `all` extra in src/pydantic_ai_pax/pyproject.toml must list every other extra but `local` and `OPT_IN` in {THIS}."
+    )
 
 
 def test_every_pax_extra_is_a_provider_a_sandbox_or_all() -> None:

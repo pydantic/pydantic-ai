@@ -43,8 +43,9 @@ class ClaudeAgentProvider(AnthropicProvider):
 
         Args:
             cli_path: The `claude` executable to run. Defaults to the one bundled with the `claude-agent-sdk` package.
-                Use Claude Code 2.1.248 or later: older versions ignore the setting that stops them from expanding
-                `@path` mentions and running slash commands in the text they're sent.
+                Use Claude Code 2.1.248 or later. Older versions ignore the setting that keeps the text they're
+                sent verbatim, so an `@path` mention in a prompt or tool result puts that local file's contents in
+                the request, and a leading `/command` runs a slash command. Claude Code only logs a warning.
                 Every `claude` on the machine shares the login stored in Claude Code's configuration directory.
             cwd: The working directory Claude Code runs in, which it tells the model about. Defaults to the current
                 working directory.
