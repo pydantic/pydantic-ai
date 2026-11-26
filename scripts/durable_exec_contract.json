@@ -1661,6 +1661,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>"
       ]
     },
+    "is_builtin_collection": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>"
+      ]
+    },
     "is_list": {
       "engines": [
         "durable_exec"
