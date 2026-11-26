@@ -189,7 +189,7 @@ def test_mapping_block_is_static_and_stable() -> None:
 
 def test_a_callable() -> None:
     def per_model(ctx: RunContext[str]) -> str | None:
-        assert isinstance(ctx.model, Model)
+        assert isinstance(ctx.model, FunctionModel)
         if ctx.model.profile.get('delegates_unprompted', False):
             return f"Don't spawn sub-agents unless {ctx.deps} asks."
         return None
@@ -214,7 +214,11 @@ async def test_an_async_callable() -> None:
         return f'You are {ctx.model.model_name}.'
 
     recorder = Recorder()
-    agent = Agent(FunctionModel(recorder, model_name='gpt-6-luna'), capabilities=[ModelInstructions(per_model)])
+    agent = Agent(
+        FunctionModel(recorder, model_name='gpt-6-luna'),
+        deps_type=type(None),
+        capabilities=[ModelInstructions(per_model)],
+    )
     await agent.run('Hi')
     assert recorder.texts == [['You are gpt-6-luna.']]
 
@@ -306,7 +310,7 @@ def test_fallback_model_does_not_call_the_function() -> None:
     def per_model(ctx: RunContext[None]) -> str:
         raise AssertionError('not called on a `FallbackModel`')  # pragma: no cover
 
-    agent = Agent(FallbackModel(TestModel()), capabilities=[ModelInstructions(per_model)])
+    agent = Agent(FallbackModel(TestModel()), deps_type=type(None), capabilities=[ModelInstructions(per_model)])
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
         result = agent.run_sync('Hi')
