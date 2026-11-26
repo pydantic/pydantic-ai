@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -56,6 +57,9 @@ JOB_STEPS_ADAPTER: TypeAdapter[JobSteps] = TypeAdapter(JobSteps)
 BENCHMARK_JOB_ADAPTER: TypeAdapter[BenchmarkJob] = TypeAdapter(BenchmarkJob)
 CONDITIONAL_JOB_ADAPTER: TypeAdapter[ConditionalJob] = TypeAdapter(ConditionalJob)
 DEPENDENT_JOB_ADAPTER: TypeAdapter[DependentJob] = TypeAdapter(DependentJob)
+JOB_ADAPTER: TypeAdapter[dict[str, object]] = TypeAdapter(dict[str, object])
+SERVICES_ADAPTER: TypeAdapter[dict[str, dict[str, object]]] = TypeAdapter(dict[str, dict[str, object]])
+STRING_ADAPTER: TypeAdapter[str] = TypeAdapter(str)
 
 
 def _workflow(path: Path = WORKFLOW) -> Workflow:
@@ -725,6 +729,40 @@ def test_latest_versions_canary_runs_on_tags_without_gating_any_job():
     for name, job in jobs.items():
         needs = DEPENDENT_JOB_ADAPTER.validate_python(job).get('needs', [])
         assert 'latest-versions-canary' not in ([needs] if isinstance(needs, str) else needs), name
+
+
+def _services(job: object) -> dict[str, dict[str, object]]:
+    return SERVICES_ADAPTER.validate_python(JOB_ADAPTER.validate_python(job).get('services', {}))
+
+
+def test_ci_service_images_are_pinned_by_digest():
+    for name, job in _workflow()['jobs'].items():
+        for service in _services(job).values():
+            image = STRING_ADAPTER.validate_python(service['image'])
+            assert re.fullmatch(r'[^\s@]+:[^\s@]+@sha256:[0-9a-f]{64}', image), name
+
+
+def test_live_service_images_daily_runs_the_ci_jobs_on_their_floating_tags():
+    ci_jobs = _workflow()['jobs']
+    daily_jobs = _workflow(WORKFLOW.with_name('live-service-images-daily.yml'))['jobs']
+    tested = set(daily_jobs) - {'report'}
+    assert tested == {name for name, job in ci_jobs.items() if _services(job)}
+
+    for name in tested:
+        ci = JOB_ADAPTER.validate_python(ci_jobs[name])
+        daily = JOB_ADAPTER.validate_python(daily_jobs[name])
+        # Every pinned reference to the image, the Redis cluster step's included, moves to the floating tag.
+        expected = json.dumps({key: ci[key] for key in ('timeout-minutes', 'services', 'env', 'steps')})
+        for service, config in _services(ci).items():
+            pinned = STRING_ADAPTER.validate_python(config['image'])
+            floating = STRING_ADAPTER.validate_python(_services(daily)[service]['image'])
+            assert '@' not in floating, name
+            assert pinned.startswith(floating.rpartition(':')[0] + ':'), name
+            expected = expected.replace(pinned, floating)
+        # The daily job's first step records the digest the floating tag resolved to.
+        steps = TypeAdapter(list[object]).validate_python(daily['steps'])
+        actual = {key: daily[key] for key in ('timeout-minutes', 'services', 'env')} | {'steps': steps[1:]}
+        assert actual == json.loads(expected), name
 
 
 def test_clai2_clipboard_job_is_gated_on_the_classifier_output():
