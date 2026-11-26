@@ -35,7 +35,7 @@ from .._fallback import (
     stamp_continuation_pin,
 )
 from .._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
-from ..exceptions import ModelAPIError
+from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     ModelResponse,
@@ -73,6 +73,14 @@ __all__ = 'FallbackModel', 'FallbackOn', 'ExceptionHandler', 'ResponseHandler', 
 # (under `__pydantic_ai__`) to fold a post-rewind response as a replace. Duplicated as a literal rather
 # than imported because that constant is module-private (importing it trips `reportPrivateUsage`).
 _REPLACE_PREVIOUS_RESPONSE_KEY = 'replace_previous_response'
+
+
+class _NoFallbackProfileError(UserError, NotImplementedError):
+    """Raised when reading `FallbackModel.profile`, as its candidate models may each have a different one.
+
+    It is a `NotImplementedError`, as `Model.profile` has always raised for a `FallbackModel`, so a caller that falls
+    back for a model without a profile, like the framework's own checks, keeps doing so.
+    """
 
 
 @dataclass(init=False)
@@ -504,7 +512,12 @@ class FallbackModel(Model):
 
     @cached_property
     def profile(self) -> ModelProfile:
-        raise NotImplementedError('FallbackModel does not have its own model profile.')
+        raise _NoFallbackProfileError(
+            '`FallbackModel` has no single model profile, as its candidate models may each have a different one: '
+            'inspect the profile of each model in `fallback_model.models` instead. In an agent, use '
+            '`Agent(model, capabilities=[ModelFallback(*fallback_models)])`, which resolves instructions and '
+            'model settings with `ctx.model` set to the model serving each attempt.'
+        )
 
     def _start_request_deadline(self, model_settings: ModelSettings | None, *, stream: bool) -> RequestDeadline | None:
         # Each model it tries gets fresh deadlines of its own instead.
