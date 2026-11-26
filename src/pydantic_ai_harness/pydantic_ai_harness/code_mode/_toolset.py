@@ -107,6 +107,21 @@ _TIME_LIMIT_MESSAGE = (
 )
 
 
+_RuntimeResetReason = Literal['duration', 'memory', 'session_lost']
+_RUNTIME_RESET_MESSAGES: dict[_RuntimeResetReason, str] = {
+    'duration': _TIME_LIMIT_MESSAGE,
+    'memory': (
+        'The sandbox ran out of memory and the session was reset. '
+        'Re-run any imports, recreate any state you need, and use less memory: '
+        'process smaller batches, avoid large intermediate values, and print less output.'
+    ),
+    'session_lost': (
+        'The sandbox could not keep the session after this error, so it was reset. '
+        'Re-run any imports and recreate any state you need.'
+    ),
+}
+
+
 # One entry per limit `CodeModeResourceLimits` exposes, mapped to the wording Monty reports when
 # it trips. Monty offers no typed marker for either, so its phrasing is load-bearing here and
 # nowhere else. `test_every_resource_limit_reports_started_calls_when_exhausted` exhausts each
@@ -846,19 +861,15 @@ def _raise_escaped_tool_failed(error: MontyFailure, execution: RunCodeExecution,
     raise ToolFailed(content + reset_advice) from escaped
 
 
-def _runtime_failure_retry(error: MontyFailure, execution: RunCodeExecution, *, reset_advice: str) -> ModelRetry:
+def _runtime_failure_retry(
+    error: MontyFailure, execution: RunCodeExecution, *, reset_advice: str, report_started_calls: bool
+) -> ModelRetry:
     """Build the retry for an uncaught sandbox runtime error, including any session-reset advice."""
     # Tool errors (e.g. a wrapped tool's `ModelRetry`) re-raise in the sandbox and surface
     # here if uncaught. Re-wrapping a `ModelRetry` is fine: the display keeps its message
     # and the model still gets a retry.
     message = f'Runtime error:\n{execution.capture.prepend_to(error.display)}'
-    if execution.budget_exhausted or _exhausted_sandbox_limit(error) is not None or reset_advice:
-        # A retry is the only record the model gets of an uncaught failure, and these
-        # calls already started. Without them the model reruns their side effects when
-        # it retries. Asking which limit tripped, rather than testing one flag per limit,
-        # is what keeps a newly added limit from quietly losing this. It matters most on
-        # the duration path, which resets the session and with it the REPL state the model
-        # would otherwise reconstruct from.
+    if report_started_calls:
         message += _started_calls_note(execution)
     message += reset_advice
     if 'RuntimeError' in error.exception_types and re.fullmatch(r'suspension limit [0-9]+ exceeded', error.message):
@@ -1485,26 +1496,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         return result
 
     @staticmethod
-    async def _reset_for_runtime_error(error: MontyFailure, run_state: MontyRunState) -> str:
+    def _runtime_reset_reason(error: MontyFailure) -> _RuntimeResetReason | None:
         if _is_duration_exhausted(error):
-            advice = _TIME_LIMIT_MESSAGE
-        elif 'MemoryError' in error.exception_types and (
+            return 'duration'
+        if 'MemoryError' in error.exception_types and (
             not error.has_traceback or _exhausted_sandbox_limit(error) == 'max_memory'
         ):
-            advice = (
-                'The sandbox ran out of memory and the session was reset. '
-                'Re-run any imports, recreate any state you need, and use less memory: '
-                'process smaller batches, avoid large intermediate values, and print less output.'
-            )
-        elif error.session_lost:
-            advice = (
-                'The sandbox could not keep the session after this error, so it was reset. '
-                'Re-run any imports and recreate any state you need.'
-            )
-        else:
-            return ''
-        await run_state.reset()
-        return f'\n\n{advice}'
+            return 'memory'
+        return 'session_lost' if error.session_lost else None
 
     @staticmethod
     def _worker_failure_message(error: MontyFailure) -> str:
@@ -1556,9 +1555,21 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 return ModelRetry(f'Type error in code:\n{capture.prepend_to(failure.display)}')
             case 'runtime':
                 run_state.has_executed_feed = True
-                reset_advice = await self._reset_for_runtime_error(failure, run_state)
+                reset_reason = self._runtime_reset_reason(failure)
+                reset_advice = ''
+                if reset_reason is not None:
+                    await run_state.reset()
+                    reset_advice = f'\n\n{_RUNTIME_RESET_MESSAGES[reset_reason]}'
                 _raise_escaped_tool_failed(failure, execution, reset_advice=reset_advice)
-                return _runtime_failure_retry(failure, execution, reset_advice=reset_advice)
+                # Include likely limit failures even when the evidence does not justify a reset.
+                report_started_calls = (
+                    execution.budget_exhausted
+                    or reset_reason is not None
+                    or _exhausted_sandbox_limit(failure) is not None
+                )
+                return _runtime_failure_retry(
+                    failure, execution, reset_advice=reset_advice, report_started_calls=report_started_calls
+                )
             case 'crashed' | 'disconnected':
                 # The worker died mid-feed (e.g. the code exhausted its memory or hit the
                 # request timeout) and the REPL state died with it; the pool replaces the
