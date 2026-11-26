@@ -45,7 +45,6 @@ runs:
         npm install --prefix "$tools/opencode" @opencode/cli@2.2.5
         python3 -m pip install --quiet --target "$tools/python" 'pydantic==2.13.4'
 
-    # A pull_request_target run can restore the default-branch cache but cannot populate it.
     # Save only on push, before a reviewer processes any PR content.
     - name: Save fallback tools
       if: inputs.save-cache == 'true' && github.event_name == 'push' && steps.restore.outputs.cache-hit != 'true'
