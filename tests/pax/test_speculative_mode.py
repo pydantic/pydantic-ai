@@ -865,12 +865,16 @@ async def run_claim_then_cold(
     before: Sequence[Hooks[object]] = (),
     after: Sequence[Hooks[object]] = (),
 ) -> tuple[SpeculationCounters, list[AgentStreamEvent | AgentRunResultEvent[str]]]:
-    """Run a snippet that claims a speculative `read_file`, then calls a cold tool that sets `cold_started`."""
+    """Run a snippet that claims a speculative `read_file`, then calls a cold tool that sets `cold_started`.
+
+    The snippet is one compound statement, so eager execution can't start it while the model streams:
+    it runs once the tool call starts, which keeps the claim in the tool call's event stream.
+    """
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) > 1:
             return ModelResponse(parts=[TextPart('done')])
-        code = 'text = await read_file(path="a.py")\nawait cold()\nfinished = True\n'
+        code = 'if await read_file(path="a.py"):\n    await cold()\n'
         return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
 
     (root / 'a.py').write_text('contents of a.py\n')
@@ -1006,7 +1010,7 @@ class TestSandboxCallDisplay:
     async def test_claim_whose_finished_report_is_filtered_out_holds_only_reports(self, tmp_path: Path) -> None:
         """A capability inside the stream can drop a report a claim is waiting for.
 
-        Only the sandbox call reports behind the claim wait, and the stream's end releases them.
+        Only the sandbox call reports behind the claim wait, until the tool call's event stream ends.
         """
         cold_started = anyio.Event()
         hide = Hooks[object]()
@@ -1033,7 +1037,7 @@ class TestSandboxCallDisplay:
             for index, event in enumerate(events)
             if isinstance(event, SandboxCallStartedEvent) and event.call.tool_name == 'cold'
         )
-        # The run_code result is not held with the reports.
+        # The run_code result is not held with the reports, which come out when its stream ends.
         assert run_code_result < cold_report
 
     async def test_launch_evicted_while_running_is_not_held(self) -> None:
