@@ -217,11 +217,15 @@ def _client_request_part(
 ) -> ModelRequestPart | None:
     """`part` as `client_view` shows it.
 
-    A legacy retry is translated first, as the dumps would translate it, so one bound to a tool call is that call's
-    return and takes its visibility.
+    A legacy retry bound to a tool call is that call's return, as the dumps translate it, so it takes the call's
+    visibility; a shown one is left for the dumps to translate.
     """
     if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
-        part = _translate_legacy_retry_part(part)
+        translated = _translate_legacy_retry_part(part)
+        if not isinstance(translated, ToolReturnPart):
+            return part
+        shown = client_tool_return(translated, _return_visibility(translated, calls, default_ui_visibility))
+        return part if shown is translated else shown
     if isinstance(part, ToolReturnPart):
         return client_tool_return(part, _return_visibility(part, calls, default_ui_visibility))
     return part
