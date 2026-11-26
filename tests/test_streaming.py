@@ -7995,3 +7995,92 @@ async def test_completed_streamed_response_replays_canonical_system():
             ('part_end', 1, None),
         ]
     )
+
+
+async def test_streamed_model_error_recorded_on_chat_span(allow_model_requests: None):
+    """Streamed model errors (on open or mid-stream, with or without `on_model_request_error`) are recorded on the `chat` span."""
+    from .conftest import try_import
+
+    with try_import() as otel_imports:
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+        from opentelemetry.trace import StatusCode
+
+    if not otel_imports():  # pragma: no cover
+        pytest.skip('opentelemetry-sdk not installed')
+
+    from pydantic_ai.capabilities import AbstractCapability, Instrumentation
+    from pydantic_ai.exceptions import ModelHTTPError
+    from pydantic_ai.models.instrumented import InstrumentationSettings
+
+    class _PassthroughErrorCap(AbstractCapability[None]):
+        async def on_model_request_error(self, ctx: RunContext[None], *, request_context: Any, error: Exception) -> Any:
+            raise error
+
+    async def rejected_on_open(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        raise ModelHTTPError(400, 'my-model', body='rejected')
+        yield ''  # pragma: no cover
+
+    async def fails_mid_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'partial '
+        raise ModelHTTPError(500, 'my-model', body='mid-stream failure')
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    settings = InstrumentationSettings(tracer_provider=provider)
+
+    for stream_fn in (rejected_on_open, fails_mid_stream):
+        for extra_caps in ((), (_PassthroughErrorCap(),)):
+            exporter.clear()
+            agent = Agent(FunctionModel(stream_function=stream_fn), capabilities=[Instrumentation(settings), *extra_caps])
+            with pytest.raises(ModelHTTPError):
+                async with agent.run_stream('hello') as result:
+                    async for _ in result.stream_text():
+                        pass
+
+            spans = {span.name: span for span in exporter.get_finished_spans()}
+            chat_span = next(span for name, span in spans.items() if name.startswith('chat '))
+            assert chat_span.status.status_code == StatusCode.ERROR
+            assert [event.name for event in chat_span.events] == ['exception']
+
+
+async def test_streamed_consumer_error_not_recorded_on_chat_span(allow_model_requests: None):
+    """A consumer-side error while iterating a stream must not be recorded on the `chat` span."""
+    from .conftest import try_import
+
+    with try_import() as otel_imports:
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+        from opentelemetry.trace import StatusCode
+
+    if not otel_imports():  # pragma: no cover
+        pytest.skip('opentelemetry-sdk not installed')
+
+    from pydantic_ai.capabilities import Instrumentation
+    from pydantic_ai.models.instrumented import InstrumentationSettings
+
+    async def ok_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'hello '
+        yield 'world'
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    settings = InstrumentationSettings(tracer_provider=provider)
+
+    agent = Agent(FunctionModel(stream_function=ok_stream), capabilities=[Instrumentation(settings)])
+    with pytest.raises(RuntimeError, match='consumer error'):
+        async with agent.run_stream('hello') as result:
+            async for _ in result.stream_text():
+                raise RuntimeError('consumer error')
+
+    spans = exporter.get_finished_spans()
+    chat_span = next(span for span in spans if span.name.startswith('chat '))
+    invoke_span = next(span for span in spans if span.name.startswith('invoke_agent '))
+    assert chat_span.status.status_code == StatusCode.UNSET
+    assert list(chat_span.events) == []
+    assert invoke_span.status.status_code == StatusCode.ERROR
+    assert [event.name for event in invoke_span.events] == ['exception']

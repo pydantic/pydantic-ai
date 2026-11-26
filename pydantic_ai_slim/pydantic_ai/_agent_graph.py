@@ -2919,6 +2919,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         _billed_by_request(_interrupted_response, req_ctx.messages)
                     )
                     capture_model_response_span_context(req_ctx, _interrupted_response, time_to_first_chunk)
+                    if agent_stream_holder[0]._model_stream_error is stream_error:  # pyright: ignore[reportPrivateUsage]
+                        raise stream_error
                 raise
             # Streaming core errors surface in the consumer task, which cancels this wrap task;
             # `on_model_request_error` cannot recover an error after streaming has begun.

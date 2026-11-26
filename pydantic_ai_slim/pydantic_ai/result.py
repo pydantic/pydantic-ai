@@ -91,6 +91,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _model_pull_lock: anyio.Lock = field(default_factory=anyio.Lock, init=False)
     _model_pull_scope: anyio.CancelScope | None = field(default=None, init=False)
     _model_stream_finished: bool = field(default=False, init=False)
+    _model_stream_error: Exception | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self):
         self._refresh_initial_run_ctx_usage()
@@ -550,7 +551,11 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
     async def _model_events(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """The model stream's events, followed by its replacement's if the stream was abandoned."""
-        events = aiter(self._raw_stream_response)
+        try:
+            events = aiter(self._raw_stream_response)
+        except Exception as exc:
+            self._model_stream_error = exc
+            raise
         while self._replacement_response is None:
             event: ModelResponseStreamEvent | None = None
             with anyio.CancelScope() as self._model_pull_scope:
@@ -559,6 +564,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                         event = await anext(events)
                     except StopAsyncIteration:
                         pass
+                    except Exception as exc:
+                        self._model_stream_error = exc
+                        raise
             if self._replacement_response is not None:
                 break
             if event is None:
