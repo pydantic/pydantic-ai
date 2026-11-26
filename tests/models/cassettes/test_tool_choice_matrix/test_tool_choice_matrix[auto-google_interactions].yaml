@@ -1,0 +1,186 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "411"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: What's the weather in Paris?
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=1549
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: requires_action
+        usage:
+          total_tokens: 113
+          total_input_tokens: 54
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 54
+          total_cached_tokens: 0
+          total_output_tokens: 16
+          total_tool_use_tokens: 0
+          total_thought_tokens: 43
+          initial_input_tokens: 33
+        created: 2026-11-06T02:04:35Z
+        updated: 2026-11-06T02:04:35Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            Ev0BCvoBAWkUfRPvhEAgWI4UOiQPZIKn12EN4PUUh4x5JiI1TYSKeWKZ7JzAO6on749IZ49rFTybUK6I38xq6+cX7mtlZMLvJ/Pa3kT7RoYk6xLElXEKOxn/d9r85Q1dn7aXvyagf1djKT8YbDsTTEOImMll8y77NsbLx3cJ+MUSKkd4kla+DBzu5T4HnJUimllxGuqR7n65CuU04v9fycsSASxnyPWBbHoNGn2UEPQxGE10axh5dFH6lnQYBSSDJIedjwtL56TbOK7SUq8wiw0LHiJ81E4YoTSVgwbrAKokxpmt53jiYVsVv4SOw70r9iS2SOu38pxKn+kNI4BE/A==
+          type: thought
+        - id: call_3899808809397269285
+          type: function_call
+          name: get_weather
+          arguments:
+            city: Paris
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:04:35.265055+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1054"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: What's the weather in Paris?
+        - signature: >-
+            Ev0BCvoBAWkUfRPvhEAgWI4UOiQPZIKn12EN4PUUh4x5JiI1TYSKeWKZ7JzAO6on749IZ49rFTybUK6I38xq6+cX7mtlZMLvJ/Pa3kT7RoYk6xLElXEKOxn/d9r85Q1dn7aXvyagf1djKT8YbDsTTEOImMll8y77NsbLx3cJ+MUSKkd4kla+DBzu5T4HnJUimllxGuqR7n65CuU04v9fycsSASxnyPWBbHoNGn2UEPQxGE10axh5dFH6lnQYBSSDJIedjwtL56TbOK7SUq8wiw0LHiJ81E4YoTSVgwbrAKokxpmt53jiYVsVv4SOw70r9iS2SOu38pxKn+kNI4BE/A==
+          type: thought
+        - id: call_3899808809397269285
+          name: get_weather
+          type: function_call
+          arguments:
+            city: Paris
+        - type: function_result
+          name: get_weather
+          call_id: call_3899808809397269285
+          is_error: false
+          result:
+          - type: text
+            text: Sunny, 22C in Paris
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=1289
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 162
+          total_input_tokens: 121
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 121
+          total_cached_tokens: 0
+          total_output_tokens: 17
+          total_tool_use_tokens: 0
+          total_thought_tokens: 24
+          initial_input_tokens: 103
+        created: 2026-11-06T02:04:36Z
+        updated: 2026-11-06T02:04:36Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            EsIBCr8BAWkUfRPNHO+gwNLoBxpc9NlniEQyMaTq8OMSo2/SQk4qkgpQJrM30xJEYVEcZ7tmPbzeFrCCOq3T5036kpX2uteyB39MHjU2CvjrHjg85j9k4kl38UrmehHPlgvq26lu0YAmd7JBPsjkKxVMTDoxjscpot4fjKkHXWzx1cdQpjnaEL9zfzyCTSbZK7tNiS0X6NrtXXIjZcglaEO4e6dKwEWCuhjpk1uDiuGPXqKmhArt18g4t1y5n4y8zUv+xYo=
+          type: thought
+        - content:
+          - text: The current weather in Paris is sunny with a temperature of 22°C.
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:04:36.598766+00:00

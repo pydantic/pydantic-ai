@@ -2,8 +2,8 @@
 
 It has its own conversation and only the tools in `workspace_tools` and `session_tools`, plus
 `ask_user_question`, answered in its own chat. The session's agent gets none of them. The sessions it
-starts in workspaces are live sessions of this CLAI, listed in the sidebar like any other. Its conversation
-is one JSON file in CLAI's state directory, so it survives a reload and a restart, and never shows
+starts in workspaces are live sessions of this Pax, listed in the sidebar like any other. Its conversation
+is one JSON file in Pax's state directory, so it survives a reload and a restart, and never shows
 among the saved sessions.
 """
 
@@ -43,7 +43,7 @@ from pydantic_ai_pax.builtin_plugins.web.protocol import (
     usage_info,
 )
 from pydantic_ai_pax.builtin_plugins.workspaces import configured
-from pydantic_ai_pax.config.settings_store import state_dir
+from pydantic_ai_pax.paths import state_dir
 from pydantic_ai_pax.plugins import TurnOutcome
 from pydantic_ai_pax.runtime.strict_schemas import NON_STRICT_SCHEMAS
 
@@ -52,11 +52,11 @@ if TYPE_CHECKING:
     from pydantic_ai_pax.builtin_plugins.web.workspace_tools import WorkspaceTools
 
 HISTORY = 'orchestrator.json'
-"""The conversation's file in CLAI's state directory."""
+"""The conversation's file in Pax's state directory."""
 
 INSTRUCTIONS = """\
-You are CLAI's orchestrator. You manage workspaces: checkouts of a repository on their own branch, each \
-with a CLAI session of its own that you give tasks to. Create them, give their agents tasks, watch them, steer \
+You are Pax's orchestrator. You manage workspaces: checkouts of a repository on their own branch, each \
+with a Pax session of its own that you give tasks to. Create them, give their agents tasks, watch them, steer \
 them, and report back to the user what they did. `workspace_list` shows the workspaces and the kinds you \
 can make; `workspace_create` makes one (it does not start anything); `session_start` starts its session with \
 a prompt; `session_wait` waits for the turn to end or for a question; `session_read` shows the latest \
@@ -76,7 +76,7 @@ class Saved:
 
 
 class ChatChanged(Exception):
-    """Another CLAI changed the conversation's file since this one read it."""
+    """Another Pax changed the conversation's file since this one read it."""
 
 
 def _revision(path: Path) -> tuple[bytes | None, str | None]:
@@ -144,7 +144,7 @@ class Orchestrator:
         return state_dir() / HISTORY
 
     async def load(self) -> Saved:
-        """The conversation, read from its file again between turns, as another CLAI may have saved it since."""
+        """The conversation, read from its file again between turns, as another Pax may have saved it since."""
         if self.running:
             return self._saved
         if self._unsaved is not None:
@@ -212,7 +212,7 @@ class Orchestrator:
         saved = await self.load()
         if self.running:  # Checked after the read, as another request may have started a turn meanwhile.
             raise RuntimeError('The orchestrator is still working. Wait for it, or stop it.')
-        self._task = asyncio.get_running_loop().create_task(self._run(text, saved), name='clai2-orchestrator')
+        self._task = asyncio.get_running_loop().create_task(self._run(text, saved), name='pax-orchestrator')
 
     async def _run(self, prompt: str, saved: Saved) -> None:
         item = Item(id=f'orchestrator{time.monotonic_ns()}', kind='user', text=prompt)
@@ -220,7 +220,7 @@ class Orchestrator:
         self._turn.clear()
         self._turn.apply(ItemAdded(item=item))
         self._send(TurnStarted(item=item))
-        # The history this turn starts from, which another CLAI may have changed since the page loaded.
+        # The history this turn starts from, which another Pax may have changed since the page loaded.
         self._send(self._state(saved.messages, await self.host.default_model_name()))
         messages = saved.messages
         outcome: TurnOutcome = 'failed'
@@ -258,11 +258,11 @@ class Orchestrator:
                     )
                     self._unsaved = None
             except ChatChanged:
-                # Not written over: what the other CLAI saved is the chat now.
+                # Not written over: what the other Pax saved is the chat now.
                 self._unsaved = None
                 outcome, error = (
                     'failed',
-                    'Another CLAI changed the orchestrator chat during this turn, so it was not kept.',
+                    'Another Pax process changed the orchestrator chat during this turn, so it was not kept.',
                 )
             except OSError as exc:
                 self._unsaved = messages

@@ -107,8 +107,9 @@ other failure the model can act on:
 - a working directory an earlier command deleted or replaced with a file
 - a command the operating system refuses to spawn because it holds a NUL byte or
   a character the operating system cannot encode
-- a command too long for the operating system to start (the model is asked to
-  write it to a file and run that instead)
+- a command too long for the operating system to start (on a local workspace the
+  model is asked to write it to a file and run that instead; a remote one passes
+  on the shell's own error)
 
 Failures the model can do nothing about abort the run:
 
@@ -347,6 +348,9 @@ inside the workspace, and that directory is carried into subsequent calls. The p
 updated when the command exits `0`. If the recorded directory disappears, the next command reports a retry and resets to the workspace working directory. The record is written out-of-band (not
 to stdout) so command output can never spoof the tracked directory.
 
+The instructions name the working directory through [`AnnounceWorkingDirectory`](../announce_working_directory/), which states it once however
+many capabilities bring it, and starts a sandbox that isn't running to ask for it.
+
 The model sees a capped preview of command output. For large output, redirect it to a file in the workspace, then use `grep` or `tail` to inspect bounded portions rather than printing the whole file.
 
 ## Configuration
@@ -400,7 +404,7 @@ workspace capability in Python).
 
 ## Durable execution
 
-`Shell` works under Temporal, DBOS, and Prefect, including background jobs and `persist_cwd`, and runs its `shell` tool under [Azure Durable Task](https://pydantic.dev/docs/ai/harness/azure-durable-task/) and [Render Workflows](https://pydantic.dev/docs/ai/harness/render-workflows/); the [workspace guide](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) shows what works on each engine. On Temporal a command runs within its activity's timeout, 300 seconds for `run_command` and `shell`; see [command timeouts](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-command-timeouts) to raise it.
+`Shell` works under Temporal, DBOS, and Prefect, including background jobs and `persist_cwd`, and runs its `shell` tool under [Azure Durable Task](https://pydantic.dev/docs/ai/harness/azure-durable-task/) and [Render Workflows](https://pydantic.dev/docs/ai/harness/render-workflows/); the [workspace guide](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) shows what works on each engine. A sticky `cd` is kept in the workspace under `.pydantic-ai-harness/shell/run-state/`, so a new worker continues in the same directory. A retried `start_command` reattaches to its job instead of starting a second process; if a launch failed partway, the retry reports a pending launch, and once the process has stopped you remove its files under `.pydantic-ai-harness/shell/`. On Temporal a command runs within its activity's timeout, 300 seconds for `run_command` and `shell`; see [command timeouts](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-command-timeouts) to raise it.
 
 ## Further reading
 

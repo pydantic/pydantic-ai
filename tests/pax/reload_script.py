@@ -41,7 +41,7 @@ def start_warming_and_wait(modules: Sequence[str] = warm_imports.FIRST_USE_MODUL
     # before Python 3.14 `tuple()` then fails to resize it with `SystemError`, failing that thread's import. A module
     # it finished first, such as `openai.types.responses.response_output_text`, stays cached but missing from its
     # re-imported parent package, so `/set model` fails for the rest of the process. Finish warming before prompting.
-    # `/reload` re-executes `warm_imports` and drops this wrapper, which holds only because CLAI2 starts warming once
+    # `/reload` re-executes `warm_imports` and drops this wrapper, which holds only because Pax starts warming once
     # per process, before any reload.
     thread = start_warming(modules)
     thread.join()
@@ -222,7 +222,7 @@ async def main(root: Path, mode: str) -> None:
         if isinstance(part, UserPromptPart)
     ] == seen[2]
     text = output.getvalue()
-    assert '/reload: Reload CLAI2 code without restarting' in text, text
+    assert '/reload: Reload Pax code without restarting' in text, text
     assert 'Usage: /reload' in text, text
     assert ('Goodbye.' if mode == 'unchanged' else 'Updated goodbye.') in text, text
     assert text.count('plugin end') == 3, text
@@ -243,11 +243,11 @@ async def main(root: Path, mode: str) -> None:
     assert store.load().model == 'test' and not store.load().thinking
     assert store.load().theme == 'github_light'
     if mode in ('unchanged', 'success', 'custom', 'new_imports', 'stock'):
-        assert text.count('CLAI2 reloaded. Conversation preserved.') == 2, text
+        assert text.count('Pax reloaded. Conversation preserved.') == 2, text
         assert ('Use /help.' if mode == 'unchanged' else 'Use updated /help.') in text, text
     else:
         assert text.count('Reload failed:') == 1, text
-        assert text.count('CLAI2 reloaded. Conversation preserved.') == 1, text
+        assert text.count('Pax reloaded. Conversation preserved.') == 1, text
         assert 'Use /help.' in text, text
         assert 'pydantic_ai_pax.new_module' not in sys.modules
     assert ('Harness is not refreshed by /reload.' in text) == (mode == 'harness'), text

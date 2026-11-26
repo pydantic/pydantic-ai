@@ -4,6 +4,7 @@ import ast
 import asyncio
 import dataclasses
 import importlib.util
+import json
 import os
 import re
 import secrets
@@ -176,6 +177,7 @@ if TYPE_CHECKING:
 
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.xai import XaiProvider
+    from pydantic_ai.tools import ToolUIVisibility
 
     def IsInstance(arg: type[T]) -> T: ...
     def IsDatetime(*args: Any, **kwargs: Any) -> datetime: ...
@@ -547,6 +549,9 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # for a relative path. The harness relativizes absolute workspace paths with it.
     ('os.path.abspath', '<frozen posixpath>', 'relpath'),
     ('os.path.abspath', 'posixpath.py', 'relpath'),
+    # Pax looks for its config and state folders, and moves one under the old `pydantic-clai2` name, once per
+    # process for each, on the first `config_dir()` or `state_dir()` call, which may be in async code.
+    ('os.stat', 'pydantic_ai_pax/paths.py', 'pax_dir'),
     # Spawning a Monty worker pool locates the worker binary, once per pool.
     ('os.stat', 'pydantic_monty/_binary.py', 'find_monty_binary'),
     # Inside a Temporal workflow, Code Mode reaches Monty through a blocking portal, the only way to reach it
@@ -556,6 +561,9 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
         'pydantic_ai_harness/_monty_exec.py',
         ('get_session', 'call_monty', '_enter_monty', '_release_monty'),
     ),
+    # `/sandbox local smol` looks for the `smolvm` CLI in the `PATH` directories, a few stats, to say what to install when
+    # the user runs `/sandbox local` or `/sandbox local smol`, or a run reopens its VM.
+    *((func, 'pydantic_ai_harness/_smolvm_cli.py', 'find_cli') for func in ('os.stat', 'os.access')),
     # Capabilities resolve their executables, and clients their package versions, once when they're built.
     *(
         (func, f'pydantic_ai_harness/docker_container/{module}', constructor)
@@ -636,6 +644,7 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # pydantic-ai-pax reads keys once the event loop reports the terminal readable, and writes output straight to it.
     ('os.read', 'prompt_toolkit/input/posix_utils.py', 'read'),
     ('os.read', 'pydantic_ai_pax/cli/shell_terminal.py', '_key'),
+    ('os.read', 'pydantic_ai_pax/cli/shell_terminal.py', 'key'),
     ('os.write', 'pydantic_ai_pax/cli/shell_terminal.py', 'pass_through'),
     ('os.write', 'pydantic_ai_pax/cli/self_update.py', '_print_line'),
     # On Windows, the socket pair that lets Ctrl+C wake the loop connects over loopback, once per turn.
@@ -643,7 +652,7 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # Rich writes each render to its console's file: the terminal, `os.devnull` for a background agent, or a test's file.
     ('io.TextIOWrapper.write', 'rich/console.py', '_write_buffer'),
     ('io.BufferedWriter.write', 'rich/console.py', '_write_buffer'),
-    # `logging` handlers write each record synchronously, to a stream or to CLAI's telemetry log file.
+    # `logging` handlers write each record synchronously, to a stream or to Pax's telemetry log file.
     ('io.TextIOWrapper.write', 'logging/__init__.py', 'emit'),
     ('io.BufferedWriter.write', 'logging/__init__.py', 'emit'),
     # prompt-toolkit's `FileHistory` reads the input history when a prompt opens, and appends each entry it accepts.
@@ -662,11 +671,14 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # Configuring logfire at session start waits for the instance it replaces to shut down.
     ('threading.Lock.acquire', 'pydantic_ai_pax/builtin_plugins/logfire.py', '__init__'),
     # A module's first import runs its top-level code, which can read files such as its package's metadata, and waits
-    # for the module's lock while another thread, such as CLAI's import warm-up, imports it. The frames belong to
+    # for the module's lock while another thread, such as Pax's import warm-up, imports it. The frames belong to
     # importlib rather than the importing module, so these exemptions apply to every suite, not only `tests/pax`.
     ('io.TextIOWrapper.read', '<frozen importlib._bootstrap>', '_find_and_load'),
     ('os.listdir', '<frozen importlib._bootstrap>', '_find_and_load'),
     ('threading.Lock.acquire', '<frozen importlib._bootstrap>', ('_find_and_load', '_lock_unlock_module')),
+    # Under `coverage run`, the tracer takes coverage's own data lock when a call enters a measured file, on every such
+    # call with the C tracer. Another measured thread may hold it, but only for a dict lookup or insert.
+    ('threading.Lock.acquire', 'coverage/collector.py', 'lock_data'),
     # A session, and a plugin host built outside the shell, work in the current directory unless given one.
     ('os.getcwd', 'pydantic_ai_pax/runtime/session.py', '__init__'),
     ('os.getcwd', 'pydantic_ai_pax/plugins/__init__.py', 'workspace'),
@@ -699,6 +711,9 @@ BLOCKBUSTER_LOCAL_FILES: list[tuple[str, str | tuple[str, ...]]] = [
     # pydantic-ai-pax's commands, menus, and sign-ins check and update its own small files in the user's folders.
     ('pydantic_ai_pax/config/api_keys.py', ('save_key', 'load_keys')),
     ('pydantic_ai_pax/config/project_settings.py', ('_present', 'load_project_settings')),
+    # A session's trust in its folder is looked up as the shell is built: where the folder's repository is, and
+    # the decision saved for it.
+    ('pydantic_ai_pax/runtime/workspace_trust.py', ('saved', 'from_scope', 'trust_scope')),
     ('pydantic_ai_pax/ui/menus/key_menu.py', 'storage'),
     ('pydantic_ai_pax/builtin_plugins/coder_folders.py', ('_directory_problem', '_same_directory', 'path')),
     ('pydantic_ai_pax/builtin_plugins/logfire.py', 'credentials'),
@@ -741,6 +756,7 @@ BLOCKBUSTER_TEST_DOUBLES: tuple[str, ...] = (
     'tests/harness/kubernetes_sandbox/fake_sandboxd.py',
     'tests/harness/opensandbox_sandbox/fake_opensandbox.py',
     'tests/harness/render_sandbox/workspace_helpers.py',
+    'tests/harness/smol_sandbox/fake_smolvm.py',
 )
 
 
@@ -752,7 +768,7 @@ BLOCKBUSTER_LIBRARY_SETUP: tuple[tuple[str, str], ...] = (
     # use: `kubernetes_asyncio` reads the kubeconfig and writes its embedded certificates to temporary
     # files synchronously (its exec credential plugins run as asyncio subprocesses and stay covered).
     ('k8s_agent_sandbox/async_k8s_helper.py', '_ensure_initialized'),
-    # Render's SDK reads its own package metadata for the User-Agent of each client it builds. CLAI's
+    # Render's SDK reads its own package metadata for the User-Agent of each client it builds. Pax's
     # `/sandbox render` builds one in its synchronous `reopen`, which cannot offload it, so that the key
     # can come from `/keys`.
     ('render/version.py', 'get_version'),
@@ -770,7 +786,7 @@ def _function_names(path: str) -> tuple[str, ...]:
 
 
 def _blockbuster_packages() -> list[str]:
-    """The shipped packages the detector scans. The harness and CLAI aren't installed in every CI lane (`pydantic-evals`)."""
+    """The shipped packages the detector scans. The harness and Pax aren't installed in every CI lane (`pydantic-evals`)."""
     optional = [
         package
         for package in ('pydantic_ai_harness', 'pydantic_ai_pax')
@@ -1062,6 +1078,9 @@ DEPRECATED_MODELS_IN_RECORDINGS: tuple[str, ...] = (
     # Anthropic, retires 2026-11-30: https://github.com/pydantic/pydantic-ai/issues/14036
     'claude-sonnet-4-5',
     'claude-sonnet-4-5-20250929',
+    # Anthropic, retires 2027-01-22: https://github.com/pydantic/pydantic-ai/issues/14036
+    'claude-opus-4-5',
+    'claude-opus-4-5-20251101',
     # Anthropic, no retirement date: https://github.com/pydantic/pydantic-ai/issues/14036
     'claude-mythos-preview',
     # OpenAI, retires 2025-07-14: https://github.com/pydantic/pydantic-ai/issues/14037
@@ -2041,6 +2060,25 @@ def legacy_retry_prompt_part(
     if timestamp is not None:
         part.timestamp = timestamp
     return part
+
+
+def sse_data(encoded: Sequence[str]) -> list[dict[str, Any]]:
+    """The JSON payloads of a server-sent event stream, without its closing `[DONE]`."""
+    return [
+        json.loads(line.removeprefix('data: '))
+        for line in ''.join(encoded).splitlines()
+        if line.startswith('data: ') and line != 'data: [DONE]'
+    ]
+
+
+def tool_part_stamps(messages: Sequence[ModelMessage]) -> list[tuple[str, str, ToolUIVisibility | None]]:
+    """Each tool call and return part in `messages`, as `(part kind, tool name, ui_visibility stamp)`."""
+    return [
+        (part.part_kind, part.tool_name, part.ui_visibility)
+        for message in messages
+        for part in message.parts
+        if isinstance(part, (ToolCallPart, ToolReturnPart, NativeToolCallPart, NativeToolReturnPart))
+    ]
 
 
 _RequestPartT = TypeVar(

@@ -715,6 +715,11 @@ async def test_deferred_output_json_schema():
                             'default': None,
                             'title': 'Tool Kind',
                         },
+                        'ui_visibility': {
+                            'anyOf': [{'enum': ['public', 'redacted', 'private'], 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Ui Visibility',
+                        },
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Id'},
                         'provider_name': {
                             'anyOf': [{'type': 'string'}, {'type': 'null'}],
@@ -842,6 +847,11 @@ async def test_deferred_output_json_schema():
                             ],
                             'default': None,
                             'title': 'Tool Kind',
+                        },
+                        'ui_visibility': {
+                            'anyOf': [{'enum': ['public', 'redacted', 'private'], 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Ui Visibility',
                         },
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Id'},
                         'provider_name': {

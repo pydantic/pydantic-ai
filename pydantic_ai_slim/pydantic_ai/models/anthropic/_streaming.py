@@ -41,6 +41,7 @@ from anthropic.types.beta import (
     BetaWebFetchToolResultBlock,
     BetaWebSearchToolResultBlock,
 )
+from pydantic import TypeAdapter, ValidationError
 
 from ... import _utils
 from ..._context_size import mark_context_input_tokens
@@ -55,6 +56,7 @@ from ...messages import (
 from .. import StreamedResponse
 from .._decode_errors import MapStreamDecodeErrors
 from ._citations import citations_provider_details, fetched_page, map_citations
+from ._computer import ComputerBlock, NativeComputer
 from ._errors import map_api_errors
 from ._native_tools import (
     finalize_streamed_tool_search_call_part,
@@ -88,6 +90,9 @@ AnthropicEventStream: TypeAlias = _utils.PeekableAsyncStream[
 ]
 """A streamed response whose first event has been read, so an error that stops it is raised before it's processed."""
 
+_COMPUTER_INPUT_ADAPTER = TypeAdapter(dict[str, Any])
+"""Parses a streamed computer use call's input, which must be a JSON object."""
+
 
 @dataclass
 class AnthropicStreamedResponse(StreamedResponse):
@@ -104,6 +109,7 @@ class AnthropicStreamedResponse(StreamedResponse):
     _report_inference_geo: bool = False
     _thread_record: ThreadRecord | None = None
     """Records the message thread the request was sent in, if any, on the response `get()` builds."""
+    _native_computer: NativeComputer | None = None
     _from_fallback_model: bool = field(default=False, init=False)
     _current_block: BetaContentBlock | None = field(default=None, init=False)
     _ignored_block_indices: set[int] = field(default_factory=set[int], init=False)
@@ -116,6 +122,8 @@ class AnthropicStreamedResponse(StreamedResponse):
     _builtin_tool_calls: dict[str, NativeToolCallPart] = field(
         default_factory=dict[str, NativeToolCallPart], init=False
     )
+    _computer_input: list[str] = field(default_factory=list[str], init=False)
+    """The input JSON of the computer use call being streamed. Its `computer` call is sent once the input is complete."""
 
     def get(self) -> ModelResponse:
         response = super().get()
@@ -183,6 +191,9 @@ class AnthropicStreamedResponse(StreamedResponse):
 
     def _map_content_block_start(self, event: BetaRawContentBlockStartEvent) -> Iterator[ModelResponseStreamEvent]:  # noqa: C901
         self._current_block = current_block = event.content_block
+        if self._native_computer and self._native_computer.is_computer_call(current_block):
+            self._computer_input = []
+            return
         match current_block:
             # The SDK builds a block type it doesn't know as a `BetaTextBlock` carrying that type.
             case BetaTextBlock() if current_block.type != 'text':
@@ -341,6 +352,10 @@ class AnthropicStreamedResponse(StreamedResponse):
                     signature=delta.signature,
                     provider_name=self.provider_name,
                 )
+            case BetaInputJSONDelta() if self._native_computer and self._native_computer.is_computer_call(
+                self._current_block
+            ):
+                self._computer_input.append(delta.partial_json)
             case BetaInputJSONDelta():
                 yield from self._parts_manager.handle_tool_call_delta_events(
                     vendor_part_id=event.index,
@@ -405,8 +420,11 @@ class AnthropicStreamedResponse(StreamedResponse):
                 citations=citations,
             )
         current_block = self._current_block
+        native_computer = self._native_computer
         if event.index in self._ignored_block_indices:
             self._ignored_block_indices.remove(event.index)
+        elif native_computer and native_computer.is_computer_call(current_block):
+            yield from self._map_computer_block_stop(event.index, native_computer, current_block)
         elif isinstance(current_block, BetaMCPToolUseBlock):
             # A call with no arguments streams no input JSON, so restore the `{}` dropped at block start.
             no_input = (
@@ -433,6 +451,27 @@ class AnthropicStreamedResponse(StreamedResponse):
                     part=finalize_streamed_tool_search_call_part(existing),
                 )
         self._current_block = None
+
+    def _map_computer_block_stop(
+        self, index: int, native_computer: NativeComputer, current_block: BetaToolUseBlock
+    ) -> Iterator[ModelResponseStreamEvent]:
+        # With no input deltas, the whole input came with the block's start event.
+        computer_args: dict[str, Any] = {**current_block.input}
+        if self._computer_input:
+            raw_input = ''.join(self._computer_input)
+            try:
+                computer_args = _COMPUTER_INPUT_ADAPTER.validate_json(raw_input)
+            except ValidationError:
+                # A call cut off by `max_tokens` streams only part of its input. It becomes a plain `computer` call
+                # with the raw input, so the agent handles it like any other incomplete or invalid tool call.
+                yield from self._parts_manager.handle_tool_call_delta_events(
+                    vendor_part_id=index, tool_name=native_computer.name, args=raw_input, tool_call_id=current_block.id
+                )
+                return
+        block = ComputerBlock(id=current_block.id, name=current_block.name, input=computer_args)
+        yield self._parts_manager.handle_part(
+            vendor_part_id=block['id'], part=native_computer.map_computer_call(block, self.provider_name)
+        )
 
     async def close_stream(self) -> None:
         await self._response.source.close()

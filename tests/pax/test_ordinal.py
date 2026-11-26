@@ -618,7 +618,7 @@ async def test_without_a_terminal_only_the_chosen_method_counts(vault: Vault, mo
 async def test_no_sign_in_loads_without_tools_and_says_how_never_opening_the_browser(
     vault: Vault, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, settings: dict[str, JsonValue]
 ) -> None:
-    """Loading waits for every plugin, so a browser left open at load would leave CLAI unable to run anything."""
+    """Loading waits for every plugin, so a browser left open at load would leave Pax unable to run anything."""
     SignIn.unfinished = True
     for attached in (True, False):
         terminal(monkeypatch, attached=attached)

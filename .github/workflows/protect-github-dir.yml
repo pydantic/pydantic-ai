@@ -7,17 +7,19 @@ name: Protect .github
 # an external contributor touches that directory; a maintainer carries any legitimate
 # change forward in their own PR.
 #
-# Deliberately no `paths:` filter on the trigger. A `pull_request_target` filtered to
+# Deliberately no `paths:` filter on the trigger. A `pull_request` filtered to
 # `.github/**` would not run at all on the PRs that don't touch it, and a required check
 # that never runs stays *pending* forever — blocking every merge. The job runs on every
 # PR and exits 0 when nothing protected changed.
 
 on:
-  # zizmor: ignore[dangerous-triggers] -- pull_request_target is required so the guard runs
-  # from the base repository's default branch (a fork can't disable it by editing this file)
-  # and can comment on fork PRs. Nothing here checks out or executes PR code: it reads PR
+  # The PR's own copy of this file runs. An author with write access may change `.github/`
+  # anyway. A GitHub App cannot push `.github/workflows/` without the `workflows` permission,
+  # which `pydanty[bot]` lacks, so its branches cannot change this file. A fork can, so the merge
+  # gate is `PR Review Gates`' `Gate: .github changes by a maintainer` status, which default-branch
+  # code computes with the same rule. Nothing here checks out or executes PR code: it reads PR
   # metadata via the API.
-  pull_request_target:
+  pull_request:
     # `edited` is in the list because it is the only event fired when a PR's BASE branch
     # changes, and the verdict is a diff against that base: without it a green check
     # survives a base switch that changes which files the PR actually touches.
@@ -92,9 +94,12 @@ jobs:
           fi
 
           # `previous_filename` catches a rename *out of* `.github/`, which changes the
-          # directory just as much as an edit in place.
-          PROTECTED_FILES=$(printf '%s\n' "$PR_FILES" \
-            | jq -r '.filename, (.previous_filename // empty)' | grep '^\.github/' | sort -u) || true
+          # directory just as much as an edit in place. `jq` gets its own assignment so that
+          # `set -e` fails the guard when it errors or is missing: behind the `|| true`, an empty
+          # or partial list would read as "No files under .github/ changed." The `|| true` stays
+          # on the grep pipeline, where grep exits 1 when nothing matches.
+          CHANGED_PATHS=$(printf '%s\n' "$PR_FILES" | jq -r '.filename, (.previous_filename // empty)')
+          PROTECTED_FILES=$(printf '%s\n' "$CHANGED_PATHS" | grep '^\.github/' | sort -u) || true
 
           if [ -z "$PROTECTED_FILES" ]; then
             echo "No files under .github/ changed."
@@ -162,7 +167,9 @@ jobs:
               "Files under \`.github/\` changed by this PR:" \
               "$PROTECTED_LIST" \
               "$MARKER")
-            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT"
+            # A fork PR's run has a read-only token; `Gate: .github changes by a maintainer` still judges it.
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT" \
+              || echo "::warning::Could not post the explanation; a fork pull request's token is read-only."
           else
             echo "Explanatory comment already posted; not repeating it."
           fi

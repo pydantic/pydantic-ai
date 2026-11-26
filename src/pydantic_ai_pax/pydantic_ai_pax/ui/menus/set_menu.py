@@ -1,4 +1,4 @@
-"""The `/set` menu: CLAI's own settings, edited through the shared field editor."""
+"""The `/set` menu: Pax's own settings, edited through the shared field editor."""
 
 from collections.abc import Callable, Collection
 

@@ -63,7 +63,7 @@ ACTIVE = timedelta(days=14)
 
 SourceFilter = ImportSource | Literal['clai'] | None
 _FILTERS: tuple[SourceFilter, ...] = (None, 'clai', *IMPORT_SOURCES)
-"""What `f` cycles through: every session, CLAI's own, then each agent's imports."""
+"""What `f` cycles through: every session, Pax's own, then each agent's imports."""
 
 
 def colored(text: str, *, role: str = theme.INFO, bold: bool = False) -> str:
@@ -165,7 +165,7 @@ class SessionBrowser:
         """What the source filter lists, for the header and notices."""
         if self.source is None:
             return 'all'
-        return 'CLAI' if self.source == 'clai' else source_label(self.source)
+        return 'Pax' if self.source == 'clai' else source_label(self.source)
 
     def _fold(self) -> None:
         """Gather each project's removed and idle worktrees, when it also has active ones to list on their own."""
@@ -282,7 +282,7 @@ class SessionBrowser:
         shown = ', archived included' if self.archived else ''
         source = f' | Source: {self.source_name()}' if self.source is not None else ''
         header = plain(
-            f'CLAI > Resume session    {len(self.visible)} sessions / {len(self.projects)} projects{shown}{source}'
+            f'Pax > Resume session    {len(self.visible)} sessions / {len(self.projects)} projects{shown}{source}'
         )
         if self.mode == 'preview':
             preview = self.preview_text[:24_000]
@@ -415,12 +415,12 @@ class SessionBrowser:
         if self.mode in ('search', 'rename'):
             return plain(f'{self.mode}: {self.buffer} - Enter apply - Esc cancel')
         if self.mode == 'preview':
-            return 'Up/Down scroll - Esc back - Ctrl-C close'
+            return 'Up/Down scroll - Esc back - Ctrl+C close'
         if self.mode == 'projects':
-            return 'Enter/Right open project - Up/Down move - / search - f source - h archived - Esc/Ctrl-C close'
+            return 'Enter/Right open project - Up/Down move - / search - f source - h archived - Esc/Ctrl+C close'
         return (
             'Left/Esc projects - Enter resume - Up/Down move - Right preview - / search - s sort - f source - '
-            'r rename - d delete - a archive - h archived - m more - Ctrl-C close'
+            'r rename - d delete - a archive - h archived - m more - Ctrl+C close'
         )
 
     def handle_key(self, key: str) -> str | None:

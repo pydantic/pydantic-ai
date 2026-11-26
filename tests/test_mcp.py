@@ -11,13 +11,16 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import itertools
 import json
+import os
 import re
 import subprocess
 import sys
 import warnings
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -68,6 +71,7 @@ from pydantic_ai.usage import RunUsage
 from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
 
 from .conftest import IsStr, try_import
+from .harness._regex_steps import linearity_failure
 
 with try_import() as logfire_imports_successful:
     import logfire
@@ -95,6 +99,8 @@ with try_import() as imports_successful:
     from pydantic_ai import _mcp, mcp as mcp_module
     from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 
+    from .mcp_server import parameterized_prompt
+
     Annotations = mcp_types.Annotations
     AudioContent = mcp_types.AudioContent
     BlobResourceContents = mcp_types.BlobResourceContents
@@ -108,6 +114,7 @@ with try_import() as imports_successful:
     from pydantic_ai import _mcp_compat
     from pydantic_ai._mcp_compat import wire_name
     from pydantic_ai.mcp import (
+        _ENV_VAR_PATTERN,  # pyright: ignore[reportPrivateUsage]
         MCPError,
         MCPToolset,
         Prompt,
@@ -117,6 +124,7 @@ with try_import() as imports_successful:
         ResourceAnnotations,
         ResourceTemplate,
         ServerCapabilities,
+        _expand_env_vars,  # pyright: ignore[reportPrivateUsage]
         _make_httpx_client_factory,  # pyright: ignore[reportPrivateUsage]
         load_mcp_toolsets,
     )
@@ -594,10 +602,10 @@ def _register_prompts(server: FastMCP[None]) -> None:
         """A simple prompt template."""
         return 'This is a simple prompt'
 
-    @server.prompt()
-    def parameterized_prompt(name: str, topic: str) -> str:
-        """A prompt template with parameters."""
-        return f"Hello {name}, let's talk about {topic}!"
+    # Defined in `tests/mcp_server.py`, which doesn't postpone annotations: before 4.2.6, FastMCP
+    # reads a postponed `str` annotation as the string `'str'` and appends a JSON-schema hint to the
+    # argument's description (https://github.com/PrefectHQ/fastmcp/issues/5318).
+    server.prompt(parameterized_prompt)
 
     @server.prompt()
     def annotated_text_prompt() -> list[Message]:
@@ -1668,20 +1676,8 @@ A later <pyai:context> element with the same id replaces the earlier one and sta
                     name='parameterized_prompt',
                     description='A prompt template with parameters.',
                     arguments=[
-                        PromptArgument(
-                            name='name',
-                            # FastMCP generates this text and has reworded it across releases; pin only
-                            # that the argument's JSON schema is conveyed.
-                            description=IsStr(regex=r'.*\{"type":"string"\}.*'),
-                            required=True,
-                        ),
-                        PromptArgument(
-                            name='topic',
-                            # FastMCP generates this text and has reworded it across releases; pin only
-                            # that the argument's JSON schema is conveyed.
-                            description=IsStr(regex=r'.*\{"type":"string"\}.*'),
-                            required=True,
-                        ),
+                        PromptArgument(name='name', description='Who to greet.', required=True),
+                        PromptArgument(name='topic', description='What to talk about.', required=True),
                     ],
                     metadata={'fastmcp': {'tags': []}},
                 ),
@@ -2868,13 +2864,22 @@ class TestLoadMCPToolsets:
 
     async def test_load_mcp_toolsets_expands_env_vars(self, monkeypatch: pytest.MonkeyPatch):
         """`${VAR_NAME}` references in the config are resolved from `os.environ`; default-syntax
-        (`${VAR_NAME:-fallback}`) returns the fallback when unset; missing required vars raise."""
+        (`${VAR_NAME:-fallback}`) returns the fallback when unset; missing required vars raise. A reference that's
+        never closed or is malformed stays as written, and doesn't stop a closed one after it from expanding."""
         monkeypatch.setenv('MCP_TEST_TOKEN', 'secret-value')
         config = {
             'mcpServers': {
                 'alpha': {
                     'url': 'https://${MCP_TEST_HOST:-localhost:8000}/mcp',
-                    'headers': {'Authorization': 'Bearer ${MCP_TEST_TOKEN}'},
+                    'headers': {
+                        'Authorization': 'Bearer ${MCP_TEST_TOKEN}',
+                        'X-Unclosed': '${MCP_TEST_TOKEN',
+                        'X-Unclosed-Then-Closed': '${a:b ${MCP_TEST_TOKEN}',
+                        'X-Unclosed-Default': '${MCP_TEST_HOST:-x',
+                        'X-Empty-Default': '${MCP_TEST_HOST:-}',
+                        'X-Malformed-Then-Closed': '${:-x} ${MCP_TEST_TOKEN:x} ${MCP_TEST_TOKEN}',
+                        'X-Default-Then-Unclosed': '${MCP_TEST_UNSET:-$5} ${MCP_TEST_TOKEN',
+                    },
                 },
                 # `args` is the list-valued field, so it covers expansion inside a list.
                 'beta': {'command': 'python', 'args': ['-m', '${MCP_TEST_TOKEN}']},
@@ -2888,7 +2893,15 @@ class TestLoadMCPToolsets:
         wrapped = toolsets[0].wrapped  # type: ignore[attr-defined]
         assert isinstance(wrapped, MCPToolset)
         assert isinstance(wrapped.client.transport, StreamableHttpTransport)
-        assert wrapped.client.transport.headers == {'Authorization': 'Bearer secret-value'}
+        assert wrapped.client.transport.headers == {
+            'Authorization': 'Bearer secret-value',
+            'X-Unclosed': '${MCP_TEST_TOKEN',
+            'X-Unclosed-Then-Closed': '${a:b secret-value',
+            'X-Unclosed-Default': '${MCP_TEST_HOST:-x',
+            'X-Empty-Default': '',
+            'X-Malformed-Then-Closed': '${:-x} ${MCP_TEST_TOKEN:x} secret-value',
+            'X-Default-Then-Unclosed': '$5 ${MCP_TEST_TOKEN',
+        }
         assert str(wrapped.client.transport.url) == 'https://localhost:8000/mcp'
 
         stdio = toolsets[1].wrapped  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
@@ -3014,6 +3027,43 @@ class TestLoadMCPToolsets:
             config_path.write_text(json.dumps(config), encoding='utf-8')
             toolsets = load_mcp_toolsets(config_path)
         assert len(toolsets) == 1
+
+    def test_env_var_expansion_expands_exactly_the_closed_references(self, monkeypatch: pytest.MonkeyPatch):
+        """On every short string, expansion gives what substituting each closed `${...}` reference gives, so `$`, `{` and
+        `:` in a name or default, an undefined variable and `${VAR:-}` behave as before, and an unclosed one stays as is.
+
+        It calls `_expand_env_vars` directly: loading tens of thousands of configs through `load_mcp_toolsets` would make
+        it expensive, and `test_load_mcp_toolsets_expands_env_vars` pins the cases users write through that API."""
+        monkeypatch.setenv('a', 'A')
+        closed_reference = re.compile(r'\$\{([^}:]+)(:-([^}]*))?\}')
+
+        def substitute(match: re.Match[str]) -> str:
+            name, separator, default = match.groups()
+            if name in os.environ:
+                return os.environ[name]
+            if separator is None:
+                raise ValueError(f'Environment variable ${{{name}}} is not defined')
+            return default
+
+        def outcome(expand: Callable[[str], object], value: str) -> object:
+            try:
+                return expand(value)
+            except ValueError as error:
+                return error.args
+
+        for length in range(7):
+            for characters in itertools.product('${}:-a', repeat=length):
+                value = ''.join(characters)
+                assert outcome(_expand_env_vars, value) == outcome(partial(closed_reference.sub, substitute), value), (
+                    value
+                )
+
+    def test_env_var_expansion_takes_linear_time(self):
+        """A `${` that's never closed doesn't make each `${` after it rescan the rest of the string.
+
+        The step counter bounds the pattern's scan itself; through `load_mcp_toolsets` only a huge input on the wall
+        clock would show it, which "Test cost" in `tests/AGENTS.md` rules out."""
+        assert linearity_failure(_ENV_VAR_PATTERN.pattern, _ENV_VAR_PATTERN.flags) is None
 
 
 def test_construction_does_not_emit_warnings(recwarn: Any) -> None:

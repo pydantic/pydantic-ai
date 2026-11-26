@@ -3,12 +3,12 @@
 from termflow.live import Region, Widget
 
 from pydantic_ai_pax.ui.prompt.prompt_transcript import TranscriptBuffer
-from pydantic_ai_pax.ui.rendering import theme
 
 _Position = tuple[int, int]
 """A row: the item's id and the row within it."""
 
 SCROLLED_HINT = ' ↓ more below · PgDn '
+"""Shown in a rule under the transcript while scrolled back, so it covers no transcript text."""
 
 
 class TranscriptView(Widget):
@@ -118,15 +118,18 @@ class TranscriptView(Widget):
         if not self._shown:
             return (False,)
         after = self._after(self._shown[-1])
-        return tuple(
-            self.transcript.continued(item, width=self._width)[row]
-            for item, row in (*self._shown, *((after,) if after is not None else ()))
-        ) + ((False,) if after is None else ())
+        positions = (*self._shown, *((after,) if after is not None else ()))
+        # Once per item, not per row: the panel reads them every paint, and an unfinished line wraps again each time.
+        flags = {
+            item: self.transcript.continued(item, width=self._width) for item in dict.fromkeys(i for i, _ in positions)
+        }
+        # A part can change its rows between a paint and a click (one that ends renders again),
+        # so a shown row may no longer exist; it joins nothing until the next paint.
+        return tuple(row < len(flags[item]) and flags[item][row] for item, row in positions) + (
+            (False,) if after is None else ()
+        )
 
     def draw(self, region: Region, focused: bool) -> None:
-        """Paint into `region`, with a hint while scrolled away from the newest output."""
+        """Paint into `region`; `PromptSurface` shows `SCROLLED_HINT` while scrolled away from the newest output."""
         for y, row in enumerate(self.window(width=max(1, region.width), height=region.height)):
             region.ansi(0, y, row)
-        if self.anchor is not None and region.height > 0:
-            hint = SCROLLED_HINT[: region.width]
-            region.ansi(region.width - len(hint), region.height - 1, f'{theme.sgr(theme.MUTED)}\x1b[7m{hint}\x1b[0m')

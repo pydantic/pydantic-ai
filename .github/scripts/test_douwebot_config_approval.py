@@ -14,7 +14,14 @@ import pytest
 import yaml
 from category_classify_opencode import TOOL_GUIDANCE, Classification
 from douwebot_opencode_run import OPENCODE_GO, ZAI, ZAI_BACKUP
-from publish_douwebot_review import REVIEW_ENGINES, Finding, ReviewEngine, ReviewResult, publication
+from publish_douwebot_review import (
+    EARLIER_REVIEW_ATTRIBUTIONS,
+    REVIEW_ENGINES,
+    Finding,
+    ReviewEngine,
+    ReviewResult,
+    publication,
+)
 
 WORKFLOW = Path(__file__).parent.parent / 'workflows' / 'bots.yml'
 APPROVAL_LABEL = 'douwebot:review-agent-config'
@@ -156,6 +163,29 @@ def test_ordinary_douwebot_keeps_config_denial_and_author_exemption(tmp_path: Pa
 
 
 @pytest.mark.skipif(shutil.which('jq') is None, reason='the gh stub filters payloads with jq')
+@pytest.mark.parametrize(
+    ('overrides', 'allowed'),
+    [
+        ({'FAKE_PERMISSION': 'write'}, True),
+        ({'FAKE_PERMISSION': 'admin'}, True),
+        ({'FAKE_PERMISSION': 'read'}, False),
+        ({'FAKE_PERMISSION': 'write', 'SENDER_TYPE': 'Bot'}, False),
+        ({'FAKE_PERMISSION_ERROR': '1'}, False),
+    ],
+    ids=['write', 'admin', 'triage-or-read', 'app', 'api-error'],
+)
+def test_only_a_write_user_can_request_an_ordinary_review(
+    tmp_path: Path, overrides: dict[str, str], allowed: bool
+) -> None:
+    """Triage can add labels too, so the `douwebot` label counts only from a write user."""
+    guard = _step('Verify a maintainer requested the review')
+    assert guard['if'] == "github.event.label.name == 'douwebot'"
+    assert _workflow()['jobs']['douwebot-opencode']['steps'][0] == guard
+    result, _ = _run_step(guard, tmp_path, {'SENDER': 'maintainer', 'SENDER_TYPE': 'User', **overrides})
+    assert (result.returncode == 0) is allowed
+
+
+@pytest.mark.skipif(shutil.which('jq') is None, reason='the gh stub filters payloads with jq')
 @pytest.mark.parametrize('permission', ['write', 'admin'])
 def test_first_attempt_user_with_permission_can_review_current_labeled_head(tmp_path: Path, permission: str):
     """A qualifying user can authorize the one live head on the first attempt."""
@@ -207,8 +237,9 @@ def test_invalid_approval_events_fail_closed(tmp_path: Path, overrides: dict[str
 def test_workflow_routes_events_and_cancellation_without_relying_on_label_presence():
     """Review, cancellation, cleanup, and label jobs follow their intended events."""
     workflow = _workflow()
-    trigger = workflow[True]['pull_request_target']
+    trigger = workflow[True]['pull_request']
     assert trigger['types'] == ['opened', 'synchronize', 'edited', 'labeled', 'unlabeled']
+    assert 'pull_request_target' not in workflow[True]
 
     jobs = workflow['jobs']
     review = jobs['review']
@@ -216,13 +247,23 @@ def test_workflow_routes_events_and_cancellation_without_relying_on_label_presen
         "github.event.action == 'labeled' && (github.event.label.name == 'douwebot' "
         "|| github.event.label.name == 'douwebot:review-agent-config')"
     )
-    assert jobs['prior-findings']['if'] == review_requested
+    same_repository = 'github.event.pull_request.head.repo.full_name == github.repository'
+    assert jobs['prior-findings']['if'] == f'{same_repository} && {review_requested}'
     assert review['needs'] == 'prior-findings'
-    assert review['if'] == f"!cancelled() && needs.prior-findings.outputs.review_url == '' && {review_requested}"
-    assert jobs['size-label']['if'] == (
-        "github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'edited'"
+    assert review['if'] == (
+        f"!cancelled() && needs.prior-findings.outputs.review_url == '' && {same_repository} && {review_requested}"
     )
-    assert jobs['category-classify']['if'] == "github.event.action == 'opened' || github.event.action == 'synchronize'"
+    assert jobs['trust']['if'] == (
+        f"{same_repository} && github.actor != 'dependabot[bot]' "
+        "&& (github.event.action == 'opened' || github.event.action == 'synchronize' "
+        "|| github.event.action == 'edited' "
+        "|| (github.event.action == 'labeled' && github.event.label.name == 'trusted:ci-run'))"
+    )
+    assert jobs['size-label']['needs'] == 'trust'
+    assert jobs['size-label']['if'] == "needs.trust.outputs.trusted == 'true'"
+    for name in ('category-classify', 'durable-exec-label'):
+        assert jobs[name]['needs'] == 'trust'
+        assert jobs[name]['if'] == "needs.trust.outputs.trusted == 'true' && github.event.action != 'edited'"
     assert workflow['concurrency']['group'] == (
         "pr-bots-${{ github.event.pull_request.number }}${{ github.event.action == 'edited' && '-size' "
         "|| ((github.event.action == 'labeled' "
@@ -284,7 +325,7 @@ def test_workflow_only_publishes_the_successful_review() -> None:
     assert 'contents/.github/scripts/douwebot_usage_limit.py?ref=${TRUSTED_REF}' in detector['run']
     assert 'pip install' not in detector['run']
     assert 'python3 -I "$RUNNER_TEMP/douwebot_usage_limit.py"' in detector['run']
-    assert detector['env']['TRUSTED_REF'] == '${{ github.sha }}'
+    assert detector['env']['TRUSTED_REF'] == '${{ github.event.repository.default_branch }}'
     assert fallback['needs'] == 'review'
     assert fallback['if'] == "needs.review.result == 'success' && needs.review.outputs.fallback == 'true'"
     assert 'douwebot-opencode' in publish['needs']
@@ -489,6 +530,21 @@ def _douwebot_review(
             False,
             '',
             id='clean-opencode-zai',
+        ),
+        pytest.param(
+            (
+                zai := _douwebot_review(
+                    16, 'APPROVED', ReviewResult(verdict='APPROVE', comments=[], discussion=''), engine='opencode-zai'
+                )
+            )
+            | {
+                'body': zai['body'].replace(
+                    REVIEW_ENGINES['opencode-zai'], EARLIER_REVIEW_ATTRIBUTIONS['opencode-zai'][0]
+                )
+            },
+            False,
+            '',
+            id='clean-opencode-zai-on-an-earlier-model',
         ),
         pytest.param(
             _douwebot_review(

@@ -605,7 +605,7 @@ def test_claude_code_import_starts_at_the_compaction_summary(tmp_path: Path, seg
 async def test_claude_code_sub_agents_become_tasks(tmp_path: Path) -> None:
     path = claude_agent_session(tmp_path)
     review, child = await run_sync(claude_code_sessions.tasks, path, 'conversation')
-    # CLAI runs `general-purpose` as itself, by the name a resume checks.
+    # Pax runs `general-purpose` as itself, by the name a resume checks.
     assert (review.agent_name, review.prompt, review.output) == ('self', 'Review the diff', 'Looks good')
     assert (review.conversation_id, review.status, review.outcome, review.background) == (
         'conversation',
@@ -613,7 +613,7 @@ async def test_claude_code_sub_agents_become_tasks(tmp_path: Path) -> None:
         'ok',
         True,
     )
-    # Already reported in the parent's history, so never delivered again; resumable as CLAI's own agent.
+    # Already reported in the parent's history, so never delivered again; resumable as Pax's own agent.
     assert review.delivered and review.resumable
     assert context(review.messages[0].parts[0])[1].startswith('This sub-agent conversation (abc) was imported')
     # Stopped before it reported: resumable, and delivered, so opening the session starts no turn by itself.
@@ -631,7 +631,7 @@ async def test_claude_code_sub_agents_become_tasks(tmp_path: Path) -> None:
             assert task.messages[-1].parts[-1] == review.messages[-1].parts[-1]
             return 'Resumed'
 
-        # The model resumes it as CLAI's own task; from then on, it is CLAI's.
+        # The model resumes it as Pax's own task; from then on, it is Pax's.
         await owner.delegate(
             agent_name='self',
             prompt='Go on',
@@ -1119,7 +1119,7 @@ def test_codex_sub_agents_become_tasks(tmp_path: Path) -> None:
         ),
         ('agent_message:message', 'Plain'),
     ]
-    # The final answer becomes the task's report, as a CLAI task reports.
+    # The final answer becomes the task's report, as a Pax task reports.
     [report] = [p for p in requests if isinstance(p, TaskOutputPart)]
     assert report == replace(
         replace(research, conversation_id='', output='Found it', generation=1).report(),
@@ -1239,7 +1239,7 @@ async def test_import_refreshes_only_an_untouched_copy(tmp_path: Path) -> None:
     refreshed = await store.get(conversation_id=conversation_id)
     # Ahead of the note that closes the import.
     assert [p.content for p in refreshed.messages[-2].parts if isinstance(p, TextPart)] == ['Added', 'And more']
-    # Once CLAI continues it, the copy is CLAI's own.
+    # Once Pax continues it, the copy is Pax's own.
     continued = await store.save(summary=refreshed.summary, messages=refreshed.messages[:1])
     assert await save_import(store, await run_sync(find_import, 'codex', CODEX_ID)) == conversation_id
     assert (await store.get(conversation_id=conversation_id)).summary == continued
@@ -1296,10 +1296,10 @@ async def test_resume_browser_lists_imports_beside_saved_sessions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     service, store = sessions_service(tmp_path)
-    await service.session.prompt('A CLAI session')
+    await service.session.prompt('A Pax session')
     native_id = service.session.summary.id
     await service.session.clear()
-    # Older than the CLAI session, so the browser lists it first.
+    # Older than the Pax session, so the browser lists it first.
     os.utime(claude_session(tmp_path), (2_000, 2_000))
     os.utime(codex_session(tmp_path / 'other'), (1_000, 1_000))
     seen: list[list[str]] = []
@@ -1310,14 +1310,14 @@ async def test_resume_browser_lists_imports_beside_saved_sessions(
         browser.reload()
         claude = next(entry for entry in browser.entries if entry.tags == ('claude',))
         assert 'user: Fix the parser please' in browser.preview(claude.id)
-        assert 'A CLAI session' in browser.preview(native_id)
+        assert 'A Pax session' in browser.preview(native_id)
         with pytest.raises(LookupError):
             browser.preview('missing')
         return claude.id
 
     monkeypatch.setattr(SessionBrowser, 'run', select)
     assert (await service.command([])).startswith('Resumed Fix the parser')
-    assert seen[0][0] == 'A CLAI session'
+    assert seen[0][0] == 'A Pax session'
     imported_id = service.session.summary.id
     assert len(await store.listing()) == 2
 
@@ -1380,7 +1380,7 @@ def test_browser_marks_sessions_to_import() -> None:
             message_count=123,
             total_tokens=1_234_567,
         ),
-        # CLAI's own, with a topic tag that names a source.
+        # Pax's own, with a topic tag that names a source.
         ConversationSummary(id=str(uuid4()), workspace='/w', title='About Claude', tags=('claude',)),
     ]
     importing = [True]

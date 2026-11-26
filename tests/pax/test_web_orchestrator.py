@@ -101,7 +101,7 @@ def test_the_orchestrator_chat_streams_asks_and_is_saved(make_web: MakeWeb, tmp_
         seen, asked = orchestrator_until(socket, QuestionAsked)
         [started] = [event for event in seen if isinstance(event, TurnStarted)]
         assert started.item is not None and started.item.text == 'What is there?'
-        # With it, the history the turn starts from, as another CLAI may have changed it since the page loaded.
+        # With it, the history the turn starts from, as another Pax may have changed it since the page loaded.
         [starting] = [event for event in seen if isinstance(event, OrchestratorState)]
         assert starting.running and starting.items == [started.item]
         tools = [event.item for event in seen if isinstance(event, ItemAdded) and event.item.kind == 'tool']
@@ -125,13 +125,13 @@ def test_the_orchestrator_chat_streams_asks_and_is_saved(make_web: MakeWeb, tmp_
         ['user', 'tool', 'tool', 'assistant'],
     )
     assert state['items'][-1]['text'] == 'All set.'
-    saved = tmp_path / 'state' / 'pydantic-clai2' / 'orchestrator.json'
+    saved = tmp_path / 'state' / 'pydantic-ai-pax' / 'orchestrator.json'
     assert saved.is_file() and saved.stat().st_mode & 0o777 == 0o600
-    # A restarted CLAI reads the same conversation; the session's own stays empty.
+    # A restarted Pax reads the same conversation; the session's own stays empty.
     again = Orchestrator(service=web_.plugin.service)
     assert [item.kind for item in web_.portal.call(again.state).items] == ['user', 'tool', 'tool', 'assistant']
     assert web_.get('/api/state').json()['items'] == []
-    # Another CLAI starting a new chat starts one here too: the file is read again between turns.
+    # Another Pax starting a new chat starts one here too: the file is read again between turns.
     web_.portal.call(again.clear)
     assert web_.get('/api/orchestrator/state').json()['items'] == []
 
@@ -191,7 +191,7 @@ def test_stopping_failing_and_starting_over(make_web: MakeWeb, tmp_path: Path) -
 
         assert web_.post('/api/orchestrator/clear').status_code == 204
         assert orchestrator_until(socket, OrchestratorState)[1].items == []
-    assert not (tmp_path / 'state' / 'pydantic-clai2' / 'orchestrator.json').exists()
+    assert not (tmp_path / 'state' / 'pydantic-ai-pax' / 'orchestrator.json').exists()
 
     # `/web stop` stops a running turn: no page is left to watch or answer it.
     web_.post('/api/orchestrator/input', {'text': 'Work until I stop you'})
@@ -260,7 +260,7 @@ def test_a_conversation_it_cannot_read_or_without_a_model(make_web: MakeWeb) -> 
 
 
 def test_a_turn_another_clai_overtook_is_not_kept(make_web: MakeWeb) -> None:
-    """A turn whose file another CLAI changed meanwhile fails rather than writing over that CLAI's chat."""
+    """A turn whose file another Pax changed meanwhile fails rather than writing over that Pax's chat."""
     web_ = orchestrated(make_web)
     other = Orchestrator(service=web_.plugin.service)
     with web_.client.websocket_connect(
@@ -275,6 +275,7 @@ def test_a_turn_another_clai_overtook_is_not_kept(make_web: MakeWeb) -> None:
         web_.post('/api/orchestrator/interrupt')
         ended = orchestrator_until(socket, TurnEnded)[1]
     assert ended == TurnEnded(
-        outcome='failed', error='Another CLAI changed the orchestrator chat during this turn, so it was not kept.'
+        outcome='failed',
+        error='Another Pax process changed the orchestrator chat during this turn, so it was not kept.',
     )
-    assert web_.get('/api/orchestrator/state').json()['items'] == [], "the other CLAI's new chat stands"
+    assert web_.get('/api/orchestrator/state').json()['items'] == [], "the other Pax's new chat stands"

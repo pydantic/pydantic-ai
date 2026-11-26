@@ -26,6 +26,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
     NativeToolReturnPart,
     SystemPromptPart,
     TextContent,
@@ -947,6 +948,28 @@ def test_response_part_metadata_is_not_digested():
         return continuation_digest(history_hasher([request], None), [replace(part, metadata=metadata)])
 
     assert digest({'handle': object()}) == digest(None)
+
+
+@pytest.mark.parametrize(
+    'part',
+    [
+        NativeToolCallPart(tool_name='web_search', args={'query': 'q'}, provider_name='anthropic'),
+        NativeToolReturnPart(tool_name='web_search', content='ok', provider_name='anthropic'),
+    ],
+)
+def test_ui_visibility_stamp_is_not_digested(part: NativeToolCallPart | NativeToolReturnPart):
+    """A response part's `ui_visibility` stamp is left out of the digest, as it's never sent.
+
+    A UI adapter run with a non-public `default_ui_visibility` stamps native tool parts after the response's digest
+    was taken, so a stamp in the digest would end the thread on the next request. A unit test, as a native tool turn
+    through a UI adapter needs a server tool recording.
+    """
+    request = ModelRequest.user_text_prompt('Hi')
+
+    def digest(stamped: NativeToolCallPart | NativeToolReturnPart) -> str:
+        return continuation_digest(history_hasher([request], None), [stamped])
+
+    assert digest(replace(part, ui_visibility='redacted')) == digest(part)
 
 
 @pytest.mark.parametrize('stream', [False, True])

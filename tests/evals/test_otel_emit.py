@@ -380,7 +380,7 @@ def test_baggage_attached_to_event_attributes(capfire: CaptureLogfire):
 
 
 def test_baggage_does_not_overwrite_standard_attrs(capfire: CaptureLogfire):
-    """Standard `gen_ai.*`/`error.type` attrs win over conflicting baggage keys."""
+    """Baggage cannot change the `gen_ai.evaluation.*` attributes an event writes itself."""
     ctx = _baggage.set_baggage('gen_ai.evaluation.target', 'baggage_target')
     ctx = _baggage.set_baggage('gen_ai.evaluation.score.label', 'baggage_label', ctx)
     token = _otel_context.attach(ctx)
@@ -421,6 +421,29 @@ def test_baggage_cannot_set_logfire_scorer_attrs(capfire: CaptureLogfire):
     assert attrs['logfire.scorer.run_id'] == _RUN_ID
     # Log processors that copy a record's context baggage onto it (logfire>=6 does by default) find none.
     assert _baggage.get_all(record.context) == {}
+
+
+def test_baggage_cannot_set_gen_ai_evaluation_or_error_type_attrs(capfire: CaptureLogfire):
+    """Baggage cannot set `gen_ai.evaluation.*` or `error.type` attributes on an event; other baggage keys still land."""
+    ctx = _baggage.set_baggage('gen_ai.evaluation.score.value', '1.0')
+    ctx = _baggage.set_baggage('error.type', 'ValueError', ctx)
+    ctx = _baggage.set_baggage('tenant', 'acme', ctx)
+    token = _otel_context.attach(ctx)
+    try:
+        emit_otel_events(
+            results=[_result('X', 'pass')],
+            failures=[],
+            target=_target('f'),
+            scoring_run_id=_RUN_ID,
+            include_baggage=True,
+        )
+    finally:
+        _otel_context.detach(token)
+
+    attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
+    assert 'gen_ai.evaluation.score.value' not in attrs
+    assert 'error.type' not in attrs
+    assert attrs['tenant'] == 'acme'
 
 
 def test_include_baggage_false_skips_snapshot(capfire: CaptureLogfire):

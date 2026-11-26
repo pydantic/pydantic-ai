@@ -37,7 +37,7 @@ class Splash:
         if not self._enabled or self._thread is not None:
             return
         sys.stdout, sys.stderr = self._buffers
-        self._thread = threading.Thread(target=self._run, name='clai-startup-splash', daemon=True)
+        self._thread = threading.Thread(target=self._run, name='pax-startup-splash', daemon=True)
         self._thread.start()
 
     def frame(self, phase: int) -> str:

@@ -1,12 +1,13 @@
 name: PR Review Checks
 
 # Default-branch code reviews each pull request head as data with a read-only model, and
-# publishes one `PR Review Checks` commit status on that head. Each check is a config entry in
+# publishes one `PR Review Checks` commit status on that head. A fork pull request gets no review:
+# its run holds no secrets and a read-only token. Each check is a config entry in
 # `.github/scripts/pr_review_checks.py`. `.github/workflows/AGENTS.md` documents the
 # trust boundaries, the run label and the acceptance label.
 
 on:
-  pull_request_target: # zizmor: ignore[dangerous-triggers] -- runs only default-branch code; the head is read as data by a model without write tools
+  pull_request:
     types: [opened, reopened, synchronize, edited, labeled]
   # Every head is reviewed before admission; report success on the merge-group SHA.
   merge_group:
@@ -16,7 +17,7 @@ permissions: {}
 
 concurrency:
   # Unrelated label events and edits that keep the base use their own groups, so they cannot replace a queued review.
-  group: pr-review-checks-${{ github.event.pull_request.number || github.event.merge_group.head_sha }}${{ ((github.event.action == 'labeled' && github.event.label.name != 'pr-review-checks:run' && github.event.label.name != 'pr-review-checks:accepted') || (github.event.action == 'edited' && !github.event.changes.base)) && format('-noop-{0}', github.run_id) || '' }}
+  group: pr-review-checks-${{ github.event.pull_request.number || github.event.merge_group.head_sha }}${{ ((github.event.action == 'labeled' && github.event.label.name != 'trusted:ci-run' && github.event.label.name != 'pr-review-checks:accepted') || (github.event.action == 'edited' && !github.event.changes.base)) && format('-noop-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.event.action == 'synchronize' }}
 
 jobs:
@@ -24,7 +25,8 @@ jobs:
     name: PR Review Checks gate
     if: >-
       github.event_name == 'merge_group'
-      || ((github.event.action != 'labeled' || github.event.label.name == 'pr-review-checks:run' || github.event.label.name == 'pr-review-checks:accepted')
+      || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+      && (github.event.action != 'labeled' || github.event.label.name == 'trusted:ci-run' || github.event.label.name == 'pr-review-checks:accepted')
       && (github.event.action != 'edited' || github.event.changes.base))
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -88,7 +90,6 @@ jobs:
           path: pr-head
           fetch-depth: 0
           persist-credentials: false
-          allow-unsafe-pr-checkout: true
       - name: Select checks and files
         id: select
         run: |
@@ -132,7 +133,6 @@ jobs:
           path: pr-head
           fetch-depth: 0
           persist-credentials: false
-          allow-unsafe-pr-checkout: true
 
       - name: Fetch the base commit
         run: git -C pr-head fetch --no-tags --quiet "https://github.com/${GITHUB_REPOSITORY}.git" "$BASE_SHA"
@@ -196,6 +196,32 @@ jobs:
     steps:
       # A check without a result fails the status, so a failed download fails closed.
       - name: Download review results
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: pr-review-checks-result-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/pr-review-checks-result
+      # The artifact service can list a finalized upload seconds late, and the download step lists only once
+      # (https://github.com/actions/download-artifact/issues/505). Every review job that succeeded uploaded its
+      # result, so the job waits and downloads again before a result counts as missing.
+      - name: Wait for results the artifact list missed
+        id: unlisted
+        if: needs.review.result == 'success'
+        run: |
+          for check in $(jq -r '.[]' <<< "$REVIEW_CHECKS"); do
+            if [ ! -f "$RESULTS_DIR/$check.json" ]; then
+              echo "Not listed yet: $check"
+              echo 'missing=true' >> "$GITHUB_OUTPUT"
+              sleep 30
+              break
+            fi
+          done
+        env:
+          REVIEW_CHECKS: ${{ needs.detect.outputs.checks }}
+          RESULTS_DIR: ${{ runner.temp }}/pr-review-checks-result
+      - name: Download the review results again
+        if: steps.unlisted.outputs.missing == 'true'
         continue-on-error: true
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
