@@ -21,7 +21,7 @@ import asyncio
 import json
 import math
 import time
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -383,6 +383,8 @@ class _Session:
     """The configured name of each of the user's own MCP servers, by its name in Claude Code's tool names."""
     external_calls: set[str] = field(default_factory=set[str])
     """The IDs of the tool calls Claude Code ran itself."""
+    offered_servers: list[str] = field(default_factory=list[str])
+    """The configured names of the user's own MCP servers the session offers."""
     pending_results: list[ToolResultBlock] = field(default_factory=list[ToolResultBlock])
     """Results of Claude Code's own tool calls that came after the response with the call had ended."""
 
@@ -595,7 +597,7 @@ class ClaudeCodeSessions:
                 servers = await _settled_mcp_servers(client)
             finally:
                 await client.disconnect()
-            self.user_mcp_servers = {tool_name_server(name): name for name in servers if name != _MCP_SERVER}
+            self.user_mcp_servers = {tool_name_server(name): name for name in servers}
         return self.user_mcp_servers
 
     async def _inherited_servers(self, session: _Session, inherit: bool | list[str]) -> list[str]:
@@ -604,11 +606,13 @@ class ClaudeCodeSessions:
             return []
         session.server_names = servers = await self._find_user_mcp_servers()
         if inherit is True:
+            session.offered_servers = list(servers.values())
             return []
         allowed = {tool_name_server(name) for name in inherit}
         if unknown := sorted(name for name in inherit if tool_name_server(name) not in servers):
             raise ClaudeCodeMcpServerNotFound(unknown, sorted(servers.values()))
         session.allowed_servers = frozenset(allowed)
+        session.offered_servers = [servers[server] for server in allowed]
         return [f'{MCP_PREFIX}{server}' for server in servers if server not in allowed]
 
     async def _start(self, request: _MessagesRequest) -> _Session:
@@ -622,7 +626,7 @@ class ClaudeCodeSessions:
             if request.inherit_mcp_servers:
                 # Claude Code loads the user's servers and connectors in the background: without them, its first
                 # request would offer the model none of their tools.
-                await _settled_mcp_servers(session.client)
+                await _settled_mcp_servers(session.client, expected=session.offered_servers)
             session.messages = aiter(session.client.receive_messages())
             await session.replay(request.messages)
         except BaseException:
@@ -694,14 +698,23 @@ _MCP_STATUS_POLL = 0.25
 _MCP_STATUS_WAIT = 10.0
 
 
-async def _settled_mcp_servers(client: ClaudeSDKClient) -> list[str]:
-    """The names of Claude Code's MCP servers, once they've loaded: claude.ai connectors take a few seconds."""
+async def _settled_mcp_servers(client: ClaudeSDKClient, expected: Collection[str] = ()) -> list[str]:
+    """The names of the user's own MCP servers, once they've loaded: claude.ai connectors take a few seconds.
+
+    Waits for at least one server, and for each of `expected`, to be listed and no longer pending.
+    """
     servers: list[str] = []
     with anyio.move_on_after(_MCP_STATUS_WAIT):
         while True:
-            status = (await client.get_mcp_status())['mcpServers']
+            status = [
+                server for server in (await client.get_mcp_status())['mcpServers'] if server['name'] != _MCP_SERVER
+            ]
             servers = [server['name'] for server in status]
-            if servers and not any(server['status'] == 'pending' for server in status):
+            if (
+                servers
+                and set(expected) <= set(servers)
+                and not any(server['status'] == 'pending' for server in status)
+            ):
                 break
             await anyio.sleep(_MCP_STATUS_POLL)
     return servers

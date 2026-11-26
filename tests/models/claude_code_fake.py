@@ -82,7 +82,7 @@ class FakeClaudeCode:
     mcp_servers: list[str] = field(default_factory=list[str])
     """The user's own MCP servers and connectors, which Claude Code offers when MCP config isn't strict."""
     pending_polls: int = 0
-    """How many `mcp_status` requests of each process see its servers still loading."""
+    """How many `mcp_status` requests of each process come before the user's own servers have loaded."""
     external_results: dict[str, str | list[dict[str, Any]]] = field(
         default_factory=dict[str, 'str | list[dict[str, Any]]']
     )
@@ -115,7 +115,8 @@ class FakeSession(Transport):
         self._pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._hooks: list[tuple[str, list[str]]] = []
         """Each `PreToolUse` matcher the SDK registered, with its callback IDs."""
-        self._status_polls = 0
+        self.status_polls = 0
+        """How many times the SDK asked for the MCP servers' status."""
         self._counter = 0
         self._tasks: set[asyncio.Task[None]] = set()
 
@@ -339,12 +340,13 @@ class FakeSession(Transport):
         )
 
     def _mcp_status(self) -> list[dict[str, str]]:
-        self._status_polls += 1
-        status = 'pending' if self._status_polls <= self.script.pending_polls else 'connected'
-        servers = (
-            [*self.options.mcp_servers, *self.script.mcp_servers] if isinstance(self.options.mcp_servers, dict) else []
-        )
-        return [{'name': name, 'status': status} for name in servers]
+        """Like Claude Code: Pydantic AI's own server at once, the user's own once they've loaded."""
+        self.status_polls += 1
+        configured = self.options.mcp_servers
+        own = [{'name': name, 'status': 'connected'} for name in configured] if isinstance(configured, dict) else []
+        if self.status_polls <= self.script.pending_polls:
+            return own
+        return [*own, *({'name': name, 'status': 'connected'} for name in self.script.mcp_servers)]
 
     async def _call_tool(self, block: dict[str, Any]) -> None:
         hook_input = {

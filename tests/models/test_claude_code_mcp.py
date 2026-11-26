@@ -166,16 +166,19 @@ async def test_the_servers_are_found_once_after_they_load():
 
     assert len(fake.discoveries) == 1
     assert len(fake.sessions) == 2
+    # Each session waits for the servers it offers, not only Pydantic AI's own, which is there at once.
+    assert [session.status_polls for session in fake.sessions] == [3, 3]
 
 
 async def test_servers_that_never_finish_loading(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(_claude_code_sessions, '_MCP_STATUS_WAIT', 0.05)
     model, fake = claude_code(FakeResponse([text('One.')]), pending_polls=10**9)
 
-    result = await Agent(model, model_settings=DOCS).run('Hi')
+    result = await Agent(model, model_settings=ALL).run('Hi')
 
+    # The request goes ahead after the wait, with the servers that had loaded: none.
     assert result.output == 'One.'
-    assert fake.sessions[0].options.disallowed_tools == ['mcp__claude_ai_Gmail']
+    assert fake.sessions[0].options.disallowed_tools == []
 
 
 async def test_native_tool_parts_continue_and_replay():
