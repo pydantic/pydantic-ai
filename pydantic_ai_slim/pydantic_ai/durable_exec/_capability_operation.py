@@ -428,7 +428,7 @@ def _declaration(
         raise UserError('ModelRequestContext cannot be used as a variadic positional parameter (`*args`)')
     return_hint = type_hints.get('return')
     if model_request_parameter is not None:
-        return_hint = _hook_return_hint(function) or return_hint
+        return_hint = _hook_return_hint(capability, handler) or return_hint
     returns_model_request_context = model_request_parameter is not None and (
         return_hint is None or return_hint is ModelRequestContext
     )
@@ -457,16 +457,17 @@ def _declaration(
     )
 
 
-def _hook_return_hint(function: Callable[..., Any]) -> object:
+def _hook_return_hint(capability: AbstractCapability[Any], handler: Callable[..., Any]) -> object:
     """What an override of a built-in model request hook returns, as the hook declares it, or `None` for another method.
 
     The override's own annotation may be missing, `Any` or a union, but the hook still returns what it always does: the
-    request context from `before_model_request`, the response from `after_model_request`.
+    request context from `before_model_request`, the response from `after_model_request`. The hook is found by the
+    attribute the override is set as, which is the hook's name however the function itself was named.
     """
-    hook = getattr(AbstractCapability, function.__name__, None)
-    if not inspect.isfunction(hook):
-        return None
-    return get_type_hints(hook, localns={'ModelRequestContext': ModelRequestContext}).get('return')
+    for name, hook in vars(AbstractCapability).items():
+        if inspect.isfunction(hook) and getattr(type(capability), name, None) is handler:
+            return get_type_hints(hook, localns={'ModelRequestContext': ModelRequestContext}).get('return')
+    return None
 
 
 def _capability_operation_schema(

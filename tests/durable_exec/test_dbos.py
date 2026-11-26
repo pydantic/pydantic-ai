@@ -6006,12 +6006,33 @@ class _UnannotatedChecksTheResponseDurably(AbstractCapability[object]):
         return replace(response, parts=[TextPart(f'Checked: {response.text}')])
 
 
-async def test_dbos_durability_an_unannotated_durable_after_model_request_returns_its_response(dbos: DBOS) -> None:
+@durable_operation('after_model_request')
+async def _check_the_response(
+    self: AbstractCapability[object],
+    ctx: RunContext[object],
+    *,
+    request_context: ModelRequestContext,
+    response: ModelResponse,
+):
+    return replace(response, parts=[TextPart(f'Checked: {response.text}')])
+
+
+@dataclass
+class _AliasedChecksTheResponseDurably(AbstractCapability[object]):
+    """An unannotated durable `after_model_request` override written under another name and set as the hook."""
+
+    after_model_request = _check_the_response
+
+
+@pytest.mark.parametrize('capability', [_UnannotatedChecksTheResponseDurably, _AliasedChecksTheResponseDurably])
+async def test_dbos_durability_an_unannotated_durable_after_model_request_returns_its_response(
+    dbos: DBOS, capability: type[AbstractCapability[object]]
+) -> None:
     """An override returns what the hook it overrides returns, so that, not its own annotation, decides how it's sent."""
     agent = Agent(
         _durability_fn_model,
-        name='durability_unannotated_after_model_request',
-        capabilities=[_UnannotatedChecksTheResponseDurably(id='unannotated_after'), DBOSDurability()],
+        name=f'durability_unannotated_after_model_request_{capability.__name__.lower()}',
+        capabilities=[capability(id='unannotated_after'), DBOSDurability()],
     )
 
     @DBOS.workflow()

@@ -142,8 +142,13 @@ class _LooselyAnnotatedRequestHook(AbstractCapability[Any]):
         return request_context
 
 
+def _temperature_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Reply with the temperature the model was sent, so a test sees the hook's setting arrive."""
+    return ModelResponse(parts=[TextPart(f'temperature={(info.model_settings or {}).get("temperature")}')])
+
+
 _loosely_annotated_agent = Agent(
-    TestModel(custom_output_text='Done.'),
+    FunctionModel(_temperature_model_fn),
     name='durable_loosely_annotated_before_model_request',
     capabilities=[_LooselyAnnotatedRequestHook(), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
 )
@@ -171,4 +176,5 @@ async def test_durability_a_before_model_request_annotated_any_still_returns_the
             task_queue=TASK_QUEUE,
             execution_timeout=timedelta(seconds=30),
         )
-    assert output == 'Done.'
+    # The hook's change came back with the request context and reached the model.
+    assert output == 'temperature=0.5'
