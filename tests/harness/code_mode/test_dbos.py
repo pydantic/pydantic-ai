@@ -23,6 +23,7 @@ from collections.abc import Generator
 from typing import Any
 
 import pytest
+from pydantic import BaseModel
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -46,6 +47,11 @@ from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import CodeMode
 from tests.harness.code_mode.stored_sessions import stored_session_pool
+
+
+class Total(BaseModel):
+    total: int
+
 
 pytestmark = pytest.mark.xdist_group(name='harness-dbos')
 
@@ -207,6 +213,26 @@ def run_gather_agent(prompt: str) -> str:
     return gather_agent.run_sync(prompt).output
 
 
+def _submit_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
+    code = 'total = await add(a=40, b=2)\nfinal_result(total=total)'
+    return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code}, tool_call_id='submit')])
+
+
+submit_agent = Agent(
+    FunctionModel(_submit_model),
+    name='code_mode_dbos_submit_agent',
+    output_type=Total,
+    toolsets=[FunctionToolset(tools=[add], id='math')],
+    capabilities=[CodeMode(allow_final_output=True), DBOSDurability()],
+)
+
+
+@DBOS.workflow()
+def run_submit_agent(prompt: str) -> dict[str, int]:
+    result = submit_agent.run_sync(prompt)
+    return {'total': result.output.total, 'requests': result.usage.requests}
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -353,3 +379,10 @@ def test_gathered_calls_overlap_in_dbos_workflow(dbos_instance: DBOS) -> None:
         output = run_gather_agent('Gather three fetches.')
 
     assert output == "done: ['a', 'b', 'c']"
+
+
+def test_code_mode_submits_final_output_in_dbos_workflow(dbos_instance: DBOS) -> None:
+    """`run_code` runs in the workflow under DBOS, so the code can submit the run's output."""
+    with SetWorkflowID(str(uuid.uuid4())):
+        result = run_submit_agent('Add 40 and 2')
+    assert result == {'total': 42, 'requests': 1}

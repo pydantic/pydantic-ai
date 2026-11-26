@@ -65,7 +65,7 @@ Its description `Requires a marked, successful douwebot approval on the current 
 If douwebot already reviewed the head, triage its findings in step 4; otherwise trigger douwebot as step 3 of the loop says. Do not debug that failure as a CI failure.
 
 `PR Review Checks` passed means its commit status reads `success` on the current head.
-[`.github/workflows/AGENTS.md`](../../../.github/workflows/AGENTS.md#pr-review-checks-reviews-every-pull-request-head) and [`publish_pr_review_checks.py`](../../../.github/scripts/publish_pr_review_checks.py) define the workflow and its verdict.
+[`.github/workflows/AGENTS.md`](../../../.github/workflows/AGENTS.md#pr-review-checks-reviews-every-same-repository-pull-request-head) and [`publish_pr_review_checks.py`](../../../.github/scripts/publish_pr_review_checks.py) define the workflow and its verdict.
 A maintainer can pass a head despite its findings by applying `pr-review-checks:accepted`. That label covers only the current head; a push removes it.
 Never apply `pr-review-checks:accepted` yourself.
 `PR Review Checks` posts as `github-actions[bot]` with its own `<!-- pr-review-checks run=… head=… -->` receipt. Its comments are not douwebot comments.
@@ -513,8 +513,10 @@ if the head changes, capture the new SHA and restart the loop.
      `gh api repos/pydantic/pydantic-ai/commits/<sha>/status --jq '.statuses[] | select(.context == "PR Review Checks")'`.
      No status yet, or `pending`, means the review has not finished; wait for `success` or `failure`.
      When the status reads "Awaiting maintainer", the author lacks write access.
-     Ask a maintainer to apply `pr-review-checks:run`; the label also covers later pushes.
+     Ask a maintainer to apply `trusted:ci-run`; the label also covers later pushes and starts the PR Bots labels.
      It does nothing on a PR whose author has write access.
+     A fork PR gets no `PR Review Checks` status: recreate it as a same-repository PR.
+     A Dependabot push gets none either: a maintainer removes and reapplies `trusted:ci-run`.
      A `failure` leaves the gate unsatisfied until a later head passes or a maintainer applies `pr-review-checks:accepted`.
      A `failure` whose description names `Incomplete`, `No result` or a rerun, and not `Blocking findings`, has no finding to triage. Rerun that `PR Review Checks` run once, then escalate.
      A rerun keeps the original run's `pr-review-checks.yml`, including the secrets its steps receive, but checks out its scripts from current `main`. When a fix to that workflow file has merged since, push a new head instead.
@@ -526,8 +528,8 @@ if the head changes, capture the new SHA and restart the loop.
      is the source of truth). Do not add that label or dispatch the workflow unless the person
      driving you asks. When `CI Review` posts on your PR, triage its findings in step 4 like any
      other review.
-   - **Douwebot:** required for both same-repository and fork PRs, except an obviously trivial S PR.
-     `CI Review` deliberately skips forks without leaving a head check. First apply the
+   - **Douwebot:** required for every same-repository PR, except an obviously trivial S PR.
+     A fork PR gets no douwebot review: recreate it as a same-repository PR. First apply the
      agent-config guard from `.github/workflows/bots.yml` to the captured base-to-head diff. If the
      PR changes an `AGENTS.md` or `CLAUDE.md` at any depth, `CLAUDE.local.md`, `.mcp.json`,
      `.claude/`, `.agents/`, or `agent_docs/`, check whether the PR author has write or admin access.
@@ -634,8 +636,8 @@ if the head changes, capture the new SHA and restart the loop.
 
 Skip this choice for prose-only documentation, mechanical text/data refreshes defined above, and [flake fixes](#flake-fixes).
 
-The required reviews are not on this menu. Step 3 applies the merge bar to both same-repository
-and fork PRs. `CI Review` starts on a write-access approval of the head, a `final-review` label,
+The required reviews are not on this menu. Step 3 applies the merge bar to them.
+`CI Review` starts on a write-access approval of the head, a `final-review` label,
 or a dispatch. Green CI alone never starts `CI Review`.
 
 What this section chooses is a second opinion on top of the required reviews, and the choice belongs to the

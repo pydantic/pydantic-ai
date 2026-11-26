@@ -675,6 +675,27 @@ def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestCon
         answered_calls = {part.tool_call_id for part in target[0].parts if isinstance(part, ToolReturnPart)}
         prompt_index = _before_prompt_index(*target, queue)
 
+    before_prompt, spliced, appended = _split_drained(ctx, drained, answered_calls, prompt_index)
+
+    events: list[EnqueuedMessagesEvent] = []
+    if before_prompt or spliced:
+        assert target is not None
+        events = _deliver_into_request(ctx, request_context, *target, prompt_index, before_prompt, spliced)
+    for enqueue_id, messages in appended:
+        request_context.messages = [*request_context.messages, *messages]
+        append_to_history(ctx, *messages)
+        events.append(EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=tuple(messages)))
+    for event in events:
+        ctx._emit_event(event)  # pyright: ignore[reportPrivateUsage]
+    return request_context
+
+
+def _split_drained(
+    ctx: RunContext[Any], drained: list[PendingMessage], answered_calls: set[str], prompt_index: int | None
+) -> tuple[
+    list[tuple[str, ModelRequest]], dict[str, list[tuple[str, ModelRequest]]], list[tuple[str, list[ModelMessage]]]
+]:
+    """Split `drained` into content placed before the prompt, content spliced after its call's return, and the rest."""
     before_prompt: list[tuple[str, ModelRequest]] = []
     spliced: dict[str, list[tuple[str, ModelRequest]]] = {}
     appended: list[tuple[str, list[ModelMessage]]] = []
@@ -697,18 +718,7 @@ def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestCon
             spliced.setdefault(tool_call[0], []).append((pending.enqueue_id, request))
         else:
             appended.append((pending.enqueue_id, messages))
-
-    events: list[EnqueuedMessagesEvent] = []
-    if before_prompt or spliced:
-        assert target is not None
-        events = _deliver_into_request(ctx, request_context, *target, prompt_index, before_prompt, spliced)
-    for enqueue_id, messages in appended:
-        request_context.messages = [*request_context.messages, *messages]
-        append_to_history(ctx, *messages)
-        events.append(EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=tuple(messages)))
-    for event in events:
-        ctx._emit_event(event)  # pyright: ignore[reportPrivateUsage]
-    return request_context
+    return before_prompt, spliced, appended
 
 
 def _delivery_target(
