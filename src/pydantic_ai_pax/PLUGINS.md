@@ -14,11 +14,6 @@ Pax groups its shell implementation into `cli/`, `config/`, `runtime/`,
 continue importing `PluginHost` from `pydantic_ai_pax.plugins` and `Command`
 from `pydantic_ai_pax.commands`.
 
-The package was `pydantic-clai2`. Plugins that import `pydantic_clai2.plugins` or
-`pydantic_clai2.commands` load only while the `pydantic-clai2` package is installed,
-which aliases them with a `DeprecationWarning` that `pax` does not show. Under
-`pydantic-ai-pax` alone, change those imports to `pydantic_ai_pax`.
-
 ## Startup
 
 `pax --help` parses arguments without loading the agent or plugins. Interactive
