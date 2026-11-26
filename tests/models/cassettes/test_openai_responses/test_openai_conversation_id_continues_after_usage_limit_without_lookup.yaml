@@ -1,0 +1,393 @@
+version: 1
+interactions:
+- request:
+    method: DELETE
+    uri: >-
+      https://api.openai.com/v1/conversations/conv_6aff9f066e9c819685f08c35b49df4dc07b8f83122e406b1
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "502"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: conv_6aff9f066e9c819685f08c35b49df4dc07b8f83122e406b1
+        object: conversation.deleted
+        deleted: true
+  recorded_at: 2026-11-20T01:14:52.305048+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/conversations
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "2"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content: {}
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "104"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: conv_6aff9f066e9c819685f08c35b49df4dc07b8f83122e406b1
+        object: conversation
+        created_at: 1795137286
+        metadata: {}
+  recorded_at: 2026-11-20T01:14:46.578664+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "419"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-4.1
+        stream: false
+        conversation: conv_6aff9f066e9c819685f08c35b49df4dc07b8f83122e406b1
+        input:
+        - role: user
+          content: Look up the value.
+        instructions: Call the lookup tool, then reply with exactly what it returns.
+        tool_choice: auto
+        tools:
+        - name: lookup
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+          description: null
+          strict: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "2452"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_07b8f83122e406b1006aff9f06e83881969d619cd2ae8e7d53
+        object: response
+        created_at: 1795137287
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1795137288
+        conversation:
+          id: conv_6aff9f066e9c819685f08c35b49df4dc07b8f83122e406b1
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        input_transformations: []
+        instructions: Call the lookup tool, then reply with exactly what it returns.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-4.1-2025-04-14
+        moderation: null
+        output:
+        - id: fc_07b8f83122e406b1006aff9f08560c81968ba6da329d82c6f7
+          type: function_call
+          status: completed
+          arguments: "{}"
+          call_id: call_pHM9qKPawhs34fqF0arG2DAH
+          name: lookup
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: in_memory
+        reasoning:
+          context: null
+          effort: null
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: null
+          name: lookup
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          strict: false
+        top_logprobs: 0
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 46
+          input_tokens_details:
+            cache_write_tokens: 0
+            cache_write_tokens_details:
+              ttl_12h_tokens: 0
+              ttl_30m_tokens: 0
+            cached_tokens: 0
+          output_tokens: 10
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 56
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-20T01:14:49.354680+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "565"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-4.1
+        stream: false
+        conversation: conv_6aff9f066e9c819685f08c35b49df4dc07b8f83122e406b1
+        input:
+        - type: function_call_output
+          call_id: call_pHM9qKPawhs34fqF0arG2DAH
+          output: The tool call was interrupted before a result was produced.
+        - role: user
+          content: "Reply exactly: done"
+        instructions: Call the lookup tool, then reply with exactly what it returns.
+        tool_choice: none
+        tools:
+        - name: lookup
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+          description: null
+          strict: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "2140"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_07b8f83122e406b1006aff9f09788c819695f4f9a8445adf3d
+        object: response
+        created_at: 1795137290
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1795137290
+        conversation:
+          id: conv_6aff9f066e9c819685f08c35b49df4dc07b8f83122e406b1
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        input_transformations: []
+        instructions: Call the lookup tool, then reply with exactly what it returns.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-4.1-2025-04-14
+        moderation: null
+        output:
+        - id: msg_07b8f83122e406b1006aff9f0a921881969f6a6c349c6829aa
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: done
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: in_memory
+        reasoning:
+          context: null
+          effort: null
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: none
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: null
+          name: lookup
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          strict: false
+        top_logprobs: 0
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 83
+          input_tokens_details:
+            cache_write_tokens: 0
+            cache_write_tokens_details:
+              ttl_12h_tokens: 0
+              ttl_30m_tokens: 0
+            cached_tokens: 0
+          output_tokens: 2
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 85
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-20T01:14:51.612867+00:00

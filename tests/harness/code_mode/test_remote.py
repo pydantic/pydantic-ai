@@ -24,6 +24,7 @@ from pydantic_monty import (
     AsyncMontySession,
     AsyncSnapshot,
     ExternalSettledResult,
+    MontyError,
     MontyRefusedError,
     MountDir,
 )
@@ -141,12 +142,12 @@ async def test_url_beyond_server_root_rejected(url: str) -> None:
 
 @pytest.mark.parametrize(
     ('resource_limits', 'request_timeout'),
-    [(None, 40.0), ({'max_duration_secs': 90}, 100.0), ('unlimited', None)],
+    [(None, 40.0), ({'max_duration_seconds': 90}, 100.0), ('unlimited', None)],
 )
 async def test_remote_turn_deadline_follows_max_duration(
     monkeypatch: pytest.MonkeyPatch, resource_limits: Any, request_timeout: float | None
 ) -> None:
-    """The transport's per-turn deadline leaves room for `max_duration_secs` to fire first."""
+    """The transport's per-turn deadline leaves room for `max_duration_seconds` to fire first."""
     seen: list[float | None] = []
 
     def recording_pool(url: str, *, request_timeout: float | None) -> Never:
@@ -167,7 +168,7 @@ async def test_dial_failure_reaches_caller() -> None:
     """Dial errors reach the caller unchanged, without adding a credential-bearing model retry."""
     agent = Agent(_snippets_model('1 + 1'), capabilities=[CodeMode(monty_sandbox='http://alice:hunter2@127.0.0.1:1')])
 
-    with capture_run_messages() as messages, pytest.raises(RuntimeError):
+    with capture_run_messages() as messages, pytest.raises((RuntimeError, MontyError)):
         await agent.run('dial a dead worker')
     assert _retries(messages) == []
     assert 'hunter2' not in str(messages)
@@ -336,7 +337,7 @@ class TestCodeModeErrorRouting:
             capabilities=[
                 CodeMode(
                     monty_sandbox=MagicMock(return_value=local_backed_factory_pool),
-                    resource_limits={'max_duration_secs': 0.01},
+                    resource_limits={'max_duration_seconds': 0.01},
                 )
             ],
         )
@@ -469,8 +470,8 @@ class TestCodeModeErrorRouting:
         at the public native snapshot boundary after a real tool call, not into the harness executor.
         """
         assert _SECRET in str(error)
-        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyCrashedError', _CrashedError)
-        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyDisconnectError', _DisconnectError)
+        monkeypatch.setattr('pydantic_ai_harness._monty_turns.MontyCrashedError', _CrashedError)
+        monkeypatch.setattr('pydantic_ai_harness._monty_turns.MontyDisconnectError', _DisconnectError)
         original_resume = AsyncFutureSnapshot.resume
 
         async def fail_after_tool(

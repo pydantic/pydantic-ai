@@ -3,17 +3,19 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Generic, Literal, Self, TypeVar, Union
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Self, TypeVar, Union
 
 import anyio
 import pytest
 from dirty_equals import IsJson
-from pydantic import BaseModel, TypeAdapter, field_validator
+from pydantic import AliasChoices, AliasPath, BaseModel, Field, TypeAdapter, field_validator
+from pydantic.json_schema import SkipJsonSchema
 from pydantic_core import ErrorDetails, to_json
+from typing_extensions import TypedDict
 
 from pydantic_ai import (
     AbstractToolset,
@@ -43,6 +45,7 @@ from pydantic_ai import (
     ModelSelectionContext,
     NativeToolCallPart,
     NativeToolReturnPart,
+    OutputTokenLimitExceeded,
     PrefixedToolset,
     RequestUsage,
     RetryFeedbackPart,
@@ -103,6 +106,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.workspaces import WorkspaceUnavailableError
 from pydantic_graph import End
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 if TYPE_CHECKING:
@@ -126,8 +130,10 @@ if TYPE_CHECKING:
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
+    from pydantic_ai.providers.otari import OtariProvider
     from pydantic_ai.providers.ovhcloud import OVHcloudProvider
     from pydantic_ai.providers.sambanova import SambaNovaProvider
+    from pydantic_ai.providers.stav import StavProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
     from pydantic_ai.providers.vllm import VLLMProvider
@@ -147,8 +153,10 @@ else:
         from pydantic_ai.providers.ollama import OllamaProvider
         from pydantic_ai.providers.openai import OpenAIProvider
         from pydantic_ai.providers.openrouter import OpenRouterProvider
+        from pydantic_ai.providers.otari import OtariProvider
         from pydantic_ai.providers.ovhcloud import OVHcloudProvider
         from pydantic_ai.providers.sambanova import SambaNovaProvider
+        from pydantic_ai.providers.stav import StavProvider
         from pydantic_ai.providers.together import TogetherProvider
         from pydantic_ai.providers.vercel import VercelProvider
         from pydantic_ai.providers.vllm import VLLMProvider
@@ -156,7 +164,7 @@ else:
         AlibabaProvider = AzureProvider = CerebrasProvider = DeepSeekProvider = None
         CrusoeProvider = FireworksProvider = GitHubProvider = HerokuProvider = None
         MetaProvider = MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None
-        OpenRouterProvider = OVHcloudProvider = SambaNovaProvider = None
+        OpenRouterProvider = OtariProvider = OVHcloudProvider = SambaNovaProvider = StavProvider = None
         TogetherProvider = VercelProvider = VLLMProvider = None
 
     try:
@@ -196,6 +204,7 @@ from .conftest import (
     IsNow,
     IsStr,
     TestEnv,
+    assert_cancellation_leaks_no_tasks,
     iter_message_parts,
     legacy_retry_prompt_part,
     message,
@@ -211,11 +220,6 @@ requires_google = pytest.mark.skipif(GoogleProvider is None, reason='google-gena
 requires_groq = pytest.mark.skipif(GroqProvider is None, reason='groq not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_litellm = pytest.mark.skipif(LiteLLMProvider is None, reason='litellm not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_mistral = pytest.mark.skipif(MistralProvider is None, reason='mistral not installed')  # pyright: ignore[reportUnnecessaryComparison]
-
-# Wall-clock guard for the readiness `Event.wait()`s in the cancellation tests below. The events are set
-# near-instantly; the timeout only exists to fail fast on a genuine hang, since no global pytest timeout is
-# configured. `timeout=1` was too tight under heavy xdist load and flaked (#5399), so allow generous headroom.
-READINESS_WAIT_TIMEOUT = 10
 
 
 def test_run_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):
@@ -2019,7 +2023,7 @@ def test_output_type_text_output_function_with_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='Mexico City')],
-                usage=RequestUsage(input_tokens=80, output_tokens=5),
+                usage=RequestUsage(input_tokens=82, output_tokens=5),
                 model_name='function:call_tool:',
                 model_id='function:function:call_tool:',
                 timestamp=IsDatetime(),
@@ -2046,6 +2050,99 @@ def test_output_type_text_output_invalid():
     with pytest.raises(UserError, match='TextOutput must take a function taking a single `str` argument'):
         output_type: TextOutput[str] = TextOutput(int_func)  # pyright: ignore[reportArgumentType]
         Agent('test', output_type=output_type)
+
+
+class TextModel(BaseModel):
+    text: str
+
+
+class TextTypedDict(TypedDict):
+    text: str
+
+
+@dataclass
+class TextDataclass:
+    text: str
+
+
+def model_arg(m: TextModel) -> str:
+    return m.text  # pragma: no cover
+
+
+def model_arg_named_like_field(text: TextModel) -> str:
+    return text.text  # pragma: no cover
+
+
+def typed_dict_arg(m: TextTypedDict) -> str:
+    return m['text']  # pragma: no cover
+
+
+def typed_dict_arg_named_like_field(text: TextTypedDict) -> str:
+    return text['text']  # pragma: no cover
+
+
+def dataclass_arg_named_like_field(text: TextDataclass) -> str:
+    return text.text  # pragma: no cover
+
+
+def ctx_and_model_arg_named_like_field(ctx: RunContext[None], text: TextModel) -> str:
+    return text.text  # pragma: no cover
+
+
+@pytest.mark.parametrize(
+    'output_function',
+    [
+        model_arg,
+        model_arg_named_like_field,
+        typed_dict_arg,
+        typed_dict_arg_named_like_field,
+        dataclass_arg_named_like_field,
+        ctx_and_model_arg_named_like_field,
+    ],
+)
+def test_output_type_text_output_model_like_arg(output_function: Callable[..., str]):
+    """A model-like arg takes the model's JSON schema, so a model with one `str` field looks like a `str` arg.
+
+    The function would still be handed the raw text, so it's rejected like any other non-`str` arg.
+
+    Not a VCR test: the `UserError` is raised when the agent is created, before any request is sent.
+    """
+    with pytest.raises(UserError, match='TextOutput must take a function taking a single `str` argument'):
+        Agent('test', output_type=TextOutput(output_function))
+
+
+TextAlias = str
+
+
+def str_arg(text: str) -> str:
+    return f'text={text}'
+
+
+def type_alias_str_arg(text: TextAlias) -> str:
+    return f'text={text}'
+
+
+def constrained_str_arg(text: Annotated[str, Field(max_length=10)]) -> str:
+    return f'text={text}'
+
+
+def ctx_and_str_arg(ctx: RunContext[None], text: str) -> str:
+    return f'text={text}'
+
+
+@pytest.mark.parametrize('output_function', [str_arg, type_alias_str_arg, constrained_str_arg, ctx_and_str_arg])
+def test_output_type_text_output_str_arg_forms(output_function: Callable[..., str]):
+    """Every form of `str` arg passes the construction check that rejects a model-like arg.
+
+    Not a VCR test: the check runs when the agent is created, and calling the function with the text is in-memory
+    framework behavior that no provider response changes.
+    """
+
+    def respond(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='hello')])
+
+    agent = Agent(FunctionModel(respond), output_type=TextOutput(output_function))
+    assert agent.run_sync('hi').output == 'text=hello'
 
 
 def test_output_type_native_output_must_be_only():
@@ -2251,6 +2348,161 @@ def test_output_type_text_output_function():
             ),
         ]
     )
+
+
+def text_alias(text: Annotated[str, Field(alias='theText')]) -> str:
+    return f'text={text}'
+
+
+def text_with_hidden_arg(text: str, b: SkipJsonSchema[int] = 1) -> str:
+    return f'text={text}'
+
+
+def text_with_var_kwargs(text: str, **kwargs: int) -> str:
+    return f'text={text}'
+
+
+def text_with_hidden_arg_aliased_as_text(text: str, b: SkipJsonSchema[Annotated[int, Field(alias='text')]] = 1) -> str:
+    return f'text={text}'
+
+
+def text_alias_with_hidden_arg(text: Annotated[str, Field(alias='theText')], b: SkipJsonSchema[int] = 1) -> str:
+    return f'text={text}'
+
+
+def text_alias_choices_with_hidden_arg(
+    text: Annotated[str, Field(validation_alias=AliasChoices('theText', 't'))], b: SkipJsonSchema[int] = 1
+) -> str:
+    return f'text={text}'
+
+
+def text_alias_with_var_kwargs(text: Annotated[str, Field(alias='theText')] = 'default', **kwargs: int) -> str:
+    return f'text={text}'
+
+
+def text_alias_positional_only_with_hidden_arg(
+    text: Annotated[str, Field(alias='theText')], /, b: SkipJsonSchema[int] = 1
+) -> str:
+    return f'text={text}'
+
+
+def text_alias_path_with_hidden_arg(
+    text: Annotated[str, Field(validation_alias=AliasPath('payload', 'text'))], b: SkipJsonSchema[int] = 1
+) -> str:
+    return f'text={text}'
+
+
+class TextOutputNode(BaseModel):
+    value: int
+    children: list['TextOutputNode'] = []
+
+
+class TextOutputLeaf(BaseModel):
+    value: int
+
+
+def text_alias_with_hidden_model_args(
+    text: Annotated[str, Field(alias='theText')],
+    node: SkipJsonSchema[Annotated[TextOutputNode | None, Field(alias='n')]] = None,
+    leaf: SkipJsonSchema[Annotated[TextOutputLeaf | None, Field(alias='l')]] = None,
+) -> str:
+    return f'text={text}'
+
+
+def text_alias_shared_with_hidden_arg(
+    text: Annotated[str, Field(alias='theText')], b: SkipJsonSchema[Annotated[int, Field(alias='theText')]] = 1
+) -> str:
+    return f'text={text}'
+
+
+def text_alias_shared_with_hidden_arg_and_var_kwargs(
+    text: Annotated[str, Field(alias='theText')] = 'default',
+    b: SkipJsonSchema[Annotated[int, Field(alias='theText')]] = 1,
+    **kwargs: int,
+) -> str:
+    return f'text={text}'
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize(
+    'output_function',
+    [
+        text_alias,
+        text_with_hidden_arg,
+        text_with_var_kwargs,
+        text_with_hidden_arg_aliased_as_text,
+        text_alias_with_hidden_arg,
+        text_alias_choices_with_hidden_arg,
+        text_alias_with_var_kwargs,
+        text_alias_positional_only_with_hidden_arg,
+        text_alias_path_with_hidden_arg,
+        text_alias_with_hidden_model_args,
+        text_alias_shared_with_hidden_arg,
+        text_alias_shared_with_hidden_arg_and_var_kwargs,
+    ],
+)
+async def test_output_type_text_output_function_str_arg(output_function: Callable[..., str], stream: bool):
+    """`TextOutput` calls the function with the text under the str arg's Python name, not its alias.
+
+    Not a VCR test: mapping a parameter alias back to its Python name is in-memory framework behavior.
+    """
+
+    def respond(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='hello')])
+
+    async def stream_respond(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'hello'
+
+    agent = Agent(FunctionModel(respond, stream_function=stream_respond), output_type=TextOutput(output_function))
+    if stream:
+        async with agent.run_stream('hi') as result:
+            assert await result.get_output() == 'text=hello'
+    else:
+        assert (await agent.run('hi')).output == 'text=hello'
+
+
+def text_alias_named_like_hidden_arg(
+    text: Annotated[str, Field(alias='b')] = 'default', b: SkipJsonSchema[str] = 'hidden'
+) -> str:
+    return f'text={text} b={b}'
+
+
+def text_alias_named_like_hidden_arg_without_default(
+    text: Annotated[str, Field(alias='b')], b: SkipJsonSchema[str] = 'hidden'
+) -> str:
+    return f'text={text} b={b}'  # pragma: no cover
+
+
+def text_alias_named_like_hidden_arg_positional_only(
+    text: Annotated[str, Field(alias='b')] = 'default', /, b: SkipJsonSchema[str] = 'hidden'
+) -> str:
+    return f'text={text} b={b}'  # pragma: no cover
+
+
+def test_output_type_text_output_function_alias_named_like_hidden_arg():
+    """`TextOutput` sends the text to a hidden arg named like the str arg's alias, deliberately.
+
+    The JSON schema property `b` is the str arg's alias and also the hidden arg's Python name, and a property named
+    after a parameter's Python name names only that parameter, though tool and `ToolOutput` validation give both args
+    the value. Pydantic accepts the clash, and remapping or rejecting it would change runs that succeed, see
+    https://github.com/pydantic/pydantic-ai/issues/13438. So the str arg keeps its default, and the call fails when it
+    has none or is positional-only.
+    Not a VCR test: mapping a parameter alias back to its Python name is in-memory framework behavior.
+    """
+
+    def respond(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='hello')])
+
+    agent = Agent(FunctionModel(respond), output_type=TextOutput(text_alias_named_like_hidden_arg))
+    assert agent.run_sync('hi').output == 'text=default b=hello'
+
+    agent = Agent(FunctionModel(respond), output_type=TextOutput(text_alias_named_like_hidden_arg_without_default))
+    with pytest.raises(TypeError, match="missing 1 required positional argument: 'text'"):
+        agent.run_sync('hi')
+
+    agent = Agent(FunctionModel(respond), output_type=TextOutput(text_alias_named_like_hidden_arg_positional_only))
+    with pytest.raises(KeyError, match="'text'"):
+        agent.run_sync('hi')
 
 
 def test_output_type_handoff_to_agent():
@@ -3182,7 +3434,7 @@ def test_native_output():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
-                usage=RequestUsage(input_tokens=91, output_tokens=12),
+                usage=RequestUsage(input_tokens=93, output_tokens=12),
                 model_name='function:return_city_location:',
                 model_id='function:function:return_city_location:',
                 timestamp=IsDatetime(),
@@ -3264,7 +3516,7 @@ def test_prompted_output_function_with_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City"}')],
-                usage=RequestUsage(input_tokens=80, output_tokens=11),
+                usage=RequestUsage(input_tokens=82, output_tokens=11),
                 model_name='function:call_tool:',
                 model_id='function:function:call_tool:',
                 timestamp=IsDatetime(),
@@ -4241,8 +4493,14 @@ async def test_agent_run_id_stamped_on_request_before_hooks() -> None:
 
     agent = Agent(TestModel(custom_output_text='ok'), capabilities=[Hooks(before_model_request=capture)])
     await agent.run('hi', run_id='run-pre-hook')
+    # A trailing request from `message_history`, as UI adapters send it, is stamped before hooks too.
+    result = await agent.run(message_history=[ModelRequest(parts=[UserPromptPart('hi')])], run_id='run-from-history')
+    # It is still prior context, not a new message.
+    assert [type(message) for message in result.new_messages()] == [ModelResponse]
+    # One that already has a `run_id` keeps it.
+    await agent.run(message_history=[ModelRequest(parts=[UserPromptPart('hi')], run_id='run-earlier')])
 
-    assert seen == ['run-pre-hook']
+    assert seen == ['run-pre-hook', 'run-from-history', 'run-earlier']
 
 
 def test_agent_run_id_duplicate_on_model_response_raises() -> None:
@@ -4501,6 +4759,103 @@ async def test_agent_run_metadata_kwarg_ignored_with_override() -> None:
         result = await agent.run('kwarg override prompt', metadata={'run_only': True})
 
     assert result.metadata == {'env': 'override', 'override_only': True}
+
+
+@dataclass
+class AgentMetadataCompatibilityCase:
+    name: str
+    base: dict[str, object] | None
+    run: dict[str, object] | None
+    expected: dict[str, object] | None
+    identity: Literal['base', 'run', 'new', 'none']
+
+
+@pytest.mark.parametrize(
+    'case',
+    [
+        AgentMetadataCompatibilityCase('no metadata', None, None, None, 'none'),
+        AgentMetadataCompatibilityCase('empty base', {}, None, {}, 'base'),
+        AgentMetadataCompatibilityCase('empty run', None, {}, None, 'none'),
+        AgentMetadataCompatibilityCase('truthy base and empty run', {'base': True}, {}, {'base': True}, 'base'),
+        AgentMetadataCompatibilityCase('truthy run only', None, {'run': True}, {'run': True}, 'run'),
+        AgentMetadataCompatibilityCase(
+            'two truthy dicts',
+            {'shared': 'base', 'base': True},
+            {'shared': 'run', 'run': True},
+            {'shared': 'run', 'base': True, 'run': True},
+            'new',
+        ),
+    ],
+    ids=lambda case: case.name,
+)
+async def test_agent_metadata_resolution(case: AgentMetadataCompatibilityCase) -> None:
+    agent = Agent(TestModel(), metadata=case.base)
+
+    result = await agent.run('hello', metadata=case.run)
+
+    assert result.metadata == case.expected
+    if case.identity == 'base':
+        assert result.metadata is case.base
+    elif case.identity == 'run':
+        assert result.metadata is case.run
+    elif case.identity == 'new':
+        assert result.metadata is not case.base
+        assert result.metadata is not case.run
+    else:
+        assert result.metadata is None
+
+
+async def test_agent_metadata_factories_resolve_in_order_and_override_skips_them() -> None:
+    calls: list[str] = []
+    spec_metadata: dict[str, object] = {'shared': 'spec', 'spec': True}
+
+    def base_factory(_ctx: RunContext[object]) -> dict[str, object]:
+        calls.append('base')
+        return {'shared': 'base', 'base': True}
+
+    def run_factory(_ctx: RunContext[object]) -> dict[str, object]:
+        calls.append('run')
+        return {'shared': 'run', 'run': True}
+
+    agent = Agent(TestModel(), metadata=base_factory)
+    result = await agent.run('hello', spec=AgentSpec(metadata=spec_metadata), metadata=run_factory)
+
+    assert calls[:2] == ['base', 'run']
+    assert result.metadata == {'shared': 'run', 'spec': True, 'base': True, 'run': True}
+
+    calls.clear()
+    override: dict[str, object] = {}
+    with agent.override(metadata=override):
+        result = await agent.run('hello', spec=AgentSpec(metadata=spec_metadata), metadata=run_factory)
+
+    assert result.metadata is override
+    assert calls == []
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+async def test_default_run_id_does_not_add_history_traversals(legacy: bool) -> None:
+    class CountingHistory(list[ModelMessage]):
+        iterations: int = 0
+
+        def __iter__(self) -> Iterator[ModelMessage]:
+            self.iterations += 1
+            return super().__iter__()
+
+    class LegacyCapability(AbstractCapability[object]):
+        def get_default_run_id(self) -> str:
+            return 'legacy-run-id'
+
+    capabilities: list[AbstractCapability[object]] = [LegacyCapability()] if legacy else []
+    agent = Agent(TestModel(), capabilities=capabilities)
+    history = CountingHistory(
+        [
+            ModelRequest(parts=[UserPromptPart('previous question')], run_id='previous-run'),
+            ModelResponse(parts=[TextPart('previous answer')], run_id='previous-run'),
+        ]
+    )
+    await agent.run('hello', message_history=history)
+    # Legacy IDs need a collision scan; keep each path within its established traversal budget.
+    assert history.iterations <= (4 if legacy else 3)
 
 
 def test_unknown_tool():
@@ -4763,6 +5118,58 @@ def test_unknown_tool_per_tool_retries_exceeded():
         agent.run_sync('Hello')
 
 
+@pytest.mark.parametrize('external', [pytest.param(True, id='external'), pytest.param(False, id='requires_approval')])
+def test_deferred_tool_cutoff_raises_incomplete_tool_call(external: bool):
+    """A deferred tool call cut off by the token limit raises `IncompleteToolCall`, as a function tool call does.
+
+    `FunctionModel` scripts the cut-off response: what's under test is how the agent graph handles it,
+    not how a provider reports a `'length'` finish reason.
+    """
+    requests = 0
+
+    def model_function(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal requests
+        requests += 1
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='deferred_tool', args='{"value":', tool_call_id='call-1')],
+            finish_reason='length',
+        )
+
+    toolset: AbstractToolset[object]
+    if external:
+        toolset = ExternalToolset(
+            [
+                ToolDefinition(
+                    name='deferred_tool',
+                    parameters_json_schema={
+                        'type': 'object',
+                        'properties': {'value': {'type': 'string'}},
+                        'required': ['value'],
+                    },
+                )
+            ]
+        )
+    else:
+        toolset = FunctionToolset()
+
+        @toolset.tool_plain(requires_approval=True)
+        def deferred_tool(value: str) -> str:
+            assert False
+
+    agent = Agent(FunctionModel(model_function), output_type=[str, DeferredToolRequests], toolsets=[toolset])
+
+    with pytest.raises(IncompleteToolCall) as exc_info:
+        agent.run_sync('test')
+
+    assert str(exc_info.value) == (
+        'Model token limit (provider default) exceeded while generating a tool call, '
+        'resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt '
+        'to result in a shorter response that will fit within the limit.'
+    )
+    # An external tool gets no retries; an approval-required tool gets the default one retry first.
+    assert requests == (1 if external else 2)
+
+
 def test_tool_exceeds_token_limit_error():
     def return_incomplete_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         resp = ModelResponse(parts=[ToolCallPart('dummy_tool', args='{"foo": "bar",')])
@@ -4774,8 +5181,9 @@ def test_tool_exceeds_token_limit_error():
     with pytest.raises(
         IncompleteToolCall,
         match=r'Model token limit \(10\) exceeded while generating a tool call, resulting in incomplete arguments\.',
-    ):
+    ) as exc_info:
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
+    assert isinstance(exc_info.value, OutputTokenLimitExceeded)
 
     with pytest.raises(
         IncompleteToolCall,
@@ -4802,6 +5210,23 @@ def test_tool_exceeds_token_limit_but_complete_args():
     assert result.output == 'done'
 
 
+def test_tool_exceeds_token_limit_but_complete_non_object_args():
+    """Complete JSON wasn't cut off, so a function tool call whose args aren't an object isn't an `IncompleteToolCall`."""
+
+    def return_non_object_args(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('dummy_tool', args='["bar"]')], finish_reason='length')
+
+    agent = Agent(FunctionModel(return_non_object_args), output_type=str)
+
+    @agent.tool_plain
+    def dummy_tool(foo: str) -> str:
+        return 'tool-ok'  # pragma: no cover
+
+    with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'dummy_tool' exceeded max retries count of 1") as exc_info:
+        agent.run_sync('Hello')
+    assert not isinstance(exc_info.value, IncompleteToolCall)
+
+
 def test_empty_response_with_finish_reason_length():
     def return_empty_response(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         resp = ModelResponse(parts=[])
@@ -4811,13 +5236,13 @@ def test_empty_response_with_finish_reason_length():
     agent = Agent(FunctionModel(return_empty_response), output_type=str)
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        OutputTokenLimitExceeded,
         match=r'Model token limit \(10\) exceeded before any response was generated.',
     ):
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        OutputTokenLimitExceeded,
         match=r'Model token limit \(provider default\) exceeded before any response was generated.',
     ):
         agent.run_sync('Hello')
@@ -4832,13 +5257,13 @@ def test_thinking_only_response_with_finish_reason_length():
     agent = Agent(FunctionModel(return_thinking_only), output_type=str)
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        OutputTokenLimitExceeded,
         match=r'Model token limit \(10\) exceeded before any response was generated.',
     ):
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        OutputTokenLimitExceeded,
         match=r'Model token limit \(provider default\) exceeded before any response was generated.',
     ):
         agent.run_sync('Hello')
@@ -4862,13 +5287,13 @@ def test_truncated_structured_output_raises_without_retry(output_type: NativeOut
     agent = Agent(FunctionModel(truncated), output_type=output_type, retries=3)
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        OutputTokenLimitExceeded,
         match=r'Model token limit \(10\) exceeded while generating structured output, resulting in incomplete JSON\.',
     ):
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
     assert calls == 1
 
-    with pytest.raises(UnexpectedModelBehavior, match=r'Model token limit \(provider default\) exceeded'):
+    with pytest.raises(OutputTokenLimitExceeded, match=r'Model token limit \(provider default\) exceeded'):
         agent.run_sync('Hello')
 
 
@@ -4934,6 +5359,85 @@ def test_text_output_function_validation_error_with_finish_reason_length_is_retr
 
     agent = Agent(FunctionModel(respond), output_type=TextOutput(parse))
     assert agent.run_sync('Hello').output == _City(name='Paris', population=2)
+
+
+@pytest.mark.parametrize('mode', ['run', 'iter'])
+async def test_truncated_output_tool_call_raises_without_retry(mode: str):
+    """Output tool arguments the token limit cut off would be cut off again on a retry with the same limit."""
+    calls = 0
+
+    def truncated(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        return ModelResponse(
+            parts=[ToolCallPart(info.output_tools[0].name, '{"name": "Paris", "popu')], finish_reason='length'
+        )
+
+    agent = Agent(FunctionModel(truncated), output_type=ToolOutput(_City), retries=3)
+    settings = ModelSettings(max_tokens=10)
+
+    with pytest.raises(
+        IncompleteToolCall,
+        match=r'Model token limit \(10\) exceeded while generating a tool call, resulting in incomplete arguments\.',
+    ):
+        if mode == 'run':
+            await agent.run('Hello', model_settings=settings)
+        else:
+            async with agent.iter('Hello', model_settings=settings) as agent_run:
+                async for _ in agent_run:
+                    pass
+    assert calls == 1
+
+
+@pytest.mark.parametrize(
+    'first',
+    ['{"name": "Paris"}', '["Paris", 2]', '{"name": "Paris", "population": 2}'],
+    ids=['schema', 'non_object', 'output_validator'],
+)
+def test_output_tool_args_that_parse_but_are_rejected_with_finish_reason_length_are_retried(first: str):
+    """Only arguments cut off before they're complete are blamed on the token limit: arguments that parse are retried."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_name = info.output_tools[0].name
+        if len(messages) > 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name, '{"name": "Paris", "population": 3}')])
+        return ModelResponse(parts=[ToolCallPart(tool_name, first)], finish_reason='length')
+
+    agent = Agent(FunctionModel(respond), output_type=ToolOutput(_City))
+
+    @agent.output_validator
+    def check(output: _City) -> _City:
+        if output.population < 3:
+            raise ModelRetry('Population is too small.')
+        return output
+
+    assert agent.run_sync('Hello').output == _City(name='Paris', population=3)
+
+
+def test_truncated_output_tool_call_does_not_override_valid_output_in_same_response():
+    """With `'exhaustive'`, a valid output tool call still wins over a later one the token limit cut off."""
+    calls = 0
+
+    def respond(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        tool_name = info.output_tools[0].name
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name, '{"name": "Paris", "population": 2}', tool_call_id='valid'),
+                ToolCallPart(tool_name, '{"name": "Lyon", "popu', tool_call_id='cut_off'),
+            ],
+            finish_reason='length',
+        )
+
+    agent = Agent(FunctionModel(respond), output_type=ToolOutput(_City), end_strategy='exhaustive')
+    result = agent.run_sync('Hello')
+    assert result.output == _City(name='Paris', population=2)
+    assert calls == 1
+    tool_returns = [part for part in result.new_messages()[-1].parts if isinstance(part, ToolReturnPart)]
+    assert [(part.tool_call_id, part.content) for part in tool_returns] == snapshot(
+        [('valid', 'Final result processed.'), ('cut_off', 'Output tool not used - output failed validation.')]
+    )
 
 
 def test_truncated_text_output_is_returned():
@@ -5869,7 +6373,7 @@ class TestMultipleToolCalls:
             assert info.output_tools is not None
             return ModelResponse(
                 parts=[
-                    ToolCallPart('deferred_tool'),
+                    ToolCallPart('deferred_tool', tool_call_id='deferred_tool'),
                     ToolCallPart('regular_tool', {'x': 1}),
                 ],
             )
@@ -5891,7 +6395,10 @@ class TestMultipleToolCalls:
 
         result = agent.run_sync('test early strategy with deferred tool call')
         assert result.output == snapshot(
-            DeferredToolRequests(calls=[ToolCallPart(tool_name='deferred_tool', tool_call_id=IsStr())])
+            DeferredToolRequests(
+                calls=[ToolCallPart(tool_name='deferred_tool', tool_call_id=IsStr())],
+                validated_args={'deferred_tool': {}},
+            )
         )
         messages = result.all_messages()
 
@@ -5937,6 +6444,7 @@ class TestMultipleToolCalls:
                     timestamp=IsNow(tz=UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'deferred_pause': True}},
                 ),
             ]
         )
@@ -9576,8 +10084,10 @@ async def test_azure_provider_lifecycle_closes_client():
             lambda: OllamaProvider(base_url='http://localhost:11434/v1'), marks=[requires_openai], id='ollama'
         ),
         pytest.param(lambda: OpenRouterProvider(api_key='t'), marks=[requires_openai], id='openrouter'),
+        pytest.param(lambda: OtariProvider(api_key='t'), marks=[requires_openai], id='otari'),
         pytest.param(lambda: OVHcloudProvider(api_key='t'), marks=[requires_openai], id='ovhcloud'),
         pytest.param(lambda: SambaNovaProvider(api_key='t'), marks=[requires_openai], id='sambanova'),
+        pytest.param(lambda: StavProvider(api_key='t'), marks=[requires_openai], id='stav'),
         pytest.param(lambda: TogetherProvider(api_key='t'), marks=[requires_openai], id='together'),
         pytest.param(lambda: VercelProvider(api_key='t'), marks=[requires_openai], id='vercel'),
         pytest.param(lambda: AlibabaProvider(api_key='t'), marks=[requires_openai], id='alibaba'),
@@ -10720,6 +11230,18 @@ async def test_run_handoff_survives_absorbed_cancellation():
         pytest.fail('run completed instead of ending cancelled')
 
 
+async def test_run_cancelled_at_any_point_leaves_no_task_behind():
+    """Cancelling a run at any point of its lifecycle must not leave a task it started pending.
+
+    On Python 3.11, draining the finished `_ready_waiter` yields to the event loop, so a cancellation
+    can land after `_do_run` has parked on `_run_done.wait()`, which only the error path's cleanup
+    unblocks. See https://github.com/pydantic/pydantic-ai/issues/13716.
+    """
+    agent = Agent(TestModel())
+
+    await assert_cancellation_leaks_no_tasks(lambda: agent.run('test'))
+
+
 async def test_streaming_handoff_survives_absorbed_cancellation():
     """Streaming counterpart of #6422: model request survives cancellation without deadlock.
 
@@ -10895,7 +11417,7 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
                 ToolCallPart(tool_name='call_first'),
                 ToolCallPart(tool_name='call_first'),
                 ToolCallPart(tool_name='increment_integer_holder'),
-                ToolCallPart(tool_name='requires_approval'),
+                ToolCallPart(tool_name='requires_approval', tool_call_id='requires_approval'),
                 ToolCallPart(tool_name='call_second'),
                 ToolCallPart(tool_name='call_second'),
                 ToolCallPart(tool_name='call_second'),
@@ -10944,7 +11466,10 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
         result = agent.run_sync(user_prompt)
 
     assert result.output == snapshot(
-        DeferredToolRequests(approvals=[ToolCallPart(tool_name='requires_approval', tool_call_id=IsStr())])
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='requires_approval', tool_call_id=IsStr())],
+            validated_args={'requires_approval': {}},
+        )
     )
     assert integer_holder == 2
 
@@ -11460,6 +11985,7 @@ async def test_hitl_tool_approval(serialize_history: bool):
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
             ),
         ]
     )
@@ -11468,7 +11994,8 @@ async def test_hitl_tool_approval(serialize_history: bool):
             approvals=[
                 ToolCallPart(tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'),
                 ToolCallPart(tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'),
-            ]
+            ],
+            validated_args={'ok_to_delete': {'path': 'ok_to_delete.py'}, 'never_delete': {'path': 'never_delete.py'}},
         )
     )
 
@@ -11529,6 +12056,7 @@ async def test_hitl_tool_approval(serialize_history: bool):
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
             ),
             ModelRequest(
                 parts=[
@@ -12876,14 +13404,17 @@ async def test_run_with_unapproved_tool_call_in_history():
 
     messages = [
         ModelRequest(parts=[UserPromptPart(content='Hello')]),
-        ModelResponse(parts=[ToolCallPart(tool_name='delete_file')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='delete_file', tool_call_id='delete_file')]),
     ]
 
     result = await agent.run(message_history=messages)
 
     assert result.all_messages() == messages
     assert result.output == snapshot(
-        DeferredToolRequests(approvals=[ToolCallPart(tool_name='delete_file', tool_call_id=IsStr())])
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='delete_file', tool_call_id=IsStr())],
+            validated_args={'delete_file': {}},
+        )
     )
 
 
@@ -13790,7 +14321,7 @@ async def test_agent_allows_none_output_validator_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='hello')],
-                usage=RequestUsage(input_tokens=75, output_tokens=1),
+                usage=RequestUsage(input_tokens=77, output_tokens=1),
                 model_name='function:model_then_text:',
                 model_id='function:function:model_then_text:',
                 timestamp=IsNow(tz=UTC),

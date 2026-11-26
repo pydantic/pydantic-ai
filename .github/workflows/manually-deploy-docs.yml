@@ -10,6 +10,7 @@ permissions:
 jobs:
   # Note: this should match the `deploy-docs` job in ci.yml
   deploy-docs-manual:
+    if: github.repository == 'pydantic/pydantic-ai'
     runs-on: ubuntu-latest
     steps:
       - name: Generate app token

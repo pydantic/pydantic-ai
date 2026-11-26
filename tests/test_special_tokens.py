@@ -301,7 +301,7 @@ async def test_inlined_text_files_on_the_wire(allow_model_requests: None, monkey
     async def download_item(item: Any, **kwargs: Any) -> dict[str, str]:
         return {'data': f'Fetched {FORGED}', 'data_type': 'text/plain'}
 
-    monkeypatch.setattr('pydantic_ai.models.openai.download_item', download_item)
+    monkeypatch.setattr('pydantic_ai.models.openai._chat_model.download_item', download_item)
     model = _model(_tool_call('read', {'path': 'a'}), _text('Done'))
     agent = Agent(model)
 
@@ -601,6 +601,16 @@ ROUTE_CASES: list[tuple[str, str, str, bool]] = [
     ('vercel', 'VercelProvider', 'alibaba/qwen3.8-27b', True),
     ('vercel', 'VercelProvider', 'bare-model', True),
     ('vercel', 'VercelProvider', 'anthropic/claude-opus-5-5', False),
+    ('otari', 'OtariProvider', 'together:qwen/qwen3.8-27b', True),
+    ('otari', 'OtariProvider', 'my-routing-policy', True),
+    ('otari', 'OtariProvider', 'anthropic:claude-opus-5-5', False),
+    ('otari', 'OtariProvider', 'openai:gpt-6-luna', False),
+    # The backend in the name wins over a model name that reads as a lab's own API.
+    ('otari', 'OtariProvider', 'ollama:command-r', True),
+    ('otari', 'OtariProvider', 'vllm/CohereLabs/command-a', True),
+    ('otari', 'OtariProvider', 'groq:openai/gpt-oss-120b', True),
+    ('stav', 'StavProvider', 'deepseek-ai/deepseek-v4-flash-0731', True),
+    ('stav', 'StavProvider', 'anthropic/claude-sonnet-4-5', False),
     ('azure', 'AzureProvider', 'deepseek-v4-pro', True),
     ('azure', 'AzureProvider', 'grok-4.7', False),
     ('azure', 'AzureProvider', 'gpt-6-luna', False),

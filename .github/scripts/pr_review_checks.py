@@ -73,7 +73,7 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
         paths=re.compile(
             r'pydantic_ai_slim/pydantic_ai/(_ssrf\.py|common_tools/web_fetch\.py'
             r'|capabilities/(web_fetch|file_understanding)\.py)'
-            r'|src/pydantic_ai_harness/pydantic_ai_harness/(playwright|browser_use)/.*'
+            r'|src/pydantic_ai_harness/pydantic_ai_harness/(_browser_egress\.py|(playwright|browser_use|cdp_browser)/.*)'
             r'|tests/test_(ssrf|web_fetch)\.py'
         ),
         diff_tokens=re.compile(
@@ -86,13 +86,14 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
     SpecialistCheck(
         name='ui',
         title='UI adapters and local web UI',
-        scope="the UI adapters' client/server trust boundary and CLAI 2's local web control UI",
+        scope="the UI adapters' client/server trust boundary, Pax's local web control UI and its live-session socket",
         paths=re.compile(
             r'pydantic_ai_slim/pydantic_ai/ui/.*'
-            r'|src/pydantic_clai2/(web-ui/.*|pydantic_clai2/builtin_plugins/web/.*|pydantic_clai2/cli/web\.py'
+            r'|src/pydantic_ai_pax/(web-ui/.*|pydantic_ai_pax/builtin_plugins/web/.*|pydantic_ai_pax/cli/web\.py'
+            r'|pydantic_ai_pax/runtime/live_registry\.py'
             r'|clai2_web_README\.md|scripts/check_web_assets\.py)'
-            r'|docs/(ui/.*|input\.md|web\.md|harness/clai2\.md)'
-            r'|tests/(test_vercel_ai|test_ag_ui|test_ui|test_ui_web)\.py|tests/clai2/(test_web[^/]*\.py|browser/.*)'
+            r'|docs/(ui/.*|input\.md|web\.md|harness/pax\.md)'
+            r'|tests/(test_vercel_ai|test_ag_ui|test_ui|test_ui_web)\.py|tests/pax/(test_web[^/]*\.py|browser/.*)'
         ),
         # The core message types cross the adapter boundary, but most changes to them are not about it.
         joint_paths=re.compile(r'pydantic_ai_slim/pydantic_ai/messages\.py'),
@@ -105,18 +106,23 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
             r'pydantic_ai_slim/pydantic_ai/(_instrumentation|_otel_messages|capabilities/instrumentation'
             r'|models/instrumented|embeddings/instrumented|images/instrumented|realtime/_instrumentation)\.py'
             r'|src/pydantic_ai_harness/pydantic_ai_harness/logfire/.*'
-            r'|src/pydantic_clai2/pydantic_clai2/runtime/agent_instrumentation\.py'
+            r'|src/pydantic_ai_pax/pydantic_ai_pax/runtime/agent_instrumentation\.py'
         ),
         diff_tokens=re.compile(r'otel_|include_content|gen_ai\.|set_attribute|record_exception|span_name'),
         token_paths=re.compile(r'pydantic_ai_slim/pydantic_ai/(messages\.py|durable_exec/.*)'),
+        # The gh-aw provider-health controller exports its decisions as spans; the general check keeps owning it.
+        joint_paths=re.compile(r'\.github/scripts/agent_provider_health\.py'),
     ),
     SpecialistCheck(
         name='sandboxes',
         title='Sandboxes and Code Mode',
-        scope='sandboxes, workspaces, shells and Code Mode execution boundaries',
+        scope='sandboxes, workspaces, shells, computer use and Code Mode execution boundaries',
         paths=re.compile(
             r'src/pydantic_ai_harness/pydantic_ai_harness/'
-            r'([^/]*_sandbox|code_mode|ipython_code_mode|ssh_workspace|shell)/.*'
+            r'([^/]*_sandbox|docker_container|code_mode|ipython_code_mode|ssh_workspace|shell|computer_use)/.*'
+            r'|src/pydantic_ai_harness/pydantic_ai_harness/_monty_(exec|turns)\.py'
+            r'|src/pydantic_ai_harness/pydantic_ai_harness/_smolvm_cli\.py'
+            r'|pydantic_ai_slim/pydantic_ai/(workspaces/windows|computer_use)\.py'
         ),
     ),
     SpecialistCheck(
@@ -137,7 +143,7 @@ CHECKS: tuple[ReviewCheck, ...] = (GENERAL, *SPECIALIST_CHECKS)
 _CONTENT = (
     'README.md',
     'clai/README.md',
-    'src/pydantic_clai2/README.md',
+    'src/pydantic_ai_pax/README.md',
     'src/pydantic_ai_harness/README.md',
     *(f'docs/*.{ext}' for ext in ('md', 'mdc', 'png', 'svg', 'ico', 'jpg', 'jpeg', 'gif', 'webp', 'avif')),
     'examples/*.md',

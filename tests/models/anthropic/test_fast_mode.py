@@ -4,11 +4,15 @@ Anthropic reports the speed each request ran at in `usage.speed`. A fast-mode re
 `provider_details['speed']`, which `ModelResponse.cost` passes to genai-prices as the price context, so
 its `speed: fast` price variants apply. Every other response reports `usage.speed: 'standard'`, which
 matches no variant, and its `provider_details` stay as they were.
+
+All four cassettes recorded the same usage (18 input, 17 output tokens), so the fast cases cost twice the
+standard ones.
 """
 
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Literal
 
 import pytest
@@ -33,6 +37,7 @@ class Case:
     speed: Literal['fast'] | None
     stream: bool
     provider_details: dict[str, str]
+    total_price: Decimal
 
 
 CASES = [
@@ -41,15 +46,29 @@ CASES = [
         speed='fast',
         stream=False,
         provider_details=snapshot({'finish_reason': 'end_turn', 'speed': 'fast'}),
+        total_price=snapshot(Decimal('0.001648')),
     ),
     Case(
         id='fast-stream',
         speed='fast',
         stream=True,
         provider_details=snapshot({'speed': 'fast', 'finish_reason': 'end_turn'}),
+        total_price=snapshot(Decimal('0.001648')),
     ),
-    Case(id='standard-request', speed=None, stream=False, provider_details=snapshot({'finish_reason': 'end_turn'})),
-    Case(id='standard-stream', speed=None, stream=True, provider_details=snapshot({'finish_reason': 'end_turn'})),
+    Case(
+        id='standard-request',
+        speed=None,
+        stream=False,
+        provider_details=snapshot({'finish_reason': 'end_turn'}),
+        total_price=snapshot(Decimal('0.000824')),
+    ),
+    Case(
+        id='standard-stream',
+        speed=None,
+        stream=True,
+        provider_details=snapshot({'finish_reason': 'end_turn'}),
+        total_price=snapshot(Decimal('0.000824')),
+    ),
 ]
 
 
@@ -61,7 +80,10 @@ async def test_fast_mode_provider_details(
     request_capture: RequestCapture,
     case: Case,
 ):
-    """A fast-mode response records `speed: 'fast'`, streamed or not; a standard one records no speed."""
+    """A fast-mode response records `speed: 'fast'` and prices at fast mode rates, streamed or not.
+
+    A standard one records no speed and prices at standard rates.
+    """
     # An explicit `max_tokens` keeps the non-streaming request from being streamed behind the scenes.
     settings = AnthropicModelSettings(max_tokens=256)
     if case.speed is not None:
@@ -79,3 +101,4 @@ async def test_fast_mode_provider_details(
     assert request_capture.body('/v1/messages').get('speed') == case.speed
     assert isinstance(response, ModelResponse)
     assert response.provider_details == case.provider_details
+    assert response.cost().total_price == case.total_price

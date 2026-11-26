@@ -153,16 +153,22 @@ jobs:
       - name: Set up OpenCode and review tools
         uses: ./.github/actions/setup-douwebot-tools
 
-      - name: Review with OpenCode Go
+      - name: Review with OpenCode
         run: |
           export PATH="$RUNNER_TEMP/douwebot-tools/bin:$RUNNER_TEMP/douwebot-tools/opencode/node_modules/.bin:$PATH"
-          python3 .github/scripts/run_pr_review_check.py
+          # A cancelled job signals only the step's entry process; `exec` makes that the runner, so it exports its span.
+          exec python3 .github/scripts/run_pr_review_check.py
         env:
           CHECK: ${{ matrix.check }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }} # zizmor: ignore[secrets-outside-env] -- the default-branch runner hands OpenCode only this key and the Logfire token
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }} # zizmor: ignore[secrets-outside-env] -- the default-branch runner hands OpenCode only the key of the provider it runs on, and the Logfire token
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }} # zizmor: ignore[secrets-outside-env] -- used only by a Coding Plan link of the provider chain
+          ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }} # zizmor: ignore[secrets-outside-env] -- used only by a Coding Plan link of the provider chain
+          # A repository variable, which only someone with write access sets, can replace the provider chain. Its
+          # entries name the secrets above, and the runner hands each key only to the provider it belongs to.
+          PR_REVIEW_MODEL_CHAIN: ${{ vars.PR_REVIEW_MODEL_CHAIN }}
           TRIAGE_WEBHOOK_URL: ${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }} # zizmor: ignore[secrets-outside-env] -- only the default-branch runner reads it; OpenCode never does
           LOGFIRE_TOKEN: ${{ secrets.LOGFIRE_TOKEN }} # zizmor: ignore[secrets-outside-env] -- a write-only ingest token; OpenCode exports with it, and has no tool that reads its environment
           LOGFIRE_URL: ${{ vars.LOGFIRE_URL }}
@@ -190,6 +196,32 @@ jobs:
     steps:
       # A check without a result fails the status, so a failed download fails closed.
       - name: Download review results
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: pr-review-checks-result-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/pr-review-checks-result
+      # The artifact service can list a finalized upload seconds late, and the download step lists only once
+      # (https://github.com/actions/download-artifact/issues/505). Every review job that succeeded uploaded its
+      # result, so the job waits and downloads again before a result counts as missing.
+      - name: Wait for results the artifact list missed
+        id: unlisted
+        if: needs.review.result == 'success'
+        run: |
+          for check in $(jq -r '.[]' <<< "$REVIEW_CHECKS"); do
+            if [ ! -f "$RESULTS_DIR/$check.json" ]; then
+              echo "Not listed yet: $check"
+              echo 'missing=true' >> "$GITHUB_OUTPUT"
+              sleep 30
+              break
+            fi
+          done
+        env:
+          REVIEW_CHECKS: ${{ needs.detect.outputs.checks }}
+          RESULTS_DIR: ${{ runner.temp }}/pr-review-checks-result
+      - name: Download the review results again
+        if: steps.unlisted.outputs.missing == 'true'
         continue-on-error: true
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:

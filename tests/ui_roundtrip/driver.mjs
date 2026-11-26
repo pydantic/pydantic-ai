@@ -6,7 +6,10 @@
 //
 // - `<protocol>.submit` adds a user message and returns the request body the client sends to the server.
 //   Passing `messages` first replaces the client's state, the way an app hydrates it from storage.
-// - `<protocol>.receive` feeds the server's stream to the pending request and returns the client's messages.
+// - `<protocol>.regenerate` does the same for the client's retry of its last response, instead of a new message,
+//   and takes `messages` the same way, for a retry from a client hydrated after a reload.
+// - `<protocol>.receive` feeds the server's stream to the pending request and returns the client's messages, and
+//   `data`: what it handed the app besides them, the transient data parts or custom events.
 //
 // Vercel AI goes through the AI SDK's `AbstractChat` (what `useChat` wraps), with a transport that hands the
 // request to the test and streams back what the test receives. AG-UI goes through `AbstractAgent.runAgent()` of
@@ -79,6 +82,7 @@ class VercelSession {
       messages,
       // Deterministic ids, so failures reproduce.
       generateId: () => `${this.chatId}-client-${++this.counter}`,
+      onData: (part) => this.turn.data.push(part),
       transport: {
         sendMessages: async ({ trigger, chatId, messageId, messages }) => {
           let controller;
@@ -97,9 +101,20 @@ class VercelSession {
     if (messages !== undefined) {
       this.chat = this.newChat(messages);
     }
-    this.turn = { sent: deferred() };
+    return await this.start(() => this.chat.sendMessage(message));
+  }
+
+  async regenerate({ messages } = {}) {
+    if (messages !== undefined) {
+      this.chat = this.newChat(messages);
+    }
+    return await this.start(() => this.chat.regenerate());
+  }
+
+  async start(send) {
+    this.turn = { sent: deferred(), data: [] };
     // `AbstractChat` keeps a failed request's error rather than rejecting.
-    this.turn.done = this.chat.sendMessage(message).then(() => this.chat.error);
+    this.turn.done = send().then(() => this.chat.error);
     return await sentOrFailed(this.turn.sent.promise, this.turn.done);
   }
 
@@ -109,7 +124,7 @@ class VercelSession {
     }
     this.turn.controller.close();
     const error = await this.turn.done;
-    return { error: error && String(error), messages: structuredClone(this.chat.messages) };
+    return { error: error && String(error), messages: structuredClone(this.chat.messages), data: this.turn.data };
   }
 }
 
@@ -131,9 +146,23 @@ class AGUISession {
       this.agent = new ReplayAgent({ threadId: this.threadId, initialMessages: messages });
     }
     this.agent.addMessage(message);
-    this.agent.turn = { sent: deferred(), events: new Subject() };
+    return await this.start();
+  }
+
+  // `@ag-ui/client` has no retry of its own: an app drops the last response and runs the agent again.
+  async regenerate({ messages } = {}) {
+    if (messages !== undefined) {
+      this.agent = new ReplayAgent({ threadId: this.threadId, initialMessages: messages });
+    }
+    this.agent.setMessages(this.agent.messages.slice(0, -1));
+    return await this.start();
+  }
+
+  async start() {
+    this.agent.turn = { sent: deferred(), events: new Subject(), data: [] };
     const { turn } = this.agent;
-    turn.done = this.agent.runAgent().then(
+    const subscriber = { onCustomEvent: ({ event }) => void turn.data.push(event) };
+    turn.done = this.agent.runAgent({}, subscriber).then(
       () => undefined,
       (error) => error,
     );
@@ -147,7 +176,7 @@ class AGUISession {
     }
     turn.events.complete();
     const error = await turn.done;
-    return { error: error && String(error), messages: structuredClone(this.agent.messages) };
+    return { error: error && String(error), messages: structuredClone(this.agent.messages), data: turn.data };
   }
 }
 
@@ -163,7 +192,7 @@ function session(protocol, id) {
 
 async function handle({ op, session: id, ...request }) {
   const [protocol, action] = op.split('.');
-  if (!['vercel', 'agui'].includes(protocol) || !['submit', 'receive'].includes(action)) {
+  if (!['vercel', 'agui'].includes(protocol) || !['submit', 'regenerate', 'receive'].includes(action)) {
     throw new Error(`unknown op ${op}`);
   }
   return await session(protocol, id)[action](request);

@@ -11,7 +11,7 @@ from typing import Any
 import anyio.to_thread
 from pydantic_core import to_jsonable_python
 
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, durable_operation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import TextContent, ToolCallPart, ToolReturn
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector, matches_tool_selector
@@ -72,6 +72,28 @@ def _diagnostics(verdict: DefenseResult) -> dict[str, object]:
     }
 
 
+def _trace(ctx: RunContext[Any], call: ToolCallPart, verdict: DefenseResult) -> None:
+    """Mark a flagged verdict with a zero-duration span.
+
+    Sanitized field names come from the tool result, so they are only recorded with `trace_include_content`.
+    """
+    span = ctx.tracer.start_span('prompt_injection flagged')
+    if span.is_recording():
+        attributes: dict[str, str | float | list[str]] = {
+            'gen_ai.tool.name': call.tool_name,
+            'gen_ai.tool.call.id': call.tool_call_id,
+            'prompt_injection.action': 'reported' if verdict.allowed else 'blocked',
+            'prompt_injection.risk_level': verdict.risk_level,
+            'prompt_injection.detections': list(verdict.detections),
+        }
+        if verdict.tier2_score is not None:
+            attributes['prompt_injection.tier2_score'] = verdict.tier2_score
+        if ctx.trace_include_content:
+            attributes['prompt_injection.fields_sanitized'] = list(verdict.fields_sanitized)
+        span.set_attributes(attributes)
+    span.end()
+
+
 def _payload(value: object) -> object:
     """Put a bare string under Defender's standard `content` field."""
     return {'content': value} if isinstance(value, str) else to_jsonable_python(value, fallback=str)
@@ -107,8 +129,8 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
     returns. A result passes through unchanged unless the defense rejects it. With
     `block_high_risk=True`, the built-in defense rejects detected high or critical risk
     results, which are replaced with `blocked_message` so their content never reaches the
-    model. Every flagged verdict is reported through
-    `on_detection`, and a withheld result carries a diagnostics summary on
+    model. Every flagged verdict is recorded as a `prompt_injection flagged` span and reported
+    through `on_detection`, and a withheld result carries a diagnostics summary on
     `ToolReturn.metadata` (not visible to the model).
 
     Pass `semantic_detection=True` to add the local ML classifier, which is what catches
@@ -118,6 +140,11 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
 
     Provider-native tools (for example hosted web search) run server-side and never transit
     the client, so they are not classified here.
+
+    Inside a durable workflow or flow, semantic warmup and, with `semantic_detection` or a supplied
+    `defense`, classification are durable operations addressed by the capability's `id`. It has no
+    default (several scoped defenders compose), so a defender on a durable-capable agent needs an
+    explicit one: `PromptInjectionDefender(id='defender')`.
 
     Example:
         ```python
@@ -216,7 +243,11 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Preload the optional semantic classifier off the event loop."""
         if self.semantic_detection:
-            await anyio.to_thread.run_sync(self._defense.warmup_tier2)
+            await self._warmup(ctx)
+
+    @durable_operation('warmup')
+    async def _warmup(self, ctx: RunContext[AgentDepsT]) -> None:
+        await anyio.to_thread.run_sync(self._defense.warmup_tier2)
 
     async def after_tool_execute(
         self,
@@ -230,10 +261,12 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
         """Classify each model-visible part; withhold the whole result when any part is blocked."""
         if not await matches_tool_selector(self.tool_filter, ctx, tool_def):
             return result
-        verdicts = [
-            await self._defense.defend_tool_result_async(_payload(value), call.tool_name)
-            for value in _model_visible_values(result)
-        ]
+        payloads = [_payload(value) for value in _model_visible_values(result)]
+        # A supplied defense may run Tier 2 or Tier 3, which can't run in workflow code either.
+        if self.semantic_detection or self.defense is not None:
+            verdicts = await self._classify(ctx, payloads, call.tool_name)
+        else:
+            verdicts = await self._defend(payloads, call.tool_name)
         blocking = next((verdict for verdict in verdicts if not verdict.allowed), None)
         blocked: ToolReturn[str] | None = None
         if blocking is not None:
@@ -244,7 +277,18 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
                 await self._notify(ctx, call, verdict)
         return result if blocked is None else blocked
 
+    @durable_operation('classify')
+    async def _classify(
+        self, ctx: RunContext[AgentDepsT], payloads: list[object], tool_name: str
+    ) -> list[DefenseResult]:
+        """Classify as a durable operation, since the semantic classifier can't load in workflow code."""
+        return await self._defend(payloads, tool_name)
+
+    async def _defend(self, payloads: list[object], tool_name: str) -> list[DefenseResult]:
+        return [await self._defense.defend_tool_result_async(payload, tool_name) for payload in payloads]
+
     async def _notify(self, ctx: RunContext[AgentDepsT], call: ToolCallPart, verdict: DefenseResult) -> None:
+        _trace(ctx, call, verdict)
         if self.on_detection is None:
             return
         outcome = self.on_detection(ctx, call, verdict)

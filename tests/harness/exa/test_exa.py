@@ -44,6 +44,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.exa import ExaSearch, ExaSearchToolset
 
 
@@ -184,7 +185,7 @@ class _FakeExaClient:
 def _toolset(
     client: _FakeExaClient,
     *,
-    num_results: int = 5,
+    max_results: int = 5,
     max_text_chars: int = 10_000,
     text_summary: bool | str = False,
     include_deep_search: bool = False,
@@ -192,7 +193,7 @@ def _toolset(
     exclude_domains: Sequence[str] = (),
 ) -> ExaSearchToolset[None]:
     return ExaSearch[None](
-        num_results=num_results,
+        max_results=max_results,
         max_text_chars=max_text_chars,
         text_summary=text_summary,
         include_deep_search=include_deep_search,
@@ -236,7 +237,7 @@ class TestWebSearch:
 
     async def test_requests_highlights_num_results_and_domains(self) -> None:
         client = _FakeExaClient(search_response=_response(_result()))
-        toolset = _toolset(client, num_results=3, include_domains=['a.dev', 'b.dev'])
+        toolset = _toolset(client, max_results=3, include_domains=['a.dev', 'b.dev'])
         await toolset.web_search('q')
         assert client.search_calls == [
             {
@@ -299,7 +300,7 @@ class TestWebSearch:
         output = await _toolset(client).web_search('q')
         assert output.metadata == {'sources': [{'url': 'https://a.dev', 'title': 'First'}]}
 
-    async def test_num_results_enforced_on_oversized_response(self) -> None:
+    async def test_max_results_enforced_on_oversized_response(self) -> None:
         client = _FakeExaClient(
             search_response=_response(
                 _result('https://a.dev', title='A'),
@@ -307,7 +308,7 @@ class TestWebSearch:
                 _result('https://c.dev', title='C'),
             )
         )
-        output = await _toolset(client, num_results=2).web_search('q')
+        output = await _toolset(client, max_results=2).web_search('q')
         assert _text(output) == (
             "Found 2 results for 'q':\n\nTitle: A\nURL: https://a.dev\n\n---\n\nTitle: B\nURL: https://b.dev"
         )
@@ -537,10 +538,32 @@ class TestExaSearch:
         toolset = ExaSearch[None]().get_toolset()
         assert isinstance(toolset, ExaSearchToolset)
 
-    @pytest.mark.parametrize('num_results', [0, 101])
-    def test_num_results_out_of_bounds_rejected(self, num_results: int) -> None:
-        with pytest.raises(ValueError, match=f'num_results must be between 1 and 100, got {num_results}'):
-            ExaSearch[None](num_results=num_results)
+    @pytest.mark.parametrize('max_results', [0, 101])
+    def test_max_results_out_of_bounds_rejected(self, max_results: int) -> None:
+        with pytest.raises(ValueError, match=f'max_results must be between 1 and 100, got {max_results}'):
+            ExaSearch[None](max_results=max_results)
+
+    def test_num_results_is_a_deprecated_alias(self) -> None:
+        with pytest.warns(HarnessDeprecationWarning, match=r'`ExaSearch\(num_results=\.\.\.\)` has been renamed'):
+            capability = ExaSearch[None](num_results=3)
+        assert (capability.max_results, capability.num_results) == (3, None)
+        with pytest.warns(HarnessDeprecationWarning, match=r'`ExaSearch\(num_results=\.\.\.\)` has been renamed'):
+            assert ExaSearch[None].from_spec(num_results=3).max_results == 3
+        with pytest.raises(TypeError, match='`num_results` is its deprecated name'):
+            ExaSearch[None](max_results=4, num_results=3)
+
+    async def test_toolset_num_results_is_a_deprecated_alias(self) -> None:
+        client = _FakeExaClient(search_response=_response())
+        with pytest.warns(HarnessDeprecationWarning, match=r'`ExaSearchToolset\(num_results=\.\.\.\)`'):
+            toolset = ExaSearchToolset[None](
+                client=client, num_results=2, max_text_chars=10_000, include_deep_search=False
+            )
+        await toolset.web_search('q')
+        assert client.search_calls[0]['num_results'] == 2
+        with pytest.raises(TypeError, match='`num_results` is its deprecated name'):
+            ExaSearchToolset[None](
+                client=client, max_results=4, num_results=2, max_text_chars=10_000, include_deep_search=False
+            )
 
     @pytest.mark.parametrize('max_text_chars', [0, 10_001])
     def test_max_text_chars_out_of_bounds_rejected(self, max_text_chars: int) -> None:
@@ -757,7 +780,7 @@ class TestAgentSpec:
 
     async def test_web_search_tool_is_a_core_web_search_fallback(self) -> None:
         client = _FakeExaClient(search_response=_response(_result('https://a.dev', title='A', highlights=['alpha'])))
-        exa = ExaSearch[object](num_results=3, client=client)
+        exa = ExaSearch[object](max_results=3, client=client)
 
         tools, _ = await _tools_sent(WebSearch[object](local=exa.web_search_tool()), native_web_search=True)
         assert tools == []
@@ -784,14 +807,14 @@ class TestAgentSpec:
 
     def test_from_spec_builds_capability(self) -> None:
         capability = ExaSearch[None].from_spec(
-            num_results=3,
+            max_results=3,
             text_summary=True,
             include_deep_search=True,
             include_domains=['a.dev'],
             native=True,
         )
         assert capability.native is True
-        assert capability.num_results == 3
+        assert capability.max_results == 3
         assert capability.text_summary is True
         assert capability.include_deep_search is True
         assert capability.include_domains == ['a.dev']
@@ -812,6 +835,6 @@ class TestAgentSpec:
     def test_agent_loads_from_spec_file(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv('EXA_API_KEY', 'test-key')
         spec = tmp_path / 'agent.yaml'
-        spec.write_text('model: test\ncapabilities:\n  - ExaSearch:\n      num_results: 3\n')
+        spec.write_text('model: test\ncapabilities:\n  - ExaSearch:\n      max_results: 3\n')
         agent = Agent.from_file(spec, custom_capability_types=[ExaSearch])
         assert isinstance(agent, Agent)

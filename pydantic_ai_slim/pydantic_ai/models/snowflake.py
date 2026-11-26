@@ -10,7 +10,7 @@ from pydantic import field_validator
 from typing_extensions import TypedDict, override
 
 from .. import _utils
-from ..messages import FinishReason, ModelResponseStreamEvent, ThinkingPart, ToolCallPart
+from ..messages import FinishReason, ModelResponse, ModelResponseStreamEvent, ThinkingPart, ToolCallPart
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..settings import ModelSettings, ThinkingLevel
@@ -23,13 +23,8 @@ try:
 
     from ..providers.snowflake import SnowflakeModelProfile
     from ._reasoning_details import ReasoningDetail, from_reasoning_detail, into_reasoning_detail
-    from .openai import (
-        OpenAIChatModel,
-        OpenAIChatModelSettings,
-        OpenAIStreamedResponse,
-        _ChatCompletion,  # pyright: ignore[reportPrivateUsage]
-        _ChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
-    )
+    from .openai import OpenAIChatModel, OpenAIChatModelSettings, OpenAIStreamedResponse
+    from .openai._chat_completions import LenientChatCompletion, LenientChatCompletionChunk
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the Snowflake model, '
@@ -115,7 +110,7 @@ class _SnowflakeChoice(chat_completion.Choice):
     message: _SnowflakeCompletionMessage  # pyright: ignore[reportIncompatibleVariableOverride]
 
 
-class _SnowflakeChatCompletion(_ChatCompletion):
+class _SnowflakeChatCompletion(LenientChatCompletion):
     choices: list[_SnowflakeChoice]  # pyright: ignore[reportIncompatibleVariableOverride]
 
 
@@ -134,7 +129,7 @@ class _SnowflakeChunkChoice(chat_completion_chunk.Choice):
         return value or None
 
 
-class _SnowflakeChatCompletionChunk(_ChatCompletionChunk):
+class _SnowflakeChatCompletionChunk(LenientChatCompletionChunk):
     choices: list[_SnowflakeChunkChoice]  # pyright: ignore[reportIncompatibleVariableOverride]
 
 
@@ -246,6 +241,11 @@ class SnowflakeModel(OpenAIChatModel):
         else:
             return super()._process_thinking(message)
 
+    @override
+    def _carries_thinking_in_user_turn(self, message: ModelResponse, part: ThinkingPart) -> bool:
+        native = self.accepts_stateless_artifacts(message, part) and into_reasoning_detail(part)
+        return not native and super()._carries_thinking_in_user_turn(message, part)
+
     @dataclass
     class _MapModelResponseContext(OpenAIChatModel._MapModelResponseContext):  # pyright: ignore[reportPrivateUsage]
         reasoning_details: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
@@ -334,7 +334,8 @@ def _snowflake_settings_to_openai_settings(
     # Copy so the `snowflake_` pops never mutate the caller's dict: `merge_model_settings` can return the
     # model's own `settings` by identity, so popping in place would drop the keys on the next request.
     settings = model_settings.copy()
-    extra_body = dict(cast(dict[str, Any], settings.get('extra_body', {})))
+    configured = settings.get('extra_body')
+    extra_body: dict[str, object] = {} if configured is None else dict(cast(dict[str, object], configured))
 
     # Fall back to unified thinking when snowflake_reasoning is not set
     if 'snowflake_reasoning' not in settings and profile.get('snowflake_supports_reasoning', False):

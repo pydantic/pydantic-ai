@@ -2,9 +2,10 @@
 
 See `tests/append_only.py` for the scenario and the three invariants it checks, and
 `tests/test_history_append_only.py` for the core capabilities. Every public capability class in
-`pydantic_ai_harness` runs, constructed with its defaults or with a fixture from `FIXTURES`, unless
-`EXEMPT` says why it can't run offline. Capabilities that keep state change it mid-conversation through
-`SCENARIOS`, and the clock moves an hour between requests.
+`pydantic_ai_harness` runs, constructed with its defaults or with the `build` of its case in
+`tests/harness/capability_cases.py`, unless that `build` is `Unbuildable`, saying why it can't run offline.
+Capabilities that keep state change it mid-conversation through `SCENARIOS`, and the clock moves an hour
+between requests.
 """
 
 from __future__ import annotations
@@ -17,79 +18,46 @@ from typing import Any
 
 import anyio
 import pytest
-from mcp.server.fastmcp import FastMCP
 
-import pydantic_ai_harness
 from pydantic_ai import Agent, RunContext, Tool
-from pydantic_ai.capabilities import AbstractCapability, Capability, LocalWorkspace, ToolSearch, Toolset
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Capability,
+    LocalWorkspace,
+    ToolSearch,
+    Toolset,
+)
 from pydantic_ai.capabilities.abstract import leaf_capabilities
-from pydantic_ai.messages import ModelMessage, TextContent, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness import (
-    Advisor,
-    ApprovalReviewer,
-    AskUser,
-    BubblewrapSandbox,
-    CapabilityCreation,
-    ClampOversizedMessages,
-    ClearToolResults,
     CodeMode,
-    Coder,
-    CompactOnRequest,
-    DayAI,
-    DeduplicateFileReads,
     FallbackCompaction,
     FileSystem,
-    Grain,
-    InputGuardrail,
-    Macroscope,
-    ManagedPrompt,
-    Ordinal,
-    OutputGuardrail,
-    PostHog,
-    Pylon,
-    RelevanceCompaction,
-    RepoContext,
-    Researcher,
-    Shell,
-    Skills,
-    SlidingWindowCompaction,
-    SmartSearch,
-    StackOne,
+    Peers,
+    ReportStaleFiles,
     SummarizingCompaction,
     SystemReminders,
-    TieredCompaction,
-    ToolCallJudge,
-    ToolOutputLimits,
-    TrajectoryJudge,
-    WarnNearLimits,
 )
-from pydantic_ai_harness.conversation_search import ConversationSearch, SnapshotHistorySource
-from pydantic_ai_harness.github import GitHub
-from pydantic_ai_harness.linear import Linear
-from pydantic_ai_harness.logfire_mcp import LogfireMCP
-from pydantic_ai_harness.notion import Notion
+from pydantic_ai_harness.peers import InMemoryPeerNetwork, LocalPeerInbox, read_peer_message
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
-from pydantic_ai_harness.slack import Slack
-from pydantic_ai_harness.step_persistence import InMemoryStepStore
-from pydantic_ai_harness.subagents import (
+from pydantic_ai_harness.report_stale_files import StaleFilesPart
+from pydantic_ai_harness.sub_agents import (
     DelegationReports,
     DelegationTaskEvent,
     DelegationTasks,
     SubAgent,
     SubAgents,
-    is_task_report,
+    TaskOutputPart,
 )
 from pydantic_ai_harness.system_reminders import LLMReminder, Reminder
 
 from ..append_only import (
-    CLOCK,
     PROVIDERS,
     Allowed,
     ConversationResult,
-    Exempt,
     Fixture,
     Known,
     Provider,
@@ -102,67 +70,16 @@ from ..append_only import (
     run_conversation,
     skip_unless_installed,
 )
-
-# MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
-pytestmark = pytest.mark.filterwarnings(
-    "ignore:Field 'lifespan' has an incomplete definition:UserWarning:pydantic_settings.sources.utils"
-)
-
-
-def _hosted_server() -> FastMCP:
-    """An in-process stand-in for a hosted MCP service, with server instructions and one tool."""
-    server = FastMCP('hosted', instructions='Hosted service instructions.')
-
-    @server.tool()
-    def search() -> str:
-        return 'found'  # pragma: no cover
-
-    return server
-
-
-_HOSTED_MCP: tuple[type[AbstractCapability[Any]], ...] = (
-    DayAI,
-    GitHub,
-    Grain,
-    Linear,
-    LogfireMCP,
-    Notion,
-    Ordinal,
-    PostHog,
-    Pylon,
-    Slack,
-)
-"""Hosted MCP integrations, run against an in-process server through their `client` field."""
-
-
-def _hosted(cls: Callable[..., AbstractCapability[Any]]) -> Fixture:
-    return lambda _: cls(client=_hosted_server())
-
-
-def _workspace(build: Callable[[], AbstractCapability[Any]]) -> Fixture:
-    """The capability plus a local workspace in the test's directory, for capabilities that need one."""
-    return lambda tmp_path: [build(), LocalWorkspace(tmp_path)]
-
-
-def _repo_context(tmp_path: Path) -> list[AbstractCapability[Any]]:
-    (tmp_path / 'AGENTS.md').write_text('Keep answers short.\n')
-    return [RepoContext(), FileSystem(), LocalWorkspace(tmp_path)]
-
-
-def _skills(tmp_path: Path) -> list[AbstractCapability[Any]]:
-    skill = tmp_path / 'skills' / 'weather'
-    skill.mkdir(parents=True)
-    (skill / 'SKILL.md').write_text('---\ndescription: Report the weather.\n---\n\nSay sunny.\n')
-    return [Skills(tmp_path / 'skills'), LocalWorkspace(tmp_path)]
-
-
-def _deduplicate_file_reads(tmp_path: Path) -> list[AbstractCapability[Any]]:
-    (tmp_path / 'notes.md').write_text('Sunny.\n')
-    return [DeduplicateFileReads(file_key=_read_file_key), FileSystem(), LocalWorkspace(tmp_path)]
+from ..capability_cases import Unbuildable
+from .capability_cases import CASES, HARNESS_CAPABILITY_PACKAGES
 
 
 def _run_look_up(topic: str) -> tuple[str, dict[str, Any]]:
     return 'run_code', {'code': f'await look_up(topic={topic!r})'}
+
+
+def _bridge_look_up(topic: str) -> tuple[str, dict[str, str]]:
+    return 'tool_call', {'name': 'look_up', 'args_json': f'{{"topic": "{topic}"}}'}
 
 
 def _forecast(city: str) -> str:
@@ -270,79 +187,6 @@ _TIDES_FROM_CODE = _run_code("await tides(port='Brest')")
 _CODE_MODE_SEARCHES = _code_mode_discoveries(_SEARCH_TIDES, _TIDES_FROM_CODE)
 _CODE_MODE_LOADS = _code_mode_discoveries(_LOAD_TIDAL, _TIDES_FROM_CODE, ('load_capability', {'id': 'forecasting'}))
 
-
-def _modal_sandbox() -> AbstractCapability[Any]:
-    # Imported here, not at module level, so collecting this file never imports the Modal SDK. The test has
-    # already skipped when `modal` isn't installed (`OPTIONAL_DEPENDENCIES`).
-    from pydantic_ai_harness.modal_sandbox import ModalSandbox
-
-    return ModalSandbox(warn_if_no_tools=False)
-
-
-def _ipython_code_mode() -> AbstractCapability[Any]:
-    # Imported here, so collecting this file never imports `jupyter_client`. The test has already skipped
-    # when it isn't installed (`OPTIONAL_DEPENDENCIES`).
-    from pydantic_ai_harness.ipython_code_mode import IPythonCodeMode
-
-    return IPythonCodeMode(tools=[])
-
-
-def _read_file_key(call: ToolCallPart) -> str | None:
-    args = call.args_as_dict()
-    return str(args['path']) if call.tool_name == 'read_file' else None
-
-
-def _time_reminder(ctx: RunContext[Any]) -> str:
-    return f'It is now {CLOCK.now:%H:%M} UTC.'
-
-
-FIXTURES: dict[str, Fixture] = {
-    **{cls.__name__: _hosted(cls) for cls in _HOSTED_MCP},
-    'Advisor': lambda _: Advisor(TestModel()),
-    'ApprovalReviewer': lambda _: ApprovalReviewer(TestModel(), question='Is this safe?'),
-    'AskUser': lambda _: AskUser(answerer=None),
-    'BubblewrapSandbox': lambda tmp_path: BubblewrapSandbox(LocalWorkspace(tmp_path)),
-    'CapabilityCreation': lambda tmp_path: [CapabilityCreation(tmp_path / 'capabilities'), LocalWorkspace(tmp_path)],
-    'ClampOversizedMessages': lambda _: ClampOversizedMessages(max_part_chars=100_000),
-    'ClearToolResults': lambda _: ClearToolResults(max_messages=6, keep_pairs=1),
-    'Coder': _workspace(Coder),
-    'CompactOnRequest': lambda _: CompactOnRequest(SlidingWindowCompaction(max_messages=1, keep_messages=2)),
-    'ConversationSearch': lambda _: ConversationSearch(
-        SnapshotHistorySource(InMemoryStepStore()), scope='conversation'
-    ),
-    'DeduplicateFileReads': _deduplicate_file_reads,
-    'FallbackCompaction': lambda _: FallbackCompaction(
-        fallback_chain=[SlidingWindowCompaction(max_messages=6, keep_messages=2)]
-    ),
-    'FileSystem': _workspace(FileSystem),
-    'InputGuardrail': lambda _: InputGuardrail(guard=lambda text: True),
-    # Keeps the scenario's tools native, so the conversation checks the `run_code` declaration without
-    # launching a kernel process for every provider.
-    'IPythonCodeMode': lambda _: _ipython_code_mode(),
-    'Macroscope': _workspace(Macroscope),
-    'ManagedPrompt': lambda _: ManagedPrompt('assistant', default='You answer questions about the news.'),
-    'ModalSandbox': lambda _: _modal_sandbox(),
-    'OutputGuardrail': lambda _: OutputGuardrail(guard=lambda output: True),
-    'Pixeltable': lambda _: pydantic_ai_harness.Pixeltable(tables=['*']),
-    'RepoContext': _repo_context,
-    'RelevanceCompaction': lambda _: RelevanceCompaction(TestModel(), max_tokens=20, keep_tokens=1),
-    'Researcher': _workspace(Researcher),
-    'Shell': _workspace(Shell),
-    'Skills': _skills,
-    'SlidingWindowCompaction': lambda _: SlidingWindowCompaction(max_messages=6, keep_messages=2),
-    'SmartSearch': _workspace(lambda: SmartSearch(model=TestModel())),
-    'StackOne': lambda _: StackOne('account', client=_hosted_server()),
-    'SummarizingCompaction': lambda _: SummarizingCompaction(TestModel(), max_messages=6, keep_messages=2),
-    'SystemReminders': lambda _: SystemReminders(dynamic_reminders=[_time_reminder]),
-    'TieredCompaction': lambda _: TieredCompaction(
-        tiers=[ClearToolResults(max_messages=6, keep_pairs=1)], target_tokens=10
-    ),
-    'ToolCallJudge': lambda _: ToolCallJudge(TestModel(), question='Is this call safe?'),
-    'ToolOutputLimits': _workspace(ToolOutputLimits),
-    'TrajectoryJudge': lambda _: TrajectoryJudge(model=TestModel()),
-    'WarnNearLimits': lambda _: WarnNearLimits(max_iterations=2),
-}
-"""Capabilities that need configuration, keyed by class name, built for each test in its `tmp_path`."""
 
 VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
     # A lasting reminder is recorded on each firing and sent again on every later request, so it only ever appends.
@@ -464,7 +308,18 @@ VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
 
 SCENARIOS: dict[str, Scenario] = {
     'CodeMode': Scenario(look_up=_run_look_up),
+    'ToolBridge': Scenario(look_up=_bridge_look_up),
     'CompactOnRequest': Scenario(state_calls=(('compact_context', {'focus': 'the forecast'}),)),
+    # A button pressed in one step stays held into the run's next step, which releases it.
+    'ComputerUse': Scenario(
+        turns=(
+            Turn(calls=(('computer', {'actions': [{'type': 'mouse_down'}]}),)),
+            Turn(calls=(('computer', {'actions': [{'type': 'mouse_up'}, {'type': 'screenshot'}]}),)),
+            Turn(text='Clicked.'),
+            Turn(calls=(('look_up', {'topic': 'sports'}),)),
+            Turn(text='Here is more.'),
+        )
+    ),
     'DeduplicateFileReads': Scenario(
         state_calls=(('read_file', {'path': 'notes.md'}), ('read_file', {'path': 'notes.md'}))
     ),
@@ -483,6 +338,31 @@ SCENARIOS: dict[str, Scenario] = {
     'Planning': Scenario(
         state_calls=(('add_task', {'content': 'Check the weather'}), ('add_task', {'content': 'Check the sports'}))
     ),
+    # The first run's second step prunes the first step's result.
+    'PruneToolResults': Scenario(state_calls=(('prune_tool_result', {'tool_call_id': '', 'summary': 'Quiet.'}),)),
+    # Each run ends with a review round, which takes a turn of its own.
+    'RefineOutput': Scenario(
+        turns=(
+            Turn(calls=(('look_up', {'topic': 'weather'}),)),
+            Turn(calls=(('look_up', {'topic': 'news'}),)),
+            Turn(text='Here is the weather and the news.'),
+            Turn(text='Here is the weather and the news, checked.'),
+            Turn(calls=(('look_up', {'topic': 'sports'}),)),
+            Turn(text='Here is more.'),
+            Turn(text='Here is more, checked.'),
+        )
+    ),
+    # The first run edits, is sent back to verify, and passes a check; the second makes no edit.
+    'RequireVerification': Scenario(
+        turns=(
+            Turn(calls=(('write_file', {'path': 'weather.py', 'content': 'FORECAST = "sunny"\n'}),)),
+            Turn(text='Saved the forecast.'),
+            Turn(calls=(('run_command', {'command': 'true'}),)),
+            Turn(text='Saved and verified the forecast.'),
+            Turn(calls=(('look_up', {'topic': 'sports'}),)),
+            Turn(text='Here is more.'),
+        )
+    ),
     'RepoContext': Scenario(
         state_calls=(
             ('edit_file', {'path': 'AGENTS.md', 'old_text': 'short', 'new_text': 'very short'}),
@@ -491,16 +371,6 @@ SCENARIOS: dict[str, Scenario] = {
     ),
 }
 """Conversations that change a capability's state, or call tools the way the capability exposes them."""
-
-EXEMPT: dict[str, Exempt] = {
-    'AbsurdDurability': Exempt('Durable engine: needs a Postgres-backed Absurd queue.'),
-    'AWSLambdaDurability': Exempt('Durable engine: needs the AWS Lambda durable functions runtime.'),
-    'DynamicWorkflow': Exempt('Runs sub-agents a caller supplies, whose requests are their own conversations.'),
-    'GoogleWorkspace': Exempt('Needs Google OAuth credentials to list its tools.'),
-    'PGTaskDurability': Exempt('Durable engine: needs Postgres.'),
-    'RenderWorkflows': Exempt('Durable engine: needs a Render Workflows app.'),
-    'SSHWorkspace': Exempt('Needs an SSH host to attach a workspace to.'),
-}
 
 _ISSUES = 'https://github.com/pydantic/pydantic-ai/issues/'
 _PULLS = 'https://github.com/pydantic/pydantic-ai/pull/'
@@ -522,6 +392,10 @@ ALLOWED: dict[str, Allowed] = {
     ),
     'DeduplicateFileReads': Allowed(
         'Clears superseded file reads in place, as documented, when the model reads a file again',
+        (('messages', 'tool-return'),),
+    ),
+    'PruneToolResults': Allowed(
+        'Replaces the tool result the model pruned, once per accepted `prune_tool_result` call',
         (('messages', 'tool-return'),),
     ),
     # With a 20-token trigger every request is over it, so each request with an older step outside the
@@ -560,6 +434,22 @@ ALLOWED: dict[str, Allowed] = {
     'WarnNearLimits': Allowed(
         f'Request-scoped system prompt ({_PULLS}10561): sent for one request, then left out. Anthropic clears it '
         'natively with `clear_at`; elsewhere it is a request-only tail',
+        (('messages', 'system-prompt'),),
+        tail=True,
+        records=('request-scoped system prompt',),
+        providers=('openai-responses', 'openai-chat'),
+    ),
+    'ReportRemainingBudget': Allowed(
+        f'Request-scoped system prompt ({_ISSUES}9019): sent for one request, then left out. Anthropic clears it '
+        'natively with `clear_at`; elsewhere it is a request-only tail',
+        (('messages', 'system-prompt'),),
+        tail=True,
+        records=('request-scoped system prompt',),
+        providers=('openai-responses', 'openai-chat'),
+    ),
+    'ReportStaleFiles': Allowed(
+        'Request-scoped stale-file notice: sent for one request, then left out. Anthropic clears it natively with '
+        '`clear_at`; elsewhere it is a request-only tail',
         (('messages', 'system-prompt'),),
         tail=True,
         records=('request-scoped system prompt',),
@@ -617,37 +507,7 @@ ALLOWED: dict[str, Allowed] = {
 }
 """Documented prefix movers, checked exactly."""
 
-OPTIONAL_DEPENDENCIES: dict[str, str] = {
-    'BoxdSandbox': 'boxd',
-    'BoxLiteSandbox': 'boxlite',
-    'BrowserUse': 'browser_use',
-    'DaytonaSandbox': 'daytona',
-    'AzureDurableTaskDurability': 'durabletask',
-    'E2BSandbox': 'e2b',
-    'ExaAgent': 'exa_py',
-    'ExaSearch': 'exa_py',
-    'IPythonCodeMode': 'jupyter_client',
-    'ModalSandbox': 'modal',
-    'OpenSandbox': 'opensandbox',
-    'Pixeltable': 'pixeltable',
-    'PlaywrightBrowser': 'playwright',
-    'PromptInjectionDefender': 'stackone_defender',
-    'SmolSandbox': 'smol',
-    'SpritesSandbox': 'sprites',
-    'YouResearch': 'youdotcom',
-    'YouSearch': 'youdotcom',
-}
-"""Capabilities whose module needs an optional dependency group, by the module that group provides."""
-
-ENV: dict[str, dict[str, str]] = {
-    'ExaAgent': {'EXA_API_KEY': 'test-key'},
-    'ExaSearch': {'EXA_API_KEY': 'test-key'},
-    'YouResearch': {'YDC_API_KEY': 'test-key'},
-    'YouSearch': {'YDC_API_KEY': 'test-key'},
-}
-"""Credentials a capability checks when it's built; nothing is sent, as the scripted model never calls its tools."""
-
-CAPABILITIES = discover_capabilities(('pydantic_ai_harness',))
+CAPABILITIES = discover_capabilities(HARNESS_CAPABILITY_PACKAGES)
 
 
 _REPORT = 'The logs show one error.'
@@ -687,12 +547,10 @@ def _delegation_reports(
     def delivered_once(result: ConversationResult) -> None:
         parts = [part for message in result.history for part in getattr(message, 'parts', ()) if _REPORT in str(part)]
         assert len(parts) == 1, f'expected the report in history once, found {len(parts)}'
-        # Delivered as framed `<task_output>` data on the user channel, recognized by its metadata.
+        # Delivered as a typed `<task_output>` capability part, which survives serialization as one.
         (part,) = parts
-        assert is_task_report(part), f'expected a task report, found {part!r}'
-        assert not isinstance(part.content, str)
-        (text,) = part.content
-        assert isinstance(text, TextContent) and text.content.startswith('<task_output task_id=')
+        assert isinstance(part, TaskOutputPart), f'expected a task report, found {part!r}'
+        assert part.content == _REPORT
 
     scenario = Scenario(
         turns=(
@@ -714,7 +572,64 @@ def _delegation_reports(
     return capabilities, scenario, delivered_once
 
 
+_PEER_NOTE = 'The deploy finished.'
+
+
+def _peer_message(
+    tmp_path: Path,
+) -> tuple[list[AbstractCapability[Any]], Scenario, Callable[[ConversationResult], None]]:
+    """A peer message that arrives between the runs enters the second run's history once, as peer data."""
+    network = InMemoryPeerNetwork()
+    inbox = LocalPeerInbox(path=tmp_path / 'inbox.json')
+    view = network.join(handle='self', inbox=inbox)
+    sender = network.join(handle='ops')
+
+    async def send() -> None:
+        (recipient,) = await sender.peers()
+        await sender.send(recipient.id, _PEER_NOTE, key='ops:1')
+
+    def delivered_once(result: ConversationResult) -> None:
+        parts = [
+            part for message in result.history for part in getattr(message, 'parts', ()) if _PEER_NOTE in str(part)
+        ]
+        assert len(parts) == 1, f'expected the peer message in history once, found {len(parts)}'
+        assert read_peer_message(parts[0]) is not None, f'expected a peer message, found {parts[0]!r}'
+
+    return [Peers(network=view, inbox=inbox)], Scenario(between_runs=send), delivered_once
+
+
+def _stale_files(
+    tmp_path: Path,
+) -> tuple[list[AbstractCapability[None]], Scenario, Callable[[ConversationResult], None]]:
+    """A file the model read and edited changes from outside between the runs, so the second run gets notices."""
+    notes = tmp_path / 'notes.md'
+    notes.write_text('Sunny.\n')
+
+    async def change() -> None:
+        notes.write_text('Snowy.\n')
+
+    def notified(result: ConversationResult) -> None:
+        parts = [
+            part
+            for message in result.history
+            for part in getattr(message, 'parts', ())
+            if isinstance(part, StaleFilesPart)
+        ]
+        assert parts, 'expected a stale-file notice in the second run'
+
+    scenario = Scenario(
+        state_calls=(
+            ('read_file', {'path': 'notes.md'}),
+            ('edit_file', {'path': 'notes.md', 'old_text': 'Sunny.', 'new_text': 'Rainy.'}),
+        ),
+        between_runs=change,
+    )
+    return [ReportStaleFiles(), FileSystem(), LocalWorkspace(tmp_path)], scenario, notified
+
+
 CONVERSATIONS = {
+    'Peers': _peer_message,
+    'ReportStaleFiles': _stale_files,
     'DelegationReports': _delegation_reports,
     'SummarizingCompaction+Capability(defer_loading=True)': _summarized_load(
         ('load_capability', {'id': 'forecasting'})
@@ -726,25 +641,27 @@ CONVERSATIONS = {
 """Capabilities whose behavior needs a conversation of its own, with the check it must also pass."""
 
 
-def test_every_capability_has_a_case():
+UNBUILDABLE = {name for name, case in CASES.items() if isinstance(case.build, Unbuildable)}
+
+
+def test_every_table_entry_names_a_capability():
     """Every table entry names a capability that still exists, so renames and removals don't leave dead rows."""
-    tables = (
-        FIXTURES.keys() | EXEMPT.keys() | SCENARIOS.keys() | KNOWN.keys() | ALLOWED.keys() | ENV.keys()
-    ) | OPTIONAL_DEPENDENCIES.keys()
+    tables = SCENARIOS.keys() | KNOWN.keys() | ALLOWED.keys()
     stale = tables - CAPABILITIES.keys() - VARIANTS.keys() - CONVERSATIONS.keys()
     assert not stale, f'entries for capabilities that no longer exist: {sorted(stale)}'
 
 
-@pytest.mark.parametrize('name', sorted(CAPABILITIES.keys() - EXEMPT.keys()))
+@pytest.mark.parametrize('name', sorted(CAPABILITIES.keys() - UNBUILDABLE))
 def test_only_coder_repairs_tool_arguments_by_default(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """`Coder` is the one capability that turns `RepairToolArguments` on; every other one leaves arguments as sent."""
-    skip_unless_installed(name, OPTIONAL_DEPENDENCIES)
-    for key, value in ENV.get(name, {}).items():
+    case = CASES[name]
+    skip_unless_installed(name, case.requires)
+    for key, value in case.env.items():
         monkeypatch.setenv(key, value)
     if name in CONVERSATIONS:
         capabilities = CONVERSATIONS[name](tmp_path)[0]
     else:
-        capabilities = build_capabilities(name, CAPABILITIES[name].load, FIXTURES.get(name), tmp_path)
+        capabilities = build_capabilities(name, CAPABILITIES[name].load, CASES[name].fixture, tmp_path)
     leaves = [leaf for capability in capabilities for leaf in leaf_capabilities(capability)]
     repairs = any(isinstance(leaf, RepairToolArguments) for leaf in leaves)
     assert repairs == (name in {'Coder', 'RepairToolArguments'})
@@ -753,14 +670,15 @@ def test_only_coder_repairs_tool_arguments_by_default(name: str, tmp_path: Path,
 @pytest.mark.parametrize('provider', PROVIDERS)
 @pytest.mark.parametrize(
     'name',
-    sorted(CAPABILITIES.keys() - EXEMPT.keys()) + sorted(VARIANTS.keys() | CONVERSATIONS.keys() - CAPABILITIES.keys()),
+    sorted(CAPABILITIES.keys() - UNBUILDABLE) + sorted(VARIANTS.keys() | CONVERSATIONS.keys() - CAPABILITIES.keys()),
 )
 async def test_conversation_only_appends(
     name: str, provider: Provider, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
 ):
-    skip_unless_installed(name, OPTIONAL_DEPENDENCIES)
-    for key, value in ENV.get(name, {}).items():
-        monkeypatch.setenv(key, value)
+    if (case := CASES.get(name)) is not None:
+        skip_unless_installed(name, case.requires)
+        for key, value in case.env.items():
+            monkeypatch.setenv(key, value)
     check: Callable[[ConversationResult], None] | None = None
     if name in CONVERSATIONS:
         capabilities, scenario, check = CONVERSATIONS[name](tmp_path)
@@ -768,7 +686,7 @@ async def test_conversation_only_appends(
         fixture, scenario = VARIANTS[name]
         capabilities = build_capabilities(name, lambda: AbstractCapability, fixture, tmp_path)
     else:
-        capabilities = build_capabilities(name, CAPABILITIES[name].load, FIXTURES.get(name), tmp_path)
+        capabilities = build_capabilities(name, CAPABILITIES[name].load, CASES[name].fixture, tmp_path)
         scenario = SCENARIOS.get(name, Scenario())
     clock = inject_clock(monkeypatch)
     result = await run_conversation(provider, capabilities, scenario, clock)

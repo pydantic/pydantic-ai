@@ -29,6 +29,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
     SqliteConversationStore,
     conversation_text,
     ensure_inactive,
+    ensure_posix_inactive,
 )
 
 
@@ -239,6 +240,7 @@ def test_live_owner_is_not_a_recovery_point(monkeypatch: pytest.MonkeyPatch) -> 
 
     monkeypatch.setattr(os, 'kill', gone)
     ensure_inactive(running)
+    ensure_posix_inactive(pid=123)
 
     def denied(pid: int, signal: int) -> None:
         raise PermissionError
@@ -246,6 +248,8 @@ def test_live_owner_is_not_a_recovery_point(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(os, 'kill', denied)
     with pytest.raises(ConversationConflict):
         ensure_inactive(running)
+    with pytest.raises(ConversationConflict, match='busy in process 123'):
+        ensure_posix_inactive(pid=123)
 
 
 @pytest.mark.skipif(sys.platform != 'linux', reason='Process start times come from Linux `/proc`.')

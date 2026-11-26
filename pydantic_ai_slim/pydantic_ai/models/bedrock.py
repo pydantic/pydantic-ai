@@ -76,7 +76,8 @@ from pydantic_ai import (
     _utils,
     usage,
 )
-from pydantic_ai._gateway_cost import fill_gateway_header_cost
+from pydantic_ai._file_input import KNOWN_IMAGE_MEDIA_TYPES, KNOWN_VIDEO_MEDIA_TYPES
+from pydantic_ai._gateway_cost import fill_gateway_header_cost, gateway_reported_cost
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._thinking_part import REDACTED_THINKING_PART_IDS, render_replayed_thinking
@@ -84,6 +85,7 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelHTTPError,
     ModelNotFoundError,
+    ModelServerError,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -106,6 +108,8 @@ from pydantic_ai.models import (
     check_allow_model_requests,
     download_item,
 )
+from pydantic_ai.models._anthropic_max_tokens import cap_max_tokens
+from pydantic_ai.models._anthropic_sampling import drop_conflicting_sampling_settings
 from pydantic_ai.models._anthropic_schema_limits import (
     SCHEMA_TOO_COMPLEX_HINT,
     default_output_mode_within_limits,
@@ -235,6 +239,17 @@ def _map_api_errors(
         raise ModelAPIError(model_name=model_name, message=f'Failed to decode response as an event stream: {e}') from e
 
 
+def _model_error_category(e: ClientError, message: str | None) -> _model_errors.HTTPErrorCategory:
+    """A 424 `ModelErrorException` is the model failing; the model's own status, when present, says more than the 424."""
+    original_status_code = e.response.get('originalStatusCode')
+    category = (
+        _model_errors.http_status_category(original_status_code, message)
+        if isinstance(original_status_code, int)
+        else None
+    )
+    return category or ModelServerError
+
+
 def _map_client_error(
     e: ClientError, model_name: str, model_id_namespace: str, *, strict_schema_limits: bool
 ) -> ModelAPIError:
@@ -244,6 +259,8 @@ def _map_client_error(
     code, message = error.get('Code'), error.get('Message')
     provider_error_code = code if isinstance(code, str) else None
     category = _model_errors.bedrock_code_category(provider_error_code, message)
+    if provider_error_code == 'ModelErrorException':
+        category = _model_error_category(e, message)
     # An exception event inside a `ConverseStream` response carries no status code; it gets the status the same
     # exception has before the stream opens.
     in_stream = not isinstance(status_code, int)
@@ -422,6 +439,45 @@ Converse accepts `none`, `low`, `medium`, and `high`, but only `high` produced r
 folds up to it rather than sending a level that doesn't reason.
 """
 
+_HIGH_ONLY_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
+    False: 'none',
+    True: 'high',
+    'minimal': 'high',
+    'low': 'high',
+    'medium': 'high',
+    'high': 'high',
+    'xhigh': 'high',
+    'max': 'high',
+}
+"""Maps unified thinking values to `reasoning_effort` for models where only `high` reasons on Converse.
+
+Used for Z.AI GLM-4.7/GLM-4.7-flash/GLM-5 and DeepSeek V3.2: Converse accepts `none`, `low`, `medium`, and `high`,
+but in live checks only `high` produced reasoning, so every enabled level folds up to it.
+"""
+
+_GLM_EFFORT_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
+    # GLM-5.3 always reasons on Converse and accepts `low`/`medium`/`high`/`xhigh`/`max`, rejecting `none` and
+    # `minimal`, so `thinking=False` and `minimal` reason as little as it can. `True` sends `max`, the level the
+    # model uses when the field is left out (per the AWS model card).
+    False: 'low',
+    True: 'max',
+    'minimal': 'low',
+    'low': 'low',
+    'medium': 'medium',
+    'high': 'high',
+    'xhigh': 'xhigh',
+    'max': 'max',
+}
+"""Maps unified thinking values to `reasoning_effort` for Z.AI GLM models with effort levels on Converse (GLM-5.3)."""
+
+_REASONING_EFFORT_MAPS: dict[str, dict[ThinkingLevel, str]] = {
+    'openai': _GPT_OSS_REASONING_EFFORT_MAP,
+    'deepseek': _HIGH_ONLY_REASONING_EFFORT_MAP,
+    'zai': _HIGH_ONLY_REASONING_EFFORT_MAP,
+    'zai_effort': _GLM_EFFORT_REASONING_EFFORT_MAP,
+}
+"""The `reasoning_effort` table for each thinking variant that takes that field on Converse."""
+
 _GROK_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
     # Grok always reasons on Converse and accepts `low`/`medium`/`high`/`xhigh`, so `thinking=False` and `minimal`
     # reason as little as it can and `max` folds to `xhigh`. `True` picks `medium` like the other always-on
@@ -493,6 +549,7 @@ LatestBedrockModelNames = Literal[
     'global.anthropic.claude-haiku-4-5-20251001-v1:0',
     # OpenAI
     'global.openai.gpt-6.1-sol',
+    'global.openai.gpt-6.1-terra',
     'global.openai.gpt-6-luna',
     'global.openai.gpt-6-astra',
     'global.openai.gpt-5.6-sol',
@@ -821,8 +878,12 @@ _CACHE_SETTINGS_KEYS = (
 class BedrockConverseModel(Model[BaseClient]):
     """A model that uses the Bedrock Converse API."""
 
-    # The Converse API has no audio content block.
+    # The Converse API has no audio content block, and names each image's and video's format, which only the media
+    # types core knows have.
     _unsupported_file_inputs = frozenset({'audio'})
+    _supported_media_types = {'image': KNOWN_IMAGE_MEDIA_TYPES, 'video': KNOWN_VIDEO_MEDIA_TYPES}
+    # A tool's files that a tool result can't carry here go on the user channel, framed.
+    _relocates_tool_files = True
 
     unsupported_settings = frozenset(
         {
@@ -932,6 +993,18 @@ class BedrockConverseModel(Model[BaseClient]):
             return 'anthropic'
         return super().canonical_system
 
+    @property
+    def _canonical_system_stamp(self) -> str | None:
+        """Also stamp `'bedrock'` on responses from models with the `openai_responses` thinking variant.
+
+        Their encrypted reasoning would otherwise be accepted by name by a Claude model on Bedrock, which can't
+        verify it. Other responses are stamped only when their canonical system differs from `system`, so one from a
+        model the name doesn't identify, which may be Claude, stays acceptable to Claude models by name.
+        """
+        if self.profile.get('bedrock_thinking_variant') == 'openai_responses':
+            return self.canonical_system
+        return super()._canonical_system_stamp
+
     def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
         return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
 
@@ -978,7 +1051,7 @@ class BedrockConverseModel(Model[BaseClient]):
         )
         if (
             (variant == 'anthropic' and ('thinking' in fields or effort_replaced))
-            or (variant == 'openai' and 'reasoning_effort' in fields)
+            or (variant in _REASONING_EFFORT_MAPS and 'reasoning_effort' in fields)
             or (variant == 'openai_responses' and 'reasoning' in fields)
             or (variant == 'qwen' and 'reasoning_config' in fields)
             or (variant == 'xai' and 'reasoning' in fields)
@@ -1054,17 +1127,32 @@ class BedrockConverseModel(Model[BaseClient]):
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
         if exceeded := self._strict_schema_limit_exceeded(prepared_settings, model_request_parameters):
             raise limit_exceeded_error(exceeded, self.model_name)
-        if prepared_settings and (
-            self.profile.get('anthropic_disallows_sampling_settings', False)
-            or self.profile.get('bedrock_disallows_sampling_settings', False)
-        ):
-            filtered: ModelSettings = {**prepared_settings}
-            self._drop_unsupported_sampling_settings(filtered)
-            prepared_settings = filtered or None
+        prepared_settings = cap_max_tokens(prepared_settings, self.profile.get('anthropic_max_output_tokens'))
+        if prepared_settings:
+            prepared_settings = self._drop_rejected_sampling_settings(prepared_settings, model_request_parameters)
+        if prepared_settings and 'stop_sequences' in self._unsupported_settings():
+            # `super().prepare_request()` has already warned that it's ignored.
+            without_stop_sequences: ModelSettings = {**prepared_settings}
+            without_stop_sequences.pop('stop_sequences', None)
+            prepared_settings = without_stop_sequences or None
         # Explicit `bedrock_cache_*` settings take precedence over the unified `cache` setting.
         if (cache := model_request_parameters.cache) and not self._has_provider_cache_settings(prepared_settings or {}):
             prepared_settings = self._translate_cache(cast(BedrockModelSettings, prepared_settings or {}), cache)
         return prepared_settings, model_request_parameters
+
+    def _drop_rejected_sampling_settings(
+        self, model_settings: ModelSettings, model_request_parameters: ModelRequestParameters
+    ) -> ModelSettings | None:
+        """Drop the sampling settings the model rejects alone or with the rest of the request, like `AnthropicModel`."""
+        profile = cast(BedrockModelProfile, self.profile)
+        if profile.get('anthropic_disallows_sampling_settings', False) or profile.get(
+            'bedrock_disallows_sampling_settings', False
+        ):
+            filtered: ModelSettings = {**model_settings}
+            self._drop_unsupported_sampling_settings(filtered)
+            return filtered or None
+        thinking = _effective_thinking_type(model_settings, model_request_parameters, profile) is not None
+        return drop_conflicting_sampling_settings(model_settings, profile, thinking=thinking) or None
 
     def _check_output_mode(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
@@ -1084,8 +1172,7 @@ class BedrockConverseModel(Model[BaseClient]):
         if (
             model_request_parameters.output_mode == 'tool'
             and not model_request_parameters.allow_text_output
-            and profile.get('bedrock_thinking_variant') not in (None, 'anthropic')
-            and _thinking_rejects_tool_forcing(
+            and _thinking_rejects_output_tools(
                 _effective_thinking_type(model_settings, model_request_parameters, profile), profile
             )
         ):
@@ -1097,6 +1184,11 @@ class BedrockConverseModel(Model[BaseClient]):
                 'Bedrock does not support thinking and output tools at the same time. '
                 f'Use `output_type={suggested_output_type}(...)` instead.'
             )
+
+    def _unsupported_settings(self) -> frozenset[str]:
+        if self.profile.get('bedrock_supports_stop_sequences', True):
+            return self.unsupported_settings
+        return self.unsupported_settings | {'stop_sequences'}
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
         """Drop the sampling settings a flagged model rejects, warning like `AnthropicModel` does.
@@ -1931,7 +2023,7 @@ class BedrockConverseModel(Model[BaseClient]):
             content.append({'reasoningContent': reasoning_content})
         else:
             thinking_text, carry_in_user_turn = render_replayed_thinking(part.content, profile)
-            if not carry_in_user_turn:
+            if not carry_in_user_turn and part.content:
                 content.append({'text': thinking_text})
             elif part.content:
                 # A redacted block arrives with its reasoning stripped (`content=''`), and
@@ -2443,6 +2535,11 @@ class BedrockStreamedResponse(StreamedResponse):
                 raw_finish_reason = message_stop['stopReason']
                 self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
                 self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+                # The gateway reports the stream's cost here. The `metadata` event's usage, which usually comes after,
+                # carries no cost, so adding it keeps this one.
+                response_fields = message_stop.get('additionalModelResponseFields')
+                if (cost := gateway_reported_cost({'usage': response_fields})) is not None:
+                    self._usage.cost = cost
             case {'metadata': metadata}:
                 if 'usage' in metadata:  # pragma: no branch
                     self._add_usage(
@@ -2690,9 +2787,9 @@ def _add_thinking_fields(existing: dict[str, Any], thinking: ThinkingLevel, prof
         case 'anthropic':
             if 'thinking' not in existing:
                 _add_anthropic_thinking_fields(existing, thinking, profile)
-        case 'openai':
+        case str() if (effort_map := _REASONING_EFFORT_MAPS.get(variant)) is not None:
             if 'reasoning_effort' not in existing:
-                existing['reasoning_effort'] = _GPT_OSS_REASONING_EFFORT_MAP[thinking]
+                existing['reasoning_effort'] = effort_map[thinking]
         case 'openai_responses':
             if 'reasoning' not in existing:
                 existing['reasoning'] = {'effort': _openai_responses_reasoning_effort(thinking, profile)}
@@ -2775,9 +2872,24 @@ def _thinking_rejects_tool_forcing(
     Extended thinking and thinking on the non-Anthropic variants do, except two. xAI Grok always reasons, and Converse
     accepts a forced `toolChoice` with Grok 4.6 while it reasons (Grok 4.7 is assumed to match). OpenAI GPT-5.6 and
     GPT-6 accept output tools while they think, offered without a forced `toolChoice` as their profile doesn't enable
-    forcing.
+    forcing. Z.AI GLM is not exempt: Converse accepts a forced `toolChoice` while it reasons, but GLM often answers in
+    text instead.
     """
     return thinking_type == 'enabled' and profile.get('bedrock_thinking_variant') not in ('xai', 'openai_responses')
+
+
+def _thinking_rejects_output_tools(
+    thinking_type: Literal['adaptive', 'enabled'] | None, profile: BedrockModelProfile
+) -> bool:
+    """Whether this request's thinking rules out an explicit Tool Output on a non-Anthropic variant.
+
+    Z.AI GLM is the exception: Converse accepts its output tools while it reasons, so only its default output mode
+    falls back. An explicit `ToolOutput` is offered with `toolChoice: auto`, as forcing is off while thinking, and
+    relies on output retries when GLM answers in text instead.
+    """
+    if profile.get('bedrock_thinking_variant') in (None, 'anthropic', 'zai', 'zai_effort'):
+        return False
+    return _thinking_rejects_tool_forcing(thinking_type, profile)
 
 
 def _support_tool_forcing(

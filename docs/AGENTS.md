@@ -43,6 +43,15 @@ The docs index and repository README tell the same story on two surfaces. Keep t
 - README snippets that cannot run in the documentation test environment are excluded by `tests/test_examples.py`, not by fence attributes, so README fences remain compatible with GitHub rendering.
 - When the shared tagline or Harness framing changes, check `docs/harness/index.md` and `src/pydantic_ai_harness/README.md` too.
 
+# Pax front pages: `docs/harness/pax.md` and `src/pydantic_ai_pax/README.md`
+
+The Pax page and the Pax README tell the same story on two surfaces, and `tests/pax/test_docs_parity.py` holds them together. Edit both:
+
+- The page uses relative links; the README uses absolute documentation links and keeps its badges. A relative link in the README resolves against `src/pydantic_ai_pax/`, not `docs/`, so `../cli.md` would point at nothing on GitHub, and PyPI does not resolve relative links at all.
+- Both name models themselves rather than by alias. The page is in `EXEMPT_PAGES` of `tests/test_docs_model_aliases.py` because it documents Pax's own default model and the `account@model` syntax with real Codex IDs, which an alias would misstate. A code block is the one place on the page where an alias is allowed, since the parity test resolves aliases there and nowhere else.
+- Code blocks and prose both stay identical: a command a reader copies, and the wording around it, must be the same on both.
+- Nothing regenerates either one.
+
 # Model names
 
 - Name models with an alias from [`model_aliases/aliases.json`](model_aliases/aliases.json), never a model ID. Chat models use `<provider>:<tier>`, with the tiers `small`, `medium`, `large`, and `xlarge`; every chat provider defines all four. Realtime, image generation, and embedding models use `<provider>:realtime`, `<provider>:image`, and `<provider>:embedding`.
@@ -51,4 +60,4 @@ The docs index and repository README tell the same story on two surfaces. Keep t
 - Aliases stand only for models served under their provider's own IDs. Third-party catalogs, such as OpenRouter, Snowflake, or Heroku, keep their own model IDs.
 - Don't name or describe the aliased model in prose, labels, or comments, since the alias can move. Write "an OpenAI model", not the model's name.
 - The exceptions are pages about specific models or versions, such as provider pages under `models/` or the changelog. `tests/test_docs_model_aliases.py` fails on model IDs anywhere else; register an exception in its `EXEMPT_PAGES` or `EXEMPT_DIRS`, with the reason.
-- To move the docs to a new model, edit only `model_aliases/aliases.json`, following [`model_aliases/AGENTS.md`](model_aliases/AGENTS.md), then run `make update-examples` to refresh example output that depends on the model, such as costs; it keeps the aliases. The docs site and `tests/test_examples.py` resolve the aliases. The READMEs that `tests/test_docs_parity.py` and `tests/harness/test_docs_parity.py` compare with docs pages keep concrete model IDs, since GitHub can't resolve aliases; update them when those tests fail.
+- To move the docs to a new model, edit only `model_aliases/aliases.json`, following [`model_aliases/AGENTS.md`](model_aliases/AGENTS.md), then run `make update-examples` to refresh example output that depends on the model, such as costs; it keeps the aliases. The docs site and `tests/test_examples.py` resolve the aliases. The READMEs that `tests/test_docs_parity.py`, `tests/harness/test_docs_parity.py` and `tests/pax/test_docs_parity.py` compare with docs pages keep concrete model IDs, since GitHub can't resolve aliases; update them when those tests fail.

@@ -5,12 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TypeVar
 
-import httpx
+import httpx2
 import pytest
 from fastmcp.client.auth import OAuth
 from fastmcp.client.transports import StreamableHttpTransport
-from mcp.server.fastmcp.server import FastMCP, Settings
-from mcp.types import ToolAnnotations
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
@@ -23,9 +21,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.grain import Grain
 from tests.harness._hosted_mcp import mcp_connection, only_leaf
 
-# The MCP SDK leaves a settings annotation unresolved in some supported dependency
-# combinations. Rebuild it before warnings are escalated by the test suite.
-Settings.model_rebuild()
+from .._mcp_server import NOT_READ_ONLY, READ_ONLY, MCPServer
 
 DepsT = TypeVar('DepsT')
 
@@ -40,7 +36,7 @@ def _http_transport(toolset: AbstractToolset[DepsT]) -> StreamableHttpTransport:
 def bearer(toolset: AbstractToolset[DepsT]) -> str:
     auth = _http_transport(toolset).auth
     assert auth is not None
-    request = next(auth.auth_flow(httpx.Request('POST', 'https://example.com/mcp')))
+    request = next(auth.auth_flow(httpx2.Request('POST', 'https://example.com/mcp')))
     return request.headers['Authorization']
 
 
@@ -63,15 +59,15 @@ def per_user_token(ctx: RunContext[str | None]) -> str | None:
     return ctx.deps
 
 
-def fake_grain() -> FastMCP:
+def fake_grain() -> MCPServer:
     """A stand-in for Grain's server with one read-only tool and one that changes data."""
-    server = FastMCP('grain-fake')
+    server = MCPServer('grain-fake')
 
-    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    @server.tool(annotations=READ_ONLY)
     def search_meetings() -> str:
         return 'found'  # pragma: no cover
 
-    @server.tool(annotations=ToolAnnotations(readOnlyHint=False))
+    @server.tool(annotations=NOT_READ_ONLY)
     def tag_meeting() -> str:
         return 'tagged'  # pragma: no cover
 
@@ -101,13 +97,13 @@ class TestGrain:
         ],
     )
     async def test_read_only_keeps_only_read_only_tools(self, read_only: bool, expected: str) -> None:
-        server = FastMCP('grain-fake')
+        server = MCPServer('grain-fake')
 
-        @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+        @server.tool(annotations=READ_ONLY)
         def read() -> str:
             return 'read'
 
-        @server.tool(annotations=ToolAnnotations(readOnlyHint=False))
+        @server.tool(annotations=NOT_READ_ONLY)
         def write() -> str:
             return 'written'
 
@@ -127,7 +123,7 @@ class TestGrain:
 
     @pytest.mark.parametrize('include', [True, False])
     async def test_server_instructions(self, include: bool) -> None:
-        server = FastMCP('grain-fake', instructions='Grain instructions.')
+        server = MCPServer('grain-fake', instructions='Grain instructions.')
         agent = Agent(TestModel(call_tools=[]), capabilities=[Grain(client=server, include_instructions=include)])
         request = (await agent.run('Hello')).all_messages()[0]
         assert isinstance(request, ModelRequest)

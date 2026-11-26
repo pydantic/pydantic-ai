@@ -8,7 +8,7 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@ag-ui/client": "1.0.3",
+    "@ag-ui/client": "1.0.4",
     "ai": "6.0.309",
     "rxjs": "7.8.1"
   }
