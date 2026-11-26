@@ -329,6 +329,7 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
                         tool_name='final_result',
                         args='{"city":"Mexico City","country":"Mexico"}',
                         tool_call_id=IsStr(),
+                        tool_kind='output',
                     )
                 ],
                 usage=RequestUsage(
@@ -350,6 +351,7 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id=IsStr(),
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1748,7 +1750,9 @@ async def test_xai_stream_structured(allow_model_requests: None):
     ]
     assert tool_events == snapshot(
         [
-            PartStartEvent(index=0, part=ToolCallPart(tool_name='final_result', tool_call_id='tool-123')),
+            PartStartEvent(
+                index=0, part=ToolCallPart(tool_name='final_result', tool_call_id='tool-123', tool_kind='output')
+            ),
             PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta='{"first": "One', tool_call_id='tool-123')),
             PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta='", "second": "Two"', tool_call_id='tool-123')),
             PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta='}', tool_call_id='tool-123')),

@@ -417,6 +417,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_name='final_result',
                         args='{"response": [1, 2, 123]}',
                         tool_call_id='123',
+                        tool_kind='output',
                     )
                 ],
                 usage=RequestUsage(unmeasured_requests=1),
@@ -437,6 +438,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='123',
+                        tool_kind='output',
                         timestamp=IsNow(tz=UTC),
                     )
                 ],

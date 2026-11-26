@@ -41,7 +41,6 @@ from pydantic import JsonValue, ValidationError
 from ... import _utils, usage
 from ..._file_input import KNOWN_DOCUMENT_MEDIA_TYPES, TEXT_DOCUMENT_MEDIA_TYPES
 from ..._http import to_httpx2_timeout
-from ..._output import DEFAULT_OUTPUT_TOOL_NAME
 from ..._run_context import RunContext
 from ..._thinking_part import render_replayed_thinking
 from ..._utils import (
@@ -83,7 +82,7 @@ from ...messages import (
     VideoUrl,
 )
 from ...native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool, WebSearchTool
-from ...output import OutputObjectDefinition
+from ...output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from ...profiles import ModelProfile, ModelProfileSpec, merge_profile
 from ...profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole, validate_openai_profile
 from ...providers import Provider, infer_provider

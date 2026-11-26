@@ -13,7 +13,6 @@ from pydantic_core import from_json
 
 from .. import ModelHTTPError, _model_errors, _utils, usage
 from .._gateway_cost import gateway_reported_cost
-from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
@@ -49,7 +48,7 @@ from ..messages import (
     VideoUrl,
 )
 from ..native_tools import AbstractNativeTool, WebSearchTool
-from ..output import OutputObjectDefinition
+from ..output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec, merge_profile
 from ..profiles.groq import GROQ_GPT_OSS_REASONING_EFFORT_MAP
 from ..providers import Provider, infer_provider

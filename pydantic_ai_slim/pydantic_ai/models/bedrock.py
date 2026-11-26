@@ -78,7 +78,6 @@ from pydantic_ai import (
 )
 from pydantic_ai._file_input import KNOWN_IMAGE_MEDIA_TYPES, KNOWN_VIDEO_MEDIA_TYPES
 from pydantic_ai._gateway_cost import fill_gateway_header_cost, gateway_reported_cost
-from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._thinking_part import REDACTED_THINKING_PART_IDS, render_replayed_thinking
 from pydantic_ai.exceptions import (
@@ -133,7 +132,7 @@ from pydantic_ai.models._tool_choice import (
 )
 from pydantic_ai.models._transport_errors import transport_error_message
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
-from pydantic_ai.output import StructuredOutputMode
+from pydantic_ai.output import DEFAULT_OUTPUT_TOOL_NAME, StructuredOutputMode
 from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.profiles.anthropic import (
     ANTHROPIC_SAMPLING_PARAMS,

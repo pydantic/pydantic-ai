@@ -22,7 +22,7 @@ from .. import _utils, usage
 from .._deferred_capabilities import DEFERRED_CAPABILITY_CATALOG_ID
 from .._instrumentation import model_attributes, open_request_policy, record_uncaught_errors, safe_to_json
 from .._json_schema import InlinedValues
-from .._output import DEFAULT_OUTPUT_TOOL_DESCRIPTION, DEFAULT_OUTPUT_TOOL_NAME
+from .._output import DEFAULT_OUTPUT_TOOL_DESCRIPTION
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
@@ -63,6 +63,7 @@ from ..messages import (
     is_multi_modal_content,
     tool_return_ta,
 )
+from ..output import DEFAULT_OUTPUT_TOOL_NAME
 from ..profiles import ModelProfile, merge_profile
 from ..profiles.decision import DecisionModelProfile
 from ..providers import InterfaceClient

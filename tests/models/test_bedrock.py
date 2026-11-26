@@ -1113,6 +1113,7 @@ The temperature in London on 1st January 2022 was 30°C.\
                         tool_name='final_result',
                         args={'date': '2022-01-01', 'city': 'London', 'temperature': '30°C'},
                         tool_call_id='tooluse_qVHAm8Q9QMGoJRkk06_TVA',
+                        tool_kind='output',
                     )
                 ],
                 usage=RequestUsage(input_tokens=821, output_tokens=31, cost=Decimal('0.000033075')),
@@ -1132,6 +1133,7 @@ The temperature in London on 1st January 2022 was 30°C.\
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id=IsStr(),
+                        tool_kind='output',
                         timestamp=IsNow(tz=UTC),
                     )
                 ],
@@ -7552,6 +7554,7 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                         tool_name='final_result',
                         args={'result': 7006652.0},
                         tool_call_id='tooluse_DaRsVjwcShCI_3pOsIsWqg',
+                        tool_kind='output',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=1002, output_tokens=59, cost=Decimal('0.00049291')),
@@ -7571,6 +7574,7 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='tooluse_DaRsVjwcShCI_3pOsIsWqg',
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -7612,6 +7616,7 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                         tool_name='final_result',
                         args={'result': 14013304.0},
                         tool_call_id='tooluse_RyG7SphVTsuS_8GFmX9hIA',
+                        tool_kind='output',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=1148, output_tokens=59, cost=Decimal('0.00054109')),
@@ -7631,6 +7636,7 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='tooluse_RyG7SphVTsuS_8GFmX9hIA',
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -7795,6 +7801,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                         tool_name='final_result',
                         args='{"result":7006652.0}',
                         tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw',
+                        tool_kind='output',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=1002, output_tokens=59, cost=Decimal('0.00049291')),
@@ -7814,6 +7821,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw',
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -7863,7 +7871,9 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
             ),
             PartStartEvent(
                 index=2,
-                part=ToolCallPart(tool_name='final_result', tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw'),
+                part=ToolCallPart(
+                    tool_name='final_result', tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw', tool_kind='output'
+                ),
                 previous_part_kind='builtin-tool-return',
             ),
             FinalResultEvent(tool_name='final_result', tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw'),
@@ -7876,12 +7886,18 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
             PartEndEvent(
                 index=2,
                 part=ToolCallPart(
-                    tool_name='final_result', args='{"result":7006652.0}', tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw'
+                    tool_name='final_result',
+                    args='{"result":7006652.0}',
+                    tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw',
+                    tool_kind='output',
                 ),
             ),
             OutputToolCallEvent(
                 part=ToolCallPart(
-                    tool_name='final_result', args='{"result":7006652.0}', tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw'
+                    tool_name='final_result',
+                    args='{"result":7006652.0}',
+                    tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw',
+                    tool_kind='output',
                 ),
                 args_valid=True,
             ),
@@ -7890,6 +7906,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                     tool_name='final_result',
                     content='Final result processed.',
                     tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw',
+                    tool_kind='output',
                     timestamp=IsDatetime(),
                 )
             ),

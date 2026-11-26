@@ -279,6 +279,7 @@ async def test_request_structured_response(allow_model_requests: None, huggingfa
                         tool_name='final_result',
                         args='{"response":[2,3,5]}',
                         tool_call_id='call_7qxjvbuxpm6017n3jcq1uqwt',
+                        tool_kind='output',
                     )
                 ],
                 usage=RequestUsage(input_tokens=19, output_tokens=29, cost=Decimal('0.000260')),
@@ -299,6 +300,7 @@ async def test_request_structured_response(allow_model_requests: None, huggingfa
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='call_7qxjvbuxpm6017n3jcq1uqwt',
+                        tool_kind='output',
                         timestamp=IsNow(tz=UTC),
                     )
                 ],
