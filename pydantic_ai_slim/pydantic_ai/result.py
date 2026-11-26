@@ -44,6 +44,7 @@ from .usage import RunUsage, UsageLimits
 from .workspaces import Workspace, WorkspaceRef
 
 if TYPE_CHECKING:
+    from ._appended_messages import AppendedMessages
     from .capabilities.abstract import AbstractCapability
     from .run import AgentRunResult
 
@@ -637,6 +638,13 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
     _run_result: AgentRunResult[OutputDataT] | None = None
 
+    _full_history_from: tuple[AppendedMessages, int] | None = None
+    """The run's record of its messages, and where the messages this result adds to its copy of the history start.
+
+    Set when the stream's own response ends the run, so the settled result's conversation can keep the full history
+    when a capability dropped or rewrote messages, as the run's would.
+    """
+
     is_complete: bool = field(default=False, init=False)
     """Whether the stream has all been received.
 
@@ -738,6 +746,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                     conversation_id=self.conversation_id,
                     metadata=self.metadata,
                     compactions=self._compactions,
+                    appended_messages=self._settled_full_history(),
                 ),
                 _new_message_index=self._new_message_index,
                 _traceparent_value=self._traceparent_value,
@@ -747,6 +756,21 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             return result
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
+
+    def _settled_full_history(self) -> AppendedMessages:
+        """The full history for the settled result of a run whose history a capability rewrote, or an empty record."""
+        from ._appended_messages import AppendedMessages
+
+        record, start = self._full_history_from or (AppendedMessages(), 0)
+        if not record.full or record.messages is None:
+            return AppendedMessages()
+        # The run kept its full history when it ended, with the streamed response, which the run commits itself, but
+        # not the request with the tool returns the stream added to its copy after it. Content queued at a deferred
+        # pause is in both, recorded before the run committed the response, so the copy's order is kept for it.
+        added = [message for message in self._all_messages[start:] if isinstance(message, _messages.ModelRequest)]
+        in_copy = {id(message) for message in added}
+        kept = [message for message in record.messages if id(message) not in in_copy]
+        return AppendedMessages([*kept, *added], record.new_message_index, full=True)
 
     def all_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
         """Return the history of _messages.

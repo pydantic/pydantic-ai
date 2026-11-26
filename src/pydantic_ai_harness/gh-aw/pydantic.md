@@ -23,7 +23,7 @@ pre-agent-steps:
       python3 -P -c "from pydantic_ai_harness import Coder"
 engine:
   id: pydantic-ai
-  version: "0.74.0"
+  version: "0.75.0"
   display-name: Pydantic AI
   description: Pax headless runner for Pydantic AI agents with MCP tool support
   mcp: true
