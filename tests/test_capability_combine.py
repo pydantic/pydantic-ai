@@ -152,10 +152,32 @@ def test_a_deferred_capability_does_not_combine_with_an_always_on_one(
 
 
 async def test_a_run_layer_combines_without_its_overridden_deferred_namesake() -> None:
-    """Only the last layer's occurrences combine, so a deferred agent-level copy it overrides isn't compared."""
-    agent = Agent(TestModel(), capabilities=[Thinking(effort='low', defer_loading=True)])
-    result = await agent.run('Hi', capabilities=[Thinking(effort='high'), Thinking(effort='medium')])
-    assert result.output
+    """A run's two always-on capabilities combine even when the agent's namesake they override is deferred.
+
+    Each layer combines on its own before the run's overrides the agent's, so the deferred copy is never compared
+    with them. The run's two combine as one configuration stated twice, the later winning, which reaches the model.
+    """
+
+    @dataclass
+    class Temperature(AbstractCapability[Any]):
+        value: float
+
+        _: KW_ONLY
+
+        id: str | None = 'temperature'
+
+        def get_model_settings(self) -> ModelSettings:
+            return ModelSettings(temperature=self.value)
+
+    temperatures: list[float | None] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        temperatures.append((info.model_settings or {}).get('temperature'))
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond), capabilities=[Temperature(0.1, defer_loading=True)])
+    await agent.run('Hi', capabilities=[Temperature(0.5), Temperature(0.9)])
+    assert temperatures == [0.9]
 
 
 def test_capabilities_in_two_deferred_groups_do_not_combine() -> None:

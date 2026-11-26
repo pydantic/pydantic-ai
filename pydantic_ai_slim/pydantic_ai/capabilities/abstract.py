@@ -2007,7 +2007,10 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
             _reject_class_crossing_id(capability_id, {type(survivor) for survivor in surviving})
             if not _declares_default_id(type(combined_duplicate)):
                 raise UserError(_repeated_id_message(capability_id, surviving))
-            _reject_combining_across_deferred_loading(capability_id, duplicates, last_layer, deferred_owner)
+            # Positions follow the layers, so the last layer's occurrences are the tail of `duplicates`.
+            _reject_combining_across_deferred_loading(
+                capability_id, duplicates[len(duplicates) - len(surviving) :], deferred_owner
+            )
             combined_duplicate = combined_duplicate.combine(surviving)
         replacements.update(
             {id(duplicate.capability): [None] * occurrence_counts[id(duplicate.capability)] for duplicate in duplicates}
@@ -2074,23 +2077,21 @@ def _visits(
 
 def _reject_combining_across_deferred_loading(
     capability_id: str,
-    duplicates: Sequence[_CapabilityOccurrence[Any]],
-    layer_index: int,
+    occurrences: Sequence[_CapabilityOccurrence[Any]],
     deferred_owner: Mapping[int, AbstractCapability[Any]],
 ) -> None:
     """Refuse to combine capabilities that load at different times.
 
-    `duplicates` are the occurrences sharing `capability_id`; those in `layer_index` are the ones to combine, and
-    `deferred_owner` maps a position to the deferred capability it is part of. Capabilities combine only when they
+    `occurrences` are the ones sharing `capability_id` that are about to be combined, and `deferred_owner` maps a
+    position to the deferred capability it is part of. Capabilities combine only when they
     share that owner: none (always on), or one deferred capability. The combined capability is built once, when the
     agent is, so it can't take one's configuration only once its deferred capability loads: it would apply it from
     the start, or never.
     """
     by_owner: dict[int, tuple[AbstractCapability[Any], AbstractCapability[Any] | None]] = {}
-    for duplicate in duplicates:
-        if duplicate.layer_index == layer_index:
-            owner = deferred_owner.get(duplicate.position)
-            by_owner.setdefault(id(owner), (duplicate.capability, owner))
+    for occurrence in occurrences:
+        owner = deferred_owner.get(occurrence.position)
+        by_owner.setdefault(id(owner), (occurrence.capability, owner))
     if len(by_owner) < 2:
         return
     first, second = (_loading_description(capability, owner) for capability, owner in list(by_owner.values())[:2])
