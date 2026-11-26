@@ -4,7 +4,7 @@ import inspect
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import aclosing
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeAlias, TypeVar, cast
 from uuid import uuid4
 
@@ -57,11 +57,19 @@ from ..messages import (
     ToolCallPartDelta,
     ToolResultEvent,
     ToolReturnPart,
+    ToolUIVisibility,
     UnknownCustomEvent,
 )
 from ..output import OutputDataT
 from ..run import AgentRunResult, AgentRunResultEvent
 from ..tools import AgentDepsT
+from ._utils import (
+    client_response_part,
+    client_tool_return,
+    return_ui_visibility,
+    ui_visibility_of,
+    warn_client_held_history_with_hidden_tools,
+)
 
 if TYPE_CHECKING:
     from starlette.responses import StreamingResponse
@@ -149,6 +157,28 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
     message_id: str = field(default_factory=lambda: str(uuid4()))
     """The message ID to use for the next event."""
+
+    default_ui_visibility: ToolUIVisibility = field(default='public', kw_only=True)
+    """What the client is sent for a tool call or return with no `ui_visibility` stamp: see [Tool visibility](../../ui/overview.md#tool-visibility).
+
+    Only unstamped parts take it. A [`UIAdapter`][pydantic_ai.ui.UIAdapter] run sets it to the adapter's
+    [`default_ui_visibility`][pydantic_ai.ui.UIAdapter.default_ui_visibility], which it also writes onto the tools
+    without a setting, and stamps external and output tools `'public'`. A stream used on its own, with no adapter,
+    stamps nothing, so a non-public default here applies to external (frontend) and output tools too: under `'private'`,
+    an output tool's call isn't sent, and a frontend tool's call is sent only once the run defers it.
+    """
+
+    _call_ui_visibilities: dict[str, ToolUIVisibility] = field(default_factory=dict[str, ToolUIVisibility], init=False)
+    """What the client is sent for each tool call seen so far, by `tool_call_id`, for a return without a stamp of its own."""
+    _hidden_part_indices: set[int] = field(default_factory=set[int], init=False)
+    """Indices of the streamed parts of the current response the client is sent nothing for."""
+    _hidden_calls: dict[str, ToolCallPart] = field(default_factory=dict[str, ToolCallPart], init=False)
+    """`'private'` tool calls the client was sent nothing for, by `tool_call_id`, in case one defers."""
+    _warns_on_hidden_tools: bool = field(default=False, init=False)
+    """Whether to warn the first time a non-public tool part is hidden or redacted; set by an adapter run with client-held history."""
+
+    _closeout_hid_tools: bool = field(default=False, init=False)
+    """Whether the error path's closeout hid or redacted a tool result, so the warning goes out after the error."""
 
     _turn: Literal['request', 'response'] | None = None
 
@@ -304,6 +334,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             async with aclosing(self._closing_events(exc, cancelled, on_cancel)) as closing_events:
                 async for e in closing_events:
                     yield e
+            if self._closeout_hid_tools:
+                # Warned only now, so a warning raised as an error can't take the place of the run's own error.
+                self._warn_once_on_hidden_tools()
         finally:
             await _utils.aclose_if_supported(stream)
 
@@ -373,6 +406,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
     def _record_tool_call(self, event: ToolCallEvent) -> None:
         tool_call_id = event.part.tool_call_id
+        if ui_visibility_of(event.part, call_visibility=None, default=self.default_ui_visibility) == 'private':
+            # The client was sent nothing for the call, so the error path has nothing to close.
+            return
         kind: Literal['function', 'output'] = 'output' if isinstance(event, OutputToolCallEvent) else 'function'
         self._pending_tool_calls[tool_call_id] = _PendingToolCall(kind, event.part.tool_name)
         if kind == 'output':
@@ -383,7 +419,10 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     def _record_part_start(self, event: PartStartEvent) -> None:
         # Mark the part open only after its start event has been emitted, so a start hook that
         # raises mid-emit doesn't leave the error path closing a part the client never saw.
-        if isinstance(event.part, TextPart | ThinkingPart | ToolCallPart | NativeToolCallPart):
+        if (
+            isinstance(event.part, (TextPart, ThinkingPart, ToolCallPart, NativeToolCallPart))
+            and event.index not in self._hidden_part_indices
+        ):
             self._open_part = event.part
             self._open_part_index = event.index
             self._open_part_deltas.clear()
@@ -411,7 +450,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             and (tool_name := self._final_result_event.tool_name)
         ):
             self._final_result_event = None
-            self._pending_tool_calls[tool_call_id] = _PendingToolCall('output', tool_name)
+            # A call the client was sent nothing for has nothing to close.
+            if self._call_ui_visibilities.get(tool_call_id, self.default_ui_visibility) != 'private':
+                self._pending_tool_calls[tool_call_id] = _PendingToolCall('output', tool_name)
 
         # Pending tool calls
         for tool_call_id, (kind, tool_name) in self._pending_tool_calls.items():
@@ -441,7 +482,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 pass
         return part
 
-    def _interrupted_tool_result(
+    async def _interrupted_tool_result(
         self, tool_call_id: str, kind: Literal['function', 'output'], tool_name: str, *, cancelled: bool
     ) -> AsyncIterator[EventT]:
         """Handle the synthetic result that closes a pending tool call the stream's error interrupted."""
@@ -454,9 +495,22 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             content=INTERRUPTED_TOOL_RETURN_CONTENT if cancelled else 'Tool execution was interrupted by an error.',
             outcome='interrupted' if cancelled else 'failed',
         )
-        if kind == 'output':
-            return self.handle_output_tool_result(OutputToolResultEvent(error_part))
-        return self.handle_function_tool_result(FunctionToolResultEvent(error_part))
+        client_part = client_tool_return(
+            error_part, return_ui_visibility(error_part, self._call_ui_visibilities, self.default_ui_visibility)
+        )
+        if client_part is None:
+            # Only calls the client was sent are pending, but a `'private'` call that reuses a pending call's
+            # `tool_call_id` takes over that id's visibility, so its closing result is hidden too.
+            return
+        if client_part is not error_part:
+            self._closeout_hid_tools = True
+        handler = (
+            self.handle_output_tool_result(OutputToolResultEvent(client_part))
+            if kind == 'output'
+            else self.handle_function_tool_result(FunctionToolResultEvent(client_part))
+        )
+        async for e in handler:
+            yield e
 
     async def _closing_events(
         self, exc: Exception, cancelled: RunCancelled | None, on_cancel: OnCancelFunc[EventT] | None
@@ -531,13 +585,85 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         - [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] -> `handle_capability_event`
         - [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] -> `handle_run_result`
 
+        Tool calls and returns reach those methods as the client is to be sent them, by their `ui_visibility`
+        stamp: nothing for a `'private'` tool, and a placeholder instead of a `'redacted'` tool's result. A result
+        event's `content`, from [`ToolReturn.content`][pydantic_ai.messages.ToolReturn], is user-channel content
+        that `ui_visibility` doesn't cover, so a result event that is sent carries it as the tool sent it; a
+        `'private'` tool's result event isn't sent at all. The built-in adapters never send a result event's
+        `content`. See [Tool visibility](../../ui/overview.md#tool-visibility).
+
         Subclasses are encouraged to override the individual `handle_*` methods rather than this one.
         If you need specific behavior for all events, make sure you call the super method.
         """
-        if (handler := self._dispatch_event(event)) is None:
+        if isinstance(event, DeferredToolRequestsEvent):
+            async for e in self._show_deferred_hidden_calls(event):
+                yield e
+        client_event = self._client_event(event)
+        if client_event is not event:
+            # The event changed, so a non-public tool part was hidden or redacted.
+            self._warn_once_on_hidden_tools()
+        if client_event is None:
+            return
+        if (handler := self._dispatch_event(client_event)) is None:
             return
         async for e in handler:
             yield e
+
+    def _warn_once_on_hidden_tools(self) -> None:
+        """Warn, the first time the stream hides or redacts a tool part, that the client holds the history."""
+        if self._warns_on_hidden_tools:
+            self._warns_on_hidden_tools = False
+            warn_client_held_history_with_hidden_tools(stacklevel=3)
+
+    def _client_event(self, event: NativeEvent) -> NativeEvent | None:
+        """`event` as the client is to be sent it, by the `ui_visibility` of the tool part it carries; `None` for nothing."""
+        match event:
+            case PartStartEvent():
+                return self._client_part_start(event)
+            case PartDeltaEvent() | PartEndEvent():
+                return None if event.index in self._hidden_part_indices else event
+            case FunctionToolCallEvent() | OutputToolCallEvent():
+                if client_response_part(event.part, self._call_ui_visibilities, self.default_ui_visibility) is None:
+                    self._hidden_calls[event.part.tool_call_id] = event.part
+                    return None
+                return event
+            case FunctionToolResultEvent() | OutputToolResultEvent():
+                part = client_tool_return(
+                    event.part, return_ui_visibility(event.part, self._call_ui_visibilities, self.default_ui_visibility)
+                )
+                if part is None:
+                    return None
+                return event if part is event.part else replace(event, part=part)
+            case _:
+                return event
+
+    def _client_part_start(self, event: PartStartEvent) -> PartStartEvent | None:
+        """A `PartStartEvent` as the client is to be sent it, recording whether the part's later events are hidden."""
+        shown = client_response_part(event.part, self._call_ui_visibilities, self.default_ui_visibility)
+        if shown is None:
+            self._hidden_part_indices.add(event.index)
+            return None
+        self._hidden_part_indices.discard(event.index)
+        return event if shown is event.part else replace(event, part=shown)
+
+    async def _show_deferred_hidden_calls(self, event: DeferredToolRequestsEvent) -> AsyncIterator[EventT]:
+        """Send the client the `'private'` calls that deferred, which the agent run now stamps `'redacted'`.
+
+        The client was sent nothing for them while they streamed, but now it has to see the calls it is asked to
+        approve or answer.
+        """
+        for call in [*event.requests.calls, *event.requests.approvals]:
+            if self._hidden_calls.pop(call.tool_call_id, None) is None:
+                continue
+            self._call_ui_visibilities[call.tool_call_id] = 'redacted'
+            # Now that the client was sent the call, the error path has to close it.
+            self._pending_tool_calls[call.tool_call_id] = _PendingToolCall('function', call.tool_name)
+            async for e in self.handle_part_start(PartStartEvent(index=0, part=call)):
+                yield e
+            async for e in self.handle_part_end(PartEndEvent(index=0, part=call)):
+                yield e
+            async for e in self.handle_function_tool_call(FunctionToolCallEvent(call, args_valid=True)):
+                yield e
 
     def _dispatch_event(self, event: NativeEvent) -> AsyncIterator[EventT] | None:  # noqa: C901
         """Call the `handle_*` method for `event`, or return `None` when `handle_event` forwards nothing for it."""

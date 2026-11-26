@@ -111,7 +111,10 @@ class LiveServer:
         """The client's last frame was a tool result, which its content can follow as a message item (a typed turn
         starts with the note telling the model what was typed, or the request to run the backend comes first)."""
         self.queued_texts: list[tuple[list[str], str | None]] = []
-        """Text turns whose `response.create` came while a backend response ran: Live runs each once that one ends."""
+        """Text turns whose `response.create` came while a delegation was open: Live runs each once none is.
+
+        Live works on one delegation at a time, even when the open one is only waiting for a tool's result (see
+        `decide()`); while a backend response runs, that is seen live for typed text too."""
         self.delegations: dict[str, _Delegation] = {}
         self.held_delegations = 0
         """Delegations the model decided on while another was open, which Live opens once none is (see `decide()`)."""
@@ -209,8 +212,8 @@ class LiveServer:
                 self._start_backend(delegation)
             elif self.typed:  # pragma: no branch
                 texts, self.typed = self.typed, []
-                if self.running_delegation() is not None:
-                    # Live runs it once the backend response under way ends (seen live).
+                if self.delegations:
+                    # Live works on one delegation at a time: it runs the text once the open one settles.
                     self.queued_texts.append((texts, frame.get('event_id')))
                 else:
                     self._take_up(texts, frame.get('event_id'))
@@ -500,7 +503,7 @@ class LiveServer:
                 self.held_delegations -= 1
                 self.delegate()
         # Otherwise the backend waits for the results and the client's `response.create` to continue it.
-        if self.queued_texts and self.running_delegation() is None:
+        if self.queued_texts and not self.delegations:
             texts, client_event_id = self.queued_texts.pop(0)
             self._take_up(texts, client_event_id)
 

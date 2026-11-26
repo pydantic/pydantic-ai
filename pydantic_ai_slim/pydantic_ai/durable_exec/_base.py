@@ -341,6 +341,20 @@ def _as_capability(value: object, capability: AbstractCapability[Any]) -> object
     return value
 
 
+def _project_request_context(args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    """Replace a model request context among the arguments with its projection, which can cross a durable boundary."""
+    request_context = next(
+        (value for value in (*args, *kwargs.values()) if isinstance(value, ModelRequestContext)), None
+    )
+    if request_context is None:
+        return args, kwargs
+    projection = ModelRequestContextProjection.from_context(request_context)
+    return (
+        tuple(projection if value is request_context else value for value in args),
+        {key: projection if value is request_context else value for key, value in kwargs.items()},
+    )
+
+
 def _operation_capability_id(capability: AbstractCapability[Any]) -> str | None:
     """The `id` a capability's durable operations bind under, or `None` for an id-less one that opted out of binding."""
     if capability.id is not None:
@@ -780,13 +794,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             kwargs = {key: _as_capability(value, capability) for key, value in kwargs.items()}
             return await bind_declaration_body(declaration, capability)(*args, **kwargs)
 
-        request_context = next(
-            (value for value in (*args, *kwargs.values()) if isinstance(value, ModelRequestContext)), None
-        )
-        if request_context is not None:
-            projection = ModelRequestContextProjection.from_context(request_context)
-            args = tuple(projection if value is request_context else value for value in args)
-            kwargs = {key: projection if value is request_context else value for key, value in kwargs.items()}
+        args, kwargs = _project_request_context(args, kwargs)
         arguments = bind_arguments(declaration, ctx=ctx, args=args, kwargs=kwargs)
         model = ctx.model
         if not isinstance(model, Model):

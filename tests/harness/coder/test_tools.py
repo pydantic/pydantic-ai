@@ -603,7 +603,8 @@ class TestCoder:
         parts = model.last_model_request_parameters.instruction_parts or []
         assert _DELEGATION_RULE not in '\n'.join(part.content for part in parts)
         assert 'delegation' not in {part.name for part in parts}
-        assert not any(part.dynamic for part in parts)
+        # No model-specific block is registered; the one dynamic part is `AnnounceWorkingDirectory`'s line.
+        assert [part.content for part in parts if part.dynamic] == [f'The working directory is `{tmp_path.resolve()}`.']
 
     @pytest.mark.parametrize('autonomy', ['high', 'max'])
     @pytest.mark.parametrize('flag', [None, *_MAX_GUIDANCE_FLAGS])
@@ -630,8 +631,11 @@ class TestCoder:
         assert blocks == {name: text for name, text in expected.items() if text is not None}
         assert all(part.on_change == 'rewrite' for part in parts)
         if not is_max:
-            # Below `'max'` the blocks aren't registered, so the instructions stay all static.
-            assert not any(part.dynamic for part in parts)
+            # Below `'max'` the blocks aren't registered, so `Coder`'s instructions stay all static. The one
+            # dynamic part is `AnnounceWorkingDirectory`'s line, which asks the workspace.
+            assert [part.content for part in parts if part.dynamic] == [
+                f'The working directory is `{tmp_path.resolve()}`.'
+            ]
         guidance = next(part.content for part in parts if 'software engineering agent' in part.content)
         assert (_MISREAD_MAX_TEXT in guidance) is is_max
         assert (_MISREAD_TEXT in guidance) is not is_max
@@ -643,8 +647,10 @@ class TestCoder:
         coder = Coder(autonomy='max', repo_context=False)
         await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert model.last_model_request_parameters is not None
-        parts = model.last_model_request_parameters.instruction_parts or []
-        assert [part.content for part in parts] == snapshot(
+        contents = [part.content for part in model.last_model_request_parameters.instruction_parts or []]
+        # `AnnounceWorkingDirectory`'s line names the run's own directory, so it's checked on its own.
+        contents.remove(f'The working directory is `{tmp_path.resolve()}`.')
+        assert contents == snapshot(
             [
                 """\
 You are a software engineering agent. Match the surrounding code's style, structure, and imports.
@@ -783,36 +789,17 @@ Available sub-agents:
             result = await Agent(fallback, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert result.output == 'gpt'
 
-    @pytest.mark.parametrize(
-        ('unrestricted', 'files'),
-        [(False, 'the file tools only accept paths inside it'), (True, 'relative file paths resolve from it')],
-    )
-    async def test_instructions_name_the_project_once(self, tmp_path: Path, unrestricted: bool, files: str) -> None:
+    @pytest.mark.parametrize('repo_context', [False, True])
+    async def test_instructions_name_the_project_once(self, tmp_path: Path, repo_context: bool) -> None:
+        """`Shell` and `FileSystem` each bring `AnnounceWorkingDirectory`, which states the directory once."""
         model = TestModel(call_tools=[])
-        coder = Coder(unrestricted_filesystem=unrestricted)
-        await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
-        assert model.last_model_request_parameters is not None
-        parts = model.last_model_request_parameters.instruction_parts or []
-        notes = [part.content for part in parts if 'Your project is' in part.content]
-        assert notes == [f'Your project is `{tmp_path.resolve()}`. Shell commands start there, and {files}.']
-
-    async def test_lazy_sandbox_instructions_leave_out_the_project(self, tmp_path: Path) -> None:
-        # Without `RepoContext` nothing touches the workspace at run start, so neither do the instructions.
-        model = TestModel(call_tools=[])
-        await Agent(model, capabilities=[Coder(repo_context=False)]).run(
+        await Agent(model, capabilities=[Coder(repo_context=repo_context)]).run(
             'go', workspace=LocalWorkspaceBackend(tmp_path)
         )
         assert model.last_model_request_parameters is not None
         parts = model.last_model_request_parameters.instruction_parts or []
-        assert not any('Your project is' in part.content for part in parts)
-
-    async def test_a_given_repo_context_keeps_the_project_note(self, tmp_path: Path) -> None:
-        model = TestModel(call_tools=[])
-        coder = Coder(repo_context=RepoContext(expose_inventory_tool=False))
-        await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
-        assert model.last_model_request_parameters is not None
-        parts = model.last_model_request_parameters.instruction_parts or []
-        assert sum('Your project is' in part.content for part in parts) == 1
+        notes = [part.content for part in parts if 'working directory is' in part.content]
+        assert notes == [f'The working directory is `{tmp_path.resolve()}`.']
 
     @pytest.mark.parametrize(
         ('config', 'loaded', 'nested'),
@@ -862,7 +849,7 @@ Available sub-agents:
 
     async def test_read_write(self, tmp_path: Path) -> None:
         assert 'hash:' not in await call(tmp_path, 'write_file', {'path': 'test.txt', 'content': 'one\ntwo\n'})
-        output = await call(tmp_path, 'read_file', {'path': 'test.txt', 'offset': 1, 'limit': 1})
+        output = await call(tmp_path, 'read_file', {'path': 'test.txt', 'offset': 2, 'limit': 1})
         assert 'two' in output and 'one' not in output and 'hash:' not in output
 
     async def test_long_reads_page_without_gaps(self, tmp_path: Path) -> None:
@@ -870,7 +857,7 @@ Available sub-agents:
         output = await call(tmp_path, 'read_file', {'path': 'big.py'})
         numbers = [int(line.split('\t')[0]) for line in output.splitlines()[1:-1]]
         assert numbers == list(range(1, len(numbers) + 1)) and len(numbers) < 2000
-        assert output.endswith(f'Use offset={len(numbers)} to continue reading.)\n')
+        assert output.endswith(f'Use offset={len(numbers) + 1} to continue reading.)\n')
         assert '[truncated' not in output
 
     async def test_batch_edit(self, tmp_path: Path) -> None:
