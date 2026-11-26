@@ -23,6 +23,7 @@ from typing import Literal, Protocol, get_args
 
 import anyio
 import pytest
+from inline_snapshot import snapshot
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -4052,16 +4053,48 @@ class TestBrowserEvents:
 
         await agent.run('drive')
         (span,) = [span for span in exporter.get_finished_spans() if span.name.startswith('browser ')]
-        assert span.attributes is not None
-        assert ('url.full' in span.attributes) is include_content
-        console, response = span.events
-        assert console.attributes is not None and response.attributes is not None
-        assert ('browser.event.message' in console.attributes) is include_content
-        assert ('url.full' in response.attributes) is include_content
-        assert response.attributes['browser.event.kind'] == 'response'
-        assert response.attributes['browser.event.level'] == 'error'
-        assert response.attributes['http.request.method'] == 'POST'
-        assert response.attributes['http.response.status_code'] == 503
+        # Everything exported is pinned, so a content-bearing attribute added later fails here.
+        exported = (dict(span.attributes or {}), [dict(event.attributes or {}) for event in span.events])
+        if include_content:
+            assert exported == snapshot(
+                (
+                    {
+                        'browser.action': 'get_text',
+                        'browser.timeout_ms': 5000,
+                        'browser.outcome': 'ok',
+                        'url.full': 'https://example.com/',
+                    },
+                    [
+                        {
+                            'browser.event.kind': 'console',
+                            'browser.event.level': 'error',
+                            'browser.event.message': 'error: boom',
+                        },
+                        {
+                            'browser.event.kind': 'response',
+                            'browser.event.level': 'error',
+                            'url.full': 'https://example.com/api',
+                            'http.request.method': 'POST',
+                            'http.response.status_code': 503,
+                        },
+                    ],
+                )
+            )
+        else:
+            assert exported == snapshot(
+                (
+                    {'browser.action': 'get_text', 'browser.timeout_ms': 5000, 'browser.outcome': 'ok'},
+                    [
+                        {'browser.event.kind': 'console', 'browser.event.level': 'error'},
+                        {
+                            'browser.event.kind': 'response',
+                            'browser.event.level': 'error',
+                            'http.request.method': 'POST',
+                            'http.response.status_code': 503,
+                        },
+                    ],
+                )
+            )
 
     async def test_failed_operation_is_marked_on_the_span(self) -> None:
         page = _FakePage(click_error=PlaywrightTimeoutError('Timeout 5000ms exceeded.'))
