@@ -735,17 +735,18 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                     'until it stopped are still available from `all_messages()`.'
                 )
             output, output_tool_name = self._stream_response._settled_output()  # pyright: ignore[reportPrivateUsage]
+            state, start = self._settled_from or (GraphAgentState(), 0)
             result = AgentRunResult(
                 output=output,
                 _output_tool_name=output_tool_name,
                 _state=replace(
-                    self._settled_from[0] if self._settled_from is not None else GraphAgentState(),
+                    state,
                     message_history=self._all_messages,
                     usage=self.usage,
                     run_id=self.run_id,
                     conversation_id=self.conversation_id,
                     metadata=self.metadata,
-                    appended_messages=self._settled_full_history(),
+                    appended_messages=self._settled_full_history(state.appended_messages, start),
                 ),
                 _new_message_index=self._new_message_index,
                 _traceparent_value=self._traceparent_value,
@@ -757,14 +758,10 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
-    def _settled_full_history(self) -> AppendedMessages:
+    def _settled_full_history(self, record: AppendedMessages, start: int) -> AppendedMessages:
         """The full history for the settled result of a run whose history a capability rewrote, or an empty record."""
         from ._appended_messages import AppendedMessages
 
-        if self._settled_from is None:
-            return AppendedMessages()
-        state, start = self._settled_from
-        record = state.appended_messages
         if not record.full or record.messages is None:
             return AppendedMessages()
         # The run kept its full history when it ended, with the streamed response, which the run commits itself, but
