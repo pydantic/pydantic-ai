@@ -501,7 +501,7 @@ the table under the `hooks` key of its `.clai/settings.json`:
       {"tools": ["write_file", "edit_file"], "command": ["uv", "run", "ruff", "format", "--", "{path}"]}
     ],
     "turn_end": [
-      {"command": ["notify-send", "clai2", "turn finished"]}
+      {"command": ["notify-send", "pax", "turn finished"]}
     ]
   }
 }
@@ -1462,12 +1462,12 @@ to the clipboard without choosing an answer. Transcript text remains selectable 
 is loaded, it asks the questions instead, in the browser and this picker at once.
 
 The same picker asks about the calls [`/permissions`](docs/reference.md#permissions) holds: the plugin also binds
-`runtime/permissions.py`'s `approval_handler`, which puts each held call to the answerer as a question with
-`Approve`, `Approve for this session`, and `Deny`; a typed answer denies the call with it as the reason. The held
-command is printed in full above the picker first, since the picker cuts its question to the rows it has
-(`TerminalAnswerer.ask_approval`); a replacement approver should show it in full too. A
-replacement for this plugin that should answer approvals binds `approval_handler` with its own approver; without
-one, held calls are denied.
+`runtime/permissions.py`'s `approval_handler`, an `ApprovalHandler` (a core `HandleDeferredToolCalls`) whose handler
+is harness `approval_ask`, which puts each held call to the answerer as a question with `Approve`, `Approve for this
+session`, and `Deny`; a typed answer denies the call with it as the reason. The held command is printed in full above the
+picker first, since the picker cuts its question to the rows it has (`TerminalAnswerer.ask_approval`); a
+replacement approver should show it in full too. A replacement for this plugin that should answer approvals binds
+`approval_handler` with its own approver; without one, held calls are denied.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for
@@ -4145,9 +4145,9 @@ A `LiveSession` is one live session:
 | `wait_for_user(reason)` | mark a user wait, such as an approval dialog, until you call the idempotent function it returns; pair the call with `finally` so cancellation cannot leave a stale wait |
 | `setting(key)` | a Pax setting's value in it, as its `host.setting` reads it, with its own `model` and `run.*` |
 | `queued` | how many inputs wait for its running turn or command to end |
-| `queue` | those inputs, oldest first, each a `QueuedInput` with an `id` (stable while it waits, also when the terminal starts or stops showing the session) and its `text`; the same queue the terminal lists above its prompt |
-| `edit_queued(input_id, text)` | rewrite a waiting input in place, as Enter on a recalled one at the prompt does; raises `LookupError` once it has run or was removed, and `ValueError` for blank text |
-| `remove_queued(input_id)` | drop a waiting input; raises `LookupError` once it has run or was removed |
+| `queue` | those inputs, oldest first, each a `QueuedInput` with an `id` (stable while it waits, also when the terminal starts or stops showing the session) and its `text`; the same queue the terminal lists above its prompt. An input the terminal is editing (recalled with Up) keeps its place in the list but does not run until the edit ends, so the run takes the inputs around it; if nothing else is queued when the session goes idle, it leaves the queue and becomes the terminal's unsent draft |
+| `edit_queued(input_id, text)` | rewrite a waiting input in place, as Enter on a recalled one at the prompt does; raises `LookupError` once it has run, was removed, or became the terminal's draft, and `ValueError` for blank text |
+| `remove_queued(input_id)` | drop a waiting input; raises `LookupError` once it has run or was removed. Removing one the terminal is editing ends the edit and leaves the edited text in the terminal's input, unsent |
 | `steer(text)` | send `text` to its running turn now, as steering at the prompt does; its model reads it at its next request. `False` when nothing takes it: no turn runs, or it is a `/command` or `!` shell line |
 | `watchers` | how many `watch()` calls have not stopped yet |
 | `watch()` | count a watcher, such as a browser showing it, until you call the function it returns; a watched session is never closed for being idle |

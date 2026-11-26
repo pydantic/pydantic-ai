@@ -29,9 +29,6 @@ DOCS = Path(__file__).parent.parent / 'docs'
 
 # Pages that are deliberately about specific models or versions, so they may name them directly.
 EXEMPT_PAGES = {
-    'harness/pax.md': "documents Pax's own default model and the account@model syntax "
-    'with real Codex IDs, and mirrors the Pax README, which GitHub and PyPI render without '
-    'resolving aliases',
     'changelog.md': 'release notes name the models of their time',
     'migration.md': 'migration notes name the models of their version',
     'capabilities/thinking.md': 'thinking support and settings differ per model',
@@ -39,6 +36,9 @@ EXEMPT_PAGES = {
     'harness/cdp-browser.md': 'reports a benchmark run of the models it measured',
     'harness/compaction.md': 'context windows differ per model',
     'harness/gh-aw.md': 'the engine runs `openai/` models on Chat Completions, where the aliased ones reject tools at their default reasoning effort',
+    'harness/pax.md': "documents Pax's own default model and the account@model syntax "
+    'with real Codex IDs, and mirrors the Pax README, which GitHub and PyPI render without '
+    'resolving aliases',
     'realtime/azure.md': 'Azure Voice Live serves specific models',
     'realtime/overview.md': 'Azure Voice Live serves specific models',
     'realtime/troubleshooting.md': 'Azure Voice Live serves specific models',
