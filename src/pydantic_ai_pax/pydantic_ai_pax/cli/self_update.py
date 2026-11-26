@@ -44,7 +44,7 @@ PACKAGES = (
     'pydantic-ai-pax',
     'pydantic-clai2',
     'pydantic-ai-harness[coder,skills]',
-    'pydantic-ai-slim[anthropic,mcp,openai]',
+    'pydantic-ai-slim[anthropic,google,mcp,openai]',
     'pydantic-graph',
 )
 """Requirements installed together from one commit's sdists; `scripts/build_bleeding.sh` builds the same list."""

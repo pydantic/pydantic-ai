@@ -7637,7 +7637,7 @@ dependencies = [
     { name = "pillow" },
     { name = "prompt-toolkit" },
     { name = "pydantic-ai-harness", extra = ["coder", "skills"] },
-    { name = "pydantic-ai-slim", extra = ["anthropic", "mcp", "openai"] },
+    { name = "pydantic-ai-slim", extra = ["anthropic", "google", "mcp", "openai"] },
     { name = "pydantic-monty" },
     { name = "pyfiglet" },
     { name = "python-dotenv" },
@@ -7649,8 +7649,30 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+all = [
+    { name = "pydantic-ai-harness", extra = ["boxd", "daytona", "e2b", "kubernetes", "modal", "opensandbox", "render", "sprites"] },
+    { name = "pydantic-ai-slim", extra = ["anthropic", "bedrock", "bedrock-mantle", "cerebras", "cohere", "crusoe", "google", "groq", "huggingface", "mistral", "openai", "openrouter", "snowflake", "typesafe", "xai", "zai"] },
+]
+anthropic = [
+    { name = "pydantic-ai-slim", extra = ["anthropic"] },
+]
+bedrock = [
+    { name = "pydantic-ai-slim", extra = ["bedrock"] },
+]
+bedrock-mantle = [
+    { name = "pydantic-ai-slim", extra = ["bedrock-mantle"] },
+]
 boxd = [
     { name = "pydantic-ai-harness", extra = ["boxd"] },
+]
+cerebras = [
+    { name = "pydantic-ai-slim", extra = ["cerebras"] },
+]
+cohere = [
+    { name = "pydantic-ai-slim", extra = ["cohere"] },
+]
+crusoe = [
+    { name = "pydantic-ai-slim", extra = ["crusoe"] },
 ]
 daytona = [
     { name = "pydantic-ai-harness", extra = ["daytona"] },
@@ -7658,14 +7680,32 @@ daytona = [
 e2b = [
     { name = "pydantic-ai-harness", extra = ["e2b"] },
 ]
+google = [
+    { name = "pydantic-ai-slim", extra = ["google"] },
+]
+groq = [
+    { name = "pydantic-ai-slim", extra = ["groq"] },
+]
+huggingface = [
+    { name = "pydantic-ai-slim", extra = ["huggingface"] },
+]
 kubernetes = [
     { name = "pydantic-ai-harness", extra = ["kubernetes"] },
 ]
 local = [
     { name = "pydantic-ai-harness", extra = ["boxlite", "smol"] },
 ]
+mistral = [
+    { name = "pydantic-ai-slim", extra = ["mistral"] },
+]
 modal = [
     { name = "pydantic-ai-harness", extra = ["modal"] },
+]
+openai = [
+    { name = "pydantic-ai-slim", extra = ["openai"] },
+]
+openrouter = [
+    { name = "pydantic-ai-slim", extra = ["openrouter"] },
 ]
 opensandbox = [
     { name = "pydantic-ai-harness", extra = ["opensandbox"] },
@@ -7673,11 +7713,20 @@ opensandbox = [
 render = [
     { name = "pydantic-ai-harness", extra = ["render"] },
 ]
+snowflake = [
+    { name = "pydantic-ai-slim", extra = ["snowflake"] },
+]
 sprites = [
     { name = "pydantic-ai-harness", extra = ["sprites"] },
 ]
 typesafe = [
     { name = "pydantic-ai-slim", extra = ["typesafe"] },
+]
+xai = [
+    { name = "pydantic-ai-slim", extra = ["xai"] },
+]
+zai = [
+    { name = "pydantic-ai-slim", extra = ["zai"] },
 ]
 
 [package.metadata]
@@ -7693,6 +7742,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=12.3.0" },
     { name = "prompt-toolkit", specifier = ">=3.0.52" },
     { name = "pydantic-ai-harness", extras = ["boxd"], marker = "extra == 'boxd'", editable = "src/pydantic_ai_harness" },
+    { name = "pydantic-ai-harness", extras = ["boxd", "daytona", "e2b", "kubernetes", "modal", "opensandbox", "render", "sprites"], marker = "extra == 'all'", editable = "src/pydantic_ai_harness" },
     { name = "pydantic-ai-harness", extras = ["boxlite", "smol"], marker = "extra == 'local'", editable = "src/pydantic_ai_harness" },
     { name = "pydantic-ai-harness", extras = ["coder", "skills"], editable = "src/pydantic_ai_harness" },
     { name = "pydantic-ai-harness", extras = ["daytona"], marker = "extra == 'daytona'", editable = "src/pydantic_ai_harness" },
@@ -7702,8 +7752,24 @@ requires-dist = [
     { name = "pydantic-ai-harness", extras = ["opensandbox"], marker = "extra == 'opensandbox'", editable = "src/pydantic_ai_harness" },
     { name = "pydantic-ai-harness", extras = ["render"], marker = "extra == 'render'", editable = "src/pydantic_ai_harness" },
     { name = "pydantic-ai-harness", extras = ["sprites"], marker = "extra == 'sprites'", editable = "src/pydantic_ai_harness" },
-    { name = "pydantic-ai-slim", extras = ["anthropic", "mcp", "openai"], editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["anthropic"], marker = "extra == 'anthropic'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["anthropic", "bedrock", "bedrock-mantle", "cerebras", "cohere", "crusoe", "google", "groq", "huggingface", "mistral", "openai", "openrouter", "snowflake", "typesafe", "xai", "zai"], marker = "extra == 'all'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["anthropic", "google", "mcp", "openai"], editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["bedrock"], marker = "extra == 'bedrock'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["bedrock-mantle"], marker = "extra == 'bedrock-mantle'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["cerebras"], marker = "extra == 'cerebras'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["cohere"], marker = "extra == 'cohere'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["crusoe"], marker = "extra == 'crusoe'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["google"], marker = "extra == 'google'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["groq"], marker = "extra == 'groq'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["huggingface"], marker = "extra == 'huggingface'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["mistral"], marker = "extra == 'mistral'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["openai"], marker = "extra == 'openai'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["openrouter"], marker = "extra == 'openrouter'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["snowflake"], marker = "extra == 'snowflake'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["typesafe"], marker = "extra == 'typesafe'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["xai"], marker = "extra == 'xai'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["zai"], marker = "extra == 'zai'", editable = "pydantic_ai_slim" },
     { name = "pydantic-monty", specifier = ">=1.7.0,<2" },
     { name = "pyfiglet", specifier = ">=1.0.4" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
@@ -7713,7 +7779,7 @@ requires-dist = [
     { name = "uvicorn", specifier = ">=0.38.0" },
     { name = "websockets", specifier = ">=15.0" },
 ]
-provides-extras = ["boxd", "daytona", "e2b", "kubernetes", "local", "modal", "opensandbox", "render", "sprites", "typesafe"]
+provides-extras = ["all", "anthropic", "bedrock", "bedrock-mantle", "boxd", "cerebras", "cohere", "crusoe", "daytona", "e2b", "google", "groq", "huggingface", "kubernetes", "local", "mistral", "modal", "openai", "openrouter", "opensandbox", "render", "snowflake", "sprites", "typesafe", "xai", "zai"]
 
 [[package]]
 name = "pydantic-ai-slim"
@@ -7968,8 +8034,29 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+all = [
+    { name = "pydantic-ai-pax", extra = ["all"] },
+]
+anthropic = [
+    { name = "pydantic-ai-pax", extra = ["anthropic"] },
+]
+bedrock = [
+    { name = "pydantic-ai-pax", extra = ["bedrock"] },
+]
+bedrock-mantle = [
+    { name = "pydantic-ai-pax", extra = ["bedrock-mantle"] },
+]
 boxd = [
     { name = "pydantic-ai-pax", extra = ["boxd"] },
+]
+cerebras = [
+    { name = "pydantic-ai-pax", extra = ["cerebras"] },
+]
+cohere = [
+    { name = "pydantic-ai-pax", extra = ["cohere"] },
+]
+crusoe = [
+    { name = "pydantic-ai-pax", extra = ["crusoe"] },
 ]
 daytona = [
     { name = "pydantic-ai-pax", extra = ["daytona"] },
@@ -7977,14 +8064,32 @@ daytona = [
 e2b = [
     { name = "pydantic-ai-pax", extra = ["e2b"] },
 ]
+google = [
+    { name = "pydantic-ai-pax", extra = ["google"] },
+]
+groq = [
+    { name = "pydantic-ai-pax", extra = ["groq"] },
+]
+huggingface = [
+    { name = "pydantic-ai-pax", extra = ["huggingface"] },
+]
 kubernetes = [
     { name = "pydantic-ai-pax", extra = ["kubernetes"] },
 ]
 local = [
     { name = "pydantic-ai-pax", extra = ["local"] },
 ]
+mistral = [
+    { name = "pydantic-ai-pax", extra = ["mistral"] },
+]
 modal = [
     { name = "pydantic-ai-pax", extra = ["modal"] },
+]
+openai = [
+    { name = "pydantic-ai-pax", extra = ["openai"] },
+]
+openrouter = [
+    { name = "pydantic-ai-pax", extra = ["openrouter"] },
 ]
 opensandbox = [
     { name = "pydantic-ai-pax", extra = ["opensandbox"] },
@@ -7992,28 +8097,53 @@ opensandbox = [
 render = [
     { name = "pydantic-ai-pax", extra = ["render"] },
 ]
+snowflake = [
+    { name = "pydantic-ai-pax", extra = ["snowflake"] },
+]
 sprites = [
     { name = "pydantic-ai-pax", extra = ["sprites"] },
 ]
 typesafe = [
     { name = "pydantic-ai-pax", extra = ["typesafe"] },
 ]
+xai = [
+    { name = "pydantic-ai-pax", extra = ["xai"] },
+]
+zai = [
+    { name = "pydantic-ai-pax", extra = ["zai"] },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "pydantic-ai-pax", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["all"], marker = "extra == 'all'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["anthropic"], marker = "extra == 'anthropic'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["bedrock"], marker = "extra == 'bedrock'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["bedrock-mantle"], marker = "extra == 'bedrock-mantle'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["boxd"], marker = "extra == 'boxd'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["cerebras"], marker = "extra == 'cerebras'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["cohere"], marker = "extra == 'cohere'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["crusoe"], marker = "extra == 'crusoe'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["daytona"], marker = "extra == 'daytona'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["e2b"], marker = "extra == 'e2b'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["google"], marker = "extra == 'google'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["groq"], marker = "extra == 'groq'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["huggingface"], marker = "extra == 'huggingface'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["kubernetes"], marker = "extra == 'kubernetes'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["local"], marker = "extra == 'local'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["mistral"], marker = "extra == 'mistral'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["modal"], marker = "extra == 'modal'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["openai"], marker = "extra == 'openai'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["openrouter"], marker = "extra == 'openrouter'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["opensandbox"], marker = "extra == 'opensandbox'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["render"], marker = "extra == 'render'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["snowflake"], marker = "extra == 'snowflake'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["sprites"], marker = "extra == 'sprites'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["typesafe"], marker = "extra == 'typesafe'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["xai"], marker = "extra == 'xai'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["zai"], marker = "extra == 'zai'", editable = "src/pydantic_ai_pax" },
 ]
-provides-extras = ["boxd", "daytona", "e2b", "kubernetes", "local", "modal", "opensandbox", "render", "sprites", "typesafe"]
+provides-extras = ["all", "anthropic", "bedrock", "bedrock-mantle", "boxd", "cerebras", "cohere", "crusoe", "daytona", "e2b", "google", "groq", "huggingface", "kubernetes", "local", "mistral", "modal", "openai", "openrouter", "opensandbox", "render", "snowflake", "sprites", "typesafe", "xai", "zai"]
 
 [[package]]
 name = "pydantic-core"

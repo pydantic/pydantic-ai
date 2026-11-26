@@ -297,7 +297,7 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
             from .azure import AzureProvider
 
             return AzureProvider
-        case 'google' | 'google-decisions':
+        case 'google' | 'google-interactions' | 'google-decisions':
             from .google import GoogleProvider
 
             return GoogleProvider
