@@ -6,7 +6,7 @@ import datetime
 import functools
 import inspect
 import math
-from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Iterable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import AbstractContextManager, asynccontextmanager, contextmanager, nullcontext
 from dataclasses import KW_ONLY, dataclass, field, replace
 from decimal import Decimal
@@ -37,7 +37,7 @@ from pydantic_ai._agent_graph import build_validation_context
 from pydantic_ai._cancel import RunCancellation
 from pydantic_ai._enqueue import EnqueueGuard
 from pydantic_ai._run_context import ToolNamePath, with_tool_name_path, without_tool_name_path
-from pydantic_ai._utils import is_list, is_str_dict
+from pydantic_ai._utils import is_builtin_collection, is_list, is_str_dict
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -607,8 +607,9 @@ def raw_tool_args_for_unit(
       the arguments, in place or not, keeps the call on its dump.
 
     Both checks validate with pydantic-core alone: no Pydantic plugin observes them and they don't
-    read the run's validation context. They compare values by every attribute and exact type, not
-    with `==`.
+    read the run's validation context. They compare values by exact type and every field, extra and
+    private attribute, not with `==`. They leave out a model's `model_fields_set`, which a dump always
+    fills.
 
     Call this workflow-side in a function-call transport's `dump`, and set the loaded value on
     [`ToolsetCallToolParams.raw_tool_args`][pydantic_ai.durable_exec.ToolsetCallToolParams.raw_tool_args]
@@ -665,8 +666,9 @@ def _same_value(a: object, b: object) -> bool:
     """Whether a tool can't tell `a` from `b`.
 
     Not `==`: the values are user types, whose `__eq__` can ignore state a hook changed, such as a
-    `compare=False` field, and `1 == 1.0`. This compares exact types and every attribute of a model or
-    dataclass instead. A type it doesn't know counts as different.
+    `compare=False` field, and `1 == 1.0`. This compares exact types and every field, extra and private
+    attribute of a model or dataclass instead, except `model_fields_set`. A type it doesn't know counts
+    as different.
     """
     if type(a) is not type(b):
         return False
@@ -698,14 +700,14 @@ def _exact_leaf(value: object) -> object:
 
 def _parts(value: object) -> list[object] | None:
     """What a container holds, in order; `None` for a type `_same_value` doesn't know."""
-    if type(value) is dict:
-        return [part for item in cast(dict[object, object], value).items() for part in item]
-    if type(value) in (list, tuple):
-        return list(cast(Iterable[object], value))
-    if type(value) in (set, frozenset):
-        return sorted(cast(Iterable[object], value), key=repr)
+    if is_str_dict(value) and type(value) is dict:
+        return [part for item in value.items() for part in item]
+    if is_builtin_collection(value):
+        return sorted(value, key=repr) if isinstance(value, set | frozenset) else list(value)
     if isinstance(value, BaseModel):
-        return [value.__dict__, value.__pydantic_extra__, value.__pydantic_private__, value.__pydantic_fields_set__]
+        # Not `model_fields_set`: a dump writes every field, so comparing it would send the model's arguments for
+        # every call that leaves out a defaulted field, although the dump gives back every value.
+        return [value.__dict__, value.__pydantic_extra__, value.__pydantic_private__]
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return [*(getattr(value, f.name) for f in dataclasses.fields(value)), getattr(value, '__dict__', {})]
     return None

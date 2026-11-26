@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from enum import Enum
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 import pytest
@@ -673,7 +673,7 @@ class Dog(BaseModel):
     kind: Literal['dog'] = 'dog'
 
 
-def _pet_kind(value: Any) -> str:
+def _pet_kind(value: Cat | Dog | dict[str, str]) -> str:
     return value.get('kind', 'cat') if isinstance(value, dict) else value.kind
 
 
@@ -761,6 +761,23 @@ def copied_default(venue: Venue, d: Defaulted) -> None:
     pass
 
 
+@dataclass
+class Clamp:
+    # `eq=True` without `frozen` makes instances unhashable.
+    high: int
+
+    def __call__(self, n: int) -> int:
+        return min(n, self.high)
+
+
+def unhashable_validator(venue: Venue, n: Annotated[int, AfterValidator(Clamp(10))]) -> None:
+    pass
+
+
+def schema_only(venue: object) -> None:
+    pass
+
+
 @dataclass(frozen=True)
 class GateCase:
     tool: Tool[None]
@@ -792,9 +809,10 @@ GATE_CASES = [
     GateCase(Tool(callable_discriminator), {'venue': VENUE, 'pet': {'kind': 'dog'}}, sent=False),
     GateCase(Tool(enum_missing), {'venue': VENUE, 'shade': 'red'}, sent=False),
     GateCase(Tool(copied_default), {'venue': VENUE, 'd': {}}, sent=False),
+    GateCase(Tool(unhashable_validator), {'venue': VENUE, 'n': 3}, sent=False),
     GateCase(
         Tool.from_schema(
-            lambda venue: None,
+            schema_only,
             name='from_schema',
             description=None,
             json_schema={'type': 'object', 'properties': {'venue': {'type': 'object'}}},
@@ -902,14 +920,42 @@ async def test_raw_tool_args_for_unit_keeps_arguments_a_hook_changed_on_the_dump
     )
 
 
+class Sparse(BaseModel):
+    a: int
+    b: int = 0
+
+
+def sparse(m: Sparse) -> None:
+    pass
+
+
+async def test_raw_tool_args_for_unit_keeps_the_dump_when_only_the_fields_set_differ():
+    """A model argument that leaves out a defaulted field crosses as its dump, as on `main`.
+
+    The dump writes every field, so the unit's model has them all in `model_fields_set`, unlike the run's. Its
+    values are the same, and comparing `model_fields_set` would send the model's arguments for all such calls.
+
+    Not a VCR test: the helper's decision is internal to a durable engine's transport, and no model request is
+    involved.
+    """
+    toolset, params = await _validated_call(Tool(sparse), {'m': {'a': 1}})
+    loaded = TypeAdapter(dict[str, Any]).dump_python(params.tool_args, mode='json', by_alias=True)
+    assert raw_tool_args_for_unit(toolset, params, loaded_tool_args=loaded) is None
+
+
+@dataclass
+class Writes:
+    values: list[int] = field(default_factory=list[int])
+
+
 class Noted(BaseModel):
     n: int
 
     @field_validator('n')
     @classmethod
     def note(cls, n: int, info: ValidationInfo) -> int:
-        if isinstance(info.context, list):
-            cast(list[int], info.context).append(n)
+        if isinstance(info.context, Writes):
+            info.context.values.append(n)
         return n
 
 
@@ -923,10 +969,10 @@ async def test_raw_tool_args_for_unit_runs_no_validator_again_with_the_run_valid
     Not a VCR test: the claim is about work the helper doesn't do in the workflow, and no model request is involved.
     """
     toolset, params = await _validated_call(Tool(noted), {'venue': VENUE, 'q': {'n': 1}})
-    writes: list[int] = []
+    writes = Writes()
     params = replace(params, ctx=replace(params.ctx, validation_context=writes))
     assert raw_tool_args_for_unit(toolset, params, loaded_tool_args=_dumped_by_name(params.tool_args)) is None
-    assert writes == []
+    assert writes.values == []
 
 
 async def test_validation_context_rebuilt_on_a_shallow_copy_leaves_the_original_rebuildable():

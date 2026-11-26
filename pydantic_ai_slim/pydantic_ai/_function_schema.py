@@ -6,7 +6,7 @@ This module has to use numerous internal Pydantic APIs and is therefore brittle 
 from __future__ import annotations as _annotations
 
 import warnings
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from functools import cached_property, partial
 from inspect import Parameter, Signature, signature
@@ -28,7 +28,9 @@ from ._utils import (
     await_maybe,
     check_object_json_schema,
     is_async_callable,
+    is_builtin_collection,
     is_model_like,
+    is_str_dict,
     run_in_executor,
     takes_run_context,
 )
@@ -338,7 +340,8 @@ _NOT_CALLED_KEYS = frozenset(
 
 
 def _is_trusted_callable(value: object) -> bool:
-    if value in _PURE_FACTORIES:
+    # Compared by identity: a callable instance can be unhashable.
+    if any(value is factory for factory in _PURE_FACTORIES):
         return True
     while isinstance(value, partial):
         value = value.func
@@ -356,10 +359,10 @@ def _is_copied_safely(default: object) -> bool:
 
 
 def _is_builtin_data(value: object) -> bool:
-    if type(value) in (list, tuple, set, frozenset):
-        return all(_is_builtin_data(item) for item in cast(Iterable[object], value))
-    if type(value) is dict:
-        return all(_is_builtin_data(k) and _is_builtin_data(v) for k, v in cast(dict[object, object], value).items())
+    if is_str_dict(value) and type(value) is dict:
+        return all(_is_builtin_data(k) and _is_builtin_data(v) for k, v in value.items())
+    if is_builtin_collection(value):
+        return all(_is_builtin_data(item) for item in value)
     return type(value) in (str, bytes, int, float, bool, type(None))
 
 
@@ -367,15 +370,14 @@ def _runs_user_code(node: object, seen: set[int]) -> bool:
     if id(node) in seen:
         return False
     seen.add(id(node))
-    if isinstance(node, list | tuple):
-        return any(_runs_user_code(item, seen) for item in cast(Iterable[object], node))
-    if not isinstance(node, dict):
+    if is_builtin_collection(node):
+        return any(_runs_user_code(item, seen) for item in node)
+    if not is_str_dict(node):
         return callable(node) and not _is_trusted_callable(node)
-    schema = cast(dict[str, object], node)
-    return any(_entry_runs_user_code(schema, key, value, seen) for key, value in schema.items())
+    return any(_entry_runs_user_code(node, key, value, seen) for key, value in node.items())
 
 
-def _entry_runs_user_code(schema: dict[str, object], key: str, value: object, seen: set[int]) -> bool:
+def _entry_runs_user_code(schema: Mapping[str, object], key: str, value: object, seen: set[int]) -> bool:
     if key in _NOT_CALLED_KEYS:
         return False
     if key == 'default':

@@ -24,7 +24,7 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness import RenderWorkflows
 
 from ...durable_exec.function_tool_arg_shapes import RECEIVED, TOOLS, check_shapes, shapes_hooks, shapes_model
-from .conftest import P, R, RecordingTaskContext, run_agent_in_task
+from .conftest import P, R, RecordingTaskContext, is_envelope, run_agent_in_task
 
 
 @dataclass
@@ -797,9 +797,9 @@ class CallToolRecordingTaskContext(RecordingTaskContext):
     async def run(self, task: TaskDefinition[P, R], *args: P.args, **kwargs: P.kwargs) -> R:
         if task.name.endswith('.call_tool'):
             [request] = args
-            assert isinstance(request, dict)
+            assert is_envelope(request)
             payload = request['payload']
-            assert isinstance(payload, dict)
+            assert is_envelope(payload)
             self.call_tool_payloads[str(payload['name'])] = payload
         return await super().run(task, *args, **kwargs)
 

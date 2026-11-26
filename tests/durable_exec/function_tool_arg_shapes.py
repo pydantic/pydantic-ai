@@ -37,6 +37,7 @@ from pydantic import (
 from typing_extensions import TypedDict
 
 from pydantic_ai import RunContext
+from pydantic_ai._utils import is_builtin_collection, is_str_dict
 from pydantic_ai.capabilities import Hooks, ValidatedToolArgs
 from pydantic_ai.messages import BinaryContent, ImageUrl, ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -57,9 +58,9 @@ def describe(value: Any) -> str:
         return f'{type(value).__name__}({describe(value.__dict__)}{private})'
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return f'{type(value).__name__}({describe(vars(value))})'
-    if isinstance(value, dict):
+    if is_str_dict(value):
         return '{' + ', '.join(f'{key!r}: {describe(item)}' for key, item in value.items()) + '}'
-    if isinstance(value, list | tuple):
+    if is_builtin_collection(value):
         return f'{type(value).__name__}[' + ', '.join(describe(item) for item in value) + ']'
     return f'{type(value).__name__}:{value!r}'
 
@@ -194,7 +195,7 @@ class Dog(BaseModel):
     kind: Literal['dog'] = 'dog'
 
 
-def _pet_kind(value: Any) -> str:
+def _pet_kind(value: Cat | Dog | dict[str, str]) -> str:
     return value.get('kind', 'cat') if isinstance(value, dict) else value.kind
 
 
