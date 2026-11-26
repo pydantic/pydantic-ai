@@ -46,7 +46,11 @@ AGENT_NAME_BAGGAGE_KEY = 'gen_ai.agent.name'
 RUN_ID_BAGGAGE_KEY = 'gen_ai.agent.call.id'
 CONVERSATION_ID_BAGGAGE_KEY = 'gen_ai.conversation.id'
 ROOT_CONVERSATION_ID_BAGGAGE_KEY = 'pydantic_ai.root_conversation_id'
-"""The conversation of the outermost run, set only on runs started inside another run (such as sub-agents)."""
+"""The top-level run's `conversation_id`, set on a run's spans when it differs from the run's own.
+
+A sub-agent gets it from the run that started it. A run whose incoming request carries a
+`gen_ai.conversation.id` in its OTel baggage, for example from another service, gets that one.
+"""
 
 GEN_AI_SYSTEM_ATTRIBUTE = 'gen_ai.system'
 GEN_AI_REQUEST_MODEL_ATTRIBUTE = 'gen_ai.request.model'

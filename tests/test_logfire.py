@@ -5218,15 +5218,15 @@ async def test_nested_delegation_spans_sum_to_the_runs_total(capfire: CaptureLog
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 async def test_sub_agent_cost_rolls_up_to_the_root_conversation(capfire: CaptureLogfire) -> None:
-    """Grouping chat spans by root conversation counts every sub-agent's cost under the outer chat.
+    """Adding up chat-span tokens by top-level conversation counts every sub-agent's tokens in the chat.
 
-    Each delegate run here gets a conversation of its own, as `SubAgents` gives each child, so
-    grouping by `gen_ai.conversation.id` alone misses their tokens. Spans of nested runs also carry
-    the outermost conversation, and top-level spans don't, so the documented query falls back to
-    `gen_ai.conversation.id` for them.
+    Each inner run here gets its own `conversation_id`, as `SubAgents` gives each child, so adding
+    up by `gen_ai.conversation.id` alone splits the tokens across three conversations. The inner
+    runs' spans also carry `pydantic_ai.root_conversation_id` and the top-level run's spans don't,
+    so the sum uses `gen_ai.conversation.id` where the attribute is missing, as the docs say to.
 
-    This is not a VCR test: the claim is about which span attributes the runs carry, which a
-    recorded provider response would not change, and exact token counts keep the sums readable.
+    This is not a VCR test: it checks which attributes the spans carry, which a recorded provider
+    response wouldn't change, and fixed token counts keep the sums easy to check.
     """
 
     def leaf_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

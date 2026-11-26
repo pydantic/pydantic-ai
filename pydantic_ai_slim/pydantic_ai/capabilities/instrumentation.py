@@ -108,22 +108,31 @@ _conversation_cache_marks = ConversationCacheMarkStore()
 
 
 def _root_conversation_attributes(conversation_id: str | None) -> dict[str, str]:
-    """The outermost run's conversation, for a run started inside another run with a different one.
+    """Return the top-level run's `conversation_id` as a span attribute, or nothing.
 
-    A run started inside another run, such as a sub-agent, still sees the outer run's baggage when
-    its own span starts. Sub-agents get a conversation of their own, so recording the outermost one
-    lets cost be summed per conversation across them. "Outer" is whatever conversation the current
-    OTel baggage holds, so baggage propagated from another process counts too: that is how a remote
-    sub-agent worker gets its parent's.
+    A run started inside another run, such as a sub-agent, gets its own `conversation_id`, so its
+    cost is missed when cost is added up by `gen_ai.conversation.id`. When this run's span starts,
+    the OTel baggage still holds the values the run around it set: the top-level run's
+    `conversation_id` under `ROOT_CONVERSATION_ID_BAGGAGE_KEY`, or, when the run around it is the
+    top-level run, under `CONVERSATION_ID_BAGGAGE_KEY`. Baggage also arrives from another process
+    with the trace, which is how a sub-agent on a remote worker gets it.
+
+    Returns nothing for a top-level run, and for a run that shares the top-level `conversation_id`.
     """
-    outer = _otel_get_baggage(ROOT_CONVERSATION_ID_BAGGAGE_KEY) or _otel_get_baggage(CONVERSATION_ID_BAGGAGE_KEY)
-    if not outer or outer == conversation_id:
+    top_level_conversation_id = _otel_get_baggage(ROOT_CONVERSATION_ID_BAGGAGE_KEY) or _otel_get_baggage(
+        CONVERSATION_ID_BAGGAGE_KEY
+    )
+    if not top_level_conversation_id or top_level_conversation_id == conversation_id:
         return {}
-    return {ROOT_CONVERSATION_ID_BAGGAGE_KEY: str(outer)}
+    return {ROOT_CONVERSATION_ID_BAGGAGE_KEY: str(top_level_conversation_id)}
 
 
 def _agent_run_baggage(agent_name: str, ctx: RunContext[Any], root_conversation: dict[str, str]) -> Context:
-    """The OTel context that tags the spans inside an agent run with that run's identity."""
+    """Return the OTel context to run an agent in.
+
+    It holds the agent name, run ID and conversation IDs as baggage, so the model request and tool
+    spans started inside the run can copy them as attributes.
+    """
     otel_ctx = _otel_set_baggage(AGENT_NAME_BAGGAGE_KEY, agent_name)
     otel_ctx = _otel_set_baggage(RUN_ID_BAGGAGE_KEY, ctx.run_id or '', context=otel_ctx)
     otel_ctx = _otel_set_baggage(CONVERSATION_ID_BAGGAGE_KEY, ctx.conversation_id or '', context=otel_ctx)
