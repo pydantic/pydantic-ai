@@ -10,7 +10,8 @@ from __future__ import annotations as _annotations
 
 import json
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass, field
+from contextlib import nullcontext
+from dataclasses import dataclass, field, replace
 from types import SimpleNamespace
 from typing import Any, Literal, cast
 
@@ -34,6 +35,7 @@ from pydantic_ai import (
     ModelUnavailableError,
 )
 from pydantic_ai.capabilities import ModelFallback
+from pydantic_ai.exceptions import UnsupportedSettingWarning
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -52,6 +54,8 @@ with try_import() as imports_successful:
         ReadTimeoutError,
     )
     from cohere import AsyncClientV2
+    from google.genai import Client as GoogleClient
+    from google.genai.types import HttpOptions, HttpRetryOptions
     from groq import AsyncGroq
     from huggingface_hub import AsyncInferenceClient
     from huggingface_hub.errors import HfHubHTTPError
@@ -60,6 +64,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.cohere import CohereModel
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel
     from pydantic_ai.models.groq import GroqModel
     from pydantic_ai.models.huggingface import HuggingFaceModel
     from pydantic_ai.models.mistral import MistralModel
@@ -215,6 +220,25 @@ def _google(handler: Handler) -> Model:
         'gemini-2.5-flash',
         provider=GoogleProvider(api_key='test', http_client=http_client, base_url='http://localhost'),
     )
+
+
+def _google_interactions(handler: Handler | httpx2.AsyncClient) -> Model:
+    if isinstance(handler, httpx2.AsyncClient):
+        return GoogleInteractionsModel(
+            'gemini-3.8-flash',
+            provider=GoogleProvider(api_key='test', http_client=handler, base_url='http://localhost'),
+        )
+    # The Interactions SDK retries a 429 or 5xx and waits out its `Retry-After`, and `google-genai` won't take
+    # `attempts=0`, so it retries only a status no case returns: the first response is the one classified.
+    client = GoogleClient(
+        api_key='test',
+        http_options=HttpOptions(
+            base_url='http://localhost',
+            httpx_async_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+            retry_options=HttpRetryOptions(http_status_codes=[599]),
+        ),
+    )
+    return GoogleInteractionsModel('gemini-3.8-flash', provider=GoogleProvider(client=client))
 
 
 def _mistral(handler: Handler) -> Model:
@@ -415,9 +439,14 @@ def _google_retry_info_body(retry_delay: object) -> dict[str, Any]:
 _UPSTREAM_OVERFLOW = "Input length (100000) exceeds the model's maximum context length (8192)."
 
 
-def _openrouter_metadata_raw_error(raw: str) -> dict[str, object]:
-    """An OpenRouter 400 that forwards the upstream provider's error in `metadata.raw`."""
-    return {'error': {'code': 400, 'message': 'Provider returned error', 'metadata': {'raw': raw}}}
+_UPSTREAM_OVERFLOW_JSON = json.dumps({'error': {'message': _UPSTREAM_OVERFLOW}})
+_DEEPLY_NESTED_RAW = '[' * 1_000 + ']' * 1_000
+"""Past `pydantic_core.from_json`'s depth limit, and deep enough that `json.loads` raises `RecursionError` on Python 3.11."""
+
+
+def _openrouter_metadata_raw_error(raw: object, code: int | str = 400, **metadata: object) -> dict[str, object]:
+    """An OpenRouter error that forwards the upstream provider's error in `metadata.raw`."""
+    return {'error': {'code': code, 'message': 'Provider returned error', 'metadata': {'raw': raw, **metadata}}}
 
 
 CASES = [
@@ -619,14 +648,14 @@ CASES = [
     Case(
         id='openrouter-http-metadata-raw-context-window-json',
         model=_openrouter,
-        handler=_json(400, _openrouter_metadata_raw_error(json.dumps({'error': {'message': _UPSTREAM_OVERFLOW}}))),
+        handler=_json(400, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON)),
         categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_code': '400'},
     ),
     Case(
         id='openrouter-http-metadata-raw-context-window-json-stream',
         model=_openrouter,
-        handler=_json(400, _openrouter_metadata_raw_error(json.dumps({'error': {'message': _UPSTREAM_OVERFLOW}}))),
+        handler=_json(400, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON)),
         categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_code': '400'},
         stream=True,
@@ -645,6 +674,210 @@ CASES = [
         categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_code': '400'},
         stream=True,
+    ),
+    # Any other error keeps its category whatever `metadata.raw` says: like `openai`, a status a retrying transport gave
+    # up on is classified from the error's `message`, not from the whole body.
+    Case(
+        id='openrouter-http-metadata-raw-context-window-401',
+        model=_openrouter,
+        handler=_json(401, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 401)),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 401, 'provider_error_code': '401'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-401-stream',
+        model=_openrouter,
+        handler=_json(401, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 401)),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 401, 'provider_error_code': '401'},
+        stream=True,
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-403',
+        model=_openrouter,
+        handler=_json(403, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 403)),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 403, 'provider_error_code': '403'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-403-flagged-input',
+        model=_openrouter,
+        handler=_json(
+            403,
+            _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 403, flagged_input='text', reasons=['violence']),
+        ),
+        categories=_REJECTED,
+        attrs={'status_code': 403, 'provider_error_code': '403'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-403-flagged-input-stream',
+        model=_openrouter,
+        handler=_json(
+            403,
+            _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 403, flagged_input='text', reasons=['violence']),
+        ),
+        categories=_REJECTED,
+        attrs={'status_code': 403, 'provider_error_code': '403'},
+        stream=True,
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-404',
+        model=_openrouter,
+        handler=_json(404, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 404)),
+        categories=_NOT_FOUND,
+        attrs={'status_code': 404, 'provider_error_code': '404'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-404-stream',
+        model=_openrouter,
+        handler=_json(404, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 404)),
+        categories=_NOT_FOUND,
+        attrs={'status_code': 404, 'provider_error_code': '404'},
+        stream=True,
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-402',
+        model=_openrouter,
+        handler=_json(402, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 402)),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 402, 'provider_error_code': '402'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-402-stream',
+        model=_openrouter,
+        handler=_json(402, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 402)),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 402, 'provider_error_code': '402'},
+        stream=True,
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-429',
+        model=_openrouter,
+        handler=_json(429, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 429)),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'provider_error_code': '429'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-429-stream',
+        model=_openrouter,
+        handler=_json(429, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 429)),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'provider_error_code': '429'},
+        stream=True,
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-503',
+        model=_openrouter,
+        handler=_json(503, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 503)),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'provider_error_code': '503'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-503-stream',
+        model=_openrouter,
+        handler=_json(503, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 503)),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'provider_error_code': '503'},
+        stream=True,
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-model-not-found',
+        model=_openrouter,
+        handler=_json(400, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 'model_not_found')),
+        categories=_NOT_FOUND,
+        attrs={'status_code': 400, 'provider_error_code': 'model_not_found'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-object',
+        model=_openrouter,
+        handler=_json(400, _openrouter_metadata_raw_error({'error': {'message': _UPSTREAM_OVERFLOW}})),
+        categories=_REJECTED,
+        attrs={'status_code': 400, 'provider_error_code': '400'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-generic-nested-type',
+        model=_openrouter,
+        handler=_json(
+            400, _openrouter_metadata_raw_error(json.dumps({'error': {'type': 'BadRequestError', 'code': 400}}))
+        ),
+        categories=_REJECTED,
+        attrs={'status_code': 400, 'provider_error_code': '400'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-deeply-nested',
+        model=_openrouter,
+        handler=_json(400, _openrouter_metadata_raw_error(_DEEPLY_NESTED_RAW)),
+        categories=_REJECTED,
+        attrs={'status_code': 400, 'provider_error_code': '400'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-overloaded',
+        model=_openrouter,
+        handler=_json(
+            503,
+            _openrouter_metadata_raw_error(
+                'litellm.InternalServerError: The provider is overloaded, please try again later.', 503
+            ),
+        ),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'provider_error_code': '503'},
+    ),
+    Case(
+        id='openai-http-metadata-raw-context-window-401',
+        model=_openai,
+        handler=_json(
+            401,
+            {'error': {'message': 'Invalid API key provided.', 'metadata': {'raw': _UPSTREAM_OVERFLOW_JSON}}},
+        ),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 401},
+    ),
+    Case(
+        id='openai-http-metadata-raw-context-window-403',
+        model=_openai,
+        handler=_json(
+            403,
+            {
+                'error': {
+                    'message': 'Your API key does not have access to this model.',
+                    'metadata': {'raw': _UPSTREAM_OVERFLOW_JSON},
+                }
+            },
+        ),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 403},
+    ),
+    Case(
+        id='openai-http-metadata-raw-context-window-404',
+        model=_openai,
+        handler=_json(
+            404,
+            {
+                'error': {
+                    'code': 'model_not_found',
+                    'message': 'No endpoints found matching your request.',
+                    'metadata': {'raw': _UPSTREAM_OVERFLOW_JSON},
+                }
+            },
+        ),
+        categories=_NOT_FOUND,
+        attrs={'status_code': 404, 'provider_error_code': 'model_not_found'},
+    ),
+    Case(
+        id='openai-http-metadata-raw-context-window-model-not-found',
+        model=_openai,
+        handler=_json(
+            400,
+            {
+                'error': {
+                    'code': 'model_not_found',
+                    'message': 'We could not route your request.',
+                    'metadata': {'raw': _UPSTREAM_OVERFLOW_JSON},
+                }
+            },
+        ),
+        categories=_NOT_FOUND,
+        attrs={'status_code': 400, 'provider_error_code': 'model_not_found'},
     ),
     Case(
         id='openrouter-body-rate-limit',
@@ -668,7 +901,7 @@ CASES = [
     Case(
         id='openrouter-body-metadata-raw-context-window',
         model=_openrouter,
-        handler=_json(200, _openrouter_metadata_raw_error(json.dumps({'error': {'message': _UPSTREAM_OVERFLOW}}))),
+        handler=_json(200, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON)),
         categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_code': '400'},
         has_cause=False,
@@ -2293,6 +2526,80 @@ CASES = [
 ]
 
 
+CASES.extend(
+    replace(case, id=case.id.replace('google-', 'google-interactions-', 1), model=_google_interactions)
+    for case in list(CASES)
+    # The stream cases send GenerateContent's error chunk, which an Interactions stream never carries.
+    if case.model is _google
+    and case.id not in ('google-stream-unavailable', 'google-stream-internal', 'google-stream-retry-info')
+)
+CASES.extend(
+    [
+        Case(
+            # Google's API layer answers an Interactions request it rejects, like this invalid key, with its error in a
+            # list, as recorded in `tests/test_retrying_transport_error_categories.py`.
+            id='google-interactions-api-key-invalid-in-list',
+            model=_google_interactions,
+            handler=_json(
+                400,
+                [
+                    {
+                        'error': {
+                            'code': 400,
+                            'message': 'API key not valid. Please pass a valid API key.',
+                            'status': 'INVALID_ARGUMENT',
+                            'details': [
+                                {
+                                    '@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+                                    'reason': 'API_KEY_INVALID',
+                                    'domain': 'googleapis.com',
+                                }
+                            ],
+                        }
+                    }
+                ],
+            ),
+            categories=_AUTHENTICATION,
+            attrs={'status_code': 400, 'provider_error_code': 'INVALID_ARGUMENT'},
+        ),
+        Case(
+            id='google-interactions-connection',
+            model=_google_interactions,
+            handler=_raise('connect'),
+            categories={ModelConnectionError},
+            attrs={'phase': 'connect'},
+        ),
+        Case(
+            id='google-interactions-timeout',
+            model=_google_interactions,
+            handler=_raise('timeout'),
+            categories={ModelConnectionError, ModelTimeoutError},
+            attrs={'phase': 'read'},
+        ),
+        Case(
+            id='google-interactions-stream-unavailable',
+            model=_google_interactions,
+            handler=_sse_data({'event_type': 'error', 'error': {'code': '503', 'message': 'Service unavailable'}}),
+            categories={ModelHTTPError, ModelUnavailableError},
+            attrs={'status_code': 503, 'in_stream': True, 'provider_error_code': '503'},
+            stream=True,
+            has_cause=False,
+        ),
+        Case(
+            id='google-interactions-stream-internal',
+            model=_google_interactions,
+            handler=_sse_data(
+                {'event_type': 'error', 'error': {'code': '500', 'message': 'An internal error occurred'}}
+            ),
+            categories={ModelHTTPError, ModelServerError},
+            attrs={'status_code': 500, 'in_stream': True, 'provider_error_code': '500'},
+            stream=True,
+            has_cause=False,
+        ),
+    ]
+)
+
+
 @pytest.mark.parametrize('case', CASES, ids=[case.id for case in CASES])
 async def test_http_provider_error_category(allow_model_requests: None, case: Case):
     agent = Agent(case.model(case.handler))
@@ -2399,8 +2706,8 @@ def _retrying_mistral(client: httpx2.AsyncClient) -> Model:
 
 @pytest.mark.parametrize(
     'make_model',
-    [_retrying_openai, _retrying_anthropic, _retrying_google, _retrying_mistral],
-    ids=['openai', 'anthropic', 'google', 'mistral'],
+    [_retrying_openai, _retrying_anthropic, _retrying_google, _google_interactions, _retrying_mistral],
+    ids=['openai', 'anthropic', 'google', 'google-interactions', 'mistral'],
 )
 async def test_model_fallback_after_retrying_transport_gives_up(
     allow_model_requests: None, make_model: Callable[[httpx2.AsyncClient], Model]
@@ -2420,7 +2727,13 @@ async def test_model_fallback_after_retrying_transport_gives_up(
         model_settings={'max_retries': 0},
         capabilities=[ModelFallback(FunctionModel(fallback))],
     )
-    result = await agent.run('hello')
+    # Interactions has no per-request SDK retry option; a caller-configured transport still owns its retries.
+    with (
+        pytest.warns(UnsupportedSettingWarning, match='max_retries')
+        if make_model is _google_interactions
+        else nullcontext()
+    ):
+        result = await agent.run('hello')
 
     assert result.output == 'from the fallback model'
     assert len(requests) == 3

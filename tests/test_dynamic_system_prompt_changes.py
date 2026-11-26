@@ -26,6 +26,7 @@ from .conftest import try_import
 
 with try_import() as google_available:
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel
     from pydantic_ai.providers.google import GoogleProvider
 
 
@@ -250,14 +251,16 @@ def test_withdrawal_and_restatement(inline_system: bool, expected: list[tuple[st
 
 
 @pytest.mark.skipif(not google_available(), reason='google-genai not installed')
-def test_fallback_model_gets_the_announcement_and_the_tagged_change():
+@pytest.mark.parametrize('api_family', ['generate-content', 'interactions'], ids=['google', 'google-interactions'])
+def test_fallback_model_gets_the_announcement_and_the_tagged_change(api_family: str):
     """On a model without mid-conversation system messages, a change goes the way an instruction change does.
 
     It's `<system>`-tagged user text, and the standing prompt says what that tag means.
     """
     agent = _user_name_agent(Recorder(inline_system=False))
     history = _converse(agent, 'Frank', 'Bob')
-    model = GoogleModel('gemini-3.8-flash', provider=GoogleProvider(api_key='mock-api-key'))
+    model_class = GoogleInteractionsModel if api_family == 'interactions' else GoogleModel
+    model = model_class('gemini-3.8-flash', provider=GoogleProvider(api_key='mock-api-key'))
 
     assert [
         [

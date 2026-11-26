@@ -27,7 +27,7 @@ import pytest
 from cassetter import Cassette
 from pydantic import BaseModel, JsonValue
 
-from pydantic_ai import Agent, BinaryContent, CachePoint, ImageUrl, PromptedOutput, RunContext
+from pydantic_ai import Agent, AgentRunResult, BinaryContent, CachePoint, ImageUrl, PromptedOutput, RunContext
 from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai.computer_use import COMPUTER_KIND
 from pydantic_ai.exceptions import UserError
@@ -48,7 +48,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
@@ -1790,6 +1791,186 @@ async def test_openai_responses_stable_instructions_as_input(
     assert {'instructions': request.get('instructions'), 'input': request['input']} == expected
 
 
+async def _run_rewrite_change(model: Model, stable: str = 'Support policies.') -> list[AgentRunResult[str]]:
+    """The three runs where an append block changes, and then only a rewrite-mode instruction does."""
+    agent = Agent(model, instructions=stable, deps_type=str)
+    date = 'D1'
+
+    @agent.instructions(name='queue', on_change='append')
+    def queue(ctx: RunContext[str]) -> str:
+        return f'Queue: {ctx.deps}.'
+
+    @agent.instructions
+    def current_date() -> str:
+        return f'Today is {date}.'
+
+    first = await agent.run('Which shelf holds entry 0042? Reply with just the number.', deps='A')
+    second = await agent.run(
+        'Which aisle holds entry 0101? Reply with just the number.', deps='B', message_history=first.all_messages()
+    )
+    date = 'D2'
+    third = await agent.run(
+        'Which volume is entry 0007? Reply with just the number.', deps='B', message_history=second.all_messages()
+    )
+    return [first, second, third]
+
+
+@pytest.mark.parametrize('model_name', ['gpt-6.2-sol', 'gpt-6.2-astra'])
+async def test_openai_responses_rewrite_change_keeps_leading_instructions(allow_model_requests: None, model_name: str):
+    """On GPT-6.2 a rewrite-mode change only moves the top-level field, after the input."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=mock_client))
+
+    await _run_rewrite_change(model)
+
+    _, second, third = get_mock_responses_kwargs(mock_client)
+    assert third['input'][: len(second['input'])] == second['input']
+    assert _wire_shape(third) == snapshot(
+        {
+            'previous_response_id': None,
+            'instructions': 'Today is D2.',
+            'input': [
+                ('system', 'Support policies.'),
+                (
+                    'system',
+                    """\
+<pyai:context id="agent:queue">
+Queue: A.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+                ),
+                ('user', 'Which shelf holds entry 0042? Reply with just the number.'),
+                ('assistant', [{'text': 'done', 'type': 'output_text', 'annotations': []}]),
+                ('user', 'Which aisle holds entry 0101? Reply with just the number.'),
+                (
+                    'system',
+                    """\
+<pyai:context id="agent:queue">
+Queue: B.
+</pyai:context>\
+""",
+                ),
+                ('assistant', [{'text': 'done', 'type': 'output_text', 'annotations': []}]),
+                ('user', 'Which volume is entry 0007? Reply with just the number.'),
+            ],
+        }
+    )
+
+
+# The third request of `_run_rewrite_change` on each model: `Queue: B.` folded into the prefix, `Queue: A.` gone.
+_OTHER_MODELS_THIRD: dict[str, Any] = {
+    'opt-out': snapshot(
+        {
+            'previous_response_id': None,
+            'instructions': """\
+Support policies.
+
+<pyai:context id="agent:queue">
+Queue: B.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
+
+Today is D2.\
+""",
+            'input': [
+                ('user', 'Which shelf holds entry 0042? Reply with just the number.'),
+                ('assistant', [{'text': 'done', 'type': 'output_text', 'annotations': []}]),
+                ('user', 'Which aisle holds entry 0101? Reply with just the number.'),
+                ('assistant', [{'text': 'done', 'type': 'output_text', 'annotations': []}]),
+                ('user', 'Which volume is entry 0007? Reply with just the number.'),
+            ],
+        }
+    ),
+    'gpt-6.1-sol': snapshot(
+        {
+            'previous_response_id': None,
+            'instructions': """\
+Support policies.
+
+<pyai:context id="agent:queue">
+Queue: B.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
+
+Today is D2.\
+""",
+            'input': [
+                ('user', 'Which shelf holds entry 0042? Reply with just the number.'),
+                ('assistant', [{'text': 'done', 'type': 'output_text', 'annotations': []}]),
+                ('user', 'Which aisle holds entry 0101? Reply with just the number.'),
+                ('assistant', [{'text': 'done', 'type': 'output_text', 'annotations': []}]),
+                ('user', 'Which volume is entry 0007? Reply with just the number.'),
+            ],
+        }
+    ),
+    'chat': snapshot(
+        [
+            ('system', 'Support policies.'),
+            (
+                'system',
+                """\
+<pyai:context id="agent:queue">
+Queue: B.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+            ),
+            ('system', 'Today is D2.'),
+            ('user', 'Which shelf holds entry 0042? Reply with just the number.'),
+            ('assistant', 'response'),
+            ('user', 'Which aisle holds entry 0101? Reply with just the number.'),
+            ('assistant', 'response'),
+            ('user', 'Which volume is entry 0007? Reply with just the number.'),
+        ]
+    ),
+    'fallback-model': snapshot(
+        {
+            'previous_response_id': None,
+            'instructions': 'Today is D2.',
+            'input': [
+                ('system', 'Support policies.'),
+                (
+                    'system',
+                    """\
+<pyai:context id="agent:queue">
+Queue: B.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+                ),
+                ('user', 'Which shelf holds entry 0042? Reply with just the number.'),
+                ('assistant', [{'text': 'done', 'type': 'output_text', 'annotations': []}]),
+                ('user', 'Which aisle holds entry 0101? Reply with just the number.'),
+                ('assistant', [{'text': 'done', 'type': 'output_text', 'annotations': []}]),
+                ('user', 'Which volume is entry 0007? Reply with just the number.'),
+            ],
+        }
+    ),
+}
+
+
+@pytest.mark.parametrize('case', ['opt-out', 'gpt-6.1-sol', 'chat', 'fallback-model'])
+async def test_openai_rewrite_change_opens_a_window_on_other_models(allow_model_requests: None, case: str):
+    """Only a GPT-6.2 Responses model with the flag on keeps its window: the rest fold the change into the prefix."""
+    if case == 'chat':
+        chat_client = MockOpenAI.create_mock(chat_completion())
+        await _run_rewrite_change(OpenAIChatModel('gpt-6.2-sol', provider=OpenAIProvider(openai_client=chat_client)))
+        third = get_mock_chat_completion_kwargs(chat_client)[2]
+        assert [(message['role'], message['content']) for message in third['messages']] == _OTHER_MODELS_THIRD[case]
+    else:
+        mock_client = MockOpenAIResponses.create_mock(responses_completion())
+        provider = OpenAIProvider(openai_client=mock_client)
+        opt_out = OpenAIModelProfile(openai_responses_stable_instructions_as_input=False)
+        model: Model = {
+            'opt-out': lambda: OpenAIResponsesModel('gpt-6.2-sol', provider=provider, profile=opt_out),
+            'gpt-6.1-sol': lambda: OpenAIResponsesModel('gpt-6.1-sol', provider=provider),
+            'fallback-model': lambda: FallbackModel(OpenAIResponsesModel('gpt-6.2-sol', provider=provider)),
+        }[case]()
+        await _run_rewrite_change(model)
+        assert _wire_shape(get_mock_responses_kwargs(mock_client)[2]) == _OTHER_MODELS_THIRD[case]
+
+
 async def test_openai_responses_stable_instructions_as_input_with_cache_instructions(allow_model_requests: None):
     """With `openai_cache_instructions` on GPT-6.2, the breakpoint goes after the static instructions as usual, and
     the instruction that rewrites the prefix still stays in the top-level field, where its changes leave the cached
@@ -2933,6 +3114,55 @@ async def test_openai_responses_stable_instructions_as_input_e2e(
         assert second.usage.cache_read_tokens == first.usage.cache_write_tokens + first.usage.cache_read_tokens
     else:
         assert second.usage.cache_read_tokens == 0
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize('model_name', ['gpt-6.2-sol', 'gpt-6.2-astra'])
+async def test_openai_responses_rewrite_change_keeps_cache_e2e(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture, model_name: str
+):
+    """After an appended change, a rewrite-mode change reads everything the previous request cached."""
+    model = OpenAIResponsesModel(
+        model_name, provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    )
+
+    _, second, third = await _run_rewrite_change(model, _STABLE_PREFIX)
+
+    _, second_body, third_body = cast('list[dict[str, Any]]', request_capture.bodies('/responses'))
+    assert third_body['input'][: len(second_body['input'])] == second_body['input']
+    assert _wire_shape(third_body) == snapshot(
+        {
+            'previous_response_id': None,
+            'instructions': 'Today is D2.',
+            'input': [
+                ('system', '<_STABLE_PREFIX>'),
+                (
+                    'system',
+                    """\
+<pyai:context id="agent:queue">
+Queue: A.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+                ),
+                ('user', 'Which shelf holds entry 0042? Reply with just the number.'),
+                ('assistant', [{'text': '19', 'type': 'output_text', 'annotations': []}]),
+                ('user', 'Which aisle holds entry 0101? Reply with just the number.'),
+                (
+                    'system',
+                    """\
+<pyai:context id="agent:queue">
+Queue: B.
+</pyai:context>\
+""",
+                ),
+                ('assistant', [{'text': '3', 'type': 'output_text', 'annotations': []}]),
+                ('user', 'Which volume is entry 0007? Reply with just the number.'),
+            ],
+        }
+    )
+    assert second.usage.cache_read_tokens > 0
+    assert third.usage.cache_read_tokens == second.usage.cache_write_tokens + second.usage.cache_read_tokens
 
 
 @pytest.mark.vcr

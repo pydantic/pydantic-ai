@@ -89,6 +89,8 @@ jobs:
       # `TEMPORAL_DEBUG` as on `ci.yml`'s `test-durable-exec` job, for the reasons documented there.
       BLOCKBUSTER_ENABLED: false
       TEMPORAL_DEBUG: '1'
+      # The leg's artifact name, and the directory its report is written under: see "Upload the report".
+      REPORT_NAME: latest-versions-canary-${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -196,7 +198,7 @@ jobs:
       - name: Report which dependencies moved
         env:
           LOCKED_BEFORE: ${{ runner.temp }}/uv.lock.committed
-          MOVED_REPORT: ${{ runner.temp }}/canary-report/moved.txt
+          MOVED_REPORT: ${{ runner.temp }}/canary-report/${{ env.REPORT_NAME }}/moved.txt
         run: |
           python3 - <<'PY'
           import os
@@ -295,7 +297,7 @@ jobs:
         run: |
           status=0
           uv run --no-sync pytest --durations=100 -n logical --dist=loadgroup \
-            --junit-xml="${RUNNER_TEMP}/canary-report/junit.xml" -o junit_family=xunit1 || status=$?
+            --junit-xml="${RUNNER_TEMP}/canary-report/${REPORT_NAME}/junit.xml" -o junit_family=xunit1 || status=$?
           echo "exit=$status" >> "$GITHUB_OUTPUT"
           exit "$status"
         env:
@@ -313,14 +315,16 @@ jobs:
           LEGS: ${{ strategy.job-total }}
           PYTEST_EXIT: ${{ steps.test.outputs.exit }}
         run: |
-          mkdir -p "${RUNNER_TEMP}/canary-report"
+          mkdir -p "${RUNNER_TEMP}/canary-report/${REPORT_NAME}"
           printf '{"resolve": "%s", "install": "%s", "test": "%s", "legs": %s, "pytest_exit": %s}\n' \
-            "$RESOLVE" "$INSTALL" "$TEST" "$LEGS" "${PYTEST_EXIT:-null}" > "${RUNNER_TEMP}/canary-report/outcome.json"
+            "$RESOLVE" "$INSTALL" "$TEST" "$LEGS" "${PYTEST_EXIT:-null}" > "${RUNNER_TEMP}/canary-report/${REPORT_NAME}/outcome.json"
 
+      # The report sits under a directory named like the artifact, so the report job in
+      # `latest-versions-canary-nightly.yml` reads a lone artifact the way it reads several.
       - name: Upload the report
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: latest-versions-canary-${{ matrix.python-version }}
+          name: ${{ env.REPORT_NAME }}
           path: ${{ runner.temp }}/canary-report/
           retention-days: 7
