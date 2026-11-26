@@ -12,7 +12,7 @@ sends a minimal request with the feature and the same request without it, and co
 
 `EXPECTED` lists every pair whose outcome isn't `sent`, so a class that starts dropping a feature, or stops, fails the
 test until the table is updated. Every `dropped` entry there has its reason in `DROPPED_BECAUSE`: a documented filter, a deliberate skip, or a
-known gap.
+tracked gap.
 
 `ToolDefinition.strict` is left out: a provider that drops it is handled by retrying on the invalid arguments, so it
 stays best-effort.
@@ -246,7 +246,7 @@ EXPECTED: dict[str, dict[str, Outcome]] = {
 }
 """Per case, every feature whose outcome isn't `sent`. Every `dropped` entry has its reason in `DROPPED_BECAUSE`."""
 
-CHAT_IMAGE_OUTPUT_GAP = 'known gap: the profile allows image output for the Responses image tool, and Chat neither asks for nor parses images'
+CHAT_IMAGE_OUTPUT_GAP = 'tracked gap: https://github.com/pydantic/pydantic-ai/issues/14790'
 CACHE_POINT_HINT = 'documented: "Models that don\'t support caching will filter these out" (`CachePoint`)'
 
 DROPPED_BECAUSE: dict[tuple[str, str], str] = {
@@ -259,20 +259,20 @@ DROPPED_BECAUSE: dict[tuple[str, str], str] = {
     (
         'HuggingFaceModel',
         'native_output',
-    ): 'known gap: the Qwen 3.5 profile allows native output, which the adapter never sends',
-    ('MCPSamplingModel', 'function_tools'): 'known gap: https://github.com/pydantic/pydantic-ai/issues/14774',
-    ('MCPSamplingModel', 'output_tools'): 'known gap: https://github.com/pydantic/pydantic-ai/issues/14774',
+    ): 'tracked gap: https://github.com/pydantic/pydantic-ai/issues/14789',
+    ('MCPSamplingModel', 'function_tools'): 'tracked gap: https://github.com/pydantic/pydantic-ai/issues/14774',
+    ('MCPSamplingModel', 'output_tools'): 'tracked gap: https://github.com/pydantic/pydantic-ai/issues/14774',
     (
         'MCPSamplingModel',
         'prompted_output',
-    ): 'known gap: rides on `instruction_parts`, https://github.com/pydantic/pydantic-ai/issues/14774',
-    ('MCPSamplingModel', 'instruction_parts'): 'known gap: https://github.com/pydantic/pydantic-ai/issues/14774',
+    ): 'tracked gap: rides on `instruction_parts`, https://github.com/pydantic/pydantic-ai/issues/14774',
+    ('MCPSamplingModel', 'instruction_parts'): 'tracked gap: https://github.com/pydantic/pydantic-ai/issues/14774',
     (
         'MCPSamplingModel',
         'replayed_signed_thinking',
     ): 'deliberate: MCP sampling messages have no thinking content (`_mcp.py`)',
 }
-"""Why each `dropped` entry in `EXPECTED` is allowed: a documented filter, a deliberate skip, or a known gap."""
+"""Why each `dropped` entry in `EXPECTED` is allowed: a documented filter, a deliberate skip, or a tracked gap."""
 
 
 async def _outcome(case: Case, feature: Feature) -> tuple[Outcome, str]:
