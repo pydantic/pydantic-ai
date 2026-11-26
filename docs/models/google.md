@@ -153,8 +153,8 @@ what changes:
 - `temperature`, `top_p` and `top_k` are [ignored](https://aistudio.google.com/docs/whats-new-gemini-3.6#sampling-parameter-deprecation).
 - A request that ends with a model turn, which only the [direct API](../direct.md) sends, fails with a 400 error.
 
-`gemini-3.8-flash` also rejects `google_logprobs` with `Logprobs is not enabled for this model`, so that setting fails
-on `gemini-2.5-pro`.
+`gemini-3.8-flash` also rejects `google_logprobs` with `Logprobs is not enabled for this model`, so once the Gemini API
+routes `gemini-2.5-pro` to it, that setting fails there.
 
 `NativeOutput` with function tools, and native tools with function tools, stay unavailable on these model names, as on
 Gemini 2.5. To use the new models' features, change the model name.
