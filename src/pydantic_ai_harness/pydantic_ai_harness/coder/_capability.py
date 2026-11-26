@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_args
@@ -21,7 +21,6 @@ from pydantic_ai_harness.coder._instructions import (
     Autonomy,
     coder_instructions,
     model_specific_instructions,
-    project_instructions,
 )
 from pydantic_ai_harness.compaction import ClearToolResults
 from pydantic_ai_harness.file_system import FileSystem
@@ -151,7 +150,6 @@ class _CoderGuidance(AbstractCapability[AgentDepsT]):
 
     guidance: str
     delegated_guidance: str
-    project: tuple[Callable[[RunContext[AgentDepsT]], Awaitable[str]], ...]
     model_specific: tuple[Callable[[RunContext[AgentDepsT]], InstructionPart], ...] = ()
     """The blocks from `model_specific_instructions`, resolved against the model handling each request.
 
@@ -166,7 +164,6 @@ class _CoderGuidance(AbstractCapability[AgentDepsT]):
         return [
             self.delegated_guidance if self.delegate else self.guidance,
             *self.model_specific,
-            *self.project,
         ]
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
@@ -242,8 +239,7 @@ class Coder(CombinedCapability[AgentDepsT]):
         repo_context: Include `RepoContext`. Pass `False` when the agent binds its
             own, so the instruction files are not loaded twice. Pass a
             `RepoContext` to use it in place of the bundled
-            `RepoContext(walk_up='repo_root')`, keeping the project-directory note;
-            e.g. `RepoContext()` loads only the working directory's instruction files.
+            `RepoContext(walk_up='repo_root')`; e.g. `RepoContext()` loads only the working directory's instruction files.
         sub_agents: Add `delegate_task`, which hands a self-contained sub-task to a
             fresh run of the same agent `Coder` is bound to, including capabilities
             bound next to `Coder`. This requires binding `Coder` with
@@ -316,17 +312,11 @@ class Coder(CombinedCapability[AgentDepsT]):
             and bundled_repo_context.nested_traversal
             and bundled_repo_context.nested_inject == 'contents',
         )
-        # Naming the directory creates a lazily created sandbox, so it comes only with
-        # `RepoContext`, which reads the workspace at run start anyway.
-        project = (
-            [project_instructions(unrestricted=unrestricted_filesystem)] if bundled_repo_context is not None else []
-        )
         capabilities: list[AbstractCapability[AgentDepsT]] = [
             RequireWorkspace[AgentDepsT]('Coder'),
             _CoderGuidance[AgentDepsT](
                 guidance,
                 delegated_guidance,
-                tuple(project),
                 tuple(
                     model_specific_instructions(
                         autonomy=autonomy, delegate_tool=delegation.tool_name if delegation is not None else None

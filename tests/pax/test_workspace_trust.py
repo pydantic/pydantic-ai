@@ -27,6 +27,7 @@ from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_ai_pax.runtime.session_workspace import SessionWorkspace
 from pydantic_ai_pax.runtime.workspace_trust import (
     WorkspaceTrust,
+    describe,
     repository_files,
     trust_command,
     trust_scope,
@@ -118,10 +119,9 @@ async def test_trust_shows_what_it_covers(repository: Path) -> None:
         assert await shell.commands.execute_async('/trust') == (
             f'This folder is untrusted, as every folder is until you decide.\n'
             f'{repository}: this repository and its worktrees.\n'
-            'Found here: ../AGENTS.md, skills '
-            '(walk-up instruction files, skills and agent folders still load as before until they check workspace authority).\n'
-            'Untrusted, the agent can still read, edit and run code here; capabilities that check workspace '
-            "authority treat the folder's files as the repository's, not yours.\n"
+            'Found here: ../AGENTS.md, skills.\n'
+            'Untrusted, the agent can still read, edit and run code here, '
+            "and instruction files and skills reach the model as the repository's, not yours.\n"
             'Either way, these still wait for their own approval: ../.clai/settings.json (/project approve, /plugins enable).\n'
             '/trust yes trusts it; /trust no keeps it untrusted.'
         )
@@ -197,9 +197,23 @@ async def test_nobody_is_asked_without_a_terminal(tmp_path: Path) -> None:
         await shell.close('exit')
 
 
+_DECLINED = "Untrusted: instruction files and skills reach the model as the repository's. /trust changes it."
+
+
 @pytest.mark.parametrize(
-    ('keys', 'trusted', 'saved'),
-    [('1', True, True), ('\r', False, False), ('2', False, False), ('\x1b', False, None)],
+    ('keys', 'trusted', 'saved', 'confirmation'),
+    [
+        ('1', True, True, 'Trusted. /trust changes it.'),
+        ('\r', False, False, _DECLINED),
+        ('2', False, False, _DECLINED),
+        (
+            '\x1b',
+            False,
+            None,
+            "Untrusted for this session: instruction files and skills reach the model as the repository's. "
+            '/trust changes it.',
+        ),
+    ],
 )
 async def test_the_question_defaults_to_untrusted(
     tmp_path: Path,
@@ -208,6 +222,7 @@ async def test_the_question_defaults_to_untrusted(
     keys: str,
     trusted: bool,
     saved: bool | None,
+    confirmation: str,
 ) -> None:
     store = SettingsStore(tmp_path / 'config.db')
     shell = shell_in(tmp_path, store)
@@ -223,6 +238,7 @@ async def test_the_question_defaults_to_untrusted(
         await shell.close('exit')
     shown = Text.from_ansi(terminal.file.getvalue()).plain  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownArgumentType]
     assert f'{tmp_path.resolve()}: this folder and its subfolders.' in ' '.join(shown.split())
+    assert shown.rstrip().splitlines()[-1].strip() == confirmation
     assert store.workspace_trust(tmp_path.resolve()) is saved
 
 
@@ -437,9 +453,15 @@ def test_repository_files_lists_names_only(repository: Path) -> None:
     (repository / '.agents' / 'agents').mkdir(parents=True)
     (repository / '.mcp.json').write_text('{}')
     files = repository_files(repository)
-    assert (files.trusted, files.approved_separately) == (
+    assert (files.trusted, files.approved_separately, files.agent_folders) == (
         ('CLAUDE.md', '.agents/agents'),
         (('.mcp.json', '/mcp trust'),),
+        True,
+    )
+    store = SettingsStore(repository.parent / 'config.db')
+    assert (
+        'Found here: CLAUDE.md, .agents/agents (agent folders still reach the model as yours either way, for now).'
+        in describe(WorkspaceTrust.saved(store, repository), repository)
     )
 
 

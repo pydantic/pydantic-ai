@@ -16,7 +16,7 @@ import sys
 import tempfile
 import warnings
 import weakref
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -25,12 +25,14 @@ from unittest.mock import Mock
 
 import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 
 import pydantic_ai
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import BatchModelRequests
+from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart
 from pydantic_ai.models import StreamedResponse, override_allow_model_requests
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -54,6 +56,7 @@ with try_import() as imports_successful:
         CAPTURE_OPTION,
         SDK_MOCKS,
         SOURCE_FILE,
+        ImportWatcher,
         RefactorCapture,
         bedrock_canary_model,
         compare,
@@ -869,11 +872,168 @@ def test_warnings():
         warnings.warn('filtered out')
 """
 
+DURABLE = """
+import asyncio
+import base64
+import json
+import threading
+from types import SimpleNamespace
+from uuid import uuid4
+
+import pytest
+from dbos import DBOS
+from prefect.cache_policies import INPUTS, Inputs
+from temporalio import activity
+from temporalio.api.common.v1 import Payload
+from temporalio.api.failure.v1 import Failure
+from temporalio.bridge.proto.workflow_activation import (
+    InitializeWorkflow,
+    RemoveFromCache,
+    WorkflowActivation,
+    WorkflowActivationJob,
+)
+from temporalio.bridge.proto.workflow_commands import CompleteWorkflowExecution, ScheduleActivity, WorkflowCommand
+from temporalio.bridge.proto.workflow_completion import Failure as Failed, Success, WorkflowActivationCompletion
+from temporalio.bridge.worker import Worker
+
+from pydantic_ai import Agent, PydanticAIDeprecationWarning
+from pydantic_ai.durable_exec.dbos import DBOSDurability
+from pydantic_ai.durable_exec.prefect import DEFAULT_PYDANTIC_AI_CACHE_POLICY, PrefectAgent
+from pydantic_ai.durable_exec.temporal import TemporalDurability
+from pydantic_ai.models.test import TestModel
+
+COLLECTED = Agent(TestModel(), name='collected', capabilities=[TemporalDurability()])
+
+
+def test_durable_names():
+    Agent(TestModel(), name='dbos_agent', capabilities=[DBOSDurability(register_legacy_workflows=True)])
+    with pytest.warns(PydanticAIDeprecationWarning):
+        PrefectAgent(Agent(TestModel(), name='prefect_agent'))
+    activity.defn(name='by_the_test')(lambda: None)
+
+
+class Core:
+    def __init__(self, activations):
+        self.activations = [activation.SerializeToString() for activation in activations]
+
+    async def poll_workflow_activation(self):
+        return self.activations.pop(0)
+
+    async def complete_workflow_activation(self, completion):
+        pass
+
+
+def payload(value):
+    return Payload(metadata={{'encoding': b'json/plain'}}, data=json.dumps(value).encode())
+
+
+def started(run_id, workflow_type, workflow_id):
+    job = WorkflowActivationJob(
+        initialize_workflow=InitializeWorkflow(workflow_type=workflow_type, workflow_id=workflow_id)
+    )
+    return WorkflowActivation(run_id=run_id, jobs=[job])
+
+
+def test_temporal_commands():
+    first, second = str(uuid4()), str(uuid4())
+    event = payload({{'tool_call_id': f'pyd_ai_{{uuid4().hex}}'}})
+    stream_item = {{'topic': 'agent_events', 'data': base64.b64encode(event.SerializeToString()).decode(), 'offset': 0}}
+    activations = [
+        started(second, 'Second', 'second'),
+        started(first, 'First', f'first-{{uuid4()}}'),
+        WorkflowActivation(run_id=first, jobs=[WorkflowActivationJob(remove_from_cache=RemoveFromCache())]),
+    ]
+    failure = Failure(message='boom', stack_trace='File "workflow.py", line 7, in run')
+    commands = [
+        WorkflowCommand(
+            schedule_activity=ScheduleActivity(
+                seq=1,
+                activity_id='1',
+                activity_type='agent__model_request',
+                arguments=[
+                    payload({{'serialized_run_context': {{'active_capability_ids': ['tool_search', 'agent']}}}}),
+                    payload({{'items': [stream_item], 'topic': 'not a stream item'}}),
+                ],
+            )
+        ),
+        WorkflowCommand(
+            schedule_activity=ScheduleActivity(
+                seq=2,
+                activity_id='2',
+                activity_type='raw',
+                arguments=[Payload(metadata={{'encoding': b'binary/plain'}}, data=b'raw')],
+            )
+        ),
+        WorkflowCommand(
+            schedule_activity=ScheduleActivity(
+                seq=3,
+                activity_id='3',
+                activity_type='not_json',
+                arguments=[Payload(metadata={{'encoding': b'json/plain'}}, data=b'not json')],
+            )
+        ),
+        WorkflowCommand(complete_workflow_execution=CompleteWorkflowExecution(result=payload({text!r}))),
+    ]
+    completions = [
+        WorkflowActivationCompletion(run_id=second, failed=Failed(failure=failure)),
+        WorkflowActivationCompletion(run_id=first, successful=Success(commands=commands)),
+        WorkflowActivationCompletion(run_id=first, successful=Success()),
+    ]
+    worker = Worker(Core(activations))
+
+    async def drive():
+        for completion in completions:
+            await worker.poll_workflow_activation()
+            await worker.complete_workflow_activation(completion)
+
+    asyncio.run(drive())
+
+
+def test_dbos_workflow(tmp_path):
+    DBOS(config={{'name': 'refactor_capture', 'system_database_url': f'sqlite:///{{tmp_path / "dbos.sqlite"}}'}})
+
+    @DBOS.step()
+    def double(n: int) -> int:
+        return n * 2
+
+    @DBOS.workflow()
+    def quadruple(n: int) -> int:
+        return double(double(n))
+
+    DBOS.launch()
+    try:
+        handle = DBOS.start_workflow(quadruple, 1)
+        assert handle.get_result() == 4
+        # The fork replays the first step's recorded result and runs the second.
+        assert DBOS.fork_workflow(handle.workflow_id, 2).get_result() == 4
+    finally:
+        DBOS.destroy()
+
+
+def test_cache_keys():
+    def task_function():
+        pass
+
+    task_ctx = SimpleNamespace(task_run=SimpleNamespace(flow_run_id=uuid4(), id=uuid4()), task=task_function)
+    DEFAULT_PYDANTIC_AI_CACHE_POLICY.compute_key(task_ctx, {{'prompt': {text!r}}}, {{}})
+    with pytest.raises(ValueError):
+        INPUTS.compute_key(task_ctx, {{'lock': threading.Lock()}}, {{}})
+
+    class Inherited(Inputs):
+        pass
+
+    Inherited().compute_key(task_ctx, {{'n': 1}}, {{}})
+    cyclic = []
+    cyclic.append(cyclic)
+    INPUTS.compute_key(task_ctx, {{'cyclic': cyclic}}, {{}})
+    INPUTS.compute_key(task_ctx, {{'generated': str(uuid4())}}, {{}})
+"""
+
 
 @pytest.fixture
 def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCapture:
-    """Capture an in-process pytest session over `STREAMS` and `REQUESTS`, `UI`, `REALTIME`, `SESSION` or
-    `TOOL_PLUMBING`, carrying `text`, into `capture_dir`.
+    """Capture an in-process pytest session over `STREAMS` and `REQUESTS`, `UI`, `REALTIME`, `SESSION`,
+    `TOOL_PLUMBING` or `DURABLE`, carrying `text`, into `capture_dir`.
 
     It runs as `main` runs each side.
     """
@@ -898,9 +1058,12 @@ def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCaptur
         realtime: bool = False,
         session: bool = False,
         tool_plumbing: bool = False,
+        durable: bool = False,
     ) -> pytest.RunResult:
         pytester.makeconftest(CONFTEST)
-        if ui:
+        if durable:
+            pytester.makepyfile(test_capture_durable=DURABLE.format(text=text))
+        elif ui:
             pytester.makepyfile(test_ui=UI.format(text=text))
         elif realtime:
             pytester.makepyfile(test_realtime=REALTIME.format(text=text))
@@ -2218,6 +2381,421 @@ n
     )
 
 
+@pytest.mark.skipif(
+    any(importlib.util.find_spec(name) is None for name in ('temporalio', 'dbos', 'prefect')),
+    reason='`temporalio`, `dbos` or `prefect` not installed',
+)
+# `DBOS` is one instance per process, which the DBOS test modules launch once per module on their worker.
+@pytest.mark.xdist_group(name='dbos')
+def test_capture_records_durable_names_workflows_and_cache_keys(
+    run: RunCapture, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    """Each name `pydantic_ai.durable_exec` registers, each Temporal workflow run's commands and DBOS workflow's
+    operations, and each `compute_key` call on a Prefect cache policy.
+
+    A name registered while the module is collected is recorded under the module's node; one the test registers itself
+    isn't recorded. The Temporal worker polls and completes activations through a stand-in for its core: the runs are
+    recorded in a set order, a run context's set sorted, the activation that evicts a run issues nothing, and a
+    failure's stack trace is left out. A forked DBOS workflow is recorded with its original's name, and its operations
+    show which steps it replayed. The compound default policy's key, the key of the policy for the flow run's ID it
+    combines, and a key computed from a generated ID are run-scoped; the calls handed the same inputs as the call
+    they're made in leave them out, and inputs that hold a reference cycle are recorded as the error writing them
+    raised.
+
+    The Prefect modules are imported before the capture starts, as a conftest can import them, so they hold the `task`
+    decorator they imported, which the capture rebinds.
+
+    Compared with a capture of the Temporal and cache key tests carrying other text, the summary counts each durable
+    kind and its targets, and lists the tests whose durable records changed.
+    """
+    importlib.import_module('pydantic_ai.durable_exec.prefect')
+    run(tmp_path, durable=True).assert_outcomes(passed=4)
+
+    records = [json.loads(line) for line in (tmp_path / 'main.jsonl').read_text().splitlines()]
+    assert [
+        (record['node'], record['target'], record['name'], record['options'])
+        for record in records
+        if record['kind'] == 'durable_name'
+    ] == snapshot(
+        [
+            ('test_capture_durable.py', 'temporalio.activity.defn', 'agent__collected__external_event_ask', {}),
+            (
+                'test_capture_durable.py',
+                'temporalio.activity.defn',
+                'agent__collected__model_cancel_suspended_response',
+                {},
+            ),
+            ('test_capture_durable.py', 'temporalio.activity.defn', 'agent__collected__model_compact_messages', {}),
+            ('test_capture_durable.py', 'temporalio.activity.defn', 'agent__collected__model_count_tokens', {}),
+            ('test_capture_durable.py', 'temporalio.activity.defn', 'agent__collected__model_request', {}),
+            ('test_capture_durable.py', 'temporalio.activity.defn', 'agent__collected__model_request_stream', {}),
+            (
+                'test_capture_durable.py',
+                'temporalio.activity.defn',
+                'agent__collected__toolset__<agent>__call_tool',
+                {},
+            ),
+            (
+                'test_capture_durable.py',
+                'temporalio.activity.defn',
+                'agent__collected__toolset__<agent>__validate_args',
+                {},
+            ),
+            (
+                'test_capture_durable.py',
+                'temporalio.workflow.defn',
+                'agent__collected__toolset__<agent>__call_tool__child_workflow',
+                {},
+            ),
+            (
+                'test_capture_durable.py::test_durable_names',
+                'dbos.DBOS.step',
+                'dbos_agent__model.cancel_suspended_response',
+                {},
+            ),
+            ('test_capture_durable.py::test_durable_names', 'dbos.DBOS.step', 'dbos_agent__model.compact_messages', {}),
+            ('test_capture_durable.py::test_durable_names', 'dbos.DBOS.step', 'dbos_agent__model.count_tokens', {}),
+            ('test_capture_durable.py::test_durable_names', 'dbos.DBOS.step', 'dbos_agent__model.request', {}),
+            ('test_capture_durable.py::test_durable_names', 'dbos.DBOS.step', 'dbos_agent__model.request_stream', {}),
+            ('test_capture_durable.py::test_durable_names', 'dbos.DBOS.workflow', 'dbos_agent.run', {}),
+            ('test_capture_durable.py::test_durable_names', 'dbos.DBOS.workflow', 'dbos_agent.run_sync', {}),
+            ('test_capture_durable.py::test_durable_names', 'prefect.task', 'call_tool_task', {}),
+            ('test_capture_durable.py::test_durable_names', 'prefect.task', 'cancel_suspended_response_task', {}),
+            ('test_capture_durable.py::test_durable_names', 'prefect.task', 'request_stream_task', {}),
+            ('test_capture_durable.py::test_durable_names', 'prefect.task', 'wrapped_request', {}),
+        ]
+    )
+    assert [
+        {key: value for key, value in record.items() if key != 'kind'}
+        for record in records
+        if record['kind'] in ('temporal', 'dbos')
+    ] == snapshot(
+        [
+            {
+                'node': 'test_capture_durable.py::test_temporal_commands',
+                'target': 'First',
+                'workflow_id': 'first-UUID',
+                'commands': [
+                    {
+                        'schedule_activity': {
+                            'seq': 1,
+                            'activity_id': '1',
+                            'activity_type': 'agent__model_request',
+                            'arguments': [
+                                {
+                                    'metadata': {'encoding': 'json/plain'},
+                                    'data': {
+                                        'serialized_run_context': {'active_capability_ids': ['agent', 'tool_search']}
+                                    },
+                                },
+                                {
+                                    'metadata': {'encoding': 'json/plain'},
+                                    'data': {
+                                        'items': [
+                                            {
+                                                'topic': 'agent_events',
+                                                'data': {
+                                                    'metadata': {'encoding': 'json/plain'},
+                                                    'data': {'tool_call_id': 'pyd_ai_ID'},
+                                                },
+                                                'offset': 0,
+                                            }
+                                        ],
+                                        'topic': 'not a stream item',
+                                    },
+                                },
+                            ],
+                        }
+                    },
+                    {
+                        'schedule_activity': {
+                            'seq': 2,
+                            'activity_id': '2',
+                            'activity_type': 'raw',
+                            'arguments': [{'metadata': {'encoding': 'binary/plain'}, 'data': 'cmF3'}],
+                        }
+                    },
+                    {'unrecorded': 'JSONDecodeError: Expecting value: line 1 column 1 (char 0)'},
+                    {
+                        'complete_workflow_execution': {
+                            'result': {'metadata': {'encoding': 'json/plain'}, 'data': 'hello'}
+                        }
+                    },
+                ],
+            },
+            {
+                'node': 'test_capture_durable.py::test_temporal_commands',
+                'target': 'Second',
+                'workflow_id': 'second',
+                'commands': [{'failed': {'failure': {'message': 'boom'}}}],
+            },
+            {
+                'node': 'test_capture_durable.py::test_dbos_workflow',
+                'target': 'test_dbos_workflow.<locals>.quadruple',
+                'workflow_id': 'UUID',
+                'class_name': None,
+                'config_name': None,
+                'parent_workflow_id': None,
+                'forked_from': 'UUID',
+                'operations': [
+                    {'function_id': 1, 'function_name': 'test_dbos_workflow.<locals>.double', 'recorded': True},
+                    {'function_id': 2, 'function_name': 'test_dbos_workflow.<locals>.double', 'recorded': False},
+                ],
+            },
+            {
+                'node': 'test_capture_durable.py::test_dbos_workflow',
+                'target': 'test_dbos_workflow.<locals>.quadruple',
+                'workflow_id': 'UUID',
+                'class_name': None,
+                'config_name': None,
+                'parent_workflow_id': None,
+                'operations': [
+                    {'function_id': 1, 'function_name': 'test_dbos_workflow.<locals>.double', 'recorded': False},
+                    {'function_id': 2, 'function_name': 'test_dbos_workflow.<locals>.double', 'recorded': False},
+                ],
+            },
+        ]
+    )
+    assert [
+        {key: value for key, value in record.items() if key not in ('kind', 'node')}
+        for record in records
+        if record['kind'] == 'cache_key'
+    ] == snapshot(
+        [
+            {
+                'target': 'prefect.cache_policies.CompoundCachePolicy.compute_key',
+                'inputs': {'prompt': 'hello'},
+                'key': 'RUN_SCOPED',
+            },
+            {
+                'target': 'pydantic_ai.durable_exec.prefect._cache_policies.PrefectAgentInputs.compute_key',
+                'key': 'afa8b1aa08166a4e863e973bd4acb59f',
+            },
+            {
+                'target': 'prefect.cache_policies.Inputs.compute_key',
+                'inputs': {'prompt': 'hello'},
+                'key': 'afa8b1aa08166a4e863e973bd4acb59f',
+            },
+            {'target': 'prefect.cache_policies.TaskSource.compute_key', 'key': 'b75d1a1f59ed47f1109c2d723e3866c3'},
+            {'target': 'prefect.cache_policies.RunId.compute_key', 'key': 'RUN_SCOPED'},
+            {
+                'target': 'prefect.cache_policies.Inputs.compute_key',
+                'inputs': {'generated': 'UUID'},
+                'key': 'RUN_SCOPED',
+            },
+            {
+                'target': 'prefect.cache_policies.Inputs.compute_key',
+                'inputs': {'lock': '<unlocked _thread.lock object at 0x?>'},
+                'error': """\
+ValueError: Unable to create hash - objects could not be serialized.
+  JSON error: Unable to serialize unknown type: <class '_thread.lock'>
+  Pickle error: cannot pickle '_thread.lock' object
+
+This often occurs when task inputs contain objects that cannot be cached like locks, file handles, or other system resources.
+
+To resolve this, you can:
+  1. Exclude these arguments by defining a custom `cache_key_fn`
+  2. Disable caching by passing `cache_policy=NO_CACHE`
+""",
+            },
+            {
+                'target': 'prefect.cache_policies.Inputs.compute_key',
+                'inputs': {
+                    'unrecorded': 'PydanticSerializationError: Error serializing to JSON: ValueError: Circular reference detected (id repeated)'
+                },
+                'key': 'b4e74d9d48bc91343a5a0b0553ebf41e',
+            },
+            {
+                'target': 'test_capture_durable.test_cache_keys.<locals>.Inherited.compute_key',
+                'inputs': {'n': 1},
+                'key': 'ca4f55a38abb6a072c674e3ffedc365a',
+            },
+        ]
+    )
+
+    head = tmp_path / 'head'
+    run(head, '-k', 'temporal_commands or cache_keys', durable=True, text='goodbye').assert_outcomes(
+        passed=2, deselected=2
+    )
+    (head / SOURCE_FILE).write_text(json.dumps({'pydantic_ai': f'{head}/pydantic_ai/__init__.py'}))
+    capsys.readouterr()
+    assert compare(tmp_path, head) == 1
+    assert capsys.readouterr().out == snapshot("""\
+nodes: base 5, head 3
+records: base 35, head 21
+stream events: head 0
+requests: head 0
+ui records: head 0
+realtime records: head 0
+session records: head 0
+hook records: head 0
+exception records: head 1
+warning records: head 0
+temporal workflow run records: head 2
+dbos workflow records: head 0
+durable name records: head 9
+cache key records: head 9
+nodes per stream module, head:
+nodes per request target, head:
+nodes per ui target, head:
+nodes per realtime target, head:
+nodes per session target, head:
+nodes per hook target, head:
+nodes per temporal workflow run target, head:
+  First: 1
+  Second: 1
+nodes per dbos workflow target, head:
+nodes per durable name target, head:
+  temporalio.activity.defn: 1
+  temporalio.workflow.defn: 1
+nodes per cache key target, head:
+  prefect.cache_policies.CompoundCachePolicy.compute_key: 1
+  prefect.cache_policies.Inputs.compute_key: 1
+  prefect.cache_policies.RunId.compute_key: 1
+  prefect.cache_policies.TaskSource.compute_key: 1
+  pydantic_ai.durable_exec.prefect._cache_policies.PrefectAgentInputs.compute_key: 1
+  test_capture_durable.test_cache_keys.<locals>.Inherited.compute_key: 1
+nodes that recorded no request, realtime or session record, head: 2
+  test_capture_durable.py::test_cache_keys
+  test_capture_durable.py::test_temporal_commands
+only in base: 2, only in head: 0, differing: 2
+  only in base: test_capture_durable.py::test_dbos_workflow
+  only in base: test_capture_durable.py::test_durable_names
+  differing: test_capture_durable.py::test_cache_keys
+  differing: test_capture_durable.py::test_temporal_commands
+""")
+
+
+async def test_capture_holds_a_stream_only_while_it_lives(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A stream holds what the run iterating it holds, like its dependencies, so the capture holds it only while the
+    recording of its iteration lives. The response it builds is recorded once iteration ends, and again when the test
+    ends if the stream still lives then, as it is when the test ends, so what the run sets on it in between shows, even
+    once the stream is gone; one that can't be built or written then is recorded as the error, never raised.
+
+    Garbage collection is off, as in `tests/test_run_reference_cycles.py`, so only reference counting frees them.
+    """
+    # The capture names its records file after the xdist worker it runs on.
+    monkeypatch.delenv('PYTEST_XDIST_WORKER', raising=False)
+
+    class Deps:
+        pass
+
+    class Unwritable:
+        def __repr__(self) -> str:
+            raise RuntimeError('unwritable')
+
+    def unbuildable() -> ModelResponse:
+        raise RuntimeError('unbuildable')
+
+    async def stream_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'hello'
+
+    agent = Agent(FunctionModel(stream_function=stream_text), deps_type=Deps)
+    capture = RefactorCapture(tmp_path)
+    capture.install()
+    gc.disable()
+    try:
+        deps = Deps()
+        ref = weakref.ref(deps)
+        async with agent.run_stream('hello', deps=deps, infer_name=False) as result:
+            assert await result.get_output() == 'hello'
+        del result, deps
+        assert ref() is None
+        async with model_request_stream(
+            FunctionModel(stream_function=stream_text), [ModelRequest.user_text_prompt('hi')]
+        ) as kept:
+            async for _ in kept:
+                pass
+        kept.provider_details = {'set': 'once iteration ended'}
+        async with model_request_stream(
+            FunctionModel(stream_function=stream_text), [ModelRequest.user_text_prompt('hi')]
+        ) as dropped:
+            async for _ in dropped:
+                pass
+        dropped.usage.details['counted_once_iteration_ended'] = 1
+        dropped_ref = weakref.ref(dropped)
+        del dropped
+        assert dropped_ref() is None
+        async with model_request_stream(
+            FunctionModel(stream_function=stream_text), [ModelRequest.user_text_prompt('hi')]
+        ) as unwritable:
+            unwritable.provider_details = {'unwritable': Unwritable()}
+            async for _ in unwritable:
+                pass
+        async with model_request_stream(
+            FunctionModel(stream_function=stream_text), [ModelRequest.user_text_prompt('hi')]
+        ) as unbuilt:
+            async for _ in unbuilt:
+                pass
+        # Built once iteration ended, its response can't be built when the test ends.
+        monkeypatch.setattr(unbuilt, 'get', unbuildable)
+        capture.write('test_streams.py::test_kept')
+    finally:
+        gc.enable()
+        capture.pytest_unconfigure()
+    records = [json.loads(line) for line in (tmp_path / 'main.jsonl').read_text().splitlines()]
+    *streams, counted, unwritten, unbuilt = [record for record in records if record['kind'] == 'stream']
+    assert counted['response']['usage']['details'] == {'counted_once_iteration_ended': 1}
+    assert [unwritten['response'], unbuilt['response']] == snapshot(
+        [
+            {'unrecorded': 'PydanticSerializationError: Error serializing to JSON: RuntimeError: unwritable'},
+            {'unrecorded': 'RuntimeError: unbuildable'},
+        ]
+    )
+    assert [
+        (record['stream'], record['response']['parts'][0]['content'], record['response']['provider_details'])
+        for record in streams
+    ] == snapshot(
+        [
+            ('pydantic_ai.models._continuation._ContinuationStreamedResponse', 'hello', None),
+            ('pydantic_ai.models.function.FunctionStreamedResponse', 'hello', None),
+            ('pydantic_ai.models.function.FunctionStreamedResponse', 'hello', {'set': 'once iteration ended'}),
+        ]
+    )
+
+
+def test_capture_wraps_a_module_now_or_once_it_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A module imported already is wrapped at once, and one imported later once it has run, leaving its loader as it
+    was; a spec found but never run leaves the wrap for the import. Other imports pass through, and a module that can't
+    be found isn't wrapped.
+    """
+    (tmp_path / 'watched_module.py').write_text('VALUE = 1\n')
+    (tmp_path / 'unwatched_module.py').write_text('')
+    monkeypatch.syspath_prepend(str(tmp_path))  # pyright: ignore[reportUnknownMemberType]
+    wrapped: list[object] = []
+    capture = RefactorCapture(tmp_path)
+    capture.wrap_on_import(
+        {
+            'json': lambda: wrapped.append('json'),
+            'watched_module': lambda: wrapped.append(vars(sys.modules['watched_module'])['VALUE']),
+            'missing_module': lambda: wrapped.append('missing'),
+        }
+    )
+    try:
+        assert wrapped == ['json']
+        importlib.import_module('unwatched_module')
+        spec = importlib.util.find_spec('watched_module')
+        assert spec is not None and wrapped == ['json']
+        # Garbage collection is off, so only reference counting frees the loader of a spec that never runs.
+        gc.disable()
+        try:
+            not_run = weakref.ref(spec.loader)
+            del spec
+            assert not_run() is None
+        finally:
+            gc.enable()
+        module = importlib.import_module('watched_module')
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module('missing_module')
+    finally:
+        capture.pytest_unconfigure()
+        for name in ('watched_module', 'unwatched_module'):
+            sys.modules.pop(name, None)
+    assert wrapped == ['json', 1]
+    assert 'exec_module' not in vars(module.__loader__)
+    assert not any(isinstance(finder, ImportWatcher) for finder in sys.meta_path)
+
+
 async def test_capture_keeps_what_ui_adapter_subclasses_are(tmp_path: Path):
     """A subclass defined once the capture started keeps its type parameters, and its abstract methods."""
     capture = RefactorCapture(tmp_path)
@@ -2240,6 +2818,75 @@ async def test_capture_keeps_what_ui_adapter_subclasses_are(tmp_path: Path):
     assert vars(Concrete)['__parameters__'] == ()
     assert Partial.__abstractmethods__ == Uncaptured.__abstractmethods__
     assert sorted(Partial.__abstractmethods__) == snapshot(['build_event_stream', 'build_run_input', 'load_messages'])
+
+
+def test_capture_builds_a_class_in_the_namespace_its_statement_runs_in(tmp_path: Path):
+    """A model keeps the namespace of the frame its class statement runs in, or none for one that runs in a module, as
+    without the capture: Pydantic resolves the model's annotations in it. A namespace that held the capture couldn't be
+    pickled, so Prefect couldn't hash the model. A warning a class raises as it's defined reports the statement's line.
+    """
+
+    class Warns:
+        def __init_subclass__(cls) -> None:
+            warnings.warn('defined', UserWarning, stacklevel=2)
+
+    def define() -> type[Warns]:
+        class Subclass(Warns):
+            pass
+
+        return Subclass
+
+    with pytest.warns(UserWarning, match='defined') as uncaptured:
+        define()
+    module: dict[str, object] = {}
+    capture = RefactorCapture(tmp_path)
+    capture.install()
+    try:
+
+        class Inner(BaseModel):
+            value: int
+
+        class Outer(BaseModel):
+            inner: Inner
+
+        exec('from pydantic import BaseModel\nclass AtModuleLevel(BaseModel):\n    value: int\n', module)
+        with pytest.warns(UserWarning, match='defined') as captured:
+            define()
+    finally:
+        capture.pytest_unconfigure()
+    assert [(warning.filename, warning.lineno) for warning in captured] == [
+        (warning.filename, warning.lineno) for warning in uncaptured
+    ]
+    assert 'Inner' in vars(Outer)['__pydantic_parent_namespace__']
+    assert vars(module['AtModuleLevel'])['__pydantic_parent_namespace__'] is None
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason='a PEP 695 generic class needs Python 3.12')
+def test_capture_builds_a_generic_class_in_the_namespace_its_statement_runs_in(tmp_path: Path):
+    """A PEP 695 generic class statement runs in an annotation scope, which Pydantic looks past to the frame the
+    statement runs in, as without the capture.
+    """
+    module: dict[str, object] = {}
+    exec(
+        'from pydantic import BaseModel\n'
+        'def define():\n'
+        '    class Inner(BaseModel):\n'
+        '        value: int\n'
+        '    class Generic[T](BaseModel):\n'
+        '        inner: Inner\n'
+        '        value: T\n'
+        '    return Generic\n',
+        module,
+    )
+    define = module['define']
+    assert callable(define)
+    capture = RefactorCapture(tmp_path)
+    capture.install()
+    try:
+        generic = define()
+    finally:
+        capture.pytest_unconfigure()
+    assert 'Inner' in vars(generic)['__pydantic_parent_namespace__']
 
 
 def test_capture_needs_the_plugin_and_its_directory(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch):
@@ -2556,6 +3203,10 @@ session records: head 0
 hook records: head 6
 exception records: head 1
 warning records: head 1
+temporal workflow run records: head 0
+dbos workflow records: head 0
+durable name records: head 0
+cache key records: head 0
 nodes per stream module, head:
   pydantic_ai.models.function: 3
   test_streams: 1
@@ -2576,6 +3227,10 @@ nodes per hook target, head:
   pydantic_ai.capabilities.combined.CombinedCapability.before_tool_validate: 1
   pydantic_ai.capabilities.combined.CombinedCapability.wrap_tool_execute: 1
   pydantic_ai.capabilities.combined.CombinedCapability.wrap_tool_validate: 1
+nodes per temporal workflow run target, head:
+nodes per dbos workflow target, head:
+nodes per durable name target, head:
+nodes per cache key target, head:
 nodes that recorded no request, realtime or session record, head: 2
   test_streams.py::test_no_stream
   test_streams.py::test_subclass_defined_after_the_capture_started
@@ -2590,6 +3245,10 @@ session records: head 0
 hook records: head 6
 exception records: head 0
 warning records: head 1
+temporal workflow run records: head 0
+dbos workflow records: head 0
+durable name records: head 0
+cache key records: head 0
 nodes per stream module, head:
   pydantic_ai.models.function: 2
   test_streams: 1
@@ -2610,6 +3269,10 @@ nodes per hook target, head:
   pydantic_ai.capabilities.combined.CombinedCapability.before_tool_validate: 1
   pydantic_ai.capabilities.combined.CombinedCapability.wrap_tool_execute: 1
   pydantic_ai.capabilities.combined.CombinedCapability.wrap_tool_validate: 1
+nodes per temporal workflow run target, head:
+nodes per dbos workflow target, head:
+nodes per durable name target, head:
+nodes per cache key target, head:
 nodes that recorded no request, realtime or session record, head: 2
   test_streams.py::test_no_stream
   test_streams.py::test_subclass_defined_after_the_capture_started
@@ -2765,6 +3428,10 @@ session records: head 0
 hook records: head 0
 exception records: head 0
 warning records: head 0
+temporal workflow run records: head 0
+dbos workflow records: head 0
+durable name records: head 0
+cache key records: head 0
 nodes per stream module, head:
 nodes per request target, head:
 nodes per ui target, head:
@@ -2772,6 +3439,10 @@ nodes per ui target, head:
 nodes per realtime target, head:
 nodes per session target, head:
 nodes per hook target, head:
+nodes per temporal workflow run target, head:
+nodes per dbos workflow target, head:
+nodes per durable name target, head:
+nodes per cache key target, head:
 nodes that recorded no request, realtime or session record, head: 1
   test_ui.py::test_media_type_set_or_implied
 only in base: 0, only in head: 0, differing: 1
@@ -2910,6 +3581,25 @@ def test_normalized_replaces_values_that_change_between_runs():
             'mcp_meta': {'traceparent': '00-12345678123441238123123456789abc-0123456789abcdef-01', 'progressToken': 2},
             'prefect_labels': {'__OTEL_TRACEPARENT': '00-01a1cb2f55a38937d7e2c3ba122f0f00-367bccfae831323d-01'},
             'prefect_task_run': {'name': 'agent Run-0', 'task_key': 'wrapped_run_flow-095f908e', 'dynamic_key': '0'},
+            'default_run_id_inputs': {'sequence_key': 'pydantic_ai:default_run_id:02be28f320dd3c5469019298e187e2cb'},
+            'activity_failure_info': {'identity': '8844@worker.local'},
+            'evaluation_dispatch': {
+                'duration': 0.010735334130004048,
+                'span_reference': {'trace_id': '01a20f4cca618c0447a135792da95fe7', 'span_id': 'ff67063ae64898cb'},
+                'tiny': {'duration': 9.5367431640625e-07},
+            },
+            'set_duration': {'action': 'wait', 'duration': 2.5},
+            'timers': [{'start_to_fire_timeout': '0.099999624s'}, {'start_to_fire_timeout': '0.100s'}],
+            'workflow_result': '[{"history_digest":"35a4e6e45d1d07a2fc4e901f819028c8915756b6e7dfae805874a8fa012d69b7"}]',
+            'sorted_ticket': {
+                'batch': {'id': 'batch_12345678-1234-4123-8123-123456789abc', 'provider_details': {}, 'status': 'done'},
+                'custom_id': '027dd8a70deea5cb190b0995f0b6c37e',
+                'polls': 0,
+            },
+            'sorted_details': {
+                'custom_id': '7435ac26f85dbab292c80d8b26546f38',
+                'id': 'batch_12345678-1234-4123-8123-123456789abc',
+            },
             'in_memory_ticket': {
                 'custom_id': '52a31e60e1afe0ff4a1058d5fcf539a6-1',
                 'batch': {'id': 'batch_12345678123441238123123456789abc', 'model_name': 'test'},
@@ -2980,6 +3670,22 @@ def test_normalized_replaces_values_that_change_between_runs():
             'mcp_meta': {'traceparent': '00-TRACE_ID-SPAN_ID-01', 'progressToken': 2},
             'prefect_labels': {'__OTEL_TRACEPARENT': '00-TRACE_ID-SPAN_ID-01'},
             'prefect_task_run': {'name': 'agent Run-0', 'task_key': 'wrapped_run_flow-CODE_HASH', 'dynamic_key': '0'},
+            'default_run_id_inputs': {'sequence_key': 'pydantic_ai:default_run_id:DIGEST'},
+            'activity_failure_info': {'identity': 'PID@worker.local'},
+            'evaluation_dispatch': {
+                'duration': 'DURATION',
+                'span_reference': {'trace_id': 'TRACE_ID', 'span_id': 'SPAN_ID'},
+                'tiny': {'duration': 'DURATION'},
+            },
+            'set_duration': {'action': 'wait', 'duration': 2.5},
+            'timers': [{'start_to_fire_timeout': 'DURATION'}, {'start_to_fire_timeout': '0.100s'}],
+            'workflow_result': '[{"history_digest":"DIGEST"}]',
+            'sorted_ticket': {
+                'batch': {'id': 'batch_UUID', 'provider_details': {}, 'status': 'done'},
+                'custom_id': 'CUSTOM_ID',
+                'polls': 0,
+            },
+            'sorted_details': {'custom_id': 'CUSTOM_ID', 'id': 'batch_UUID'},
             'in_memory_ticket': {'custom_id': 'CUSTOM_ID-1', 'batch': {'id': 'batch_UUID', 'model_name': 'test'}},
             'in_memory_response': {
                 'provider_details': {'batch': {'id': 'batch_UUID', 'custom_id': 'CUSTOM_ID'}},
