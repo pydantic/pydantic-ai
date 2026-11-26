@@ -7609,6 +7609,59 @@ async def test_dbos_run_compact_runs_the_compaction_as_a_step(dbos: DBOS) -> Non
     )
 
 
+async def test_dbos_compact_history_runs_the_compaction_as_a_step(dbos: DBOS) -> None:
+    """`compact_history()` in a workflow is a run like any other: its compaction is a DBOS step, and nothing else is."""
+
+    class CompactingModel(FunctionModel):
+        async def compact_messages(
+            self, request_context: ModelRequestContext, *, instructions: str | None = None
+        ) -> ModelResponse:
+            return ModelResponse(
+                parts=[CompactionPart(content=f'a summary of {len(request_context.messages)}, about {instructions}')]
+            )
+
+    def not_sent(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise AssertionError('`compact_history` sends no model request')  # pragma: no cover
+
+    after_run: list[object] = []
+
+    async def record_after_run(ctx: RunContext[None], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+        after_run.append(result.output)
+        return result
+
+    model = CompactingModel(
+        not_sent, profile=ModelProfile(supports_compaction_on_demand=True, compaction_instructions='replaces_prompt')
+    )
+    agent = Agent(
+        model,
+        name='durability_compact_history',
+        capabilities=[Hooks(after_run=record_after_run), NativeCompaction(), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def compact_durably() -> tuple[list[str | None], list[str]]:
+        result = await agent.compact_history(
+            [ModelRequest(parts=[UserPromptPart('Hello DBOS')]), ModelResponse(parts=[TextPart('Hello!')])],
+            focus='the greeting',
+        )
+        summaries = [
+            part.content
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, CompactionPart)
+        ]
+        return summaries, [record.handler for record in result.compactions]
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        summaries, handlers = await compact_durably()
+    assert summaries == ['a summary of 2, about the greeting']
+    assert handlers == ['native']
+    assert after_run == [None]
+    steps = await dbos.list_workflow_steps_async(wfid)
+    assert [step['function_name'] for step in steps] == snapshot(['durability_compact_history__model.compact_messages'])
+
+
 # --- `FunctionToolset` defaults on `Tool` instances, across the upgrade that applied them ---
 
 tool_instances_crash_armed = threading.Event()

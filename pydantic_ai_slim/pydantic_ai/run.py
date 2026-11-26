@@ -1376,6 +1376,74 @@ class AgentRunResult(Generic[OutputDataT]):
         return self._state.conversation_id
 
 
+@dataclasses.dataclass
+class CompactionRunResult:
+    """The result of [`compact_history`][pydantic_ai.agent.AbstractAgent.compact_history]: the compacted history, without an output.
+
+    When no capability compacted the history, [`all_messages()`][pydantic_ai.agent.CompactionRunResult.all_messages] is
+    the history it was given and [`compactions`][pydantic_ai.agent.CompactionRunResult.compactions] is empty.
+    """
+
+    _state: _agent_graph.GraphAgentState = dataclasses.field(repr=False)
+
+    @classmethod
+    def _of(cls, run_result: AgentRunResult[Any]) -> CompactionRunResult:
+        return cls(_state=run_result._state)  # pyright: ignore[reportPrivateUsage]
+
+    def all_messages(self) -> list[_messages.ModelMessage]:
+        """The compacted message history, to continue the conversation with in place of the one that was compacted."""
+        return self._state.message_history
+
+    def all_messages_json(self) -> bytes:
+        """Return all messages from [`all_messages`][pydantic_ai.agent.CompactionRunResult.all_messages] as JSON bytes."""
+        return _messages.ModelMessagesTypeAdapter.dump_json(self.all_messages())
+
+    def new_messages(self) -> list[_messages.ModelMessage]:
+        """The messages the compaction wrote in place of the ones it summarized, which hold the summary.
+
+        They're the compacted history up to the messages it kept as they were, at
+        [`CompactionRecord.kept_from`][pydantic_ai.messages.CompactionRecord.kept_from]; the rest of
+        [`all_messages()`][pydantic_ai.agent.CompactionRunResult.all_messages] is the end of the history it was given.
+        Empty when nothing was compacted.
+        """
+        if not (compactions := self._state.compactions):
+            return []
+        return self.all_messages()[: compactions[-1].kept_from]
+
+    def new_messages_json(self) -> bytes:
+        """Return new messages from [`new_messages`][pydantic_ai.agent.CompactionRunResult.new_messages] as JSON bytes."""
+        return _messages.ModelMessagesTypeAdapter.dump_json(self.new_messages())
+
+    @property
+    def compactions(self) -> list[_messages.CompactionRecord]:
+        """The compaction the run kept, if any, as a list like [`AgentRunResult.compactions`][pydantic_ai.agent.AgentRunResult.compactions].
+
+        Its [`CompactionRecord`][pydantic_ai.messages.CompactionRecord] says what the compaction replaced, for
+        example to store the conversation's full log. Empty when no capability compacted the history.
+        """
+        return self._state.compactions
+
+    @property
+    def usage(self) -> _usage.RunUsage:
+        """The usage of the run: the compaction's, with no request step, plus any usage the run started with."""
+        return self._state.usage
+
+    @property
+    def metadata(self) -> dict[str, Any] | None:
+        """Metadata associated with this run, if configured."""
+        return self._state.metadata
+
+    @property
+    def run_id(self) -> str:
+        """The unique identifier for the run."""
+        return self._state.run_id
+
+    @property
+    def conversation_id(self) -> str:
+        """The unique identifier for the conversation the compacted history belongs to."""
+        return self._state.conversation_id
+
+
 @dataclasses.dataclass(repr=False)
 class AgentRunResultEvent(Generic[OutputDataT]):
     """An event indicating the agent run ended and containing the final result of the agent run."""

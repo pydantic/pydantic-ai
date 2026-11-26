@@ -51,6 +51,35 @@ Which models compact on demand, and how, is in their [profile](../models/overvie
 
 To compact without either, call [`Model.compact_messages`][pydantic_ai.models.Model.compact_messages] directly. It returns a `ModelResponse` holding the compaction part to put in the message history.
 
+To compact a conversation without continuing it, for example while the user is idle and the prompt cache is still warm, call [`compact_history()`][pydantic_ai.agent.AbstractAgent.compact_history]. It takes the `focus` and `reason` of [`compact=`](#requesting-compaction), and returns a [`CompactionRunResult`][pydantic_ai.agent.CompactionRunResult], with no output:
+
+```python {title="compact_history.py" test="skip" gateway_toggle="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import NativeCompaction
+
+agent = Agent('{{ anthropic:medium }}', capabilities=[NativeCompaction()])
+
+
+async def main():
+    result = await agent.run('Our API uses PostgreSQL 17 behind pgbouncer. Note that down.')
+
+    compacted = await agent.compact_history(
+        result.all_messages(), focus='the infrastructure decisions', reason='cache_expiry'
+    )
+    print([record.handler for record in compacted.compactions])
+    #> ['native']
+
+    result = await agent.run('Which database do we use?', message_history=compacted.all_messages())
+```
+
+It's a run that ends after its compaction step: the history is compacted before the run's first model request, as with `compact=`, and the run then ends instead of sending that request. Its whole lifecycle runs, `after_run` gets its result with an `output` of `None`, the [compaction events](#compaction-events) fire, and under [durable execution](../durable_execution/overview.md) the compaction is a durable model operation like any other. `after_model_request` hooks don't run, as no request is sent.
+
+- [`all_messages()`][pydantic_ai.agent.CompactionRunResult.all_messages] is the compacted history, to continue the conversation with.
+- [`new_messages()`][pydantic_ai.agent.CompactionRunResult.new_messages] are the messages the compaction wrote, up to its record's [`kept_from`][pydantic_ai.messages.CompactionRecord.kept_from]; the rest is the end of the history it was given.
+- [`compactions`][pydantic_ai.agent.CompactionRunResult.compactions] holds the compaction's [record](#storing-the-full-conversation), and [`usage`][pydantic_ai.agent.CompactionRunResult.usage] its usage.
+
+If no capability compacts, or a [`CompactionStartEvent`](#compaction-events) listener cancels the compaction, `all_messages()` is the history as it was given, and `compactions` and `new_messages()` are empty. A history that ends with tool calls that weren't answered yet, or with a suspended response, raises a `UserError`: run the agent with it first.
+
 ### Requesting compaction
 
 A run compacts when something on it asks: the history is compacted before the run's next model request attempt, by the capabilities' [`compact_history`](#the-compaction-hook) hooks, with the [compaction events](#compaction-events), and recorded on the result's [`compactions`](#storing-the-full-conversation). You can ask from any handle you hold on the run:

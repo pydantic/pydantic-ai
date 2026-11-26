@@ -243,7 +243,7 @@ from .profiles import (
     ModelProfile,
     ModelProfileSpec,
 )
-from .run import AgentRun, AgentRunResult, AgentRunResultEvent
+from .run import AgentRun, AgentRunResult, AgentRunResultEvent, CompactionRunResult
 from .settings import ModelSettings, ToolChoice, ToolOrOutput
 from .template import TemplateStr
 from .tools import (
@@ -564,6 +564,7 @@ __all__: tuple[str, ...] = (
     'AgentRunEvents',
     'AgentRunResult',
     'AgentRunResultEvent',
+    'CompactionRunResult',
     'Conversation',
     'ConversationTypeAdapter',
 )

@@ -232,6 +232,9 @@ _UNFORWARDED_BY_DESIGN: dict[tuple[str, str], frozenset[str] | None] = {
     ('AbstractAgent', 'run_stream_events'): frozenset({'infer_name'}),
     ('AbstractAgent', 'run_stream_sync'): frozenset({'infer_name'}),
     ('AbstractAgent', 'run_sync'): frozenset({'infer_name'}),
+    # Same for `infer_name`. `focus` and `reason` are folded into the `compact=` options the run is
+    # given, which is how a run receives them.
+    ('AbstractAgent', 'compact_history'): frozenset({'infer_name', 'focus', 'reason'}),
     # Stored rather than delegated: `realtime()` builds an `AgentRealtime` that holds the whole
     # configuration until `session()` opens the connection, so every keyword lands on a private
     # dataclass field (`_deps=deps`) rather than on a same-named parameter. The rename is what the

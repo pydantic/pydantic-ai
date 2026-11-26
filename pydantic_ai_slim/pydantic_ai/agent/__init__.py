@@ -82,7 +82,7 @@ from .._cancel import (
     provide_run_deadline,
     take_run_binding,
 )
-from .._compaction_requests import RequestedCompaction
+from .._compaction_requests import RequestedCompaction, take_compaction_only_run
 from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions, lowered_block_id
 from .._output import OutputToolset
@@ -121,7 +121,7 @@ from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..native_tools import AbstractNativeTool
 from ..native_tools._tool_search import ToolSearchTool
 from ..output import OutputDataT, OutputSpec, StructuredDict
-from ..run import AgentRun, AgentRunResult
+from ..run import AgentRun, AgentRunResult, CompactionRunResult
 from ..settings import ModelSettings, merge_model_settings
 from ..template import TemplateStr
 from ..tool_manager import ParallelExecutionMode, ToolManager
@@ -209,6 +209,7 @@ __all__ = (
     'AgentRun',
     'AgentRunEvents',
     'AgentRunResult',
+    'CompactionRunResult',
     'NativeToolFunc',
     'CallToolsNode',
     'EndStrategy',
@@ -1715,6 +1716,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # toolset `for_run()` hooks below) runs in this context: a hook that starts a nested agent
         # run would otherwise consume it and attach the outer handle to the wrong run.
         binding = take_run_binding()
+        # Consumed here too, for the same reason: see `AbstractAgent.compact_history`.
+        compaction_only = take_compaction_only_run()
 
         # The controller likewise exists before any user-supplied setup code, so `RunContext.cancel()`
         # from a capability/toolset `for_run()` hook records the request instead of raising. Delivery
@@ -2355,6 +2358,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings=instrumentation_settings,
             cancellation=cancellation,
             deadline=deadline,
+            compaction_only=compaction_only,
         )
 
         user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](

@@ -3,10 +3,13 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
+from collections.abc import Generator
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from . import messages as _messages
 
-__all__ = ('CompactionRequests', 'RequestedCompaction')
+__all__ = ('CompactionRequests', 'RequestedCompaction', 'compaction_only_run', 'take_compaction_only_run')
 
 
 @dataclasses.dataclass
@@ -60,3 +63,29 @@ class CompactionRequests:
         """Drop `requested` once it's been acted on, unless a later request was merged into it in the meantime."""
         if self.requested is requested:
             self.requested = None
+
+
+_compaction_only: ContextVar[bool] = ContextVar('pydantic_ai.compaction_only_run', default=False)
+"""Whether the next agent run started in this context is one of `AbstractAgent.compact_history`'s."""
+
+
+@contextmanager
+def compaction_only_run() -> Generator[None]:
+    """Make the next agent run started in this context end after its compaction step.
+
+    A context variable rather than a run method argument, so it reaches the run through every agent wrapper's run
+    methods, like a durable agent's, unchanged.
+    """
+    token = _compaction_only.set(True)
+    try:
+        yield
+    finally:
+        _compaction_only.reset(token)
+
+
+def take_compaction_only_run() -> bool:
+    """Consume the pending `compaction_only_run` at most once, so a run started inside that run isn't one too."""
+    compaction_only = _compaction_only.get()
+    if compaction_only:
+        _compaction_only.set(False)
+    return compaction_only

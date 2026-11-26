@@ -1202,6 +1202,19 @@ def _part_position(messages: Sequence[_messages.ModelMessage], part: _messages.C
     raise AssertionError('The compacted history was checked to contain its `CompactionPart`.')  # pragma: no cover
 
 
+def _drop_added_request(record: _messages.CompactionRecord) -> None:
+    """Describe a `compact_history` run's compaction without the empty request the run added to compact with.
+
+    The run removes that request, the last message of both the history the compaction replaced and the compacted one.
+    """
+    # Set when the compaction was made; only a record loaded from a serialized result lacks it.
+    assert record.replaced is not None
+    record.replaced = record.replaced[:-1]
+    record.messages_before -= 1
+    record.messages_after -= 1
+    record.kept_from = min(record.kept_from, record.messages_after)
+
+
 def _compaction_timestamp(holder: _messages.ModelMessage, step_request: _messages.ModelRequest) -> datetime:
     """When a compaction's usage is priced: a timestamp from the history, not the clock.
 
@@ -1570,6 +1583,9 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     first output of the response being handled (see `ModelRequestNode` and `CallToolsNode`)."""
     final_result_reached: bool = dataclasses.field(default=False, repr=False)
     """Whether the run has its final result, after which `RunContext.submit_output` is refused."""
+    compaction_only: bool = dataclasses.field(default=False, repr=False)
+    """Whether the run is one of [`compact_history`][pydantic_ai.agent.AbstractAgent.compact_history]'s, which ends
+    after its first request step's compaction instead of sending that request."""
     prepared_output_tool_defs: list[ToolDefinition] | None = dataclasses.field(default=None, repr=False)
     """The output tools as this step's `prepare_output_tools` hooks left them, recorded once they're prepared.
 
@@ -1703,6 +1719,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             return await self._handle_deferred_tool_results(self.deferred_tool_results, messages, ctx)
 
         messages[:] = _repair_interrupted_tail(messages, has_new_prompt=self.user_prompt is not None)
+        _check_compactable(ctx, messages, answered_at_pause)
 
         next_message: _messages.ModelRequest | None = None
         is_resuming_without_prompt = False
@@ -1746,8 +1763,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                         # of instructions.  Instructions will be applied by ModelRequestNode.run() on
                         # the subsequent request after tool results are collected.
                         return CallToolsNode[DepsT, NodeRunEndT](last_message)
-                    instruction_parts = await _get_instructions(ctx, run_context)
-                    if not instruction_parts:
+                    if not await _continues_with_a_request(ctx, run_context):
                         # No pending tool calls and no instructions — nothing new to send to the model.
                         return CallToolsNode[DepsT, NodeRunEndT](last_message)
                 elif last_message.state == 'suspended':
@@ -1926,6 +1942,40 @@ def _with_system_prompt_statements(
         else:
             parts.insert(latest + 1, statement)
     return replace(request, parts=[*opening, *parts])
+
+
+async def _continues_with_a_request(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]], run_context: RunContext[DepsT]
+) -> bool:
+    """Whether a run given a history that ends with a response without tool calls, and no prompt, makes a request.
+
+    It does when there are instructions to send, and in a `compact_history` run, to compact the history with.
+    """
+    return ctx.deps.compaction_only or bool(await _get_instructions(ctx, run_context))
+
+
+def _check_compactable(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
+    messages: Sequence[_messages.ModelMessage],
+    answered_at_pause: tuple[_ToolCallKey, ...] | None,
+) -> None:
+    """In a `compact_history` run, refuse a history it can't compact without continuing it first."""
+    if not ctx.deps.compaction_only:
+        return
+    if not messages:
+        raise exceptions.UserError('There is no message history to compact.')
+    last_message = messages[-1]
+    if answered_at_pause is not None or (isinstance(last_message, _messages.ModelResponse) and last_message.tool_calls):
+        raise exceptions.UserError(
+            'Cannot compact a message history that ends with unprocessed tool calls. Run the agent with it to '
+            'execute them, pass `deferred_tool_results` if they were deferred, or call '
+            '`pydantic_ai.messages.repair_messages()` on the history first to close them out.'
+        )
+    if isinstance(last_message, _messages.ModelResponse) and last_message.state == 'suspended':
+        raise exceptions.UserError(
+            'Cannot compact a message history that ends in a suspended response. Resume it first by running the '
+            'agent with this message history and no new prompt.'
+        )
 
 
 def _repair_interrupted_tail(
@@ -2964,6 +3014,13 @@ class _OutputSubmitted(Exception):
     """
 
 
+class _Compacted(Exception):
+    """Raised once a `compact_history` run's compaction step is done, instead of sending its request.
+
+    `ModelRequestNode` catches it, like `_OutputSubmitted`, and ends the run.
+    """
+
+
 def _short_circuited_response(task: asyncio.Task[_messages.ModelResponse]) -> _messages.ModelResponse:
     """The response of a `wrap_model_request` that returned without calling its handler, or skipped the request."""
     try:
@@ -3337,7 +3394,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # wrap_model_request completed without calling handler — short-circuited or raised SkipModelRequest
             try:
                 model_response = _short_circuited_response(wrap.task)
-            except (_OutputSubmitted, exceptions.ModelRetry) as e:
+            except (_OutputSubmitted, _Compacted, exceptions.ModelRetry) as e:
                 self._did_stream = True
                 await self._end_step_without_response(ctx, e)
                 # Must still yield from @asynccontextmanager — yield an empty stream
@@ -3492,15 +3549,17 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     async def _end_step_without_response(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-        error: _OutputSubmitted | exceptions.ModelRetry,
+        error: _OutputSubmitted | _Compacted | exceptions.ModelRetry,
     ) -> None:
         """End a streamed step whose request a model request hook stopped before it was sent.
 
-        A hook either submitted the run's output or raised `ModelRetry`. No response is committed, so the
-        step is not counted in `usage.requests`.
+        A hook either submitted the run's output or raised `ModelRetry`, or the step was a `compact_history` run's
+        compaction. No response is committed, so the step is not counted in `usage.requests`.
         """
         if isinstance(error, _OutputSubmitted):
             self._end_with_submitted_output(ctx)
+        elif isinstance(error, _Compacted):
+            self._end_after_compaction(ctx)
         else:
             await self._build_retry_node(ctx, error)
 
@@ -3588,6 +3647,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             except _OutputSubmitted:
                 await _settle_pending(state.pending, None)
                 return self._end_with_submitted_output(ctx)
+            except _Compacted:
+                return self._end_after_compaction(ctx)
             except exceptions.ModelRetry:
                 raise  # Propagate to outer handler
         except exceptions.ModelRetry as e:
@@ -4447,6 +4508,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self._serving_model_id = prepared.model_id or prepared.model.model_id
         compaction = _AttemptCompaction()
         await self._compact_attempt(ctx, run_context, request_context, prepared, compaction)
+        if ctx.deps.compaction_only and compaction.error is None:
+            # Nothing is sent, so the compaction is kept now. One that failed is the attempt's error, which the error
+            # hooks and fallback models act on as for any request, before the next attempt compacts again.
+            compaction.commit(ctx)
+            raise _Compacted
         if compaction.error is None:
             compaction.restore(request_context, prepared)
             await self._prepare_attempt(ctx, run_context, request_context, prepared)
@@ -5160,6 +5226,30 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # No response will answer this step's request-scoped prompts.
         _drop_unanswered_request_scoped_prompts(ctx.state)
         self._result = SetFinalResult(result.FinalResult(cast(NodeRunEndT, submission.output)))
+        return self._result
+
+    def _end_after_compaction(
+        self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
+    ) -> SetFinalResult[DepsT, NodeRunEndT]:
+        """End a `compact_history` run after its compaction step, without an output.
+
+        The run's history is the compacted one, or the one it was given when nothing compacted it: the empty request
+        the run added to compact it with is removed, as no response will answer it.
+        """
+        _drop_unanswered_request_scoped_prompts(ctx.state)
+        history = ctx.state.message_history
+        if (
+            not self.is_resuming_without_prompt
+            and isinstance(added := history[-1], _messages.ModelRequest)
+            and not added.parts
+        ):
+            del history[-1]
+            ctx.state.appended_messages.replace(added, None)
+            ctx.deps.new_message_index = min(ctx.deps.new_message_index, len(history))
+            # The run ends right after its compaction step, so there's at most the one compaction it kept.
+            for record in ctx.state.compactions:
+                _drop_added_request(record)
+        self._result = SetFinalResult(result.FinalResult(cast(NodeRunEndT, None)))
         return self._result
 
     async def _build_retry_node(
