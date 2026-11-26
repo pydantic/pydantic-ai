@@ -4401,10 +4401,12 @@
         "prefect"
       ],
       "kinds": [
+        "attribute_read",
         "import"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::<module>"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_excluded_fields"
       ]
     },
     "InstructionDeltaPart.authority": {
