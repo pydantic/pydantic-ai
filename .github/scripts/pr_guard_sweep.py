@@ -2,8 +2,8 @@
 
 A fork pull request's own runs hold a read-only token, so PR Guard runs on a schedule from the
 default branch instead. Each sweep reads the events since the last successful sweep started, and runs
-`pr_guard.sh` for each pull request they touched, as the user who acted last. A failed sweep leaves the
-next one to read the same events again.
+`pr_guard.sh` for each pull request they touched: as the author when the author acted, otherwise as the
+user who acted last. A failed sweep leaves the next one to read the same events again.
 """
 
 from __future__ import annotations
