@@ -257,30 +257,34 @@ class PydanticAIPlugin(SimplePlugin):
                     f'__pydantic_ai_agents__ must be a Sequence of TemporalAgent instances, got {type(agents)}'
                 )
             for agent in agents:  # type: ignore[reportUnknownVariableType]
-                if isinstance(agent, TemporalAgent):  # pyright: ignore[reportDeprecated]
-                    # Deprecated path: `TemporalAgent` is being phased out in favor of
-                    # `capabilities=[TemporalDurability(...)]` on a regular `Agent`. Kept
-                    # working so existing workers keep loading without changes.
-                    activities.extend(agent.temporal_activities)
-                elif isinstance(agent, AbstractAgent):
-                    durability = TemporalDurability.from_agent(agent)  # type: ignore[reportUnknownArgumentType]
-                    if durability is None:
-                        raise UserError(
-                            f'Agent {agent.name!r} listed in `__pydantic_ai_agents__` has no '
-                            '`TemporalDurability` capability; add one to `capabilities=[...]`.'
-                        )
-                    agent_activities, agent_workflows = worker_registrations(durability)
-                    activities.extend(agent_activities)
-                    child_workflows.extend(agent_workflows)
-                else:
-                    raise TypeError(  # pragma: no cover
-                        f'__pydantic_ai_agents__ items must be TemporalAgent or AbstractAgent, got {type(agent)}'  # type: ignore[reportUnknownVariableType]
-                    )
+                agent_activities, agent_workflows = _listed_agent_registrations(agent)  # type: ignore[reportUnknownArgumentType]
+                activities.extend(agent_activities)
+                child_workflows.extend(agent_workflows)
 
         config['activities'] = activities
         config['workflows'] = [*workflows, *child_workflows]
 
         return _dedupe_registrations(config)
+
+
+def _listed_agent_registrations(agent: object) -> tuple[list[Callable[..., Any]], list[type]]:
+    """The activities and child workflows a worker registers for an agent listed in `__pydantic_ai_agents__`."""
+    if isinstance(agent, TemporalAgent):  # pyright: ignore[reportDeprecated]
+        # Deprecated path: `TemporalAgent` is being phased out in favor of
+        # `capabilities=[TemporalDurability(...)]` on a regular `Agent`. Kept
+        # working so existing workers keep loading without changes.
+        return agent.temporal_activities, []
+    if isinstance(agent, AbstractAgent):
+        durability = TemporalDurability.from_agent(agent)  # type: ignore[reportUnknownArgumentType]
+        if durability is None:
+            raise UserError(
+                f'Agent {agent.name!r} listed in `__pydantic_ai_agents__` has no '
+                '`TemporalDurability` capability; add one to `capabilities=[...]`.'
+            )
+        return worker_registrations(durability)
+    raise TypeError(  # pragma: no cover
+        f'__pydantic_ai_agents__ items must be TemporalAgent or AbstractAgent, got {type(agent)}'
+    )
 
 
 class AgentPlugin(SimplePlugin):

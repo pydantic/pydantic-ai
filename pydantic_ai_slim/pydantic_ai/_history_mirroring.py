@@ -10,6 +10,7 @@ from ._warnings import PydanticAIDeprecationWarning
 from .messages import ModelMessage
 
 if TYPE_CHECKING:
+    from ._appended_messages import AppendedMessages
     from .models import ModelRequestContext
 
 _WARNING = (
@@ -19,11 +20,13 @@ _WARNING = (
 )
 
 
-class _History:
+class MirroredHistory:
     """The history that every mirroring list in one before-chain adds to, until the chain finishes."""
 
-    def __init__(self, messages: list[ModelMessage]):
+    def __init__(self, messages: list[ModelMessage], appended: AppendedMessages):
         self.messages: list[ModelMessage] | None = messages
+        self.appended = appended
+        """The run's record of the messages it appends, which messages added to history here join."""
 
 
 class HistoryMirroringMessages(list[ModelMessage]):
@@ -35,9 +38,9 @@ class HistoryMirroringMessages(list[ModelMessage]):
     the before-chain finishes and `detach()` turns every list of the chain into a plain request-only list.
     """
 
-    def __init__(self, messages: Iterable[ModelMessage], history: list[ModelMessage] | _History):
+    def __init__(self, messages: Iterable[ModelMessage], history: MirroredHistory):
         super().__init__(messages)
-        self._history = history if isinstance(history, _History) else _History(history)
+        self._history = history
 
     def detach(self) -> None:
         self._history.messages = None
@@ -46,7 +49,7 @@ class HistoryMirroringMessages(list[ModelMessage]):
         if self._history.messages is not None and messages:
             # stacklevel points at the hook's `append`/`extend`/`+=` call.
             warnings.warn(_WARNING, PydanticAIDeprecationWarning, stacklevel=3)
-            self._history.messages.extend(messages)
+            self._history.appended.append(self._history.messages, *messages)
 
     def append(self, message: ModelMessage) -> None:
         super().append(message)
