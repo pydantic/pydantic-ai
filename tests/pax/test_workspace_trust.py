@@ -196,9 +196,23 @@ async def test_nobody_is_asked_without_a_terminal(tmp_path: Path) -> None:
         await shell.close('exit')
 
 
+_DECLINED = "Untrusted: instruction files and skills reach the model as the repository's. /trust changes it."
+
+
 @pytest.mark.parametrize(
-    ('keys', 'trusted', 'saved'),
-    [('1', True, True), ('\r', False, False), ('2', False, False), ('\x1b', False, None)],
+    ('keys', 'trusted', 'saved', 'confirmation'),
+    [
+        ('1', True, True, 'Trusted. /trust changes it.'),
+        ('\r', False, False, _DECLINED),
+        ('2', False, False, _DECLINED),
+        (
+            '\x1b',
+            False,
+            None,
+            "Untrusted for this session: instruction files and skills reach the model as the repository's. "
+            '/trust changes it.',
+        ),
+    ],
 )
 async def test_the_question_defaults_to_untrusted(
     tmp_path: Path,
@@ -207,6 +221,7 @@ async def test_the_question_defaults_to_untrusted(
     keys: str,
     trusted: bool,
     saved: bool | None,
+    confirmation: str,
 ) -> None:
     store = SettingsStore(tmp_path / 'config.db')
     shell = shell_in(tmp_path, store)
@@ -222,6 +237,7 @@ async def test_the_question_defaults_to_untrusted(
         await shell.close('exit')
     shown = Text.from_ansi(terminal.file.getvalue()).plain  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownArgumentType]
     assert f'{tmp_path.resolve()}: this folder and its subfolders.' in ' '.join(shown.split())
+    assert shown.rstrip().splitlines()[-1].strip() == confirmation
     assert store.workspace_trust(tmp_path.resolve()) is saved
 
 
