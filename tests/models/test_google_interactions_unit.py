@@ -186,7 +186,7 @@ async def test_server_timeout(
 ):
     """A request asks the server for Google's 20-minute long-decode deadline, unless the caller set their own.
 
-    Not recorded: the claim is about a request header; `test_long_decode_stops_at_the_request_cap` records its effect.
+    Not recorded: the claim is about a request header; `test_continued_long_decode` records its effect.
     """
     await model_request(
         mock_model, [ModelRequest.user_text_prompt('hello')], model_settings={'extra_headers': extra_headers}
