@@ -1,7 +1,8 @@
 """Agents with a structured output type whose model streams text before a tool call, for each durability engine.
 
 A durable run replays the unit's stream against the parameters the unit's model prepared, in which `'auto'` has
-resolved to tool output, so the text isn't the final result, as in a plain run.
+resolved to tool output, so the text isn't the final result, as in a plain run. Behind a `FallbackModel`, those are the
+parameters the candidate that answered prepared.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from pydantic_ai import (
     RunContext,
 )
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 
 
@@ -50,10 +52,13 @@ class StructuredOutput:
 
 def preamble_text_agents(
     durability: Callable[[], AbstractCapability[object]] | None = None,
+    *,
+    fallback: bool = False,
 ) -> list[Agent[object, StructuredOutput]]:
     """One agent per stream shape: text before a function tool, and text before the output tool.
 
-    Without `durability`, the agents run as a plain `Agent` does, which a durable run must match.
+    Without `durability`, the agents run as a plain `Agent` does, which a durable run must match. With `fallback`, the
+    model is a `FallbackModel` around it, whose `prepare_request` leaves the output mode to the candidate that answers.
 
     The tests built on these agents aren't VCR tests. What they check is how the workflow side classifies the
     `ModelResponse` the durable unit returned. The unit has already parsed the provider's answer by then, so the wire
@@ -62,8 +67,10 @@ def preamble_text_agents(
     """
     return [
         Agent(
-            FunctionModel(stream_function=stream_function),
-            name=f'durability_{stream_function.__name__}',
+            FallbackModel(FunctionModel(stream_function=stream_function))
+            if fallback
+            else FunctionModel(stream_function=stream_function),
+            name=f'durability_{"fallback_" if fallback else ""}{stream_function.__name__}',
             output_type=StructuredOutput,
             tools=[look_up_city],
             capabilities=[durability()] if durability is not None else [],

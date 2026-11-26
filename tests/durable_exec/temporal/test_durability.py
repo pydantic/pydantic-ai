@@ -4040,6 +4040,39 @@ async def test_durability_structured_output_after_preamble_text_in_workflow(clie
     assert output == await plain_run_and_stream()
 
 
+_fallback_preamble_text_agents = preamble_text_agents(
+    lambda: TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG), fallback=True
+)
+
+
+@workflow.defn
+class FallbackStructuredOutputAfterPreambleTextWorkflow:
+    @workflow.run
+    async def run(self) -> list[RunAndStreamResult]:
+        return [await run_and_stream(agent) for agent in _fallback_preamble_text_agents]
+
+
+async def test_durability_fallback_model_structured_output_after_preamble_text_in_workflow(client: Client) -> None:
+    """Behind a `FallbackModel`, text streamed before a tool call isn't the final result either.
+
+    The activity returns the parameters the candidate that answered prepared with the response, as preparing the
+    request again in the workflow leaves `'auto'` to the candidate, and the workflow replays the stream against them.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[FallbackStructuredOutputAfterPreambleTextWorkflow],
+        plugins=[AgentPlugin(agent) for agent in _fallback_preamble_text_agents],
+    ):
+        output = await client.execute_workflow(
+            FallbackStructuredOutputAfterPreambleTextWorkflow.run,
+            id=FallbackStructuredOutputAfterPreambleTextWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == await plain_run_and_stream()
+
+
 _rejected_native_output_agent = Agent(
     FunctionModel(
         stream_function=preamble_text_before_output_tool, profile=ModelProfile(supports_json_schema_output=False)

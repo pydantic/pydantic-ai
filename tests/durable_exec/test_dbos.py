@@ -4648,6 +4648,22 @@ async def test_dbos_durability_structured_output_after_preamble_text_in_workflow
         assert await structured_output_after_preamble_text_workflow() == await plain_run_and_stream()
 
 
+async def test_dbos_durability_fallback_model_structured_output_after_preamble_text_in_workflow(dbos: DBOS) -> None:
+    """Behind a `FallbackModel`, text streamed before a tool call isn't the final result either.
+
+    The step returns the parameters the candidate that answered prepared with the response, as preparing the request
+    again in the workflow leaves `'auto'` to the candidate, and the workflow replays the stream against them.
+    """
+    agents = preamble_text_agents(DBOSDurability, fallback=True)
+
+    @DBOS.workflow()
+    async def fallback_structured_output_after_preamble_text_workflow() -> list[RunAndStreamResult]:
+        return [await run_and_stream(agent) for agent in agents]
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await fallback_structured_output_after_preamble_text_workflow() == await plain_run_and_stream()
+
+
 async def test_dbos_durability_run_stream_warns_once_about_an_ignored_setting(dbos: DBOS) -> None:
     """A setting the model ignores is warned about once per request, by the step's model that sends it."""
 

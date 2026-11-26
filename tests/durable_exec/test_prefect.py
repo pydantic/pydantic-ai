@@ -5143,6 +5143,21 @@ async def test_prefect_durability_structured_output_after_preamble_text_in_flow(
     assert await structured_output_after_preamble_text_flow() == await plain_run_and_stream()
 
 
+async def test_prefect_durability_fallback_model_structured_output_after_preamble_text_in_flow() -> None:
+    """Behind a `FallbackModel`, text streamed before a tool call isn't the final result either.
+
+    The task returns the parameters the candidate that answered prepared with the response, as preparing the request
+    again in the flow leaves `'auto'` to the candidate, and the flow replays the stream against them.
+    """
+    agents = preamble_text_agents(PrefectDurability, fallback=True)
+
+    @flow
+    async def fallback_structured_output_after_preamble_text_flow() -> list[RunAndStreamResult]:
+        return [await run_and_stream(agent) for agent in agents]
+
+    assert await fallback_structured_output_after_preamble_text_flow() == await plain_run_and_stream()
+
+
 async def test_prefect_durability_event_stream_handler() -> None:
     events_in_boundary: list[tuple[AgentStreamEvent, bool]] = []
 

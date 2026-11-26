@@ -37,6 +37,7 @@ __all__ = [
     'CountTokensResult',
     'DurableModel',
     'SegmentExecutor',
+    'ServedStreamedResult',
     'StreamedActivityResult',
     'StreamedModelRequestResult',
     'agent_instrumentation_settings',
@@ -128,8 +129,23 @@ class StreamedActivityResult:
     events: list[ModelResponseStreamEvent]
 
 
-StreamedModelRequestResult: TypeAlias = ModelResponse | StreamedActivityResult
-"""What a streamed model request's durable unit returns: the final response, or a recorded `StreamedActivityResult`."""
+@dataclass(kw_only=True)
+class ServedStreamedResult:
+    """A streamed model request's final response, with the parameters the model that served it prepared.
+
+    The run replays the response against the parameters the serving model sent, which it usually gets by preparing the
+    request again itself. That doesn't work for a model that answers through others, like a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], whose `prepare_request` leaves the parameters to the
+    candidate that answers, so a durable unit returns this instead of the bare `ModelResponse` for such a model.
+    """
+
+    response: ModelResponse
+    model_request_parameters: ModelRequestParameters
+
+
+StreamedModelRequestResult: TypeAlias = ModelResponse | ServedStreamedResult | StreamedActivityResult
+"""What a streamed model request's durable unit returns: the final response, alone or with the parameters it was served
+with, or a recorded `StreamedActivityResult`."""
 
 
 @dataclass(kw_only=True)
@@ -172,9 +188,13 @@ def streamed_before_failing(error: BaseException) -> ModelResponse | None:
 
 
 def _completed_stream(
-    result: StreamedModelRequestResult, model_request_parameters: ModelRequestParameters
+    result: StreamedModelRequestResult, replay_request_parameters: Callable[[], ModelRequestParameters]
 ) -> CompletedStreamedResponse:
     """The stream the run consumes for what a durable unit's streamed model request returned."""
+    if isinstance(result, ServedStreamedResult):
+        return CompletedStreamedResponse(
+            result.response, model_request_parameters=result.model_request_parameters, replay_events=True
+        )
     if isinstance(result, StreamedActivityResult):
         response, replay_events = result.response, result.events
     else:
@@ -183,7 +203,7 @@ def _completed_stream(
         response, replay_events = result, True
     return CompletedStreamedResponse(
         response,
-        model_request_parameters=model_request_parameters,
+        model_request_parameters=replay_request_parameters(),
         replay_events=replay_events,
     )
 
@@ -276,7 +296,8 @@ class DurableModel(WrapperModel):
         def replay_request_parameters() -> ModelRequestParameters:
             # The replay classifies each part against the parameters the unit's model sent, such as the output mode
             # `'auto'` resolves to. They're prepared once the unit returns, so a request the model rejects still fails
-            # inside the unit; the unit's model already warned about the settings it ignores.
+            # inside the unit; the unit's model already warned about the settings it ignores. A unit whose model
+            # answers through others, like a `FallbackModel`, returns the parameters it was served with instead.
             with suppress_unsupported_setting_warnings():
                 return self.wrapped.prepare_request(model_settings, model_request_parameters)[1]
 
@@ -291,7 +312,7 @@ class DurableModel(WrapperModel):
                 partial, model_request_parameters=replay_request_parameters(), error=error
             )
         else:
-            stream = _completed_stream(result, replay_request_parameters())
+            stream = _completed_stream(result, replay_request_parameters)
         yield stream
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:

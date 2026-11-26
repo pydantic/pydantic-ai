@@ -68,6 +68,7 @@ from pydantic_ai.models import (
     StreamedResponse,
 )
 from pydantic_ai.models._batch_model import BatchedModel
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
@@ -83,6 +84,7 @@ from .preamble_text import (
     StructuredOutput,
     plain_run_and_stream,
     preamble_text_agents,
+    preamble_text_before_output_tool,
     run_and_stream,
 )
 
@@ -798,6 +800,77 @@ async def test_durable_stream_replay_classifies_parts_as_the_unit_prepared_them(
             ),
         ]
     )
+
+
+class _JournalingBackend(_RecordingBackend):
+    """Keeps what each durable unit returned, as the engine's journal would hold it."""
+
+    def __init__(self, durability: JournalingDurability) -> None:
+        super().__init__(durability)
+        self._journal = durability.journal
+
+    async def execute(
+        self,
+        *,
+        operation_id: DurableOperationId,
+        name: str,
+        body: Callable[[], Awaitable[object]],
+        cache_key: tuple[object, ...],
+        config: object,
+    ) -> object:
+        payload = await super().execute(
+            operation_id=operation_id, name=name, body=body, cache_key=cache_key, config=config
+        )
+        self._journal.append((name, payload))
+        return payload
+
+
+class JournalingDurability(RecordingDurability):
+    def __init__(self) -> None:
+        super().__init__()
+        self.journal: list[tuple[str, Any]] = []
+
+    def get_durable_operation_backend(self) -> CallableOperationBackend[ToolConfig]:
+        return _JournalingBackend(self)
+
+
+async def test_durable_stream_replay_classifies_parts_as_the_fallback_candidate_prepared_them() -> None:
+    """Behind a `FallbackModel`, text streamed before a tool call isn't the final result either.
+
+    `FallbackModel.prepare_request` leaves the parameters to the candidate that answers, so preparing the request again
+    keeps `'auto'`, which allows text output. The unit returns the parameters the candidate prepared with the response,
+    and the replay classifies the parts against those, finding the same final result as a plain run. Both run methods
+    replay the response's parts as the model streamed them.
+    """
+    durable = [await run_and_stream(agent) for agent in preamble_text_agents(RecordingDurability, fallback=True)]
+    assert durable == await plain_run_and_stream()
+
+
+async def test_durable_stream_unit_returns_its_parameters_only_for_a_model_answering_through_others() -> None:
+    """A streamed request's unit returns the parameters it was served with only when its model answers through others.
+
+    A model that prepares the parameters it sends records the bare response, as before. A `FallbackModel` records the
+    parameters its candidate prepared, with `'auto'` resolved to tool output, alongside the response.
+    """
+
+    async def stream_unit_result(model: Model) -> Any:
+        durability = JournalingDurability()
+        agent = Agent(
+            model, name='durability_served_parameters', output_type=StructuredOutput, capabilities=[durability]
+        )
+        async with agent.run_stream('hello') as result:
+            assert await result.get_output() == StructuredOutput(response='Paris')
+        [payload] = [payload for name, payload in durability.journal if '__model.request_stream' in name]
+        return payload
+
+    bare = await stream_unit_result(FunctionModel(stream_function=preamble_text_before_output_tool))
+    assert 'parts' in bare
+    assert 'model_request_parameters' not in bare
+
+    served = await stream_unit_result(FallbackModel(FunctionModel(stream_function=preamble_text_before_output_tool)))
+    assert served['response']['parts'] == bare['parts']
+    assert served['model_request_parameters']['output_mode'] == 'tool'
+    assert served['model_request_parameters']['allow_text_output'] is False
 
 
 async def _preamble_text_before_output_tool_then_failure(
