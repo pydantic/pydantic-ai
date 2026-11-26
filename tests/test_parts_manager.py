@@ -1183,3 +1183,25 @@ def test_apply_event_preserves_stream_part_indexes():
     assert replay_manager.get_parts() == snapshot(
         [TextPart(content='hello world'), TextPart(content='goodbye everyone')]
     )
+
+
+def test_tool_call_args_delta_with_unmapped_vendor_id_attaches_by_tool_call_id():
+    """Args deltas that arrive on a different vendor index must not be dropped.
+
+    Chat Completions providers normally keep one `index` per tool call, but a delta can carry
+    args for a call that was introduced under a different index (or by a second choice entry).
+    The manager has no part for that index, so without a `tool_call_id` fallback the delta becomes
+    an orphan `ToolCallPartDelta` that `get_parts()` excludes, and the call silently keeps `{}`.
+    """
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+
+    event = manager.handle_tool_call_delta(vendor_part_id=0, tool_name='get_weather', args=None, tool_call_id='call_1')
+    assert isinstance(event, PartStartEvent)
+    assert event.part == ToolCallPart(tool_name='get_weather', tool_call_id='call_1')
+
+    for args in ('{"city":', '"Paris"}'):
+        manager.handle_tool_call_delta(vendor_part_id=7, args=args, tool_call_id='call_1')
+
+    assert manager.get_parts() == [
+        ToolCallPart(tool_name='get_weather', args='{"city":"Paris"}', tool_call_id='call_1')
+    ]

@@ -424,8 +424,14 @@ class ModelResponsePartsManager:
                     ToolCallPart, NativeToolCallPart, ToolCallPartDelta
                 )
         else:
-            # vendor_part_id is provided, so look up the corresponding part or delta
+            # vendor_part_id is provided, so look up the corresponding part or delta. A delta can
+            # arrive under an index the manager never saw (a second choice entry, or a provider that
+            # re-indexes a call mid-stream), so fall back to the `tool_call_id` the delta carries.
+            # Without the fallback the args would land on an orphan `ToolCallPartDelta` that
+            # `get_parts()` excludes, and the call would silently keep empty args.
             part_index = self._vendor_id_to_part_index.get(vendor_part_id)
+            if part_index is None and tool_call_id is not None:
+                part_index = self._part_index_for_tool_call_id(tool_call_id)
             if part_index is not None:
                 existing_part = self._parts[part_index]
                 if not isinstance(existing_part, ToolCallPartDelta | ToolCallPart | NativeToolCallPart):
@@ -612,6 +618,20 @@ class ModelResponsePartsManager:
                 new_part_index = self._append_part(part)
             self._vendor_id_to_part_index[vendor_part_id] = new_part_index
         return PartStartEvent(index=new_part_index, part=part)
+
+    def _part_index_for_tool_call_id(self, tool_call_id: str) -> int | None:
+        """Find the part whose `tool_call_id` is *tool_call_id*, or None.
+
+        Used when a delta arrives on a vendor index that is not mapped to a part: the tool call ID
+        is the only key that survives a re-indexed or duplicated stream.
+        """
+        for index, part in enumerate(self._parts):
+            if (
+                isinstance(part, ToolCallPartDelta | ToolCallPart | NativeToolCallPart)
+                and part.tool_call_id == tool_call_id
+            ):
+                return index
+        return None
 
     def _stop_tracking_vendor_id(self, vendor_part_id: VendorId | None) -> None:
         """Stop tracking a vendor_part_id (no-op if None or not tracked)."""
