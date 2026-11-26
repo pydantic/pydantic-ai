@@ -890,7 +890,7 @@ async def test_redacted_tool_drops_the_mcp_app_and_keeps_metadata_events(protoco
         'toolset_id': 'weather',
     }
 
-    @agent.tool_plain(ui_visibility='redacted')
+    @agent.tool_plain(ui_visibility='redacted', sequential=True)
     def forecast(city: str) -> ToolReturn:
         return ToolReturn(return_value=SECRET, metadata={'mcp_app': app})
 
@@ -900,7 +900,7 @@ async def test_redacted_tool_drops_the_mcp_app_and_keeps_metadata_events(protoco
         else DataChunk(type='data-progress', data='notified')
     )
 
-    @agent.tool_plain(ui_visibility='redacted')
+    @agent.tool_plain(ui_visibility='redacted', sequential=True)
     def notify() -> ToolReturn:
         return ToolReturn(return_value=SECRET, metadata=event)
 
