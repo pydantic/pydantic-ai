@@ -30,15 +30,35 @@ DEEPWIKI = MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp')
 DISPLAY_SIZE = (1024, 768)
 
 
-async def test_mcp_server_tool_on_google_model_names_interactions(allow_model_requests: None):
-    """Not a VCR test: the tool is rejected in `prepare_request`, before any request is built."""
-    model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='mock-api-key'))
-    agent = Agent(model, capabilities=[NativeTool(DEEPWIKI)])
+@pytest.mark.parametrize(
+    'google_cloud,expected',
+    [
+        pytest.param(
+            False,
+            '`MCPServerTool` is not supported by `GoogleModel`. Use `GoogleInteractionsModel`, with the '
+            '`google-interactions:` prefix, or `MCP(local=True)` for a local fallback.',
+            id='gemini-api',
+        ),
+        pytest.param(
+            True,
+            '`MCPServerTool` is not supported by `GoogleModel`. Use `GoogleInteractionsModel` or `MCP(local=True)` '
+            'for a local fallback.',
+            id='google-cloud',
+        ),
+    ],
+)
+async def test_mcp_server_tool_on_google_model_names_interactions(
+    allow_model_requests: None, google_cloud: bool, expected: str
+):
+    """The `google-interactions:` prefix uses the Gemini API, so only a Gemini API model is pointed at it.
+
+    Not a VCR test: the tool is rejected in `prepare_request`, before any request is built.
+    """
+    provider = GoogleCloudProvider(api_key='mock-api-key') if google_cloud else GoogleProvider(api_key='mock-api-key')
+    agent = Agent(GoogleModel('gemini-3-flash-preview', provider=provider), capabilities=[NativeTool(DEEPWIKI)])
     with pytest.raises(UserError) as exc_info:
         await agent.run('What is the pydantic/pydantic-ai repository about?')
-    assert str(exc_info.value) == snapshot(
-        '`MCPServerTool` is not supported by `GoogleModel`. Use `GoogleInteractionsModel`, with the `google-interactions:` prefix, or `MCP(local=True)` for a local fallback.'
-    )
+    assert str(exc_info.value) == expected
 
 
 @pytest.mark.parametrize(

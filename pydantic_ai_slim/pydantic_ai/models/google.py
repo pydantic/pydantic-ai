@@ -813,16 +813,7 @@ class GoogleModel(Model[Client]):
                 f'`ImageGenerationTool` is not supported by model {self.model_name!r}. '
                 "Use a model with 'image' in the name, or `ImageGeneration(local=...)` for a local fallback."
             )
-        # Likewise, a remote MCP server points at the Interactions API, which serves it.
-        fallback_ids = {t.unless_native for t in model_request_parameters.function_tools if t.unless_native}
-        if any(
-            isinstance(t, MCPServerTool) and not t.optional and t.unique_id not in fallback_ids
-            for t in model_request_parameters.native_tools
-        ):
-            raise UserError(
-                '`MCPServerTool` is not supported by `GoogleModel`. Use `GoogleInteractionsModel`, with the '
-                '`google-interactions:` prefix, or `MCP(local=True)` for a local fallback.'
-            )
+        self._reject_mcp_server_tools(model_request_parameters)
         # Count only native tools this model supports, including the settings set on them.
         # `Model.prepare_request` swaps an unsupported one for its local fallback, drops it when
         # optional, or rejects it, so it never reaches the wire beside output tools. A supported one
@@ -848,6 +839,20 @@ class GoogleModel(Model[Client]):
                     'Use `output_type=PromptedOutput(...)` instead.'
                 )
         return super().prepare_request(model_settings, model_request_parameters)
+
+    def _reject_mcp_server_tools(self, params: ModelRequestParameters) -> None:
+        """Point a remote MCP server at the Interactions API, which serves it, before base validation rejects it."""
+        fallback_ids = {t.unless_native for t in params.function_tools if t.unless_native}
+        if any(
+            isinstance(t, MCPServerTool) and not t.optional and t.unique_id not in fallback_ids
+            for t in params.native_tools
+        ):
+            # The `google-interactions:` prefix uses the Gemini API, so a Google Cloud model isn't pointed at it.
+            prefix = '' if self._is_google_cloud else ', with the `google-interactions:` prefix,'
+            raise UserError(
+                f'`MCPServerTool` is not supported by `GoogleModel`. Use `GoogleInteractionsModel`{prefix} '
+                'or `MCP(local=True)` for a local fallback.'
+            )
 
     async def request(
         self,
