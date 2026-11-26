@@ -660,8 +660,7 @@ credentials file was found. Scripts can replace the declaration instead:
 /plugins add observability pydantic_ai_pax.builtin_plugins.logfire '{"include_content": true, "include_binary_content": true}'
 ```
 
-Options are `service_name` (default `pydantic-ai-pax`; a saved `pydantic-clai2`, the
-old default, moves to it once, and any other saved name is kept), `include_content` and
+Options are `service_name` (default `pydantic-ai-pax`), `include_content` and
 `include_binary_content` (both default `false`, so credentials alone never export
 prompts, results, or files; settings saved before that default that never set them
 also leave content out), `httpx` (default `false`), and `send_to_logfire` (default
