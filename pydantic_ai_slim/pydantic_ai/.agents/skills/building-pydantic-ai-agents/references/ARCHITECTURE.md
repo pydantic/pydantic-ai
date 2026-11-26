@@ -226,7 +226,7 @@ To let the users of an open-source or local app run it on their own ChatGPT plan
 | `Toolset` | Wraps an `AbstractToolset` | No |
 | `ProcessHistory` | Wraps a history processor function — a thin wrapper over the `before_model_request` hook | No |
 | `ModelFallback` | Attempts other models when a request fails or its response is rejected | Yes |
-| `ModelInstructions` | Adds a block of instructions per model: a mapping of name globs (first match wins, `'*'` for the rest) or a callable; `kind='tuning'` (default) rewrites on a model switch, `kind='rule'` appends; resolved again for each `ModelFallback` attempt | Yes (mapping) |
+| `ModelInstructions` | Adds a block of instructions per model: a mapping of name globs (first match wins, `'*'` for the rest) or a callable; a model switch appends a changed text and drops the block for a model with none; resolved again for each `ModelFallback` attempt | Yes (mapping) |
 | `BatchModelRequests` | Sends model requests through the OpenAI, Anthropic or Gemini batch API at batch prices; runs started together share batches | Yes |
 
 ### When to Use Each Agent Method

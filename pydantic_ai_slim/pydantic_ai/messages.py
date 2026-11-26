@@ -3465,7 +3465,9 @@ class InstructionPart:
 
     `'rewrite'` replaces the instruction prefix on each request. `'append'` preserves the initial
     prefix and appends full replacements to trusted message history when this block changes,
-    including withdrawal when it stops contributing content. Requires an addressable `id`;
+    including withdrawal when it stops contributing content. An instruction function registered without
+    `on_change='append'` that returns an empty `'rewrite'` part with an `id` removes the block instead: the next
+    request's instructions are rewritten without it, and no withdrawal is recorded. Requires an addressable `id`;
     otherwise a warning is emitted and the part uses `'rewrite'`. Evaluation frequency is unchanged.
     Since an appending block doesn't change the prefix, it's placed after the static parts but ahead of the
     `dynamic` parts that rewrite it, and providers that take several cache points get one after the appending

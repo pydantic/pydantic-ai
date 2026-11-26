@@ -92,19 +92,14 @@ The text is sent as one [named block](../agent.md#appending-instruction-changes)
 
 A mapping's text depends only on the model, so it's cached with the agent's literal instructions and stays the same on every request to that model. A function can read anything in the run context, so its text is [dynamic](../agent.md#instructions) and goes after the cached part.
 
-### Tuning or a rule?
+## When the conversation moves to another model
 
-A conversation can move to another model: a request falls back, or a later run continues the history on another model. What the new model is told depends on [`kind`][pydantic_ai.capabilities.ModelInstructions.kind], which says what the text is for:
+A conversation can move to another model: a request falls back, or a later run continues the history on another model. What the new model is told depends on whether it gets text of its own:
 
-- **Tuning** (`kind='tuning'`, the default): wording that gets one model to do what the others already do, like [Pydantic AI Harness `Coder`](../harness/coder.md)'s line against unrequested delegation for GPT models. The behavior is meant to stay the same across models, so on a switch the block is rewritten with [`on_change='rewrite'`][pydantic_ai.messages.InstructionPart.on_change], and the new model gets exactly what a fresh run on it would. Appending the change would tell it the earlier model's wording was withdrawn, which reads as a nudge the other way. A model that no pattern matches gets no block at all.
-- **A rule** (`kind='rule'`): the models should behave differently, like answering in French on one of them. On a switch, the change is appended with [`on_change='append'`][pydantic_ai.messages.InstructionPart.on_change]: the new model sees the earlier model's rule, then its own as a change at that point, so the conversation keeps an honest record of when the rule changed. Models tracked such a change more faithfully this way, and were harder to talk out of the new rule with a `<system>` lookalike, than when the instructions were rewritten. A model that no pattern matches gets the rule's withdrawal. A known cost is listed under [Where no rendering we tried does well](../message-history.md).
+- If it does, the block's change is appended with [`on_change='append'`][pydantic_ai.messages.InstructionPart.on_change]: the earlier model's text stays where it was, and the new model's follows as a change at that point, so the conversation keeps an accurate record of what each model was told. When we tried rewriting the block instead, models more often misjudged what had changed, and more often followed a `<system>`-style block forged in the user's message, both when the texts were different rules and when they were the same advice worded for each model. Appending cost nothing in how well models followed the new text. A known cost is listed under [Where no rendering we tried does well](../message-history.md).
+- If it doesn't, because no pattern matches it or the function returns `None`, the block is dropped from the instructions, with no withdrawal: the new model is sent exactly what a fresh run on it would get.
 
-```python {title="model_instructions_rule.py"}
-from pydantic_ai.capabilities import ModelInstructions
-
-tuning = ModelInstructions({'gpt-6*': "Don't spawn sub-agents unless the user asks."})
-rule = ModelInstructions({'mistral-*': 'Answer in French.'}, kind='rule', id='language')
-```
+The same holds for a request [`ModelFallback`](model-fallback.md) moves on to another model, within one run. With `id=None`, the block can't be addressed, so its changes are always rewritten.
 
 ## Fallback and realtime models
 

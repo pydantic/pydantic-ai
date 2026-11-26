@@ -100,13 +100,13 @@ def test_an_unmatched_model_gets_no_block() -> None:
     agent = Agent(
         FunctionModel(recorder, model_name='gemini-3-pro'),
         instructions='Be brief.',
-        capabilities=[ModelInstructions({'gpt-6*': 'GPT-6'})],
+        capabilities=[ModelInstructions({'gpt-6*': 'GPT-6'}), ModelInstructions({'*': 'Any.'}, id='any')],
     )
     result = agent.run_sync('Hi')
-    assert recorder.texts == [['Be brief.']]
+    assert recorder.texts == [['Be brief.', 'Any.']]
     request = result.all_messages()[0]
     assert isinstance(request, ModelRequest)
-    assert request.instructions == 'Be brief.'
+    assert request.instructions == 'Be brief.\n\nAny.'
 
 
 def test_a_pattern_with_a_colon_matches_the_model_id() -> None:
@@ -290,9 +290,7 @@ def test_a_switch_to_other_text_appends_the_change() -> None:
 @pytest.mark.moves_cache_prefix(reason='a model with no text gets the instructions a fresh run on it would')
 def test_a_switch_to_no_text_rewrites_the_block_away() -> None:
     """A model no pattern matches gets no block and no withdrawal, as if the block had never been sent."""
-    assert switch_models(start='gpt-6-luna', to='gemini-3-pro') == snapshot(
-        ('GPT-6', [('capability:model_instructions:text', None)])
-    )
+    assert switch_models(start='gpt-6-luna', to='gemini-3-pro') == snapshot((None, []))
 
 
 def test_a_switch_from_no_text_to_some_text() -> None:

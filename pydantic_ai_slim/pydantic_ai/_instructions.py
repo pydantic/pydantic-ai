@@ -170,7 +170,8 @@ async def resolve_instruction_function(
 ) -> InstructionPart | None:
     """Run the instruction function `sourced` was registered as, returning the part it contributes, if any.
 
-    An append-mode part is kept when empty so its withdrawal can be recorded.
+    An append-mode part is kept when empty so its withdrawal can be recorded. So is an empty part with an id that
+    the function returned itself, which removes its block without a withdrawal (see `update_instruction_history`).
     """
     result = await _system_prompt.SystemPromptRunner[AgentDepsT, str | InstructionPart](function).run(run_context)
     if isinstance(result, InstructionPart):
@@ -183,7 +184,9 @@ async def resolve_instruction_function(
             dynamic=sourced.dynamic,
             on_change=sourced.on_change,
         )
-    return part if part.content or part.on_change == 'append' else None
+    if part.content or part.on_change == 'append':
+        return part
+    return part if isinstance(result, InstructionPart) and part.id is not None else None
 
 
 def _computed_part(sourced: SourcedInstruction[AgentDepsT], result: InstructionPart) -> InstructionPart:
@@ -939,7 +942,8 @@ def update_instruction_history(
     With `rewrites_outside_prefix`, for a model that reads the dynamic rewrite-mode blocks outside the cached
     prefix, a change to one of them doesn't move the prefix, so the window continues.
     """
-    normalized = _normalize_append_parts(instructions or [])
+    removed, kept = _split_removed_blocks(instructions or [])
+    normalized = _normalize_append_parts(kept)
     baseline = instruction_window(messages)
 
     recorded = _recorded_instruction_values(messages, baseline) if baseline is not None else None
@@ -953,7 +957,14 @@ def update_instruction_history(
     if (
         baseline is not None
         and recorded is not None
-        and _stays_in_window(baseline, normalized, loaded, rewrites_outside_prefix=rewrites_outside_prefix)
+        and _stays_in_window(
+            baseline,
+            normalized,
+            loaded,
+            removed=removed,
+            recorded=recorded,
+            rewrites_outside_prefix=rewrites_outside_prefix,
+        )
     ):
         _record_window_changes(targets, recorded, normalized)
     elif any(part.on_change == 'append' for part in normalized):
@@ -971,18 +982,41 @@ def update_instruction_history(
     return prefix
 
 
+def _split_removed_blocks(parts: Sequence[InstructionPart]) -> tuple[set[InstructionId], list[InstructionPart]]:
+    """The ids of the blocks `parts` remove, and the other parts.
+
+    An empty rewrite-mode part with an id takes its block out of the instructions, so the model reads what a fresh
+    run would send it rather than the block's earlier text and a withdrawal: `ModelInstructions` returns one for a
+    model it has no text for. A block that's left out is withdrawn instead.
+    """
+    removed: set[InstructionId] = set()
+    kept: list[InstructionPart] = []
+    for part in parts:
+        if part.id is not None and part.on_change != 'append' and not part.content.strip():
+            removed.add(part.id)
+        else:
+            kept.append(part)
+    return removed, kept
+
+
 def _stays_in_window(
     baseline: InstructionBaselinePart,
     normalized: Sequence[InstructionPart],
     loaded: Mapping[str, str | None],
     *,
+    removed: Collection[InstructionId],
+    recorded: Mapping[InstructionId, str | None],
     rewrites_outside_prefix: bool,
 ) -> bool:
     """Whether the request can be sent with `baseline`'s prefix, as `continues_window` decides.
 
+    A removed block the model still reads, per `recorded`, opens a window without it rather than being withdrawn.
+
     A block a loaded capability holds that the prefix now carries, because the capability is eager, changes owner
     at a new window's baseline, so its changes from then on are the prefix's.
     """
+    if any(recorded.get(instruction_id) is not None for instruction_id in removed):
+        return False
     takes_over = any(
         part.on_change == 'append' and _loaded_block_capability_id(part.id) in loaded for part in normalized
     )

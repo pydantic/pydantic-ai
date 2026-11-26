@@ -884,6 +884,67 @@ async def test_instruction_updates_removed_source_withdraws_its_blocks():
     assert request.instructions == 'A'
 
 
+def _state_agent() -> Agent[InstructionPart | None, str]:
+    """An agent whose `state` block is what its deps say: a part, or `None` for no part."""
+    agent = Agent(TestModel(custom_output_text='ok'), instructions='Base', deps_type=InstructionPart | None)
+
+    @agent.instructions(name='state')
+    def state(ctx: RunContext[InstructionPart | None]) -> InstructionPart | None:
+        return ctx.deps
+
+    return agent
+
+
+@pytest.mark.moves_cache_prefix(reason='an empty rewrite-mode part removes its block from the prefix')
+async def test_instruction_updates_empty_rewrite_part_removes_its_block():
+    """An empty rewrite-mode part with an id takes an appended block out of a new window, with no withdrawal."""
+    agent = _state_agent()
+    first = await agent.run('Hi', deps=InstructionPart(content='A', on_change='append'))
+    result = await agent.run(
+        'Again', message_history=first.all_messages(), deps=InstructionPart(content='', on_change='rewrite')
+    )
+    request = result.new_messages()[0]
+    assert isinstance(request, ModelRequest)
+    assert not any(isinstance(part, InstructionDeltaPart) for part in request.parts)
+    assert baseline_of(request) == []
+    assert request.instructions == 'Base'
+
+
+@pytest.mark.parametrize(
+    'deps',
+    [
+        pytest.param(None, id='no-part'),
+        pytest.param(InstructionPart(content='', on_change='append'), id='empty-append'),
+    ],
+)
+async def test_instruction_updates_left_out_block_is_withdrawn(deps: InstructionPart | None):
+    """A block that's left out, or emptied in append mode, is withdrawn: the prefix keeps its earlier text."""
+    agent = _state_agent()
+    first = await agent.run('Hi', deps=InstructionPart(content='A', on_change='append'))
+    result = await agent.run('Again', message_history=first.all_messages(), deps=deps)
+    request = result.new_messages()[0]
+    assert isinstance(request, ModelRequest)
+    assert [(p.id, p.content) for p in request.parts if isinstance(p, InstructionDeltaPart)] == [(STATE_ID, None)]
+    assert request.instructions == 'Base\n\nA'
+
+
+async def test_instruction_updates_empty_rewrite_part_never_sent_keeps_the_window():
+    """An empty rewrite-mode part whose block the window doesn't hold leaves the window and the instructions as they were."""
+    agent = _state_agent()
+
+    @agent.instructions(name='date', on_change='append')
+    def date() -> str:
+        return 'Monday'
+
+    empty = InstructionPart(content='', on_change='rewrite')
+    first = await agent.run('Hi', deps=empty)
+    result = await agent.run('Again', message_history=first.all_messages(), deps=empty)
+    request = result.new_messages()[0]
+    assert baseline_of(request) is None
+    assert isinstance(request, ModelRequest)
+    assert request.instructions == 'Base\n\nMonday'
+
+
 async def test_instruction_updates_empty_baseline_keeps_other_block_positions():
     agent = Agent(
         TestModel(custom_output_text='ok'),
