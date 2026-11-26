@@ -167,13 +167,31 @@ def _text_content(node: dict[str, object]) -> str | None:
     content = node.get('content')
     if not isinstance(content, str):
         return None
-    if isinstance(node.get('part_kind'), str) or node.get('kind') in _TEXT_CONTENT_KINDS:
+    if _has_text_discriminator(node):
         return content
     return None
 
 
+def _has_text_discriminator(node: dict[str, object]) -> bool:
+    return isinstance(node.get('part_kind'), str) or node.get('kind') in _TEXT_CONTENT_KINDS
+
+
 def _is_external_marker(node: dict[str, object]) -> bool:
-    return node.get(_EXTERNAL_MARKER) is True
+    """Does `node` have the shape of a marker `externalize_media` writes?
+
+    A marker is the node it replaced less the externalized field, plus the
+    marker keys, so it keeps the discriminator the writer matched on: a binary
+    marker keeps `kind == 'binary'` and has no `data`, and a text marker keeps
+    the `_text_content` discriminator and has no `content`. Escaping moves only
+    `_MARKER_METADATA_KEYS`, so neither shape depends on the marker format
+    version. A dict carrying `_EXTERNAL_MARKER` without either shape is caller
+    data.
+    """
+    if node.get(_EXTERNAL_MARKER) is not True:
+        return False
+    if node.get('kind') == 'binary' and 'data' not in node:
+        return True
+    return node.get(_TEXT_MARKER) is True and _has_text_discriminator(node) and 'content' not in node
 
 
 def _literal_payload(node: dict[str, object]) -> dict[str, object] | None:
