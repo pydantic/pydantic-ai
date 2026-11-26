@@ -2,7 +2,7 @@
 Source tapes/common.tape
 Output shots/resume.txt
 Hide
-Type 'clai-demo' Enter
+Type 'pax-demo' Enter
 Wait+Screen /\| ready/
 Type '/resume' Enter
 Wait+Screen /Shorter install and usage/

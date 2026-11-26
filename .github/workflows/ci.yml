@@ -723,6 +723,7 @@ jobs:
           tests/test_docs_parity.py
           tests/test_docs_navigation.py
           tests/harness/test_docs_parity.py
+          tests/pax/test_docs_parity.py
           tests/harness/test_doc_snippets.py
           tests/harness/test_workspace_quickstarts.py
           -n logical --dist=loadgroup

@@ -12,6 +12,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal, SupportsIndex, TypeAlias, TypeVar, cast
 
+from ._appended_messages import append_to_history
 from ._capability_parts import operator_voice_lookalike
 from ._framing import resembles_frame
 from ._utils import fill_run_metadata
@@ -656,12 +657,13 @@ def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestCon
         spliced_target = replace(target, parts=parts)
         queue._spliced_request = (original, spliced_target)  # pyright: ignore[reportPrivateUsage]
         ctx.messages[-1] = spliced_target
+        ctx._appended_messages.replace(target, spliced_target)  # pyright: ignore[reportPrivateUsage]
         request_context.messages = [
             spliced_target if message is target else message for message in request_context.messages
         ]
     for enqueue_id, messages in appended:
         request_context.messages = [*request_context.messages, *messages]
-        ctx.messages.extend(messages)
+        append_to_history(ctx, *messages)
         events.append(EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=tuple(messages)))
     for event in events:
         ctx._emit_event(event)  # pyright: ignore[reportPrivateUsage]
