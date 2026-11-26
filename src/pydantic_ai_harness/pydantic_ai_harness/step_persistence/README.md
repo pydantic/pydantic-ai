@@ -424,10 +424,18 @@ compacted history, and retention may delete older ones.
   counting when `ctx.run_step` resets. `{table}_snapshot_keys` keeps
   replay-suppression keys through snapshot pruning; `{table}_tool_effects`
   upserts per `(run_id, tool_call_id)`. Timestamps and JSON are `TEXT`.
+- `RedisStepStore(client, prefix='pydantic-ai-harness:step')` -- one set of keys
+  per run under `prefix`, plus `runs:*` sets that serve `list_runs` (see [What
+  `RedisStepStore` writes](#what-redisstepstore-writes)). `client` is a
+  caller-owned `redis.asyncio`-compatible client (the `RedisClient` protocol):
+  the harness imports no driver, defines no extra for one, and never closes the
+  client. Registration uses `SET ... NX` on the run key; a duplicate raises
+  `ValueError`. Pass `expire_seconds=` to expire a run's keys that long after
+  its last write. `media_store` defaults to `None`, so parts stay inline.
 
 All implement the async `StepStore` protocol. File and SQLite I/O runs through
-`anyio.to_thread`, so hooks never block the event loop; Mongo and Postgres are
-natively async.
+`anyio.to_thread`, so hooks never block the event loop; Mongo, Postgres, and
+Redis are natively async.
 
 `FileStepStore` validates `run_id` against `[A-Za-z0-9_.-]{1,200}` and rejects
 `..` to prevent path traversal; still sanitize user-controlled IDs.
@@ -531,11 +539,77 @@ async def build_persistence() -> tuple[StepPersistence, asyncpg.Pool]:
 Call `build_persistence` at startup and close the pool at shutdown; the store
 does not manage it. CI tests both Postgres backends against `postgres:17`.
 
+### What `RedisStepStore` writes
+
+Every key that belongs to one run carries a `{run_id}` hash tag, so on Redis
+Cluster all of them sit on one slot. That lets the store apply each write as one
+Lua script (`EVAL`): the replay check, the write, the snapshot prune, and the
+TTL refresh run without another client's command in between. Two workers
+retrying the same event or snapshot can't both store it, and a worker that
+dies mid-write can't leave half of one behind.
+
+| Key                                     | Type   | Holds                                         |
+| --------------------------------------- | ------ | --------------------------------------------- |
+| `<prefix>:run:{<run_id>}`               | string | `RunRecord` JSON                              |
+| `<prefix>:events:{<run_id>}`            | list   | one `StepEvent` JSON per append               |
+| `<prefix>:event_keys:{<run_id>}`        | set    | idempotency keys of appended events           |
+| `<prefix>:snapshots:{<run_id>}`         | zset   | member `<seq>:<state>`, score `seq`           |
+| `<prefix>:snapshots:seq:{<run_id>}`     | string | counter allocating `seq`                      |
+| `<prefix>:snapshot_payloads:{<run_id>}` | hash   | `seq` -> snapshot JSON, history as message keys |
+| `<prefix>:snapshot_keys:{<run_id>}`     | set    | idempotency keys of saved snapshots           |
+| `<prefix>:messages:{<run_id>}`          | hash   | SHA-256 -> message JSON                       |
+| `<prefix>:tool_effects:{<run_id>}`      | hash   | `tool_call_id` -> `ToolEffectRecord` JSON     |
+| `<prefix>:runs:all`                     | set    | every run id                                  |
+| `<prefix>:runs:conversation:<cid>`      | set    | run ids in one conversation                   |
+| `<prefix>:runs:parent:<pid>`            | set    | run ids spawned by one run                    |
+
+- A `run_id` that is empty or starts with `}`, and a `prefix` containing `{`
+  or `}`, raise `ValueError`: the hash tag would be empty or come from the
+  prefix, and on a cluster the script would fail with `CROSSSLOT`.
+- The `runs:*` sets index runs on other slots, so they are written with
+  separate commands after the script. Every write adds its run to them, not
+  only `register_run`, so a worker that died between registering a run and
+  indexing it is repaired by the run's next write.
+- With `expire_seconds`, every write refreshes the TTL of all the run's keys,
+  so a run expires as a unit, that long after its last write. A `runs:*` set is
+  refreshed by every write to a run it indexes, under the lineage of the run's
+  stored `RunRecord`, so it expires with the last run it holds. While it is
+  busier than its runs it can hold ids whose run has expired; `list_runs`
+  removes those as it reads.
+- The server needs Lua scripting, which Redis has had since 2.6. CI exercises
+  the store against `redis:8`.
+
+```python
+from redis.asyncio import Redis
+
+from pydantic_ai_harness import StepPersistence
+from pydantic_ai_harness.step_persistence import RedisStepStore
+
+client = Redis.from_url('redis://localhost')
+store = RedisStepStore(client, expire_seconds=3 * 24 * 3600)
+persistence = StepPersistence(store=store, agent_name='support_bot')
+```
+
+Install and manage the driver in your application, and close the client with
+`await client.aclose()` during shutdown. The store does not manage it.
+
+uv:
+
+```bash
+uv add redis
+```
+
+pip:
+
+```bash
+pip install redis
+```
+
 ## Bounding snapshot growth
 
 Each settled tool-call step writes a full-history snapshot keyed by an
 incrementing `seq`, and nothing is pruned by default, so a long `Agent.run`
-keeps growing storage. All five stores accept
+keeps growing storage. All six stores accept
 `max_snapshots_per_run: int | None` (default `None`, unbounded). With `N >= 1`,
 each `save_snapshot` prunes the run to:
 
@@ -545,10 +619,10 @@ each `save_snapshot` prunes the run to:
 - the newest `complete` snapshot (serves the default read path).
 
 The last two keep both read modes working, so the retained set can exceed `N`
-when the newest `N` are all `interrupted`.
-`from_spec(..., max_snapshots_per_run=N)` forwards the bound for
-`backend='memory'`, `'file'`, or `'sqlite'`; Mongo and Postgres stores take a
-live client or pool, so build them directly.
+when the newest `N` are all `interrupted`. `from_spec(...,
+max_snapshots_per_run=N)` forwards the bound for `backend='memory'`, `'file'`,
+or `'sqlite'`; Mongo, Postgres, and Redis stores take a live client or pool, so
+build them directly.
 
 ```python
 from pydantic_ai_harness.step_persistence import FileStepStore
@@ -556,12 +630,13 @@ from pydantic_ai_harness.step_persistence import FileStepStore
 store = FileStepStore('runs', max_snapshots_per_run=8)
 ```
 
-Pruning never deletes externalized media (see the non-goals below), and there is
-no age-based (TTL) expiry, which belongs at whole-run granularity, not per
-snapshot. Anything that rebuilds history from retained snapshots, such as
-snapshot search or a compaction receipt keyed on `run_id`, sees only what is
-kept: with `max_snapshots_per_run=1`, pre-compaction states are gone. When that
-history matters, leave the bound at `None` or set it high enough.
+Pruning never deletes externalized media (see the non-goals below), and
+age-based (TTL) expiry belongs at whole-run granularity, not per snapshot, as
+with `RedisStepStore`'s `expire_seconds`. Anything that rebuilds history from
+retained snapshots, such as snapshot search or a compaction receipt keyed on
+`run_id`, sees only what is kept: with `max_snapshots_per_run=1`, pre-compaction
+states are gone. When that history matters, leave the bound at `None` or set it
+high enough.
 
 ### Storing each message once
 
@@ -586,8 +661,10 @@ keys in order. Unlike SQLite, they keep messages after their snapshots are
 pruned, as with media, because with concurrent writers deleting a message with
 its last snapshot could race a save about to reference it. So pruning neither
 bounds their size nor removes that content, such as messages compaction
-replaced. `FileStepStore` still writes each snapshot as a complete JSON file, so
-a run directory stays readable and greppable on its own.
+replaced. `RedisStepStore` does the same with a `messages` hash per run, which
+expires with the run under `expire_seconds`. `FileStepStore` still writes each
+snapshot as a complete JSON file, so a run directory stays readable and
+greppable on its own.
 
 ## Persisting media
 
@@ -595,11 +672,12 @@ Inline base64 `BinaryContent` (images, audio, documents, video) bloats every
 snapshot containing it, and a large text part can push a `MongoStepStore`
 message past MongoDB's 16 MiB document cap
 ([#440](https://github.com/pydantic/pydantic-ai-harness/issues/440)). So every
-store except `InMemoryStepStore` moves any `BinaryContent.data` or string part
-`content` at or above `media_threshold_bytes` (default 64 KiB, shared by binary
-and text) to a `MediaStore` and leaves a URI in the snapshot; `media_store=None`
-is the only opt-out. Reads are transparent: `latest_snapshot(...).messages`
-returns the original bytes and text.
+store except `InMemoryStepStore` and, unless given a `media_store`,
+`RedisStepStore` moves any `BinaryContent.data` or string part `content` at or
+above `media_threshold_bytes` (default 64 KiB, shared by binary and text) to a
+`MediaStore` and leaves a URI in the snapshot; `media_store=None`, the
+`RedisStepStore` default, is the only opt-out. Reads are transparent:
+`latest_snapshot(...).messages` returns the original bytes and text.
 
 The marker format is versioned and upgrade-only: current readers restore older
 snapshots, but older releases can misread or reject newer markers, so keep a
@@ -614,6 +692,7 @@ surfaces; `list_snapshots` skips that snapshot and logs the error.
 | `SqliteStepStore` | `SqliteMediaStore(database=<same db>)` | sibling `media` table in the same DB |
 | `MongoStepStore` | `MongoMediaStore(client=<same client>)` | sibling `media` + `media_chunks` collections |
 | `PostgresStepStore` | `PostgresMediaStore(<same pool>)` | `{table}_media` table on the same pool |
+| `RedisStepStore` | none (inline) | parts stay in the stored messages |
 
 Pass your own `MediaStore` to change the destination:
 
@@ -776,7 +855,7 @@ paths or `..` segments, so a key cannot escape the store directory.
 
 ### Persisting to unsupported backends
 
-DynamoDB, Redis, GCS, and other backends are not built in. Write your own
+DynamoDB, GCS, and other backends are not built in. Write your own
 `StepStore` (a protocol of ten methods) or `MediaStore` (five methods: `put`,
 `get`, `exists`, `public_url`, `get_metadata`) and pass it as `store=` /
 `media_store=`.
