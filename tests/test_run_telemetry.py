@@ -194,22 +194,40 @@ class MarkWhenPrepared(AbstractCapability[object]):
         return self
 
 
+async def run_marking_sub_agent(parent: AbstractCapability[object], child: AbstractCapability[object]) -> None:
+    """Run a parent whose tool runs a sub-agent that writes a content attribute to `current_span` in `for_run`."""
+    sub_agent = Agent(TestModel(), capabilities=[MarkWhenPrepared(), child])
+    agent = Agent(TestModel(call_tools=['delegate']), capabilities=[parent])
+
+    @agent.tool_plain
+    async def delegate() -> str:
+        return (await sub_agent.run('go')).output
+
+    await agent.run('go')
+
+
+def marked_spans(exporter: InMemorySpanExporter) -> list[str]:
+    return [span.name for span in exporter.get_finished_spans() if 'example.prompt' in (span.attributes or {})]
+
+
 async def test_a_sub_agents_for_run_does_not_write_to_its_parents_span(instrumented: Instrumented):
     """In a sub-agent's `for_run` the open span is the parent's tool call, which records no content here."""
-    parent_instrumentation, parent_exporter = instrumented(False)
-    child_instrumentation, _ = instrumented(True)
-    child = Agent(TestModel(), capabilities=[MarkWhenPrepared(), child_instrumentation])
-    parent = Agent(TestModel(call_tools=['delegate']), capabilities=[parent_instrumentation])
+    parent, parent_exporter = instrumented(False)
+    child, _ = instrumented(True)
+    await run_marking_sub_agent(parent, child)
 
-    @parent.tool_plain
-    async def delegate() -> str:
-        return (await child.run('go')).output
+    assert marked_spans(parent_exporter) == []
 
-    await parent.run('go')
 
-    assert [
-        span.name for span in parent_exporter.get_finished_spans() if 'example.prompt' in (span.attributes or {})
-    ] == []
+async def test_a_sub_agent_on_its_parents_tracer_and_setting_writes_to_the_parents_span():
+    """With the parent's tracer and content setting, the sub-agent's `for_run` gets the parent's span, which allows it."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    settings = InstrumentationSettings(tracer_provider=provider, include_content=True)
+    await run_marking_sub_agent(Instrumentation(settings=settings), Instrumentation(settings=settings))
+
+    assert marked_spans(exporter) == ['execute_tool delegate']
 
 
 def test_a_durable_unit_that_did_not_carry_the_tracer_is_untraced():

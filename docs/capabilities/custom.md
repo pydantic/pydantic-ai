@@ -1364,7 +1364,7 @@ class NoDeletes(AbstractCapability[Any]):
         if call.tool_name.startswith('delete_'):
             record_decision(
                 ctx,
-                'tool call refused',
+                'no_deletes refused call',
                 attributes={'no_deletes.tool': call.tool_name},
                 content={'no_deletes.arguments': repr(args)},
             )
@@ -1386,7 +1386,7 @@ print(result.output)
 #> {"delete_file":"Deleting is not allowed."}
 ```
 
-[`open_span`][pydantic_ai.telemetry.open_span] marks the span as failed if the work raises, and records the error's message only when content is allowed. [`current_span(ctx)`][pydantic_ai.telemetry.current_span] returns the span already open around your hook, such as the tool call's span, so you can add attributes to it instead of opening a new one. Code that runs during a run but isn't given a `ctx`, such as a [workspace](../workspace-custom.md), passes [`current_run_telemetry()`][pydantic_ai.telemetry.current_run_telemetry] instead.
+With the [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability or [Logfire](../logfire.md) set up, the trace shows `no_deletes refused call` for the `delete_file` call, with its arguments only when content is allowed. [`open_span`][pydantic_ai.telemetry.open_span] marks the span as failed if the work raises, and records the error's message only when content is allowed. [`current_span(ctx)`][pydantic_ai.telemetry.current_span] returns the span already open around your hook, such as the tool call's span, so you can add attributes to it instead of opening a new one. Code that runs during a run but isn't given a `ctx`, such as a [workspace](../workspace-custom.md), passes [`current_run_telemetry()`][pydantic_ai.telemetry.current_run_telemetry] instead.
 
 ## Durable capability operations {#durable-capability-operations}
 
