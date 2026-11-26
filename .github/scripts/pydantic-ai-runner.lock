@@ -1228,8 +1228,8 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["spec"], marker = "extra == 'logfire'", editable = "../../pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["temporal"], marker = "extra == 'temporal'", editable = "../../pydantic_ai_slim" },
     { name = "pydantic-handlebars", marker = "extra == 'logfire'", specifier = ">=0.2.1" },
-    { name = "pydantic-monty", marker = "extra == 'code-mode'", specifier = ">=1.5.0,<2" },
-    { name = "pydantic-monty", marker = "extra == 'codemode'", specifier = ">=1.5.0,<2" },
+    { name = "pydantic-monty", marker = "extra == 'code-mode'", specifier = ">=1.7.0,<2" },
+    { name = "pydantic-monty", marker = "extra == 'codemode'", specifier = ">=1.7.0,<2" },
     { name = "pydantic-monty", marker = "extra == 'dynamic-workflow'", specifier = ">=1.5.0,<2" },
     { name = "pymongo", marker = "extra == 'mongodb'", specifier = ">=4.17.0" },
     { name = "pyyaml", marker = "extra == 'skills'", specifier = ">=6.0.2" },
@@ -1257,6 +1257,7 @@ dependencies = [
     { name = "pydantic", version = "2.13.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.15'" },
     { name = "pydantic", version = "2.14.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.15'" },
     { name = "pydantic-graph" },
+    { name = "truststore", marker = "sys_platform != 'emscripten'" },
     { name = "typing-inspection", version = "0.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.15'" },
     { name = "typing-inspection", version = "0.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.15'" },
 ]
@@ -1337,6 +1338,7 @@ requires-dist = [
     { name = "tiktoken", marker = "extra == 'openai'", specifier = ">=0.12.0" },
     { name = "tiktoken", marker = "extra == 'openai-realtime'", specifier = ">=0.12.0" },
     { name = "tiktoken", marker = "extra == 'xai-realtime'", specifier = ">=0.12.0" },
+    { name = "truststore", marker = "sys_platform != 'emscripten'", specifier = ">=0.10.5" },
     { name = "typesafe-sdk", marker = "extra == 'typesafe'", specifier = ">=0.6.0,<1" },
     { name = "typing-inspection", specifier = ">=0.4.0" },
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.38.0" },
@@ -1932,11 +1934,11 @@ wheels = [
 
 [[package]]
 name = "truststore"
-version = "0.10.4"
+version = "0.10.5"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/53/a3/1585216310e344e8102c22482f6060c7a6ea0322b63e026372e6dcefcfd6/truststore-0.10.4.tar.gz", hash = "sha256:9d91bd436463ad5e4ee4aba766628dd6cd7010cf3e2461756b3303710eebc301", size = 26169, upload-time = "2025-08-12T18:49:02.73Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ee/9f/c5201d42a484c061e528825fc8e2d565f5abd50a4ced6fb7d29c4ec99b2b/truststore-0.10.5.tar.gz", hash = "sha256:30d36967ccaded5cbb38d602c433f53600036c79d502f4533a49b60a03bbefcd", size = 28091, upload-time = "2026-10-12T22:27:31.808Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/19/97/56608b2249fe206a67cd573bc93cd9896e1efb9e98bce9c163bcdc704b88/truststore-0.10.4-py3-none-any.whl", hash = "sha256:adaeaecf1cbb5f4de3b1959b42d41f6fab57b2b1666adb59e89cb0b53361d981", size = 18660, upload-time = "2025-08-12T18:49:01.46Z" },
+    { url = "https://files.pythonhosted.org/packages/51/e9/3a7820be2bb0fe53b6bc9c3be26d3d1158004e4c3ab953aa6840b955b1e9/truststore-0.10.5-py3-none-any.whl", hash = "sha256:9aaaedaefaf06d8b206278cf8b5012bc897f485a874503501e12d776df78951c", size = 19017, upload-time = "2026-10-12T22:27:30.377Z" },
 ]
 
 [[package]]

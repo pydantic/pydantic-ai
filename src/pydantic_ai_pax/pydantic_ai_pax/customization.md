@@ -99,8 +99,9 @@ plugin may do as many things as it likes: several capabilities, commands, hooks,
 renderers, in any combination. The example below deliberately does two
 unrelated things, adding ExaSearch and registering a /greet command, to show
 both shapes side by side; a real plugin would usually pick one purpose. Create
-~/.config/pydantic-clai2/plugins/search.py, or use
-$XDG_CONFIG_HOME/pydantic-clai2/plugins/search.py when XDG_CONFIG_HOME is set:
+~/.config/pydantic-ai-pax/plugins/search.py, or use
+$XDG_CONFIG_HOME/pydantic-ai-pax/plugins/search.py when XDG_CONFIG_HOME is set. With
+--database, the plugins folder is the one next to that database:
 
 ```python
 from collections.abc import Sequence
@@ -218,7 +219,7 @@ own async answerer; see PLUGINS.md.
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for
 multi-select questions. Enter submits nonblank text. Esc returns to the choices
-and keeps your draft; Ctrl-C declines the whole request. Backspace and arrow keys
+and keeps your draft; Ctrl+C declines the whole request. Backspace and arrow keys
 edit the text. Multiline paste is inserted as text and waits for Enter; it does
 not submit an answer or select choices. The conversation stays visible while you type. Custom answers
 appear in the transcript and reach the model as a one-item list under the question's header.
@@ -257,7 +258,7 @@ Its Logfire project row sets token and base_url for you, and turns sending on:
 pick Logfire US, EU, or a self-hosted URL, sign in in the browser, and pick a
 project; its new write token is saved in /keys. This explicit option overrides
 LOGFIRE_SEND_TO_LOGFIRE. Use LOGFIRE_TOKEN or the SDK credential file in
-$XDG_CONFIG_HOME/pydantic-clai2/logfire (default ~/.config/pydantic-clai2/logfire).
+$XDG_CONFIG_HOME/pydantic-ai-pax/logfire (default ~/.config/pydantic-ai-pax/logfire).
 Both SDK configuration and credentials are read from that user directory, not
 from the checkout. LOGFIRE_CONFIG_DIR and LOGFIRE_CREDENTIALS_DIR are ignored;
 relative XDG_CONFIG_HOME falls back to ~/.config. Keep tokens out of plugin JSON. Disabling or reloading shuts down only the plugin's own
@@ -394,7 +395,7 @@ cancel(), use its documented cancellation semantics.
 
 ## Settings that need a feature: requirement tags
 
-Every Pax on a machine shares one settings database (~/.config/pydantic-clai2/config.db),
+Every Pax on a machine shares one settings database (~/.config/pydantic-ai-pax/config.db),
 whatever code it runs: other worktrees, branches, and installs. A plugin setting that one
 build supports can break another. Version numbers cannot tell them apart, because worktrees
 are diverging branches that report the same dev version. Feature names can.
@@ -497,7 +498,7 @@ unique, including built-ins. Unknown command-shaped input such as `/missing`
 does not reach the model. Path-like input (a slash, dot, or backslash in the first
 token after `/`) is passed through as a prompt instead. Routing itself does not
 read files. Separately, the editor converts bracketed pastes of existing image
-paths into attachments. Ctrl-V or Alt-V attaches clipboard images. Attachment
+paths into attachments. Ctrl+V or Alt+V attaches clipboard images. Attachment
 markers are removed before host turn hooks run; those hooks receive the text
 caption, while core hooks receive the multimodal request. Quoted paths are also
 prompts.
@@ -617,7 +618,7 @@ class MyMenu(Plugin):
 
 Termflow owns the alternate screen. Do not print while it is open. Put errors and
 empty states in disabled rows or the preview. Use .on_key for single-key actions,
-apply changes immediately, then replace_items to redraw. Esc and Ctrl-C should
+apply changes immediately, then replace_items to redraw. Esc and Ctrl+C should
 close normally. menu_key and run_worker cooperate on cancellation, keeping the
 terminal owned until the worker restores its screen. Do not fire-and-forget a
 thread that is still reading input. If a menu key needs an async action, follow
@@ -634,7 +635,7 @@ mid-turn; it then runs at once with arguments too, ahead of queued follow-ups,
 as /plugins does.
 
 Pass live=True to Command for a slow handler that only prints, such as /compact,
-so the editor stays live while it runs: the working spinner shows, Esc or Ctrl-C
+so the editor stays live while it runs: the working spinner shows, Esc or Ctrl+C
 cancels it, and Enter queues a follow-up. Leave it off for anything that reads
 keys or opens a menu; those need the suspended editor.
 

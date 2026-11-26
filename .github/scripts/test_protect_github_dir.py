@@ -1,10 +1,8 @@
 """Regression tests for the `.github/` protection guard.
 
 `.github/workflows/protect-github-dir.yml` decides whether a pull request may change
-`.github/`. It triggers on `pull_request_target`, and GitHub runs such a workflow from the
-**default branch of the base repository**, so the guard can never be exercised by the PR
-that edits it — these tests are the only place its logic is checked before `main`. That
-matters more than for an ordinary workflow: a bug in one direction blocks every
+`.github/`. It triggers on `pull_request`, so a PR runs its own copy of the guard; these tests
+check its logic before any PR depends on it. That matters more than for an ordinary workflow: a bug in one direction blocks every
 contributor, and in the other it lets fork-authored changes into a directory that
 executes with repository credentials.
 
@@ -97,7 +95,7 @@ class Case:
     author: str = 'outside-contributor'
     permission: str = 'read'
     state: str = 'open'
-    event: str = 'pull_request_target'
+    event: str = 'pull_request'
     existing_comments: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
     # Defaults to len(files); set higher to model the PR-files API truncating.
     total_files: int | None = None
@@ -278,9 +276,9 @@ def test_a_jq_failure_fails_the_guard(jq: str, tmp_path: Path):
 
 
 def test_the_guard_never_checks_out_pull_request_code():
-    """`pull_request_target` hands the job a write token in base-repository context.
+    """A same-repository PR's run holds a write token.
 
-    Checking out or running the PR's own code under that trigger is precisely the
+    Checking out or running the PR's own code with that token is precisely the
     supply-chain hole this workflow exists to close, so the guard reads PR metadata over
     the API and runs no action at all.
     """
@@ -316,12 +314,12 @@ def test_the_guard_does_not_trust_a_base_repo_head_branch():
 def test_the_trigger_has_no_paths_filter():
     """A `paths:` filter here would deadlock the repository.
 
-    A `pull_request_target` filtered to `.github/**` does not run at all on the PRs that
+    A `pull_request` filtered to `.github/**` does not run at all on the PRs that
     don't match it, and a *required* check that never runs stays pending forever. The job
     runs on every PR and exits 0 when nothing protected changed.
     """
     # YAML 1.1 resolves the bare `on:` key to the boolean True.
-    trigger = _workflow()[True]['pull_request_target']
+    trigger = _workflow()[True]['pull_request']
     assert 'paths' not in trigger
     assert 'paths-ignore' not in trigger
     # `edited` is the only event fired when a PR's base branch changes, and the verdict is a

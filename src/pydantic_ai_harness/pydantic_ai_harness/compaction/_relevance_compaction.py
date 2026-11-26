@@ -34,7 +34,6 @@ from pydantic_ai.messages import (
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     ToolCallPart,
     ToolReturnPart,
-    UserPromptPart,
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -43,13 +42,12 @@ from pydantic_ai_harness._message_text import CHARS_PER_TOKEN, tool_return_text,
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness.compaction._capability_loads import deferred_capability_ids, keep_loaded_state
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
-from pydantic_ai_harness.compaction._pinning import is_pinned, reinject_pinned
+from pydantic_ai_harness.compaction._pinning import reinject_pinned
 from pydantic_ai_harness.compaction._receipts import (
     ReceiptInfo,
     discover_transcript_handle,
     format_receipt,
     is_receipt_message,
-    is_receipt_part,
     make_receipt_part,
     record_receipt,
 )
@@ -63,9 +61,10 @@ from pydantic_ai_harness.compaction._shared import (
     estimate_token_count,
     exceeds,
     find_token_cutoff,
-    is_harness_data,
+    is_user_part,
     record_compaction_reclaim,
     resolve_token_trigger,
+    starts_user_turn,
     validate_token_trigger,
 )
 from pydantic_ai_harness.compaction._summarizing_compaction import (
@@ -658,7 +657,7 @@ def _split_steps(messages: Sequence[ModelMessage], counts: Sequence[int], start:
                 start=begin,
                 end=stop,
                 tokens=sum(counts[begin:stop]),
-                has_user_prompt=any(_is_user_request(message) for message in messages[begin:stop]),
+                has_user_prompt=any(starts_user_turn(message) for message in messages[begin:stop]),
             )
         )
     return steps
@@ -685,22 +684,11 @@ def _joined_ranges(messages: Sequence[ModelMessage], ranges: Sequence[tuple[int,
     return joined
 
 
-def _is_user_request(message: ModelMessage) -> bool:
-    return isinstance(message, ModelRequest) and any(_is_user_part(part) for part in message.parts)
-
-
-def _is_user_part(part: ModelRequestPart) -> bool:
-    """A user prompt the user wrote, not a pin, receipt or harness capability's content."""
-    return isinstance(part, UserPromptPart) and not (is_pinned(part) or is_receipt_part(part) or is_harness_data(part))
-
-
 def _user_text(message: ModelMessage) -> str:
     """The text of the user prompts the user wrote in *message*, or `''`."""
     if not isinstance(message, ModelRequest):
         return ''
-    return '\n'.join(
-        user_prompt_text(part) for part in message.parts if isinstance(part, UserPromptPart) and _is_user_part(part)
-    )
+    return '\n'.join(user_prompt_text(part) for part in message.parts if is_user_part(part))
 
 
 def _summary_parts(messages: Sequence[ModelRequest]) -> list[ModelRequestPart]:

@@ -366,6 +366,16 @@ class OpenAIModelProfile(ModelProfile, total=False):
     through a custom `base_url`. A server that serves these names and reports per-chunk deltas instead would have its
     usage under-reported, so turn this off in the model's profile."""
 
+    openai_chat_completion_tokens_omit_reasoning: bool
+    """Whether Chat Completions `usage` leaves reasoning tokens out of `completion_tokens` and counts them only in `total_tokens`. Default: `False`.
+
+    When enabled and `usage` carries no `completion_tokens_details`, the amount by which `total_tokens` exceeds
+    `prompt_tokens + completion_tokens` counts as output and reasoning tokens, in each streamed chunk too.
+
+    [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] enables it for `gemini*` model names, including
+    through a custom `base_url`. A server that serves these names and counts anything else in that gap would have its
+    output tokens over-reported, so turn this off in the model's profile."""
+
     openai_chat_supports_web_search: bool
     """Whether the model supports web search in Chat Completions API. Default: `False`."""
 
@@ -415,6 +425,15 @@ class OpenAIModelProfile(ModelProfile, total=False):
     See https://developers.openai.com/api/docs/guides/latest-model.
     Explicit `openai_reasoning_effort='minimal'` settings are still passed through unchanged.
 
+    `OpenAIProvider` also disables it for the GPT-5.1 through GPT-5.5 families, which OpenAI's API answers with a 400
+    for `minimal` (verified live on gpt-5.1, gpt-5.2, gpt-5.3-codex, gpt-5.4, gpt-5.4-mini, gpt-5.4-nano, gpt-5.5
+    and their dated snapshots). gpt-5.5-cyber-preview and gpt-5.3-codex-spark are covered by the prefix only. The
+    `-pro` and `-chat` variants set `openai_reasoning_efforts`, which decides instead; the other ids under these
+    prefixes return 404 (shut down or nonexistent). `openai_model_profile` leaves it on,
+    because OpenRouter accepts `minimal` for these models. `OpenAIProvider(base_url=...)` keeps the flag off, as a
+    proxy to OpenAI should; for another server that serves these model names and accepts `minimal`, pass
+    `profile=OpenAIModelProfile(openai_supports_minimal_reasoning_effort=True)`.
+
     Ignored when `openai_reasoning_efforts` is set."""
 
     openai_reasoning_efforts: frozenset[OpenAIReasoningEffort]
@@ -430,7 +449,13 @@ class OpenAIModelProfile(ModelProfile, total=False):
     `openai_supports_reasoning_effort_none` and `openai_supports_minimal_reasoning_effort`. When unset, unified
     levels map one-to-one (see `openai_supports_minimal_reasoning_effort`), and `thinking=False` sends nothing on a
     model that always reasons.
-    Explicit `openai_reasoning_effort` settings are passed through unchanged."""
+    Explicit `openai_reasoning_effort` settings are passed through unchanged.
+
+    `OpenAIProvider` sets an empty set for `gpt-5-search-api`, which OpenAI's API answers with a 400 for any
+    `reasoning_effort` (verified live, 2026-11). `openai_model_profile` keeps the `'gpt-5'` efforts, as the
+    restriction is unverified on the OpenAI-compatible endpoints that share it. `OpenAIProvider(base_url=...)` keeps
+    the empty set, as a proxy to OpenAI should; for another server that serves this model name and accepts an effort,
+    pass `profile=OpenAIModelProfile(openai_reasoning_efforts=...)` with the efforts it accepts."""
 
     openai_chat_supports_max_reasoning_effort: bool
     """Whether the Chat Completions API accepts `reasoning_effort='max'` for this model. Default: `False`.
@@ -758,6 +783,12 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         # it gets the announcement from the first request (see the field's docstring). Here rather than in
         # `harmony_model_profile`, which builds on this one, because not every host of gpt-oss uses that.
         profile['default_framing_announcement'] = 'always'
+    elif model_name.startswith('gpt-'):
+        # OpenAI's own GPT models, not other models served through an OpenAI-compatible API (see the fields' docstrings).
+        profile['delegates_unprompted'] = True
+        profile['reinterprets_malformed_inputs'] = True
+        profile['omits_handoff_evidence'] = True
+        profile['ignores_stated_runtime_constraints'] = True
     return profile
 
 
@@ -817,6 +848,9 @@ def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
         # Speech and delegated work run independently: the Live model can keep the conversation going
         # while the backend works, so a tool call doesn't hold up speech, and there's no mode that waits.
         'async_tool_call_mode': 'always',
+        # The tools are the backend's, and a `session.update` of `delegation.responses.tools` replaces them
+        # mid-session: the backend calls a tool it adds from its next response on (checked live).
+        'supports_tool_updates': True,
         # The backend runs web search; Live refuses every other native Responses tool (checked live).
         'supported_native_tools': frozenset({WebSearchTool}),
         # The delegated backend does the reasoning, so `thinking` sets its effort. Whether a given backend
@@ -857,6 +891,9 @@ def openai_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # wire flag to set, unlike Gemini. The session already runs tools in the background and
         # defers `response.create` while a response is active, so this is true end to end.
         'async_tool_call_mode': 'always',
+        # A `session.update` with a new `tools` array mid-session takes effect: a tool it adds is called from the next
+        # response on, and the conversation so far is kept (checked live on `gpt-realtime`, and on Azure).
+        'supports_tool_updates': True,
         'emits_input_speech_events': True,
         'audio_input_sample_rate': 24000,
         'audio_output_sample_rate': 24000,
