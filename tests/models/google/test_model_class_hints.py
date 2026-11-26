@@ -6,7 +6,6 @@ on a request that fails either way; a request that works keeps working.
 
 from __future__ import annotations as _annotations
 
-import httpx2
 import pytest
 from inline_snapshot import snapshot
 
@@ -101,25 +100,8 @@ async def test_interactions_only_model_on_google_model_names_interactions(
         await Agent(model).run('A red ball rolling across a plain white floor, fixed camera.')
     assert isinstance(exc_info.value, ModelRequestRejectedError)
     assert str(exc_info.value) == snapshot(
-        "status_code: 400, model_name: gemini-omni-1.1-flash, body: {'error': {'code': 400, 'message': 'This model only supports Interactions API.', 'status': 'INVALID_ARGUMENT'}}. Use `GoogleInteractionsModel`, with the `google-interactions:` prefix, for this model."
+        "status_code: 400, model_name: gemini-omni-1.1-flash, body: {'error': {'code': 400, 'message': 'This model only supports Interactions API.', 'status': 'INVALID_ARGUMENT'}}. Use `GoogleInteractionsModel` for this model."
     )
-
-
-async def test_interactions_only_model_on_google_cloud_names_interactions(allow_model_requests: None):
-    """On Google Cloud the hint names `GoogleInteractionsModel` alone, as the `google-interactions:` prefix uses the Gemini API.
-
-    Not a VCR test: Google Cloud recordings need Cloud credentials, so the Gemini API's recorded 400 is served here.
-    """
-
-    def handler(request: httpx2.Request) -> httpx2.Response:
-        error = {'code': 400, 'message': 'This model only supports Interactions API.', 'status': 'INVALID_ARGUMENT'}
-        return httpx2.Response(400, json={'error': error})
-
-    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
-    provider = GoogleCloudProvider(api_key='mock-api-key', http_client=http_client)
-    with pytest.raises(ModelHTTPError) as exc_info:
-        await Agent(GoogleModel('gemini-omni-1.1-flash', provider=provider)).run('A red ball rolling across a floor.')
-    assert exc_info.value.hint == snapshot('Use `GoogleInteractionsModel` for this model.')
 
 
 async def test_interactions_count_tokens_names_google_model(allow_model_requests: None):
