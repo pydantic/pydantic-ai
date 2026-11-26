@@ -1524,11 +1524,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         limit = exceeded_sandbox_limit(error)
         reset_advice = self._runtime_reset_advice(limit, session_lost=error.session_lost)
         session_reset = await reset_session(run_state, snippet_ran=True) if reset_advice else False
-        # A nested call's `UsageLimitExceeded` ends the call instead, which leaves this failure unrecorded.
-        _raise_usage_limit_exceeded(execution)
-        execution.failure = RunCodeFailure(
-            'runtime' if limit is None else 'resource_limit', session_reset=session_reset, limit=limit
-        )
+        # A nested call's `UsageLimitExceeded` ends the call instead (raised by `_runtime_failure_retry`, after
+        # an escaped `ToolFailed`), so the failure is recorded only when no limit is pending.
+        if execution.usage_limit_exceeded is None:
+            execution.failure = RunCodeFailure(
+                'runtime' if limit is None else 'resource_limit', session_reset=session_reset, limit=limit
+            )
         _raise_escaped_tool_failed(error, execution, reset_advice=reset_advice)
         return _runtime_failure_retry(error, execution, limit=limit, reset_advice=reset_advice)
 
