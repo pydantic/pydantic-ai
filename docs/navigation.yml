@@ -197,7 +197,7 @@ navigation:
       - page: "Ollama"
         path: "models/ollama.md"
         slug: "models/ollama"
-      - page: "OpenAI ChatGPT Plan Usage"
+      - page: "Sign in with ChatGPT"
         path: "models/openai-chatgpt.md"
         slug: "models/openai-chatgpt"
       - page: "OpenAI Codex"

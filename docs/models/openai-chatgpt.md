@@ -2,7 +2,7 @@
 description: "Let the users of your open-source or local app run it on their own ChatGPT plan instead of an API key, through OpenAI's Sign in with ChatGPT."
 ---
 
-# OpenAI ChatGPT Plan Usage
+# Sign in with ChatGPT
 
 [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source) lets the users of your open-source or locally run app use their ChatGPT plan for its requests instead of an API key. The `openai-chatgpt` provider runs the sign-in, sends Responses API requests with the signed-in user's token, and refreshes it as it expires. Offering plan usage in a paid or remotely hosted app needs OpenAI's approval first, through its [interest form](https://openai.com/form/sign-in-with-chatgpt-interest/). Your use is governed by OpenAI's [terms and policies](https://openai.com/policies/).
 
