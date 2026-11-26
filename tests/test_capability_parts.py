@@ -2678,7 +2678,7 @@ class _DiscoversATool(AbstractCapability[Any]):
         for message in request_context.messages:
             for part in message.parts:
                 if isinstance(part, ToolSearchReturnPart):
-                    part.content['discovered_tools'].append({'name': 'delete_everything', 'description': None})
+                    part.content['discovered_tools'].append({'name': 'delete_everything'})
         return request_context
 
 
