@@ -303,6 +303,8 @@ jobs:
           LABEL_NAME: ${{ github.event.label.name }}
           EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          EVENT_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           AW_CONTEXT: ${{ github.event.inputs.aw_context }}
           # Must match gh-aw's GH_AW_CALLER_WORKFLOW_ID for this workflow.
           REVIEW_CALL_ID: "${{ github.repository }}/pydantic-ai-pr-review"
@@ -481,6 +483,13 @@ jobs:
               | select((.conclusion // .state) as $c | $c != "SUCCESS" and $c != "SKIPPED" and $c != "NEUTRAL")
               | (.name // .context) ] | join(", ")')
           [ -z "$FAILING" ] || skip "required checks not passing: ${FAILING}"
+
+          # --- Default-branch base ---------------------------------------------
+          # An approval or label requests a review only on a PR into the default branch.
+          if [ "$EVENT_NAME" = 'pull_request_review' ] || [ "$EVENT_NAME" = 'pull_request' ]; then
+            [ "$EVENT_BASE_REF" = "$DEFAULT_BRANCH" ] \
+              || skip "PR #${PR_NUMBER} is based on ${EVENT_BASE_REF}, not ${DEFAULT_BRANCH}"
+          fi
 
           # --- A maintainer already asked for changes --------------------------
           # Piling an AI verdict on top of a human REQUEST_CHANGES adds noise to a

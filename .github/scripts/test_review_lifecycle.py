@@ -80,6 +80,8 @@ gh() {
     payload='{"state":"DISMISSED"}'
   elif [[ "$endpoint" = "repos/$REPO/issues/123/labels"* ]]; then
     payload='{}'
+  elif [ "$endpoint" = "repos/$REPO/collaborators/maintainer/permission" ]; then
+    payload='{"permission":"write"}'
   else
     echo "unexpected gh request: $*" >&2
     return 91
@@ -106,6 +108,8 @@ def run_shell(script: str, tmp_path: Path, **overrides: str) -> subprocess.Compl
         'LABEL_NAME': 'final-review',
         'EVENT_HEAD_REPO': REPO,
         'EVENT_PR_NUMBER': '123',
+        'EVENT_BASE_REF': 'main',
+        'DEFAULT_BRANCH': 'main',
         'REVIEW_PAGES': '[[]]',
         'PULL_JSON': json.dumps({'state': 'open', 'head': {'sha': HEAD}}),
         'GITHUB_OUTPUT': str(tmp_path / 'outputs'),
@@ -121,7 +125,7 @@ def check(name: str = 'check', conclusion: str = 'SUCCESS', required: bool = Tru
     return {'name': name, 'conclusion': conclusion, 'isRequired': required}
 
 
-def pr_page(checks: list[dict[str, object]], *, head: str = HEAD) -> dict[str, object]:
+def pr_page(checks: list[dict[str, object]], *, head: str = HEAD, base: str = 'main') -> dict[str, object]:
     return {
         'data': {
             'repository': {
@@ -130,7 +134,7 @@ def pr_page(checks: list[dict[str, object]], *, head: str = HEAD) -> dict[str, o
                     'isDraft': False,
                     'reviewDecision': 'REVIEW_REQUIRED',
                     'isCrossRepository': False,
-                    'baseRefName': 'main',
+                    'baseRefName': base,
                     'headRefName': 'feature',
                     'headRefOid': head,
                     'commits': {'nodes': [{'commit': {'statusCheckRollup': {'contexts': {'nodes': checks}}}}]},
@@ -204,6 +208,36 @@ def test_required_check_after_first_hundred_contexts_is_seen(tmp_path: Path):
     )
     assert result.returncode == 0, result.stderr
     assert 'eligible=true' in (tmp_path / 'outputs').read_text()
+
+
+@pytest.mark.parametrize(
+    ('event', 'base', 'eligible'),
+    [
+        ('pull_request', 'main', True),
+        ('pull_request', 'release', False),
+        ('pull_request_review', 'main', True),
+        ('pull_request_review', 'release', False),
+        ('workflow_dispatch', 'main', True),
+    ],
+)
+def test_eligibility_requires_a_default_branch_base(tmp_path: Path, event: str, base: str, eligible: bool):
+    approval = {'user': {'login': 'maintainer', 'type': 'User'}, 'state': 'APPROVED', 'commit_id': HEAD}
+    result = run_shell(
+        workflow_script(WORKFLOWS[0], 'eligibility', 'Decide whether to review'),
+        tmp_path,
+        EVENT_NAME=event,
+        EVENT_BASE_REF='' if event == 'workflow_dispatch' else base,
+        REVIEW_STATE='approved',
+        REVIEWER='maintainer',
+        REVIEW_PAGES=json.dumps([[approval]]),
+        AW_CONTEXT=json.dumps({'item_type': 'pull_request', 'item_number': 123}),
+        GRAPHQL_PAGES=json.dumps([pr_page([check()], base=base)]),
+    )
+    assert result.returncode == 0, result.stderr
+    outputs = (tmp_path / 'outputs').read_text()
+    assert f'eligible={str(eligible).lower()}' in outputs
+    if not eligible:
+        assert 'reason=PR #123 is based on release, not main' in outputs
 
 
 @pytest.mark.parametrize(
