@@ -37,7 +37,7 @@ from ._citations import (
 )
 from ._errors import map_api_errors
 from ._model_names import OpenAIModelName
-from ._response_fields import map_usage
+from ._response_fields import add_reasoning_tokens_omitted_from_completion_tokens, map_usage
 from ._settings import OpenAIChatModelSettings
 
 
@@ -140,9 +140,12 @@ class OpenAIStreamedResponse(StreamedResponse):
                 'timestamp': self._provider_timestamp,
             }
 
-        # When continuous_usage_stats is enabled, each chunk contains cumulative usage,
+        # When continuous_usage_stats is enabled or the profile declares it, each chunk contains cumulative usage,
         # so we replace rather than increment to avoid double-counting.
-        cumulative = bool(self._model_settings and self._model_settings.get('openai_continuous_usage_stats'))
+        cumulative = bool(
+            self._model_profile.get('openai_chat_streaming_repeats_usage_totals')
+            or (self._model_settings and self._model_settings.get('openai_continuous_usage_stats'))
+        )
         if chunk.usage is not None or not cumulative:
             self._add_usage(self._map_usage(chunk), reported=chunk.usage is not None, cumulative=cumulative)
 
@@ -404,7 +407,10 @@ class OpenAIStreamedResponse(StreamedResponse):
         return None
 
     def _map_usage(self, response: ChatCompletionChunk) -> usage.RequestUsage:
-        return map_usage(response, self._provider_name, self._provider_url, self.model_name)
+        request_usage = map_usage(response, self._provider_name, self._provider_url, self.model_name)
+        if self._model_profile.get('openai_chat_completion_tokens_omit_reasoning', False):
+            add_reasoning_tokens_omitted_from_completion_tokens(request_usage, response.usage)
+        return request_usage
 
     def _map_finish_reason(
         self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']

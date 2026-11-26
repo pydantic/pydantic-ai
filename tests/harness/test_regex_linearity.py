@@ -79,6 +79,9 @@ RUNTIME_PATTERNS: dict[str, tuple[str, ...]] = {
         "a `DEFAULT_SECRET_PATTERNS` or `DEFAULT_PII_PATTERNS` entry, or the user's `extra`",
     ),
     'permissions/_capability.py::Permissions.__post_init__': ("the user's `ask_commands`",),
+    'playwright/_toolset.py::_without_endpoint_credentials': (
+        'an alternation of the escaped `cdp_url` credential values',
+    ),
     'require_verification/_capability.py::RequireVerification.__post_init__': (
         "a `DEFAULT_VERIFICATION_COMMANDS` entry, or the user's `verification_commands`",
         "a `DEFAULT_EDIT_COMMANDS` entry, or the user's `edit_commands`",

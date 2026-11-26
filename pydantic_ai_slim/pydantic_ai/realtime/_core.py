@@ -31,7 +31,7 @@ from __future__ import annotations as _annotations
 
 from bisect import insort
 from collections import OrderedDict, deque
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal, TypeAlias, assert_never
 
@@ -63,7 +63,9 @@ from ..messages import (
     TextPart,
     TextPartDelta,
     ToolCallPart,
+    ToolPartKind,
     ToolReturnPart,
+    ToolUIVisibility,
 )
 from ..usage import RequestUsage, RunUsage
 from ._lifecycle import (
@@ -453,6 +455,24 @@ class Owed:
     """Which exchange it was owed in; `ExchangeAbandoned` starts the next."""
 
 
+def tool_call_part(
+    event: ToolCall, tool_kinds: Mapping[str, ToolPartKind], ui_visibilities: Mapping[str, ToolUIVisibility]
+) -> ToolCallPart:
+    """The history part for a tool call, stamped with its tool's `ui_visibility` and typed by its `tool_kind`, as the graph does.
+
+    Shared by the core, which records the call, and the session, which runs it, so both build the same part.
+    """
+    return ToolCallPart.narrow_type(
+        ToolCallPart(
+            tool_name=event.tool_name,
+            args=event.args,
+            tool_call_id=event.tool_call_id,
+            ui_visibility=ui_visibilities.get(event.tool_name),
+        ),
+        tool_kind=tool_kinds.get(event.tool_name),
+    )
+
+
 class SessionCore:
     """The session's conversation state; see the module docstring."""
 
@@ -478,6 +498,8 @@ class SessionCore:
         opening: ModelRequest | None = None,
         usage: RunUsage | None = None,
         annotate_response: Callable[[ModelResponse], None] | None = None,
+        tool_kinds: Mapping[str, ToolPartKind] | None = None,
+        tool_ui_visibilities: Mapping[str, ToolUIVisibility] | None = None,
     ) -> None:
         self._model_name = model_name
         self._provider_name = provider_name
@@ -504,6 +526,12 @@ class SessionCore:
             self._opening.append(opening)
         self._annotate_response = annotate_response
         """Adds what instrumentation knows about each response's parts (its tools' OTel metadata) before it's recorded."""
+        self._tool_kinds: Mapping[str, ToolPartKind] = tool_kinds if tool_kinds is not None else {}
+        """The `tool_kind` of each tool that has one, by name, which promotes a call to its typed subclass as the graph does."""
+        self._tool_ui_visibilities: Mapping[str, ToolUIVisibility] = (
+            tool_ui_visibilities if tool_ui_visibilities is not None else {}
+        )
+        """The `ui_visibility` a call to each tool that sets one is stamped with, by name, as the graph stamps it."""
         self.usage = usage if usage is not None else RunUsage()
         """Token usage and requests, as the provider reported them for this session, added to what it held."""
         self.requests = 0
@@ -997,7 +1025,7 @@ class SessionCore:
             return
         if not self._speech_spans_calls:
             self._close_part(response)
-        call = ToolCallPart(tool_name=event.tool_name, args=event.args, tool_call_id=event.tool_call_id)
+        call = tool_call_part(event, self._tool_kinds, self._tool_ui_visibilities)
         response.parts.append(call)
         index = self._take_index()
         self._effects.extend([PartStartEvent(index=index, part=call), PartEndEvent(index=index, part=call)])
@@ -1023,6 +1051,7 @@ class SessionCore:
                         content=INTERRUPTED_TOOL_RETURN_CONTENT,
                         tool_call_id=call_id,
                         tool_kind=call.tool_kind,
+                        ui_visibility=call.ui_visibility,
                         outcome='interrupted',
                     )
                 ]

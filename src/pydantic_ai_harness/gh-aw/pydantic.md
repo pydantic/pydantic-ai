@@ -10,7 +10,7 @@ pre-agent-steps:
       # sys.path, so a repo-local pip.py or pydantic_ai_harness/ cannot be
       # imported in place of the installed packages.
       #
-      # CLAI 2.0's published `-p` command is the headless interface used by this
+      # Pax's published `-p` command is the headless interface used by this
       # engine. The agent hooks and MCP composition require Pydantic AI 2.54, and
       # GITHUB_COPILOT_INTEGRATION_ID below requires 2.59.
       python3 -P -m pip install --quiet --user --disable-pip-version-check "pydantic-ai-harness[coder]==${GH_AW_ENGINE_VERSION}" "pydantic-clai2==${GH_AW_ENGINE_VERSION}" "pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0" "cryptography>=48.0.1"
@@ -23,9 +23,9 @@ pre-agent-steps:
       python3 -P -c "from pydantic_ai_harness import Coder"
 engine:
   id: pydantic-ai
-  version: "0.71.0"
+  version: "0.75.0"
   display-name: Pydantic AI
-  description: CLAI 2 headless runner for Pydantic AI agents with MCP tool support
+  description: Pax headless runner for Pydantic AI agents with MCP tool support
   mcp: true
   # gh-aw's threat-detection job runs only on its built-in engines, so a custom engine
   # names the one it runs on. Without this key gh-aw falls back to `copilot` anyway
@@ -434,7 +434,7 @@ engine:
       const DEFAULT_AGENT = "gh_aw_agent:agent";
 
       // Preload the installed runner before the wrapper resolves PAI_AGENT, which
-      // can append the checkout to sys.path. The wrapper is cached before CLAI 2
+      // can append the checkout to sys.path. The wrapper is cached before Pax
       // resolves -a, so agent code imports once and import failures retain their
       // traceback.
       const LAUNCHER = `import importlib
@@ -825,21 +825,20 @@ engine:
         const mcpConfig = join(process.env.RUNNER_TEMP || "/tmp", "gh-aw", "mcp-config", "mcp-servers.json");
         delete env.GH_AW_MCP_CONFIG;
         if (existsSync(mcpConfig)) env.GH_AW_MCP_CONFIG = mcpConfig;
-        // Log only the origin because endpoint userinfo and query parameters can
+        // Log only endpoint origins because userinfo and query parameters can
         // contain credentials, and workflow run logs are not private.
-        const otlpEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
-        let otlpOrigin = "";
-        if (otlpEndpoint) {
+        const originForLog = url => {
           try {
-            otlpOrigin = new URL(otlpEndpoint).origin;
+            return new URL(url).origin;
           } catch {
-            otlpOrigin = "(unparsable)";
+            return "(unparsable)";
           }
-        }
+        };
+        const otlpEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
         log(
-          `provider=${configuredBaseUrl ? "(PAI_BASE_URL)" : provider} model=${model} baseUrl=${baseUrl}` +
+          `provider=${configuredBaseUrl ? "(PAI_BASE_URL)" : provider} model=${model} baseUrl=${originForLog(baseUrl)}` +
             (configuredAgent ? ` agent=${configuredAgent}` : "") +
-            (otlpOrigin ? ` otlp=${otlpOrigin}` : "")
+            (otlpEndpoint ? ` otlp=${originForLog(otlpEndpoint)}` : "")
         );
         // The target is passed twice on purpose: once for LAUNCHER, which imports it
         // and hands the CLI a module already in sys.modules, and once as the `-a`
@@ -997,7 +996,7 @@ engine:
 <!--
 # Pydantic AI
 
-Shared engine definition for CLAI 2 headless execution. Import this file and set
+Shared engine definition for Pax headless execution. Import this file and set
 `engine: id: pydantic-ai`; gh-aw v1.0.1 or newer with the protected session capture
 contract described in `README.md` is required.
 

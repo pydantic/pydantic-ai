@@ -7,7 +7,8 @@ from datetime import date
 from typing import Annotated
 
 import pytest
-from pydantic import BaseModel, ConfigDict, Field, Json, SecretStr, computed_field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, Json, SecretStr, computed_field, model_validator, with_config
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 from render.workflows import TaskContext, Workflows
 from typing_extensions import TypedDict
 
@@ -674,3 +675,113 @@ async def test_validator_that_mutates_its_input_runs_once_in_the_task() -> None:
     assert await run_agent_in_task(agent, runtime, RecordingTaskContext()) == 'done'
     # The model's arguments were folded in place, so this call keeps the dump and loses `opts` as on main (#13440).
     assert seen == [Folded(price=6, qty=1), (Folded(price=6, qty=1), {})]
+
+
+class Room(BaseModel):
+    name: str = Field(alias='roomName')
+    max_price: float | None = Field(None, alias='maxPrice')
+
+
+@pydantic_dataclass
+class Guest:
+    name: Annotated[str, Field(alias='guestName')]
+
+
+def nested_aliased_argument_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    del info
+    if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+        return ModelResponse(parts=[TextPart('nested aliased arguments arrived')])
+    args = {'room': {'roomName': 'A1', 'maxPrice': 10}, 'guest': {'guestName': 'Ada'}}
+    return ModelResponse(parts=[ToolCallPart('book', args, tool_call_id='book')])
+
+
+async def test_nested_aliased_function_arguments_cross_the_json_boundary_by_alias() -> None:
+    """By Python name, the required `roomName` would fail revalidation and `maxPrice` would revalidate to its default.
+
+    Not a VCR test: the claim is about the arguments crossing into the chained task run, and no provider request
+    is involved.
+    """
+    seen: list[tuple[str, float | None, str]] = []
+    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
+    agent = Agent[None, str](
+        FunctionModel(nested_aliased_argument_model),
+        name='nested-aliased-arguments',
+        deps_type=type(None),
+        capabilities=[runtime],
+    )
+
+    @agent.tool_plain
+    async def book(room: Room, guest: Guest) -> str:
+        seen.append((room.name, room.max_price, guest.name))
+        return 'ok'
+
+    async def run_agent_impl(ctx: TaskContext) -> str:
+        del ctx
+        return (await agent.run('book A1 for Ada')).output
+
+    run_agent = runtime.task(run_agent_impl)
+    pending = run_agent.func(RecordingTaskContext())
+    assert inspect.isawaitable(pending)
+
+    assert await pending == 'nested aliased arguments arrived'
+    assert seen == [('A1', 10.0, 'Ada')]
+
+
+@with_config(ConfigDict(validate_by_name=True))
+class NamedVenue(TypedDict):
+    room: Annotated[str, Field(alias='roomName')]
+
+
+def typed_dict_aliased_argument_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    del info
+    returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+    if returns:
+        return ModelResponse(parts=[TextPart(', '.join(f'{part.tool_name}: {part.outcome}' for part in returns))])
+    args = {'venue': {'roomName': 'A1'}, 'guests': 2}
+    return ModelResponse(
+        parts=[
+            ToolCallPart('book_venue', args, tool_call_id='venue'),
+            ToolCallPart('book_named_venue', args, tool_call_id='named-venue'),
+        ]
+    )
+
+
+async def test_typed_dict_aliased_fields_need_validate_by_name_to_cross_the_json_boundary() -> None:
+    """A validated `TypedDict` parameter is a plain dict keyed by Python name, so it crosses the boundary that way.
+
+    The serializer for the arguments sees no field types, so it can't write the `TypedDict`'s aliases. After the
+    boundary, the tool's schema reads `roomName`, so the argument revalidates only when the `TypedDict` also
+    validates by name.
+
+    Not a VCR test: the claim is about the arguments crossing into the chained task run, and no provider request
+    is involved.
+    """
+    seen: list[str] = []
+    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
+    agent = Agent[None, str](
+        FunctionModel(typed_dict_aliased_argument_model),
+        name='typed-dict-aliased-arguments',
+        deps_type=type(None),
+        capabilities=[runtime],
+    )
+
+    # Revalidation rejects the by-name `venue`, so this tool never runs.
+    @agent.tool_plain
+    async def book_venue(venue: Venue, guests: int) -> str:  # pragma: no cover
+        return venue['room']
+
+    @agent.tool_plain
+    async def book_named_venue(venue: NamedVenue, guests: int) -> str:
+        seen.append(venue['room'])
+        return 'ok'
+
+    async def run_agent_impl(ctx: TaskContext) -> str:
+        del ctx
+        return (await agent.run('book A1')).output
+
+    run_agent = runtime.task(run_agent_impl)
+    pending = run_agent.func(RecordingTaskContext())
+    assert inspect.isawaitable(pending)
+
+    assert await pending == 'book_venue: retried, book_named_venue: success'
+    assert seen == ['A1']

@@ -73,6 +73,7 @@ from pydantic_ai.output import NativeOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers import Provider
 from pydantic_ai.providers.gateway import gateway_provider
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ..conftest import no_leaked_tasks, try_import
 from ..durable_exec.responses_websocket import (
@@ -119,7 +120,6 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed')
-READINESS_WAIT_TIMEOUT = 10
 WEBSOCKET: OpenAIResponsesModelSettings = {'openai_transport': 'websocket'}
 
 with try_import() as bedrock_mantle_imports_successful:

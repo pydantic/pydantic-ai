@@ -11,6 +11,7 @@ from uuid import UUID
 
 import pytest
 from pydantic import BaseModel, ConfigDict, Field, Json, JsonValue, SecretStr, computed_field, model_validator
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
@@ -751,3 +752,36 @@ def test_mcp_discovery_instructions_and_calls(durable_worker: 'InMemoryWorker') 
         'mcp__mcp_server__calc.get_instructions',
         'mcp__model.request',
     ]
+
+
+def test_nested_aliased_tool_arguments_cross_the_activity_input_by_alias(durable_worker: 'InMemoryWorker') -> None:
+    """By Python name, the required `roomName` would fail revalidation and `maxPrice` would revalidate to its default.
+
+    Not a VCR test: the claim is about the arguments crossing into the activity input, and no provider request is
+    involved.
+    """
+
+    class Room(BaseModel):
+        name: str = Field(alias='roomName')
+        max_price: float | None = Field(None, alias='maxPrice')
+
+    @pydantic_dataclass
+    class Guest:
+        name: Annotated[str, Field(alias='guestName')]
+
+    observed: list[tuple[str, float | None, str]] = []
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        args = {'room': {'roomName': 'A1', 'maxPrice': 10}, 'guest': {'guestName': 'Ada'}}
+        return ModelResponse(parts=[ToolCallPart('book', args)] if len(messages) == 1 else [TextPart('done')])
+
+    agent = Agent(FunctionModel(model), name='nested-aliased-args', capabilities=[AzureDurableTaskDurability()])
+
+    @agent.tool_plain
+    def book(room: Room, guest: Guest) -> str:
+        observed.append((room.name, room.max_price, guest.name))
+        return 'booked'
+
+    with registered_agent(durable_worker, agent):
+        assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
+    assert observed == [('A1', 10.0, 'Ada')]

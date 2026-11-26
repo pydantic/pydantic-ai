@@ -1,0 +1,83 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "232"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.1-flash-image
+        generation_config:
+          thinking_level: high
+          thinking_summaries: auto
+        store: false
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: What is 2+2? Reply with just the number.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=1351
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 88
+          total_input_tokens: 14
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 14
+          total_cached_tokens: 0
+          total_output_tokens: 1
+          total_tool_use_tokens: 0
+          total_thought_tokens: 73
+          initial_input_tokens: 14
+        created: 2026-11-19T01:16:30Z
+        updated: 2026-11-19T01:16:30Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            Ev4CCvsCAWkUfRMh68Ha/RdwILLwNWtoW7vM08ApfnO5eK7Uh7s01J/hBMezSlRqm4nfR+tcwHgu9YZrkri93ex2Mib1ZMUtHdU2LfgTbmNuY1Rk6BXJ9HWg3Zo1WDVPYwW3dhGaB7I1bIi6kH4HDZO/q0adDrSMyFJQodoQKUin1+uCN7A+MMTb7AqTOC0usCEKRP9S/TBWBXUemqZT7lfVUKVTDeUZ1FtVTY5dRH1rey2yTWfczqkl3otXGSxx/OoBa56t3G5w2OifylXg/F/Tg16+eJPgV32hVwKddPNt/bz2P8XP8j6TVFoTcTdq1O1gYq9dwvoy+WGIdm1bhqDCJGZlux7AtGdOA0EDJrIPrlM7s2pDMF8Hv+P69mNjQRoM7KaOMARdT6lNVgsMxBzIZGes3rafCJWyE+d7VTMXIeIYC3BBJGjBFsb9eaS6LWQX42x7b5xsVVa19U4JoxIEOuungd9AONpXArq6xPGZey7+IsXg7GpuVasMCqNeIw==
+          summary:
+          - text: |+
+              **Calculating the Answer**
+
+              I've analyzed the user's request, focusing on the core task: calculating 2 + 2 and extracting the numerical result. I've performed the calculation, which is straightforward. The constraint to provide *only* the number is now fully considered, so the final output is formulated as "4".
+
+
+            type: text
+          type: thought
+        - content:
+          - text: "4"
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.1-flash-image
+  recorded_at: 2026-11-19T01:16:30.366632+00:00

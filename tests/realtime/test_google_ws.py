@@ -1052,12 +1052,14 @@ def test_profile_allow_seeding() -> None:
         supports_webrtc=False,
         supports_seeding_images=True,
         supports_seeding_audio=False,
+        supports_appending_voice_instructions=False,
         supports_thinking=True,  # native-audio and 3.x Live models take a thinking config
         # The session's choice, via the `async_tool_calls` setting, which is off by default.
         async_tool_call_mode='optional',
         supports_async_tool_calls=True,  # deprecated, derived from `async_tool_call_mode`
         # Gemini Live renders an opted-in return schema natively (the declaration's `response`).
         supports_tool_return_schema=True,
+        supports_tool_updates=False,
         # Search grounding only: Live models reject or silently ignore code execution and URL context.
         supported_native_tools=frozenset({WebSearchTool}),
         # Gemini Live never reports user speech start/end; a UI must key off interruption events.

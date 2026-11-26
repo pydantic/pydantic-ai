@@ -61,6 +61,7 @@ from pydantic_graph._utils import (
 from pydantic_graph.exceptions import UnsupportedEventLoopError
 from pydantic_graph.util import get_callable_name
 
+from ._json_schema_keywords import iter_subschemas
 from .exceptions import UserError
 
 AbstractSpan = AbstractSpan
@@ -1120,8 +1121,10 @@ def get_function_type_hints(func: Any, *, include_keys: set[str] | None = None) 
     return _typing_extra.get_function_type_hints(func, include_keys=include_keys)
 
 
-def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, str]) -> None:
+def _update_mapped_json_schema_refs(s: dict[str, Any] | bool, name_mapping: dict[str, str]) -> None:
     """Update $refs in a schema to use the new names from name_mapping."""
+    if isinstance(s, bool):
+        return
     if '$ref' in s:
         ref = s['$ref']
         if ref.startswith('#/$defs/'):  # pragma: no branch
@@ -1129,29 +1132,8 @@ def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, s
             new_name = name_mapping.get(original_name, original_name)
             s['$ref'] = f'#/$defs/{new_name}'
 
-    for subschema in _mapped_json_subschemas(s):
+    for subschema in iter_subschemas(s):
         _update_mapped_json_schema_refs(subschema, name_mapping)
-
-
-def _mapped_json_subschemas(s: dict[str, Any]) -> Iterator[dict[str, Any]]:
-    """The subschemas directly under `s` whose `$ref`s `_update_mapped_json_schema_refs` updates."""
-    # Handle keywords whose values map names to schemas.
-    for keyword in ['properties', 'patternProperties', 'dependentSchemas']:
-        if keyword in s:
-            props: dict[str, dict[str, Any]] = s[keyword]
-            yield from (prop for prop in props.values() if isinstance(prop, dict))
-
-    # Handle single-subschema keywords, including conditionals and array containment.
-    for keyword in ['items', 'additionalProperties', 'propertyNames', 'not', 'contains', 'if', 'then', 'else']:
-        subschema = s.get(keyword)
-        if isinstance(subschema, dict):
-            yield subschema
-
-    # Handle schema arrays, including the legacy tuple form of items.
-    for keyword in ['prefixItems', 'anyOf', 'oneOf', 'allOf', 'items']:
-        keyword_items: dict[str, Any] | list[dict[str, Any] | bool] | None = s.get(keyword)
-        if isinstance(keyword_items, list):
-            yield from (item for item in keyword_items if isinstance(item, dict))
 
 
 def _unique_def_name(name: str, schema: dict[str, Any], all_defs: dict[str, dict[str, Any]]) -> str:

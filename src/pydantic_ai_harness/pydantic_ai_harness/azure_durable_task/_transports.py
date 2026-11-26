@@ -132,7 +132,9 @@ class _Call:
 
 
 _CALL = TypeAdapter(_Call)
-_TOOL_ARGS = TypeAdapter(dict[str, Any])
+# By alias, so nested models and pydantic dataclasses revalidate through the tool's alias-reading schema.
+# This adapter sees no field types, so a `TypedDict` or stdlib dataclass outside a model still ships by Python name.
+_FUNCTION_TOOL_ARGS = TypeAdapter(dict[str, object])
 
 
 def function_transport(
@@ -142,7 +144,7 @@ def function_transport(
         tool = params.tool
         assert tool is not None
         # What the activity loads: `_Transport.dump` writes this again unchanged, as it is JSON already.
-        tool_args = _TOOL_ARGS.dump_python(params.tool_args, mode='json', round_trip=True)
+        tool_args = _FUNCTION_TOOL_ARGS.dump_python(params.tool_args, mode='json', by_alias=True, round_trip=True)
         return _Call(
             name=params.name,
             tool_args=tool_args,

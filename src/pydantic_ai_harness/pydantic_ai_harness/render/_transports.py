@@ -6,6 +6,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
+from pydantic import TypeAdapter
+
 from pydantic_ai.durable_exec import DurabilityEngineSpec, ParameterTransports
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, InstructionPart, ModelMessage, ModelResponse
@@ -43,6 +45,7 @@ from ._compat import (
     prepare_function_call_params,
     raw_tool_args_for_unit,
     resolve_mcp_tool_for_definition,
+    to_json_object,
 )
 
 Instructions = str | InstructionPart | Sequence[str | InstructionPart] | None
@@ -62,6 +65,10 @@ __all__ = (
 )
 
 AgentDepsT = TypeVar('AgentDepsT')
+
+# By alias, so nested models and pydantic dataclasses revalidate through the tool's alias-reading schema.
+# This adapter sees no field types, so a `TypedDict` or stdlib dataclass outside a model still ships by Python name.
+_FUNCTION_TOOL_ARGS = TypeAdapter(dict[str, object])
 
 
 @dataclass(kw_only=True)
@@ -130,7 +137,7 @@ class RenderFunctionCallTransport(Generic[AgentDepsT], RenderJSONTransport[Tools
         tool = params.tool
         if tool is None:  # pragma: no cover - core resolves tools before dispatch
             raise ValueError(f'Function tool {params.name!r} has no resolved definition.')
-        tool_args = dump_json_object(dict[str, object], params.tool_args)
+        tool_args = to_json_object(_FUNCTION_TOOL_ARGS.dump_python(params.tool_args, mode='json', by_alias=True))
         payload = _CallToolPayload(
             name=params.name,
             tool_args=tool_args,
