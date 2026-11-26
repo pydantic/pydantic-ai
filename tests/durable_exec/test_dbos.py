@@ -5973,6 +5973,61 @@ class _OverrideAddedOperation(AbstractCapability[object]):
         self.calls += 1
 
 
+@dataclass
+class _ChecksTheResponseDurably(AbstractCapability[object]):
+    """Rewrites the model's response from an `after_model_request` that runs as a durable step."""
+
+    @durable_operation('after_model_request')
+    async def after_model_request(
+        self, ctx: RunContext[object], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        return replace(response, parts=[TextPart(f'Checked: {response.text}')])
+
+
+@dataclass
+class _HandsOnTheResponseDurably(AbstractCapability[object]):
+    """Hands the model's response on unchanged from an `after_model_request` that runs as a durable step."""
+
+    @durable_operation('after_model_request')
+    async def after_model_request(
+        self, ctx: RunContext[object], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        return response
+
+
+async def test_dbos_durability_a_durable_after_model_request_returns_its_response(dbos: DBOS) -> None:
+    """The step takes the request context but returns a response, which comes back as the response."""
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_after_model_request_rewrites',
+        capabilities=[_ChecksTheResponseDurably(id='checks_the_response'), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await run_agent() == snapshot('Checked: Echo: Hello')
+
+
+async def test_dbos_durability_a_lowered_durable_after_model_request_can_hand_on_the_response(dbos: DBOS) -> None:
+    """A capability below operator authority whose durable `after_model_request` hands the response on unchanged."""
+    capability = _HandsOnTheResponseDurably(id='hands_on_the_response').with_authority('user')
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_after_model_request_hands_on',
+        capabilities=[capability, DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await run_agent() == snapshot('Echo: Hello')
+
+
 async def test_dbos_durability_override_capabilities_follow_the_per_run_rules(dbos: DBOS) -> None:
     """A capability an override adds has no registered steps, so inside a workflow it is refused like a per-run one."""
     agent = Agent(_durability_fn_model, name='durability_override_added', capabilities=[DBOSDurability()])

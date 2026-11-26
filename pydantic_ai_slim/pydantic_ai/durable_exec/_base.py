@@ -693,9 +693,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                                 params=semantic_params,
                                 model_request_context=request_context,
                             )
-                            operation_result = ModelRequestContextProjection.from_context(result)
-                            if result.model is not model:
-                                operation_result.model_id = self._find_registered_model_id_for_hook(result.model)
+                            operation_result = self._model_request_hook_result(declaration, result, model)
                         return CapabilityOperationResult(
                             value=operation_result, usage_delta=durable_ctx.usage - usage_before
                         )
@@ -807,23 +805,46 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 CapabilityOperationParams(run_context=ctx, arguments=arguments, model_id=model_id)
             ),
         )
-        if declaration.model_request_parameter is not None:
-            projection = cast(ModelRequestContextProjection, result.value)
-            inbound = cast(ModelRequestContextProjection, arguments[declaration.model_request_parameter])
-            resolved_model = None
-            if projection.model_id != inbound.model_id:
-                resolved_model = await self._resolve_model_for_request(projection.model_id, ctx)
-                registered, _ = self._registered_model_id(resolved_model)
-                self._record_resolved_request_model(resolved_model, projection.model_id, registered=registered)
-            value: Any = _ResolvedModelRequestContext(projection=projection, model=resolved_model)
-        else:
-            value = result.value
+        value = await self._operation_value(declaration, arguments, result.value, ctx)
         usage_delta = ctx.usage - usage_before
         if not usage_delta.has_values() and not usage_delta.unmeasured_requests:
             # Recorded, not incremented: the operation accumulated this delta across the durable
             # boundary, where the activity's context can't reach the spans open back here.
             _usage_attribution.record_usage(ctx.usage, result.usage_delta)
         return value
+
+    def _model_request_hook_result(self, declaration: CapabilityMethodDeclaration, result: Any, model: Model) -> Any:
+        """What a durable model request hook sends back across the boundary.
+
+        The request context it returned, projected, or any other value, such as the response `after_model_request`
+        returns, as it is.
+        """
+        if not declaration.returns_model_request_context:
+            return result
+        projection = ModelRequestContextProjection.from_context(result)
+        if result.model is not model:
+            projection.model_id = self._find_registered_model_id_for_hook(result.model)
+        return projection
+
+    async def _operation_value(
+        self,
+        declaration: CapabilityMethodDeclaration,
+        arguments: dict[str, Any],
+        value: Any,
+        ctx: RunContext[AgentDepsT],
+    ) -> Any:
+        """The value a durable operation returned, with a request context it returned resolved back to its model."""
+        parameter = declaration.model_request_parameter
+        if parameter is None or not declaration.returns_model_request_context:
+            return value
+        projection = cast(ModelRequestContextProjection, value)
+        inbound = cast(ModelRequestContextProjection, arguments[parameter])
+        resolved_model = None
+        if projection.model_id != inbound.model_id:
+            resolved_model = await self._resolve_model_for_request(projection.model_id, ctx)
+            registered, _ = self._registered_model_id(resolved_model)
+            self._record_resolved_request_model(resolved_model, projection.model_id, registered=registered)
+        return _ResolvedModelRequestContext(projection=projection, model=resolved_model)
 
     def _check_bindable(self) -> None:
         """Validate that the capability can be bound in the current context."""
