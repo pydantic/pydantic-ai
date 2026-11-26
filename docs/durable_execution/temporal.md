@@ -738,6 +738,8 @@ The Temporal server decides when to suggest continuing, based on the history's e
 
 As an async function, yours can first [execute an activity](https://docs.temporal.io/develop/python/core-application#activity-execution), for example to store the history somewhere else and pass a reference instead. It can also return without calling `workflow.continue_as_new()` to wait for a condition only your application can judge; it is then called again before the next model request. Setting `continue_as_new=None`, the default, leaves the feature disabled.
 
+When the run continues, the events it emitted for that model request, like the [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] of [queued messages](../message-history.md#injecting-messages-mid-run) the request delivers, still reach your `on_event` listeners, `event_stream_handler` and `event_stream_topic` from the execution that emitted them. The new execution doesn't emit them again.
+
 !!! warning "`continue_as_new` arguments share Temporal's per-payload size limit"
     Like activity and workflow inputs, each argument passed to `continue_as_new` counts against Temporal's per-payload size limit (see [Large Payloads](#large-payloads)). Bound the history you carry, for example by compacting it with a history-processing capability like [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory], or [offload large payloads to your own storage](#offloading-payloads-to-your-own-storage).
 

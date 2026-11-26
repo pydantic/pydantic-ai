@@ -100,6 +100,10 @@ _DURABLE_COUNT_TOKENS_PATCH = 'pydantic_ai:durable_count_tokens'
 _PUBLISH_BEFORE_CONTINUE_AS_NEW_PATCH = 'pydantic_ai:publish_buffered_events_before_continue_as_new'
 """`workflow.patched()` ID marking histories in which the run's buffered events were published before `continue_as_new`."""
 
+_DELIVER_ON_CONTINUE_AS_NEW_PATCH = 'pydantic_ai:deliver_buffered_events_on_continue_as_new'
+"""`workflow.patched()` ID marking histories in which the run's buffered events reached its listeners and
+`event_stream_handler` as it continued as new."""
+
 _DEFAULT_NON_RETRYABLE_MODEL_ERRORS: tuple[type[ModelAPIError], ...] = (
     ModelRequestRejectedError,
     ModelQuotaExceededError,
@@ -784,7 +788,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             and workflow.info().is_continue_as_new_suggested()
         ):
             await self._publish_buffered_events(ctx)
-            await await_maybe(self.continue_as_new(ctx))
+            try:
+                await await_maybe(self.continue_as_new(ctx))
+            except workflow.ContinueAsNewError:
+                await self._deliver_buffered_events(ctx)
+                raise
         return await super().before_model_request(ctx, request_context)
 
     async def _publish_buffered_events(self, ctx: RunContext[AgentDepsT]) -> None:
@@ -807,6 +815,35 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             dispatched = ctx._event_stream_replacements.get(id(event), event)  # pyright: ignore[reportPrivateUsage]
             if _publishes_from_workflow(topic, dispatched):
                 publish_agent_event_ahead(topic.name, dispatched)
+
+    async def _deliver_buffered_events(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Dispatch the buffered events to the run's listeners and `event_stream_handler` as it continues as new.
+
+        This execution's stream never reaches them, and the successor's history already holds the content they
+        report, so it never emits them again. Unlike the topic, whose state the continuation carries, neither
+        consumer has to see them before `continue_as_new` runs, so a run that declines still delivers them at their
+        stream position.
+        """
+        buffered = list(ctx._event_stream_buffer or ())  # pyright: ignore[reportPrivateUsage]
+        handler = self._effective_event_stream_handler()
+        root = ctx.root_capability
+        # Events dispatched immediately, or ahead by `_publish_buffered_events`, already reached their listeners.
+        unheard = {
+            id(event)
+            for event in buffered
+            if root is not None and root.listens_to(event) and id(event) not in ctx._pending_immediate_dispatches  # pyright: ignore[reportPrivateUsage]
+        }
+        if not (unheard or (handler is not None and buffered)) or not workflow.patched(
+            _DELIVER_ON_CONTINUE_AS_NEW_PATCH
+        ):
+            return
+        for event in buffered:
+            if id(event) in unheard:
+                await dispatch_event_ahead(ctx, event)
+            dispatched = ctx._event_stream_replacements.get(id(event), event)  # pyright: ignore[reportPrivateUsage]
+            # As at the stream position: model events reached the handler from the activity that produced them.
+            if handler is not None and not isinstance(dispatched, MODEL_RESPONSE_STREAM_EVENT_TYPES):
+                await self._dispatch_event_stream_event(ctx, dispatched)
 
     async def _cancel_suspended_response_without_run_context(
         self, model_id: str | None, response: ModelResponse

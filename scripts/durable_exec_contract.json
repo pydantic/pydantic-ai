@@ -595,6 +595,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.__init__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability._deliver_buffered_events",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability._publish_buffered_events"
       ]
     },
@@ -610,6 +611,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.__init__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability._deliver_buffered_events",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability._publish_buffered_events"
       ]
     },
@@ -665,6 +667,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.__init__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability._deliver_buffered_events",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability._publish_buffered_events"
       ]
     },
@@ -1132,6 +1135,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.restore",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace._ensure",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability.prepare_tools",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability._deliver_buffered_events",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability.wrap_run"
       ]
     },
@@ -2850,6 +2854,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::durable_operation.decorate.decorated",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::recover_capability",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::restore_telemetry_mcp_url_ids"
+      ]
+    },
+    "AbstractCapability.listens_to": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability._deliver_buffered_events"
       ]
     },
     "AbstractCapability.on_run_error": {
