@@ -308,7 +308,8 @@ def _sleeping_agent(
 ) -> Agent[None, str]:
     """An agent whose model requests stream when `stream` is set, as an event stream handler makes them."""
     capabilities: list[AbstractCapability[None]] = [ProcessEventStream(_ignore_events)] if stream else []
-    return Agent(model, name='sleeping', capabilities=[*capabilities, durability])
+    capabilities.append(durability)
+    return Agent(model, name='sleeping', capabilities=capabilities)
 
 
 _RESUMED_HISTORY: list[ModelMessage] = [
