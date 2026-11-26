@@ -152,24 +152,47 @@ def test_rows_split_a_word_longer_than_the_row() -> None:
     # A wide character moves with its word.
     buffer.replace('a bcde界')
     assert plain_rows(buffer, width=6) == ['a ', 'bcde界', ' ']
+    # A word too long for any row splits where it is, even when it follows a place to break.
+    buffer.replace(' bcdef界')
+    assert plain_rows(buffer, width=6) == [' bcdef', '界 ']
     # A new line starts with no place to break, whatever the line above it held.
     buffer.replace('a b\ncccc')
     assert plain_rows(buffer, width=3) == ['a b', 'ccc', 'c ']
+    buffer.cursor = 3
+    assert buffer.rows(width=3, limit=10) == ['a b', '\x1b[7m \x1b[27m', 'ccc', 'c']
 
 
 @pytest.mark.parametrize(
     ('text', 'width', 'expected'),
     [
-        pytest.param('hello world', 5, ['hello', ' worl', 'd '], id='space-that-overflowed'),
-        pytest.param('  abc', 4, ['  ab', 'c '], id='indent'),
-        pytest.param(' bcde界', 6, [' bcde', '界 '], id='wide-character'),
-        pytest.param('a\n bcd', 3, ['a', ' bc', 'd '], id='indent-after-a-newline'),
+        pytest.param('hello world', 5, ['hello', 'world', ' '], id='space'),
+        pytest.param('hello   world', 5, ['hello', 'world', ' '], id='several-spaces'),
+        pytest.param('abc\tdef', 5, ['abc', 'def '], id='tab-that-only-partly-fits'),
+        pytest.param('hello \nworld', 5, ['hello', 'world', ' '], id='space-before-a-newline'),
+        pytest.param('ab cd e', 5, ['ab cd', 'e '], id='space-after-a-row-with-a-break'),
     ],
 )
-def test_rows_never_leave_leading_blanks_on_a_row_of_their_own(text: str, width: int, expected: list[str]) -> None:
+def test_rows_do_not_paint_a_blank_that_overflows(text: str, width: int, expected: list[str]) -> None:
     buffer = PromptBuffer()
     buffer.insert(text)
     assert plain_rows(buffer, width=width) == expected
+
+
+def test_rows_paint_an_overflowing_blank_under_the_cursor() -> None:
+    buffer = PromptBuffer()
+    buffer.insert('hello world')
+    buffer.cursor = 5
+    # The word after it still moves down whole, off the cursor's row.
+    assert buffer.rows(width=5, limit=10) == ['hello', '\x1b[7m \x1b[27m', 'world']
+    # Spaces typed at the edge leave the cursor at the start of the next row.
+    buffer.replace('hello  ')
+    assert buffer.rows(width=5, limit=10) == ['hello', '\x1b[7m \x1b[27m']
+
+
+def test_rows_break_after_an_indent_that_leaves_no_room() -> None:
+    buffer = PromptBuffer()
+    buffer.insert('  abcd\n e')
+    assert plain_rows(buffer, width=4) == ['  ', 'abcd', ' e ']
 
 
 def test_rows_keep_a_word_in_place_when_only_the_cursor_overflows() -> None:
