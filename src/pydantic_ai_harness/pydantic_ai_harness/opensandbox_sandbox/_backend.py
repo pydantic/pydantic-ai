@@ -225,8 +225,8 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         credential_proxy: The SDK's `CredentialProxyConfig` for a new sandbox, passed to `Sandbox.create`
             unchanged. `CredentialProxyConfig(enabled=True)` has the server add the tokens in the sandbox's
             `credential_vault` to matching requests as they leave the sandbox. Ignored on attach.
-        volumes: SDK `Volume` objects for a new sandbox, passed to `Sandbox.create` unchanged. `mount_path`
-            values must not overlap the sandbox root or each other. Ignored on attach.
+        volumes: The SDK's `Volume` mounts for a new sandbox, passed to `Sandbox.create` unchanged. Ignored on
+            attach.
         secure_access: Ask the server to turn on Secure Access for a new sandbox, so its ingress gateway and
             proxy require the sandbox's token. Requires Kubernetes with an ingress gateway; Docker rejects `True`.
             Ignored on attach.
@@ -275,10 +275,10 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         if network_policy is None and not allow_internet_access:
             network_policy = NetworkPolicy(defaultAction='deny')
         self._network_policy = network_policy
-        self._sandbox_timeout = sandbox_timeout
         self._credential_proxy = credential_proxy
         self._volumes = list(volumes) if volumes is not None else None
         self._secure_access = secure_access
+        self._sandbox_timeout = sandbox_timeout
         self._sandbox: Sandbox | None = None
         self._resolved_working_dir: str | None = None
         self._lock = anyio.Lock()

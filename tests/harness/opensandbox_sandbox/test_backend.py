@@ -21,7 +21,7 @@ import httpx
 import pytest
 from opensandbox.config import ConnectionConfig
 from opensandbox.exceptions import SandboxApiException, SandboxConnectionException, SandboxTimeoutException
-from opensandbox.models.sandboxes import CredentialProxyConfig, Host, NetworkPolicy, NetworkRule, Volume
+from opensandbox.models.sandboxes import PVC, CredentialProxyConfig, NetworkPolicy, NetworkRule, Volume
 
 from pydantic_ai import RunContext
 from pydantic_ai.exceptions import UserError
@@ -174,20 +174,38 @@ class TestNetworkPolicy:
         [sandbox] = server.sandboxes.values()
         assert sandbox.network_policy == expected
         assert sandbox.credential_proxy is None
+        assert sandbox.volumes is None
 
-    async def test_network_policy_and_credential_proxy_pass_through(
-        self, server: FakeOpenSandbox, working_dir: str
-    ) -> None:
+    async def test_creation_options_pass_through(self, server: FakeOpenSandbox, working_dir: str) -> None:
         network_policy = NetworkPolicy(
             defaultAction='deny', egress=[NetworkRule(action='allow', target='api.github.com')]
         )
         backend = _create(
-            server, working_dir, network_policy=network_policy, credential_proxy=CredentialProxyConfig(enabled=True)
+            server,
+            working_dir,
+            network_policy=network_policy,
+            credential_proxy=CredentialProxyConfig(enabled=True),
+            volumes=[Volume(name='workspace', pvc=PVC(claimName='project-42'), mountPath='/workspace')],
         )
         await backend.working_dir()
         [sandbox] = server.sandboxes.values()
         assert sandbox.network_policy == network_policy.model_dump(by_alias=True, exclude_none=True)
         assert sandbox.credential_proxy == {'enabled': True}
+        assert sandbox.volumes == [
+            {
+                'name': 'workspace',
+                'mountPath': '/workspace',
+                'pvc': {
+                    'claimName': 'project-42',
+                    'createIfNotExists': True,
+                    'deleteOnSandboxTermination': False,
+                    'storageClass': None,
+                    'storage': None,
+                    'accessModes': None,
+                },
+                'readOnly': False,
+            }
+        ]
 
 
 class TestSecureAccess:
@@ -230,39 +248,6 @@ class TestSecureAccess:
                 f'http://execd.{DOMAIN}/{backend.ref.id}/proxy/{fake_opensandbox.EXECD_PORT}/ping'
             )
         assert response.status_code == 401
-
-    async def test_create_forwards_volumes_to_sandbox_create(self, server: FakeOpenSandbox, working_dir: str) -> None:
-        volumes = [
-            Volume(name='cache', host=Host(path='/srv/cache'), mountPath='/cache', readOnly=True),
-            Volume(name='data', host=Host(path='/srv/data'), mountPath='/data', readOnly=True),
-        ]
-        backend = _create(server, working_dir, volumes=volumes)
-        await backend.run(['true'])
-        [sandbox] = server.sandboxes.values()
-        assert sandbox.volumes == [
-            {'name': 'cache', 'host': {'path': '/srv/cache'}, 'mountPath': '/cache', 'readOnly': True},
-            {'name': 'data', 'host': {'path': '/srv/data'}, 'mountPath': '/data', 'readOnly': True},
-        ]
-
-    async def test_create_without_volumes_keeps_request_unchanged(
-        self, server: FakeOpenSandbox, working_dir: str
-    ) -> None:
-        backend = _create(server, working_dir)
-        await backend.run(['true'])
-        [sandbox] = server.sandboxes.values()
-        assert sandbox.volumes is None
-
-    async def test_ref_attach_does_not_create_sandbox(self, server: FakeOpenSandbox, working_dir: str) -> None:
-        volumes = [Volume(name='cache', host=Host(path='/srv/cache'), mountPath='/cache', readOnly=True)]
-        creator = _create(server, working_dir, volumes=volumes)
-        await creator.run(['true'])
-        ref = creator.ref
-        assert ref is not None
-        attached = OpenSandboxBackend(ref=ref, connection=server.connection, working_dir=working_dir)
-        await attached.run(['true'])
-        assert attached.ref is not None
-        assert attached.ref.id == ref.id
-        assert len(server.sandboxes) == 1
 
 
 class TestLifecycle:

@@ -293,19 +293,19 @@ Before you rely on it:
 
 ## Mount volumes into the sandbox
 
-Pass `volumes` to `OpenSandboxBackend` to mount host directories, PVCs or OSSFS buckets into a new sandbox. It takes the SDK's own `Volume` objects and passes them on to `Sandbox.create` unchanged, so the mounts exist before the agent's first command. `mount_path` values are absolute sandbox paths, independent of `working_dir`, and must not overlap each other or the sandbox root.
+A deleted sandbox takes its files with it. To keep a workspace's files after you delete its sandbox, pass `volumes` to `OpenSandboxBackend`: the SDK's own `Volume` objects, for a host directory, a Kubernetes PVC or an OSSFS bucket, passed to `Sandbox.create` unchanged. Mount the volume at the working directory and a later sandbox created with the same volume starts with the files the last one left:
 
 ```python {test="skip"}
-from opensandbox.models.sandboxes import Host, Volume
+from opensandbox.models.sandboxes import PVC, Volume
 
 backend = OpenSandboxBackend(
     image='python:3.13-slim',
-    working_dir='/cache',
-    volumes=[Volume(name='cache', host=Host(path='/srv/cache'), mountPath='/cache', readOnly=True)],
+    working_dir='/workspace',
+    volumes=[Volume(name='workspace', pvc=PVC(claimName='project-42'), mountPath='/workspace')],
 )
 ```
 
-`volumes` only shape a new sandbox: a backend that attaches to a ref leaves the ref's mounts as they are.
+Your application picks the volume for each workspace and deletes it when it's done. `volumes` only shapes a new sandbox: attaching to a ref leaves its mounts as they are.
 
 ## Endpoint authentication
 
