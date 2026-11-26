@@ -1664,6 +1664,22 @@ async def test_an_edited_serialized_window_branches_inside_the_window(edited: in
     assert reloaded.messages == [*second.all_messages()[:2], *revived.messages]
 
 
+async def test_dropping_the_last_of_two_identical_turns_is_saved() -> None:
+    """Cutting the history down to a turn equal to the one dropped isn't mistaken for the history a run cleaned."""
+    store = InMemoryConversationStore()
+    turn = [ModelRequest(parts=[UserPromptPart('again')]), ModelResponse(parts=[TextPart('ok')])]
+    await store.save(Conversation(conversation_id='c', messages=[*turn, *turn]))
+    loaded = await store.load('c')
+    assert loaded is not None
+
+    loaded.messages = loaded.messages[:2]
+    await store.save(loaded)
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert reloaded.messages == turn
+
+
 @dataclasses.dataclass
 class _Answer:
     text: str
