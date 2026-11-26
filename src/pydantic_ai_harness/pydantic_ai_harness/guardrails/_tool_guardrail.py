@@ -376,7 +376,7 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
         """Evaluate `guard` against the validated arguments and act on its verdict."""
         if self.guard is None or not self._guards(call.tool_name):
             return args
-        verdict, position = replay_verdict(await self._evaluate_arguments(ctx, call, args), args)
+        verdict, _ = replay_verdict(await self._evaluate_arguments(ctx, call, args), args)
         match verdict.action:
             case 'allow':
                 return args
@@ -386,7 +386,6 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
                     ctx,
                     direction=_ARGS_DIRECTION,
                     guard=self.guard,
-                    position=position,
                     message=message,
                     tool_name=call.tool_name,
                 )
@@ -404,7 +403,6 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
                     ctx,
                     direction=_ARGS_DIRECTION,
                     guard=self.guard,
-                    position=position,
                     tool_name=call.tool_name,
                     tool_call_id=call.tool_call_id,
                     args=args,
@@ -582,8 +580,7 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
         `block`, the substituted value for `replace`. `retry` and `approve` raise. A failed tool
         and a successful one go through here alike, so both get the same verdicts.
         """
-        verdict, position = replay_verdict(await self._evaluate_result(ctx, call, args, result), result)
-        assert self.result_guard is not None
+        verdict, _ = replay_verdict(await self._evaluate_result(ctx, call, args, result), result)
         match verdict.action:
             case 'allow':
                 return _UNCHANGED
@@ -593,7 +590,6 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
                     ctx,
                     direction=_RESULT_DIRECTION,
                     guard=self.result_guard,
-                    position=position,
                     message=message,
                     tool_name=call.tool_name,
                 )

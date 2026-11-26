@@ -25,7 +25,7 @@ failure. Guards may be sync or async and may optionally take a
 the run's tracer, naming the guard that decided, so a redaction or refusal is
 visible in Logfire traces. Content attributes (the replacement value and the
 guard's message) are attached only when `RunContext.trace_include_content` is
-set. The original value is never recorded.
+set. Guardrail spans never record the original value.
 """
 
 from __future__ import annotations
@@ -53,7 +53,6 @@ from pydantic_ai_harness._peer_message import is_peer_message
 from pydantic_ai_harness._task_report import is_task_report
 from pydantic_ai_harness.guardrails._exceptions import OutputBlocked
 from pydantic_ai_harness.guardrails._shared import (
-    GuardCallable,
     GuardOutcome,
     GuardrailResult,
     RecordedVerdict,
@@ -355,8 +354,7 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
         evaluation happens before anything is rewritten, and the redaction spans
         are recorded once every rewrite has succeeded.
         """
-        guards = as_guards(self.guard, capability='InputGuardrail')
-        verdict, position = await self._screen(ctx, prompt, guards)
+        verdict, position = await self._screen(ctx, prompt)
         if verdict.action == 'allow':
             return
         if self.parallel:
@@ -378,7 +376,7 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
         same_text = original is not None and original.content == parts[0].content
         own_replacement = None
         if original is not None and not same_text:
-            own_replacement = await self._history_replacement(ctx, original, guards)
+            own_replacement = await self._history_replacement(ctx, original)
         for part in parts:
             _replace_prompt(part, replacement)
         if original is not None and (same_text or own_replacement is not None):
@@ -387,9 +385,7 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
         if own_replacement is not None:
             trace_redaction(ctx, direction='input', replacement=own_replacement)
 
-    async def _screen(
-        self, ctx: RunContext[AgentDepsT], prompt: str, guards: tuple[GuardCallable, ...]
-    ) -> tuple[GuardrailResult, int]:
+    async def _screen(self, ctx: RunContext[AgentDepsT], prompt: str) -> tuple[GuardrailResult, int]:
         """Run the guard chain on `prompt`, returning an `allow` or `replace` verdict and raising for the others.
 
         `block` raises `SkipModelRequest`; `retry` and `approve` raise `UserError`.
@@ -411,7 +407,7 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
             case 'block':
                 message = verdict.message or _DEFAULT_INPUT_BLOCK_MESSAGE
                 trace_block(
-                    ctx, direction='input', guard=guard_at(guards, position), position=position, message=message
+                    ctx, direction='input', guard=guard_at(self.guard, position), position=position, message=message
                 )
                 raise SkipModelRequest(ModelResponse(parts=[TextPart(content=message)]))
             case _:  # pragma: no cover - assert_never exhaustiveness guard
@@ -423,9 +419,7 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
         guards = as_guards(self.guard, capability='InputGuardrail')
         return await record_verdict(evaluate_all(guards, ctx, prompt, check_replacement=_require_prompt_text))
 
-    async def _history_replacement(
-        self, ctx: RunContext[AgentDepsT], original: UserPromptPart, guards: tuple[GuardCallable, ...]
-    ) -> str | None:
+    async def _history_replacement(self, ctx: RunContext[AgentDepsT], original: UserPromptPart) -> str | None:
         """The redaction of the history's `original` of a prompt the model was sent a changed copy of.
 
         The history is what later requests in the run, and any stored conversation, replay, so a
@@ -437,7 +431,7 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
 
         Returns `None` when the original is left as it is.
         """
-        verdict, position = await self._screen(ctx, _prompt_text(original.content), guards)
+        verdict, position = await self._screen(ctx, _prompt_text(original.content))
         if verdict.action == 'allow':
             return None
         return _require_prompt_text(verdict.replacement, position)
@@ -610,7 +604,7 @@ class OutputGuardrail(AbstractCapability[AgentDepsT]):
         if ctx.partial_output:
             return output
         verdict, position = replay_verdict(await self._evaluate(ctx, output), output)
-        guard = guard_at(as_guards(self.guard, capability='OutputGuardrail'), position)
+        guard = guard_at(self.guard, position)
         match verdict.action:
             case 'allow':
                 return output

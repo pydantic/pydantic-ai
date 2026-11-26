@@ -1159,20 +1159,8 @@ class TestHardFailure:
         assert error.reason is None
 
 
-def _deny_call(call: object) -> GuardrailResult:
+def _deny(value: object) -> GuardrailResult:
     return GuardrailResult.block('denied')
-
-
-def _deny_result(info: object) -> GuardrailResult:
-    return GuardrailResult.block('denied')
-
-
-def _clean_result(info: object) -> GuardrailResult:
-    return GuardrailResult.replace('clean')
-
-
-def _clean_args(call: object) -> GuardrailResult:
-    return GuardrailResult.replace({'query': 'clean'})
 
 
 def _ask_approval(call: object) -> GuardrailResult:
@@ -1184,7 +1172,7 @@ class TestTracing:
 
     async def test_block_span_carries_the_message_when_content_is_included(self):
         tracer, exporter = _recording_tracer()
-        guard = ToolGuardrail[object](guard=_deny_call)
+        guard = ToolGuardrail[object](guard=_deny)
 
         with pytest.raises(SkipToolExecution):
             await _guard_args(guard, {}, ctx=_run_ctx(trace_include_content=True, tracer=tracer))
@@ -1194,15 +1182,14 @@ class TestTracing:
         assert dict(span.attributes or {}) == {
             'guardrail.direction': 'tool args',
             'guardrail.action': 'block',
-            'guardrail.guard': '_deny_call',
-            'guardrail.position': 0,
+            'guardrail.guard': '_deny',
             'guardrail.tool': 'lookup',
             'guardrail.message': 'denied',
         }
 
     async def test_block_span_omits_the_message_by_default(self):
         tracer, exporter = _recording_tracer()
-        guard = ToolGuardrail[object](result_guard=_deny_result)
+        guard = ToolGuardrail[object](result_guard=_deny)
 
         await _guard_result(guard, 'x', ctx=_run_ctx(tracer=tracer))
 
@@ -1211,14 +1198,13 @@ class TestTracing:
         assert dict(span.attributes or {}) == {
             'guardrail.direction': 'tool result',
             'guardrail.action': 'block',
-            'guardrail.guard': '_deny_result',
-            'guardrail.position': 0,
+            'guardrail.guard': '_deny',
             'guardrail.tool': 'lookup',
         }
 
     async def test_redaction_span_carries_only_the_replacement_when_content_is_included(self):
         tracer, exporter = _recording_tracer()
-        guard = ToolGuardrail[object](result_guard=_clean_result)
+        guard = ToolGuardrail[object](result_guard=lambda _: GuardrailResult.replace('clean'))
 
         await _guard_result(guard, 'dirty', ctx=_run_ctx(trace_include_content=True, tracer=tracer))
 
@@ -1233,7 +1219,7 @@ class TestTracing:
 
     async def test_redaction_span_omits_values_by_default(self):
         tracer, exporter = _recording_tracer()
-        guard = ToolGuardrail[object](guard=_clean_args)
+        guard = ToolGuardrail[object](guard=lambda _: GuardrailResult.replace({'query': 'clean'}))
 
         await _guard_args(guard, {'query': 'dirty'}, ctx=_run_ctx(tracer=tracer))
 
@@ -1245,8 +1231,7 @@ class TestTracing:
             'guardrail.tool': 'lookup',
         }
 
-    async def test_the_approval_span_is_the_only_record_of_the_call(self):
-        """Deferring means the tool never runs, so no `execute_tool` span carries the arguments."""
+    async def test_the_approval_span_names_the_guard_and_carries_the_arguments(self):
         tracer, exporter = _recording_tracer()
         guard = ToolGuardrail[object](guard=_ask_approval)
 
@@ -1259,7 +1244,6 @@ class TestTracing:
             'guardrail.direction': 'tool args',
             'guardrail.action': 'approve',
             'guardrail.guard': '_ask_approval',
-            'guardrail.position': 0,
             'guardrail.tool': 'lookup',
             'guardrail.tool_call_id': 'call-1',
             'guardrail.arguments': "{'q': 'x'}",
@@ -1276,7 +1260,6 @@ class TestTracing:
             'guardrail.direction': 'tool args',
             'guardrail.action': 'approve',
             'guardrail.guard': '_ask_approval',
-            'guardrail.position': 0,
             'guardrail.tool': 'lookup',
             'guardrail.tool_call_id': 'call-1',
         }

@@ -19,8 +19,8 @@ from pydantic import Field, GetCoreSchemaHandler, TypeAdapter
 from pydantic_core import core_schema
 from typing_extensions import TypeIs
 
-from pydantic_ai._telemetry import record_decision, records_content
 from pydantic_ai.exceptions import ApprovalRequired, ModelRetry, UserError
+from pydantic_ai.telemetry import record_decision, records_content
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._callable import takes_context
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
@@ -416,14 +416,18 @@ def replay_verdict(recorded: RecordedVerdict, original: object) -> tuple[Guardra
     return verdict, recorded.position
 
 
-def guard_at(guards: Sequence[GuardCallable], position: int) -> GuardCallable | None:
-    """The guard at `position`, or `None` when a replayed verdict names a position the chain no longer has.
+def guard_at(guard: object, position: int) -> GuardCallable | None:
+    """The guard at `position` in a `guard` field, or `None` when there is no callable there.
 
-    A durable run replays the position recorded with its verdict, not the guard, and the chain can have
-    changed since. The verdict still applies as it did before; the span names the guard now at that
-    position, which is a different one if the chain was reordered, or none if it is now shorter.
+    It only names a guard on a span, so it never raises: a guard can have changed its own field
+    while it ran, and a durable run replays the position recorded with its verdict, not the
+    guard, so the chain can have changed since. The verdict still applies as it did before; the
+    span names the guard now at that position, a different one if the chain was reordered, or
+    none if it is now shorter.
     """
-    return guards[position] if position < len(guards) else None
+    guards = tuple(guard) if is_guard_chain(guard) else (guard,)
+    entry = guards[position] if position < len(guards) else None
+    return entry if callable(entry) else None
 
 
 def decision_attributes(
@@ -455,11 +459,13 @@ def trace_block(
     *,
     direction: GuardrailDirection,
     guard: GuardCallable | None,
-    position: int,
     message: str,
+    position: int | None = None,
     tool_name: str | None = None,
 ) -> None:
     """Record a zero-duration span marking a guardrail refusal by `guard`, at `position` in its chain.
+
+    A tool guardrail passes no `position`: each of its stages takes a single guard.
 
     The refusal message is attached only when `ctx.trace_include_content` is
     set -- it can quote sensitive content from the guarded value, and ops
@@ -508,8 +514,8 @@ def trace_redaction(
     The replacement value is attached only when `ctx.trace_include_content` is
     set, and only then turned into text, since `str()` of a guard's replacement
     can raise or be costly. The original value never is: it is the content the
-    guard removed, and recording it would put a redacted secret into the trace
-    that core's own spans, which see the rewritten value, keep out.
+    guard removed. This covers this span only: core spans opened before the
+    guard ran, such as a tool call's `execute_tool` span, can record the original.
     """
     record_decision(
         ctx,
@@ -524,24 +530,22 @@ def trace_approval(
     *,
     direction: GuardrailDirection,
     guard: GuardCallable | None,
-    position: int,
     tool_name: str,
     tool_call_id: str,
     args: object,
 ) -> None:
     """Record a zero-duration span marking a tool call deferred for approval.
 
-    Deferring means the tool never executes, so no `execute_tool` span is ever
-    created and this is the only record of what was asked for. It therefore
-    carries the call id, to correlate with the `DeferredToolRequests` an
-    application answers, and the arguments when `trace_include_content` allows
-    it -- the one case where an operator most needs to see them.
+    It names the guard that asked for approval and carries the call id, to correlate
+    with the `DeferredToolRequests` an application answers, and the arguments when
+    `trace_include_content` allows it. In an instrumented run the call's `execute_tool`
+    span records the deferral too.
     """
     record_decision(
         ctx,
         f'guardrail deferred {direction}',
         attributes={
-            **decision_attributes(direction, 'approve', guard=guard, position=position, tool_name=tool_name),
+            **decision_attributes(direction, 'approve', guard=guard, position=None, tool_name=tool_name),
             'guardrail.tool_call_id': tool_call_id,
         },
         content={'guardrail.arguments': str(args)} if records_content(ctx) else None,

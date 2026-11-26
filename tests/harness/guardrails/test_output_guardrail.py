@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import pytest
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
@@ -311,6 +312,24 @@ class TestOutputGuardrailTracing:
 
         attributes = dict(_only_span(exporter).attributes or {})
         assert (attributes['guardrail.guard'], attributes['guardrail.position']) == ('_refuse_ssn', 1)
+
+    async def test_a_guard_that_empties_its_chain_still_blocks(self):
+        """Naming the guard on the span must not validate the chain again and turn the verdict into an error."""
+        guards: list[Any] = []
+
+        def clear_and_block(output: object) -> GuardrailResult:
+            guards.clear()
+            return GuardrailResult.block('nope')
+
+        guards.append(clear_and_block)
+        tracer, exporter = _recording_tracer()
+
+        with pytest.raises(OutputBlocked):
+            await OutputGuardrail(guard=guards).after_output_process(
+                _run_ctx(tracer=tracer), output_context=_TEXT_OUTPUT_CONTEXT, output='x'
+            )
+
+        assert 'guardrail.guard' not in dict(_only_span(exporter).attributes or {})
 
     @pytest.mark.parametrize('include_content', [False, True])
     async def test_a_retry_records_a_span(self, include_content: bool, instrumented: Instrumented):

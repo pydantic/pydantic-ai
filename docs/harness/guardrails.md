@@ -542,16 +542,16 @@ Each guardrail on a durable-capable agent needs an explicit, distinct `id`, whic
 | `guardrail.direction` | every span | `input`, `output`, `stream`, `tool args` or `tool result` |
 | `guardrail.action` | every span | the verdict: `block`, `replace`, `retry` or `approve` |
 | `guardrail.guard` | every span except a redaction, which several guards can make together. A replayed durable verdict names the guard now at its recorded position, so a different one if the chain was reordered since, and none if the chain is now shorter | the deciding guard's qualified name, such as `no_secrets` (a `functools.partial` is named by the function it wraps, a callable object by its class name) |
-| `guardrail.position` | every span except a redaction | the deciding guard's index in its chain, starting at 0 |
+| `guardrail.position` | `InputGuardrail`, `OutputGuardrail` and `StreamGuardrail` spans except a redaction; a tool guardrail stage takes a single guard | the deciding guard's index in its chain, starting at 0 |
 | `guardrail.tool` | tool spans, and stream spans for a tool call | the tool's name |
 | `guardrail.tool_call_id` | `guardrail deferred tool args` | the call id, to correlate with the `DeferredToolRequests` the application answers |
 | `guardrail.message` | blocked and retried spans, content only | the refusal or retry message |
 | `guardrail.replacement` | redacted spans, content only | the replacement value as text |
 | `guardrail.arguments` | `guardrail deferred tool args`, content only | the call's arguments |
 
-Content attributes are attached only when `RunContext.trace_include_content` is enabled, since they can quote the content the guard exists to keep out of traces, and are not built otherwise, so a replacement whose `str()` fails cannot fail a run that doesn't record it. The value a redaction removed is never recorded, so content capture does not put a redacted secret into the trace. When an outer capability sends the model a changed copy of the prompt and the guard redacts both the copy and the history's original (see [Capability ordering](#capability-ordering)), each of the two redactions gets its own `guardrail redacted input` span. A `retry` on tool arguments or a tool result records no guardrail span: core records the retry on the call's `execute_tool` span, with `pydantic_ai.tool.retry.*` attributes.
+Content attributes are attached only when `RunContext.trace_include_content` is enabled, since they can quote the content the guard exists to keep out of traces, and are not built otherwise, so a replacement whose `str()` fails cannot fail a run that doesn't record it. A guardrail span never records the value a redaction removed. Core spans can still record it when content capture is on: the call's `execute_tool` span records the tool arguments it was called with, before the guard replaces them, and the model request span records the response before `OutputGuardrail` rewrites it. When an outer capability sends the model a changed copy of the prompt and the guard redacts both the copy and the history's original (see [Capability ordering](#capability-ordering)), each of the two redactions gets its own `guardrail redacted input` span. A `retry` on tool arguments or a tool result records no guardrail span: core records the retry on the call's `execute_tool` span, with `pydantic_ai.tool.retry.*` attributes.
 
-A deferred call never executes, so there is no `execute_tool` span recording what was asked for; `guardrail deferred tool args` is the only record of it.
+In an instrumented run, the call's `execute_tool` span also records the deferral, with `pydantic_ai.tool.deferral.name`; `guardrail deferred tool args` adds which guard asked for approval.
 
 `OutputGuardrail` declares `position='outermost', wrapped_by=[Instrumentation]`, so an enclosing `Instrumentation` span captures its spans whatever the list order.
 
