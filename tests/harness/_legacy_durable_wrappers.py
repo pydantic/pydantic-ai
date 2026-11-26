@@ -27,16 +27,16 @@ def wrap_in_legacy_durable_agent(wrapper: LegacyDurableWrapper, agent: Agent[Non
         warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
         if wrapper == 'TemporalAgent':
             pytest.importorskip('temporalio')
-            from pydantic_ai.durable_exec.temporal import TemporalAgent  # needs the temporal extra
+            from pydantic_ai.durable_exec.temporal import TemporalAgent  # pyright: ignore[reportDeprecated]
 
             TemporalAgent(agent)  # pyright: ignore[reportDeprecated]
         elif wrapper == 'DBOSAgent':
             pytest.importorskip('dbos')
-            from pydantic_ai.durable_exec.dbos import DBOSAgent  # needs the dbos extra
+            from pydantic_ai.durable_exec.dbos import DBOSAgent  # pyright: ignore[reportDeprecated]
 
             DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
         else:
             pytest.importorskip('prefect')
-            from pydantic_ai.durable_exec.prefect import PrefectAgent  # needs the prefect extra
+            from pydantic_ai.durable_exec.prefect import PrefectAgent  # pyright: ignore[reportDeprecated]
 
             PrefectAgent(agent)  # pyright: ignore[reportDeprecated]
