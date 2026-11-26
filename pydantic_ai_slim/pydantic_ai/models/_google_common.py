@@ -7,12 +7,14 @@ from typing import TYPE_CHECKING
 
 from ..exceptions import UserError
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
+from ..profiles import ModelProfile, merge_profile
 from ..profiles.google import (
     GOOGLE_THINKING_LEVEL_SCALE,
     GOOGLE_THINKING_LEVELS,
     GoogleModelProfile,
     GoogleThinkingLevel,
 )
+from ..providers._model_deprecations import GEMINI_API_MODEL_DEPRECATIONS, GOOGLE_CLOUD_MODEL_DEPRECATIONS
 from ..settings import ThinkingEffort
 
 if TYPE_CHECKING:
@@ -117,6 +119,18 @@ def with_gemini_api_thinking_levels(model_name: str, profile: GoogleModelProfile
     if levels is None or 'google_thinking_levels' in profile:
         return profile
     return {**profile, 'google_thinking_levels': levels, 'google_supports_minimal_thinking_level': 'MINIMAL' in levels}
+
+
+def with_deprecation(model_name: str, profile: ModelProfile, *, google_cloud: bool) -> ModelProfile:
+    """`profile` with the deprecation that Google Cloud's or the Gemini API's schedule gives `model_name`, if any.
+
+    The two schedules date the same model differently. `google-genai` sends a resource name such as `models/<id>` or
+    `publishers/google/models/<id>` as is, where it would otherwise add that prefix to a bare id, so both spellings
+    reach the same model.
+    """
+    deprecations = GOOGLE_CLOUD_MODEL_DEPRECATIONS if google_cloud else GEMINI_API_MODEL_DEPRECATIONS
+    deprecation = deprecations.get(model_name.rsplit('/', 1)[-1])
+    return profile if deprecation is None else merge_profile(profile, ModelProfile(deprecation=deprecation))
 
 
 def set_server_timeout(headers: dict[str, str], client_timeout_ms: int | None) -> None:
