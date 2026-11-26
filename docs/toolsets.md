@@ -1126,9 +1126,12 @@ def preview_margin(
 
 
 @sdk_toolset.tool_plain
-def check_solvency() -> bool:
-    """Verify the latest signed L2 ledger tip digest."""
-    return verify_ledger_tip(client.ledger_tip(), allow_self_asserted_signer=True)
+def check_solvency(expected_operator_address: str) -> bool:
+    """Verify the latest signed L2 ledger tip against a trusted operator address."""
+    return verify_ledger_tip(
+        client.ledger_tip(),
+        expected_operator_address=expected_operator_address,
+    )
 
 
 agent = Agent('{{ openai:medium }}', toolsets=[mcp_toolset])
