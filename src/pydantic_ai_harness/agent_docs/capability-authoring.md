@@ -395,9 +395,9 @@ What to record, and where:
 
 - Prefer an attribute on a span that is already open, through `current_span(ctx)`. In a tool hook
   (`before_tool_execute`, `after_tool_execute`, `wrap_tool_execute`) that is the call's `execute_tool`
-  span; in `before_model_request` it is the request's `chat` span. This holds because `Instrumentation`
-  is outermost; a capability that is also outermost and listed before an explicit `Instrumentation`
-  sees the enclosing span instead. Don't call `opentelemetry.trace.get_current_span()` directly: in an
+  span; in `before_model_request` it is the request's `chat` span. The helpers work only inside the
+  run's `agent run` span: in `for_run`, and in a `wrap_run` of a capability that is also outermost and
+  listed before an explicit `Instrumentation`, they do nothing. Don't call `opentelemetry.trace.get_current_span()` directly: in an
   uninstrumented run it returns whatever span the application has open, such as its request span.
 - `current_span(ctx)` in a tool's own body, including a toolset's `call_tool`, is also that call's
   `execute_tool` span, not only the span seen by tool hooks.
@@ -408,7 +408,7 @@ What to record, and where:
 - Holding a `RunTelemetry` for one operation and clearing it in `finally` is not storing a tracer.
 - Give a decision its own `record_decision` when there's no span to put it on, when one span can see
   several decisions (guards in a chain), or when operators should find it by name across capabilities
-  (`guardrail blocked input`, `spend budget exhausted`). It is a zero-duration span today; its public
+  (`guardrail blocked input`, `spend budget exhausted`). It is a span that ends at once today; its public
   docstring says a later release may record it as a span event (#11562) under the same name and attributes.
 - Open a span for work with its own duration, and give slow setup, such as starting a sandbox or a
   browser, its own child span, so it isn't mistaken for the work that triggered it.
@@ -422,8 +422,9 @@ Content:
   run captures content. A trace has a wider audience than the application that produced it.
 - Never put content in a span's name or in `logfire.msg`. Logfire does not scrub `logfire.msg`.
 - `open_span` records an uncaught error by its type only, unless the run captures content, because an
-  exception message can quote content. Pass `not_errors=` for an exception that is an expected answer,
-  such as a `FileNotFoundError` from an existence check.
+  exception message can quote content. A cancellation is not an error and leaves the status unset. For
+  an exception that is an expected answer, such as a `FileNotFoundError` from an existence check, catch
+  it inside the span and record the outcome as an attribute.
 - `content=` and `attributes=` are built even when nothing is recorded, so pass plain values. When
   building a content value costs something or can raise, such as `str()` of an object a guard returned
   or a serialized message, build it only `if records_content(ctx)` and pass `None` otherwise:

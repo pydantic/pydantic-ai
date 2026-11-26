@@ -1,7 +1,7 @@
 """Spans on a run's tracer that record content only when the run allows it.
 
 - `open_span(ctx, name)`: a span around work that takes time and can fail.
-- `record_decision(ctx, name)`: a decision that changed the run's course, recorded as a zero-duration span.
+- `record_decision(ctx, name)`: a decision that changed the run's course, recorded as a span that ends at once.
 - `current_span(ctx)`: the span already open where the caller runs, such as a tool hook's `execute_tool`.
 - `set_content_attribute(ctx, span, key, value)`: an attribute that can quote content, set only when
   the run captures content.
@@ -12,8 +12,9 @@ share and that can outlive a run), `current_run_telemetry()`, which the run publ
 its body, tools and their tasks inherit. A value stored on such an object would apply one run's
 settings to another's calls. `None` means no run: nothing is traced.
 
-Pass `ctx` whenever there is one: the published value only exists once `wrap_run` starts, so a
-`for_run` hook that read it would find nothing, or in a nested run its parent's.
+Pass `ctx` whenever there is one: the run publishes its telemetry only once its `agent run` span is
+open, so a `for_run` hook, or a `wrap_run` ordered outside `Instrumentation`, that read it would find
+nothing, or in a nested run its parent's.
 """
 
 from __future__ import annotations as _annotations
@@ -22,12 +23,13 @@ from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from opentelemetry.trace import INVALID_SPAN, NoOpTracer, Span, Tracer, get_current_span
 from opentelemetry.util.types import AttributeValue
 
-from ._instrumentation import record_exception, record_uncaught_errors, set_error_status
+from ._durable_replay import start_as_current_span
+from ._instrumentation import record_uncaught_errors
 
 if TYPE_CHECKING:
     from ._run_context import RunContext
@@ -47,15 +49,21 @@ __all__ = (
 
 @dataclass(frozen=True)
 class RunTelemetry:
-    """The tracer a run's spans go to, and whether they may record content.
+    """The calling run's telemetry, to pass to the helpers from code that has no `RunContext`.
 
-    [`current_run_telemetry()`][pydantic_ai.telemetry.current_run_telemetry] returns the calling run's, for
-    code that has no `RunContext`.
+    Get it from [`current_run_telemetry()`][pydantic_ai.telemetry.current_run_telemetry]; it has no public fields.
     """
 
-    # Not `InstrumentationSettings`: in a durable unit both come from the rebuilt `ctx`, whose content flag
-    # the engine narrowed to the worker's setting. One built from a `ctx` is used for a single call and never
-    # published.
+    _active: _Active
+
+
+class _Active(NamedTuple):
+    """What the helpers use.
+
+    Not `InstrumentationSettings`: in a durable unit both come from the rebuilt `ctx`, whose content flag
+    the engine narrowed to the worker's setting.
+    """
+
     tracer: Tracer
     include_content: bool
 
@@ -68,27 +76,27 @@ def current_run_telemetry() -> RunTelemetry | None:
     return _current.get()
 
 
-def publish_run_telemetry(tracer: Tracer, *, include_content: bool) -> None:
-    """Make `tracer` and `include_content` the current run's telemetry; a `NoOpTracer` means none.
+def publish_run_telemetry(ctx: RunContext[Any] | None) -> None:
+    """Make `ctx`'s telemetry the current run's; `None`, or an uninstrumented run, means none.
 
     A plain set, for a context the run owns: the run's body may finish in a different `Context`
     than it started in, where resetting a token raises.
     """
-    _current.set(_run_telemetry(tracer, include_content))
+    _current.set(_published(_telemetry_of(ctx)))
 
 
 @contextmanager
-def run_telemetry_scope(telemetry: RunTelemetry | None) -> Generator[None]:
-    """Publish `telemetry` for a block that starts and ends in one `Context`, for code that has no `RunContext`."""
-    token = _current.set(_telemetry_of(telemetry))
+def run_telemetry_scope(ctx: RunContext[Any] | RunTelemetry | None) -> Generator[None]:
+    """Publish `ctx`'s telemetry for a block that starts and ends in one `Context`, for code that has no `RunContext`."""
+    token = _current.set(_published(_telemetry_of(ctx)))
     try:
         yield
     finally:
         _current.reset(token)
 
 
-def _run_telemetry(tracer: Tracer, include_content: bool) -> RunTelemetry | None:
-    return None if isinstance(tracer, NoOpTracer) else RunTelemetry(tracer, include_content)
+def _published(active: _Active | None) -> RunTelemetry | None:
+    return None if active is None else RunTelemetry(active)
 
 
 @contextmanager
@@ -99,38 +107,30 @@ def open_span(
     *,
     attributes: Mapping[str, AttributeValue] | None = None,
     content: Mapping[str, AttributeValue] | None = None,
-    not_errors: tuple[type[BaseException], ...] = (),
 ) -> Generator[Span]:
     """Open `name` on the run's tracer.
 
     Yields `INVALID_SPAN` outside an instrumented run. `attributes` are always recorded; `content`,
     which can quote what the span is about, only when the run captures content. Both are set at the
-    start, so Logfire's console and pending spans show them. An uncaught error, including a
-    cancellation, marks the span ERROR and is recorded by its type only, unless the run captures
-    content, as its message can quote content. An exception in `not_errors`, such as an expected
-    `FileNotFoundError` or a cancellation the caller expects, is still recorded as an `exception`
-    event, but the span's status is left unset rather than marked ERROR.
+    start, so Logfire's console and pending spans show them. An uncaught `Exception` marks the span
+    ERROR and is recorded by its type only, unless the run captures content, as its message can
+    quote content. A cancellation is not an error, as in OpenTelemetry's own spans: it leaves the
+    status unset. In a durable run, a span that covered only replayed work is not exported again.
     """
     if (telemetry := _telemetry_of(ctx)) is None:
         yield INVALID_SPAN
         return
-    with telemetry.tracer.start_as_current_span(
-        name,
-        attributes=_with_content(telemetry, attributes, content),
-        record_exception=False,
-        set_status_on_exception=False,
-    ) as span:
-        try:
-            with record_uncaught_errors(span, include_content=telemetry.include_content, not_errors=not_errors):
-                yield span
-        except Exception:
-            raise
-        except BaseException as error:
-            # `use_span` also marks a cancellation, which `record_uncaught_errors` leaves alone.
-            record_exception(span, error, include_content=telemetry.include_content, escaped=False)
-            if not isinstance(error, not_errors):
-                set_error_status(span, error, include_content=telemetry.include_content)
-            raise
+    with (
+        start_as_current_span(
+            telemetry.tracer,
+            name,
+            attributes=_with_content(telemetry, attributes, content),
+            record_exception=False,
+            set_status_on_exception=False,
+        ) as span,
+        record_uncaught_errors(span, include_content=telemetry.include_content),
+    ):
+        yield span
 
 
 def record_decision(
@@ -143,12 +143,15 @@ def record_decision(
 ) -> None:
     """Record that a capability decided something that changed the run's course, such as a guard blocking a value.
 
-    It is recorded as a zero-duration span named `name`, on the run's tracer. A later release may record
-    it as a span event instead, under the same name and attributes. `attributes` are always recorded;
-    `content`, which can quote what the decision was about, only when the run captures content.
+    It is recorded as a span named `name`, on the run's tracer, that ends as soon as it starts. A later
+    release may record it as a span event instead, under the same name and attributes. `attributes` are
+    always recorded; `content`, which can quote what the decision was about, only when the run captures
+    content. On a durable engine that reports when it is replaying, such as Temporal, a decision made
+    again during replay is not exported again.
     """
     if (telemetry := _telemetry_of(ctx)) is not None:
-        telemetry.tracer.start_span(name, attributes=_with_content(telemetry, attributes, content)).end()
+        with start_as_current_span(telemetry.tracer, name, attributes=_with_content(telemetry, attributes, content)):
+            pass
 
 
 def set_content_attribute(
@@ -172,13 +175,12 @@ def current_span(ctx: RunContext[Any] | RunTelemetry | None, /) -> Span:
 
     In a tool hook that is the call's `execute_tool` span, and in `before_model_request` the request's
     `chat` span. Unlike `opentelemetry.trace.get_current_span()`, it returns a span only inside the run's
-    own trace, once the run has published its telemetry, so a run never writes to a span it doesn't own:
-    it returns `INVALID_SPAN` when the run isn't traced, and in `for_run`, which runs before the run
-    publishes. A sub-agent's `for_run` sees its parent's published telemetry, so it gets the parent's
-    span only when its tracer and content setting are the parent's. In a capability ordered outside
-    `Instrumentation`, the open span is the one around the run.
+    own `agent run` span, where the run publishes its telemetry, so a run doesn't write to a span it
+    doesn't own: it returns `INVALID_SPAN` when the run isn't traced, in `for_run`, and in a `wrap_run`
+    ordered outside `Instrumentation`. A sub-agent's `for_run` runs inside its parent's tool call and sees
+    its parent's telemetry, so it gets the parent's span when its tracer and content setting are the parent's.
     """
-    if (telemetry := _telemetry_of(ctx)) is None or _current.get() != telemetry:
+    if (telemetry := _telemetry_of(ctx)) is None or _telemetry_of(_current.get()) != telemetry:
         return INVALID_SPAN
     return get_current_span()
 
@@ -186,22 +188,22 @@ def current_span(ctx: RunContext[Any] | RunTelemetry | None, /) -> Span:
 _TRACE_FIELDS = frozenset({'tracer', 'trace_include_content'})
 
 
-def _telemetry_of(ctx: RunContext[Any] | RunTelemetry | None) -> RunTelemetry | None:
+def _telemetry_of(ctx: RunContext[Any] | RunTelemetry | None) -> _Active | None:
     if ctx is None:
         return None
     if isinstance(ctx, RunTelemetry):
-        # Built by hand, as a durable worker does, it may wrap an uninstrumented run's `NoOpTracer`.
-        return None if isinstance(ctx.tracer, NoOpTracer) else ctx
+        # Built only from an instrumented run's telemetry, by `_published`.
+        return ctx._active  # pyright: ignore[reportPrivateUsage]
     # A context rebuilt inside a durable unit has only the fields its engine carried, and reading any
     # other raises. Work in a unit that didn't carry the tracer goes untraced rather than failing.
     if not _TRACE_FIELDS <= ctx.__dataclass_fields__.keys():
         return None
     # `ctx` is the only source: in a durable unit the engine already narrowed its flag to the worker's setting.
-    return _run_telemetry(ctx.tracer, ctx.trace_include_content)
+    return None if isinstance(ctx.tracer, NoOpTracer) else _Active(ctx.tracer, ctx.trace_include_content)
 
 
 def _with_content(
-    telemetry: RunTelemetry,
+    telemetry: _Active,
     attributes: Mapping[str, AttributeValue] | None,
     content: Mapping[str, AttributeValue] | None,
 ) -> Mapping[str, AttributeValue] | None:

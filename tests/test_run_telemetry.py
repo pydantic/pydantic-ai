@@ -8,21 +8,27 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
-from opentelemetry.trace import INVALID_SPAN, NoOpTracer
+from opentelemetry.trace import INVALID_SPAN, NoOpTracer, Tracer
 from opentelemetry.util.types import AttributeValue
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, AgentRunResult, RunContext
 from pydantic_ai._telemetry import run_telemetry_scope
-from pydantic_ai.capabilities import AbstractCapability, Instrumentation, ValidatedToolArgs
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    CapabilityOrdering,
+    Instrumentation,
+    ValidatedToolArgs,
+    WrapRunHandler,
+)
 from pydantic_ai.durable_exec import DurableRunContext
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.telemetry import (
-    RunTelemetry,
     current_run_telemetry,
     current_span,
     open_span,
@@ -31,6 +37,7 @@ from pydantic_ai.telemetry import (
     set_content_attribute,
 )
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.usage import RunUsage
 
 from .conftest import Instrumented, try_import
 
@@ -194,6 +201,32 @@ class MarkWhenPrepared(AbstractCapability[object]):
         return self
 
 
+@dataclass
+class MarkAroundTheRun(AbstractCapability[object]):
+    def get_ordering(self) -> CapabilityOrdering:
+        # `Instrumentation` is outermost too; listed first, this one wraps it.
+        return CapabilityOrdering(position='outermost')
+
+    async def wrap_run(self, ctx: RunContext[object], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+        set_content_attribute(ctx, current_span(ctx), 'example.prompt', 'secret')
+        return await handler()
+
+
+async def test_a_wrap_run_outside_instrumentation_does_not_write_to_the_span_around_the_run(
+    instrumented: Instrumented,
+):
+    """Ordered before `Instrumentation`, `wrap_run` runs before the run's span opens, around the application's span."""
+    instrumentation, exporter = instrumented(True)
+    app_exporter = InMemorySpanExporter()
+    app_provider = TracerProvider()
+    app_provider.add_span_processor(SimpleSpanProcessor(app_exporter))
+    with app_provider.get_tracer('app').start_as_current_span('app request'):
+        await Agent(TestModel(), capabilities=[MarkAroundTheRun(), instrumentation]).run('go')
+
+    assert marked_spans(app_exporter) == []
+    assert marked_spans(exporter) == []
+
+
 async def run_marking_sub_agent(parent: AbstractCapability[object], child: AbstractCapability[object]) -> None:
     """Run a parent whose tool runs a sub-agent that writes a content attribute to `current_span` in `for_run`."""
     sub_agent = Agent(TestModel(), capabilities=[MarkWhenPrepared(), child])
@@ -274,45 +307,50 @@ async def test_code_without_a_ctx_traces_to_the_calling_run(instrumented: Instru
         assert span is INVALID_SPAN
 
 
+def traced_context(tracer: Tracer, include_content: bool) -> RunContext[None]:
+    return RunContext(
+        deps=None, model=TestModel(), usage=RunUsage(), tracer=tracer, trace_include_content=include_content
+    )
+
+
 @pytest.mark.parametrize('include_content', [True, False])
-@pytest.mark.parametrize(
-    ('error', 'not_errors', 'status'),
-    [
-        (asyncio.CancelledError('private'), (), 'ERROR'),
-        (asyncio.CancelledError('private'), (asyncio.CancelledError,), 'UNSET'),
-        (ValueError('private'), (), 'ERROR'),
-        (FileNotFoundError('private'), (FileNotFoundError,), 'UNSET'),
-    ],
-)
-def test_an_escaping_exception_is_recorded_by_its_type(
-    error: BaseException, not_errors: tuple[type[BaseException], ...], status: str, include_content: bool
-):
-    """A cancellation is an error like any other unless the caller expects it; the message needs content."""
+def test_an_escaping_exception_is_recorded_by_its_type(include_content: bool):
+    """The message can quote content, so it is recorded only when the run captures content."""
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
 
-    with pytest.raises(type(error)):
-        with open_span(
-            RunTelemetry(provider.get_tracer('test'), include_content=include_content),
-            'example work',
-            not_errors=not_errors,
-        ):
-            raise error
+    with pytest.raises(ValueError):
+        with open_span(traced_context(provider.get_tracer('test'), include_content), 'example work'):
+            raise ValueError('private')
 
     [span] = exporter.get_finished_spans()
-    assert span.status.status_code.name == status
+    assert span.status.status_code.name == 'ERROR'
     [event] = span.events
-    assert str((event.attributes or {})['exception.type']).endswith(type(error).__qualname__)
+    assert (event.attributes or {})['exception.type'] == 'ValueError'
     recorded = f'{span.status.description} {event.attributes}'
     assert ('private' in recorded) is include_content
 
 
-def test_a_telemetry_scope_publishes_for_its_block_only():
-    telemetry = RunTelemetry(TracerProvider().get_tracer('test'), include_content=False)
+def test_a_cancellation_is_not_an_error():
+    """As in OpenTelemetry's own spans, a cancellation leaves the status unset and records no exception."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
 
-    with run_telemetry_scope(telemetry):
-        assert current_run_telemetry() is telemetry
-        with run_telemetry_scope(RunTelemetry(NoOpTracer(), include_content=True)):
+    with pytest.raises(asyncio.CancelledError):
+        with open_span(traced_context(provider.get_tracer('test'), True), 'example work'):
+            raise asyncio.CancelledError
+
+    [span] = exporter.get_finished_spans()
+    assert (span.status.status_code.name, span.events) == ('UNSET', ())
+
+
+def test_a_telemetry_scope_publishes_for_its_block_only():
+    with run_telemetry_scope(traced_context(TracerProvider().get_tracer('test'), False)):
+        outer = current_run_telemetry()
+        assert outer is not None
+        with run_telemetry_scope(traced_context(NoOpTracer(), True)):
             assert current_run_telemetry() is None
+        assert current_run_telemetry() is outer
     assert current_run_telemetry() is None

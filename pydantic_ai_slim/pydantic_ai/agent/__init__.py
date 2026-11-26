@@ -356,9 +356,10 @@ async def _run_lifecycle_hooks(  # noqa: C901
 
     outer_context = contextvars.copy_context()
     # Code without a `RunContext`, such as a workspace, reads the run's telemetry from the context `wrap_run`'s task
-    # and the run body inherit.
+    # and the run body inherit. `Instrumentation.wrap_run` publishes it once the run's span is open; until then,
+    # including in a nested run's outer `wrap_run` hooks, there is none, rather than the parent's.
     wrap_context = outer_context.copy()
-    wrap_context.run(publish_run_telemetry, run_ctx.tracer, include_content=run_ctx.trace_include_content)
+    wrap_context.run(publish_run_telemetry, None)
     # Teardown after the run body returns, raises, or exits early waits for `wrap_run` through `ScopedTask`, so a
     # cancellation of the caller reaches it in the form it arrived: shielded cleanup in `wrap_run` finishes under a
     # cancelled `anyio` scope, and `on_run_error` is still reached. `_SHUTDOWN_EXCEPTIONS` cancel and drain it instead.
