@@ -280,13 +280,12 @@ this stateless adapter's scope. URI-only output raises an error.
 ### Unsupported Interactions features
 
 Interactions has no token-counting endpoint, batch support, or explicit prompt caching. Implicit caching is
-provider-managed. With `google-genai` earlier than
-[2.34](https://github.com/googleapis/python-genai/releases/tag/v2.34.0), which doesn't continue an Interactions [long
-decode](#long-decode), a request that reaches the model's per-request output cap returns its partial output with finish
-reason `length` and `provider_details['status']` set to `requires_continuation`. From 2.34, the SDK continues it in
-further requests, and the response holds every request's steps and their summed usage. Unlike on `GoogleModel`, a
-failure after the first request raises the SDK's own error, and a non-streamed response doesn't record the first
-request's input size for context-window checks ([#13938](https://github.com/pydantic/pydantic-ai/issues/13938)).
+provider-managed. As on `GoogleModel`, the SDK continues a [long decode](#long-decode) in further requests, the
+response holds every request's steps and their summed usage, context-window checks read the first request's input, and
+a later request that fails fails the model request with that request's own error. Unlike there, a numeric
+[`timeout`][pydantic_ai.settings.ModelSettings.timeout] bounds the whole call rather than each request: the SDK sends
+each further request with the time left, and a streamed response checks it before each event. Running out raises
+[`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError].
 Sampling settings absent from this API are ignored; its settings class describes them. Finish reasons are derived from
 interaction status, which has less detail than GenerateContent's finish reasons. Raw status and usage remain available
 in `provider_details`.

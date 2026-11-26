@@ -15,8 +15,11 @@ from pydantic_ai._context_size import context_input_tokens
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.exceptions import (
     ModelAPIError,
+    ModelConnectionError,
+    ModelHTTPError,
     ModelOverloadedError,
     ModelRateLimitError,
+    ModelTimeoutError,
     UnexpectedModelBehavior,
     UserError,
 )
@@ -69,6 +72,8 @@ with try_import() as imports_successful:
     from google.genai import Client, interactions as gi
     from google.genai._gaos.lib.compat_errors import APIConnectionError, APIError, APITimeoutError
     from google.genai._gaos.utils.serializers import ALLOW_UNKNOWN_UNION_VARIANTS
+    from google.genai._interactions_continuation import ContinuationTimeoutError
+    from google.genai.errors import ContinuationInterruptedError
     from google.genai.types import HarmBlockThreshold, HarmCategory, HttpOptions, MediaResolution
 
     from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
@@ -136,7 +141,7 @@ def mock_model(mock_google: MockGoogle) -> GoogleInteractionsModel:
         pytest.param({'user-agent': 'support-bot'}, 'support-bot', id='user-agent'),
         pytest.param({'USER-AGENT': 'support-bot'}, 'support-bot', id='USER-AGENT'),
         pytest.param({'User-Agent': 'a', 'user-agent': 'b'}, 'a b', id='two spellings'),
-        pytest.param({'User-Agent': ''}, 'google-genai', id='empty'),
+        pytest.param({'User-Agent': ''}, 'google-genai client', id='empty'),
     ],
 )
 async def test_one_user_agent(
@@ -148,17 +153,21 @@ async def test_one_user_agent(
 ):
     """A request carries one user-agent line: the caller's in any spelling, or the SDK's label with ours.
 
-    Not recorded: the claim is about the header lines the SDK sends, which no response bears on.
+    An empty one leaves the SDK's label alone, which google-genai replaces with the client's own `user-agent`. Not
+    recorded: the claim is about the header lines the SDK sends, which no response bears on.
     """
     await model_request(
         mock_model, [ModelRequest.user_text_prompt('hello')], model_settings={'extra_headers': extra_headers}
     )
 
     [user_agent] = mock_google.headers[-1].get_list('user-agent')
+    client_headers = mock_model.client._api_client._http_options.headers  # pyright: ignore[reportPrivateUsage]
+    assert client_headers is not None
+    client_user_agent = client_headers['user-agent']
     assert (
-        user_agent.replace(get_user_agent(), 'pydantic-ai').replace(
-            mock_model.client.aio.interactions.sdk_configuration.user_agent, 'google-genai'
-        )
+        user_agent.replace(client_user_agent, 'google-genai client')
+        .replace(get_user_agent(), 'pydantic-ai')
+        .replace(mock_model.client.aio.interactions.sdk_configuration.user_agent, 'google-genai')
         == expected
     )
 
@@ -651,8 +660,9 @@ async def test_stream_mixed_content_and_signature_fragments():
 async def test_stream_continued_long_decode():
     """A long decode continued in a second request keeps both requests' steps and sums their usage.
 
-    Not recorded: from 2.34, google-genai continues the decode on the same stream, numbering the second request's
-    steps from 0 again, and the locked SDK predates that.
+    google-genai continues the decode on the same stream, numbering the second request's steps from 0 again. Not
+    recorded: a decode small enough to pin every event and each request's usage; `test_continued_long_decode` in
+    `tests/models/test_google_interactions.py` records a real one.
     """
 
     def request(signature: str, text: str, interaction: dict[str, JsonValue]) -> list[dict[str, JsonValue]]:
@@ -700,9 +710,9 @@ async def test_stream_continued_long_decode():
 async def test_stream_resumed_from_checkpoint():
     """A request resumed from a mid-stream checkpoint keeps the steps the dropped request streamed.
 
-    Not recorded: from 2.34, google-genai resumes the stream from the last checkpoint's continuation token when the
-    connection drops with no output after it, with no `interaction.completed` in between, and the locked SDK
-    predates that.
+    google-genai resumes the stream from the last checkpoint's continuation token when the connection drops with no
+    output after it, with no `interaction.completed` in between. Not recorded: a live connection can't be made to
+    drop there.
     """
     values: list[dict[str, JsonValue]] = [
         {'event_type': 'interaction.created', 'interaction': {'object': 'interaction', 'model': 'gemini-test'}},
@@ -742,7 +752,7 @@ async def test_stream_resumed_from_checkpoint():
 async def test_stream_resumed_from_checkpoint_after_pending_mcp_call():
     """Steps held back to classify an MCP call still count when a request resumed from a checkpoint numbers its own.
 
-    Not recorded: the resume comes from google-genai 2.34, which the locked SDK predates.
+    Not recorded: a live connection can't be made to drop after a checkpoint.
     """
     values: list[dict[str, JsonValue]] = [
         {'event_type': 'interaction.created', 'interaction': {'object': 'interaction', 'model': 'gemini-test'}},
@@ -785,8 +795,8 @@ async def test_stream_resumed_from_checkpoint_after_pending_mcp_call():
 async def test_stream_resumed_from_checkpoint_after_open_media_step():
     """A file the dropped request was still streaming comes out before the resumed request's parts.
 
-    Not recorded: the resume comes from google-genai 2.34, which the locked SDK predates. A file part is only emitted
-    when its step stops, and the dropped request's step never does.
+    Not recorded: a live connection can't be made to drop after a checkpoint. A file part is only emitted when its
+    step stops, and the dropped request's step never does.
     """
     values: list[dict[str, JsonValue]] = [
         {'event_type': 'interaction.created', 'interaction': {'object': 'interaction', 'model': 'gemini-test'}},
@@ -1448,6 +1458,76 @@ async def test_sdk_error_mapping(
     monkeypatch.setattr(mock_model.client.aio.interactions, 'create', AsyncMock(side_effect=failures[error]))
     with pytest.raises(ModelAPIError):
         await model_request(mock_model, [ModelRequest.user_text_prompt('hello')])
+
+
+@pytest.mark.parametrize(
+    ('failure', 'expected'),
+    [
+        pytest.param('status', ModelOverloadedError, id='status'),
+        pytest.param('connection', ModelConnectionError, id='connection'),
+        pytest.param('deadline', ModelTimeoutError, id='deadline'),
+    ],
+)
+@pytest.mark.parametrize('stream', [False, True])
+async def test_failed_continuation_request(
+    stream: bool, failure: str, expected: type[ModelAPIError], allow_model_requests: None
+):
+    """A request google-genai sends to continue a long decode fails the model request with that request's own error.
+
+    google-genai raises `ContinuationInterruptedError` with the request's error as its cause. A numeric `timeout`
+    bounds the whole call across requests, and a stream checks it before each event, so the `deadline` case runs out
+    before the first event when streamed, where google-genai raises its timeout as is. Not recorded: a live continued
+    request can't be made to fail.
+    """
+    completed: dict[str, JsonValue] = {
+        'status': 'requires_continuation',
+        'continuation_token': 'token',
+        'steps': [{'type': 'model_output', 'content': [{'type': 'text', 'text': '1\n'}]}],
+        'usage': {'total_input_tokens': 10, 'total_output_tokens': 2},
+    }
+    events: list[dict[str, JsonValue]] = [
+        {'event_type': 'interaction.created', 'interaction': {'object': 'interaction', 'model': 'gemini-test'}},
+        {'event_type': 'step.start', 'index': 0, 'step': {'type': 'model_output'}},
+        {'event_type': 'step.delta', 'index': 0, 'delta': {'type': 'text', 'text': '1\n'}},
+        {'event_type': 'step.stop', 'index': 0},
+        {'event_type': 'interaction.completed', 'interaction': {**completed, 'steps': []}},
+    ]
+    requests: list[httpx2.Request] = []
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        if len(requests) == 1:
+            if stream:
+                content = b''.join(f'data: {json.dumps(event)}\n\n'.encode() for event in events)
+                return httpx2.Response(200, content=content, headers={'content-type': 'text/event-stream'})
+            return httpx2.Response(200, json=completed)
+        elif failure == 'status':
+            return httpx2.Response(503, json={'error': {'code': 'unavailable', 'message': 'overloaded'}})
+        raise httpx2.ConnectError('Connection refused', request=request)
+
+    model = GoogleInteractionsModel(
+        'gemini-test',
+        provider=GoogleProvider(
+            api_key='test-key', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
+        ),
+    )
+    settings: GoogleInteractionsModelSettings = {'timeout': 0} if failure == 'deadline' else {}
+    messages = [ModelRequest.user_text_prompt('Count.')]
+
+    with pytest.raises(expected) as exc_info:
+        if stream:
+            async with model_request_stream(model, messages, model_settings=settings) as response:
+                async for _ in response:
+                    pass
+        else:
+            await model_request(model, messages, model_settings=settings)
+
+    if failure == 'status':
+        assert isinstance(exc_info.value, ModelHTTPError) and exc_info.value.status_code == 503
+    # The deadline runs out before a second request is sent.
+    assert (len(requests) > 1) == (failure != 'deadline')
+    raised = ContinuationTimeoutError if stream and failure == 'deadline' else ContinuationInterruptedError
+    assert type(exc_info.value.__cause__) is raised
 
 
 async def test_unprepared_history_guards(mock_model: GoogleInteractionsModel, allow_model_requests: None):
