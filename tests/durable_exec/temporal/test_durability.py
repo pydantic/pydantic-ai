@@ -27,6 +27,7 @@ from typing import Any, Literal, cast
 from unittest.mock import patch
 
 import anyio
+import httpx2
 import pytest
 from pydantic import TypeAdapter
 
@@ -170,7 +171,7 @@ try:
     from temporalio.api.enums.v1 import EventType
     from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
     from temporalio.common import RetryPolicy
-    from temporalio.exceptions import ActivityError, ApplicationError
+    from temporalio.exceptions import ActivityError, ApplicationError, RetryState
     from temporalio.worker import (
         Interceptor,
         Replayer,
@@ -228,7 +229,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
 except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
@@ -1843,6 +1844,87 @@ async def test_durability_delegated_usage_limit_is_not_retried(client: Client):
     assert _delegation_attempts == ['pydantic']
 
 
+# --- Resuming a suspended response the provider no longer has isn't retried ---
+
+
+_expired_response_requests: list[str] = []
+
+
+def _expired_response_handler(request: httpx2.Request) -> httpx2.Response:
+    _expired_response_requests.append(f'{request.method} {request.url.path}')
+    return httpx2.Response(404, json={'error': {'message': 'No response found.', 'type': 'invalid_request_error'}})
+
+
+expired_response_agent = Agent(
+    OpenAIResponsesModel(
+        'gpt-5.6-sol',
+        provider=OpenAIProvider(
+            api_key='mock-api-key',
+            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(_expired_response_handler)),
+        ),
+    ),
+    name='durability_expired_suspended_response',
+    capabilities=[
+        TemporalDurability(
+            model_activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+            ),
+        )
+    ],
+)
+
+
+@workflow.defn
+class ExpiredSuspendedResponseWorkflow:
+    @workflow.run
+    async def run(self, messages: list[ModelMessage]) -> str:
+        return (await expired_response_agent.run(message_history=messages)).output
+
+
+async def test_durability_expired_suspended_response_is_not_retried(allow_model_requests: None, client: Client):
+    """Resuming a suspended OpenAI background response after the provider deleted it fails the model activity on its
+    first attempt: every retry would retrieve the same deleted response.
+    """
+    _expired_response_requests.clear()
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='go')]),
+        ModelResponse(
+            parts=[TextPart('The answer ')],
+            model_name='gpt-5.6-sol',
+            provider_name='openai',
+            provider_response_id='resp_expired',
+            state='suspended',
+        ),
+    ]
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ExpiredSuspendedResponseWorkflow],
+        plugins=[AgentPlugin(expired_response_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                ExpiredSuspendedResponseWorkflow.run,
+                args=[history],
+                id=ExpiredSuspendedResponseWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+    activity_error = exc_info.value.cause
+    assert isinstance(activity_error, ActivityError)
+    assert activity_error.retry_state == RetryState.NON_RETRYABLE_FAILURE
+    application_error = activity_error.cause
+    assert isinstance(application_error, ApplicationError)
+    assert (application_error.type, application_error.message) == snapshot(
+        (
+            'SuspendedResponseExpired',
+            "The suspended response 'resp_expired' could not be resumed because its server-side job is no longer "
+            'available (it may have expired).',
+        )
+    )
+    assert _expired_response_requests == ['GET /v1/responses/resp_expired']
+
+
 # --- `ModelSettings['request_timeout']` runs on the workflow's clock ---
 
 
@@ -2928,6 +3010,7 @@ def test_durability_activity_config_not_mutated():
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
         'UsageLimitExceeded',
+        'SuspendedResponseExpired',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
         'WorkspaceReadOnlyError',
@@ -2976,6 +3059,7 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
         'UsageLimitExceeded',
+        'SuspendedResponseExpired',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
         'WorkspaceReadOnlyError',
@@ -2996,6 +3080,7 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
         'UsageLimitExceeded',
+        'SuspendedResponseExpired',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
         'WorkspaceReadOnlyError',
@@ -3024,6 +3109,7 @@ def test_durability_event_stream_handler_activity_config_keeps_non_retryable_err
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
         'UsageLimitExceeded',
+        'SuspendedResponseExpired',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
         'WorkspaceReadOnlyError',
