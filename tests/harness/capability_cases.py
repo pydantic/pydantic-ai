@@ -10,16 +10,19 @@ taken once, here, as the case's `combine`. The answers, and what picks between t
   a `ToolOutputLimits` compose instead of colliding.
 - `Narrows` -- a default `id` and a `combine` method that narrows rather than unions, so two that
   disagree raise: the configuration is an access boundary.
+- `Conjoins` -- a default `id` and a `combine` method under which every instance's restrictions apply:
+  allowlists intersect, denylists add up, limits take the smaller value, so adding one only narrows.
+  `FileSystem` and `Shell`, including the instances inside `Coder`.
 - `Anonymous` -- no default `id`, and two really do coexist.
 - `Collides` -- no default `id`, and two never coexist anyway, because the toolset registers fixed
-  tool names. A fact rather than a preference, and pinned by
-  `test_two_of_a_colliding_capability_still_raise` so it cannot drift back into an `Anonymous`
-  reason describing a configuration ("one per rooted directory") that is unreachable.
+  tool names. A fact rather than a preference, recorded so it cannot drift back into an `Anonymous`
+  reason describing a configuration ("one per rooted directory") that is unreachable;
+  `test_capability_combine_policy_holds` checks the class still declares no default `id`.
 - `Rejected` -- no default `id`, and something else rejects a second one, as a durable engine does.
 
-Declaring a default `id` is the whole policy: there is no `combine` method to override unless the
-merge needs something the field-by-field default cannot express, such as a budget that should take the
-*smaller* value.
+Declaring a default `id` is the whole policy for `Combines`: there is no `combine` method to override unless
+the merge needs something the field-by-field default cannot express, such as a budget that should take the
+*smaller* value, or an access boundary, as for `Narrows` and `Conjoins`.
 """
 
 from __future__ import annotations

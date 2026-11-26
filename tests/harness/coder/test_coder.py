@@ -10,7 +10,13 @@ from typing import NoReturn
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, LocalWorkspace, local_workspace
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    CombinedCapability,
+    LocalWorkspace,
+    PrefixTools,
+    local_workspace,
+)
 from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import (
@@ -199,6 +205,42 @@ async def test_a_shell_beside_coder_restricts_coders_shell(tmp_path: Path) -> No
     denied, allowed = await call_tools(capabilities, [('shell', {'command': 'ls'}), ('shell', {'command': 'echo hi'})])
     assert "Command 'ls' is not in the allowed list." in denied
     assert 'hi' in allowed
+
+
+@pytest.mark.parametrize('placement', ['before', 'after'])
+async def test_a_shell_before_or_after_coder_narrows_it(tmp_path: Path, placement: str) -> None:
+    shell = Shell(allowed_commands=['pytest'])
+    capabilities = [shell, Coder()] if placement == 'before' else [Coder(), shell]
+    assert await _offered_tools(tmp_path, *capabilities) == CODER_DEFAULT_TOOLS
+
+
+def test_a_wrapped_shell_beside_coder_raises() -> None:
+    """`PrefixTools` keeps the wrapped `Shell`'s id, and a wrapper and a `Shell` can't be combined."""
+    with pytest.raises(UserError, match="Capability id 'shell' is used by capabilities of different types"):
+        Agent(
+            TestModel(),
+            deps_type=type(None),
+            capabilities=[Coder[None](), PrefixTools(Shell(allowed_commands=['pytest']), prefix='p')],
+        )
+
+
+async def test_a_run_level_shell_replaces_coders_whole(tmp_path: Path) -> None:
+    """A known limit: a capability passed for a run replaces its agent-level namesake rather than combining with it."""
+    model = TestModel(call_tools=[])
+    agent = Agent(model, deps_type=type(None), capabilities=[LocalWorkspace(tmp_path), Coder[None]()])
+    await agent.run('go', capabilities=[Shell(allowed_commands=['pytest'])])
+    assert model.last_model_request_parameters is not None
+    tools = {tool.name for tool in model.last_model_request_parameters.function_tools}
+    assert 'shell' not in tools and {'run_command', 'start_command'} <= tools
+
+
+def test_combining_keeps_the_lowest_authority() -> None:
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[Coder[None](), Shell().with_authority('none')])
+    [shell] = [leaf for leaf in leaf_capabilities(agent.root_capability) if isinstance(leaf, Shell)]
+    assert shell._effective_authority == 'none'  # pyright: ignore[reportPrivateUsage]
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[FileSystem().with_authority('user'), Coder[None]()])
+    [files] = [leaf for leaf in leaf_capabilities(agent.root_capability) if isinstance(leaf, FileSystem)]
+    assert files._effective_authority == 'user'  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_a_file_system_beside_coder_restricts_coders_file_tools(tmp_path: Path) -> None:

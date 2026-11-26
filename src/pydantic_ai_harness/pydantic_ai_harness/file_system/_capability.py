@@ -239,7 +239,7 @@ class FileSystem(RecordsStated, AbstractCapability[AgentDepsT]):
             if fs.allowed_patterns or fs.denied_patterns or any(cls._stated_values([fs], 'read_only_patterns'))
         ]
         _require_patterns_on_their_root(patterned, root_dir)
-        return replace(
+        merged = replace(
             file_systems[-1],
             cwd=None,
             root_dir=root_dir,
@@ -257,6 +257,11 @@ class FileSystem(RecordsStated, AbstractCapability[AgentDepsT]):
             tools=DEFAULT_TOOL_NAMES if tools is None else tools,
             max_retries=agreed([fs.max_retries for fs in file_systems], owner='FileSystem', field='max_retries'),
         )
+        # `replace` resets the `init=False` authority ceiling; lowering authority is a restriction, so all apply.
+        for fs in file_systems:
+            if fs._authority_ceiling is not None:
+                merged = merged.with_authority(fs._authority_ceiling)
+        return merged
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Fail without a workspace, without touching it: the boundary waits for the first file operation."""

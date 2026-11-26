@@ -208,6 +208,10 @@ class Shell(RecordsStated, AbstractCapability[AgentDepsT]):
             tools=RUN_SCOPED_TOOL_NAMES if tools is None else tools,
         )
         _require_supported_by_the_persistent_tool(merged)
+        # `replace` resets the `init=False` authority ceiling; lowering authority is a restriction, so all apply.
+        for shell in shells:
+            if shell._authority_ceiling is not None:
+                merged = merged.with_authority(shell._authority_ceiling)
         return merged
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
