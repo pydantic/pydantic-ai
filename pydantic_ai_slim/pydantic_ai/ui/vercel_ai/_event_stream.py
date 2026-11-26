@@ -45,7 +45,7 @@ from .._adapter import (
     model_settings_delta_payload,
     tool_availability_delta_payload,
 )
-from .._utils import TOOL_INTERRUPTED_BY_ERROR, client_error_text
+from .._utils import TOOL_INTERRUPTED_BY_ERROR, client_error_text, client_tool_return, return_ui_visibility
 from ._utils import (
     CAPABILITY_LOAD_DELTA_DATA_TYPE,
     COMPACTION_DATA_TYPE,
@@ -208,12 +208,22 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         # leaving the client stuck in `input-streaming`. The base class synthesizes the open part's
         # `PartEndEvent` on error, which `handle_tool_call_end` stashes here, so flush whatever remains.
         # On SDK v6+ the call is closed with `tool-input-error` instead, as the run discarded it:
-        # `tool-input-available` would have the client run it through `onToolCall`.
+        # `tool-input-available` would have the client run it through `onToolCall`. Its error text is
+        # the synthetic closeout result, under the same visibility as the base class's closeout: nothing
+        # is sent when that result is hidden, e.g. a `'private'` call took over the call's id.
         for part in self._streamed_call_parts.values():
-            if self.sdk_version >= 6:
-                yield self._tool_input_error_chunk(part, TOOL_INTERRUPTED_BY_ERROR)
-            else:
+            if self.sdk_version < 6:
                 yield self._tool_input_available_chunk(part)
+                continue
+            closeout = ToolReturnPart(
+                tool_name=part.tool_name,
+                content=TOOL_INTERRUPTED_BY_ERROR,
+                tool_call_id=part.tool_call_id,
+                outcome='failed',
+            )
+            visibility = return_ui_visibility(closeout, self._call_ui_visibilities, self.default_ui_visibility)
+            if (client_closeout := client_tool_return(closeout, visibility)) is not None:
+                yield self._tool_input_error_chunk(part, client_error_text(client_closeout))
         self._streamed_call_parts.clear()
 
         # No `MessageMetadataChunk` here: an errored run has no `AgentRunResultEvent` to source
