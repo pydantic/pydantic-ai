@@ -48,7 +48,9 @@ class _Repository(BaseModel):
     id: int = Field(gt=0)
 
 
-class _Head(Commit):
+class _Branch(Commit):
+    """A pull request's head or base: its commit and the repository that holds it."""
+
     repo: _Repository
 
 
@@ -57,8 +59,8 @@ class ReviewPullRequest(BaseModel):
 
     state: Literal['open', 'closed']
     user: ReviewUser
-    head: _Head
-    base: Commit
+    head: _Branch
+    base: _Branch
     labels: list[Label]
     changed_files: int
 
@@ -174,9 +176,13 @@ def review_verdicts(
     size = github.size(pull)
     size_labels = {label.name for label in pull.labels if label.name.startswith('size:')}
     if not size_labels:
-        verdicts['douwebot'].failures.append(
-            f'No size label (computed `{size}`): PR Bots labels a PR whose author has write access, or with `trusted:ci-run`.'
+        # The status description keeps only 140 characters, so the next step must fit in them.
+        next_step = (
+            'PR Bots labels a PR whose author has write access, or with `trusted:ci-run`.'
+            if pull.head.repo.id == pull.base.repo.id
+            else 'PR Bots skips fork PRs. A maintainer recreates the change as a same-repository PR.'
         )
+        verdicts['douwebot'].failures.append(f'No size label (computed `{size}`): {next_step}')
         return verdicts
     if size_labels != {size}:
         verdicts['douwebot'].failures.append(

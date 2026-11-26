@@ -553,7 +553,7 @@ class ReviewGitHub:
                 'state': 'closed' if self.closed else 'open',
                 'user': {'id': 1, 'login': self.author[0], 'type': self.author[1]},
                 'head': {'sha': self.head, 'repo': {'id': self.repository}},
-                'base': {'sha': OLD_HEAD},
+                'base': {'sha': OLD_HEAD, 'repo': {'id': 888}},
                 'changed_files': 1,
                 'labels': [{'name': label} for label in self.labels if label]
                 if self.labels is not None
@@ -612,6 +612,16 @@ def test_a_missing_size_label_names_the_activation_label():
     assert failures == [
         'No size label (computed `size: M`): PR Bots labels a PR whose author has write access, or with `trusted:ci-run`.'
     ]
+
+
+@pytest.mark.parametrize('size', ['size: M', 'size: XL'])
+def test_a_fork_pr_without_a_size_label_is_recreated(size: review_gates.Size):
+    """PR Bots never labels a fork PR, and `trusted:ci-run` cannot change that."""
+    failures = verdicts(ReviewGitHub(size_label=size, labels=[], repository=999))['douwebot'].failures
+    assert failures == [
+        f'No size label (computed `{size}`): PR Bots skips fork PRs. A maintainer recreates the change as a same-repository PR.'
+    ]
+    assert len(failures[0]) <= 140
 
 
 @pytest.mark.parametrize('labels', [[], ['size: S'], ['size: M', 'size: L']])
