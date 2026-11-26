@@ -30,6 +30,7 @@ from pydantic_ai_harness.step_persistence.conversations import ConversationSumma
 from pydantic_ai_pax.builtin_plugins.web.app import HEADER, ASGIApp, create_app
 from pydantic_ai_pax.builtin_plugins.web.server import WebServer
 from pydantic_ai_pax.plugins import InstallProgress
+from pydantic_ai_pax.plugins.menus import Option
 from tests.pax.browser.conftest import Serve
 from tests.pax.test_web import TOKEN
 from tests.pax.test_web_sessions import Fleet
@@ -150,7 +151,7 @@ class WebUI:
     delta: str
     epsilon: str
     busy: str
-    """A session another CLAI runs: this test process's parent."""
+    """A session another Pax runs: this test process's parent."""
     removed: str
     """Saved in a folder that is gone."""
     saved: str
@@ -260,7 +261,7 @@ async def test_hostile_markdown_and_external_links(page: Page, web_ui: WebUI) ->
     await page.locator('.sidebar').get_by_text('Browser Alpha', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Alpha')
     await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
-    composer = page.get_by_role('combobox', name='Message CLAI')
+    composer = page.get_by_role('combobox', name='Message Pax')
     await expect(composer).to_be_enabled()
     await composer.fill('Render the hostile example')
     async with page.expect_response(f'**/api/sessions/{web_ui.alpha}/input') as sent:
@@ -303,7 +304,7 @@ async def test_single_line_breaks_survive_like_the_tui(page: Page, web_ui: WebUI
     await page.locator('.sidebar').get_by_text('Browser Lines', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Lines')
     await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
-    composer = page.get_by_role('combobox', name='Message CLAI')
+    composer = page.get_by_role('combobox', name='Message Pax')
     await expect(composer).to_be_enabled()
     await composer.fill('Print one item per line')
     async with page.expect_response(f'**/api/sessions/{web_ui.lines}/input') as sent:
@@ -374,6 +375,110 @@ async def test_sidebar_search_accessible_name(page: Page, web_ui: WebUI) -> None
     await expect(sidebar.get_by_text('Browser Alpha', exact=True)).to_have_count(0)
 
 
+VIEWS = ['sessions', 'projects']
+"""The sidebar's two listings, which render different rows and row controls."""
+FIELD_VIEWS = [*VIEWS, 'command palette', 'plugin settings', 'filter dialog']
+"""The views above, plus the command palette's, the plugin settings' and a long choice dialog's filter fields."""
+FILTERED = [Option(value=letter, label=letter) for letter in 'abcdefghi']
+"""More options than a choice dialog lists without its Filter field."""
+
+MARK_CONTROLS = """() => {
+  const controls = [...document.querySelectorAll('a[href], button, input, select, textarea, summary, [tabindex]')]
+    .filter((control) => !control.disabled && control.tabIndex >= 0 && control.type !== 'hidden' && !control.closest('[inert]'))
+  controls.forEach((control, index) => control.setAttribute('data-control', String(index)))
+  return controls.length
+}"""
+"""Mark each control the page renders in the Tab order; return how many."""
+
+MARK_PLACEHOLDER_FIELDS = """() => [...document.querySelectorAll('input[placeholder], textarea[placeholder]')]
+  .filter((field) => field.placeholder && field.checkVisibility())
+  .map((field, index) => {
+    field.setAttribute('data-placeholder-field', String(index))
+    const labelled = field.id && document.querySelector(`label[for="${CSS.escape(field.id)}"]`)
+    return [field.placeholder, field.hasAttribute('aria-label') || field.hasAttribute('aria-labelledby') || Boolean(labelled)]
+  })"""
+"""Mark each visible field with a placeholder; return its placeholder and whether it has a name of its own."""
+
+
+async def open_view(page: Page, web_ui: WebUI, view: str) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    await sidebar.get_by_text('Browser Beta', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
+    if view == 'projects':
+        await sidebar.get_by_role('button', name='Projects', exact=True).click()
+        await expect(sidebar.locator('.project-head').first).to_be_visible()
+    elif view == 'command palette':
+        await page.keyboard.press('ControlOrMeta+Shift+P')
+        await expect(page.get_by_placeholder('Search commands')).to_be_visible()
+    elif view == 'plugin settings':
+        await page.evaluate("() => { location.hash = '#settings/plugins' }")
+        await expect(page.get_by_placeholder('Search plugins')).to_be_visible()
+
+
+@pytest.mark.parametrize('view', VIEWS)
+async def test_tab_reaches_every_control_a_pointer_can(page: Page, web_ui: WebUI, view: str) -> None:
+    """A control hidden with `display` until hover takes no focus, so a keyboard cannot reach it (#12217)."""
+    await open_view(page, web_ui, view)
+    count: int = await page.evaluate(MARK_CONTROLS)
+    await page.mouse.move(0, 0)
+    reached: set[str] = set()
+    for _ in range(2 * count + 2):
+        await page.keyboard.press('Tab')
+        focused: str = await page.evaluate("() => document.activeElement?.getAttribute('data-control') ?? ''")
+        if focused in reached:
+            break
+        if focused:
+            reached.add(focused)
+    missed: list[str] = []
+    for index in map(str, range(count)):
+        if index in reached:
+            continue
+        control = page.locator(f'[data-control="{index}"]')
+        if not await control.count():
+            # Re-rendered during the walk; its replacement carries no mark.
+            continue
+        if not await control.is_visible():
+            row = await control.evaluate_handle(
+                'control => { let row = control.parentElement; while (row && !row.checkVisibility()) row = row.parentElement; return row }'
+            )
+            if (element := row.as_element()) is None:
+                continue
+            await element.hover()
+            revealed = await control.is_visible()
+            await page.mouse.move(0, 0)
+            if not revealed:
+                continue
+        missed.append(await control.evaluate("c => c.getAttribute('aria-label') || c.title || c.className"))
+    assert not missed, f'Tab never focuses these controls a pointer can use; hide one by size or opacity: {missed}'
+
+
+async def test_each_field_with_a_placeholder_has_an_accessible_name(page: Page, web_ui: WebUI) -> None:
+    """A field with no name of its own is named by its placeholder, not by whatever else its wrapping label holds.
+
+    A wrapping label named the session search 'Archived Ctrl K' (#11306), and one holding only an icon left the command
+    palette's and the plugin settings' search fields, and a long choice dialog's Filter field, with no name at all.
+    """
+    judged = 0
+    for view in FIELD_VIEWS:
+        await open_view(page, web_ui, view)
+        asked = None
+        if view == 'filter dialog':
+            choose = web_ui.fleet.service.dialogs.choose
+            asked = web_ui.fleet.portal.start_task_soon(lambda: choose(title='Pick a letter', options=FILTERED))
+            await expect(page.get_by_placeholder('Filter')).to_be_visible()
+        fields: list[tuple[str, bool]] = await page.evaluate(MARK_PLACEHOLDER_FIELDS)
+        for index, (placeholder, named) in enumerate(fields):
+            field = page.locator(f'[data-placeholder-field="{index}"]')
+            await expect(field).to_have_accessible_name(re.compile(r'\S' if named else rf'^{re.escape(placeholder)}$'))
+        judged += len(fields)
+        if asked is not None:
+            await page.keyboard.press('Escape')
+            assert await asyncio.wrap_future(asked) is None
+    assert judged, f'no view in {FIELD_VIEWS} has a field with a placeholder: open one that does'
+
+
 async def test_project_heading_title_is_its_folder(page: Page, web_ui: WebUI) -> None:
     """A repository's heading shows its main checkout's folder, not the Git folder that keys it."""
     session = {
@@ -412,7 +517,7 @@ async def test_project_heading_title_is_its_folder(page: Page, web_ui: WebUI) ->
 
 
 async def test_imported_session_shows_its_source(page: Page, web_ui: WebUI) -> None:
-    """A session imported from Claude Code or Codex says which beside its title; CLAI's own say nothing."""
+    """A session imported from Claude Code or Codex says which beside its title; Pax's own say nothing."""
 
     def entry(session_id: str, title: str, source: str | None) -> dict[str, object]:
         return {
@@ -587,7 +692,7 @@ async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
     await page.locator('.sidebar').get_by_text('Browser Beta', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
     await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
-    composer = page.get_by_role('combobox', name='Message CLAI')
+    composer = page.get_by_role('combobox', name='Message Pax')
     await expect(composer).to_be_enabled()
     await composer.fill('Only Beta should receive this')
     async with page.expect_response(f'**/api/sessions/{web_ui.beta}/input') as sent:
@@ -615,7 +720,7 @@ async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
 
 
 async def test_a_clai_restarted_as_a_new_version_reloads_the_page(page: Page, web_ui: WebUI) -> None:
-    """A page left open across `/update`'s restart loads the new CLAI's bundle rather than keep the old one."""
+    """A page left open across `/update`'s restart loads the new Pax's bundle rather than keep the old one."""
     fleet = web_ui.fleet
 
     def app(port: int) -> ASGIApp:
@@ -632,7 +737,7 @@ async def test_a_clai_restarted_as_a_new_version_reloads_the_page(page: Page, we
         await expect(page.get_by_title('Reconnecting…', exact=True)).to_be_visible()
         fleet.service.version = f'{version}+updated'
         server = fleet.portal.call(lambda: WebServer.serve(app, host='127.0.0.1', port=port))
-        await expect(page.get_by_text(f'Updated CLAI to {version}+updated.')).to_be_visible()
+        await expect(page.get_by_text(f'Updated Pax to {version}+updated.')).to_be_visible()
         await expect(page.get_by_title('Connected', exact=True)).to_be_visible()
         assert await page.evaluate('window.claiTestOldBundle ?? null') is None
     finally:
@@ -709,7 +814,7 @@ async def test_composer_recalls_sent_prompts(page: Page, web_ui: WebUI) -> None:
     await page.locator('.sidebar').get_by_text('Browser Beta', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
     await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
-    composer = page.get_by_role('combobox', name='Message CLAI')
+    composer = page.get_by_role('combobox', name='Message Pax')
     await expect(composer).to_be_enabled()
     for prompt in ('Recall the first prompt', 'Recall the second prompt\non two lines'):
         await composer.fill(prompt)
@@ -791,7 +896,7 @@ async def test_a_failed_tool_leads_with_its_error(
     await page.locator('.sidebar').get_by_text('Browser Delta', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Delta')
     await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
-    composer = page.get_by_role('combobox', name='Message CLAI')
+    composer = page.get_by_role('combobox', name='Message Pax')
     await expect(composer).to_be_enabled()
     await composer.fill(prompt)
     async with page.expect_response(f'**/api/sessions/{web_ui.delta}/input') as sent:
@@ -861,7 +966,7 @@ async def test_switching_back_to_a_watched_session_shows_it_at_once(page: Page, 
     """)
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     sidebar = page.locator('.sidebar')
-    composer = page.get_by_role('combobox', name='Message CLAI')
+    composer = page.get_by_role('combobox', name='Message Pax')
     for title, conversation in (('Browser Beta', web_ui.beta), ('Browser Alpha', web_ui.alpha)):
         await sidebar.get_by_text(title, exact=True).click()
         await expect(page.locator('.session.current .session-title')).to_have_text(title)
@@ -937,7 +1042,7 @@ async def test_failed_write_shows_the_attempt_and_the_error(page: Page, web_ui: 
     await page.locator('.sidebar').get_by_text('Browser Epsilon', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Epsilon')
     await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
-    composer = page.get_by_role('combobox', name='Message CLAI')
+    composer = page.get_by_role('combobox', name='Message Pax')
     await expect(composer).to_be_enabled()
     await composer.fill('Write the forbidden file')
     await composer.press('Enter')
@@ -955,9 +1060,9 @@ async def test_failed_write_shows_the_attempt_and_the_error(page: Page, web_ui: 
 async def test_a_refused_update_shows_no_saved_badge(
     page: Page, web_ui: WebUI, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Settings > About refuses Update… while CLAI cannot restart; its row must not claim it saved anything."""
+    """Settings > About refuses Update… while Pax cannot restart; its row must not claim it saved anything."""
     # The launch session installs for every page, so its refusal is the one About shows.
-    monkeypatch.setattr(web_ui.fleet.launch, 'restart_refusal', lambda: 'CLAI cannot restart now.')
+    monkeypatch.setattr(web_ui.fleet.launch, 'restart_refusal', lambda: 'Pax cannot restart now.')
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Beta', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
@@ -971,7 +1076,7 @@ async def test_a_refused_update_shows_no_saved_badge(
     # Read with the toast in one page call: a badge renders with it, and a retry would pass once its timer clears it.
     badge = await page.wait_for_function(
         """() => {
-          if (!document.querySelector('.toast.error')?.textContent?.includes('CLAI cannot restart now.')) return null
+          if (!document.querySelector('.toast.error')?.textContent?.includes('Pax cannot restart now.')) return null
           const row = [...document.querySelectorAll('.setting')]
             .find((setting) => setting.querySelector('.setting-label')?.textContent === 'Version')
           return row.querySelector('.setting-state')?.textContent ?? 'none'
@@ -999,7 +1104,7 @@ async def test_settings_about_follows_an_update(page: Page, web_ui: WebUI) -> No
     try:
         portal.call(service.install_progress, InstallProgress(stage='installing', target='0.99.0'))
         progress = settings.get_by_role('status')
-        await expect(progress).to_contain_text('Updating CLAI to 0.99.0…')
+        await expect(progress).to_contain_text('Updating Pax to 0.99.0…')
         # A trial click checks nothing covers it, as the window once covered the session's progress, and that the
         # navigation stays usable beside it.
         await progress.click(trial=True)
@@ -1007,7 +1112,7 @@ async def test_settings_about_follows_an_update(page: Page, web_ui: WebUI) -> No
         portal.call(service.install_progress, InstallProgress(stage='output', target='0.99.0', text='Resolved 3'))
         await expect(progress).to_contain_text('Resolved 3')
         portal.call(service.install_progress, InstallProgress(stage='restarting', target='0.99.0'))
-        await expect(progress).to_contain_text('Restarting CLAI…')
+        await expect(progress).to_contain_text('Restarting Pax…')
         # The new build comes back at the same address; the page loads its bundle, About still open.
         service.version, service.update = '0.99.0', None
         await page.clock.install()
@@ -1015,7 +1120,7 @@ async def test_settings_about_follows_an_update(page: Page, web_ui: WebUI) -> No
         await page.clock.run_for(500)
         await page.clock.resume()
         await expect(progress).to_have_count(0)
-        await expect(settings).to_contain_text(f'Updated CLAI from {before} to 0.99.0.')
+        await expect(settings).to_contain_text(f'Updated Pax from {before} to 0.99.0.')
     finally:
         service.version, service.update = before, None
 
@@ -1024,7 +1129,7 @@ async def test_switching_sessions_focuses_the_composer(page: Page, web_ui: WebUI
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     sidebar = page.locator('.sidebar')
     current = page.locator('.session.current .session-title')
-    composer = page.get_by_role('combobox', name='Message CLAI')
+    composer = page.get_by_role('combobox', name='Message Pax')
     # Whichever session an earlier case left shown, Gamma shows first, so picking Beta switches.
     await expect(current).to_have_count(1)
     await sidebar.get_by_text('Browser Gamma', exact=True).click()
@@ -1074,7 +1179,7 @@ async def test_at_mentions_pick_files_from_the_session_folder(page: Page, web_ui
     await page.locator('.sidebar').get_by_text('Browser Lines', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Lines')
     await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
-    composer = page.get_by_role('combobox', name='Message CLAI')
+    composer = page.get_by_role('combobox', name='Message Pax')
     await expect(composer).to_be_enabled()
     options = page.get_by_role('listbox').get_by_role('option')
     names = options.locator('.suggestion-name')
@@ -1203,7 +1308,7 @@ async def test_a_session_another_clai_runs_shows_until_forked(page: Page, web_ui
     """Clicking it shows it read-only and saves nothing; only the banner's button continues it, in a fork."""
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     sidebar = page.locator('.sidebar')
-    # This CLAI does not follow sessions' folders, so it continues only those of the session it shows: Beta's.
+    # This Pax does not follow sessions' folders, so it continues only those of the session it shows: Beta's.
     await sidebar.get_by_text('Browser Beta', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
     await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
@@ -1211,7 +1316,7 @@ async def test_a_session_another_clai_runs_shows_until_forked(page: Page, web_ui
         await sidebar.get_by_text('Browser Busy', exact=True).click()
     assert (await shown.value).ok
     banner = page.locator('.preview-banner')
-    await expect(banner).to_contain_text(f'Running in another CLAI (pid {os.getppid()}).')
+    await expect(banner).to_contain_text(f'Running in another Pax (pid {os.getppid()}).')
     await expect(sidebar.get_by_text('Browser Busy (fork)', exact=True)).to_have_count(0)
     await banner.get_by_role('button', name='Fork to continue here').click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Busy (fork)')
@@ -1252,7 +1357,7 @@ async def test_a_saved_session_opens_from_its_row_named_at_once(page: Page, web_
     async with page.expect_request(f'**/api/sessions/{web_ui.saved}/open'):
         await page.locator('.sidebar').get_by_text('Browser Saved', exact=True).click()
     await expect(page.locator('.topbar .title')).to_have_text('Browser Saved')
-    await expect(page).to_have_title('Browser Saved · CLAI')
+    await expect(page).to_have_title('Browser Saved · Pax')
     [route] = held
     await route.continue_()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Saved')
@@ -1316,7 +1421,7 @@ async def test_a_pick_over_a_read_only_view_names_the_picked_session(page: Page,
     async with page.expect_request(f'**/api/sessions/{web_ui.saved}/open'):
         await sidebar.get_by_text('Browser Saved', exact=True).click()
     await expect(page.locator('.topbar .title')).to_have_text('Browser Saved')
-    await expect(page).to_have_title('Browser Saved · CLAI')
+    await expect(page).to_have_title('Browser Saved · Pax')
     [route] = held
     await route.continue_()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Saved')
@@ -1455,7 +1560,7 @@ async def test_a_session_another_clai_runs_shows_a_ring(page: Page, web_ui: WebU
     sidebar = page.locator('.sidebar')
     row = sidebar.locator(f'.session[data-session="{web_ui.busy}"]')
     ring = row.locator('.state.busy')
-    await expect(ring).to_have_attribute('title', f'Running in clai2 pid {os.getppid()}')
+    await expect(ring).to_have_attribute('title', f'Running in Pax pid {os.getppid()}')
     await expect(row.locator('.spinner')).to_have_count(0)
     # It is running, so the attention view lists it, and the archived view does not.
     await sidebar.get_by_role('button', name=re.compile('^Attention')).click()

@@ -7,6 +7,7 @@ from contextlib import contextmanager
 
 import pytest
 from prompt_toolkit.input import create_pipe_input
+from prompt_toolkit.input.typeahead import store_typeahead
 from prompt_toolkit.key_binding import KeyPress
 from prompt_toolkit.keys import Keys
 
@@ -29,6 +30,16 @@ async def test_decoding_meta_paste_arrows_and_lone_escape() -> None:
         keys.start()
         keys.stop()
         keys.stop()
+
+
+async def test_start_replays_keys_typed_before_the_prompt() -> None:
+    events: list[tuple[str, str]] = []
+    with create_pipe_input() as pipe:
+        store_typeahead(pipe, [KeyPress('h', 'h'), KeyPress('i', 'i')])
+        keys = PromptKeys(source=pipe, feed=lambda key, data: events.append((key, data)), eof=lambda: None)
+        keys.start()
+        keys.stop()
+    assert events == [('h', 'h'), ('i', 'i')]
 
 
 async def test_attach_failure_unwinds_raw_mode(monkeypatch: pytest.MonkeyPatch) -> None:

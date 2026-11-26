@@ -75,6 +75,7 @@ from pydantic_ai.exceptions import (
     IncompleteToolCall,
     ModelAPIError,
     ModelContextWindowExceededError,
+    ModelEmptyResponseError,
     ModelHTTPError,
     ModelRateLimitError,
     ModelRequestRejectedError,
@@ -174,6 +175,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_chatgpt import OpenAIChatGPTProvider
     from pydantic_ai.providers.openai_codex import OpenAICodexProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
@@ -1096,6 +1098,24 @@ async def test_openai_responses_gpt_5_6_minimal_thinking_uses_low_effort(
     prove Pydantic AI maps its provider-agnostic `thinking='minimal'` level to `'low'` before sending it.
     """
     model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(thinking='minimal'))
+
+    result = await agent.run('What is the capital of France? Answer in one word.')
+
+    assert result.output == snapshot('Paris')
+    assert single_request_body(vcr)['reasoning'] == snapshot({'effort': 'low', 'context': 'all_turns'})
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_openai_responses_gpt_5_4_minimal_thinking_uses_low_effort(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette
+):
+    """VCR test: unified minimal thinking falls back to `low` on GPT-5.4, which rejects `minimal`.
+
+    OpenAI's API answers `reasoning.effort='minimal'` on gpt-5.4 with a 400 listing `none`, `low`, `medium`,
+    `high` and `xhigh`. A successful request and the body assertion prove Pydantic AI sends `'low'` instead.
+    """
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(thinking='minimal'))
 
     result = await agent.run('What is the capital of France? Answer in one word.')
@@ -20371,6 +20391,60 @@ async def test_promoted_tool_search_replay_item_id(
     assert input_items[0] == expected
 
 
+@pytest.mark.parametrize(
+    ('call', 'expected_id'),
+    [
+        pytest.param(
+            ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='call_1', id='tsc_abc'),
+            None,
+            id='tsc-omitted',
+        ),
+        pytest.param(
+            ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='call_1|tsc_abc'),
+            None,
+            id='legacy-combined-tsc-omitted',
+        ),
+        pytest.param(
+            ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='call_1', id='fc_123'),
+            'fc_123',
+            id='fc-preserved',
+        ),
+        pytest.param(
+            ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='call_1', id='opaque_1'),
+            'opaque_1',
+            id='opaque-preserved',
+        ),
+        pytest.param(
+            ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_1', id='tsc_abc'),
+            'tsc_abc',
+            id='ordinary-call-unchanged',
+        ),
+    ],
+)
+async def test_unpromoted_tool_search_replay_item_id(call: ToolCallPart, expected_id: str | None) -> None:
+    """A tool search replayed as a `function_call` never carries a `tool_search_call` (`tsc_*`) item ID.
+
+    The Responses API rejects that prefix on a `function_call` item. Every other item ID, and every
+    ordinary function call, is sent unchanged. This pins the mapped item directly because cassette
+    replay does not compare request bodies.
+    """
+    history = [
+        ModelResponse(parts=[call], provider_name='openai'),
+        ModelRequest(parts=[ToolReturnPart(tool_name=call.tool_name, content='result', tool_call_id='call_1')]),
+    ]
+    input_items = await _replay_input(
+        history,
+        group_function_calls=False,
+        model_settings=OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+    )
+
+    assert (input_items[0]['type'], input_items[0]['call_id'], input_items[0].get('id')) == (
+        'function_call',
+        'call_1',
+        expected_id,
+    )
+
+
 async def test_openai_responses_function_call_grouping_preserves_active_tool_search() -> None:
     """Active tool search uses its specialized client-executed protocol, whose order is preserved."""
     history = [
@@ -20939,11 +21013,26 @@ async def test_openai_responses_malformed_tool_args_degraded_on_the_wire(allow_m
 # OAuth/credential unit tests stay in `tests/providers/codex/`.
 
 
-async def test_codex_count_tokens_raises_user_error(allow_model_requests: None):
-    mock_client = cast(AsyncOpenAI, MockOpenAIResponses())
-    model = OpenAICodexModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=mock_client))
-    with pytest.raises(UserError, match='Server-side token counting is not available'):
+@pytest.mark.parametrize('provider', ['openai-codex', 'openai-chatgpt'])
+async def test_codex_and_chatgpt_count_tokens_raise_user_error(
+    allow_model_requests: None, provider: Literal['openai-codex', 'openai-chatgpt']
+):
+    """Neither provider serves `responses/input_tokens`, so `count_tokens` raises before any request.
+
+    The error is a `UserError` that is also a `NotImplementedError`, the error a caller that falls back when a model
+    can't count catches, as Pydantic AI Harness does for a nested agent's run.
+    """
+    mock_client = MockOpenAIResponses()
+    client = cast(AsyncOpenAI, mock_client)
+    model = (
+        OpenAICodexModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=client))
+        if provider == 'openai-codex'
+        else OpenAIResponsesModel('gpt-5.6-luna', provider=OpenAIChatGPTProvider(openai_client=client))
+    )
+    with pytest.raises(UserError, match='Server-side token counting is not available') as exc_info:
         await model.count_tokens([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
+    assert isinstance(exc_info.value, NotImplementedError)
+    assert mock_client.count_kwargs == []
 
 
 _MINIMAL_RESPONSE: dict[str, Any] = {
@@ -21148,7 +21237,7 @@ async def test_forced_stream_without_events_raises(allow_model_requests: None):
     # The nested-list form is how the shared mock represents a single, empty stream.
     mock_client = MockOpenAIResponses.create_mock_stream([[]])
     model = OpenAICodexModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=mock_client))
-    with pytest.raises(UnexpectedModelBehavior, match='without content'):
+    with pytest.raises(ModelEmptyResponseError, match='without content'):
         await model.request([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
 
 

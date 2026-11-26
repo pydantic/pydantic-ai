@@ -41,6 +41,8 @@ To keep two rather than resolving them, pass a distinct `id` to each, or `id=Non
 
 One limit: for a capability that contributes a [native tool](../native-tools.md), these escapes do not dissolve the native tool's own `id`. Two differently-configured duplicates of a `WebSearch` still raise the native-tool-id conflict whether you give the capabilities distinct `id`s or `id=None` — only identical configurations avoid it.
 
+[`Agent.override`][pydantic_ai.agent.Agent.override] replaces differently from a run: `agent.override(capabilities=[Thinking(effort='low')])` replaces the agent's configured capabilities as a whole for every run inside the block, not only its `Thinking`, and a run's own capabilities then resolve against that set. To add a capability for one run, pass it to the run method's `capabilities=`; to add one for every run inside the block, list the agent's own beside it: `agent.override(capabilities=[*agent.root_capability.capabilities, extra])`. [`root_capability`][pydantic_ai.agent.Agent.root_capability] is always the set the agent was constructed with, so inside another override this list drops what the outer override added. On an agent with a [durability capability](../durable_execution/overview.md), build the list this way: a list without the agent's bound durability capability raises a [`UserError`][pydantic_ai.exceptions.UserError], and inside a durable workflow or flow, the capabilities the list adds follow the rules for capabilities passed to a run there ([Temporal](../durable_execution/temporal.md#capabilities-at-runtime), [DBOS](../durable_execution/dbos.md#capabilities-at-runtime), [Prefect](../durable_execution/prefect.md#capabilities-at-runtime)).
+
 ```python {title="custom_capability_plain.py"}
 from typing import Any
 
@@ -245,7 +247,7 @@ from pydantic_ai.messages import InstructionPart
 
 
 @dataclass
-class KnowsCurrentDate(AbstractCapability[Any]):
+class AnnounceCurrentDate(AbstractCapability[Any]):
     """Tells the agent what day it is."""
 
     def get_instructions(self):
@@ -255,7 +257,7 @@ class KnowsCurrentDate(AbstractCapability[Any]):
         return _get_date
 
 
-agent = Agent('{{ openai:medium }}', capabilities=[KnowsCurrentDate(id='current_date')])
+agent = Agent('{{ openai:medium }}', capabilities=[AnnounceCurrentDate(id='current_date')])
 result = agent.run_sync("What is today's date?")
 print(result.output)
 #> Today is January 2, 2032.
@@ -325,6 +327,8 @@ print(
 _(This example is complete, it can be run "as is")_
 
 For text that changes during a run, such as state a tool updates, return a callable from `get_instructions()` that returns `InstructionPart(..., name=..., on_change='append')`, as in the [current page example](../agent.md#appending-instruction-changes), or build the capability on [`Capability`][pydantic_ai.capabilities.Capability] and register the function with [`@capability.instructions(name=..., on_change='append')`][pydantic_ai.capabilities.Capability.instructions].
+
+Annotate `get_instructions()` with [`AgentInstructions`][pydantic_ai.capabilities.AgentInstructions]. The agent collects each instruction a capability returns as a [`SourcedInstruction`][pydantic_ai.capabilities.SourcedInstruction], which keeps the instruction as returned along with the name and id it's addressed by.
 
 ## Telling the model things mid-conversation {#capability-parts}
 
@@ -454,7 +458,7 @@ A capability can cap the authority of everything it enqueues with its [`authorit
 
 To lower one instance rather than a whole class, call [`with_authority()`][pydantic_ai.capabilities.AbstractCapability.with_authority], which returns a lowered copy: with two instances of the reviewer above in one agent, one of them lowered with `.with_authority('none')`, only what that one enqueues is framed as data. `with_authority('operator')` on a capability whose class sets `'none'` leaves it at `'none'`.
 
-The ceiling covers what the capability sends mid-conversation, wherever its code runs: a hook, a tool, `for_run`, a `DynamicCapability` factory, or a function it returns for its toolset, instructions, model settings or description. It doesn't cap the capability's instructions, its tool names and descriptions, or its tools' return values, which reach the model as the application configured them: review or leave those out yourself, and for an MCP server you don't trust, also pass `include_instructions=False`. Content the application enqueues itself, from [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] or a [`Hooks`](../hooks.md) function, keeps its voice.
+The ceiling covers what the capability sends mid-conversation, wherever its code runs: a hook, a tool, `for_run`, a `DynamicCapability` factory, or a function it returns for its toolset, instructions, model settings or description. It also covers the capability's [instructions](#lowered-instructions). It doesn't cap its tool names and descriptions or its tools' return values, which reach the model as the application configured them: review or leave those out yourself. Content the application enqueues itself, from [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] or a [`Hooks`](../hooks.md) function, keeps its voice.
 
 Below `'operator'`, `ctx.enqueue` treats what the capability sends by kind, so nothing reaches the model as the application's or the user's words:
 
@@ -478,6 +482,35 @@ A downgraded instruction part with `scope='request'` still applies to its own re
 A capability's `authority` is the most its content can carry. For a workspace capability, such as [`LocalWorkspace(authority=...)`](../workspace-custom.md#workspace-authority), it's also the default authority of the workspace's files. A file another capability reads through a workspace carries the workspace's level for that file, capped again by the reader's own `authority`.
 
 Text in a part's content that looks like a framework frame, or like the part's own tag, gets a note in the application's voice naming who wrote it: the tool, the model, the file's author or the user, by the part's source. Text from an `OperatorSource` is the application's own and gets none.
+
+### Instructions below operator authority {#lowered-instructions}
+
+A capability's [instructions](#providing-instructions) follow its authority too. At `'operator'`, the default, they're part of the agent's instructions, as above. Below it, whether lowered by the `authority` class attribute or by `with_authority()`, they never enter the instructions: everything the capability tells the model through [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions], and through the toolsets it contributes, such as an [MCP server's instructions](mcp.md#lowering-an-untrusted-server), goes out as one block of framed data at that authority, like a part the capability enqueues: in a `<capability_instructions>` tag on the user channel, behind a note naming the capability.
+
+The block is stated in the message history as an [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] with the capability's [`authority`][pydantic_ai.messages.InstructionDeltaPart.authority], keyed `'capability:<capability id>'` (for a capability without an `id`, `'capability::<class name in snake case>'`, such as `'capability::mcp'`, which no `id` can spell, since an `id` can't contain `:`; capabilities of one class without an `id` share the block, at the lower of their authorities): first on the request it first applies to, then once more whenever its text changes, whatever its parts' `on_change`, with a note in the application's voice saying the earlier block no longer applies. So the instructions the model gets, and the conversation cached behind them, stay the same. The authority is stored on the part when it's recorded, and each model renders the part from it alone. A [compaction](../message-history.md) ends the block, and the next request states it again. A [`before_model_request` hook](#model-request-hooks) sees its parts in `instruction_parts`, with [`instruction_visibility_of(part)`][pydantic_ai.models.ModelRequestParameters.instruction_visibility_of] `'via_history'`, as for an [on-demand capability](on-demand.md).
+
+```python {title="lowered_instructions.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Capability
+from pydantic_ai.messages import InstructionDeltaPart, ModelRequest
+from pydantic_ai.models.test import TestModel
+
+plugin = Capability(id='plugin', instructions='Prefer the cheapest option.')
+agent = Agent(TestModel(), instructions='Be brief.', capabilities=[plugin.with_authority('none')])
+result = agent.run_sync('Which plan should I pick?')
+
+request = result.all_messages()[0]
+assert isinstance(request, ModelRequest)
+print(request.instructions)
+#> Be brief.
+delta = next(part for part in request.parts if isinstance(part, InstructionDeltaPart))
+print(delta.content, delta.authority)
+#> Prefer the cheapest option. none
+```
+
+A container or [wrapper](#wrapping-capabilities) whose subclass overrides `get_instructions()` decides what the model gets: below `'operator'` its text is one lowered block, and at `'operator'` its override replaces a lowered child's own `get_instructions()`, which then aren't sent at all (Pydantic AI warns once), since lowered text never goes out in a higher-authority override. The instructions of the child's toolsets, such as an MCP server's, are still sent as data. To send them as data, leave the child's instructions to the framework rather than merging them into the override.
+
+A realtime session has no channel for such a block, so a lowered capability's instructions aren't sent to one.
 
 ### Stored with the history
 
@@ -737,7 +770,7 @@ Dynamic selection is not currently supported by durable execution capabilities. 
 | [`get_native_tools()`][pydantic_ai.capabilities.AbstractCapability.get_native_tools] | `Sequence[`[`AgentNativeTool`][pydantic_ai.tools.AgentNativeTool]`]` | [Native tools](../native-tools.md) to register (including callables) |
 | [`get_wrapper_toolset()`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] | [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] `| None` | [Wrap the agent's assembled toolset](#toolset-wrapping) |
 | [`get_wrapper_model()`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_model] | [`Model`][pydantic_ai.models.Model] `| None` | [Wrap the model serving each request](#wrapping-the-model) |
-| [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] | [`AgentInstructions`][pydantic_ai.agent.AgentInstructions] `| None` | [Instructions](../agent.md#instructions) (static strings, [`InstructionPart`][pydantic_ai.messages.InstructionPart]s, [template strings](../agent-spec.md#template-strings), or callables) |
+| [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] | [`AgentInstructions`][pydantic_ai.capabilities.AgentInstructions] `| None` | [Instructions](../agent.md#instructions) (static strings, [`InstructionPart`][pydantic_ai.messages.InstructionPart]s, [template strings](../agent-spec.md#template-strings), or callables) |
 | [`get_model_settings()`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] | [`AgentModelSettings`][pydantic_ai.agent.AgentModelSettings] `| None` | [Model settings](../agent.md#model-run-settings) dict, or a callable for per-step settings |
 | [`get_workspace()`][pydantic_ai.capabilities.AbstractCapability.get_workspace] | [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] `| None` | The run's [workspace](../workspace-custom.md#supplying-a-workspace-from-a-capability): a backend for `ref` (fresh when `ref` is `None`), or `None` for a `ref` you don't recognize. Synchronous, no I/O. With several workspace capabilities, the first that returns one wins |
 | [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] | [`AgentModel`][pydantic_ai.capabilities.AgentModel] `| None` | Static or per-step [model selection](#selecting-the-model) |

@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, Self, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -66,7 +66,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai._instrumentation import include_content_ctx
-from pydantic_ai._run_context import get_current_run_context
+from pydantic_ai._run_context import AnchoredEvidence, get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     MCP,
@@ -81,6 +81,7 @@ from pydantic_ai.capabilities import (
     ResolveModelId,
     SelectModel,
     Toolset,
+    WrapperCapability,
     durable_operation,
 )
 from pydantic_ai.durable_exec import DurabilityEngineSpec
@@ -115,13 +116,16 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import (
+    AgentInstructionSource,
     CapabilitySource,
     DataCapabilityPart,
     InstructionCapabilityPart,
     LoadCapabilityReturnPart,
     OperatorSource,
     OperatorText,
+    RunInstructionSource,
     ToolResultSource,
+    ToolsetInstructionSource,
 )
 from pydantic_ai.models import (
     Model,
@@ -157,11 +161,12 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 try:
     from prefect import flow, task
-    from prefect.cache_policies import INPUTS
+    from prefect.cache_policies import INPUTS, NO_CACHE
     from prefect.context import FlowRunContext, TaskRunContext
     from prefect.utilities.hashing import hash_objects
 
@@ -178,7 +183,6 @@ try:
         PrefectAgentInputs,
         _cacheable_value,  # pyright: ignore[reportPrivateUsage]
         _replace_run_context,  # pyright: ignore[reportPrivateUsage]
-        _strip_cache_excluded_fields,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.prefect._mcp_toolset import prefectify_mcp_toolset
     from pydantic_ai.durable_exec.prefect._operation_backend import PrefectOperationConfig
@@ -194,11 +198,12 @@ except ImportError:  # pragma: lax no cover
 
 try:
     from fastmcp import FastMCP
-    from fastmcp.client.transports import StdioTransport
+    from fastmcp.client.transports import FastMCPTransport, StdioTransport
     from fastmcp.server.dependencies import get_http_request
 
     from pydantic_ai._mcp_compat import MCP_SDK_V2
     from pydantic_ai.mcp import MCPToolset
+    from tests.mcp_server import mcp as test_mcp_server
     from tests.mcp_task_server import TASK_SERVER_UNAVAILABLE
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
@@ -222,6 +227,8 @@ from ..realtime_connections import InferredConnection
 from ..workspace_fakes import ref_workspace
 from ..wrapped_retry_toolsets import failing_toolset
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
+from .override_rebind_cases import REBIND_CASES, RebindCase
+from .parallel_step_scenarios import VARIANTS, StepState, Variant, parallel_calls_agent
 from .preamble_text import RunAndStreamResult, plain_run_and_stream, preamble_text_agents, run_and_stream
 from .span_utils import drop_fastmcp_client_spans
 
@@ -594,6 +601,48 @@ async def test_prefect_durability_model_error_reaches_flow_with_its_type() -> No
     assert await run_durable_agent() == 'ModelHTTPError 503 7.0'
 
 
+@pytest.mark.parametrize('where', ['tool-task', 'user-task', 'flow-code'])
+async def test_prefect_durability_submit_output_needs_the_tool_in_flow_code(where: str) -> None:
+    """`submit_output()` is refused in a task, whose recorded result a retry replays, and works in flow code.
+
+    That includes a task the tool's own code runs, not only the one the agent runs the tool in.
+    """
+
+    @task(cache_policy=NO_CACHE)
+    async def submit_in_a_task(ctx: RunContext[None]) -> None:
+        await ctx.submit_output('final_result', {'response': 'submitted'})
+
+    async def finish(ctx: RunContext[None]) -> str:
+        if where == 'user-task':
+            await submit_in_a_task(ctx)
+        else:
+            await ctx.submit_output('final_result', {'response': 'submitted'})
+        return 'done'
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('finish', {})])
+
+    toolset = FunctionToolset[None](id='submit-tools')
+    toolset.add_function(finish, metadata=None if where == 'tool-task' else {'prefect': False})
+    agent = Agent(
+        FunctionModel(model),
+        name=f'prefect_durability_submit_output_{where}',
+        deps_type=type(None),
+        toolsets=[toolset],
+        capabilities=[PrefectDurability()],
+    )
+
+    @flow(name=f'test_prefect_durability_submit_output_{where}')
+    async def run_durable_agent() -> str:
+        return (await agent.run('Finish')).output
+
+    if where == 'flow-code':
+        assert await run_durable_agent() == 'submitted'
+    else:
+        with pytest.raises(UserError, match='cannot be called from a tool that runs as a durable step or task'):
+            await run_durable_agent()
+
+
 class Deps(BaseModel):
     country: str
 
@@ -753,13 +802,13 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                             children=[
                                                 BasicSpan(content='ctx.run_step=1'),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"canonical_system":null,"event_kind":"part_start"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"ui_visibility":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"canonical_system":null,"event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"canonical_system":null,"event_kind":"part_end"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"ui_visibility":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"canonical_system":null,"event_kind":"part_end"}'
                                                 ),
                                             ],
                                         )
@@ -770,7 +819,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"args_valid":true,"event_kind":"function_tool_call"}'
+                                            content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"ui_visibility":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"args_valid":true,"event_kind":"function_tool_call"}'
                                         ),
                                     ],
                                 ),
@@ -784,7 +833,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'\{"part":\{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                                regex=r'\{"part":\{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"ui_visibility":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
                                             )
                                         ),
                                     ],
@@ -797,7 +846,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                             children=[
                                                 BasicSpan(content='ctx.run_step=2'),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"canonical_system":null,"event_kind":"part_start"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"ui_visibility":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"canonical_system":null,"event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"ci","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
@@ -815,16 +864,16 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                                     content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"ty\\"}","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"{\\"city\\": \\"Mexico City\\"}","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":"tool-call","canonical_system":null,"event_kind":"part_end"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"{\\"city\\": \\"Mexico City\\"}","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"ui_visibility":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":"tool-call","canonical_system":null,"event_kind":"part_end"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":"tool-call","canonical_system":null,"event_kind":"part_start"}'
+                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"ui_visibility":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":"tool-call","canonical_system":null,"event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index":1,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"canonical_system":null,"event_kind":"part_end"}'
+                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"ui_visibility":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"canonical_system":null,"event_kind":"part_end"}'
                                                 ),
                                             ],
                                         )
@@ -835,7 +884,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"part":{"tool_name":"get_weather","args":"{\\"city\\": \\"Mexico City\\"}","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"args_valid":true,"event_kind":"function_tool_call"}'
+                                            content='{"part":{"tool_name":"get_weather","args":"{\\"city\\": \\"Mexico City\\"}","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"ui_visibility":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"args_valid":true,"event_kind":"function_tool_call"}'
                                         ),
                                     ],
                                 ),
@@ -844,7 +893,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"args_valid":true,"event_kind":"function_tool_call"}'
+                                            content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"ui_visibility":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"args_valid":true,"event_kind":"function_tool_call"}'
                                         ),
                                     ],
                                 ),
@@ -863,7 +912,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'\{"part":\{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                                regex=r'\{"part":\{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"ui_visibility":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
                                             )
                                         ),
                                     ],
@@ -883,7 +932,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'\{"part":\{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                                regex=r'\{"part":\{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"ui_visibility":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
                                             )
                                         ),
                                     ],
@@ -896,7 +945,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                             children=[
                                                 BasicSpan(content='ctx.run_step=3'),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"canonical_system":null,"event_kind":"part_start"}'
+                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"ui_visibility":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"canonical_system":null,"event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"tool_name":"final_result","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","event_kind":"final_result"}'
@@ -1022,7 +1071,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                                     content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"]}","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product name\\",\\"answer\\":\\"Pydantic AI\\"}]}","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"canonical_system":null,"event_kind":"part_end"}'
+                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product name\\",\\"answer\\":\\"Pydantic AI\\"}]}","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"ui_visibility":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"canonical_system":null,"event_kind":"part_end"}'
                                                 ),
                                             ],
                                         )
@@ -1033,7 +1082,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                     children=[
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
-                                            content='{"part":{"tool_name":"final_result","args":"{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product name\\",\\"answer\\":\\"Pydantic AI\\"}]}","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"args_valid":true,"event_kind":"output_tool_call"}'
+                                            content='{"part":{"tool_name":"final_result","args":"{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product name\\",\\"answer\\":\\"Pydantic AI\\"}]}","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"ui_visibility":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"args_valid":true,"event_kind":"output_tool_call"}'
                                         ),
                                     ],
                                 ),
@@ -1043,7 +1092,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'\{"part":\{"tool_name":"final_result","content":"Final result processed\.","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"event_kind":"output_tool_result"\}'
+                                                regex=r'\{"part":\{"tool_name":"final_result","content":"Final result processed\.","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"ui_visibility":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"event_kind":"output_tool_result"\}'
                                             )
                                         ),
                                     ],
@@ -2040,12 +2089,65 @@ async def test_deprecated_agent_executes_identified_dynamic_toolset_task(blockbu
     assert calls[0] is not None
 
 
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_deprecated_agent_holds_per_run_step_false_dynamic_toolset_for_the_run(blockbuster_enabled: bool) -> None:
+    """The deprecated wrapper resolves and enters an identified `per_run_step=False` dynamic toolset once per run.
+
+    Its tasks run in the flow's process, so they reuse the toolset the run holds, as under `PrefectDurability`,
+    instead of each building and entering their own.
+    """
+    assert blockbuster_enabled is False
+    counts = {'factory': 0, 'enter': 0}
+
+    class CountingToolset(FunctionToolset[None]):
+        async def __aenter__(self) -> Self:
+            counts['enter'] += 1
+            return await super().__aenter__()
+
+    async def get_price() -> str:
+        return '42'
+
+    def build(ctx: RunContext[None]) -> FunctionToolset[None]:
+        counts['factory'] += 1
+        return CountingToolset([get_price])
+
+    agent = Agent(
+        TestModel(),
+        name='deprecated_run_held_dynamic',
+        deps_type=type(None),
+        toolsets=[DynamicToolset(build, per_run_step=False, id='deprecated_held')],
+    )
+    prefect_agent = PrefectAgent(agent)  # pyright: ignore[reportDeprecated]
+
+    result = await prefect_agent.run('Get the price')
+
+    assert '42' in str(result.output)
+    assert counts == {'factory': 1, 'enter': 1}
+
+
 # Test cache policies
 async def test_cache_policy_default():
     """Test that the default cache policy is set correctly."""
     assert DEFAULT_PYDANTIC_AI_CACHE_POLICY is not None
     # It's a CompoundCachePolicy instance with policies attribute
     assert hasattr(DEFAULT_PYDANTIC_AI_CACHE_POLICY, 'policies')
+
+
+def projected_cache_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
+    """The projection of `inputs` that `PrefectAgentInputs.compute_key` hands Prefect's `INPUTS` policy to hash.
+
+    Asserting on the projection pins what a key is made of; two digests only show whether they match.
+    """
+    hashed: list[dict[str, Any]] = []
+
+    def record(task_ctx: TaskRunContext, inputs: dict[str, Any], flow_parameters: dict[str, Any], **kwargs: Any) -> str:
+        hashed.append(inputs)
+        return 'key'
+
+    with patch.object(INPUTS, 'compute_key', record):
+        PrefectAgentInputs().compute_key(task_ctx=MagicMock(), inputs=inputs, flow_parameters={})
+    [projected] = hashed
+    return projected
 
 
 async def test_cache_policy_custom():
@@ -2193,7 +2295,14 @@ async def test_cache_policy_per_run_ids_excluded_but_dict_keys_kept():
 
 
 def test_cache_policy_keeps_user_dataclass_fields():
-    """Cache projection preserves user dependency fields that share internal context names."""
+    """Cache projection preserves user dependency fields that share internal context names.
+
+    A dataclass class, unlike an instance, is kept as is rather than expanded into its fields.
+    """
+
+    @dataclass
+    class CacheOutput:
+        answer: str
 
     @dataclass
     class CacheDeps:
@@ -2201,6 +2310,7 @@ def test_cache_policy_keeps_user_dataclass_fields():
         run_id: str
         conversation_id: str
         tool_call_id: str
+        output_type: type[CacheOutput] = CacheOutput
 
     deps = CacheDeps(
         timestamp='user-time',
@@ -2211,13 +2321,14 @@ def test_cache_policy_keeps_user_dataclass_fields():
     )
     ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
 
-    projected = _strip_cache_excluded_fields(_replace_run_context({'ctx': ctx}))
+    projected = projected_cache_inputs({'ctx': ctx})
 
     assert projected['ctx']['deps'] == {
         'timestamp': 'user-time',
         'run_id': 'user-run',
         'conversation_id': 'user-conversation',
         'tool_call_id': 'pyd_ai_user_value',
+        'output_type': CacheOutput,
     }
 
 
@@ -2284,6 +2395,71 @@ def test_cache_policy_normalizes_a_synthetic_capability_id_on_a_source():
 
     assert key_for('<fetcher:abc123>') == key_for('<fetcher:def456>')
     assert key_for('fetcher') != key_for('crawler')
+
+
+def test_cache_policy_keys_for_instruction_ids_are_pinned():
+    """Instruction sources' `kind` tag stays out of the key, so a flow retried across the upgrade that added it hits.
+
+    The digests were computed before the tag existed; a model request's parameters carry its instruction parts' ids.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+    ids = [
+        InstructionId(AgentInstructionSource(), name='persona'),
+        InstructionId(RunInstructionSource(), name='task'),
+        InstructionId(ToolsetInstructionSource('memory')),
+        InstructionId(CapabilityInstructionSource('memory'), name='usage'),
+    ]
+    part = InstructionPart(content='Keep notes short.', id=InstructionId(CapabilityInstructionSource('memory')))
+    parameters = ModelRequestParameters(instruction_parts=[part])
+
+    def key_for(value: Any) -> str | None:
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'value': value}, flow_parameters={})
+
+    assert key_for(part) == snapshot('371a510820fa52497114a702b5fe1bcf')
+    assert key_for(parameters) == snapshot('a7303d336722ed24df27df4bca54d50f')
+    assert [key_for(id) for id in ids] == snapshot(
+        [
+            '5006ff5014df6944343041dd24711207',
+            'c71eb5db3f64fbc25e31531a0433cd26',
+            '0888bba0476c0180b3f2a7766bd379b7',
+            'd080d54547ecfe63be80e0edb1942c8c',
+        ]
+    )
+
+
+def test_cache_policy_keys_for_unset_ui_visibility_are_pinned():
+    """An unset `ui_visibility` stays out of the key, so a flow retried across the upgrade that added it hits.
+
+    The digests were computed before the field existed. A set stamp stays in the key: the model task's cached response
+    carries it.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+    tool_def = ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'})
+    history: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='get_weather', args='{}', tool_call_id='call_1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_weather', content='sunny', tool_call_id='call_1')]),
+    ]
+
+    def key_for(value: Any) -> str | None:
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'value': value}, flow_parameters={})
+
+    assert key_for(tool_def) == snapshot('cc5bcf7fd396f7c465b0f76f152dd958')
+    assert key_for(ModelRequestParameters(function_tools=[tool_def])) == snapshot('feac05e3f14461938e4e34e24d9c1493')
+    assert key_for(history) == snapshot('b738f0514ffcdc82afbe3d15062093a1')
+    assert key_for(replace(tool_def, ui_visibility='private')) != key_for(tool_def)
+    stamped_history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='get_weather', args='{}', tool_call_id='call_1', ui_visibility='private')]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='get_weather', content='sunny', tool_call_id='call_1', ui_visibility='private')
+            ]
+        ),
+    ]
+    assert key_for(stamped_history) != key_for(history)
 
 
 def test_cache_policy_normalizes_only_framework_tool_call_ids():
@@ -2693,15 +2869,45 @@ def test_cache_policy_excludes_non_serializable_deps():
     assert key_for(['acme', threading.Lock()]) == key_for(['acme', threading.Lock()])
     assert key_for(('acme', threading.Lock())) != key_for(('globex', threading.Lock()))
 
+    all_deps = [
+        CacheDeps(tenant='acme'),
+        CacheModelDeps(tenant='acme'),
+        threading.Lock(),
+        ['acme', threading.Lock()],
+        ('acme', threading.Lock()),
+    ]
+    projected = [
+        projected_cache_inputs({'ctx': RunContext(deps=deps, model=TestModel(), usage=RunUsage())})['ctx']['deps']
+        for deps in all_deps
+    ]
+    assert projected == snapshot(
+        [
+            {'tenant': 'acme', 'lock': '<non-serializable>'},
+            {'tenant': 'acme', 'lock': '<non-serializable>'},
+            '<non-serializable>',
+            ['acme', '<non-serializable>'],
+            ('acme', '<non-serializable>'),
+        ]
+    )
 
-def test_cache_policy_projects_nested_run_context_and_tool():
+
+@pytest.mark.parametrize('container', ['tuple', 'list', 'dict'])
+def test_cache_policy_projects_nested_run_context_and_tool(container: Literal['tuple', 'list', 'dict']):
     """The projection reaches a `RunContext`/`ToolsetTool` nested in a container, not just a top-level one.
 
     `PrefectOperationBackend` passes an operation's logical inputs as a single `*args` tuple
     (so nothing caps how many inputs an operation may have), which means neither ever
     arrives as a top-level bound parameter. Without recursion the raw `RunContext` is hashed and
     `compute_key` raises `Unable to create hash` for any agent whose `deps` hold a live resource.
+    A list or dict nests them the same way, and a nested `RunContext` is projected as a top-level one is.
     """
+
+    def nest(items: tuple[object, ...]) -> object:
+        if container == 'tuple':
+            return items
+        if container == 'list':
+            return list(items)
+        return dict(zip(('tool_name', 'args', 'ctx', 'tool'), items))
 
     @dataclass
     class CacheDeps:
@@ -2721,7 +2927,7 @@ def test_cache_policy_projects_nested_run_context_and_tool():
         )
         return cache_policy.compute_key(
             task_ctx=mock_task_ctx,
-            inputs={'unit_name': 'unit', 'args': (tool_name, {}, ctx, tool)},
+            inputs={'unit_name': 'unit', 'args': nest((tool_name, {}, ctx, tool))},
             flow_parameters={},
         )
 
@@ -2731,6 +2937,11 @@ def test_cache_policy_projects_nested_run_context_and_tool():
     # And still discriminating through the container.
     assert key_for('acme', 'tool') != key_for('globex', 'tool')
     assert key_for('acme', 'tool') != key_for('acme', 'other')
+
+    ctx = RunContext(deps=CacheDeps(tenant='acme'), model=TestModel(), usage=RunUsage())
+    assert projected_cache_inputs({'args': nest(('tool', {}, ctx))}) == {
+        'args': nest(('tool', {}, projected_cache_inputs({'ctx': ctx})['ctx']))
+    }
 
 
 def test_cache_policy_projects_a_bare_tool_definition_in_the_inputs():
@@ -2845,6 +3056,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
         'conversation_id',  # per-conversation id; same rationale as run_id
         'capability_active',  # derived from loaded_capability_ids plus the static capability set, which are projected
         '_mcp_tool_defs_cache',  # live per-run memo of MCP tool defs, reconstructed from messages
+        '_appended_messages',  # live record of the history, which `messages` already projects
         '_event_stream_buffer',  # live per-run event buffer drained in flow code, not a task input
         '_pending_immediate_dispatches',  # live stream-deduplication state, not a task input
         '_event_stream_replacements',  # live legacy-replacement state applied at stream position, not a task input
@@ -2853,6 +3065,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
         '_cancellation',  # runtime-only cancellation controller; carries no run inputs and must not fork the cache key
         '_durable_operations',  # runtime callables are derived from the static agent and do not vary cache identity
         '_run_capabilities_by_id',  # live instances are represented by their projected capability state instead
+        '_output_submitter',  # live view of the run's graph state; carries no inputs and must not fork the cache key
         # Toolsets the run holds entered, built from `deps`, which is projected: they carry no
         # input the task's own resolution wouldn't reach, so they must not fork the key.
         '_run_held_toolsets',
@@ -2878,9 +3091,85 @@ def test_cache_key_run_context_projection_is_exhaustive():
         'projection (if it should fork the cache key) or to `cache_irrelevant` (with a reason).'
     )
     # A context that doesn't set them hashes as it did before they were projected.
-    assert projected.isdisjoint(projected_only_when_set)
-    deadline = datetime(2030, 1, 1, tzinfo=UTC)
-    assert _replace_run_context({'ctx': replace(ctx, deadline=deadline)})['ctx']['deadline'] == deadline
+    assert projected.isdisjoint(projected_only_when_set | projected_via_derived_key)
+
+    # Each field set to its own value, so a projection that reads, transforms or drops the wrong one shows here.
+    populated = RunContext(
+        deps={'tenant': 'acme'},
+        model=TestModel(),
+        usage=RunUsage(),
+        _model_id='test:model-id',
+        usage_limits=UsageLimits(request_limit=7),
+        deadline=datetime(2030, 1, 1, tzinfo=UTC),
+        agent=Agent(name='agent-name'),
+        prompt='the prompt',
+        messages=[ModelRequest(parts=[UserPromptPart('hi')])],
+        validation_context={'lang': 'en'},
+        retries={'tool': 2},
+        tool_call_id='call-id',
+        tool_name='tool',
+        retry=1,
+        max_retries=3,
+        run_step=4,
+        tool_call_approved=True,
+        tool_call_metadata={'approved_by': 'ops'},
+        metadata={'trace': 'abc'},
+        model_settings={'temperature': 0.5},
+        workspace=ref_workspace(WorkspaceRef(provider='fake', id='ws')),
+        loaded_capability_ids={'cap-b', 'cap-a'},
+        discovered_tool_names={'tool-b', 'tool-a'},
+        _anchored_evidence=AnchoredEvidence(
+            discovered_tool_names=frozenset({'anchored-tool'}), loaded_capability_ids=frozenset({'anchored-cap'})
+        ),
+        _tool_name_path=('prefix_',),
+    )
+    assert projected_cache_inputs({'ctx': populated}) == snapshot(
+        {
+            'ctx': {
+                'deps': {'tenant': 'acme'},
+                'agent': 'agent-name',
+                'model': 'test:test',
+                '_model_id': 'test:model-id',
+                'retries': {'tool': 2},
+                'tool_call_id': 'call-id',
+                'tool_name': 'tool',
+                'prompt': 'the prompt',
+                'metadata': {'trace': 'abc'},
+                'validation_context': {'lang': 'en'},
+                'model_settings': {'temperature': 0.5},
+                'messages': [
+                    {
+                        'parts': [{'content': 'hi', 'part_kind': 'user-prompt'}],
+                        'instructions': None,
+                        'kind': 'request',
+                        'metadata': None,
+                        'state': 'complete',
+                    }
+                ],
+                'tool_call_approved': True,
+                'tool_call_metadata': {'approved_by': 'ops'},
+                'retry': 1,
+                'max_retries': 3,
+                'run_step': 4,
+                'loaded_capability_ids': ['cap-a', 'cap-b'],
+                'discovered_tool_names': ['tool-a', 'tool-b'],
+                '_anchored_evidence': (['anchored-tool'], ['anchored-cap']),
+                'usage_limits': {
+                    'cost_limit': None,
+                    'request_limit': 7,
+                    'tool_calls_limit': None,
+                    'input_tokens_limit': None,
+                    'output_tokens_limit': None,
+                    'total_tokens_limit': None,
+                    'per_request_input_tokens_limit': None,
+                    'count_tokens_before_request': False,
+                },
+                'workspace': {'provider': 'fake', 'id': 'ws'},
+                '_tool_name_path': ('prefix_',),
+                'deadline': datetime(2030, 1, 1, tzinfo=UTC),
+            }
+        }
+    )
 
 
 async def test_repeated_run_hits_cache():
@@ -4012,6 +4301,62 @@ async def test_prefect_durability_allows_overridden_toolsets_outside_flow() -> N
     assert result.output == 'Echo: Hello outside'
 
 
+async def test_prefect_durability_override_capabilities_follow_the_per_run_rules() -> None:
+    """Stacking keeps the bound `PrefectDurability`, and a flow treats what the override adds like a per-run capability.
+
+    A hook-only capability runs inside the flow, and one that contributes an executing toolset is rejected there. A list
+    without the bound `PrefectDurability` is refused wherever the override is entered, as Prefect carries an override
+    entered outside a flow into it.
+    """
+    events: list[str] = []
+
+    class RecordingCapability(AbstractCapability[object]):
+        async def before_run(self, ctx: RunContext[object]) -> None:
+            events.append('before_run')
+
+    agent = Agent(_durability_fn_model, name='durability_override_capabilities', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    with agent.override(capabilities=[*agent.root_capability.capabilities, RecordingCapability()]):
+        assert await run_agent() == snapshot('Echo: Hello')
+    assert events == ['before_run']
+
+    with agent.override(
+        capabilities=[*agent.root_capability.capabilities, Toolset(FunctionToolset(id='override_added'))]
+    ):
+        with pytest.raises(UserError, match=r'FunctionToolset .*cannot be added at runtime'):
+            await run_agent()
+
+    with pytest.raises(UserError, match='holds the bound `PrefectDurability`'):
+        with agent.override(capabilities=[RecordingCapability()]):
+            pass
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in REBIND_CASES])
+async def test_prefect_durability_override_capabilities_refuses_a_list_that_would_bind_it_again(
+    case: RebindCase,
+) -> None:
+    """The bound `PrefectDurability` held other than by an item of `root_capability.capabilities` is refused unbound.
+
+    Nested in a new container, wrapped again, or taken from `from_agent()` out of its wrapper, it would go through
+    `for_agent` again and bind the agent's tasks a second time.
+    """
+    durability = PrefectDurability()
+    agent = Agent(
+        _durability_fn_model,
+        name=f'durability_override_{case.id}',
+        capabilities=[WrapperCapability(wrapped=durability) if case.wrap_durability else durability],
+    )
+    bound = PrefectDurability.from_agent(agent)
+    assert bound is not None
+    with pytest.raises(UserError, match='must keep, unchanged, the item'):
+        with agent.override(capabilities=case.capabilities(agent, bound)):
+            pass
+
+
 async def test_prefect_durability_rejects_runtime_toolset_reusing_registered_id() -> None:
     agent = Agent(
         _durability_fn_model,
@@ -4105,6 +4450,28 @@ async def test_prefect_durability_dynamic_capability_tool_runs_as_task() -> None
     assert task_run_names[0].startswith('Call Tool: dynamic_tool')
 
 
+@pytest.mark.parametrize('variant', VARIANTS)
+async def test_prefect_durability_parallel_calls_use_their_own_step_of_run_held_dynamic_toolset(
+    variant: Variant,
+) -> None:
+    """Parallel tool-call tasks list and call their tools through the toolset prepared once for the step.
+
+    `FunctionModel` drives it rather than a cassette: the race is between the tool-call tasks, after the model
+    response that requests both calls.
+    """
+    state = StepState()
+    agent = parallel_calls_agent(f'prefect_parallel_run_held_dynamic_{variant}', variant, state, PrefectDurability())
+
+    @flow(name=f'prefect_parallel_run_held_dynamic_{variant}')
+    async def run_agent() -> str:
+        return (await agent.run('go')).output
+
+    assert await run_agent() == 'done'
+    assert state.listed.keys() == {'call-a', 'call-b'}
+    assert state.called == state.listed
+    assert len(set(state.listed.values())) == 1
+
+
 async def test_prefect_durability_task_name_assembly_sequence() -> None:
     task_names: list[str] = []
 
@@ -4145,7 +4512,6 @@ async def test_prefect_durability_task_name_assembly_sequence() -> None:
     ]
 
 
-@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 @pytest.mark.parametrize('blockbuster_enabled', [False])
 async def test_prefect_durability_journals_mcp_discovery(blockbuster_enabled: bool) -> None:
     assert blockbuster_enabled is False
@@ -4165,8 +4531,10 @@ async def test_prefect_durability_journals_mcp_discovery(blockbuster_enabled: bo
             task_names.append(task_run_context.task.name)
             return InstructionPart(content='Server instructions', dynamic=False)
 
+    # The default 5 s init_timeout is shorter than a stalled CI worker can take to finish the initialize handshake.
     toolset = RecordingMCPToolset(
-        StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+        FastMCPTransport(test_mcp_server),
+        init_timeout=READINESS_WAIT_TIMEOUT,
         id='recording_mcp',
         include_instructions=True,
     )

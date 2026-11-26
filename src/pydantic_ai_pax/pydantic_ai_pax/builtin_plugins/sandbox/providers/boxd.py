@@ -1,7 +1,8 @@
 """`/sandbox boxd`: boxd's proxy swaps a stand-in in the machine's `GH_TOKEN` for the user's GitHub token.
 
 boxd's proxy reads only secrets, so each machine gets one of its own, made just before it and deleted after
-it: the user's (`private-unattached`, which no other org member can see or use), bound to `GITHUB_HOSTS`.
+it: the user's (`private-unattached`, which no other org member can see or use), bound to `GITHUB_HOSTS` and
+swapped into request headers only, so a command can't post the real token in a request body.
 The machine has a variable of the secret's name holding the stand-in, and `create` copies it into `GH_TOKEN`
 in the machine's spec, so `gh` and git's credential helper send it after a reopen too.
 """
@@ -31,7 +32,7 @@ if TYPE_CHECKING:
 KEY_NAME = 'BOXD_API_KEY'
 
 SECRET_PREFIX = 'CLAI_GITHUB_'
-"""How `delete` tells CLAI's GitHub secrets from the user's others."""
+"""How `delete` tells Pax's GitHub secrets from the user's others."""
 
 _SCOPE = 'private-unattached'
 
@@ -44,14 +45,17 @@ class BoxdProvider:
     title: str = 'boxd'
     working_dir: str = '/home/boxd/workspace'
     token_in_sandbox: bool = False
+    desktop_at_create: bool = False
+    desktop_link_seconds: int | None = None
     _clients: 'WeakKeyDictionary[SandboxBackend, boxd.AsyncBoxd]' = field(
         default_factory=WeakKeyDictionary['SandboxBackend', 'boxd.AsyncBoxd'], init=False, compare=False, repr=False
     )
     """The client made for each backend: `BoxdSandboxBackend` leaves a client it was given open, so `close` closes it."""
 
-    def missing(self) -> str | None:
+    def missing(self, *, desktop: bool = False) -> str | None:
+        del desktop
         if find_spec('boxd') is None:
-            return "boxd support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[boxd]'."
+            return "boxd support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[boxd]'."
         if saved_key(KEY_NAME) is None:
             return f'Add your boxd API key in /keys as {KEY_NAME}. Make one with boxd api-keys create.'
         return None
@@ -61,7 +65,9 @@ class BoxdProvider:
 
         return boxd.AsyncBoxd(api_key=saved_key(KEY_NAME))
 
-    async def create(self, *, github: GitHubCredential | None) -> tuple[WorkspaceRef, SandboxBackend]:
+    async def create(
+        self, *, github: GitHubCredential | None, desktop: bool = False
+    ) -> tuple[WorkspaceRef, SandboxBackend]:
         client = self._client()
         secret = None
         backend = None
@@ -69,8 +75,10 @@ class BoxdProvider:
             if github is not None:
                 # boxd refuses a spec naming a secret that does not exist yet, so the secret comes first.
                 secret = f'{SECRET_PREFIX}{uuid.uuid4().hex.upper()}'
-                await client.secrets.set(secret, github.token, scope=_SCOPE, domains=list(GITHUB_HOSTS))
-            backend = self._backend(client, secrets=None if secret is None else [secret])
+                await client.secrets.set(
+                    secret, github.token, scope=_SCOPE, domains=list(GITHUB_HOSTS), replace_in=['headers']
+                )
+            backend = self._backend(client, secrets=None if secret is None else [secret], desktop=desktop)
             machine = await backend.get_sandbox()
             if github is not None and secret is not None:
                 stand_in = (await backend.run(['printenv', secret])).stdout.strip()
@@ -90,21 +98,34 @@ class BoxdProvider:
             raise
         return WorkspaceRef(provider=self.name, id=machine.id), backend
 
-    def _backend(self, client: 'boxd.AsyncBoxd', *, secrets: list[str] | None = None) -> 'BoxdSandboxBackend':
+    def _backend(
+        self, client: 'boxd.AsyncBoxd', *, secrets: list[str] | None = None, desktop: bool = False
+    ) -> 'BoxdSandboxBackend':
         from pydantic_ai_harness.boxd_sandbox import BoxdSandboxBackend
 
         # The backend sets `env` on each command it runs, not on the machine, so each reopen passes it again.
-        backend = BoxdSandboxBackend(client=client, working_dir=self.working_dir, env=SANDBOX_ENV, secrets=secrets)
+        backend = BoxdSandboxBackend(
+            client=client, working_dir=self.working_dir, env=SANDBOX_ENV, secrets=secrets, desktop=desktop
+        )
         self._clients[backend] = client
         return backend
 
-    def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
+    def reopen(self, ref: WorkspaceRef, *, desktop: bool = False) -> SandboxBackend:
         from pydantic_ai_harness.boxd_sandbox import BoxdSandboxBackend
 
         client = self._client()
-        backend = BoxdSandboxBackend(client=client, ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV)
+        backend = BoxdSandboxBackend(
+            client=client, ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV, desktop=desktop
+        )
         self._clients[backend] = client
         return backend
+
+    async def desktop_url(self, backend: SandboxBackend) -> str | None:
+        """The machine's Desktop view in boxd's console, which opens only in a browser signed in to its owner's boxd."""
+        from pydantic_ai_harness.boxd_sandbox import BoxdSandboxBackend
+
+        assert isinstance(backend, BoxdSandboxBackend)
+        return (await backend.get_sandbox()).access.desktop_url or None
 
     async def close(self, backend: SandboxBackend) -> None:
         if (client := self._clients.pop(backend, None)) is not None:
@@ -116,7 +137,7 @@ class BoxdProvider:
         client = self._client()
         try:
             await BoxdSandbox[None](client=client).destroy(ref)
-            # A secret outlives its machine and only the machine named it, so every GitHub secret of CLAI's that
+            # A secret outlives its machine and only the machine named it, so every GitHub secret of Pax's that
             # no machine names goes: this machine's, and any whose machine boxd deleted itself, such as on an idle
             # timer. Another `/sandbox boxd` caught between making its secret and its machine fails, as boxd
             # refuses a machine naming a missing secret.

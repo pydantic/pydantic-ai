@@ -2,9 +2,9 @@
 
 Three layers make up the catalogue, later layers winning on a name collision:
 
-1. The builtins below: CLAI2's own `working` braille (the default) plus every Code Puppy builtin.
+1. The builtins below: Pax's own `working` braille (the default) plus every Code Puppy builtin.
 2. Spinners plugins return from `Plugin.get_spinners()`.
-3. The user's `spinners.json` next to CLAI2's settings (`/spinner init` writes a starter file).
+3. The user's `spinners.json` next to Pax's settings (`/spinner init` writes a starter file).
    An entry without `frames` that names an existing spinner only changes its speed or description.
 
 The chosen name is the `display.spinner` setting. Painters call `Spinners.active()` on every
@@ -25,7 +25,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 from rich.cells import cell_len
 
-from pydantic_ai_pax.config.settings_store import config_dir
+from pydantic_ai_pax.paths import config_dir
 from pydantic_ai_pax.ui.rendering.spinner_frames import EXTRA_SPECS
 
 if sys.platform != 'win32':  # pragma: no branch
@@ -105,7 +105,7 @@ _DOG, _DASH, _PAW, _BONE, _PUPPY = '\U0001f415', '\U0001f4a8', '\U0001f43e', '\U
 BUILTIN_SPINNERS: dict[str, Spinner] = {
     spinner.name: spinner
     for spinner in (
-        build_spinner('working', _BRAILLE, interval=0.1, description="CLAI2's braille Working indicator (default)"),
+        build_spinner('working', _BRAILLE, interval=0.1, description="Pax's braille Working indicator (default)"),
         build_spinner('puppy', _kennel_bounce(_PUPPY), interval=0.06, description='the classic kennel bounce'),
         build_spinner('bone', _kennel_bounce(_BONE), description='same kennel, chewier occupant'),
         build_spinner(
@@ -143,7 +143,7 @@ STARTER_FILE = """{
 
 
 def user_spinners_path() -> Path:
-    """`spinners.json` in the CLAI2 config folder."""
+    """`spinners.json` in the Pax config folder."""
     return config_dir() / 'spinners.json'
 
 
@@ -268,7 +268,7 @@ class Spinners:
     def save_interval(self, name: str, seconds: float) -> None:
         """Record a speed in `spinners.json`, keeping the entry's other keys; the file is the only record.
 
-        The read-modify-write holds a lock, so two CLAI2 processes saving at once both keep their change.
+        The read-modify-write holds a lock, so two Pax processes saving at once both keep their change.
         """
         with _locked(self.path):
             text = self._user_text()

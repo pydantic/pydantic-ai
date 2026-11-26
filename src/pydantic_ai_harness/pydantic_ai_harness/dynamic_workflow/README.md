@@ -535,7 +535,7 @@ DynamicWorkflow(  # all parameters are keyword-only
     forward_usage=True,
     inherit_model=False,  # True -> sub-agents run with the parent run's resolved model
     sub_agent_usage_limits=None,  # UsageLimits per sub-agent run; None -> parent run's limits when forwarding usage
-    resource_limits=None,  # None -> 256 MB, no time cap; dict merges; 'unlimited' -> sandbox limits off
+    resource_limits=None,  # None -> 256 MB, no time cap; a dict overrides only named caps; 'unlimited' -> limits off
     call_scheduler=None,  # (RunContext) -> WorkflowCallScheduler; None starts each call when made
     id=None,  # required when defer_loading=True
     description=None,  # one-line catalog entry shown while deferred

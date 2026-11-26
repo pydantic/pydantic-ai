@@ -47,7 +47,7 @@ def new_session() -> None:
 
 
 def legacy_chunks(vault: Vault, value: str, *, count: int = 3) -> None:
-    """Store `value` the way an older CLAI split large bundles for Windows' per-entry size limit."""
+    """Store `value` the way an older Pax split large bundles for Windows' per-entry size limit."""
     generation = 'a' * 32
     vault[LEGACY] = f'clai-chunks-v1:{generation}:{count}'
     size = -(-len(value) // count)
@@ -167,7 +167,7 @@ def test_swept_staging_file_leaves_the_move_to_the_other_process(
     def swept(source: str, destination: Path) -> None:
         raise FileNotFoundError(source)
 
-    monkeypatch.setattr('pydantic_ai_pax.config.credential_store.os.link', swept)
+    monkeypatch.setattr('pydantic_ai_pax.config.private_files.os.link', swept)
     assert load_codex_credentials(fallback=fallback) == 'older'
     assert vault[LEGACY] == 'older', 'the entry stays until a move succeeds'
 
@@ -378,7 +378,7 @@ def test_staging_race_is_refused(fallback: Path, no_keyring: None, monkeypatch: 
             Path(path).write_text('{"access_token":"attacker"}', encoding='utf-8')
         return real_open(path, flags, mode)
 
-    monkeypatch.setattr('pydantic_ai_pax.config.credential_store.os.open', planting_open)
+    monkeypatch.setattr('pydantic_ai_pax.config.private_files.os.open', planting_open)
     with pytest.raises(FileExistsError):
         save_codex_credentials(fallback=fallback, value='{"access_token":"secret"}')
     assert not fallback.exists()
@@ -438,7 +438,7 @@ def test_fallback_paths_are_per_account(tmp_path: Path, no_keyring: None, monkey
     monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path))
     codex = credentials_path()
     vllm = credentials_path(account='vllm')
-    assert codex.parent == vllm.parent == tmp_path / 'pydantic-clai2'
+    assert codex.parent == vllm.parent == tmp_path / 'pydantic-ai-pax'
     assert codex.name != vllm.name
     save_codex_credentials(value='codex-tokens', account='openai-codex')
     save_codex_credentials(value='vllm-token', account='vllm')

@@ -2,7 +2,7 @@
 Source tapes/common.tape
 Output shots/spinner.txt
 Hide
-Type 'clai-demo' Enter
+Type 'pax-demo' Enter
 Wait+Screen /\| ready/
 Type '/spinner' Enter
 Wait+Screen /puppy/

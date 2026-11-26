@@ -63,6 +63,16 @@ async def _output_tail(job: Job, secrets: Sequence[bytes]) -> str:
     return f'[... output truncated, {start} earlier bytes omitted]\n' + data.decode('utf-8', errors='replace')
 
 
+def _handles_start(pid: int) -> str:
+    return f'PID: {pid} ('
+
+
+def command_output(result: str, *, pid: int) -> str:
+    """The command output in a `shell` tool result for job `pid`, without the handles that follow it."""
+    output, handles, _ = result.rpartition(_handles_start(pid))
+    return output if handles else result
+
+
 class _CommandOutput(Generic[AgentDepsT]):
     """Emit at most `_OUTPUT_TAIL_BYTES` of the log as events, decoded incrementally."""
 
@@ -194,7 +204,7 @@ async def run_persistent_command(
             if result and not result.endswith('\n'):
                 result += '\n'
         result += (
-            f'PID: {job.pid} (supervisor; use `{job.stop_command}` to stop the whole process tree)\n'
+            f'{_handles_start(job.pid)}supervisor; use `{job.stop_command}` to stop the whole process tree)\n'
             f'Output: {job.output_path}\nStatus: {job.status_path}'
         )
         if (status := await job.status_text()) is not None:

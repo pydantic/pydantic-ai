@@ -1,7 +1,7 @@
 """The orchestrator's tools: make a workspace, start a session in it with a prompt, watch it, steer it, and report back.
 
 They work over the `workspaces` plugin's registry, whose settings are the kinds of workspace the model may
-make. Each workspace's session is a live session of this CLAI in its checkout, followed through
+make. Each workspace's session is a live session of this Pax in its checkout, followed through
 `local_client.LocalClient` as a page follows it, so the sidebar lists it under its repository like any
 other. Only the orchestrator's own agent gets these tools (`web.orchestrator`), never a session's.
 """
@@ -153,7 +153,7 @@ class WorkspaceTools:
             await self.disconnect(workspace_id)
             channel = await workspace_session(self.service, workspace_id, start=start)
             view = SessionView(LocalClient(self.service, channel.session.id))
-            task = asyncio.create_task(view.follow(), name=f'clai2-orchestrator-{workspace_id}')
+            task = asyncio.create_task(view.follow(), name=f'pax-orchestrator-{workspace_id}')
             self.links[workspace_id] = _Link(view=view, task=task, live_id=channel.session.id)
             with anyio.move_on_after(CONNECT_TIMEOUT):
                 await view.ready()

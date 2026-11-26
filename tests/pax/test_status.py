@@ -11,6 +11,7 @@ from typing import cast
 import anyio
 import pytest
 from rich.console import Console
+from rich.text import Text
 
 from pydantic_ai import (
     Agent,
@@ -39,7 +40,7 @@ from pydantic_ai_pax.config.project_settings import ProjectSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.runtime.session_runtime import create_shell
 from pydantic_ai_pax.ui.rendering import theme
-from pydantic_ai_pax.ui.rendering.status import Status, StatusLine
+from pydantic_ai_pax.ui.rendering.status import LinkText, Status, StatusLine, StatusLink
 from pydantic_ai_pax.ui.rendering.theme import LITHIUM, MUTED, THINKING, WARNING, sgr
 from tests.pax.test_app_edges import inputs
 
@@ -462,16 +463,15 @@ async def test_stable_status_colors_without_spinner(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr('pydantic_ai_pax.ui.rendering.status.anyio.sleep', tick)
     async with StatusLine(
-        Console(file=output, force_terminal=True, width=40, height=24),
+        Console(file=output, force_terminal=True, width=80, height=24),
         Status(model='test\x1b\n'),
         clock=lambda: now[0],
     ):
         while len(frames) < 11:
             await original_sleep(0)
     plain = [re.sub(r'\x1b\[[0-9;]*m|\x1b8', '', frame) for frame in frames]
-    assert plain[0].startswith('test?? | context:')
+    assert plain[0] == 'test?? | context: ?/? tokens | ~0 streamed tokens | ready'
     assert all(frame == plain[0] for frame in plain)
-    assert all(len(frame) == 39 for frame in plain)
     assert frames[0] == frames[10]
     assert ('38;2;' in frames[0]) == truecolor
     assert sgr(LITHIUM) in frames[0]
@@ -520,7 +520,7 @@ async def test_row_reserved_before_margins_and_again_on_resize() -> None:
         await asyncio.wait_for(painted.wait(), timeout=5)
         first = output.getvalue()
         assert first.count('\x1bD' * 4 + '\x1b[4A\x1b7\x1b[1;20r') == 1
-        assert '│> Working ⠋ Ctrl-C to interrupt' in first
+        assert '│> Working ⠋ Ctrl+C to interrupt' in first
         assert first.count('\x1b[24;1H') >= 2
         console.height = 30
         painted.clear()
@@ -536,7 +536,7 @@ async def test_row_reserved_before_margins_and_again_on_resize() -> None:
         console.height = 24
         painted.clear()
         await asyncio.wait_for(painted.wait(), timeout=5)
-        assert 'Ctrl-C to interrupt' in output.getvalue()[before:]
+        assert 'Ctrl+C to interrupt' in output.getvalue()[before:]
 
 
 async def test_tiny_terminal() -> None:
@@ -608,6 +608,22 @@ def test_plugin_segments_are_appended_and_empties_are_skipped() -> None:
     assert ''.join(text for _, text in status.toolbar()) == status.text()
 
 
+def test_a_link_segment_shows_its_text_and_keeps_its_url_apart() -> None:
+    status = Status(
+        model='m',
+        fields=lambda: ('plugins',),
+        status_segments=(
+            lambda: 'docker sandbox',
+            lambda: StatusLink(text='watch live', url='https://desktop.example/?token=t\x1b'),
+            lambda: 'last',
+        ),
+    )
+    assert status.text() == 'docker sandbox | watch live ↗ | last'
+    assert status.toolbar() == [(MUTED, 'docker sandbox | '), (MUTED, 'watch live ↗'), (MUTED, ' | last')]
+    [link] = [text for _, text in status.toolbar() if isinstance(text, LinkText)]
+    assert link.url == 'https://desktop.example/?token=t?', 'a URL cannot carry terminal controls'
+
+
 def test_a_failing_segment_reports_itself_instead_of_breaking_the_row() -> None:
     def broken() -> str:
         raise RuntimeError('no directory')
@@ -641,12 +657,9 @@ async def test_plugin_segments_are_painted_muted(monkeypatch: pytest.MonkeyPatch
     assert sgr(WARNING) not in painted
 
 
-async def test_a_fragment_wider_than_the_terminal_still_mutes_only_itself() -> None:
+async def test_a_fragment_wider_than_the_terminal_gives_way_to_the_built_in_fields() -> None:
     output = io.StringIO()
     status = Status(model='m', status_segments=(lambda: 'x' * 200,))
     async with StatusLine(Console(file=output, force_terminal=True, width=60, height=24), status):
         pass
-    painted = output.getvalue()
-    assert f'{sgr(MUTED)}m' in painted
-    assert f'{sgr(LITHIUM)}~' in painted
-    assert f'{sgr(MUTED)}x' in painted
+    assert Text.from_ansi(output.getvalue()).plain.endswith('m | context: ?/? tokens | ready')

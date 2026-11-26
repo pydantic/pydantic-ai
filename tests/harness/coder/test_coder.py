@@ -136,7 +136,12 @@ def test_coder_members_and_parameters() -> None:
         '_SetToolStrict',
     ]
     files = next(item for item in coder.capabilities if isinstance(item, FileSystem))
-    assert (files.root_dir, files.content_hashes, files.tools) == (None, False, FILE_TOOL_NAMES)
+    assert (files.root_dir, files.content_hashes, files.tools, files.max_image_side) == (
+        None,
+        False,
+        FILE_TOOL_NAMES,
+        1024,
+    )
     shell = next(item for item in coder.capabilities if isinstance(item, Shell))
     assert (shell.tools, shell.denied_commands, shell.allow_interactive) == (['shell'], [], True)
     assert (shell.env, shell.denied_env_patterns) == (None, [])
@@ -149,6 +154,16 @@ def test_coder_members_and_parameters() -> None:
     limits = next(item for item in coder.capabilities if isinstance(item, ToolOutputLimits))
     assert limits.id == 'coder_tool_output_limits'
     assert isinstance(coder.for_agent(Agent(TestModel())), Coder)
+
+
+def test_coder_max_image_side_none_sends_images_at_full_size(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Without Pillow, only the default downscaling needs it.
+    monkeypatch.setitem(sys.modules, 'PIL', None)
+    with pytest.raises(ImportError, match='needs Pillow'):
+        Coder()
+    coder = Coder(max_image_side=None)
+    files = next(item for item in coder.capabilities if isinstance(item, FileSystem))
+    assert files.max_image_side is None
 
 
 def test_bound_tool_outputs_sharing_an_id_raise_instead_of_merging() -> None:

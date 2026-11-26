@@ -79,7 +79,7 @@ def test_host_rejects_a_malformed_prefix(prefix: str) -> None:
     ],
 )
 def test_host_rejects_a_prefix_clai_already_runs(prefix: str) -> None:
-    with pytest.raises(ValueError, match='provider CLAI already runs'):
+    with pytest.raises(ValueError, match='provider Pax already runs'):
         provider(prefix)
 
 
@@ -88,7 +88,7 @@ def test_host_rejects_a_known_provider_whose_sdk_is_missing(monkeypatch: pytest.
         raise ImportError(f'install the {provider} SDK')
 
     monkeypatch.setattr('pydantic_ai_pax.plugins.infer_provider_class', missing_sdk)
-    with pytest.raises(ValueError, match='provider CLAI already runs'):
+    with pytest.raises(ValueError, match='provider Pax already runs'):
         provider('echo-test')
 
 

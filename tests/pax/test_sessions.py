@@ -334,7 +334,7 @@ async def test_step_records_another_writer_locks_out_do_not_fail_the_turn(
     caplog.set_level(logging.INFO, logger='pydantic_ai_pax.runtime.session')
 
     def run_command() -> str:
-        # Another CLAI sharing `sessions.db` starts a long write while the tool runs.
+        # Another Pax sharing `sessions.db` starts a long write while the tool runs.
         other.execute('BEGIN IMMEDIATE')
         return 'done'
 

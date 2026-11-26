@@ -5,6 +5,12 @@ Pydantic AI `Capability` that edits the message history just before a model requ
 **persist** into the run's history, so a trim, clear, or summary carries forward instead of being
 recomputed every turn.
 
+Across runs, the run's `result.conversation` keeps the whole history, including what a strategy
+dropped, so a `ConversationStore` stores every message. Carried into the next run, it is compacted
+again, which for `SummarizingCompaction` and `RelevanceCompaction` means another model call over the
+whole, growing history. To carry the compacted history instead, pass `result.all_messages()` as
+`message_history=`.
+
 Every strategy keeps tool calls **paired** with their returns: core does not validate this, and a
 provider rejects an orphaned call or return. The zero-LLM strategies never call a model.
 
@@ -41,7 +47,7 @@ flowchart TB
 |---|---|---|---|
 | `ClampOversizedMessages` | zero-LLM | Head/tail-truncates one oversized part (response text, tool-call args) | One runaway generation exceeds the context cap |
 | `SlidingWindowCompaction` | zero-LLM | Drops the oldest whole messages down to a tail | Only the recent turns matter |
-| `ClearToolResults` | zero-LLM | Blanks old tool *results* in place, keeping the last `keep_pairs` | Tool outputs dominate and can be re-fetched |
+| `ClearToolResults` | zero-LLM | Blanks old tool *results* in place, keeping the last `keep_pairs` or `keep_turns` | Tool outputs dominate and can be re-fetched |
 | `DeduplicateFileReads` | zero-LLM | Blanks file reads superseded by a newer read of the same file | The agent re-reads files and only the latest version matters |
 | `SummarizingCompaction` | one LLM call | Summarizes older messages, keeping the recent tail | Old context matters but must shrink; use behind the cheap tiers |
 | `RelevanceCompaction` | one judge request per new step, plus an optional summary | Keeps, reduces, or drops each older step by a judge model's answers | Some old tool results are needed verbatim, others are dead weight |
@@ -605,7 +611,43 @@ to call again, isn't a result: it is never cleared or counted toward `keep_pairs
 `DeduplicateFileReads` doesn't let a retried read supersede an earlier one. `clear_tool_inputs=True`
 also blanks the cleared calls' arguments, and those calls lose their item ID (`ToolCallPart.id`) as
 a clamped part does. A `load_capability` call keeps its argument, which Pydantic AI reads to know
-which capability is loaded. `exclude_tools` names tools whose results are never cleared.
+which capability is loaded.
+
+`exclude_tools` names tools whose results are never cleared; `tools` names the only ones that are,
+and `keep_pairs` then counts only their pairs, shared across the listed tools, so
+`tools=['retrieve'], keep_pairs=2` keeps the newest two `retrieve` results whatever ran in between.
+Setting `tools` with `exclude_tools` raises `UserError`.
+
+`keep_turns` keeps by user turn instead: the results of the last `keep_turns` completed turns plus
+the current one, which is never cleared, so `keep_turns=0` clears every earlier turn's. Only the
+user's own prompt starts a turn, not harness-added prompts (pinned messages, receipts) or a
+`ToolReturn`'s `content`, and a run resumed without a prompt counts the history's last turn as
+current. A `keep_pairs` other than its default of 3 alongside it raises `UserError`.
+
+`placeholder` can also be a function of the `ToolReturnPart` being cleared, for example to keep its
+first line so the ids it listed survive:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.messages import ToolReturnPart
+from pydantic_ai_harness import ClearToolResults
+
+
+def first_line(part: ToolReturnPart) -> str:
+    return part.model_response_str().partition('\n')[0]
+
+
+agent = Agent(
+    'openai:gpt-5.6-luna',
+    capabilities=[ClearToolResults(max_tokens=50_000, tools=['search'], keep_turns=0, placeholder=first_line)],
+)
+```
+
+The function runs once per result, when it is cleared, and the history stores its output; a clear
+that `min_clear_tokens` drops calls it again later. It must be deterministic, or a history cleared
+again on a resumed or replayed run comes out different and the prompt cache misses. A result whose
+`metadata` is neither `None` nor a `dict` isn't cleared with a function, and an [agent
+spec](https://pydantic.dev/docs/ai/core-concepts/agent-spec/) only takes a string.
 
 Core's framework-typed `search_tools` and `load_capability` returns are left intact (a small token
 floor): their structured content is re-parsed later, and rewriting it via `dataclasses.replace`
@@ -619,7 +661,7 @@ messages follow the last cleared result, and the requests in between extend the 
 instead of rewriting it. Right after a clear, about `2 * keep_pairs` messages (the kept pairs)
 follow the last cleared result and each tool step adds two, so the next clear comes after about
 `(max_messages - 2 * keep_pairs) / 2` tool steps; at or below `2 * keep_pairs`, it clears on every
-request.
+request. With `keep_turns`, the kept turns' messages count the same way.
 
 ## `WarnNearLimits` thresholds
 
@@ -671,16 +713,18 @@ agent without a trigger, `ClearToolResults`, `SlidingWindowCompaction` and `Summ
 raise `UserError`. Any object with `async def compact(messages, ctx) -> list[ModelMessage]` (the
 `CompactionStrategy` protocol) can be a tier.
 
-Each tier keeps some messages as they are: its `keep_tokens` or `keep_messages` tail, which holds the
-whole current turn, the first user message under `preserve_first_user_message`, and pinned parts.
-Those set a lower bound on how far the chain can shrink the history, and a `target_tokens` below it
-can't be reached. A `SummarizingCompaction` tier with `keep_tokens` whose only candidates are
-messages it keeps anyway makes no model call and leaves the history unchanged. When the last tier
-leaves the history above the target, the outermost `TieredCompaction` logs a warning on each attempt
-on the `pydantic_ai_harness.compaction._tiered_compaction` logger, and sets
-`compaction.target_unreached` on its [span](#tracing) when the history changes. If no tier changes the
-history, no span is emitted; the warning still reports the estimate and target. Pass
-`preserve_first_user_message=False` to a tier that may drop or summarize the first user message.
+Each tier keeps some messages as they are: its `keep_tokens` or `keep_messages` tail, which holds
+the whole current turn, the first user message under `preserve_first_user_message`, pinned parts,
+and the latest response when it names a workspace (its `workspace_ref`) and only requests follow it,
+as the next run finds its workspace there (kept whatever its size). Those set a lower bound on how
+far the chain can shrink the history, and a `target_tokens` below it can't be reached. A
+`SummarizingCompaction` tier with `keep_tokens` whose only candidates are messages it keeps anyway
+makes no model call and leaves the history unchanged. When the last tier leaves the history above
+the target, the outermost `TieredCompaction` logs a warning on each attempt on the
+`pydantic_ai_harness.compaction._tiered_compaction` logger, and sets `compaction.target_unreached`
+on its [span](#tracing) when the history changes. If no tier changes the history, no span is
+emitted; the warning still reports the estimate and target. Pass `preserve_first_user_message=False`
+to a tier that may drop or summarize the first user message.
 
 On its own trigger, `TieredCompaction` skips a tier that raises one of its `skip_on` exceptions (by default `ModelAPIError`, `FallbackExceptionGroup` and `UnexpectedModelBehavior`, such as a summarizer whose provider is down or that exhausted its retries; unlike `FallbackCompaction`'s `fallback_on`, this includes `UnexpectedModelBehavior`, because the next tier can still shrink the history without that model) and moves on to the next tier. The skipped tier's receipts are discarded, a warning is logged, and a `compact_messages` span records the tier as `compaction.strategy`, with `compaction.skipped='tier_failed'` and `error.type`. Other exceptions, such as programming errors and `UsageLimitExceeded`, propagate, as does every exception on a direct `compact()` call, so a `FallbackCompaction` around it still falls back. Pass `skip_on=()` to propagate every tier failure.
 

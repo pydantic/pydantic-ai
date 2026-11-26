@@ -46,7 +46,7 @@ _SPEED_TIERS: dict[CodexSpeed, Literal['default', 'priority']] = {
     'fast': 'priority',
     'ultrafast': 'priority',
 }
-"""The `service_tier` saved beside each Codex speed for older CLAI builds, its nearest for ultrafast."""
+"""The `service_tier` saved beside each Codex speed for older Pax builds, its nearest for ultrafast."""
 
 
 class ModelSettingsForm(BaseModel):
@@ -319,7 +319,7 @@ class ModelSettingsForm(BaseModel):
 
 
 def with_codex_speed(saved: Mapping[str, JsonValue], speed: CodexSpeed | None) -> dict[str, JsonValue]:
-    """`saved` with `speed` and the `service_tier` older CLAI builds read for it, its nearest for ultrafast.
+    """`saved` with `speed` and the `service_tier` older Pax builds read for it, its nearest for ultrafast.
 
     `None` drops both, so the model's default speed applies again.
     """
@@ -332,7 +332,7 @@ def with_codex_speed(saved: Mapping[str, JsonValue], speed: CodexSpeed | None) -
 
 
 def chosen_codex_speed(saved: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
-    """`saved` with the Codex speed last chosen: a tier an older CLAI build changed since outranks `codex_speed`."""
+    """`saved` with the Codex speed last chosen: a tier an older Pax build changed since outranks `codex_speed`."""
     speed, tier = saved.get('codex_speed'), saved.get('service_tier')
     if speed in _SPEED_TIERS and isinstance(tier, str) and tier in _TIER_SPEEDS and _SPEED_TIERS[speed] != tier:
         return {**saved, 'codex_speed': _TIER_SPEEDS[tier]}
@@ -340,12 +340,12 @@ def chosen_codex_speed(saved: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
 
 
 def model_defaults(*, model: str, saved: Mapping[str, JsonValue] | None = None) -> dict[str, JsonValue]:
-    """CLAI's prompt caching default for every model, reasoning defaults for GPT families, and Codex speeds.
+    """Pax's prompt caching default for every model, reasoning defaults for GPT families, and Codex speeds.
 
     Caching uses the unified `cache` setting, which providers without configurable caching ignore. A
     saved `anthropic_cache*` override still applies, since provider-specific cache settings take
     precedence over it. A Codex model's speed follows a `service_tier` in `saved` that `/fast` writes,
-    as older CLAI builds also read it; without a saved tier, the Codex models that offer ultrafast use it.
+    as older Pax builds also read it; without a saved tier, the Codex models that offer ultrafast use it.
     """
     defaults: dict[str, JsonValue] = {'cache': True, **gpt_defaults(model=model)}
     if provider_of(model) == 'openai-codex':
@@ -358,7 +358,7 @@ def model_defaults(*, model: str, saved: Mapping[str, JsonValue] | None = None) 
 
 
 def gpt_defaults(*, model: str) -> dict[str, JsonValue]:
-    """CLAI's reasoning defaults for GPT-6 and GPT-5.6 families, whichever provider serves them."""
+    """Pax's reasoning defaults for GPT-6 and GPT-5.6 families, whichever provider serves them."""
     name = model.partition(':')[2] if ':' in model else model
     name = name.rsplit('/', 1)[-1]
     if not re.match(r'^gpt-(?:6(?:\.\d+)?|5\.6)(?:$|[-:])', name):

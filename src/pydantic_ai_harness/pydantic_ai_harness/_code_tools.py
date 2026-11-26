@@ -12,6 +12,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from pydantic_ai import ToolDefinition
+from pydantic_ai.computer_use import COMPUTER_KIND
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, UsageLimitExceeded, UserError
 from pydantic_ai.function_signature import FunctionSignature, _to_python_identifier  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.messages import (
@@ -31,8 +32,10 @@ FOLD_INTO_CODE_MODE = 'fold_into_code_mode'
 """Tool metadata key that, set to `True`, lets `CodeMode` and `IPythonCodeMode` fold a code-execution tool into
 the sandbox anyway, keeping its `code_arg_name` for whatever else reads it."""
 
-_FRAMEWORK_CONTROL_TOOL_KINDS = frozenset({'tool-search', 'capability-load'})
-"""Kinds of the framework's control tools, which stay native to drive tool search and capability loading."""
+_UNSANDBOXED_TOOL_KINDS = frozenset({'tool-search', 'capability-load', COMPUTER_KIND.id})
+"""Kinds of tools that stay native: the framework's control tools, which drive tool search and capability loading, and
+`ComputerUse`'s `computer` tool. The model has to see the `computer` tool's screenshot, and code calling it would hide
+the screenshot."""
 
 BUILTIN_NAMES = frozenset(dir(builtins))
 """Every CPython builtin, which no sandboxed tool may be named after.
@@ -48,15 +51,15 @@ cannot take over a tool that works today.
 def can_be_sandboxed(tool_def: ToolDefinition) -> bool:
     """Whether a tool may go inside `run_code` at all, whatever the selector says.
 
-    Framework control tools (tool search, capability loading) drive protocol-level flows; a local fallback
-    (`unless_native`) has to stay native so `Model.prepare_request` can drop it when the provider supports
-    the native tool; and a tool that is itself a code-execution sandbox (e.g. DynamicWorkflow's
-    `run_workflow`) is a peer of `run_code`, not something to fold inside it, unless its metadata sets
+    Framework control tools (tool search, capability loading) and the `computer` tool stay native (see
+    `_UNSANDBOXED_TOOL_KINDS`); a local fallback (`unless_native`) has to stay native so `Model.prepare_request`
+    can drop it when the provider supports the native tool; and a tool that is itself a code-execution sandbox (e.g.
+    DynamicWorkflow's `run_workflow`) is a peer of `run_code`, not something to fold inside it, unless its metadata sets
     `FOLD_INTO_CODE_MODE`.
     """
     folds = bool(tool_def.metadata and tool_def.metadata.get(FOLD_INTO_CODE_MODE) is True)
     return (
-        tool_def.tool_kind not in _FRAMEWORK_CONTROL_TOOL_KINDS
+        tool_def.tool_kind not in _UNSANDBOXED_TOOL_KINDS
         and not tool_def.unless_native
         and (folds or not is_code_execution_tool(tool_def))
     )

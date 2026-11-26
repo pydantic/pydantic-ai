@@ -80,6 +80,7 @@ from pydantic_ai.realtime import (
 )
 from pydantic_ai.realtime._lifecycle import ResponseEnded
 from pydantic_ai.realtime.codec import (
+    AppendVoiceInstructions,
     AudioDelta,
     CancelResponse,
     ClearAudio,
@@ -93,6 +94,7 @@ from pydantic_ai.realtime.codec import (
     ToolCall,
     ToolResult,
     TruncateOutput,
+    UpdateTools,
 )
 from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
@@ -135,6 +137,16 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='realtime provider dependencies not installed'),
 ]
+
+
+@pytest.fixture(scope='module', autouse=True)
+def context_encoding() -> None:
+    """Load the tokenizer Live counts its caps in once per worker, outside any one test's budget.
+
+    The first load in a process can download the encoding, which can take longer than a test's
+    `PYTEST_TEST_BUDGET_SECONDS` on a loaded runner. tiktoken keeps it loaded for the process.
+    """
+    live_module.tiktoken.get_encoding(live_module._CONTEXT_ENCODING)  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.fixture
@@ -184,6 +196,7 @@ def test_profile(model: OpenAILiveModel) -> None:
         supports_system_messages=True,
         supports_seeding_images=False,
         supports_seeding_audio=False,
+        supports_appending_voice_instructions=True,
         # A server relays the offer and attaches a sideband; there are no client secrets.
         supports_webrtc=True,
         async_tool_call_mode='always',
@@ -191,6 +204,7 @@ def test_profile(model: OpenAILiveModel) -> None:
         # `thinking` sets the delegated backend's reasoning effort.
         supports_thinking=True,
         supports_tool_return_schema=False,
+        supports_tool_updates=True,
         emits_input_speech_events=False,
         output_speech_timestamp_granularity=None,
         # The one model in the repo that infers its turn boundary rather than reading it off the wire.
@@ -2499,6 +2513,75 @@ async def test_context_text_over_the_cap_is_refused_before_sending() -> None:
     assert [json.loads(frame)['type'] for frame in ws.sent[1:]] == ['session.thinking.append', 'session.close']
 
 
+async def test_voice_instructions_over_the_cap_are_refused_before_sending() -> None:
+    """Live refuses an instructions append over 500 tokens as it does context (checked live: 500 accepted, 501 refused).
+
+    The refusal arrives after the send has returned, so the session checks the length first.
+    """
+    started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
+    ws = _FakeWebSocket([started])
+    with _patched_connect(ws):
+        async with Agent().realtime(OpenAILiveModel('gpt-live-1', provider='openai')).session() as session:
+            with pytest.raises(
+                UserError, match=re.escape('at most 500 tokens per `append_voice_instructions()`, and this is 501')
+            ):
+                await session.append_voice_instructions(_text_of(501))
+            await session.append_voice_instructions(_text_of(500))
+
+    assert [json.loads(frame)['type'] for frame in ws.sent[1:]] == ['session.instructions.append', 'session.close']
+
+
+async def test_voice_instructions_are_appended_and_kept_for_a_replacement_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Voice instructions go to Live as `session.instructions.append`, and into the instructions a replacement session
+    starts with, after the voice model's own: the newest that fit in the start cap, dropping the oldest.
+
+    A unit test: the cap is 16,384 tokens, which a recording would take dozens of appends to reach.
+    """
+    monkeypatch.setattr(live_module, '_START_INSTRUCTIONS_TOKEN_LIMIT', 21)
+    sent: list[dict[str, Any]] = []
+
+    class _Recorder(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)
+
+    session_start: dict[str, Any] = {'model': 'gpt-live-1', 'instructions': _text_of(8)}
+    connection = _Recorder(object(), session_start=session_start)  # pyright: ignore[reportArgumentType]
+    # Live accepts an empty append (checked live), which adds nothing to keep.
+    await connection.send(AppendVoiceInstructions(''))
+    assert connection._voice_instructions == []  # pyright: ignore[reportPrivateUsage]
+    for words in (4, 5, 6):
+        await connection.send(AppendVoiceInstructions(_text_of(words)))
+        if words == 5:
+            # Within the cap: both appends follow the voice model's own instructions.
+            assert session_start['instructions'] == '\n\n'.join([_text_of(8), _text_of(4), _text_of(5)])
+
+    assert sent == [
+        {'type': 'session.instructions.append', 'delegation_id': None, 'content': content}
+        for content in ('', *(_text_of(words) for words in (4, 5, 6)))
+    ]
+    # The third append would pass the cap, so the oldest is dropped.
+    assert session_start['instructions'] == '\n\n'.join([_text_of(8), _text_of(5), _text_of(6)])
+
+
+async def test_a_replacement_session_starts_with_the_appended_voice_instructions(model: OpenAILiveModel) -> None:
+    """A dropped session that can't be forked is replaced by one that starts with the voice instructions added so far."""
+    first, second = _DroppingWebSocket([_started('s1')]), _FakeWebSocket([_started('s2')])
+    with _patched_dials(first, second):
+        async with model.connect(
+            messages=[], model_settings=_RECONNECT, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            await connection.send(AppendVoiceInstructions('The caller is on a key menu: stay quiet.'))
+            assert await _first_events(connection, 1) == [RealtimeSessionReconnectEvent(state_restored=False)]
+
+    assert json.loads(second.sent[0])['session']['instructions'] == snapshot("""\
+You are a voice assistant. Keep replies short and conversational. When the user asks for something you cannot answer from this conversation alone, delegate the task and tell them you are looking it up.
+
+The caller is on a key menu: stay quiet.\
+""")
+
+
 async def test_enqueued_system_prompt_is_the_operators_not_the_users() -> None:
     """`enqueue(SystemPromptPart(...))` still runs the backend, but isn't framed as something the user typed.
 
@@ -3717,6 +3800,35 @@ async def test_the_sideband_runs_the_session_it_attaches_to(model: OpenAILiveMod
     assert ws.sent == [_EMPTY_SESSION_UPDATE]
 
 
+async def test_a_sideband_tool_update_keeps_the_backends_native_tools(model: OpenAILiveModel) -> None:
+    """The backend a sideband attaches to was started by the offer, so an update builds on the tools Live reports."""
+    responses: dict[str, Any] = {
+        'model': 'gpt-5.6-luna',
+        'instructions': 'Be brief.',
+        'tools': [
+            {'type': 'function', 'name': 'load_capability', 'parameters': {'type': 'object', 'properties': {}}},
+            {'type': 'web_search'},
+        ],
+    }
+    ws = _FakeWebSocket([_started_frame(delegation={'type': 'responses', 'responses': responses})])
+    with _patched_connect(ws):
+        async with model.connect_webrtc(
+            WebRTCSession(provider_name='openai', session_id='live_test'),
+            messages=[],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        ) as connection:
+            await connection.send(
+                UpdateTools(tools=[ToolDefinition(name='load_capability'), ToolDefinition(name='get_forecast')])
+            )
+    update = json.loads(ws.sent[-1])['session']['delegation']['responses']
+    assert [tool.get('name', tool['type']) for tool in update['tools']] == [
+        'load_capability',
+        'get_forecast',
+        'web_search',
+    ]
+
+
 async def test_a_sideband_on_a_client_delegated_session_has_no_backend(model: OpenAILiveModel) -> None:
     with _patched_connect(_FakeWebSocket([_started_frame(delegation={'type': 'client'})])):
         async with model.connect_webrtc(
@@ -3726,6 +3838,29 @@ async def test_a_sideband_on_a_client_delegated_session_has_no_backend(model: Op
             model_request_parameters=ModelRequestParameters(),
         ) as connection:
             assert connection._backend_model is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_sideband_appends_voice_instructions_to_the_session_it_attaches_to(model: OpenAILiveModel) -> None:
+    """A sideband re-attaches to the same session, which keeps what was appended, so nothing is kept for a redial."""
+    ws = _FakeWebSocket([_started_frame(delegation={'type': 'client'})])
+    with _patched_connect(ws):
+        async with model.connect_webrtc(
+            WebRTCSession(provider_name='openai', session_id='live_test'),
+            messages=[],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        ) as connection:
+            await connection.send(AppendVoiceInstructions('The caller is on a key menu: stay quiet.'))
+            assert connection._voice_instructions == []  # pyright: ignore[reportPrivateUsage]
+    assert [json.loads(frame) for frame in ws.sent[1:]] == snapshot(
+        [
+            {
+                'type': 'session.instructions.append',
+                'delegation_id': None,
+                'content': 'The caller is on a key menu: stay quiet.',
+            }
+        ]
+    )
 
 
 async def test_a_malformed_started_event_on_the_sideband_raises(model: OpenAILiveModel) -> None:
