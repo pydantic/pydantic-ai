@@ -32,6 +32,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
 from pydantic_ai.capabilities import AbstractCapability
@@ -715,13 +716,18 @@ def test_message_history_round_trip_preserves_binary_content() -> None:
     assert ModelMessagesTypeAdapter.validate_json(dumped) == messages
 
 
-async def test_tool_result_media_recorded_as_message_parts(capfire: CaptureLogfire) -> None:
-    """With binary content included, media in a tool result is the same message part a user prompt records.
+@pytest.mark.parametrize('include_binary_content', [True, False])
+async def test_tool_result_media_recorded_as_message_parts(
+    capfire: CaptureLogfire, include_binary_content: bool
+) -> None:
+    """Media in a tool result is the same message part a user prompt records.
 
     The tool span's result, and the tool response in the chat and agent run spans, carry the same parts, wherever
-    the tool put the media in the containers it returned; everything else is recorded as before.
+    the tool put the media in the containers it returned; everything else is recorded as before. Without binary
+    content, a `blob` part keeps only its media type and modality.
     """
     url = ImageUrl('https://example.com/kiwi.png')
+    uploaded = UploadedFile(file_id='file_1', provider_name='anthropic', media_type='application/pdf')
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -729,12 +735,14 @@ async def test_tool_result_media_recorded_as_message_parts(capfire: CaptureLogfi
         return ModelResponse(parts=[TextPart('a kiwi')])
 
     agent = Agent(
-        FunctionModel(respond), capabilities=[Instrumentation(settings=InstrumentationSettings())], name='agent'
+        FunctionModel(respond),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_binary_content=include_binary_content))],
+        name='agent',
     )
 
     @agent.tool_plain
     def gen_images() -> dict[str, Any]:
-        return {'image': IMAGE, 'images': [url, IMAGE], 'caption': 'a kiwi'}
+        return {'image': IMAGE, 'images': [url, IMAGE], 'file': uploaded, 'caption': 'a kiwi'}
 
     await agent.run('make images')
 
@@ -745,7 +753,7 @@ async def test_tool_result_media_recorded_as_message_parts(capfire: CaptureLogfi
     [chat_response] = spans['chat function:respond:']['gen_ai.input.messages'][-1]['parts']
     [run_response] = spans['invoke_agent agent']['pydantic_ai.all_messages'][2]['parts']
 
-    image_part = {**REDACTED_IMAGE_PART, 'content': IMAGE.base64}
+    image_part = {**REDACTED_IMAGE_PART, 'content': IMAGE.base64} if include_binary_content else REDACTED_IMAGE_PART
     assert tool_result == snapshot(
         {
             'image': image_part,
@@ -753,6 +761,7 @@ async def test_tool_result_media_recorded_as_message_parts(capfire: CaptureLogfi
                 {'type': 'uri', 'modality': 'image', 'mime_type': 'image/png', 'uri': 'https://example.com/kiwi.png'},
                 image_part,
             ],
+            'file': {'type': 'file', 'modality': 'document', 'mime_type': 'application/pdf', 'file_id': 'file_1'},
             'caption': 'a kiwi',
         }
     )
