@@ -1,0 +1,279 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1398"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6-luna
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: Reply with just OK, without calling any tools.
+        reasoning:
+          effort: none
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - name: configure
+          parameters:
+            type: object
+            properties:
+              level_9:
+                type: object
+                properties:
+                  level_8:
+                    type: object
+                    properties:
+                      level_7:
+                        type: object
+                        properties:
+                          level_6:
+                            type: object
+                            properties:
+                              level_5:
+                                type: object
+                                properties:
+                                  level_4:
+                                    type: object
+                                    properties:
+                                      level_3:
+                                        type: object
+                                        properties:
+                                          level_2:
+                                            type: object
+                                            properties:
+                                              level_1:
+                                                type: object
+                                                properties:
+                                                  level_0:
+                                                    type: object
+                                                    properties:
+                                                      leaf:
+                                                        type: string
+                                                    required:
+                                                    - leaf
+                                                    additionalProperties: false
+                                                required:
+                                                - level_0
+                                                additionalProperties: false
+                                            required:
+                                            - level_1
+                                            additionalProperties: false
+                                        required:
+                                        - level_2
+                                        additionalProperties: false
+                                    required:
+                                    - level_3
+                                    additionalProperties: false
+                                required:
+                                - level_4
+                                additionalProperties: false
+                            required:
+                            - level_5
+                            additionalProperties: false
+                        required:
+                        - level_6
+                        additionalProperties: false
+                    required:
+                    - level_7
+                    additionalProperties: false
+                required:
+                - level_8
+                additionalProperties: false
+            required:
+            - level_9
+            additionalProperties: false
+          type: function
+          description: Configure.
+          strict: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "2899"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0a6959038d61d777006adfce6babf487d19edd3dc8361ea5cb
+        object: response
+        created_at: 1793052267
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1793052270
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-6-luna
+        moderation: null
+        output:
+        - id: msg_0a6959038d61d777006adfce6e409087d1a428d659c68f477c
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: OK
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: Configure.
+          name: configure
+          output_schema: null
+          parameters:
+            type: object
+            properties:
+              level_9:
+                type: object
+                properties:
+                  level_8:
+                    type: object
+                    properties:
+                      level_7:
+                        type: object
+                        properties:
+                          level_6:
+                            type: object
+                            properties:
+                              level_5:
+                                type: object
+                                properties:
+                                  level_4:
+                                    type: object
+                                    properties:
+                                      level_3:
+                                        type: object
+                                        properties:
+                                          level_2:
+                                            type: object
+                                            properties:
+                                              level_1:
+                                                type: object
+                                                properties:
+                                                  level_0:
+                                                    type: object
+                                                    properties:
+                                                      leaf:
+                                                        type: string
+                                                    required:
+                                                    - leaf
+                                                    additionalProperties: false
+                                                required:
+                                                - level_0
+                                                additionalProperties: false
+                                            required:
+                                            - level_1
+                                            additionalProperties: false
+                                        required:
+                                        - level_2
+                                        additionalProperties: false
+                                    required:
+                                    - level_3
+                                    additionalProperties: false
+                                required:
+                                - level_4
+                                additionalProperties: false
+                            required:
+                            - level_5
+                            additionalProperties: false
+                        required:
+                        - level_6
+                        additionalProperties: false
+                    required:
+                    - level_7
+                    additionalProperties: false
+                required:
+                - level_8
+                additionalProperties: false
+            required:
+            - level_9
+            additionalProperties: false
+          strict: false
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 107
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 5
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 112
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-26T22:04:30.593963+00:00

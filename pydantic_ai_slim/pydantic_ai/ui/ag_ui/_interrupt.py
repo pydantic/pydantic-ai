@@ -19,10 +19,12 @@ from typing import TYPE_CHECKING, Annotated, Any
 from pydantic import BaseModel, ConfigDict, StrictBool, ValidationError
 from pydantic.alias_generators import to_camel
 from pydantic.json_schema import WithJsonSchema
+from pydantic_core import to_json
 
+from ..._utils import is_list, is_str_dict
 from ...exceptions import UserError
 from ...messages import ToolCallPart
-from ...tools import DeferredToolApprovalResult, GenerateToolJsonSchema, ToolApproved, ToolDenied
+from ...tools import DeferredToolApprovalResult, DeferredToolRequests, GenerateToolJsonSchema, ToolApproved, ToolDenied
 from ._utils import INTERRUPT_ID_PREFIX
 
 if TYPE_CHECKING:
@@ -92,12 +94,11 @@ class _ResumePayload(BaseModel):
 
     `approved` is a `StrictBool` on purpose: lax-mode coercion would turn payloads like
     `{'approved': 1}` or `{'approved': 'true'}` into approvals, while the deny-by-default
-    stance requires such ambiguous payloads to fail validation and deny. It is also
-    required (no default) so the generated schema keeps `required: ['approved']`, matching
-    the AG-UI recommended approve-with-edits pattern. A payload without `approved` still
-    denies, but via `ValidationError` rather than the `approved is False` branch, so its
-    `reason` never reaches the denial message — spec-conforming clients always send
-    `approved`, and `test_resume_deny_by_default_for_ambiguous_payload` pins the outcome.
+    stance requires such ambiguous payloads to fail validation. It is also required (no
+    default) so the generated schema keeps `required: ['approved']`, matching the AG-UI
+    recommended approve-with-edits pattern. A payload without `approved` is therefore a
+    schema violation, reported through `RunError` rather than reaching the
+    `approved is False` branch — spec-conforming clients always send it.
 
     The wire keys are camelCase, so `to_camel` supplies them as aliases. Validation is
     deliberately by alias only — no `populate_by_name` — so the accepted shape stays
@@ -126,25 +127,59 @@ for _property in _RESUME_RESPONSE_SCHEMA['properties'].values():
     _property.pop('default', None)
 
 
-def approval_to_interrupt(call: ToolCallPart, metadata: dict[str, dict[str, Any]]) -> Interrupt:
-    """Build an AG-UI `Interrupt` from a pending approval `ToolCallPart` (outbound).
+def approval_to_interrupt(call: ToolCallPart, requests: DeferredToolRequests) -> Interrupt:
+    """Build an AG-UI `Interrupt` from a pending approval `ToolCallPart` in `requests` (outbound).
 
+    The `message` shows the arguments the model sent, each with the value the tool will receive from
+    `requests.validated_args`. A default and an argument a validation hook added aren't in it, at any
+    depth: they can hold server-side values, and the message goes to the client. An argument keeps the
+    model's value where its validated value can't be matched to it: a key validation renamed, such as a
+    validation alias, or a value whose shape validation changed, such as a list a hook extended. A request
+    that doesn't carry validated arguments, such as one built by hand, shows the model's arguments.
     The `response_schema` describes the shape clients must put in `ResumeEntry.payload`;
     it is generated from `_ResumePayload`, the same model that validates the payload on
     resume. `editedArgs`, when present, replaces the proposed `ToolCallPart.args`
     (see `ToolApproved.override_args`).
     """
+    args = call.args_as_dict()
+    validated_args = requests.validated_args.get(call.tool_call_id, {})
+    only_name, only_value = next(iter(validated_args.items())) if len(validated_args) == 1 else (None, None)
+    if not is_str_dict(only_value):
+        args = sent_validated_values(args, validated_args)
+    elif list(args) != [only_name]:
+        # A tool whose only parameter is a model takes that model's fields unwrapped.
+        args = sent_validated_values(args, only_value)
+    # Otherwise `{name: ...}` is either the model's field `name` or the model wrapped under its parameter's
+    # name, which only the tool's schema tells apart, so the message keeps the model's arguments.
     return Interrupt(
         id=f'{INTERRUPT_ID_PREFIX}{call.tool_call_id}',
         reason='tool_call',
         tool_call_id=call.tool_call_id,
-        message=f'Approve {call.tool_name}({call.args_as_json_str()})?',
+        message=f'Approve {call.tool_name}({to_json(args).decode()})?',
         # Copied per interrupt: pydantic only rebuilds the outer dict for a `dict[str, Any]`
         # field, so sharing the constant would let a consumer mutating one interrupt's schema
         # alter every other interrupt's in the same process.
         response_schema=deepcopy(_RESUME_RESPONSE_SCHEMA),
-        metadata=metadata.get(call.tool_call_id),
+        metadata=requests.metadata.get(call.tool_call_id),
     )
+
+
+def sent_validated_values(sent: Any, validated: Any) -> Any:
+    """`sent`, with each value it has replaced by the one at the same place in `validated`, at every depth.
+
+    A default or a value a validation hook added isn't in `sent`, so it's left out. A key `validated`
+    lacks, and a value whose shape `validated` doesn't share, keep the model's value.
+    """
+    if is_str_dict(sent) and is_str_dict(validated):
+        return {
+            key: sent_validated_values(value, validated[key]) if key in validated else value
+            for key, value in sent.items()
+        }
+    if is_list(sent) and is_list(validated) and len(sent) == len(validated):
+        return [sent_validated_values(item, validated_item) for item, validated_item in zip(sent, validated)]
+    if any(is_str_dict(value) or is_list(value) for value in (sent, validated)):
+        return sent
+    return validated
 
 
 def interrupt_id_to_tool_call_id(interrupt_id: str) -> str:
@@ -160,19 +195,20 @@ def interrupt_id_to_tool_call_id(interrupt_id: str) -> str:
 def resume_entry_to_approval(entry: ResumeEntry) -> DeferredToolApprovalResult:
     """Translate one `ResumeEntry` payload into `ToolApproved` / `ToolDenied` (inbound).
 
-    The payload is validated against `_ResumePayload`, the same model whose JSON schema
-    was advertised on `Interrupt.response_schema`. Approval requires a payload that
-    validates with `approved=True`; anything that fails validation (missing, `False`,
-    `null`, or non-bool `approved`, a non-dict payload, a non-dict `editedArgs`, or a
-    non-string `reason`) is treated as a denial.
-    This deny-by-default stance is intentional: this code only runs when a tool was
-    declared `requires_approval=True`, so any ambiguity in the client's response must
-    not silently execute the call. In particular, an approval carrying a malformed
-    `editedArgs` denies the whole payload rather than approving with the original
-    arguments the user visibly tried to change.
+    The payload is validated against `_ResumePayload`, the same model whose JSON schema was
+    advertised on `Interrupt.response_schema`. A payload that fails that validation is a
+    protocol error, not an outcome the user chose, so it raises `UserError` — which the run
+    stream turns into a `RunErrorEvent`, per
+    [docs.ag-ui.com/concepts/interrupts](https://docs.ag-ui.com/concepts/interrupts):
+    "Agents should handle missing or invalid resume payloads via `RunError`, not silent
+    failures." Raising also fails the whole run rather than one entry, matching the spec's
+    run-level `RunError`.
 
-    A denial `reason` only survives when the rest of the payload validates; a payload that
-    fails validation denies with `ToolDenied`'s default message even if it carried one.
+    Deny-by-default still holds: this code only runs when a tool was declared
+    `requires_approval=True`, and approval requires a payload that validates with
+    `approved=True`, so an ambiguous response can never execute the call. Such a response is
+    reported as an erroring run rather than as a denial the client cannot tell apart from the
+    user having said no.
 
     `payload.editedArgs` (when `approved=True`) feeds into `ToolApproved.override_args`,
     fully replacing the originally proposed call arguments before the agent re-executes the tool.
@@ -182,8 +218,25 @@ def resume_entry_to_approval(entry: ResumeEntry) -> DeferredToolApprovalResult:
 
     try:
         payload = _ResumePayload.model_validate(entry.payload)
-    except ValidationError:
-        return ToolDenied()
+    except ValidationError as e:
+        # Raising rather than degrading to a denial is specific to this payload: the AG-UI spec
+        # names a `responseSchema` mismatch a `RunError` condition, where a malformed client
+        # payload elsewhere at this boundary is expected to degrade to a harmless value instead
+        # of taking the whole request with it.
+        #
+        # Rendered from `loc` and pydantic's stable error `type` rather than its `msg`: this text
+        # travels back to the client over the event stream, and the `msg` for a non-dict payload
+        # names `_ResumePayload` — the same private-class-name leak `_RESUME_RESPONSE_SCHEMA`
+        # drops its `title` to avoid. `include_input` would echo the client's own unvalidated
+        # payload into whatever renders or logs the error.
+        details = ', '.join(
+            f'{".".join(str(part) for part in error["loc"]) or "payload"}: {error["type"]}'
+            for error in e.errors(include_url=False, include_input=False, include_context=False)
+        )
+        raise UserError(
+            f'`ResumeEntry` payload for interrupt {entry.interrupt_id!r} does not match the '
+            f'`responseSchema` advertised on the interrupt ({details}).'
+        ) from e
 
     if payload.approved:
         if payload.edited_args is not None:

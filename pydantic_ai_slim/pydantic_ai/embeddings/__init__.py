@@ -36,22 +36,15 @@ __all__ = [
 KnownEmbeddingModelName = TypeAliasType(
     'KnownEmbeddingModelName',
     Literal[
-        'google-cloud:gemini-embedding-001',
-        'google-cloud:gemini-embedding-2-preview',
         'google-cloud:gemini-embedding-2',
-        'google-cloud:text-embedding-005',
-        'google-cloud:text-multilingual-embedding-002',
-        'google:gemini-embedding-001',
-        'google:gemini-embedding-2-preview',
+        'google-cloud:gemini-embedding-001',
         'google:gemini-embedding-2',
-        'openai:text-embedding-ada-002',
-        'openai:text-embedding-3-small',
+        'google:gemini-embedding-001',
         'openai:text-embedding-3-large',
+        'openai:text-embedding-3-small',
         'cohere:embed-v4.0',
         'cohere:embed-english-v3.0',
-        'cohere:embed-english-light-v3.0',
         'cohere:embed-multilingual-v3.0',
-        'cohere:embed-multilingual-light-v3.0',
         'voyageai:voyage-4-large',
         'voyageai:voyage-4',
         'voyageai:voyage-4-lite',
@@ -61,13 +54,11 @@ KnownEmbeddingModelName = TypeAliasType(
         'voyageai:voyage-code-3',
         'voyageai:voyage-finance-2',
         'voyageai:voyage-law-2',
-        'voyageai:voyage-code-2',
-        'bedrock:amazon.titan-embed-text-v1',
+        'bedrock:amazon.nova-2-multimodal-embeddings-v1:0',
+        'bedrock:cohere.embed-v4:0',
         'bedrock:amazon.titan-embed-text-v2:0',
         'bedrock:cohere.embed-english-v3',
         'bedrock:cohere.embed-multilingual-v3',
-        'bedrock:cohere.embed-v4:0',
-        'bedrock:amazon.nova-2-multimodal-embeddings-v1:0',
     ],
 )
 """Known model names that can be used with the `model` parameter of [`Embedder`][pydantic_ai.embeddings.Embedder].
@@ -139,7 +130,10 @@ def infer_embedding_model(
         raise UserError(f'Unknown embeddings model: {model}')  # pragma: no cover
 
 
-@dataclass(init=False)
+# `eq=False`: a facade over a live model and the provider client behind it compares by identity.
+# `instrument` is its only dataclass field, so generated field equality would compare two embedders
+# over different models as equal, and would leave the class unhashable.
+@dataclass(init=False, eq=False)
 class Embedder:
     """High-level interface for generating text embeddings.
 
@@ -169,7 +163,7 @@ class Embedder:
     If this isn't set, then the last value set by
     [`Embedder.instrument_all()`][pydantic_ai.embeddings.Embedder.instrument_all]
     will be used, which defaults to False.
-    See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
+    See the [Debugging and Monitoring guide](https://pydantic.dev/docs/ai/integrations/logfire/) for more info.
     """
 
     _instrument_default: ClassVar[InstrumentationSettings | bool] = False

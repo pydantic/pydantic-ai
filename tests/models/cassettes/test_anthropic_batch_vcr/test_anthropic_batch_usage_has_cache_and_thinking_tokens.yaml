@@ -1,0 +1,1287 @@
+version: 1
+interactions:
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_014dsqzNyCsg1n9LAXUE64Xh/results
+    headers:
+      accept:
+      - application/binary
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-disposition:
+      - attachment; filename*=utf-8''msgbatch_014dsqzNyCsg1n9LAXUE64Xh_results.jsonl
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/x-jsonl
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |
+        {"custom_id":"usage-first","result":{"type":"succeeded","message":{"model":"claude-haiku-4-5-20251001","id":"msg_011CgGL7FnmkaA2D9K6N2acq","type":"message","role":"assistant","content":[{"type":"thinking","thinking":"The user is asking what 17 squared is. From the facts provided at the beginning, I can see:\n\nFact 17: 17 squared is 289.\n\nSo the answer is 289.","signature":"EqsDCrgBCBMYAipALp+L434jYexT2JVrDb06jJODcSbREHDF+dL56AwtigFcofEXIr4XijqgbI/A954FWhHTqLI0TYF7E6V3tni0+jIZY2xhdWRlLWhhaWt1LTQtNS0yMDI1MTAwMTgAQgh0aGlua2luZ1okNDRhZTY3NmMtOTU4Zi00ZDY4LTkxMDgtZWFlOWRlN2IzNjZimgEbChljbGF1ZGUtaGFpa3UtNC01LTIwMjUxMDAxqAHjseXWBhIM8XFkBHVTS1hWuglpGgwrFNMGftdBnTJUpt4iMJ32aQycpjsqrPgY2r0DZrFn8gcIEq8ag1Byj+Sj7pVCsHVLN/wO1Y0amCZ6Yb8jgCqfAcUceJD9/PNZpkcKHT8Mu4JX0zv8YJMPph9Fo/RX7jr0FO9LqHp447W/ZO+q82XtxYBvPvHkX43Phqwkxh1TpTAYtIVDDiJh+U5XyguSzR/sklo3Ibn7eQvNhGcM76K3uZFsnAMCkOpGct/j9g5W0O/yAj5yAzpcA2UTos5MGclm7wYIFmdD5PZ/p13J7wdQpsZhsjJR+RCDA7MQT+bmChgB"},{"type":"text","text":"289"}],"container":null,"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"usage":{"input_tokens":48,"cache_creation_input_tokens":8369,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":8369},"output_tokens":57,"output_tokens_details":{"thinking_tokens":50},"service_tier":"batch","inference_geo":"not_available","speed":"standard"},"diagnostics":null}}}
+  recorded_at: 2026-10-22T00:31:07.480111+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_014dsqzNyCsg1n9LAXUE64Xh?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      retry-after:
+      - "10"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_014dsqzNyCsg1n9LAXUE64Xh
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 1
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:28:34.405627+00:00
+        expires_at: 2026-10-23T00:28:34.405627+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:28:49.709661+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_014dsqzNyCsg1n9LAXUE64Xh?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      retry-after:
+      - "10"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_014dsqzNyCsg1n9LAXUE64Xh
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 1
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:28:34.405627+00:00
+        expires_at: 2026-10-23T00:28:34.405627+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:29:04.983872+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_014dsqzNyCsg1n9LAXUE64Xh?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      retry-after:
+      - "10"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_014dsqzNyCsg1n9LAXUE64Xh
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 1
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:28:34.405627+00:00
+        expires_at: 2026-10-23T00:28:34.405627+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:29:20.242656+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_014dsqzNyCsg1n9LAXUE64Xh?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      retry-after:
+      - "10"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_014dsqzNyCsg1n9LAXUE64Xh
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 1
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:28:34.405627+00:00
+        expires_at: 2026-10-23T00:28:34.405627+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:29:35.488349+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_014dsqzNyCsg1n9LAXUE64Xh?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      retry-after:
+      - "10"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_014dsqzNyCsg1n9LAXUE64Xh
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 1
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:28:34.405627+00:00
+        expires_at: 2026-10-23T00:28:34.405627+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:29:50.758440+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_014dsqzNyCsg1n9LAXUE64Xh?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      retry-after:
+      - "10"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_014dsqzNyCsg1n9LAXUE64Xh
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 1
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:28:34.405627+00:00
+        expires_at: 2026-10-23T00:28:34.405627+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:30:06.012217+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_014dsqzNyCsg1n9LAXUE64Xh?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      retry-after:
+      - "10"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_014dsqzNyCsg1n9LAXUE64Xh
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 1
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:28:34.405627+00:00
+        expires_at: 2026-10-23T00:28:34.405627+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:30:21.307452+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_014dsqzNyCsg1n9LAXUE64Xh?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      retry-after:
+      - "10"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_014dsqzNyCsg1n9LAXUE64Xh
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 1
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:28:34.405627+00:00
+        expires_at: 2026-10-23T00:28:34.405627+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:30:36.582558+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_014dsqzNyCsg1n9LAXUE64Xh?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      retry-after:
+      - "10"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_014dsqzNyCsg1n9LAXUE64Xh
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 1
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:28:34.405627+00:00
+        expires_at: 2026-10-23T00:28:34.405627+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:30:51.829012+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_014dsqzNyCsg1n9LAXUE64Xh?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_014dsqzNyCsg1n9LAXUE64Xh
+        type: message_batch
+        processing_status: ended
+        request_counts:
+          processing: 0
+          succeeded: 1
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: 2026-10-22T00:31:02.456386+00:00
+        created_at: 2026-10-22T00:28:34.405627+00:00
+        expires_at: 2026-10-23T00:28:34.405627+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: >-
+          https://api.anthropic.com/v1/messages/batches/msgbatch_014dsqzNyCsg1n9LAXUE64Xh/results
+  recorded_at: 2026-10-22T00:31:07.088566+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_014dsqzNyCsg1n9LAXUE64Xh?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_014dsqzNyCsg1n9LAXUE64Xh
+        type: message_batch
+        processing_status: ended
+        request_counts:
+          processing: 0
+          succeeded: 1
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: 2026-10-22T00:31:02.456386+00:00
+        created_at: 2026-10-22T00:28:34.405627+00:00
+        expires_at: 2026-10-23T00:28:34.405627+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: >-
+          https://api.anthropic.com/v1/messages/batches/msgbatch_014dsqzNyCsg1n9LAXUE64Xh/results
+  recorded_at: 2026-10-22T00:31:07.245974+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_01UcjD8JBtY7ZttbppBBZhDk/results
+    headers:
+      accept:
+      - application/binary
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-disposition:
+      - attachment; filename*=utf-8''msgbatch_01UcjD8JBtY7ZttbppBBZhDk_results.jsonl
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/x-jsonl
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |
+        {"custom_id":"usage-second","result":{"type":"succeeded","message":{"model":"claude-haiku-4-5-20251001","id":"msg_011CgGLJBwQJaPk1veJNRAAJ","type":"message","role":"assistant","content":[{"type":"thinking","thinking":"The user is asking for 17 squared. According to the facts provided, Fact 17 states: \"17 squared is 289.\"\n\nSo the answer is 289.","signature":"EpsDCrgBCBMYAipApVwd75FsZa9sp4IP2adrW0paqnDVO1TG+qFiVTTzYZf0OgA1SvAWjbug6K9aEdK3XUuhn83SAzSHMsAVllqR+DIZY2xhdWRlLWhhaWt1LTQtNS0yMDI1MTAwMTgAQgh0aGlua2luZ1okNDRhZTY3NmMtOTU4Zi00ZDY4LTkxMDgtZWFlOWRlN2IzNjZimgEbChljbGF1ZGUtaGFpa3UtNC01LTIwMjUxMDAxqAH4suXWBhIMembpL0Cydnc4rqyCGgxx+87dZlxi2xXyrUkiMMumrqlZqt9QCe0VTl9NsKiVpY06drGFTsCLnw0ZlJCNR5yjSpsyYh54+M3EtEW8SCqPAexGeAIVZa60JKq70ROBjw77uEAnVkAhfPSRBXlNFcWPbpoVwkX45BdbxbgQiVtN8t1yiDwDzQKq9/V7BsFKYroakdYL50ifu5HLKrIIPkKFJsHzn7mzNQIyY1n5Oj++5MDfqy6OAhst7aXFAtVF5AaF7SyTNDNksf5SvvlySfOLASv5yQXHqcAtBkAzoIhEGAE="},{"type":"text","text":"289"}],"container":null,"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"usage":{"input_tokens":48,"cache_creation_input_tokens":0,"cache_read_input_tokens":8369,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":51,"output_tokens_details":{"thinking_tokens":44},"service_tier":"batch","inference_geo":"not_available","speed":"standard"},"diagnostics":null}}}
+  recorded_at: 2026-10-22T00:33:25.903429+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_01UcjD8JBtY7ZttbppBBZhDk?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      retry-after:
+      - "10"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_01UcjD8JBtY7ZttbppBBZhDk
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 1
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:31:07.884175+00:00
+        expires_at: 2026-10-23T00:31:07.884175+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:31:23.177316+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_01UcjD8JBtY7ZttbppBBZhDk?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      retry-after:
+      - "10"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_01UcjD8JBtY7ZttbppBBZhDk
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 1
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:31:07.884175+00:00
+        expires_at: 2026-10-23T00:31:07.884175+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:31:38.521142+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_01UcjD8JBtY7ZttbppBBZhDk?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      retry-after:
+      - "10"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_01UcjD8JBtY7ZttbppBBZhDk
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 1
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:31:07.884175+00:00
+        expires_at: 2026-10-23T00:31:07.884175+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:31:53.774003+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_01UcjD8JBtY7ZttbppBBZhDk?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      retry-after:
+      - "10"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_01UcjD8JBtY7ZttbppBBZhDk
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 1
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:31:07.884175+00:00
+        expires_at: 2026-10-23T00:31:07.884175+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:32:09.029189+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_01UcjD8JBtY7ZttbppBBZhDk?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      retry-after:
+      - "10"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_01UcjD8JBtY7ZttbppBBZhDk
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 1
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:31:07.884175+00:00
+        expires_at: 2026-10-23T00:31:07.884175+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:32:24.353326+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_01UcjD8JBtY7ZttbppBBZhDk?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      retry-after:
+      - "10"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_01UcjD8JBtY7ZttbppBBZhDk
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 1
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:31:07.884175+00:00
+        expires_at: 2026-10-23T00:31:07.884175+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:32:39.619974+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_01UcjD8JBtY7ZttbppBBZhDk?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      retry-after:
+      - "10"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_01UcjD8JBtY7ZttbppBBZhDk
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 1
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:31:07.884175+00:00
+        expires_at: 2026-10-23T00:31:07.884175+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:32:54.864558+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_01UcjD8JBtY7ZttbppBBZhDk?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      retry-after:
+      - "10"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_01UcjD8JBtY7ZttbppBBZhDk
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 1
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:31:07.884175+00:00
+        expires_at: 2026-10-23T00:31:07.884175+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:33:10.145745+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_01UcjD8JBtY7ZttbppBBZhDk?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_01UcjD8JBtY7ZttbppBBZhDk
+        type: message_batch
+        processing_status: ended
+        request_counts:
+          processing: 0
+          succeeded: 1
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: 2026-10-22T00:33:18.979377+00:00
+        created_at: 2026-10-22T00:31:07.884175+00:00
+        expires_at: 2026-10-23T00:31:07.884175+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: >-
+          https://api.anthropic.com/v1/messages/batches/msgbatch_01UcjD8JBtY7ZttbppBBZhDk/results
+  recorded_at: 2026-10-22T00:33:25.429586+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_01UcjD8JBtY7ZttbppBBZhDk?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_01UcjD8JBtY7ZttbppBBZhDk
+        type: message_batch
+        processing_status: ended
+        request_counts:
+          processing: 0
+          succeeded: 1
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: 2026-10-22T00:33:18.979377+00:00
+        created_at: 2026-10-22T00:31:07.884175+00:00
+        expires_at: 2026-10-23T00:31:07.884175+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: >-
+          https://api.anthropic.com/v1/messages/batches/msgbatch_01UcjD8JBtY7ZttbppBBZhDk/results
+  recorded_at: 2026-10-22T00:33:25.626506+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages/batches?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "19459"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        requests:
+        - custom_id: usage-first
+          params:
+            max_tokens: 2048
+            system:
+            - type: text
+              text: "Fact 0: 0 squared is 0. Fact 1: 1 squared is 1. Fact 2: 2 squared is 4. Fact 3: 3 squared is 9. Fact 4: 4 squared is 16. Fact 5: 5 squared is 25. Fact 6: 6 squared is 36. Fact 7: 7 squared is 49. Fact 8: 8 squared is 64. Fact 9: 9 squared is 81. Fact 10: 10 squared is 100. Fact 11: 11 squared is 121. Fact 12: 12 squared is 144. Fact 13: 13 squared is 169. Fact 14: 14 squared is 196. Fact 15: 15 squared is 225. Fact 16: 16 squared is 256. Fact 17: 17 squared is 289. Fact 18: 18 squared is 324. Fact 19: 19 squared is 361. Fact 20: 20 squared is 400. Fact 21: 21 squared is 441. Fact 22: 22 squared is 484. Fact 23: 23 squared is 529. Fact 24: 24 squared is 576. Fact 25: 25 squared is 625. Fact 26: 26 squared is 676. Fact 27: 27 squared is 729. Fact 28: 28 squared is 784. Fact 29: 29 squared is 841. Fact 30: 30 squared is 900. Fact 31: 31 squared is 961. Fact 32: 32 squared is 1024. Fact 33: 33 squared is 1089. Fact 34: 34 squared is 1156. Fact 35: 35 squared is 1225. Fact 36: 36 squared is 1296. Fact 37: 37 squared is 1369. Fact 38: 38 squared is 1444. Fact 39: 39 squared is 1521. Fact 40: 40 squared is 1600. Fact 41: 41 squared is 1681. Fact 42: 42 squared is 1764. Fact 43: 43 squared is 1849. Fact 44: 44 squared is 1936. Fact 45: 45 squared is 2025. Fact 46: 46 squared is 2116. Fact 47: 47 squared is 2209. Fact 48: 48 squared is 2304. Fact 49: 49 squared is 2401. Fact 50: 50 squared is 2500. Fact 51: 51 squared is 2601. Fact 52: 52 squared is 2704. Fact 53: 53 squared is 2809. Fact 54: 54 squared is 2916. Fact 55: 55 squared is 3025. Fact 56: 56 squared is 3136. Fact 57: 57 squared is 3249. Fact 58: 58 squared is 3364. Fact 59: 59 squared is 3481. Fact 60: 60 squared is 3600. Fact 61: 61 squared is 3721. Fact 62: 62 squared is 3844. Fact 63: 63 squared is 3969. Fact 64: 64 squared is 4096. Fact 65: 65 squared is 4225. Fact 66: 66 squared is 4356. Fact 67: 67 squared is 4489. Fact 68: 68 squared is 4624. Fact 69: 69 squared is 4761. Fact 70: 70 squared is 4900. Fact 71: 71 squared is 5041. Fact 72: 72 squared is 5184. Fact 73: 73 squared is 5329. Fact 74: 74 squared is 5476. Fact 75: 75 squared is 5625. Fact 76: 76 squared is 5776. Fact 77: 77 squared is 5929. Fact 78: 78 squared is 6084. Fact 79: 79 squared is 6241. Fact 80: 80 squared is 6400. Fact 81: 81 squared is 6561. Fact 82: 82 squared is 6724. Fact 83: 83 squared is 6889. Fact 84: 84 squared is 7056. Fact 85: 85 squared is 7225. Fact 86: 86 squared is 7396. Fact 87: 87 squared is 7569. Fact 88: 88 squared is 7744. Fact 89: 89 squared is 7921. Fact 90: 90 squared is 8100. Fact 91: 91 squared is 8281. Fact 92: 92 squared is 8464. Fact 93: 93 squared is 8649. Fact 94: 94 squared is 8836. Fact 95: 95 squared is 9025. Fact 96: 96 squared is 9216. Fact 97: 97 squared is 9409. Fact 98: 98 squared is 9604. Fact 99: 99 squared is 9801. Fact 100: 100 squared is 10000. Fact 101: 101 squared is 10201. Fact 102: 102 squared is 10404. Fact 103: 103 squared is 10609. Fact 104: 104 squared is 10816. Fact 105: 105 squared is 11025. Fact 106: 106 squared is 11236. Fact 107: 107 squared is 11449. Fact 108: 108 squared is 11664. Fact 109: 109 squared is 11881. Fact 110: 110 squared is 12100. Fact 111: 111 squared is 12321. Fact 112: 112 squared is 12544. Fact 113: 113 squared is 12769. Fact 114: 114 squared is 12996. Fact 115: 115 squared is 13225. Fact 116: 116 squared is 13456. Fact 117: 117 squared is 13689. Fact 118: 118 squared is 13924. Fact 119: 119 squared is 14161. Fact 120: 120 squared is 14400. Fact 121: 121 squared is 14641. Fact 122: 122 squared is 14884. Fact 123: 123 squared is 15129. Fact 124: 124 squared is 15376. Fact 125: 125 squared is 15625. Fact 126: 126 squared is 15876. Fact 127: 127 squared is 16129. Fact 128: 128 squared is 16384. Fact 129: 129 squared is 16641. Fact 130: 130 squared is 16900. Fact 131: 131 squared is 17161. Fact 132: 132 squared is 17424. Fact 133: 133 squared is 17689. Fact 134: 134 squared is 17956. Fact 135: 135 squared is 18225. Fact 136: 136 squared is 18496. Fact 137: 137 squared is 18769. Fact 138: 138 squared is 19044. Fact 139: 139 squared is 19321. Fact 140: 140 squared is 19600. Fact 141: 141 squared is 19881. Fact 142: 142 squared is 20164. Fact 143: 143 squared is 20449. Fact 144: 144 squared is 20736. Fact 145: 145 squared is 21025. Fact 146: 146 squared is 21316. Fact 147: 147 squared is 21609. Fact 148: 148 squared is 21904. Fact 149: 149 squared is 22201. Fact 150: 150 squared is 22500. Fact 151: 151 squared is 22801. Fact 152: 152 squared is 23104. Fact 153: 153 squared is 23409. Fact 154: 154 squared is 23716. Fact 155: 155 squared is 24025. Fact 156: 156 squared is 24336. Fact 157: 157 squared is 24649. Fact 158: 158 squared is 24964. Fact 159: 159 squared is 25281. Fact 160: 160 squared is 25600. Fact 161: 161 squared is 25921. Fact 162: 162 squared is 26244. Fact 163: 163 squared is 26569. Fact 164: 164 squared is 26896. Fact 165: 165 squared is 27225. Fact 166: 166 squared is 27556. Fact 167: 167 squared is 27889. Fact 168: 168 squared is 28224. Fact 169: 169 squared is 28561. Fact 170: 170 squared is 28900. Fact 171: 171 squared is 29241. Fact 172: 172 squared is 29584. Fact 173: 173 squared is 29929. Fact 174: 174 squared is 30276. Fact 175: 175 squared is 30625. Fact 176: 176 squared is 30976. Fact 177: 177 squared is 31329. Fact 178: 178 squared is 31684. Fact 179: 179 squared is 32041. Fact 180: 180 squared is 32400. Fact 181: 181 squared is 32761. Fact 182: 182 squared is 33124. Fact 183: 183 squared is 33489. Fact 184: 184 squared is 33856. Fact 185: 185 squared is 34225. Fact 186: 186 squared is 34596. Fact 187: 187 squared is 34969. Fact 188: 188 squared is 35344. Fact 189: 189 squared is 35721. Fact 190: 190 squared is 36100. Fact 191: 191 squared is 36481. Fact 192: 192 squared is 36864. Fact 193: 193 squared is 37249. Fact 194: 194 squared is 37636. Fact 195: 195 squared is 38025. Fact 196: 196 squared is 38416. Fact 197: 197 squared is 38809. Fact 198: 198 squared is 39204. Fact 199: 199 squared is 39601. Fact 200: 200 squared is 40000. Fact 201: 201 squared is 40401. Fact 202: 202 squared is 40804. Fact 203: 203 squared is 41209. Fact 204: 204 squared is 41616. Fact 205: 205 squared is 42025. Fact 206: 206 squared is 42436. Fact 207: 207 squared is 42849. Fact 208: 208 squared is 43264. Fact 209: 209 squared is 43681. Fact 210: 210 squared is 44100. Fact 211: 211 squared is 44521. Fact 212: 212 squared is 44944. Fact 213: 213 squared is 45369. Fact 214: 214 squared is 45796. Fact 215: 215 squared is 46225. Fact 216: 216 squared is 46656. Fact 217: 217 squared is 47089. Fact 218: 218 squared is 47524. Fact 219: 219 squared is 47961. Fact 220: 220 squared is 48400. Fact 221: 221 squared is 48841. Fact 222: 222 squared is 49284. Fact 223: 223 squared is 49729. Fact 224: 224 squared is 50176. Fact 225: 225 squared is 50625. Fact 226: 226 squared is 51076. Fact 227: 227 squared is 51529. Fact 228: 228 squared is 51984. Fact 229: 229 squared is 52441. Fact 230: 230 squared is 52900. Fact 231: 231 squared is 53361. Fact 232: 232 squared is 53824. Fact 233: 233 squared is 54289. Fact 234: 234 squared is 54756. Fact 235: 235 squared is 55225. Fact 236: 236 squared is 55696. Fact 237: 237 squared is 56169. Fact 238: 238 squared is 56644. Fact 239: 239 squared is 57121. Fact 240: 240 squared is 57600. Fact 241: 241 squared is 58081. Fact 242: 242 squared is 58564. Fact 243: 243 squared is 59049. Fact 244: 244 squared is 59536. Fact 245: 245 squared is 60025. Fact 246: 246 squared is 60516. Fact 247: 247 squared is 61009. Fact 248: 248 squared is 61504. Fact 249: 249 squared is 62001. Fact 250: 250 squared is 62500. Fact 251: 251 squared is 63001. Fact 252: 252 squared is 63504. Fact 253: 253 squared is 64009. Fact 254: 254 squared is 64516. Fact 255: 255 squared is 65025. Fact 256: 256 squared is 65536. Fact 257: 257 squared is 66049. Fact 258: 258 squared is 66564. Fact 259: 259 squared is 67081. Fact 260: 260 squared is 67600. Fact 261: 261 squared is 68121. Fact 262: 262 squared is 68644. Fact 263: 263 squared is 69169. Fact 264: 264 squared is 69696. Fact 265: 265 squared is 70225. Fact 266: 266 squared is 70756. Fact 267: 267 squared is 71289. Fact 268: 268 squared is 71824. Fact 269: 269 squared is 72361. Fact 270: 270 squared is 72900. Fact 271: 271 squared is 73441. Fact 272: 272 squared is 73984. Fact 273: 273 squared is 74529. Fact 274: 274 squared is 75076. Fact 275: 275 squared is 75625. Fact 276: 276 squared is 76176. Fact 277: 277 squared is 76729. Fact 278: 278 squared is 77284. Fact 279: 279 squared is 77841. Fact 280: 280 squared is 78400. Fact 281: 281 squared is 78961. Fact 282: 282 squared is 79524. Fact 283: 283 squared is 80089. Fact 284: 284 squared is 80656. Fact 285: 285 squared is 81225. Fact 286: 286 squared is 81796. Fact 287: 287 squared is 82369. Fact 288: 288 squared is 82944. Fact 289: 289 squared is 83521. Fact 290: 290 squared is 84100. Fact 291: 291 squared is 84681. Fact 292: 292 squared is 85264. Fact 293: 293 squared is 85849. Fact 294: 294 squared is 86436. Fact 295: 295 squared is 87025. Fact 296: 296 squared is 87616. Fact 297: 297 squared is 88209. Fact 298: 298 squared is 88804. Fact 299: 299 squared is 89401. Fact 300: 300 squared is 90000. Fact 301: 301 squared is 90601. Fact 302: 302 squared is 91204. Fact 303: 303 squared is 91809. Fact 304: 304 squared is 92416. Fact 305: 305 squared is 93025. Fact 306: 306 squared is 93636. Fact 307: 307 squared is 94249. Fact 308: 308 squared is 94864. Fact 309: 309 squared is 95481. Fact 310: 310 squared is 96100. Fact 311: 311 squared is 96721. Fact 312: 312 squared is 97344. Fact 313: 313 squared is 97969. Fact 314: 314 squared is 98596. Fact 315: 315 squared is 99225. Fact 316: 316 squared is 99856. Fact 317: 317 squared is 100489. Fact 318: 318 squared is 101124. Fact 319: 319 squared is 101761. Fact 320: 320 squared is 102400. Fact 321: 321 squared is 103041. Fact 322: 322 squared is 103684. Fact 323: 323 squared is 104329. Fact 324: 324 squared is 104976. Fact 325: 325 squared is 105625. Fact 326: 326 squared is 106276. Fact 327: 327 squared is 106929. Fact 328: 328 squared is 107584. Fact 329: 329 squared is 108241. Fact 330: 330 squared is 108900. Fact 331: 331 squared is 109561. Fact 332: 332 squared is 110224. Fact 333: 333 squared is 110889. Fact 334: 334 squared is 111556. Fact 335: 335 squared is 112225. Fact 336: 336 squared is 112896. Fact 337: 337 squared is 113569. Fact 338: 338 squared is 114244. Fact 339: 339 squared is 114921. Fact 340: 340 squared is 115600. Fact 341: 341 squared is 116281. Fact 342: 342 squared is 116964. Fact 343: 343 squared is 117649. Fact 344: 344 squared is 118336. Fact 345: 345 squared is 119025. Fact 346: 346 squared is 119716. Fact 347: 347 squared is 120409. Fact 348: 348 squared is 121104. Fact 349: 349 squared is 121801. Fact 350: 350 squared is 122500. Fact 351: 351 squared is 123201. Fact 352: 352 squared is 123904. Fact 353: 353 squared is 124609. Fact 354: 354 squared is 125316. Fact 355: 355 squared is 126025. Fact 356: 356 squared is 126736. Fact 357: 357 squared is 127449. Fact 358: 358 squared is 128164. Fact 359: 359 squared is 128881. Fact 360: 360 squared is 129600. Fact 361: 361 squared is 130321. Fact 362: 362 squared is 131044. Fact 363: 363 squared is 131769. Fact 364: 364 squared is 132496. Fact 365: 365 squared is 133225. Fact 366: 366 squared is 133956. Fact 367: 367 squared is 134689. Fact 368: 368 squared is 135424. Fact 369: 369 squared is 136161. Fact 370: 370 squared is 136900. Fact 371: 371 squared is 137641. Fact 372: 372 squared is 138384. Fact 373: 373 squared is 139129. Fact 374: 374 squared is 139876. Fact 375: 375 squared is 140625. Fact 376: 376 squared is 141376. Fact 377: 377 squared is 142129. Fact 378: 378 squared is 142884. Fact 379: 379 squared is 143641. Fact 380: 380 squared is 144400. Fact 381: 381 squared is 145161. Fact 382: 382 squared is 145924. Fact 383: 383 squared is 146689. Fact 384: 384 squared is 147456. Fact 385: 385 squared is 148225. Fact 386: 386 squared is 148996. Fact 387: 387 squared is 149769. Fact 388: 388 squared is 150544. Fact 389: 389 squared is 151321. Fact 390: 390 squared is 152100. Fact 391: 391 squared is 152881. Fact 392: 392 squared is 153664. Fact 393: 393 squared is 154449. Fact 394: 394 squared is 155236. Fact 395: 395 squared is 156025. Fact 396: 396 squared is 156816. Fact 397: 397 squared is 157609. Fact 398: 398 squared is 158404. Fact 399: 399 squared is 159201. Fact 400: 400 squared is 160000. Fact 401: 401 squared is 160801. Fact 402: 402 squared is 161604. Fact 403: 403 squared is 162409. Fact 404: 404 squared is 163216. Fact 405: 405 squared is 164025. Fact 406: 406 squared is 164836. Fact 407: 407 squared is 165649. Fact 408: 408 squared is 166464. Fact 409: 409 squared is 167281. Fact 410: 410 squared is 168100. Fact 411: 411 squared is 168921. Fact 412: 412 squared is 169744. Fact 413: 413 squared is 170569. Fact 414: 414 squared is 171396. Fact 415: 415 squared is 172225. Fact 416: 416 squared is 173056. Fact 417: 417 squared is 173889. Fact 418: 418 squared is 174724. Fact 419: 419 squared is 175561. Fact 420: 420 squared is 176400. Fact 421: 421 squared is 177241. Fact 422: 422 squared is 178084. Fact 423: 423 squared is 178929. Fact 424: 424 squared is 179776. Fact 425: 425 squared is 180625. Fact 426: 426 squared is 181476. Fact 427: 427 squared is 182329. Fact 428: 428 squared is 183184. Fact 429: 429 squared is 184041. Fact 430: 430 squared is 184900. Fact 431: 431 squared is 185761. Fact 432: 432 squared is 186624. Fact 433: 433 squared is 187489. Fact 434: 434 squared is 188356. Fact 435: 435 squared is 189225. Fact 436: 436 squared is 190096. Fact 437: 437 squared is 190969. Fact 438: 438 squared is 191844. Fact 439: 439 squared is 192721. Fact 440: 440 squared is 193600. Fact 441: 441 squared is 194481. Fact 442: 442 squared is 195364. Fact 443: 443 squared is 196249. Fact 444: 444 squared is 197136. Fact 445: 445 squared is 198025. Fact 446: 446 squared is 198916. Fact 447: 447 squared is 199809. Fact 448: 448 squared is 200704. Fact 449: 449 squared is 201601. Fact 450: 450 squared is 202500. Fact 451: 451 squared is 203401. Fact 452: 452 squared is 204304. Fact 453: 453 squared is 205209. Fact 454: 454 squared is 206116. Fact 455: 455 squared is 207025. Fact 456: 456 squared is 207936. Fact 457: 457 squared is 208849. Fact 458: 458 squared is 209764. Fact 459: 459 squared is 210681. Fact 460: 460 squared is 211600. Fact 461: 461 squared is 212521. Fact 462: 462 squared is 213444. Fact 463: 463 squared is 214369. Fact 464: 464 squared is 215296. Fact 465: 465 squared is 216225. Fact 466: 466 squared is 217156. Fact 467: 467 squared is 218089. Fact 468: 468 squared is 219024. Fact 469: 469 squared is 219961. Fact 470: 470 squared is 220900. Fact 471: 471 squared is 221841. Fact 472: 472 squared is 222784. Fact 473: 473 squared is 223729. Fact 474: 474 squared is 224676. Fact 475: 475 squared is 225625. Fact 476: 476 squared is 226576. Fact 477: 477 squared is 227529. Fact 478: 478 squared is 228484. Fact 479: 479 squared is 229441. Fact 480: 480 squared is 230400. Fact 481: 481 squared is 231361. Fact 482: 482 squared is 232324. Fact 483: 483 squared is 233289. Fact 484: 484 squared is 234256. Fact 485: 485 squared is 235225. Fact 486: 486 squared is 236196. Fact 487: 487 squared is 237169. Fact 488: 488 squared is 238144. Fact 489: 489 squared is 239121. Fact 490: 490 squared is 240100. Fact 491: 491 squared is 241081. Fact 492: 492 squared is 242064. Fact 493: 493 squared is 243049. Fact 494: 494 squared is 244036. Fact 495: 495 squared is 245025. Fact 496: 496 squared is 246016. Fact 497: 497 squared is 247009. Fact 498: 498 squared is 248004. Fact 499: 499 squared is 249001. Fact 500: 500 squared is 250000. Fact 501: 501 squared is 251001. Fact 502: 502 squared is 252004. Fact 503: 503 squared is 253009. Fact 504: 504 squared is 254016. Fact 505: 505 squared is 255025. Fact 506: 506 squared is 256036. Fact 507: 507 squared is 257049. Fact 508: 508 squared is 258064. Fact 509: 509 squared is 259081. Fact 510: 510 squared is 260100. Fact 511: 511 squared is 261121. Fact 512: 512 squared is 262144. Fact 513: 513 squared is 263169. Fact 514: 514 squared is 264196. Fact 515: 515 squared is 265225. Fact 516: 516 squared is 266256. Fact 517: 517 squared is 267289. Fact 518: 518 squared is 268324. Fact 519: 519 squared is 269361. Fact 520: 520 squared is 270400. Fact 521: 521 squared is 271441. Fact 522: 522 squared is 272484. Fact 523: 523 squared is 273529. Fact 524: 524 squared is 274576. Fact 525: 525 squared is 275625. Fact 526: 526 squared is 276676. Fact 527: 527 squared is 277729. Fact 528: 528 squared is 278784. Fact 529: 529 squared is 279841. Fact 530: 530 squared is 280900. Fact 531: 531 squared is 281961. Fact 532: 532 squared is 283024. Fact 533: 533 squared is 284089. Fact 534: 534 squared is 285156. Fact 535: 535 squared is 286225. Fact 536: 536 squared is 287296. Fact 537: 537 squared is 288369. Fact 538: 538 squared is 289444. Fact 539: 539 squared is 290521. Fact 540: 540 squared is 291600. Fact 541: 541 squared is 292681. Fact 542: 542 squared is 293764. Fact 543: 543 squared is 294849. Fact 544: 544 squared is 295936. Fact 545: 545 squared is 297025. Fact 546: 546 squared is 298116. Fact 547: 547 squared is 299209. Fact 548: 548 squared is 300304. Fact 549: 549 squared is 301401. Fact 550: 550 squared is 302500. Fact 551: 551 squared is 303601. Fact 552: 552 squared is 304704. Fact 553: 553 squared is 305809. Fact 554: 554 squared is 306916. Fact 555: 555 squared is 308025. Fact 556: 556 squared is 309136. Fact 557: 557 squared is 310249. Fact 558: 558 squared is 311364. Fact 559: 559 squared is 312481. Fact 560: 560 squared is 313600. Fact 561: 561 squared is 314721. Fact 562: 562 squared is 315844. Fact 563: 563 squared is 316969. Fact 564: 564 squared is 318096. Fact 565: 565 squared is 319225. Fact 566: 566 squared is 320356. Fact 567: 567 squared is 321489. Fact 568: 568 squared is 322624. Fact 569: 569 squared is 323761. Fact 570: 570 squared is 324900. Fact 571: 571 squared is 326041. Fact 572: 572 squared is 327184. Fact 573: 573 squared is 328329. Fact 574: 574 squared is 329476. Fact 575: 575 squared is 330625. Fact 576: 576 squared is 331776. Fact 577: 577 squared is 332929. Fact 578: 578 squared is 334084. Fact 579: 579 squared is 335241. Fact 580: 580 squared is 336400. Fact 581: 581 squared is 337561. Fact 582: 582 squared is 338724. Fact 583: 583 squared is 339889. Fact 584: 584 squared is 341056. Fact 585: 585 squared is 342225. Fact 586: 586 squared is 343396. Fact 587: 587 squared is 344569. Fact 588: 588 squared is 345744. Fact 589: 589 squared is 346921. Fact 590: 590 squared is 348100. Fact 591: 591 squared is 349281. Fact 592: 592 squared is 350464. Fact 593: 593 squared is 351649. Fact 594: 594 squared is 352836. Fact 595: 595 squared is 354025. Fact 596: 596 squared is 355216. Fact 597: 597 squared is 356409. Fact 598: 598 squared is 357604. Fact 599: 599 squared is 358801."
+              cache_control:
+                type: ephemeral
+                ttl: 1h
+            messages:
+            - role: user
+              content:
+              - text: What is 17 squared? Reply with the number.
+                type: text
+            model: claude-haiku-4-5
+            thinking:
+              type: enabled
+              budget_tokens: 1024
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_014dsqzNyCsg1n9LAXUE64Xh
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 1
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:28:34.405627+00:00
+        expires_at: 2026-10-23T00:28:34.405627+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:28:34.465505+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages/batches?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "19460"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        requests:
+        - custom_id: usage-second
+          params:
+            max_tokens: 2048
+            system:
+            - type: text
+              text: "Fact 0: 0 squared is 0. Fact 1: 1 squared is 1. Fact 2: 2 squared is 4. Fact 3: 3 squared is 9. Fact 4: 4 squared is 16. Fact 5: 5 squared is 25. Fact 6: 6 squared is 36. Fact 7: 7 squared is 49. Fact 8: 8 squared is 64. Fact 9: 9 squared is 81. Fact 10: 10 squared is 100. Fact 11: 11 squared is 121. Fact 12: 12 squared is 144. Fact 13: 13 squared is 169. Fact 14: 14 squared is 196. Fact 15: 15 squared is 225. Fact 16: 16 squared is 256. Fact 17: 17 squared is 289. Fact 18: 18 squared is 324. Fact 19: 19 squared is 361. Fact 20: 20 squared is 400. Fact 21: 21 squared is 441. Fact 22: 22 squared is 484. Fact 23: 23 squared is 529. Fact 24: 24 squared is 576. Fact 25: 25 squared is 625. Fact 26: 26 squared is 676. Fact 27: 27 squared is 729. Fact 28: 28 squared is 784. Fact 29: 29 squared is 841. Fact 30: 30 squared is 900. Fact 31: 31 squared is 961. Fact 32: 32 squared is 1024. Fact 33: 33 squared is 1089. Fact 34: 34 squared is 1156. Fact 35: 35 squared is 1225. Fact 36: 36 squared is 1296. Fact 37: 37 squared is 1369. Fact 38: 38 squared is 1444. Fact 39: 39 squared is 1521. Fact 40: 40 squared is 1600. Fact 41: 41 squared is 1681. Fact 42: 42 squared is 1764. Fact 43: 43 squared is 1849. Fact 44: 44 squared is 1936. Fact 45: 45 squared is 2025. Fact 46: 46 squared is 2116. Fact 47: 47 squared is 2209. Fact 48: 48 squared is 2304. Fact 49: 49 squared is 2401. Fact 50: 50 squared is 2500. Fact 51: 51 squared is 2601. Fact 52: 52 squared is 2704. Fact 53: 53 squared is 2809. Fact 54: 54 squared is 2916. Fact 55: 55 squared is 3025. Fact 56: 56 squared is 3136. Fact 57: 57 squared is 3249. Fact 58: 58 squared is 3364. Fact 59: 59 squared is 3481. Fact 60: 60 squared is 3600. Fact 61: 61 squared is 3721. Fact 62: 62 squared is 3844. Fact 63: 63 squared is 3969. Fact 64: 64 squared is 4096. Fact 65: 65 squared is 4225. Fact 66: 66 squared is 4356. Fact 67: 67 squared is 4489. Fact 68: 68 squared is 4624. Fact 69: 69 squared is 4761. Fact 70: 70 squared is 4900. Fact 71: 71 squared is 5041. Fact 72: 72 squared is 5184. Fact 73: 73 squared is 5329. Fact 74: 74 squared is 5476. Fact 75: 75 squared is 5625. Fact 76: 76 squared is 5776. Fact 77: 77 squared is 5929. Fact 78: 78 squared is 6084. Fact 79: 79 squared is 6241. Fact 80: 80 squared is 6400. Fact 81: 81 squared is 6561. Fact 82: 82 squared is 6724. Fact 83: 83 squared is 6889. Fact 84: 84 squared is 7056. Fact 85: 85 squared is 7225. Fact 86: 86 squared is 7396. Fact 87: 87 squared is 7569. Fact 88: 88 squared is 7744. Fact 89: 89 squared is 7921. Fact 90: 90 squared is 8100. Fact 91: 91 squared is 8281. Fact 92: 92 squared is 8464. Fact 93: 93 squared is 8649. Fact 94: 94 squared is 8836. Fact 95: 95 squared is 9025. Fact 96: 96 squared is 9216. Fact 97: 97 squared is 9409. Fact 98: 98 squared is 9604. Fact 99: 99 squared is 9801. Fact 100: 100 squared is 10000. Fact 101: 101 squared is 10201. Fact 102: 102 squared is 10404. Fact 103: 103 squared is 10609. Fact 104: 104 squared is 10816. Fact 105: 105 squared is 11025. Fact 106: 106 squared is 11236. Fact 107: 107 squared is 11449. Fact 108: 108 squared is 11664. Fact 109: 109 squared is 11881. Fact 110: 110 squared is 12100. Fact 111: 111 squared is 12321. Fact 112: 112 squared is 12544. Fact 113: 113 squared is 12769. Fact 114: 114 squared is 12996. Fact 115: 115 squared is 13225. Fact 116: 116 squared is 13456. Fact 117: 117 squared is 13689. Fact 118: 118 squared is 13924. Fact 119: 119 squared is 14161. Fact 120: 120 squared is 14400. Fact 121: 121 squared is 14641. Fact 122: 122 squared is 14884. Fact 123: 123 squared is 15129. Fact 124: 124 squared is 15376. Fact 125: 125 squared is 15625. Fact 126: 126 squared is 15876. Fact 127: 127 squared is 16129. Fact 128: 128 squared is 16384. Fact 129: 129 squared is 16641. Fact 130: 130 squared is 16900. Fact 131: 131 squared is 17161. Fact 132: 132 squared is 17424. Fact 133: 133 squared is 17689. Fact 134: 134 squared is 17956. Fact 135: 135 squared is 18225. Fact 136: 136 squared is 18496. Fact 137: 137 squared is 18769. Fact 138: 138 squared is 19044. Fact 139: 139 squared is 19321. Fact 140: 140 squared is 19600. Fact 141: 141 squared is 19881. Fact 142: 142 squared is 20164. Fact 143: 143 squared is 20449. Fact 144: 144 squared is 20736. Fact 145: 145 squared is 21025. Fact 146: 146 squared is 21316. Fact 147: 147 squared is 21609. Fact 148: 148 squared is 21904. Fact 149: 149 squared is 22201. Fact 150: 150 squared is 22500. Fact 151: 151 squared is 22801. Fact 152: 152 squared is 23104. Fact 153: 153 squared is 23409. Fact 154: 154 squared is 23716. Fact 155: 155 squared is 24025. Fact 156: 156 squared is 24336. Fact 157: 157 squared is 24649. Fact 158: 158 squared is 24964. Fact 159: 159 squared is 25281. Fact 160: 160 squared is 25600. Fact 161: 161 squared is 25921. Fact 162: 162 squared is 26244. Fact 163: 163 squared is 26569. Fact 164: 164 squared is 26896. Fact 165: 165 squared is 27225. Fact 166: 166 squared is 27556. Fact 167: 167 squared is 27889. Fact 168: 168 squared is 28224. Fact 169: 169 squared is 28561. Fact 170: 170 squared is 28900. Fact 171: 171 squared is 29241. Fact 172: 172 squared is 29584. Fact 173: 173 squared is 29929. Fact 174: 174 squared is 30276. Fact 175: 175 squared is 30625. Fact 176: 176 squared is 30976. Fact 177: 177 squared is 31329. Fact 178: 178 squared is 31684. Fact 179: 179 squared is 32041. Fact 180: 180 squared is 32400. Fact 181: 181 squared is 32761. Fact 182: 182 squared is 33124. Fact 183: 183 squared is 33489. Fact 184: 184 squared is 33856. Fact 185: 185 squared is 34225. Fact 186: 186 squared is 34596. Fact 187: 187 squared is 34969. Fact 188: 188 squared is 35344. Fact 189: 189 squared is 35721. Fact 190: 190 squared is 36100. Fact 191: 191 squared is 36481. Fact 192: 192 squared is 36864. Fact 193: 193 squared is 37249. Fact 194: 194 squared is 37636. Fact 195: 195 squared is 38025. Fact 196: 196 squared is 38416. Fact 197: 197 squared is 38809. Fact 198: 198 squared is 39204. Fact 199: 199 squared is 39601. Fact 200: 200 squared is 40000. Fact 201: 201 squared is 40401. Fact 202: 202 squared is 40804. Fact 203: 203 squared is 41209. Fact 204: 204 squared is 41616. Fact 205: 205 squared is 42025. Fact 206: 206 squared is 42436. Fact 207: 207 squared is 42849. Fact 208: 208 squared is 43264. Fact 209: 209 squared is 43681. Fact 210: 210 squared is 44100. Fact 211: 211 squared is 44521. Fact 212: 212 squared is 44944. Fact 213: 213 squared is 45369. Fact 214: 214 squared is 45796. Fact 215: 215 squared is 46225. Fact 216: 216 squared is 46656. Fact 217: 217 squared is 47089. Fact 218: 218 squared is 47524. Fact 219: 219 squared is 47961. Fact 220: 220 squared is 48400. Fact 221: 221 squared is 48841. Fact 222: 222 squared is 49284. Fact 223: 223 squared is 49729. Fact 224: 224 squared is 50176. Fact 225: 225 squared is 50625. Fact 226: 226 squared is 51076. Fact 227: 227 squared is 51529. Fact 228: 228 squared is 51984. Fact 229: 229 squared is 52441. Fact 230: 230 squared is 52900. Fact 231: 231 squared is 53361. Fact 232: 232 squared is 53824. Fact 233: 233 squared is 54289. Fact 234: 234 squared is 54756. Fact 235: 235 squared is 55225. Fact 236: 236 squared is 55696. Fact 237: 237 squared is 56169. Fact 238: 238 squared is 56644. Fact 239: 239 squared is 57121. Fact 240: 240 squared is 57600. Fact 241: 241 squared is 58081. Fact 242: 242 squared is 58564. Fact 243: 243 squared is 59049. Fact 244: 244 squared is 59536. Fact 245: 245 squared is 60025. Fact 246: 246 squared is 60516. Fact 247: 247 squared is 61009. Fact 248: 248 squared is 61504. Fact 249: 249 squared is 62001. Fact 250: 250 squared is 62500. Fact 251: 251 squared is 63001. Fact 252: 252 squared is 63504. Fact 253: 253 squared is 64009. Fact 254: 254 squared is 64516. Fact 255: 255 squared is 65025. Fact 256: 256 squared is 65536. Fact 257: 257 squared is 66049. Fact 258: 258 squared is 66564. Fact 259: 259 squared is 67081. Fact 260: 260 squared is 67600. Fact 261: 261 squared is 68121. Fact 262: 262 squared is 68644. Fact 263: 263 squared is 69169. Fact 264: 264 squared is 69696. Fact 265: 265 squared is 70225. Fact 266: 266 squared is 70756. Fact 267: 267 squared is 71289. Fact 268: 268 squared is 71824. Fact 269: 269 squared is 72361. Fact 270: 270 squared is 72900. Fact 271: 271 squared is 73441. Fact 272: 272 squared is 73984. Fact 273: 273 squared is 74529. Fact 274: 274 squared is 75076. Fact 275: 275 squared is 75625. Fact 276: 276 squared is 76176. Fact 277: 277 squared is 76729. Fact 278: 278 squared is 77284. Fact 279: 279 squared is 77841. Fact 280: 280 squared is 78400. Fact 281: 281 squared is 78961. Fact 282: 282 squared is 79524. Fact 283: 283 squared is 80089. Fact 284: 284 squared is 80656. Fact 285: 285 squared is 81225. Fact 286: 286 squared is 81796. Fact 287: 287 squared is 82369. Fact 288: 288 squared is 82944. Fact 289: 289 squared is 83521. Fact 290: 290 squared is 84100. Fact 291: 291 squared is 84681. Fact 292: 292 squared is 85264. Fact 293: 293 squared is 85849. Fact 294: 294 squared is 86436. Fact 295: 295 squared is 87025. Fact 296: 296 squared is 87616. Fact 297: 297 squared is 88209. Fact 298: 298 squared is 88804. Fact 299: 299 squared is 89401. Fact 300: 300 squared is 90000. Fact 301: 301 squared is 90601. Fact 302: 302 squared is 91204. Fact 303: 303 squared is 91809. Fact 304: 304 squared is 92416. Fact 305: 305 squared is 93025. Fact 306: 306 squared is 93636. Fact 307: 307 squared is 94249. Fact 308: 308 squared is 94864. Fact 309: 309 squared is 95481. Fact 310: 310 squared is 96100. Fact 311: 311 squared is 96721. Fact 312: 312 squared is 97344. Fact 313: 313 squared is 97969. Fact 314: 314 squared is 98596. Fact 315: 315 squared is 99225. Fact 316: 316 squared is 99856. Fact 317: 317 squared is 100489. Fact 318: 318 squared is 101124. Fact 319: 319 squared is 101761. Fact 320: 320 squared is 102400. Fact 321: 321 squared is 103041. Fact 322: 322 squared is 103684. Fact 323: 323 squared is 104329. Fact 324: 324 squared is 104976. Fact 325: 325 squared is 105625. Fact 326: 326 squared is 106276. Fact 327: 327 squared is 106929. Fact 328: 328 squared is 107584. Fact 329: 329 squared is 108241. Fact 330: 330 squared is 108900. Fact 331: 331 squared is 109561. Fact 332: 332 squared is 110224. Fact 333: 333 squared is 110889. Fact 334: 334 squared is 111556. Fact 335: 335 squared is 112225. Fact 336: 336 squared is 112896. Fact 337: 337 squared is 113569. Fact 338: 338 squared is 114244. Fact 339: 339 squared is 114921. Fact 340: 340 squared is 115600. Fact 341: 341 squared is 116281. Fact 342: 342 squared is 116964. Fact 343: 343 squared is 117649. Fact 344: 344 squared is 118336. Fact 345: 345 squared is 119025. Fact 346: 346 squared is 119716. Fact 347: 347 squared is 120409. Fact 348: 348 squared is 121104. Fact 349: 349 squared is 121801. Fact 350: 350 squared is 122500. Fact 351: 351 squared is 123201. Fact 352: 352 squared is 123904. Fact 353: 353 squared is 124609. Fact 354: 354 squared is 125316. Fact 355: 355 squared is 126025. Fact 356: 356 squared is 126736. Fact 357: 357 squared is 127449. Fact 358: 358 squared is 128164. Fact 359: 359 squared is 128881. Fact 360: 360 squared is 129600. Fact 361: 361 squared is 130321. Fact 362: 362 squared is 131044. Fact 363: 363 squared is 131769. Fact 364: 364 squared is 132496. Fact 365: 365 squared is 133225. Fact 366: 366 squared is 133956. Fact 367: 367 squared is 134689. Fact 368: 368 squared is 135424. Fact 369: 369 squared is 136161. Fact 370: 370 squared is 136900. Fact 371: 371 squared is 137641. Fact 372: 372 squared is 138384. Fact 373: 373 squared is 139129. Fact 374: 374 squared is 139876. Fact 375: 375 squared is 140625. Fact 376: 376 squared is 141376. Fact 377: 377 squared is 142129. Fact 378: 378 squared is 142884. Fact 379: 379 squared is 143641. Fact 380: 380 squared is 144400. Fact 381: 381 squared is 145161. Fact 382: 382 squared is 145924. Fact 383: 383 squared is 146689. Fact 384: 384 squared is 147456. Fact 385: 385 squared is 148225. Fact 386: 386 squared is 148996. Fact 387: 387 squared is 149769. Fact 388: 388 squared is 150544. Fact 389: 389 squared is 151321. Fact 390: 390 squared is 152100. Fact 391: 391 squared is 152881. Fact 392: 392 squared is 153664. Fact 393: 393 squared is 154449. Fact 394: 394 squared is 155236. Fact 395: 395 squared is 156025. Fact 396: 396 squared is 156816. Fact 397: 397 squared is 157609. Fact 398: 398 squared is 158404. Fact 399: 399 squared is 159201. Fact 400: 400 squared is 160000. Fact 401: 401 squared is 160801. Fact 402: 402 squared is 161604. Fact 403: 403 squared is 162409. Fact 404: 404 squared is 163216. Fact 405: 405 squared is 164025. Fact 406: 406 squared is 164836. Fact 407: 407 squared is 165649. Fact 408: 408 squared is 166464. Fact 409: 409 squared is 167281. Fact 410: 410 squared is 168100. Fact 411: 411 squared is 168921. Fact 412: 412 squared is 169744. Fact 413: 413 squared is 170569. Fact 414: 414 squared is 171396. Fact 415: 415 squared is 172225. Fact 416: 416 squared is 173056. Fact 417: 417 squared is 173889. Fact 418: 418 squared is 174724. Fact 419: 419 squared is 175561. Fact 420: 420 squared is 176400. Fact 421: 421 squared is 177241. Fact 422: 422 squared is 178084. Fact 423: 423 squared is 178929. Fact 424: 424 squared is 179776. Fact 425: 425 squared is 180625. Fact 426: 426 squared is 181476. Fact 427: 427 squared is 182329. Fact 428: 428 squared is 183184. Fact 429: 429 squared is 184041. Fact 430: 430 squared is 184900. Fact 431: 431 squared is 185761. Fact 432: 432 squared is 186624. Fact 433: 433 squared is 187489. Fact 434: 434 squared is 188356. Fact 435: 435 squared is 189225. Fact 436: 436 squared is 190096. Fact 437: 437 squared is 190969. Fact 438: 438 squared is 191844. Fact 439: 439 squared is 192721. Fact 440: 440 squared is 193600. Fact 441: 441 squared is 194481. Fact 442: 442 squared is 195364. Fact 443: 443 squared is 196249. Fact 444: 444 squared is 197136. Fact 445: 445 squared is 198025. Fact 446: 446 squared is 198916. Fact 447: 447 squared is 199809. Fact 448: 448 squared is 200704. Fact 449: 449 squared is 201601. Fact 450: 450 squared is 202500. Fact 451: 451 squared is 203401. Fact 452: 452 squared is 204304. Fact 453: 453 squared is 205209. Fact 454: 454 squared is 206116. Fact 455: 455 squared is 207025. Fact 456: 456 squared is 207936. Fact 457: 457 squared is 208849. Fact 458: 458 squared is 209764. Fact 459: 459 squared is 210681. Fact 460: 460 squared is 211600. Fact 461: 461 squared is 212521. Fact 462: 462 squared is 213444. Fact 463: 463 squared is 214369. Fact 464: 464 squared is 215296. Fact 465: 465 squared is 216225. Fact 466: 466 squared is 217156. Fact 467: 467 squared is 218089. Fact 468: 468 squared is 219024. Fact 469: 469 squared is 219961. Fact 470: 470 squared is 220900. Fact 471: 471 squared is 221841. Fact 472: 472 squared is 222784. Fact 473: 473 squared is 223729. Fact 474: 474 squared is 224676. Fact 475: 475 squared is 225625. Fact 476: 476 squared is 226576. Fact 477: 477 squared is 227529. Fact 478: 478 squared is 228484. Fact 479: 479 squared is 229441. Fact 480: 480 squared is 230400. Fact 481: 481 squared is 231361. Fact 482: 482 squared is 232324. Fact 483: 483 squared is 233289. Fact 484: 484 squared is 234256. Fact 485: 485 squared is 235225. Fact 486: 486 squared is 236196. Fact 487: 487 squared is 237169. Fact 488: 488 squared is 238144. Fact 489: 489 squared is 239121. Fact 490: 490 squared is 240100. Fact 491: 491 squared is 241081. Fact 492: 492 squared is 242064. Fact 493: 493 squared is 243049. Fact 494: 494 squared is 244036. Fact 495: 495 squared is 245025. Fact 496: 496 squared is 246016. Fact 497: 497 squared is 247009. Fact 498: 498 squared is 248004. Fact 499: 499 squared is 249001. Fact 500: 500 squared is 250000. Fact 501: 501 squared is 251001. Fact 502: 502 squared is 252004. Fact 503: 503 squared is 253009. Fact 504: 504 squared is 254016. Fact 505: 505 squared is 255025. Fact 506: 506 squared is 256036. Fact 507: 507 squared is 257049. Fact 508: 508 squared is 258064. Fact 509: 509 squared is 259081. Fact 510: 510 squared is 260100. Fact 511: 511 squared is 261121. Fact 512: 512 squared is 262144. Fact 513: 513 squared is 263169. Fact 514: 514 squared is 264196. Fact 515: 515 squared is 265225. Fact 516: 516 squared is 266256. Fact 517: 517 squared is 267289. Fact 518: 518 squared is 268324. Fact 519: 519 squared is 269361. Fact 520: 520 squared is 270400. Fact 521: 521 squared is 271441. Fact 522: 522 squared is 272484. Fact 523: 523 squared is 273529. Fact 524: 524 squared is 274576. Fact 525: 525 squared is 275625. Fact 526: 526 squared is 276676. Fact 527: 527 squared is 277729. Fact 528: 528 squared is 278784. Fact 529: 529 squared is 279841. Fact 530: 530 squared is 280900. Fact 531: 531 squared is 281961. Fact 532: 532 squared is 283024. Fact 533: 533 squared is 284089. Fact 534: 534 squared is 285156. Fact 535: 535 squared is 286225. Fact 536: 536 squared is 287296. Fact 537: 537 squared is 288369. Fact 538: 538 squared is 289444. Fact 539: 539 squared is 290521. Fact 540: 540 squared is 291600. Fact 541: 541 squared is 292681. Fact 542: 542 squared is 293764. Fact 543: 543 squared is 294849. Fact 544: 544 squared is 295936. Fact 545: 545 squared is 297025. Fact 546: 546 squared is 298116. Fact 547: 547 squared is 299209. Fact 548: 548 squared is 300304. Fact 549: 549 squared is 301401. Fact 550: 550 squared is 302500. Fact 551: 551 squared is 303601. Fact 552: 552 squared is 304704. Fact 553: 553 squared is 305809. Fact 554: 554 squared is 306916. Fact 555: 555 squared is 308025. Fact 556: 556 squared is 309136. Fact 557: 557 squared is 310249. Fact 558: 558 squared is 311364. Fact 559: 559 squared is 312481. Fact 560: 560 squared is 313600. Fact 561: 561 squared is 314721. Fact 562: 562 squared is 315844. Fact 563: 563 squared is 316969. Fact 564: 564 squared is 318096. Fact 565: 565 squared is 319225. Fact 566: 566 squared is 320356. Fact 567: 567 squared is 321489. Fact 568: 568 squared is 322624. Fact 569: 569 squared is 323761. Fact 570: 570 squared is 324900. Fact 571: 571 squared is 326041. Fact 572: 572 squared is 327184. Fact 573: 573 squared is 328329. Fact 574: 574 squared is 329476. Fact 575: 575 squared is 330625. Fact 576: 576 squared is 331776. Fact 577: 577 squared is 332929. Fact 578: 578 squared is 334084. Fact 579: 579 squared is 335241. Fact 580: 580 squared is 336400. Fact 581: 581 squared is 337561. Fact 582: 582 squared is 338724. Fact 583: 583 squared is 339889. Fact 584: 584 squared is 341056. Fact 585: 585 squared is 342225. Fact 586: 586 squared is 343396. Fact 587: 587 squared is 344569. Fact 588: 588 squared is 345744. Fact 589: 589 squared is 346921. Fact 590: 590 squared is 348100. Fact 591: 591 squared is 349281. Fact 592: 592 squared is 350464. Fact 593: 593 squared is 351649. Fact 594: 594 squared is 352836. Fact 595: 595 squared is 354025. Fact 596: 596 squared is 355216. Fact 597: 597 squared is 356409. Fact 598: 598 squared is 357604. Fact 599: 599 squared is 358801."
+              cache_control:
+                type: ephemeral
+                ttl: 1h
+            messages:
+            - role: user
+              content:
+              - text: What is 17 squared? Reply with the number.
+                type: text
+            model: claude-haiku-4-5
+            thinking:
+              type: enabled
+              budget_tokens: 1024
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_01UcjD8JBtY7ZttbppBBZhDk
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 1
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:31:07.884175+00:00
+        expires_at: 2026-10-23T00:31:07.884175+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:31:07.941965+00:00

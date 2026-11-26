@@ -1,0 +1,22 @@
+--- expected
++++ actual
+@@ -239,4 +238,0 @@
+-   "content": "The following tool(s) are now available: `refund_status`"
+-  },
+-  {
+-   "role": "system",
+@@ -270,0 +267,4 @@
++  },
++  {
++   "role": "system",
++   "content": "The following tool(s) are now available: `refund_status`"
+@@ -341,4 +340,0 @@
+-   "content": "The following tool(s) are now available: `refund_status`"
+-  },
+-  {
+-   "role": "system",
+@@ -372,0 +369,4 @@
++  },
++  {
++   "role": "system",
++   "content": "The following tool(s) are now available: `refund_status`"

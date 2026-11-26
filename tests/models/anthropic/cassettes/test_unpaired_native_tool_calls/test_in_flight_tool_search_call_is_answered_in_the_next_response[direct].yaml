@@ -1,0 +1,429 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "782"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: "Do two things in parallel in this single response, without waiting for either: call `send_status` with message 'starting', and search for a tool that can pay rent. Then pay the rent."
+            type: text
+        model: claude-opus-5-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: send_status
+          description: Send a status update to the user.
+          input_schema:
+            additionalProperties: false
+            properties:
+              message:
+                type: string
+            required:
+            - message
+            type: object
+        - name: pay_rent
+          description: Pay this month's rent.
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+          defer_loading: true
+        - type: tool_search_tool_bm25_20251119
+          name: tool_search_tool_bm25
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=126
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-446d4511a7a15077ecff0ce7d0d238e8-a041e465d3ee786f-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5-5","id":"msg_011CgHxvsjW7Xt47Me5r5TjS","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":785,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01JM6cQTUMUr9aBhBi9A5T2Z","name":"send_status","input":{},"caller":{"type":"direct"}}        }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"messa"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ge\": \"s"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"tarting"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"}"}      }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0 }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_01DK8xmuaWufByq8bCJ8Kfti","name":"tool_search_tool_bm25","input":{}}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"query"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\": \"pay"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":" rent\"}"}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1            }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":785,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":103,"output_tokens_details":{"thinking_tokens":0}}   }
+
+        event: message_stop
+        data: {"type":"message_stop"        }
+
+  recorded_at: 2026-10-22T21:12:51.040127+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1210"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: "Do two things in parallel in this single response, without waiting for either: call `send_status` with message 'starting', and search for a tool that can pay rent. Then pay the rent."
+            type: text
+        - role: assistant
+          content:
+          - id: toolu_01JM6cQTUMUr9aBhBi9A5T2Z
+            type: tool_use
+            name: send_status
+            input:
+              message: starting
+          - id: srvtoolu_01DK8xmuaWufByq8bCJ8Kfti
+            type: server_tool_use
+            name: tool_search_tool_bm25
+            input:
+              query: pay rent
+        - role: user
+          content:
+          - tool_use_id: toolu_01JM6cQTUMUr9aBhBi9A5T2Z
+            type: tool_result
+            content:
+            - text: sent
+              type: text
+            is_error: false
+        model: claude-opus-5-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: send_status
+          description: Send a status update to the user.
+          input_schema:
+            additionalProperties: false
+            properties:
+              message:
+                type: string
+            required:
+            - message
+            type: object
+        - name: pay_rent
+          description: Pay this month's rent.
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+          defer_loading: true
+        - type: tool_search_tool_bm25_20251119
+          name: tool_search_tool_bm25
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=175
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-38e510698b47d7c8d72677937bf56c6d-aa8666a037fb6ad8-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5-5","id":"msg_011CgHxw152QV4kjjAz4Yqdo","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1020,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":24,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_search_tool_result","tool_use_id":"srvtoolu_01DK8xmuaWufByq8bCJ8Kfti","content":{"type":"tool_search_tool_search_result","tool_references":[{"type":"tool_reference","tool_name":"pay_rent"}]}}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01UVQYMAuTSS4F8JSwmWMkSR","name":"pay_rent","input":{},"caller":{"type":"direct"}}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1              }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1020,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":28,"output_tokens_details":{"thinking_tokens":0},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}        }
+
+        event: message_stop
+        data: {"type":"message_stop"  }
+
+  recorded_at: 2026-10-22T21:12:52.114958+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1693"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: "Do two things in parallel in this single response, without waiting for either: call `send_status` with message 'starting', and search for a tool that can pay rent. Then pay the rent."
+            type: text
+        - role: assistant
+          content:
+          - id: toolu_01JM6cQTUMUr9aBhBi9A5T2Z
+            type: tool_use
+            name: send_status
+            input:
+              message: starting
+          - id: srvtoolu_01DK8xmuaWufByq8bCJ8Kfti
+            type: server_tool_use
+            name: tool_search_tool_bm25
+            input:
+              query: pay rent
+        - role: user
+          content:
+          - tool_use_id: toolu_01JM6cQTUMUr9aBhBi9A5T2Z
+            type: tool_result
+            content:
+            - text: sent
+              type: text
+            is_error: false
+        - role: assistant
+          content:
+          - tool_use_id: srvtoolu_01DK8xmuaWufByq8bCJ8Kfti
+            type: tool_search_tool_result
+            content:
+              type: tool_search_tool_search_result
+              tool_references:
+              - tool_name: pay_rent
+                type: tool_reference
+          - id: toolu_01UVQYMAuTSS4F8JSwmWMkSR
+            type: tool_use
+            name: pay_rent
+            input: {}
+        - role: user
+          content:
+          - tool_use_id: toolu_01UVQYMAuTSS4F8JSwmWMkSR
+            type: tool_result
+            content:
+            - text: paid
+              type: text
+            is_error: false
+        model: claude-opus-5-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: send_status
+          description: Send a status update to the user.
+          input_schema:
+            additionalProperties: false
+            properties:
+              message:
+                type: string
+            required:
+            - message
+            type: object
+        - name: pay_rent
+          description: Pay this month's rent.
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+          defer_loading: true
+        - type: tool_search_tool_bm25_20251119
+          name: tool_search_tool_bm25
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=99
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-aa3429cf1ba1fb29496d9c84e0147ec1-3865e886beca0c96-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5-5","id":"msg_011CgHxw5Yfeq2hANvTAe5Kv","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1055,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":4,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null} }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}          }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS+wQKEAgTGAI4AUIIdGhpbmtpbmcSDH4eWLORyrNHDMfprRoMhr6WWnkWS82kho54IjANdXu9kbvYivpfmhR0eTLdmBMU3LvKzIO9Bpe2HtjroQlDUJz6Q6J6kIZQl95WTCYqmAQ7m2ph8SrGh7xlB9q1PdAxfSqhA1jhaI11PeXQvgB9pE0QN/tOm9g4RisGNs+nim1NDi46s3kwCpUNgdc/FcHyLqVKgtm9VEqOGM9ZHM7vrqrOzi0rN5dcmKa5uAhiQa6IU54Ethwp8CZS9YYy5yOgI32zonfWXgZGob3GBZS4EatMiZTHzRNAMt086fSwNDiNWNVXsLycfCqpL5XYiuvDI4+o6M5FCtI7s86+N1m39h51EnwB5M2n68JfGclyEVcs76efvsPxGzhUobec6lqDmG/P36QcclTGCLZU39uXjrcPGCuCfAAO8yKqO0SGdQE6Z371Eknt6/PVXpXB/TPqlzVN1gOCZ5/rDDYNtsXTGIIrDXXj35Nv2O2w5IkC5JSh41+561yYN02eA/WkSVTRGNB9ZWeE3HgVBFI2hIDwaVjYv5+L56sumeYc5xcySMvFpAkHBCsCWgSHLdWdw1GDcETCtDCeeKoEv2CyoSkGmYeZzeCTG6yXQaA49G5p/ZCtjQgLgGpKk536KmNg2QtO7TDZBfmBnQ+ETxOaS9rwcSlWr+QB0YXXA/vy6Ox3hA+B7Y0+w5Vz/4jFsdpUOhHTY7GNaBtXXl+m/rwH09BI7n6fOm5IGoFoWZNEIVcsoX9RgyIh2jwEtCmMLlW9FqhSXZIfoTUhCJYCDCsjHjKtxdMyeeXHoPeyEt7hJQyPiJKgFFJ774UybhgB"}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"I sent the"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" \""}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"starting\" status update"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" and searched for a r"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ent t"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ool at the same time."} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" The search found `"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"pay_rent`, which"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" I used to pay this month's"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" rent,"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" and it confirmed the pay"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ment went"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" through."}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1   }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1055,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":66,"output_tokens_details":{"thinking_tokens":5}}            }
+
+        event: message_stop
+        data: {"type":"message_stop"            }
+
+  recorded_at: 2026-10-22T21:12:53.818170+00:00

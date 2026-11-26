@@ -1,0 +1,209 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "440"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-4o
+        stream: false
+        messages:
+        - role: user
+          content: Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: ask_question
+            description: ""
+            parameters:
+              type: object
+              additionalProperties: false
+              properties:
+                repoName:
+                  type: string
+                question:
+                  type: string
+              required:
+              - repoName
+              - question
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "593"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: chatcmpl-ElDtWO9M1bwl4td8PPkiCqN7DrxsM
+        object: chat.completion
+        created: 1794923534
+        model: gpt-4o-2024-08-06
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: null
+            tool_calls:
+            - id: call_5PyKD0or6V4LAJpjhW8IhHUu
+              type: function
+              function:
+                name: ask_question
+                arguments: "{\"repoName\":\"pydantic/pydantic-ai\",\"question\":\"What is this repository about?\"}"
+            refusal: null
+            annotations: []
+          logprobs: null
+          finish_reason: tool_calls
+        usage:
+          prompt_tokens: 62
+          completion_tokens: 30
+          total_tokens: 92
+          prompt_tokens_details:
+            cached_tokens: 0
+            audio_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 0
+            audio_tokens: 0
+            accepted_prediction_tokens: 0
+            rejected_prediction_tokens: 0
+        service_tier: default
+        system_fingerprint: fp_936db6157f
+  recorded_at: 2026-11-17T13:52:14.735774+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "837"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-4o
+        stream: false
+        messages:
+        - role: user
+          content: Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_5PyKD0or6V4LAJpjhW8IhHUu
+            type: function
+            function:
+              name: ask_question
+              arguments: "{\"repoName\":\"pydantic/pydantic-ai\",\"question\":\"What is this repository about?\"}"
+        - role: tool
+          tool_call_id: call_5PyKD0or6V4LAJpjhW8IhHUu
+          content: pydantic/pydantic-ai is a Python agent framework built by the Pydantic team.
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: ask_question
+            description: ""
+            parameters:
+              type: object
+              additionalProperties: false
+              properties:
+                repoName:
+                  type: string
+                question:
+                  type: string
+              required:
+              - repoName
+              - question
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "692"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: chatcmpl-ElDtXFsHiaGqzBtZTFBWfb3HtZiGG
+        object: chat.completion
+        created: 1794923535
+        model: gpt-4o-2024-08-06
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: >-
+              The pydantic/pydantic-ai repo is a Python agent framework developed by the
+              Pydantic team.
+            refusal: null
+            annotations: []
+          logprobs: null
+          finish_reason: stop
+        usage:
+          prompt_tokens: 120
+          completion_tokens: 23
+          total_tokens: 143
+          prompt_tokens_details:
+            cached_tokens: 0
+            audio_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 0
+            audio_tokens: 0
+            accepted_prediction_tokens: 0
+            rejected_prediction_tokens: 0
+        service_tier: default
+        system_fingerprint: fp_936db6157f
+  recorded_at: 2026-11-17T13:52:16.046930+00:00

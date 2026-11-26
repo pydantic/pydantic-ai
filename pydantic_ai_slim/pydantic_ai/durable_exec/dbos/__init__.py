@@ -11,6 +11,15 @@ except ImportError as _import_error:
 from ._agent import DBOSAgent, DBOSParallelExecutionMode  # pyright: ignore[reportDeprecated]
 from ._durability import DBOSDurability
 from ._model import DBOSModel
-from ._utils import StepConfig
+from ._operation_names import DBOSOperationNamer
+from ._utils import ChildWorkflowConfig, StepConfig
 
-__all__ = ['DBOSAgent', 'DBOSDurability', 'DBOSModel', 'DBOSParallelExecutionMode', 'StepConfig']
+__all__ = [
+    'ChildWorkflowConfig',
+    'DBOSAgent',
+    'DBOSDurability',
+    'DBOSModel',
+    'DBOSOperationNamer',
+    'DBOSParallelExecutionMode',
+    'StepConfig',
+]

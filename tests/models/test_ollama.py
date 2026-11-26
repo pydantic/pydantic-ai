@@ -1,5 +1,7 @@
 from __future__ import annotations as _annotations
 
+from typing import Any
+
 import pytest
 from pydantic import BaseModel
 
@@ -8,7 +10,8 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     RequestUsage,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -17,19 +20,23 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.output import NativeOutput, PromptedOutput
+from pydantic_ai.settings import ModelSettings
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
+    from openai.types.chat import ChatCompletionMessage
+
     from pydantic_ai.models.ollama import OllamaModel
     from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.ollama import OllamaProvider
 
+    from .mock_openai import MockOpenAI, completion_message, get_mock_chat_completion_kwargs
+
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    pytest.mark.anyio,
 ]
 
 
@@ -136,22 +143,38 @@ def test_ollama_provider_name_routes_through_ollama_model(monkeypatch: pytest.Mo
     assert agent.model.profile.get('supports_json_schema_output', False) is False
 
 
+@pytest.mark.parametrize('model_name', ['gpt-oss:20b', 'some-unknown-model'])
+async def test_ollama_max_tokens_sent_as_max_tokens(allow_model_requests: None, model_name: str) -> None:
+    """The `max_tokens` setting goes out as `max_tokens`, the only output limit Ollama's chat endpoint reads.
+
+    Ollama silently ignores `max_completion_tokens`. A model without a known profile still gets the provider
+    overlay, so it routes the setting the same way. This is not a VCR test because the default cassette
+    matchers ignore the request body: a request that sent `max_completion_tokens` would still replay
+    against a recording.
+    """
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='world', role='assistant')))
+    model = OllamaModel(model_name, provider=OllamaProvider(openai_client=mock_client))
+    agent = Agent(model, model_settings=ModelSettings(max_tokens=20))
+
+    await agent.run('Hello')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['max_tokens'] == 20
+    assert 'max_completion_tokens' not in kwargs
+
+
 # ---------- VCR integration tests against live Ollama ----------
 
 
 @pytest.fixture(scope='module')
-def vcr_config():
+def vcr_config(vcr_config: dict[str, Any]) -> dict[str, Any]:
     """Override the repo-wide `vcr_config` fixture so that localhost traffic is recorded.
 
     The local Ollama tests need to replay `http://localhost:11434` cassettes in CI where
     there is no running daemon; the repo default ignores localhost so those requests
     would pass through live.
     """
-    return {
-        'ignore_localhost': False,
-        'filter_headers': ['authorization', 'x-api-key'],
-        'decode_compressed_response': True,
-    }
+    return {**vcr_config, 'ignore_localhost': False}
 
 
 @pytest.mark.vcr
@@ -184,6 +207,7 @@ async def test_ollama_local_native_output_uses_json_schema(allow_model_requests:
                 ],
                 usage=RequestUsage(input_tokens=136, output_tokens=15),
                 model_name='qwen3:0.6b',
+                model_id='ollama:qwen3:0.6b',
                 timestamp=IsDatetime(),
                 provider_name='ollama',
                 provider_url='http://localhost:11434/v1/',
@@ -229,6 +253,7 @@ async def test_ollama_cloud_prompted_output(allow_model_requests: None, ollama_a
                 ],
                 usage=RequestUsage(input_tokens=172, output_tokens=88),
                 model_name='gpt-oss:20b',
+                model_id='ollama:gpt-oss:20b',
                 timestamp=IsDatetime(),
                 provider_name='ollama',
                 provider_url='https://ollama.com/v1/',
@@ -272,6 +297,7 @@ async def test_ollama_cloud_tool_output(allow_model_requests: None, ollama_api_k
                 ],
                 usage=RequestUsage(input_tokens=134, output_tokens=122),
                 model_name='gpt-oss:20b',
+                model_id='ollama:gpt-oss:20b',
                 timestamp=IsDatetime(),
                 provider_name='ollama',
                 provider_url='https://ollama.com/v1/',
@@ -283,7 +309,7 @@ async def test_ollama_cloud_tool_output(allow_model_requests: None, ollama_api_k
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content=[
                             {
                                 'type': 'json_invalid',
@@ -292,7 +318,7 @@ async def test_ollama_cloud_tool_output(allow_model_requests: None, ollama_api_k
                                 'input': 'Paris.',
                             }
                         ],
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -319,6 +345,7 @@ We need to provide answer in JSON format. Let's do that.\
                 ],
                 usage=RequestUsage(input_tokens=206, output_tokens=194),
                 model_name='gpt-oss:20b',
+                model_id='ollama:gpt-oss:20b',
                 timestamp=IsDatetime(),
                 provider_name='ollama',
                 provider_url='https://ollama.com/v1/',

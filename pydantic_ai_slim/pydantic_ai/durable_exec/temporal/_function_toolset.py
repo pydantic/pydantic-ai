@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager
+from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from temporalio import activity, workflow
@@ -11,6 +13,8 @@ from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
     DurableFunctionToolset,
     ToolConfig,
+    holds_tool_instance_defaults,
+    listing_tools_before_tool_instance_defaults,
     unwrap_tool_call_result,
 )
 from pydantic_ai.exceptions import UserError
@@ -29,6 +33,23 @@ from ._toolset import (
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
+
+_TOOL_INSTANCE_DEFAULTS_PATCH = 'pydantic_ai:function_toolset_defaults_on_tool_instances'
+"""`workflow.patched()` ID marking histories in which `FunctionToolset` applied its `sequential` and `defer_loading` to `Tool` instances."""
+
+
+@contextmanager
+def gate_tool_instance_defaults(toolset: FunctionToolset[AgentDepsT]) -> Generator[None]:
+    """List `toolset`'s `Tool` instances without the `sequential` and `defer_loading` a `FunctionToolset` set on them, in histories recorded before it did.
+
+    A sequential or deferred tool changes which activities the workflow schedules, so those histories
+    replay only without them.
+    """
+    if holds_tool_instance_defaults(toolset) and not workflow.patched(_TOOL_INSTANCE_DEFAULTS_PATCH):
+        with listing_tools_before_tool_instance_defaults():
+            yield
+    else:
+        yield
 
 
 def temporalize_function_toolset(
@@ -71,7 +92,7 @@ def temporalize_function_toolset(
             assert isinstance(tool, FunctionToolsetTool)
             if not tool.is_async:
                 raise UserError(
-                    f'Temporal activity config for tool {name!r} has been explicitly set to `False` (activity disabled), '
+                    f'Temporal activity config for tool {name!r} has been explicitly set to `False` (activity disabled by `durable=False`, its Temporal metadata or `tool_activity_config`), '
                     'but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead.'
                 )
         return config
@@ -79,6 +100,7 @@ def temporalize_function_toolset(
     async def call_tool_operation(
         name: str,
         tool_args: dict[str, Any],
+        *,
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
         config: Mapping[str, Any],
@@ -113,6 +135,7 @@ def temporalize_function_toolset(
     return DurableFunctionToolset(
         toolset,
         in_durable_context=workflow.in_workflow,
+        listing_in_durable_context=partial(gate_tool_instance_defaults, toolset),
         call_tool_operation=call_tool_operation,
         resolve_tool_config=resolve_tool_config,
         lifecycle='enter-outside-durable',

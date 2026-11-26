@@ -1,0 +1,120 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.meta.ai/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "380"
+      content-type:
+      - application/json
+      host:
+      - api.meta.ai
+    body:
+      type: json
+      content:
+        model: muse-spark-1.3
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: Which city is the Colosseum in?
+        text:
+          format:
+            type: json_schema
+            name: CityInfo
+            schema:
+              properties:
+                city:
+                  type: string
+                country:
+                  type: string
+              required:
+              - city
+              - country
+              type: object
+              additionalProperties: false
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      connection:
+      - keep-alive
+      content-length:
+      - "6831"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        top_logprobs: 0
+        temperature: 1.0
+        top_p: 1.0
+        service_tier: auto
+        model: muse-spark-1.3
+        reasoning:
+          effort: high
+        background: false
+        text:
+          format:
+            type: json_schema
+            name: CityInfo
+            schema:
+              type: object
+              properties:
+                city:
+                  type: string
+                country:
+                  type: string
+              required:
+              - city
+              - country
+              additionalProperties: false
+            strict: true
+        tools: []
+        tool_choice: auto
+        truncation: disabled
+        id: resp_6ace34ae09c0f65817414f7f
+        object: response
+        status: completed
+        created_at: 1791898798.0
+        completed_at: 1791898798.0
+        error: null
+        incomplete_details: null
+        output:
+        - type: reasoning
+          id: rs_6ace34ae09c0f65817414f7f:rs_8b98c3a3-57c6-4380-8d72-83cf1f45697a
+          encrypted_content: >-
+            Q-PaDgGc1dT6U85QymNmPRXB9bgXyVeL9_ARdANwldvHtyn70wYZG-IcUbxe6pTZ-PZ-rS3-IJ3e7ckaTtQIhBPonpZ2n424uaQNhmSp_GxRZBM7EJgAVg2LIXYWoCfMti14mZ3NroQaSlUJz_0_iW11NV_68MHNZlzHZLoBejwHDUsj6yFN8JGrZxC_DSU81SSXUdp6-qTX1zhyuBQ0YgVB-nV-DqQHWfP1RZJYQ-XJbNqDvmEdP0U_8pZe5C9rDr3Z8Mgs9Rr-OM0d3Quhcpz6uPD7CnjMSyDrXj_-oFwN2P066JM30LZNZhayYPAdNOnYfZI0fpNfgZEAANheeDHOwuuh9B2fI4OAvY44YN0U-mGkXaNgwcP5-oDSvV0bPVWHh1hdj5xV_lUtR64qrHeAZk9wVTw2tzhq_V-N28zhR2HDdiWos8Py-AtJ61eLQNp78BF-a9KdN2Bej-fGuEDbFpcReuKR7-XZr0ahwvJ1XKtj6d-Q8XonLy_QYCuHxnhDRcgJ2xeawNBovhXYq3zsKWlJP-YJVANnkaErYETxx_GMM8j1v7VmbXIg36828-mRBV8nBzsZwcS38TBei3HrfipuR8DDtvKaR5S0MuCkAVR7ADd3UUZIQwbK3vJV0928bNO1UUMVpYfDRO7Wecr-jhxHBTX-ERX71D1362QTWxhnEOeCPKzi6uaRzwzs0AuOvYoZT79EaNkUYgpYdqzkvIOuUiUvhA1MGL61Nt8o3wOej3Dk7u-namcMAGE_O9ICJtxw06g8Y5ofrKMSMJK1ziYOZ_P2akPQKlDR2lKaQ5rUszyMlDG8Q7weypkBKNLSvXkOjVZLlamfGspFYzC0IaU6LD0UZTyINiTCjre6FkFBXRv7eHFLXYb_6FIrK7peuM69WGWRNsezXyduf27q1zWFvcu1dR7f34UktTOSNufvB7P16zYDj5R-QRT8NDKME8X7v3UTCH_8P011Jcw8ZethEzvbU-jFqIe8Pagze1LD3Iij2--8kj0Tk0eIrquC2gBHcxoF4ESzsdEy3EFztjdVe2E4cNg-erAKPAYxCW3LBQ4j3kwnvmgzBFRJjRCoJd_sCH9wXmrd7ERQFfQCWtsHR-4entX6DGzRrki6NaQmdHGPYCWMUf4lzhxKuddAX_1cYnI8OD2IpGcQ_5wHmE7Wu5DQJfkCIeY3Op0_cSRW-Q8Kl-HhvjMIWWiVxddbSe5lsSdsQ23gOT1GR3Mlb9TW-yY3CWJk1_CcFy4JkSodBxDTJnrX7gbqrhAlZ3YmqfNSaQXB0SYTJI2eFly2_-ZoBJNlgnn6TEl9THi5Tj7tdt5fjzolli0W1can6A2oVOZGXAVtNsS17A-J_Xea84sVTM68D9dJ6wu9xZIiajuyFsg4pIUKzi9md5vE4vudCPC44gMDXetFsUvb6s7kV0eqXAMFDT1hsbZ9HFTnJ8hbfsLf0osVIKUe9X_-Dk9_IkXunDO9FOKO_D_Zfe1fBYHR8Fc_VHLIuuTNVcdpHfKP3Kk_H-8Fq2q06cT9TaaTUukL7ETRdASBKpiEdh0lmokU6IGIqDg0fPTxL8wpHwJJEoRNyM69bNWeofsL15X8zAwVX3eK80Pzj9ujMRAvcPyOeUKFC6vTk3Rlg-Qn-I9-vIL8-xh4cdylfkjYHrDlPXQ63LS5rPhFhRtOD4bD69Nv7LaDslEFaV1pxEAIta3B-9gRNYl4ds1ybGJWafWijj_Sp50CajJWYIOsiBIvu5o6NcwkmbBTAR9niYwWKSvAiDpHB-O9sMaoGfDldjDISmmxc2Yv66R3YounvApUyY-6Q4tahQgyl5ujQikg9ZHLJRiTtgaygMnq2zjScuOtGgHRMGw0cC5SvJRDu_Z1PNvis_QWaEQZMXYaQAAgdRd3J5VQ8JJuNpM2wZo0rNcCo3VJzLrXr4CtmmcsM40nxPfHK_iBBXmT73Jlrwn1Vk82GP8Q5mP_FpncqtrvUv7Nxz4AA2G1b3Df80SaK-XDX49rl4uIXmHebaZ63lOi-775kz7FJMFPBbCG9UvRNmZnS9lD92Vja7sqOZYLPv4QKPGXV5xCwJ3OP8ITaLt8rWxEBg-VZROIMejazH0dXT24y5Jq2ZnKxlRlhkQMCALVr5x7woQ4CegGtI8gf-T6PGoCxQNGzx2rpOvfNl8H8JAGRpALGvPy0Er9Xqw9MkiqL9a1e6evv73YSzcvo7eQvM9Ti0AVNQeAdoSNTSuIv_zRFhmk-eMmf382qHP-XcHhJ7b1sDpFC1Cs7YR7h3QVKT3gf0dJzH3hXokE6h8wCLWDaQLfgmnI3w8h6B3LdfjjcrA42JMBSRk0B5eUQShcnzPbV_qWGWPp5-AoqnsgSc0jOTrcxvFwe2znglHrdbZke1YKxTKTk0pqAVY2oQcMzJ4ycSmBljUrWabiWzQs8hO0_8Ef8BB59ZJmJ386fL4R9ka1h9h7CQHk4a1inG9XDSvML5SwiM_eBwBrDiTDl3EVYrQyVHhyFEiiTdde8lv9bVr84OmymG5nFpOWRhrF1JH_zAILjyLS2tn7qDaVXXyD18i3N02Fc4wodEptBK8E-Fpq3BqNF7oMH4Fq0ahcDB_OEecGLw-XyEY5y-i79mHoZtgGSZKydofeKP-N5fiI9NsPgv0gMsB1zUfFsIJ4tPpKFYhJXmGl9jm9BT6Mc0ZfuT_XdeqU9Ez9NfQ49WxS-FgfJc5KqxnbkI2iyw6qJLDCIvYd6zWSvSA76T2adT9yXQnabphXlGsZ-cJAJEf-fZX1eZahWgBUsfMZNOBxq5qdwZpUD72ujnzBUV71SPA4v1YZRtc8MoLKp-mmM5K86KKF4twZ2LOS9JfrrB7DJaPdjR2owBi_kunVDxJyY8y6MIQRNJmS3oETt_euS3ojLIHn9nsS5nIF4B5rBQhVdpMZTdpVFXCgxqJ2o7o9EIM6ZZCk-Y6MyT7ARay1de00GWwEkLomdLWYumkoIxqtOM1MB7V_ElZAH0V_xfSA0X1jwvXxVEbVn3RPhhpkg6N8bpAkxFlcKrctD4Q8bxnHG0wokWjSVwly0OedqTEFSwZMiy4LW5lfpfFkoFTLmtiAmrIfHglvGZLkL3uRu35T11FLHvN3DkCCdj8UfiBNKtgoYm7W_zyhRGZh1p13Er1xpQ72d6z84eFM5thEfsWAgWon4XdQlSTlYVwwLOTvMZeE80rNZ7yaXcphx1eF15sH2F3XzbnvbTpMb0xp1JugFKmrxEpfiFPo6qozsVYqtAQvwgccYLqZ8FP7AKyxeINjkauvoOOpuLYDY8lx_v4pzI52f_RtEW5RHMhIn7Gvn4ax7SDfnwPEJlrXDFXGyYEbNrR4OWEYh3uaBB66xM7w6jn5PUrxDln6X6F_1gpmrtJ96Q9paTtIM_E4Z7U1VbhUaWXcTwrpuMkb0EG_OuoDOOAyfwSXQrUZyQmuWOutwBQh3HCTCx6y8VqDxGo5ctNTBRXmtl9Cj1TiEldlNy2lkN432xEwfkIshaV2cDYeqiUJUZYPNk5s5vb6zgDSl0o_jxWBypI4c2Ey2GmYSbWOyiK6Vpvkw3ZIW67d4hTimvKBBxAvCKze7a5MNHKuhgW_z1RDCqtaucFgDjDATyIYhnh0AOehfb8k36Iv3q7YptLqkXSNqnvZf_dYfFSFauv-v1qmCe6YISyG9IPDT7FZ9_xNTDPsD4idSE4u5uiWicDgAMffen3Ak9JHJtm6Wt23biSsbvLjaEHbzxKkM-W-PQeLh7BcI6edDYMAGiuolwf-eBsTLR8MYo1y5PVePNj-CRPXwPil71D2-yG4tw9qjokdwSOFzu4xnKZ4orUFc4VkS-brQGH0tz7_5DNOU92I9nTWoxLWPrUYJZpmWMsEnxYQpsKYkBEjygm-WI3Txcg6s0TNEzzbjM-AJADtP0oPfO4LU8eR1sin8uuj_pf5ZuIPRphUkg2QALqAJ1IjfkO1MRdkQI4lBejH0p_rfRHBNSuBwLcmwB6YaVyNTRDRG4W6JT8iEXMbo2ho9L_BP3PMt1WO7oXDXqhI6McVGQg39dmH7n-icpnbnzYuKZuOF8qbSuDuBF6YoYvFsVtCLYhj0r88NsLHAoJcPZWAl4CxUYB8AbcBnzwi-fuogB0H2FVB5xOvGsA7EF57B_4SVwR1r8RoBZ23PsqBFx8FBVrAdaCHOXuJWjgiVQYadaIkI4e4GHEggc93VueDAnqSpMmuQuUNADs9ADWHeyQwy0r0sIraNQibz-md6aL4a2ao58NaGPz1oX8KDKYKTWLPSSuVAyeC_A0mVetPticGo4RznD7FXcux0jriN3d9JbC8vYSTgipcwM9gjuThUXIYLe0fWc5W1itsXbpr3lXIbPnwao34dWBySva-UYZDKXW8fPB9ljARBZKaxl2v3vawjl0LRLTj7rUgw2tIomw_Br-VkQ3uBe3VoJgp-sLrKCd3vt8Gr4gsgA-t5I4H3Ljk3j0s6r-srjj-nAT45x_iCnuRyk1N58NAV_ujiomt-BScJRL3bTwHC3_-wSc6dayBN2kxaepA0WdQ6g_tB9EkgvZVsIGb7qPMwA56bzUbXXlJnOYOMEmPj3ee8AFApRUUCd472prrlC7UrbWFUOgabJeDTYxns2jFGJpXyPw5jbBd7kLNRxUHqQDj5RgVy5N0-7LcuUEaCcHYZeiSIqMyeygHWSr8vYyrTzm4ZGC3cQ3lYucxydrjHngdxK7yUdkLq5gcEP03LEsIJMhCXN45wAdYfEbsZ53D9DgUq5NmH4FOz5iDPdG5BLZiHT1Cn3OBrHOP64UnjobFqLFzRpoDLN7HkSExhbchcGbPuk1Se569kE4Az-Dw6SVybdhOp1i9-glqiArCgzUorAezKtfU9CNh7D7cHNEmn8eMVi5p9aIuTfzx5lQJNz9_5sgYz3_X-7IY-5ZXfJfprLo6pYLJ406IEpX-CClXpPo4jCRNUlGUn9uTUrmj1FA1XGU9jMKnVqnu48cDWIjuW9cIz5voHprTE20geC8yO9XLvXCg3hVrZgJLqqEhVbLAA-Y59B-Tez7UIuTHMrLzYxDVx4xS4Gct0WZKhmyiGoNemIpefFPZPzbqtPn3rX-BtAbifVVnQujeTN8c4WIrES03JolvPvQwxFMnIgrAPzEgYMRpjJgWeMU0i3WqGE-lNegtxbtFHtYvGzGEZUcYe9TJiU4xAHL7w6Noq7kqWwZKnIBIRclJAKE3z8ukAezI2fCQzt0QrCEVjtwU0MA8YXxfLGIXsnVWbWHgYQfsFZCKQPTl6N52O-dw1_CgTcnri20kh5woaJ7ziOGydGKi_l0qKrbgc6SgYT7hy4LVwv5a7-abGSA9vl8nC5GuI8-7pfUkGseyXj1HB8P62C3eTsO9nhTumwAwW97pYWAXWARm0_EBJpNZBcsbdHITtep2NzM5Jn_RmI4YTixWpEHiaAt-C54HyuT88mhgp-zk0avOkFvw_O1I145RLGm57T26b1Tb38tl7MHbHNCNIFe9V-BlLw
+          summary: []
+          status: completed
+        - type: message
+          id: msg_466521ae-a7e8-4086-b9a2-9dbf30288cac
+          role: assistant
+          content:
+          - type: output_text
+            text: "{\"city\":\"Rome\",\"country\":\"Italy\"}"
+            annotations: []
+            logprobs: []
+          status: completed
+        instructions: null
+        usage:
+          input_tokens: 16
+          input_tokens_details:
+            cached_tokens: 0
+          output_tokens: 402
+          output_tokens_details:
+            reasoning_tokens: 383
+          total_tokens: 418
+        parallel_tool_calls: true
+        store: true
+  recorded_at: 2026-10-13T13:39:58.929831+00:00

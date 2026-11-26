@@ -1,0 +1,681 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  data:
+    setup:
+      model: models/gemini-3.8-live-extended-thinking
+      generationConfig:
+        responseModalities:
+        - AUDIO
+        thinkingConfig:
+          thinking_level: LOW
+      systemInstruction:
+        parts:
+        - text: You are a flight booking assistant. Always use search_flights before
+            answering.
+        role: user
+      tools:
+      - functionDeclarations:
+        - description: Search flights between two cities. Takes several seconds.
+          name: search_flights
+          parameters:
+            properties:
+              origin:
+                type: STRING
+              destination:
+                type: STRING
+            required:
+            - origin
+            - destination
+            type: OBJECT
+          behavior: NON_BLOCKING
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  data:
+    setupComplete: {}
+- kind: message
+  direction: sent
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: Find me a flight from Amsterdam to Lisbon, then tell me the cheapest
+            one.
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  data:
+    sessionResumptionUpdate:
+      newHandle: fab40cdc-9740-43e8-930e-2aedcce26c42
+      resumable: true
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent: {}
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: v/+7/8T/vf+8/8D/vv/E/77/vv+9/7z/vf++/7r/tf+/
+        role: model
+      outputTranscription:
+        text: 'Let me check the '
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: CPud+ib6Hfok+rD6DPvy+mn77Psw/L38Jv1G/XT9af1m
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: XAStBAUFXAWcBcMF2QX3BQkGFwb7BcsFggU8BeYEiQQN
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: uACnALYAqwCcAKEAlQCQAJIAZAAsABwAJAAcAO3/2f+8
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: LP8LAa0BjgT+Bp8IiQl+C1kMOQw1DZ0NXAyaCw4M3Ap0
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: oPdW+FL3gfZg9fryNvPA8PTv+O9V7eHvSezi53Howuau
+        role: model
+      outputTranscription:
+        text: available flights for you.
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 9vh0+Y/5gPk5+Xr4M/gT+Kn3QfcL9uf0LPT48x/1EPfQ
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 8QArAZn+GP+fAasAEf9c/sH/9wCt/lsALAKz/2n/wf8J
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: gv6y/uP+D/80/zf/Nv8b/yr/Rf9P/47/pv/i/wQAKQBk
+        role: model
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      turnComplete: true
+      interactionStatus: IN_PROGRESS
+    usageMetadata:
+      promptTokenCount: 3181
+      responseTokenCount: 58
+      totalTokenCount: 3239
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 2848
+      - modality: AUDIO
+        tokenCount: 222
+      responseTokensDetails:
+      - modality: AUDIO
+        tokenCount: 58
+      thoughtsTokenCount: 71
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    toolCall:
+      functionCalls:
+      - name: search_flights
+        args:
+          destination: Lisbon
+          origin: Amsterdam
+        id: call_3850_fc_0_0
+- kind: message
+  direction: sent
+  data:
+    tool_response:
+      functionResponses:
+      - id: call_3850_fc_0_0
+        name: search_flights
+        response:
+          output: KLM at 120 dollars
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent: {}
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: AAA=
+        role: model
+      outputTranscription:
+        text: 'The flight found from '
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: BAACAAEAAwADAAEAAAABAAIAAQAAAAIAAAD//wAA///9
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: GCCpHksd2h0EIfUiJiJRIKQc8hcHFIUSQhAzDcsINARU
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 2u4b7rjssOyo7BbsaOxk6w7qWeot6+rrL+yh7PXsRO1W
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: vADsAN4AagC9/yf/I/+F/8n/uv9v/wn/yf6x/on+aP5n
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: Kw/+CuIJkweLBjAF0wDV/Fj7qPiI9f31Kfnz/RMGOg6V
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: fPCQ713unezk6oHpNujC5hLlnONQ4xTkw+Qa5SXkeeP5
+        role: model
+      outputTranscription:
+        text: Amsterdam to Lisbon
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: QxNKEhQRgg/CDYgLJQlLBxkGoAWVBcMFmwXnBJwDLQKf
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 1e+h72Dt2+xF7ObqSegB5Fnie+Kv5srnuOTV34LaAtZa
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: WAadBnMH+QV8+R/1S/njAVMImAY6/qzz9PkUAjsFfgmm
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: d+kP6IzmWOWL5HzjvuJn4ovih+NL5ULnLOnv6jbsR+2H
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 8BXXFZIVGxU5FQQVmxQ8FFgT8xKDEp8RzRCbD/kO5g3C
+        role: model
+      outputTranscription:
+        text: ' is KLM for $120,'
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 6//k/+f/4v/g/+P/3v/e/+L/2//h/9//3P/g/9r/3v/b
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: hAoIDM8NVQ+iELkRqBLLE9MUsxVyFtYWYxcuGLgY7Rjs
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: zP+e/0n/0P+n/0T/3/9n/1X/sv+d/2n/jf+d/1L/fP+W
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 6PLX98H32/kq+ZT0hvZD+h75efii/1AA5P17Ab8AwP/R
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: IvlN+Er4GPuh+3b9KQDNAnAEXgUdBwkItwhsCq0KZApo
+        role: model
+      outputTranscription:
+        text: ' which'
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: dwEg/zUBUP/a/2gAnP65AHMASv6nAXv+zACr/9H/nADy
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: SgGpAE4ALP95/hb+b/0m/XT8Zftq+mH5kPiu+Lv4yvj3
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: VQmBCM4H3ge1CAYJbAgrB6IGyASUA+YDpwVTBZsEewTb
+        role: model
+      outputTranscription:
+        text: ' is currently the cheapest'
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: YfYc+WL9gwDSAhIDqwFwAIv/3v5Y/qf9x/yO/B/8n/x2
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: +//6//f/9f/2//X/9P/2//f/+v/7//v/+//7//f/9f/3
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 8f/x//D/7v/r/+j/5P/n/+j/6f/s/+r/6P/m/+r/7//u
+        role: model
+      outputTranscription:
+        text: ' (and only available)'
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: gf/u/ywAiAD3ANAA9ACDAJX/mP4Y/nn+5/5R//7/BgBj
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: /hw5HGwY0hO1D9MMFgxUC5EKlwiNBMkA9ftE+Cj3QvZI
+        role: model
+      outputTranscription:
+        text: ' option.'
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: LfgSBN0DK/whAN78z/5CBDL1IAUjAxT6+P/eBJwAgf5Y
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: gwhiCz8OcRC3EqEULxe4F+oXnhYaFL0SGhKhEcoQaQ5r
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 7Phx+EL4u/gX+A735vYy9hj11PS287rxr/A47xjt4+tw
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: KxQPEyARFA/NDJEKzAdNBLsAtP1b+vz1BPEG7MrmQOKc
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: qQD2AP4AhQERApQCpAKKAgoDSgSkBEIEwwOvA9IDpgMB
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 3v/k/+T/+f/v//X/9P/b/+b//f8IABoAHQD6/wEAAQAP
+        role: model
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      turnComplete: true
+      interactionStatus: IDLE
+    usageMetadata:
+      promptTokenCount: 6037
+      responseTokenCount: 248
+      totalTokenCount: 6775
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 5626
+      - modality: AUDIO
+        tokenCount: 280
+      responseTokensDetails:
+      - modality: TEXT
+        tokenCount: 38
+      - modality: AUDIO
+        tokenCount: 210
+      thoughtsTokenCount: 490

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, ClassVar
 
 from .._run_context import AgentDepsT, RunContext
@@ -22,9 +22,10 @@ from ..native_tools._tool_search import (
 from ..tools import (
     AgentNativeTool,
     ToolDefinition,  # pyright: ignore[reportUnusedImport]  # noqa: F401  (resolves forward ref)
+    ToolSelector,
 )
 from ..toolsets import AbstractToolset
-from ..toolsets._tool_search import ToolSearchToolset, keywords_search_fn
+from ..toolsets._tool_search import ToolSearchToolset, keywords_search
 from ._deferred_capabilities import record_loaded_capability_tools
 from .abstract import AbstractCapability, CapabilityOrdering
 
@@ -36,7 +37,8 @@ if TYPE_CHECKING:
 class ToolSearch(AbstractCapability[AgentDepsT]):
     """Capability that provides tool discovery for large toolsets.
 
-    Tools marked with `defer_loading=True` are hidden from the model until discovered.
+    Deferred tools are hidden from the model until discovered. A tool is deferred when it's marked
+    `defer_loading=True`, or when [`tools`][pydantic_ai.capabilities.ToolSearch.tools] selects it.
     Auto-injected into every agent — zero overhead when no deferred tools exist.
 
     When the model supports native tool search (Anthropic BM25/regex, OpenAI Responses),
@@ -67,6 +69,13 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
 
     # Default: native search on supporting providers, local keyword matching elsewhere.
     agent = Agent('anthropic:claude-sonnet-4-6', tools=[weather_tool], capabilities=[ToolSearch()])
+
+    # Or choose which tools are searchable in one place, without `defer_loading` on each tool.
+    agent = Agent(
+        'anthropic:claude-sonnet-4-6',
+        tools=[get_weather],
+        capabilities=[ToolSearch(tools='all')],
+    )
 
     # Force a specific Anthropic native strategy; errors on providers that can't honor it.
     agent = Agent(
@@ -106,7 +115,9 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
 
     * `None` (default): let Pydantic AI pick the best strategy for the current provider
       — native on supporting models (Anthropic BM25, OpenAI server-executed tool search),
-      local keyword matching elsewhere. The choice may change in future versions.
+      local keyword matching elsewhere. On the legacy `AsyncAnthropicBedrock` client it's
+      Anthropic regex, so BM25 there needs an explicit `'bm25'`. The choice may change in
+      future versions.
     * `'keywords'`: always use the local keyword-overlap algorithm. Still prompt-cache
       compatible on providers that expose a "client-executed" native surface (Anthropic,
       OpenAI): the algorithm rides the same `defer_loading` wire as a custom callable,
@@ -133,6 +144,24 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     parameter_description: str | None = None
     """Custom description for the `queries` parameter when search runs on our side."""
 
+    _: KW_ONLY
+
+    tools: ToolSelector[AgentDepsT] | None = None
+    """Which tools to defer (make searchable): `'all'`, a list of tool names, a metadata dict, or a callable.
+
+    See [`ToolSelector`][pydantic_ai.tools.ToolSelector]. Selected tools are deferred in addition to
+    tools already marked `defer_loading`. Output tools and the framework's `search_tools` and
+    `load_capability` tools are never deferred. `None` (the default) defers nothing beyond what's
+    marked `defer_loading`, so a bare `ToolSearch()` only configures how search runs.
+    """
+
+    id: str | None = 'tool_search'
+    """One-off: an agent has a single tool-discovery configuration, so the id is fixed by default.
+
+    Two of them resolve to one via [`combine`][pydantic_ai.capabilities.AbstractCapability.combine].
+    Pass a distinct `id` to keep both, or `id=None` for derived ids.
+    """
+
     _search_fn: ToolSearchFunc[AgentDepsT] | None = field(init=False, repr=False, default=None)
 
     def __post_init__(self) -> None:
@@ -141,9 +170,11 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         # they share a `_search_fn` that the toolset routes through `_run_search_fn`.
         # The named strategies `'bm25'` / `'regex'` only take effect server-side
         # (Anthropic) — no local implementation today — and `None` falls through to
-        # the toolset's default keyword-overlap algorithm.
+        # the toolset's default keyword-overlap algorithm. The default and an explicit `'keywords'`
+        # run the same algorithm, but only the explicit choice takes the callable dispatch path, which
+        # engages the client-executed native wire on supporting providers (cache benefit).
         if self.strategy == 'keywords':
-            self._search_fn = keywords_search_fn
+            self._search_fn = keywords_search
         elif callable(self.strategy):
             self._search_fn = self.strategy
         else:
@@ -195,12 +226,19 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         # emitted.
         return ToolSearchToolset(
             wrapped=toolset,
+            tools=self.tools,
             search_fn=self._search_fn,
             max_results=self.max_results,
             tool_description=self.tool_description,
             parameter_description=self.parameter_description,
             enable_fallback=self.strategy not in ('bm25', 'regex'),
         )
+
+    def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
+        # `before_model_request` records tools a deferred capability load revealed, and a realtime
+        # session refuses deferred capabilities that contribute tools when it opens.
+        # Measured against this class, so a subclass that adds its own hooks still warns.
+        return self._realtime_uncalled_hooks_overriding(ToolSearch)
 
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext

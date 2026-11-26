@@ -1,12 +1,12 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import overload
+from typing import TYPE_CHECKING, overload
 
-import httpx
 from typing_extensions import deprecated
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._http import AsyncHTTPClient, legacy_httpx
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
@@ -18,6 +18,9 @@ from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 from pydantic_ai.providers import Provider
+
+if TYPE_CHECKING:
+    import httpx
 
 try:
     from openai import AsyncOpenAI
@@ -46,7 +49,7 @@ class GitHubProvider(Provider[AsyncOpenAI]):
 
     @property
     def base_url(self) -> str:
-        return 'https://models.github.ai/inference'
+        return self._base_url
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -79,13 +82,13 @@ class GitHubProvider(Provider[AsyncOpenAI]):
         return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)
 
     @overload
-    def __init__(self) -> None: ...
+    def __init__(self, *, base_url: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str) -> None: ...
+    def __init__(self, *, api_key: str, base_url: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
+    def __init__(self, *, api_key: str, base_url: str | None = None, http_client: httpx.AsyncClient) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -94,6 +97,7 @@ class GitHubProvider(Provider[AsyncOpenAI]):
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
@@ -102,7 +106,8 @@ class GitHubProvider(Provider[AsyncOpenAI]):
         Args:
             api_key: The GitHub token to use for authentication. If not provided, the `GITHUB_API_KEY`
                 environment variable will be used if available.
-            openai_client: An existing `AsyncOpenAI` client to use. If provided, `api_key` and `http_client` must be `None`.
+            base_url: The base URL to use for requests, if not provided, `https://models.github.ai/inference` will be used.
+            openai_client: An existing `AsyncOpenAI` client to use. If provided, `api_key`, `base_url` and `http_client` must be `None`.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
         api_key = api_key or os.getenv('GITHUB_API_KEY')
@@ -112,15 +117,34 @@ class GitHubProvider(Provider[AsyncOpenAI]):
                 ' to use the GitHub Models provider.'
             )
 
+        assert openai_client is None or base_url is None, 'Cannot provide both `openai_client` and `base_url`'
+        self._base_url = base_url or 'https://models.github.ai/inference'
         if openai_client is not None:
             self._client = openai_client
         elif http_client is not None:
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(
+                base_url=self.base_url,
+                api_key=api_key,
+                http_client=http_client,  # pyright: ignore[reportArgumentType]
+            )
         else:
-            http_client = create_async_http_client()
+            # This provider is not migrated to HTTPX2, and `openai` no longer depends on legacy HTTPX,
+            # so the only client it can build may be unavailable at runtime.
+            try:
+                http_client = create_async_http_client()
+            except ImportError as _import_error:
+                raise ImportError(
+                    'Please install `httpx` to use the GitHub Models provider, '
+                    'you can use the `retries` optional group — `pip install "pydantic-ai-slim[retries]"`'
+                ) from _import_error
             self._own_http_client = http_client
             self._http_client_factory = create_async_http_client
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(
+                base_url=self.base_url,
+                api_key=api_key,
+                http_client=http_client,  # pyright: ignore[reportArgumentType]
+            )
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
+    def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
+        assert legacy_httpx is not None and isinstance(http_client, legacy_httpx.AsyncClient)
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]

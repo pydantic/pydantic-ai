@@ -5,13 +5,21 @@ import inspect
 import warnings
 from collections.abc import Awaitable, Callable, Generator, Sequence
 from contextlib import contextmanager, suppress
+from datetime import timedelta
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import anyio
 import logfire_api
+from pydantic import TypeAdapter
 from typing_extensions import ParamSpec, TypeIs
+
+# Optional, not a dependency: it used to arrive only transitively, and AnyIO dropped it in 4.12.
+try:
+    import sniffio as _sniffio
+except ModuleNotFoundError:  # pragma: no cover - exercised by the clean-import test in a subprocess
+    _sniffio = None
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-evals')
 logfire_api.add_non_user_code_prefix(Path(__file__).parent.absolute())
@@ -46,6 +54,19 @@ def is_set(t_or_unset: T | Unset) -> TypeIs[T]:
     return t_or_unset is not UNSET
 
 
+_DURATION_ADAPTER = TypeAdapter(float | timedelta)
+
+
+def decode_duration(value: timedelta | float | str) -> timedelta:
+    """Decode a `timedelta`, a number of seconds, or an ISO-8601 duration string like `'PT5S'`.
+
+    Serialized datasets store `timedelta` durations as ISO-8601 strings, and spec loading passes them through
+    unvalidated, so duration fields can hold any of these forms.
+    """
+    decoded = _DURATION_ADAPTER.validate_python(value)
+    return decoded if isinstance(decoded, timedelta) else timedelta(seconds=decoded)
+
+
 def get_unwrapped_function_name(func: Callable[..., Any]) -> str:
     """Get the name of a function, unwrapping partials and decorators.
 
@@ -61,9 +82,10 @@ def get_unwrapped_function_name(func: Callable[..., Any]) -> str:
 
     def _unwrap(f: Callable[..., Any]) -> Callable[..., Any]:
         """Unwraps f, also unwrapping partials, for the sake of getting f's name."""
+        f = inspect.unwrap(f)
         if isinstance(f, partial):
             return _unwrap(f.func)
-        return inspect.unwrap(f)
+        return f
 
     try:
         return _unwrap(func).__name__
@@ -75,13 +97,35 @@ def get_unwrapped_function_name(func: Callable[..., Any]) -> str:
             raise e
 
 
+def get_function_serialization_name(func: Callable[..., Any]) -> str | None:
+    """Get the name that identifies a function in serialized data, like a dataset file.
+
+    Returns:
+        The function's `__name__`, or `None` if it doesn't have one that identifies it: a lambda has the name
+        `<lambda>` and a `functools.partial` or other callable object has no name, while a bound method's name
+        doesn't identify the instance it's bound to, just like the name of the function a partial wraps doesn't
+        capture its bound arguments.
+    """
+    # Python and built-in bound methods both have a `__self__`, while built-in functions are bound to their module.
+    bound_to = getattr(func, '__self__', None)
+    if bound_to is not None and not inspect.ismodule(bound_to):
+        return None
+    name = getattr(func, '__name__', None)
+    return name if isinstance(name, str) and name.isidentifier() else None
+
+
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
 
 
 def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
-        event_loop = asyncio.get_event_loop()
+        with warnings.catch_warnings():
+            # With no current loop in the main thread, Python 3.12 and 3.13 create one and warn that this will
+            # change; 3.14 raises `RuntimeError` instead, handled below. Either way, the loop handling here stays
+            # the same.
+            warnings.simplefilter('ignore', DeprecationWarning)
+            event_loop = asyncio.get_event_loop()
     except RuntimeError:
         event_loop = None
 
@@ -91,14 +135,36 @@ def get_event_loop() -> asyncio.AbstractEventLoop:
     return event_loop
 
 
+def running_on_asyncio() -> bool:
+    """Whether the caller runs on asyncio rather than Trio.
+
+    Inspired by AnyIO's private `current_async_library`. With `sniffio` installed, ask it: Trio records itself
+    there, so the answer holds even for Trio guest mode on an asyncio loop. Without it, Trio cannot be running,
+    because Trio depends on `sniffio`, so a running asyncio loop means asyncio. If Trio ever drops `sniffio`,
+    only guest mode would be misread, as AnyIO would misread it too.
+    """
+    if _sniffio is None:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        return True
+    try:
+        return _sniffio.current_async_library() == 'asyncio'
+    except _sniffio.AsyncLibraryNotFoundError:
+        return False
+
+
 def run_until_complete(coro: Awaitable[T]) -> T:
     """Run `coro` to completion on the event loop, cleaning up after itself if interrupted.
 
     If the caller interrupts `loop.run_until_complete()` (e.g. by pressing Ctrl-C, raising
     `KeyboardInterrupt`) while `coro` is suspended, asyncio leaves its task pending with its
     `async with`/`finally` blocks un-run, leaking the task and any open connections. We cancel
-    *our own* task and drive its cleanup to completion before re-raising, without touching any
-    other tasks on the (caller-owned) loop.
+    the task driving `coro` and drive its cleanup to completion before re-raising, without touching
+    any other tasks on the (caller-owned) loop. An `asyncio.Task` or `asyncio.Future` passed in is
+    that task, so a drive that fails before it completes, such as one attempted inside an already
+    running event loop, cancels it.
     """
     loop = get_event_loop()
     task = asyncio.ensure_future(coro, loop=loop)
@@ -151,7 +217,8 @@ else:
     @contextmanager
     def logfire_span(*args: Any, **kwargs: Any) -> Generator[logfire_api.LogfireSpan, None, None]:
         """Create a Logfire span without warning if logfire is not configured."""
-        # TODO: Remove once Logfire has the ability to suppress this warning from non-user code
+        # TODO: Remove once Logfire has the ability to suppress this warning from non-user code.
+        # Closest: https://github.com/pydantic/logfire/issues/1331 (does not cover library-code suppress).
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore', category=LogfireNotConfiguredWarning)
             with _logfire.span(*args, **kwargs) as span:

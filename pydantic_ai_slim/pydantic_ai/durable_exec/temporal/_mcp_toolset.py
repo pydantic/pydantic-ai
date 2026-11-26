@@ -10,6 +10,7 @@ from pydantic_ai import ToolsetTool
 from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
     DurableMCPToolset,
+    Instructions,
     ToolConfig,
     unwrap_tool_call_result,
     wrap_tool_call_result,
@@ -87,10 +88,11 @@ def temporalize_mcp_toolset(
 
     def resolve_tool_config(tool: ToolsetTool[Any] | None, name: str) -> ToolConfig:
         config = resolve_tool_activity_config(tool, name, tool_activity_config)
-        # The constructor-dict path raises above, so tool metadata is the only route that reaches here.
+        # The constructor-dict path raises above, so only the tool's `'temporal'` metadata or `durable=False`
+        # reaches here.
         if config is False:  # pragma: no cover
             raise UserError(
-                f'Temporal activity config for MCP tool {name!r} has been explicitly set to `False` (activity disabled), '
+                f'Temporal activity config for MCP tool {name!r} has been explicitly set to `False` (activity disabled by `durable=False` or its Temporal metadata), '
                 'but MCP tools require the use of IO and so cannot be run outside of an activity.'
             )
         return config
@@ -103,9 +105,7 @@ def temporalize_mcp_toolset(
             **config,
         )
 
-    async def get_instructions_operation(
-        ctx: RunContext[AgentDepsT],
-    ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
+    async def get_instructions_operation(ctx: RunContext[AgentDepsT]) -> Instructions:
         config: ActivityConfig = {'summary': f'get instructions: {toolset.id}', **activity_config}
         return await execute_activity(
             activity=get_instructions_activity_def,
@@ -116,6 +116,7 @@ def temporalize_mcp_toolset(
     async def call_tool_operation(
         name: str,
         tool_args: dict[str, Any],
+        *,
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
         config: Mapping[str, Any],

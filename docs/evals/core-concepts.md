@@ -1,3 +1,7 @@
+---
+description: "Learn the core concepts of Pydantic Evals, including datasets, cases, experiments, evaluators and evaluation reports, and how they work together."
+---
+
 # Core Concepts
 
 This page explains the key concepts in Pydantic Evals and how they work together.
@@ -238,7 +242,7 @@ Case(
 )
 ```
 
-If no `expected_output` is provided, evaluators that require it (like `EqualsExpected`) will skip that case.
+If no `expected_output` is provided, evaluators that require it (like `EqualsExpected`) will skip that case. `None` is how "not provided" is spelled, so a case written as `expected_output=None` is skipped too: to assert that the task returns `None`, use [`Equals(value=None)`][pydantic_evals.evaluators.Equals] instead.
 
 #### Metadata
 Arbitrary data that evaluators can access via [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext]:
@@ -421,10 +425,11 @@ The [`EvaluationReport`][pydantic_evals.reporting.EvaluationReport] contains:
 - `analyses`: List of experiment-wide analyses from [report evaluators](evaluators/report-evaluators.md) (confusion matrices, PR curves, scalars, tables)
 - `trace_id`: OpenTelemetry trace ID (optional)
 - `span_id`: OpenTelemetry span ID (optional)
+- `dataset_name`: Name of the dataset that produced the report (optional)
 
 ### ReportCase
 
-Each successfulcase result contains:
+Each successful case result contains:
 
 **Case data:**
 

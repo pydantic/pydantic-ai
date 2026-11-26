@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
 import pytest
 from pydantic import BaseModel, TypeAdapter
 
+from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -39,7 +42,6 @@ with try_import() as logfire_import_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'),
-    pytest.mark.anyio,
 ]
 
 needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed')
@@ -353,6 +355,119 @@ def test_precision_recall_evaluator_empty():
     scalar_result = results[1]
     assert isinstance(scalar_result, ScalarResult)
     assert math.isnan(scalar_result.value)
+
+
+@pytest.mark.parametrize(
+    'rows,expected',
+    [
+        pytest.param(
+            [(0.5, True), (0.5, False), (0.25, True), (0.25, False)],
+            snapshot(
+                {
+                    'pr_thresholds': ['0.5', '0.5', '0.25'],
+                    'pr_points': [(1.0, 0.0), (0.5, 0.5), (0.5, 1.0)],
+                    'pr_auc': 0.625,
+                    'roc_points': [(0.0, 0.0), (0.5, 0.5), (1.0, 1.0)],
+                    'roc_auc': 0.5,
+                }
+            ),
+            id='ties',
+        ),
+        pytest.param(
+            [(-0.0, False), (0.0, True)],
+            snapshot(
+                {
+                    'pr_thresholds': ['-0.0', '-0.0'],
+                    'pr_points': [(1.0, 0.0), (0.5, 1.0)],
+                    'pr_auc': 0.75,
+                    'roc_points': [(0.0, 0.0), (1.0, 1.0)],
+                    'roc_auc': 0.5,
+                }
+            ),
+            id='negative-zero-first',
+        ),
+        pytest.param(
+            [(0.0, True), (-0.0, False)],
+            snapshot(
+                {
+                    'pr_thresholds': ['0.0', '0.0'],
+                    'pr_points': [(1.0, 0.0), (0.5, 1.0)],
+                    'pr_auc': 0.75,
+                    'roc_points': [(0.0, 0.0), (1.0, 1.0)],
+                    'roc_auc': 0.5,
+                }
+            ),
+            id='positive-zero-first',
+        ),
+        pytest.param(
+            [(float('inf'), True), (0.0, False), (float('-inf'), True)],
+            snapshot(
+                {
+                    'pr_thresholds': ['inf', 'inf', '0.0', '-inf'],
+                    'pr_points': [(1.0, 0.0), (1.0, 0.5), (0.5, 0.5), (0.6666666666666666, 1.0)],
+                    'pr_auc': 0.7916666666666666,
+                    'roc_points': [(0.0, 0.0), (0.0, 0.5), (1.0, 0.5), (1.0, 1.0)],
+                    'roc_auc': 0.5,
+                }
+            ),
+            id='infinities',
+        ),
+    ],
+)
+def test_curve_threshold_counting(rows: list[tuple[float, bool]], expected: dict[str, object]) -> None:
+    report = _make_report(
+        [
+            _make_report_case(str(index), expected_output=positive, metrics={'score': score})
+            for index, (score, positive) in enumerate(rows)
+        ]
+    )
+    ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
+    pr, pr_scalar = PrecisionRecallEvaluator(
+        score_key='score', score_from='metrics', positive_from='expected_output'
+    ).evaluate(ctx)
+    roc, roc_scalar = ROCAUCEvaluator(
+        score_key='score', score_from='metrics', positive_from='expected_output'
+    ).evaluate(ctx)
+    assert isinstance(pr, PrecisionRecall) and isinstance(roc, LinePlot)
+    assert isinstance(pr_scalar, ScalarResult) and isinstance(roc_scalar, ScalarResult)
+    assert {
+        'pr_thresholds': [repr(point.threshold) for point in pr.curves[0].points],
+        'pr_points': [(point.precision, point.recall) for point in pr.curves[0].points],
+        'pr_auc': pr_scalar.value,
+        'roc_points': [(point.x, point.y) for point in roc.curves[0].points],
+        'roc_auc': roc_scalar.value,
+    } == expected
+
+
+def test_curve_threshold_counting_with_nan() -> None:
+    nan = float('nan')
+    report = _make_report(
+        [
+            _make_report_case(str(index), expected_output=positive, metrics={'score': score})
+            for index, (score, positive) in enumerate([(nan, True), (0.5, True), (0.25, False), (nan, False)])
+        ]
+    )
+    ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
+    pr, _ = PrecisionRecallEvaluator(score_key='score', score_from='metrics', positive_from='expected_output').evaluate(
+        ctx
+    )
+    roc, _ = ROCAUCEvaluator(score_key='score', score_from='metrics', positive_from='expected_output').evaluate(ctx)
+    assert isinstance(pr, PrecisionRecall) and isinstance(roc, LinePlot)
+    assert {repr(point.threshold): (point.precision, point.recall) for point in pr.curves[0].points[1:]} == snapshot(
+        {
+            'nan': (1.0, 0.0),
+            '0.5': (1.0, 0.5),
+            '0.25': (0.5, 0.5),
+        }
+    )
+    assert [(point.x, point.y) for point in roc.curves[0].points] == snapshot(
+        [
+            (0.0, 0.0),
+            (0.0, 0.0),
+            (0.0, 0.5),
+            (0.5, 0.5),
+        ]
+    )
 
 
 def test_precision_recall_assertions_requires_key():
@@ -782,6 +897,41 @@ async def test_async_report_evaluator():
 
     assert isinstance(result, ScalarResult)
     assert result.value == 42
+
+
+def _future_analysis() -> Awaitable[ReportAnalysis]:
+    future: asyncio.Future[ReportAnalysis] = asyncio.get_running_loop().create_future()
+    future.set_result(ScalarResult(title='Awaited', value=42))
+    return future
+
+
+def _task_analysis() -> Awaitable[ReportAnalysis]:
+    return asyncio.create_task(asyncio.sleep(0, result=ScalarResult(title='Awaited', value=42)))
+
+
+@pytest.mark.parametrize('make_awaitable', [_future_analysis, _task_analysis], ids=['future', 'task'])
+async def test_dataset_evaluate_awaits_report_evaluator_awaitable(
+    make_awaitable: Callable[[], Awaitable[ReportAnalysis]],
+):
+    """A sync `evaluate` returning a Future or Task has its result resolved into the report's analyses."""
+
+    @dataclass
+    class AwaitableEvaluator(ReportEvaluator):
+        def evaluate(self, ctx: ReportEvaluatorContext) -> Awaitable[ReportAnalysis]:
+            return make_awaitable()
+
+    dataset = Dataset[TaskInput, str, None](
+        name='test',
+        cases=[Case(name='c1', inputs=TaskInput(text='a'))],
+        report_evaluators=[AwaitableEvaluator()],
+    )
+
+    async def task(inputs: TaskInput) -> str:
+        return 'x'
+
+    report = await dataset.evaluate(task, progress=False)
+
+    assert report.analyses == snapshot([ScalarResult(title='Awaited', value=42)])
 
 
 def test_report_evaluator_build_serialization_arguments_with_default_factory():

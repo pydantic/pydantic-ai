@@ -1,0 +1,205 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "465"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.1-flash-lite
+        stream: false
+        messages:
+        - role: user
+          content: >-
+            What's the weather in Taipei and Kaohsiung? Call get_weather once for each city
+            in parallel, then summarize.
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_weather
+            description: Get today's weather for a city.
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            strict: true
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      cache-control:
+      - private
+      content-type:
+      - application/json
+      expires:
+      - Wed, 14 Oct 2026 01:07:40 GMT
+      p3p:
+      - CP="This is not a P3P policy! See g.co/p3phelp for more info."
+      server-timing:
+      - gfet4t7; dur=984
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        choices:
+        - finish_reason: tool_calls
+          index: 0
+          message:
+            role: assistant
+            tool_calls:
+            - extra_content:
+                google:
+                  thought_signature: >-
+                    EnMKcQFpFH0T2xhbu87FEGfDtWC/Z4HAeqm5FM+76vnT/PS/OUls8eE5jVvnmzyImIuD4FSew2iZY3DMxigAJ7X9KCFOrctT0ZA//+9JG2RqeBl3ik7S6VvdpbCpoBvsSnE52/Jx5i1JM64vRRdpRBMkm8nF
+              function:
+                arguments: "{\"city\":\"Taipei\"}"
+                name: get_weather
+              id: call_437438
+              type: function
+            - function:
+                arguments: "{\"city\":\"Kaohsiung\"}"
+                name: get_weather
+              id: call_437439
+              type: function
+        created: 1791940060
+        id: 3NXOarb-CoDcqtsP8tWwqQ4
+        model: gemini-3.1-flash-lite
+        object: chat.completion
+        usage:
+          completion_tokens: 36
+          prompt_tokens: 74
+          total_tokens: 110
+  recorded_at: 2026-10-14T01:07:40.977703+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1085"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.1-flash-lite
+        stream: false
+        messages:
+        - role: user
+          content: >-
+            What's the weather in Taipei and Kaohsiung? Call get_weather once for each city
+            in parallel, then summarize.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_437438
+            type: function
+            function:
+              name: get_weather
+              arguments: "{\"city\":\"Taipei\"}"
+            extra_content:
+              google:
+                thought_signature: >-
+                  EnMKcQFpFH0T2xhbu87FEGfDtWC/Z4HAeqm5FM+76vnT/PS/OUls8eE5jVvnmzyImIuD4FSew2iZY3DMxigAJ7X9KCFOrctT0ZA//+9JG2RqeBl3ik7S6VvdpbCpoBvsSnE52/Jx5i1JM64vRRdpRBMkm8nF
+          - id: call_437439
+            type: function
+            function:
+              name: get_weather
+              arguments: "{\"city\":\"Kaohsiung\"}"
+        - role: tool
+          tool_call_id: call_437438
+          content: sunny, 28°C
+        - role: tool
+          tool_call_id: call_437439
+          content: sunny, 28°C
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_weather
+            description: Get today's weather for a city.
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            strict: true
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      cache-control:
+      - private
+      content-type:
+      - application/json
+      expires:
+      - Wed, 14 Oct 2026 01:07:41 GMT
+      p3p:
+      - CP="This is not a P3P policy! See g.co/p3phelp for more info."
+      server-timing:
+      - gfet4t7; dur=768
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        choices:
+        - finish_reason: stop
+          index: 0
+          message:
+            content: >-
+              The weather is currently sunny in both Taipei and Kaohsiung, with a temperature
+              of 28°C in both cities.
+            extra_content:
+              google:
+                thought_signature: >-
+                  EnMKcQFpFH0TNBOdc4qofsrx78maG2UPPeoD0xz7y2ye0IzxiZk4IMotxqJ0CpxZjP443aF/pP4V/JsRbHkaNEyP9M+UudDXDJOOG5a/N9NO3Q0BzeEErx2ykS7G6rgTAxtxJnzjD0wpGukgz5zLktBRhCkr
+            role: assistant
+        created: 1791940061
+        id: 3dXOaq7nDYuGqtsPgcTfqQ4
+        model: gemini-3.1-flash-lite
+        object: chat.completion
+        usage:
+          completion_tokens: 27
+          prompt_tokens: 149
+          total_tokens: 176
+  recorded_at: 2026-10-14T01:07:41.844280+00:00

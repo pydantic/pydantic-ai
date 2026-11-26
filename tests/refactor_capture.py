@@ -1,0 +1,1762 @@
+"""Record what streamed model responses, UI adapters and realtime connections emit, the requests tests send, the tool
+hooks their runs call, and the exceptions they catch and warnings they raise, per test node, to prove a refactor keeps
+them.
+
+The capture is off unless pytest loads this module as a plugin, `-p tests.refactor_capture --refactor-capture=DIR`, so
+other runs never import it. To compare a base commit with the working tree, run this from the repository root, over
+one or two test nodes that reach each changed line rather than whole test files:
+
+    uv run python -m tests.refactor_capture "$(git merge-base HEAD upstream/main)" <test nodes>
+
+It extracts the base commit's copy of every workspace package with `git archive`, into a temporary directory it reaches
+through no symlink, runs pytest over the nodes once with those sources ahead of the installed ones on `PYTHONPATH` and
+once without, each into its own new capture directory, then compares the two. The tests, this plugin and the
+environment come from the working tree both times, so the library code is the only difference.
+
+Each stream is one JSON line of kind `stream`: the events its `__aiter__` hands the consumer, `PartEndEvent`s and
+`FinalResultEvent`s included, the error iteration raised if any, and the response `get()` builds once the test ends.
+The capture wraps `__aiter__` on `StreamedResponse` and on every subclass that overrides it, whether the subclass is
+defined before the capture starts or after; one that overrides `__init_subclass__` without calling `super()`, or
+assigns `__aiter__` once it's defined, escapes it. A stream whose `__aiter__` iterates other streams, like the
+continuation composite in `models/_continuation.py`, is recorded once itself and once for each stream it iterates.
+When a capture starts, it runs an agent over a streamed canary response and stops the run if that stream wasn't
+recorded, so a consumer that stops iterating through `__aiter__` fails loudly instead of recording nothing.
+
+Each request is one JSON line of kind `request`. A request an `httpx` or `httpx2` `AsyncClient` sends is recorded from
+`send`, once per attempt except for Prefect's client, below, and one a botocore client sends, like Bedrock's, from
+`Endpoint.make_request`, before it's signed and after a model's extra headers are added, once per call: botocore
+retries a call below `make_request`, so its retries aren't recorded. Either is recorded with its method and URL as the
+target, its headers and its body, parsed when it's JSON. Two kinds of header are left out: credentials
+(`authorization`, `proxy-authorization`, `x-api-key`, `api-key`, `x-goog-api-key`, `xi-api-key`, `x-amz-security-token`,
+`cookie`), so a capture never writes a key to disk, and trace context (`traceparent`, `tracestate`, `baggage`), whose
+ids are random per run. Prefect's client, which marks each request it sends with its API version, retries a request by
+sending it again when its test server is busy, so each request it sends is recorded once. Its checks of the server's
+version and fetches of a CSRF token carry nothing from the code under test and are sent wherever the load puts them, so
+they aren't recorded. Neither are the log batches its background worker sends during whichever test is running: no node
+can claim them, so the task run names and failure messages they hold go uncompared. A test that hands a model one of the
+SDK client mocks `SDK_MOCKS` lists sends no HTTP request, so each call the model makes on a listed method is recorded
+instead, with the method as the target and the arguments as passed, SDK sentinels for an omitted argument included. When
+a capture starts, it runs an agent over a Groq model on `httpx`, an Anthropic model on `httpx2` and a Bedrock model on
+botocore, and stops the run if any of those requests wasn't recorded, so an SDK that moves to an HTTP client the capture
+doesn't wrap fails loudly, as Anthropic's did moving from `httpx` to `httpx2`. Once collection has imported the tests, a
+listed mock method that's gone stops the run too. Client stand-ins a test hands a model, like the stub clients Bedrock's
+tests define, and client methods a test patches by hand, like the `generate_content` Google's tests patch on a model's
+client, escape it.
+
+A test that drives `FunctionModel` or `TestModel` sends no request either, since the model answers in process, so each
+call on a method `IN_PROCESS_MODELS` lists is recorded as a request too, with the method as the target and the
+messages, model settings and model request parameters the model is handed. A model that wraps another, like
+`FallbackModel`, is recorded through the call it makes on the model it wraps; a subclass that overrides a listed method
+without calling `super()` escapes it. When a capture starts, it runs an agent over each of those models, streamed and
+not, and stops the run if a call on a listed method wasn't recorded, so an agent that stops calling a model through
+them fails loudly.
+
+What the UI adapters produce is recorded as lines of kind `ui`, each with the target that produced it. A
+`UIEventStream.transform_stream` call is recorded under the class of the event stream it's called on, Vercel AI's,
+AG-UI's or a test's own, with the events it hands the consumer and the error iteration raised if any. The capture wraps
+`transform_stream` on `UIEventStream` and on every subclass that overrides it, whether the subclass is defined before
+the capture starts or after, and closes the stream it wraps when the consumer closes the recording, so the stream's
+cleanup runs when it would without the capture. An override that calls `super()` is recorded once itself and once for
+the call it makes. A call on a method `UI_MESSAGE_METHODS` lists, wrapped the same way on `UIAdapter` and its
+subclasses, is recorded with what it returns or the error it raises, and with the fields equality skips on each
+dataclass in what it returns, like `FileUrl._media_type` and `_identifier`: serializing a file shows the media type and
+identifier it resolves to, not whether they were set. Each request an app `create_api_app` built answers, like the one
+`create_web_app` mounts under `/api` and a test drives with Starlette's `TestClient`, is recorded with its method and
+path as the target and the status, headers and body of the response, the body parsed when it's JSON.
+
+What realtime connections do is recorded as lines of kind `realtime`, in the order it happens, so a send a connection
+makes while it handles a frame comes before the frame. Each frame `RealtimeConnection.frames` yields is one line, under
+the connection's own class, with its events in order, each named by its class, lifecycle events and `StaleEvent`s
+included: iterating the connection drops the lifecycle events and unwraps the stale ones. So is the error iteration
+raised, if any. The capture wraps `frames` and `send` on `RealtimeConnection` and on every subclass that overrides them,
+whether the subclass is defined before the capture starts or after, and closes the generator `frames` returned when the
+consumer closes the recording, so the connection settles what's open when it would without the capture. A `send` call is
+recorded with its input, named by its class, and the lifecycle events it returns or the error it raises. A frame
+reaches the provider through a test double: a cassette's `ReplayWebSocket`, or a test's own socket or Google
+`AsyncSession`. Each call on a method `REALTIME_SEND_METHODS` lists is recorded, under the double's class, with its
+arguments, a frame parsed when it's JSON, and the error it raises, if any, where a class in a package
+`REALTIME_DOUBLE_PACKAGES` lists defines it, whether before the capture starts or after. That records each frame a
+connection sends, its handshake included, and each call on a fake `AsyncSession`; a real one sends its frames on its
+socket. A call that an override or a double makes on another while it's recorded, through `super()` or to a socket it
+wraps, isn't recorded again; a `frames` override that calls `super()` is recorded once itself and once for the call it
+makes.
+
+What a realtime session does above its connection is recorded as lines of kind `session`, in the order it happens.
+Each call on a method `SESSION_CORE_METHODS` lists is one line, under the class of the `SessionCore` it's called on,
+with its arguments and its result or the error it raises: each input the session applies, the effects `take_effects`
+hands back, and what the session reads. A call the core makes on itself isn't recorded again. Each iteration of a
+`RealtimeSession` is one line, with the events `__aiter__` yields, each named by its class, and the error iteration
+raised, if any. The recording is an async generator, as `__aiter__` is, and closes the one it wraps when the consumer
+closes it. Each view `stream_audio` or `stream_transcripts` returns is one line, with the arguments it was opened with
+and what it yields, and so is the error each public session call raises, unless another public call on the same
+session, in the same task, made it. Once the first `close` call on a session ends, unless it was cancelled, what the
+session holds is one line: `all_messages()`, `new_messages()`, `usage`, `played_audio_bytes` or the error reading it
+raises, and the counters `SESSION_DROP_COUNTERS` lists. Each `infer_realtime_model` call is one line, with its
+arguments and the type, `model_name`, `system` and `base_url` of the model it returns, or the error it raises. A call
+on a method `LIFECYCLE_METHODS` lists is recorded as a core's is where a test calls it directly; what one a
+connection's `frames` or `send` makes returns is in that connection's `realtime` lines. The capture wraps these where
+`RealtimeSession`, `SessionCore`, `InferredLifecycle` or a subclass defines them, whether the subclass is defined
+before the capture starts or after. Each session, core and lifecycle a test uses is numbered in its lines, per kind, in
+the order the test first used it.
+
+An `MCPSamplingModel` sends its requests through an MCP session, so each call on its `request` is recorded as a request
+too, with the messages, model settings and model request parameters it's handed and the response it returns or the
+error it raises. Where a `unittest.mock` mock stands in for the session's `create_message`, each call the mock gets is
+a request after it, with the arguments the mock kept. A real session's calls aren't: what one sends shows where its
+peer handles it, like the sampling model an `MCPToolset` is given.
+
+Each call the tool manager makes on a hook `TOOL_HOOKS` lists is one line of kind `hook`, under the class of the
+capability it's called on, with the arguments it's handed, an exception among them as its class and message, and the
+result it returns or the error it raises. The run context and a wrap hook's handler are left out. The capture wraps the
+hooks where `AbstractCapability` or a subclass defines them, whether the subclass is defined before the capture starts
+or after. A call on a hook while a recorded call on the same hook runs in the same agent run, like the one a combined
+capability makes on each capability it combines, isn't recorded again; one an agent run inside a hook or a tool makes
+is. The calls a run step makes run concurrently, and a sync tool on a worker thread, so the hook lines of each step's
+tool calls are put in the order the calls started, each call's own in the order they were made: how one call's hooks
+interleave with another's isn't compared.
+
+Each exception a `pytest.raises` or `pytest.RaisesGroup` block catches is one line of kind `exception`, with its class,
+message and notes, whether it suppresses its context, and, described alike, the exceptions it groups, its `__cause__`
+and its `__context__`. Each warning the filters let through while a test runs is one line of kind `warning`, whether
+it's shown or recorded, by `pytest.warns` or `warnings.catch_warnings`, with its category, its message and the frame it
+reports: that frame's module and function, and its line unless a workspace package holds it, since a refactor moves the
+lines of the code it edits. One the filters raise as an error is recorded only as an exception a block catches, and one
+they ignore isn't. Neither is a `ResourceWarning`, which a finalizer raises whenever garbage collection reaches it, so
+in whichever test the allocations made put it. A recorded hook or `MCPSamplingModel.request` call is one more frame on
+the stack, so a warning raised inside one with a `stacklevel` that reaches past it would report the capture's frame.
+
+Each test starts with `random` seeded from its node id, so a test that draws from it draws the same values on both
+sides, and both sides run with one `PYTHONHASHSEED`, so a set, like the tool names in model request parameters, is
+recorded in the same order. Lines, and the id of each test node run, are written per `pytest-xdist` worker when each
+test ends. Generated tool call ids, UUIDs (version 4 ones without dashes too), the trace and span ids of a W3C trace
+context, like the `traceparent` an MCP client or Prefect puts in a request body, object addresses (the decimal one a
+`unittest.mock` repr gives, and the hex one anyio names a cancel scope by, too), timestamps within a day of the capture
+(ones in the basic format of a SigV4 `x-amz-date` header, an AG-UI event's milliseconds since the epoch, a naive
+datetime's `str()`, like the local time the `clai` agent's system prompt states, and ones in JSON a value holds as text,
+like an AG-UI message's `encryptedValue` or a web API response's event stream, too), history digests (which hash those
+timestamps), attempt durations, local server ports, multipart boundaries, pytest's numbered temporary directories, the
+random suffix of the key a capability without an `id` gets, `PromptInjectionDefender`'s measured `latency_ms`,
+`Planning`'s step ids where its plan and its reply to an added step render them, the code hash a Prefect `task_key` ends
+in, which hashes the file the task function was compiled from, and the `custom_id` of each batch request
+`InMemoryBatchModel` encodes, which hashes a random token, are normalized, so two runs of the same code compare equal. A
+step id a model echoes back isn't, in a tool call's arguments or where `Planning` renders it from them, as a subtask's
+parent or a dependency. Cassette playback hands a response's headers back in a different order each run, so the
+`HTTPHeaders` botocore copies into an error response's `ResponseMetadata` are sorted where an error message renders
+them. So are the native tools the error for an unsupported one lists as supported, a set of classes, which hash by
+identity.
+
+The comparison lists the test nodes whose records differ or that only one capture has, and exits non-zero if there are
+any. It refuses two captures that imported `pydantic_ai` from the same file, since the base run then didn't load the
+base commit, and a capture that recorded nothing, since it proves nothing. It also counts the nodes whose streams reach
+each module that defines a `StreamedResponse` subclass, the nodes that send to each request target and the nodes with a
+UI, realtime, session or hook record from each UI, realtime, session or hook target, and names the selected nodes that
+recorded no request, realtime or session record, so the capture's reach over the changed code shows. It first names the
+nodes that failed on each side: a test that fails records only what it did before it failed, so matching records don't
+prove it. A test that waits on a fixed timeout, like the five seconds an MCP server started from `--mcp-config` has to
+initialize, can fail on both sides on a loaded machine; run it again once the load is down.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import builtins
+import dataclasses
+import functools
+import importlib.util
+import inspect
+import io
+import json
+import os
+import random
+import re
+import subprocess
+import sys
+import tarfile
+import tempfile
+import warnings
+import weakref
+from collections import Counter, defaultdict
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Generator,
+    Iterable,
+    Mapping,
+    Set,
+)
+from contextlib import contextmanager, suppress
+from contextvars import ContextVar
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import TracebackType
+from unittest.mock import NonCallableMock
+
+import httpx
+import httpx2
+import pytest
+from botocore.awsrequest import AWSPreparedRequest, AWSResponse, HTTPHeaders
+from botocore.endpoint import Endpoint
+from pydantic_core import to_json
+from starlette.applications import Starlette
+from starlette.types import Message, Receive, Scope, Send
+from typing_extensions import TypedDict, TypeVar
+from urllib3 import HTTPResponse
+
+import pydantic_ai
+import pydantic_ai.realtime
+import pydantic_ai.realtime.model as realtime_model
+import pydantic_ai.ui._web.api as web_api
+import pydantic_ai.ui._web.app as web_app
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.messages import ModelMessage, ModelResponse, ModelResponseStreamEvent, TextPart, ToolCallPart
+from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, override_allow_model_requests
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.bedrock import BedrockConverseModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.groq import GroqModel
+from pydantic_ai.models.mcp_sampling import MCPSamplingModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
+from pydantic_ai.providers.bedrock import BedrockProvider
+from pydantic_ai.providers.groq import GroqProvider
+from pydantic_ai.realtime import RealtimeModel, RealtimeSession
+from pydantic_ai.realtime._core import SessionCore
+from pydantic_ai.realtime.codec import RealtimeConnection
+from pydantic_ai.realtime.lifecycle import InferredLifecycle, RealtimeFrame, StaleEvent
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.ui import UIAdapter, UIEventStream
+
+REPO = Path(__file__).resolve().parent.parent
+CAPTURE_OPTION = '--refactor-capture'
+SOURCE_FILE = 'source.json'
+NODES_SUFFIX = '.nodes'
+FAILED_SUFFIX = '.failed'
+# Request headers left out of a capture; the module docstring says why.
+UNRECORDED_HEADERS = frozenset(
+    {
+        'authorization',
+        'proxy-authorization',
+        'x-api-key',
+        'api-key',
+        'x-goog-api-key',
+        'xi-api-key',
+        'x-amz-security-token',
+        'cookie',
+        'traceparent',
+        'tracestate',
+        'baggage',
+    }
+)
+GENERATED_VALUES = [
+    # A W3C trace context, like the `traceparent` an MCP client or Prefect puts in a request body. It comes before the
+    # UUID patterns, which a trace ID can match.
+    (
+        re.compile(r'(?<![0-9a-f])([0-9a-f]{2})-[0-9a-f]{32}-[0-9a-f]{16}-([0-9a-f]{2})(?![0-9a-f])'),
+        r'\1-TRACE_ID-SPAN_ID-\2',
+    ),
+    (re.compile(r' at 0x[0-9a-f]+'), ' at 0x?'),
+    # anyio names a cancel scope by its address, in hex without `0x`.
+    (re.compile(r'(Cancelled via cancel scope )[0-9a-f]+'), r'\1ADDRESS'),
+    # A `unittest.mock` repr gives the mock's `id()` in decimal.
+    (re.compile(r"(<\w*Mock\b[^<>]* id=')\d+'"), r"\1ID'"),
+    (re.compile(r'pyd_ai_[0-9a-f]{32}'), 'pyd_ai_ID'),
+    (re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'), 'UUID'),
+    (re.compile(r'"history_digest":"[0-9a-f]{64}"'), '"history_digest":"DIGEST"'),
+    (re.compile(r'"duration":"P[0-9DTHMS.]+"'), '"duration":"DURATION"'),
+    (re.compile(r'(127\.0\.0\.1|localhost):\d+'), r'\1:PORT'),
+    (re.compile(r'(--|boundary=)[0-9a-f]{32}'), r'\1BOUNDARY'),
+    # Each pytest session numbers its temporary directory, and puts each `pytest-xdist` worker's in its own.
+    (re.compile(r'(pytest-of-[^/"]+/pytest-)\d+(?:/popen-gw\d+)?'), r'\1N'),
+    # `uuid4().hex` ids, like `AskUserQuestion.id`; the version and variant digits spare most other hex digests.
+    (re.compile(r'(?<![0-9a-f])[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}(?![0-9a-f])'), 'UUID'),
+    # The key the framework gives a capability without an `id` ends in a random suffix.
+    (re.compile(r'<(\w+):[0-9a-f]{6}>'), r'<\1:ID>'),
+    # `PromptInjectionDefender` times each screening it runs.
+    (re.compile(r'"latency_ms":[0-9.eE+-]+'), '"latency_ms":"LATENCY"'),
+    # `Planning`'s `uuid4().hex[:8]` step ids, in a plan line after the status marker and in the reply that adds a step.
+    (re.compile(r'(\[[ ~x!-]\] \[)[0-9a-f]{8}(?=\])'), r'\1STEP_ID'),
+    (re.compile(r'(with id: )[0-9a-f]{8}(?![0-9a-f])'), r'\1STEP_ID'),
+    # Prefect ends a `task_key` in a hash of the task function's code object, which holds the file it was compiled from.
+    (re.compile(r'("task_key":"[^"]*-)[0-9a-f]{8}"'), r'\1CODE_HASH"'),
+    # `InMemoryBatchModel`, which `TestModel` subclasses, encodes each request as a random token, and a batch request's
+    # `custom_id` hashes the encoded request. Its batches are the ones whose ID is a UUID; one of their `custom_id`s can
+    # itself have matched the UUID pattern. A suffix that tells apart requests with the same hash stays.
+    (
+        re.compile(
+            r'(?<=batch:batch_UUID:)(?:[0-9a-f]{32}|UUID)'
+            r'|(?<="id":"batch_UUID","custom_id":")(?:[0-9a-f]{32}|UUID)'
+            r'|(?<="custom_id":")(?:[0-9a-f]{32}|UUID)(?=(?:-\d+)?","batch":\{"id":"batch_UUID")'
+        ),
+        'CUSTOM_ID',
+    ),
+]
+# Prefect's client marks each request it sends with its API version. These paths are its log batches, version checks
+# and CSRF token fetches; the module docstring says why a capture leaves them and the client's retries out.
+PREFECT_API_VERSION_HEADER = 'x-prefect-api-version'
+PREFECT_OWN_PATHS = re.compile(r'/api/(?:logs/|admin/version|csrf-token)$')
+# The second form is ISO 8601's basic format, which SigV4 signs a request's `x-amz-date` header with. A timestamp quoted
+# `\"` is in JSON a value holds as text, like an AG-UI message's `encryptedValue` or a web API response's event stream.
+ISO_DATETIME = re.compile(r'(\\?")(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?|\d{8}T\d{6}Z)\1')
+# A naive datetime's `str()`, like the local time the `clai` agent's system prompt states.
+DATETIME_STR = re.compile(r'(?<![\d-])\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{6})?(?![\d.])')
+# AG-UI stamps each event with the milliseconds since the epoch.
+EPOCH_MILLISECONDS = re.compile(r'"timestamp":(\d{13})(?![\d.])')
+# Cassette playback hands a response's headers back in a different order each run, and botocore copies them into an
+# error response's `ResponseMetadata`, which an error message renders with `repr`.
+BOTOCORE_ERROR_HEADERS = re.compile(r"'HTTPHeaders': \{([^{}]*)\}")
+# The native tools a model supports are a set of classes, which hash by identity, so the error that lists them for an
+# unsupported one lists them in a different order each run.
+SUPPORTED_NATIVE_TOOLS = re.compile(r'(not supported by this model\. Supported: \[)([^\[\]]*)\]')
+# Test doubles that stand in for an SDK client, by module and class, with the methods a model sends a request through.
+SDK_MOCKS: list[tuple[str, str, tuple[str, ...]]] = [
+    ('tests.models.test_anthropic', 'MockAnthropic', ('messages_create', 'messages_count_tokens')),
+    ('tests.models.mock_openai', 'MockOpenAI', ('chat_completions_create',)),
+    (
+        'tests.models.mock_openai',
+        'MockOpenAIResponses',
+        ('responses_create', 'responses_input_tokens_count', 'responses_retrieve', 'responses_cancel'),
+    ),
+    ('tests.models.mock_xai', 'MockXai', ('chat_create', 'files_upload')),
+    ('tests.models.test_groq', 'MockGroq', ('chat_completions_create',)),
+    ('tests.models.test_huggingface', 'MockHuggingFace', ('chat_completions_create',)),
+    ('tests.models.test_mistral', 'MockMistralAI', ('chat_completions_create',)),
+    ('tests.models.test_cohere', 'MockAsyncClientV2', ('chat', 'chat_stream')),
+]
+# Models that answer in process and send no request, with the methods an agent calls them through.
+IN_PROCESS_MODELS: list[tuple[type[Model], tuple[str, ...]]] = [
+    (FunctionModel, ('request', 'request_stream')),
+    (TestModel, ('request', 'request_stream')),
+]
+# The `UIAdapter` class methods that convert messages, whose results a capture records.
+UI_MESSAGE_METHODS = ('load_messages', 'dump_messages')
+# The packages whose classes stand in for what a realtime connection sends on, and the methods it sends through: a
+# socket's `send`, and the ones Google's `AsyncSession` sends with.
+REALTIME_DOUBLE_PACKAGES = ('tests.realtime',)
+REALTIME_SEND_METHODS = ('send', 'send_realtime_input', 'send_client_content', 'send_tool_response')
+# The `SessionCore` methods a capture records the results of: what it does with what it's applied, and what the session
+# reads from it.
+SESSION_CORE_METHODS = (
+    'apply',
+    'take_effects',
+    'wait_tokens',
+    'still_owed',
+    'all_messages',
+    'replayable_messages',
+    'conversation_so_far',
+)
+# The `InferredLifecycle` methods a connection calls, which a capture records where a test calls them directly.
+LIFECYCLE_METHODS = (
+    'input_sent',
+    'input_failed',
+    'input_unanswerable',
+    'take_pending',
+    'speech_heard',
+    'frame_for',
+    'takes_turn',
+    'connection_lost',
+)
+# What a realtime session counts as dropped, which its span reports and a capture records once it closes.
+SESSION_DROP_COUNTERS = (
+    '_audio_tap_drops',
+    '_transcript_tap_drops',
+    '_queue_dropped_deltas',
+    '_queue_dropped_structural',
+)
+# The dunder methods of `RealtimeSession` a caller calls, besides `__aiter__`, whose events a capture records.
+SESSION_DUNDER_CALLS = ('__init__', '__aenter__', '__aexit__')
+# The capability hooks the tool manager runs a tool call through, whose calls a capture records.
+TOOL_HOOKS = (
+    'wrap_tool_validate',
+    'before_tool_validate',
+    'on_tool_validate_error',
+    'after_tool_validate',
+    'wrap_tool_execute',
+    'before_tool_execute',
+    'on_tool_execute_error',
+    'after_tool_execute',
+)
+# The tool hooks whose recorded calls are running, by name and agent run: the calls a combined capability makes on the
+# ones it combines aren't recorded again, and the ones an agent run inside a hook or a tool makes are.
+_RUNNING_TOOL_HOOKS: ContextVar[frozenset[tuple[str, str | None]]] = ContextVar(
+    '_RUNNING_TOOL_HOOKS', default=frozenset()
+)
+# Set while a recorded connection `send`, or a recorded call on a realtime double, runs.
+_RECORDING_CONNECTION_SEND: ContextVar[bool] = ContextVar('_RECORDING_CONNECTION_SEND', default=False)
+_RECORDING_DOUBLE_SEND: ContextVar[bool] = ContextVar('_RECORDING_DOUBLE_SEND', default=False)
+# Set while a recorded connection's `frames` works out its next frame.
+_READING_CONNECTION_FRAMES: ContextVar[bool] = ContextVar('_READING_CONNECTION_FRAMES', default=False)
+# Set while a recorded `SessionCore` or `InferredLifecycle` call runs, or the capture reads a closed session.
+_RECORDING_CORE_CALL: ContextVar[bool] = ContextVar('_RECORDING_CORE_CALL', default=False)
+_RECORDING_LIFECYCLE_CALL: ContextVar[bool] = ContextVar('_RECORDING_LIFECYCLE_CALL', default=False)
+# The task and session of the public session call running, by `id`: a task copies the context it's created in, so the
+# value would otherwise keep both alive through a task the session holds.
+_RECORDING_SESSION_CALL: ContextVar[tuple[int, int] | None] = ContextVar('_RECORDING_SESSION_CALL', default=None)
+
+WrappedT = TypeVar('WrappedT')
+
+
+class BotocoreRequest(TypedDict):
+    """What a capture reads from the request dict botocore's `Endpoint.make_request` is handed."""
+
+    method: str
+    url: str
+    headers: Mapping[str, str]
+    body: object
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        CAPTURE_OPTION, metavar='DIR', help='new directory to record the streams and requests of each test into'
+    )
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    capture_dir: str | None = config.getoption(CAPTURE_OPTION)
+    if capture_dir is None:
+        raise pytest.UsageError(f'`-p tests.refactor_capture` needs `{CAPTURE_OPTION}=DIR`.')
+    config.pluginmanager.register(RefactorCapture(Path(capture_dir)))
+
+
+class RefactorCapture:
+    """Records each stream a test iterates and each request it sends, and appends them to the capture directory."""
+
+    def __init__(self, capture_dir: Path) -> None:
+        self.capture_dir = capture_dir
+        self.node: str | None = None
+        self.records: list[dict[str, object]] = []
+        # Each stream record with its stream, whose response `write` adds.
+        self._streams: list[tuple[dict[str, object], StreamedResponse]] = []
+        # Each hook record of a tool call in a run, with the run and step it's in and the call's ID, by which `write`
+        # orders them.
+        self._tool_calls: list[tuple[dict[str, object], tuple[str | None, int], str]] = []
+        # Per stream, by `id`: the iterator `__aiter__` first returned and the recording that wraps it. `_streams` keeps
+        # the stream alive meanwhile, so its `id` isn't reused.
+        self._iterators: dict[
+            int, tuple[AsyncIterator[ModelResponseStreamEvent], AsyncIterator[ModelResponseStreamEvent]]
+        ] = {}
+        # The requests Prefect's client has sent, so a retry, which sends one again, isn't recorded twice.
+        self._prefect_requests: weakref.WeakSet[httpx.Request | httpx2.Request] = weakref.WeakSet()
+        # The apps `create_api_app` has built, whose responses are recorded.
+        self._api_apps: weakref.WeakSet[Starlette] = weakref.WeakSet()
+        # Each realtime session, `SessionCore` and `InferredLifecycle` the test has recorded, numbered per kind in the
+        # order the test first used it.
+        self._numbers: weakref.WeakKeyDictionary[object, int] = weakref.WeakKeyDictionary()
+        self._next_numbers: Counter[str] = Counter()
+        # Each view a session's `stream_audio` or `stream_transcripts` returned, with what it yields, kept past its test
+        # while the view lives, and the classes of those views, whose `__anext__` is wrapped.
+        self._taps: weakref.WeakKeyDictionary[object, list[object]] = weakref.WeakKeyDictionary()
+        self._tap_classes: set[type] = set()
+        # The sessions whose state was recorded once they closed.
+        self._closed_sessions: weakref.WeakSet[RealtimeSession] = weakref.WeakSet()
+        # The workspace's top-level packages, whose lines a warning's reported frame leaves out.
+        self._workspace_packages = frozenset(
+            child.name
+            for root in workspace_roots()
+            for child in (REPO / root).iterdir()
+            if (child / '__init__.py').exists()
+        )
+        self._monkeypatch = pytest.MonkeyPatch()
+
+    def pytest_configure(self) -> None:
+        # Workers start once the controller has checked, and another worker may already have written by then.
+        if 'PYTEST_XDIST_WORKER' not in os.environ:
+            if any(self.capture_dir.glob('*.jsonl')) or any(self.capture_dir.glob(f'*{NODES_SUFFIX}')):
+                raise pytest.UsageError(f'`{self.capture_dir}` already holds a capture; a second would be appended.')
+            self.capture_dir.mkdir(parents=True, exist_ok=True)
+            (self.capture_dir / SOURCE_FILE).write_text(json.dumps({'pydantic_ai': pydantic_ai.__file__}))
+        self.install()
+        self.check_stream_hook()
+        self.check_request_hook()
+        self.check_model_hook()
+
+    def pytest_collection_finish(self) -> None:
+        """Wrap each method `SDK_MOCKS` lists on the mocks collection imported, and stop the run if one is gone."""
+        for module_name, class_name, method_names in SDK_MOCKS:
+            module = sys.modules.get(module_name)
+            if module is None and importlib.util.find_spec(module_name) is not None:
+                continue
+            mock = getattr(module, class_name, None)
+            for name in method_names:
+                if not isinstance(mock, type) or name not in vars(mock):
+                    raise pytest.UsageError(
+                        f'`SDK_MOCKS` lists `{module_name}.{class_name}.{name}`, which is gone, so the capture would '
+                        'miss the requests sent through it. Update `SDK_MOCKS` in `tests/refactor_capture.py`.'
+                    )
+                self._wrap_mock(mock, name)
+
+    def pytest_unconfigure(self) -> None:
+        self._monkeypatch.undo()
+
+    def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
+        if report.failed:
+            worker = os.environ.get('PYTEST_XDIST_WORKER', 'main')
+            with open(self.capture_dir / f'{worker}{FAILED_SUFFIX}', 'a', encoding='utf-8') as f:
+                f.write(f'{report.nodeid}\n')
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_runtest_protocol(self, item: pytest.Item) -> Generator[None, object, object]:
+        self.node = item.nodeid
+        random.seed(item.nodeid)
+        try:
+            return (yield)
+        finally:
+            self.node = None
+            self.write(item.nodeid)
+
+    def install(self) -> None:
+        """Wrap `__aiter__` on `StreamedResponse` and every subclass that overrides it, now and when one is defined.
+
+        Also wrap `send` on the `httpx` and `httpx2` `AsyncClient`s, botocore's `Endpoint.make_request`, each method
+        `IN_PROCESS_MODELS` lists, `transform_stream` and the methods `UI_MESSAGE_METHODS` lists where `UIEventStream`,
+        `UIAdapter` or a subclass defines them, the app `create_api_app` builds, `frames` and `send` where
+        `RealtimeConnection` or a subclass defines them, the realtime doubles' send methods, the public methods of
+        `RealtimeSession`, the methods `SESSION_CORE_METHODS` and `LIFECYCLE_METHODS` list where `SessionCore`,
+        `InferredLifecycle` or a subclass defines them, `infer_realtime_model`, the hooks `TOOL_HOOKS` lists where
+        `AbstractCapability` or a subclass defines them, `MCPSamplingModel.request`, the point where `pytest.raises` and
+        `pytest.RaisesGroup` keep the exception they caught, and the one where a warning is shown or recorded.
+        """
+        self._wrap_subclasses(StreamedResponse, self._wrap_aiter)
+        self._wrap_subclasses(AbstractCapability, self._wrap_tool_hooks)
+        self._wrap_sampling_request()
+        self._wrap_raises()
+        self._wrap_warnings()
+        self._wrap_subclasses(UIEventStream, self._wrap_transform_stream)
+        self._wrap_subclasses(UIAdapter, self._wrap_message_methods)
+        self._wrap_subclasses(RealtimeConnection, self._wrap_connection)
+        self._wrap_subclasses(RealtimeSession, self._wrap_session)
+        self._wrap_subclasses(SessionCore, self._wrap_core)
+        self._wrap_subclasses(InferredLifecycle, self._wrap_lifecycle)
+        self._wrap_infer_realtime_model()
+        self._wrap_realtime_doubles()
+        self._wrap_api_app()
+        self._wrap_send(httpx.AsyncClient)
+        self._wrap_send(httpx2.AsyncClient)
+        self._wrap_make_request()
+        for model_class, method_names in IN_PROCESS_MODELS:
+            for name in method_names:
+                self._wrap_model(model_class, name)
+
+    def check_stream_hook(self) -> None:
+        """Stop the run unless the stream an agent iterates is recorded."""
+
+        async def run() -> None:
+            async with Agent(FunctionModel(stream_function=stream_canary)).run_stream('canary') as result:
+                await result.get_output()
+
+        asyncio.run(run())
+        recorded = any(record['events'] for record, _ in self._streams)
+        self.clear()
+        if not recorded:
+            self._monkeypatch.undo()
+            raise pytest.UsageError(
+                'The stream a canary agent run iterated was not recorded, so the capture would miss streams. '
+                'Update `tests/refactor_capture.py` to the way streams are iterated now.'
+            )
+
+    def check_request_hook(self) -> None:
+        """Stop the run unless the request an agent sends through each of `httpx`, `httpx2` and botocore is recorded."""
+
+        async def run() -> list[str]:
+            missed: list[str] = []
+            async with (
+                httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(400))) as http_client,
+                httpx2.AsyncClient(transport=httpx2.MockTransport(lambda _: httpx2.Response(400))) as http2_client,
+            ):
+                models: list[tuple[str, Model]] = [
+                    (
+                        '`GroqModel` over `httpx`',
+                        GroqModel(
+                            'llama-3.3-70b-versatile', provider=GroqProvider(api_key='canary', http_client=http_client)
+                        ),
+                    ),
+                    (
+                        '`AnthropicModel` over `httpx2`',
+                        AnthropicModel(
+                            'claude-sonnet-4-5', provider=AnthropicProvider(api_key='canary', http_client=http2_client)
+                        ),
+                    ),
+                    ('`BedrockConverseModel` over `botocore`', bedrock_canary_model()),
+                ]
+                for label, model in models:
+                    recorded = len(self.records)
+                    with override_allow_model_requests(True), suppress(ModelHTTPError):
+                        await Agent(model).run('canary')
+                    if len(self.records) == recorded:
+                        missed.append(label)
+            return missed
+
+        missed = asyncio.run(run())
+        self.clear()
+        if missed:
+            self._monkeypatch.undo()
+            raise pytest.UsageError(
+                f'The request a canary agent run sent with {" and ".join(missed)} was not recorded, so the capture '
+                'would miss requests. Update `tests/refactor_capture.py` to the HTTP client the SDK sends with now.'
+            )
+
+    def check_model_hook(self) -> None:
+        """Stop the run unless a canary agent run's call on each method `IN_PROCESS_MODELS` lists is recorded."""
+
+        async def run() -> None:
+            text_canary = FunctionModel(
+                lambda messages, info: ModelResponse(parts=[TextPart('canary')]), stream_function=stream_canary
+            )
+            for model in (text_canary, TestModel()):
+                await Agent(model).run('canary')
+                async with Agent(model).run_stream('canary') as result:
+                    await result.get_output()
+
+        asyncio.run(run())
+        recorded = {record['target'] for record in self.records if record['kind'] == 'request'}
+        self.clear()
+        targets = [method_target(model_class, name) for model_class, names in IN_PROCESS_MODELS for name in names]
+        if missed := [target for target in targets if target not in recorded]:
+            self._monkeypatch.undo()
+            raise pytest.UsageError(
+                f'The calls a canary agent run made on `{"`, `".join(missed)}` were not recorded, so the capture would '
+                'miss what in-process models are handed. Update `tests/refactor_capture.py` to the methods an agent '
+                'calls them through now.'
+            )
+
+    def write(self, node: str) -> None:
+        """Append `node` and the records so far, with the response each stream builds now, to this worker's files."""
+        worker = os.environ.get('PYTEST_XDIST_WORKER', 'main')
+        with open(self.capture_dir / f'{worker}{NODES_SUFFIX}', 'a', encoding='utf-8') as f:
+            f.write(f'{node}\n')
+        if self.records:
+            for record, stream in self._streams:
+                record['response'] = normalized(stream.get())
+            self._order_tool_calls()
+            with open(self.capture_dir / f'{worker}.jsonl', 'a', encoding='utf-8') as f:
+                f.writelines(json.dumps(record) + '\n' for record in self.records)
+            self.clear()
+
+    def _order_tool_calls(self) -> None:
+        """Put the hook records of the tool calls each run step makes in the order the calls started, each call's own
+        in the order they were made, in the places the step's hook records take among the others.
+
+        The calls of a step run concurrently, and a sync tool on a worker thread, so how the hooks of one call called
+        after its tool returns interleave with another's is the threads' order.
+        """
+        steps: dict[tuple[str | None, int], list[tuple[dict[str, object], str]]] = {}
+        for record, step, call_id in self._tool_calls:
+            steps.setdefault(step, []).append((record, call_id))
+        places = {id(record): place for place, record in enumerate(self.records)}
+        for calls in steps.values():
+            started: dict[str, int] = {}
+            for index, (_, call_id) in enumerate(calls):
+                started.setdefault(call_id, index)
+            ordered = sorted(range(len(calls)), key=lambda index: (started[calls[index][1]], index))
+            for (record, _), index in zip(calls, ordered):
+                self.records[places[id(record)]] = calls[index][0]
+
+    def clear(self) -> None:
+        """Drop the records so far."""
+        self.records.clear()
+        self._streams.clear()
+        self._tool_calls.clear()
+        self._iterators.clear()
+        self._numbers.clear()
+        self._next_numbers.clear()
+        self._closed_sessions.clear()
+
+    def _wrap_subclasses(self, base: type[WrappedT], wrap: Callable[[type[WrappedT]], None]) -> None:
+        """Call `wrap` on `base` and each of its subclasses, now and when one is defined."""
+        pending = [base]
+        while pending:
+            cls = pending.pop()
+            pending.extend(cls.__subclasses__())
+            wrap(cls)
+
+        # `Generic.__init_subclass__`, which `super()` reaches, sets up a generic subclass's type parameters.
+        def init_subclass(cls: type[WrappedT], **kwargs: object) -> None:
+            super(base, cls).__init_subclass__(**kwargs)
+            wrap(cls)
+
+        self._monkeypatch.setattr(base, '__init_subclass__', classmethod(init_subclass))
+
+    def _wrap_aiter(self, cls: type[StreamedResponse]) -> None:
+        if '__aiter__' not in vars(cls):
+            return
+        original: Callable[[StreamedResponse], AsyncIterator[ModelResponseStreamEvent]] = vars(cls)['__aiter__']
+
+        def recording_aiter(stream: StreamedResponse) -> AsyncIterator[ModelResponseStreamEvent]:
+            iterator = original(stream)
+            if (recording := self._iterators.get(id(stream))) is None:
+                recording = self._iterators[id(stream)] = (iterator, self._recorded(stream, iterator))
+            # Anything else already reads through the recording: an override's `super().__aiter__()` result, or the
+            # peeking stream `request_stream_until_first_event` stores over it.
+            return recording[1] if iterator is recording[0] else iterator
+
+        self._monkeypatch.setattr(cls, '__aiter__', recording_aiter)
+
+    def _recorded(
+        self, stream: StreamedResponse, iterator: AsyncIterator[ModelResponseStreamEvent]
+    ) -> AsyncIterator[ModelResponseStreamEvent]:
+        stream_type = type(stream)
+        events: list[object] = []
+        record: dict[str, object] = {
+            'kind': 'stream',
+            'node': self.node,
+            'stream': f'{stream_type.__module__}.{stream_type.__qualname__}',
+            'modules': sorted(
+                {cls.__module__ for cls in stream_type.__mro__ if issubclass(cls, StreamedResponse)}
+                - {StreamedResponse.__module__}
+            ),
+            'events': events,
+        }
+        self.records.append(record)
+        self._streams.append((record, stream))
+
+        # Closing this doesn't close `iterator`: every `__aiter__` in the library returns a guard that does no cleanup
+        # on close, so only its garbage collection moves.
+        async def recorded() -> AsyncIterator[ModelResponseStreamEvent]:
+            try:
+                async for event in iterator:
+                    events.append(normalized(event))
+                    yield event
+            except Exception as e:
+                record['error'] = normalized(f'{type(e).__name__}: {e}')
+                raise
+
+        return recorded()
+
+    def _wrap_transform_stream(self, cls: type) -> None:
+        if 'transform_stream' not in vars(cls):
+            return
+        original: Callable[..., AsyncGenerator[object]] = vars(cls)['transform_stream']
+
+        @functools.wraps(original)
+        def recording_transform_stream(event_stream: object, *args: object, **kwargs: object) -> AsyncIterator[object]:
+            return self._recorded_ui_events(event_stream, original(event_stream, *args, **kwargs))
+
+        self._monkeypatch.setattr(cls, 'transform_stream', recording_transform_stream)
+
+    def _recorded_ui_events(self, event_stream: object, iterator: AsyncGenerator[object]) -> AsyncIterator[object]:
+        events: list[object] = []
+        record: dict[str, object] = {
+            'kind': 'ui',
+            'node': self.node,
+            'target': method_target(type(event_stream), 'transform_stream'),
+            'events': events,
+        }
+        self.records.append(record)
+
+        async def recorded() -> AsyncIterator[object]:
+            try:
+                async for event in iterator:
+                    events.append(normalized(event))
+                    yield event
+            except Exception as e:
+                record['error'] = normalized(f'{type(e).__name__}: {e}')
+                raise
+            finally:
+                # `transform_stream` runs its cleanup when it's closed, so it's closed with this rather than collected.
+                await iterator.aclose()
+
+        return recorded()
+
+    def _wrap_message_methods(self, cls: type) -> None:
+        for name in UI_MESSAGE_METHODS:
+            if name in vars(cls):
+                self._wrap_message_method(cls, name)
+
+    def _wrap_message_method(self, cls: type, name: str) -> None:
+        original: classmethod[object, ..., object] = vars(cls)[name]
+        target = method_target(cls, name)
+
+        # `functools.wraps` carries over `__isabstractmethod__`, which tells an abstract subclass apart.
+        @functools.wraps(original.__func__)
+        def recording_method(adapter_class: type[object], *args: object, **kwargs: object) -> object:
+            record: dict[str, object] = {'kind': 'ui', 'node': self.node, 'target': target}
+            self.records.append(record)
+            try:
+                result = original.__get__(None, adapter_class)(*args, **kwargs)
+            except Exception as e:
+                record['error'] = normalized(f'{type(e).__name__}: {e}')
+                raise
+            record['result'] = normalized(result)
+            record['uncompared_fields'] = uncompared_fields(result)
+            return result
+
+        self._monkeypatch.setattr(cls, name, classmethod(recording_method))
+
+    def _wrap_connection(self, cls: type[RealtimeConnection]) -> None:
+        if 'frames' in vars(cls):
+            self._wrap_frames(cls)
+        if 'send' in vars(cls):
+            self._wrap_connection_send(cls)
+
+    def _wrap_frames(self, cls: type[RealtimeConnection]) -> None:
+        original: Callable[[RealtimeConnection], AsyncIterator[RealtimeFrame]] = vars(cls)['frames']
+
+        @functools.wraps(original)
+        def recording_frames(connection: RealtimeConnection) -> AsyncIterator[RealtimeFrame]:
+            return self._recorded_frames(connection, original(connection))
+
+        self._monkeypatch.setattr(cls, 'frames', recording_frames)
+
+    def _recorded_frames(
+        self, connection: RealtimeConnection, iterator: AsyncIterator[RealtimeFrame]
+    ) -> AsyncIterator[RealtimeFrame]:
+        target = method_target(type(connection), 'frames')
+
+        async def recorded() -> AsyncIterator[RealtimeFrame]:
+            frames = aiter(iterator)
+            try:
+                while True:
+                    token = _READING_CONNECTION_FRAMES.set(True)
+                    try:
+                        frame = await anext(frames)
+                    except StopAsyncIteration:
+                        break
+                    finally:
+                        _READING_CONNECTION_FRAMES.reset(token)
+                    self.records.append(
+                        {'kind': 'realtime', 'node': self.node, 'target': target, 'frame': list(map(tagged, frame))}
+                    )
+                    yield frame
+            except Exception as e:
+                self.records.append(
+                    {
+                        'kind': 'realtime',
+                        'node': self.node,
+                        'target': target,
+                        'error': normalized(f'{type(e).__name__}: {e}'),
+                    }
+                )
+                raise
+            finally:
+                # A connection's `frames` settles what's open when it's closed, so it's closed with this.
+                if isinstance(iterator, AsyncGenerator):
+                    await iterator.aclose()
+
+        return recorded()
+
+    def _wrap_connection_send(self, cls: type[RealtimeConnection]) -> None:
+        original: Callable[..., Awaitable[Iterable[object] | None]] = vars(cls)['send']
+
+        # `functools.wraps` carries over `__isabstractmethod__`, which tells an abstract subclass apart.
+        @functools.wraps(original)
+        async def recording_send(connection: RealtimeConnection, content: object) -> Iterable[object] | None:
+            if _RECORDING_CONNECTION_SEND.get():
+                return await original(connection, content)
+            record: dict[str, object] = {
+                'kind': 'realtime',
+                'node': self.node,
+                'target': method_target(type(connection), 'send'),
+                'input': tagged(content),
+            }
+            self.records.append(record)
+            token = _RECORDING_CONNECTION_SEND.set(True)
+            try:
+                result = await original(connection, content)
+            except Exception as e:
+                record['error'] = normalized(f'{type(e).__name__}: {e}')
+                raise
+            finally:
+                _RECORDING_CONNECTION_SEND.reset(token)
+            record['result'] = None if result is None else list(map(tagged, result))
+            return result
+
+        self._monkeypatch.setattr(cls, 'send', recording_send)
+
+    def _wrap_realtime_doubles(self) -> None:
+        """Wrap the realtime doubles' send methods on the classes defined so far, and on each one defined later."""
+        for module_name, module in [*sys.modules.items()]:
+            if is_realtime_double_module(module_name):
+                for value in [*vars(module).values()]:
+                    if isinstance(value, type) and value.__module__ == module_name:
+                        self._wrap_realtime_double(value)
+        original: Callable[..., object] = vars(builtins)['__build_class__']
+
+        # A class statement builds its class through `__build_class__`, wherever it runs.
+        def build_class(*args: object, **kwargs: object) -> object:
+            cls = original(*args, **kwargs)
+            if isinstance(cls, type) and is_realtime_double_module(cls.__module__):
+                self._wrap_realtime_double(cls)
+            return cls
+
+        self._monkeypatch.setattr(builtins, '__build_class__', build_class)
+
+    def _wrap_realtime_double(self, cls: type[object]) -> None:
+        if issubclass(cls, RealtimeConnection):
+            return
+        for name in REALTIME_SEND_METHODS:
+            if inspect.iscoroutinefunction(vars(cls).get(name)):
+                self._wrap_double_send(cls, name)
+
+    def _wrap_double_send(self, cls: type[object], name: str) -> None:
+        original: Callable[..., Awaitable[object]] = vars(cls)[name]
+
+        @functools.wraps(original)
+        async def recording_send(double: object, *args: object, **kwargs: object) -> object:
+            if _RECORDING_DOUBLE_SEND.get():
+                return await original(double, *args, **kwargs)
+            record: dict[str, object] = {
+                'kind': 'realtime',
+                'node': self.node,
+                'target': method_target(type(double), name),
+                'args': normalized([parsed_json(arg) if isinstance(arg, str) else arg for arg in args]),
+                'kwargs': normalized(kwargs),
+            }
+            self.records.append(record)
+            token = _RECORDING_DOUBLE_SEND.set(True)
+            try:
+                return await original(double, *args, **kwargs)
+            except Exception as e:
+                record['error'] = normalized(f'{type(e).__name__}: {e}')
+                raise
+            finally:
+                _RECORDING_DOUBLE_SEND.reset(token)
+
+        self._monkeypatch.setattr(cls, name, recording_send)
+
+    def _number(self, label: str, value: object) -> int:
+        """`value`'s number among the objects of kind `label` the test has recorded, in the order it first used them."""
+        if (number := self._numbers.get(value)) is None:
+            number = self._numbers[value] = self._next_numbers[label]
+            self._next_numbers[label] += 1
+        return number
+
+    def _wrap_session(self, cls: type[RealtimeSession]) -> None:
+        for name, value in [*vars(cls).items()]:
+            if name == '__aiter__':
+                self._wrap_session_events(cls)
+            elif name in ('stream_audio', 'stream_transcripts'):
+                self._wrap_session_tap(cls, name)
+            elif name == 'close':
+                self._wrap_session_close(cls)
+            elif name.startswith('_') and name not in SESSION_DUNDER_CALLS:
+                continue
+            elif isinstance(value, property):
+                assert value.fget is not None
+                fget = self._recorded_session_call(name, value.fget)
+                self._monkeypatch.setattr(cls, name, property(fget, value.fset, value.fdel, value.__doc__))
+            elif inspect.isfunction(value):
+                self._monkeypatch.setattr(cls, name, self._recorded_session_call(name, value))
+
+    @contextmanager
+    def _session_call(self, session: RealtimeSession, name: str) -> Generator[None]:
+        """Record the error a public call on `session` raises, unless another public call on it in this task made it."""
+        key = (running_task_id(), id(session))
+        if _RECORDING_SESSION_CALL.get() == key:
+            yield
+            return
+        token = _RECORDING_SESSION_CALL.set(key)
+        try:
+            yield
+        except Exception as e:
+            self.records.append(
+                {
+                    'kind': 'session',
+                    'node': self.node,
+                    'target': method_target(type(session), name),
+                    'session': self._number('session', session),
+                    'error': normalized(f'{type(e).__name__}: {e}'),
+                }
+            )
+            raise
+        finally:
+            _RECORDING_SESSION_CALL.reset(token)
+
+    def _recorded_session_call(self, name: str, original: Callable[..., object]) -> Callable[..., object]:
+        if inspect.iscoroutinefunction(original):
+
+            @functools.wraps(original)
+            async def recording_async_call(session: RealtimeSession, *args: object, **kwargs: object) -> object:
+                with self._session_call(session, name):
+                    return await original(session, *args, **kwargs)
+
+            return recording_async_call
+
+        @functools.wraps(original)
+        def recording_call(session: RealtimeSession, *args: object, **kwargs: object) -> object:
+            with self._session_call(session, name):
+                return original(session, *args, **kwargs)
+
+        return recording_call
+
+    def _wrap_session_events(self, cls: type[RealtimeSession]) -> None:
+        original: Callable[[RealtimeSession], AsyncGenerator[object]] = vars(cls)['__aiter__']
+
+        # An async generator, as `__aiter__` is, so closing the recording closes the generator it wraps.
+        @functools.wraps(original)
+        async def recording_aiter(session: RealtimeSession) -> AsyncIterator[object]:
+            events: list[object] = []
+            record: dict[str, object] = {
+                'kind': 'session',
+                'node': self.node,
+                'target': method_target(type(session), '__aiter__'),
+                'session': self._number('session', session),
+                'events': events,
+            }
+            self.records.append(record)
+            iterator = original(session)
+            try:
+                async for event in iterator:
+                    events.append(tagged(event))
+                    yield event
+            except Exception as e:
+                record['error'] = normalized(f'{type(e).__name__}: {e}')
+                raise
+            finally:
+                await iterator.aclose()
+
+        self._monkeypatch.setattr(cls, '__aiter__', recording_aiter)
+
+    def _wrap_session_tap(self, cls: type[RealtimeSession], name: str) -> None:
+        original: Callable[..., AsyncIterator[object]] = vars(cls)[name]
+
+        @functools.wraps(original)
+        def recording_tap(session: RealtimeSession, **kwargs: object) -> AsyncIterator[object]:
+            with self._session_call(session, name):
+                view = original(session, **kwargs)
+            # An override that calls `super()` hands back the view it's handed.
+            if view not in self._taps:
+                items: list[object] = []
+                record: dict[str, object] = {
+                    'kind': 'session',
+                    'node': self.node,
+                    'target': method_target(type(session), name),
+                    'session': self._number('session', session),
+                    'kwargs': normalized(kwargs),
+                    'items': items,
+                }
+                self._taps[view] = items
+                self.records.append(record)
+                self._wrap_tap_view(type(view))
+            return view
+
+        self._monkeypatch.setattr(cls, name, recording_tap)
+
+    def _wrap_tap_view(self, view_class: type[AsyncIterator[object]]) -> None:
+        """Wrap `__anext__` on the class of a view a session's tap returned, which tests check the type of."""
+        if view_class in self._tap_classes:
+            return
+        self._tap_classes.add(view_class)
+        original = view_class.__anext__
+
+        async def recording_anext(view: AsyncIterator[object]) -> object:
+            item = await original(view)
+            self._taps[view].append(normalized(item))
+            return item
+
+        self._monkeypatch.setattr(view_class, '__anext__', recording_anext)
+
+    def _wrap_session_close(self, cls: type[RealtimeSession]) -> None:
+        original: Callable[[RealtimeSession], Awaitable[None]] = vars(cls)['close']
+
+        @functools.wraps(original)
+        async def recording_close(session: RealtimeSession) -> None:
+            try:
+                with self._session_call(session, 'close'):
+                    await original(session)
+            except Exception:
+                self._record_closed(session)
+                raise
+            self._record_closed(session)
+
+        self._monkeypatch.setattr(cls, 'close', recording_close)
+
+    def _record_closed(self, session: RealtimeSession) -> None:
+        """Record what `session` holds once the first `close` call on it ends, unless that call was cancelled."""
+        if session in self._closed_sessions:
+            return
+        self._closed_sessions.add(session)
+        record: dict[str, object] = {
+            'kind': 'session',
+            'node': self.node,
+            'target': method_target(type(session), 'close'),
+            'session': self._number('session', session),
+        }
+
+        # What the capture reads is no call the test or the session made.
+        core_token = _RECORDING_CORE_CALL.set(True)
+        session_token = _RECORDING_SESSION_CALL.set((running_task_id(), id(session)))
+        try:
+            record['all_messages'] = normalized(session.all_messages())
+            record['new_messages'] = normalized(session.new_messages())
+            record['usage'] = normalized(session.usage)
+            # Reading `played_audio_bytes` can raise the error that ended the session again. Raised where another
+            # exception is being handled, as when `close` raises, Python chains it to that one, and cuts the other's
+            # chain where it held the error, to keep it from looping back. The chain being handled is put back as it
+            # was. One thing can't be: the error's own `__context__`, where the chain didn't hold it. The reads stay in
+            # the event loop, where waiting on a thread would block it.
+            handled_chain: list[tuple[BaseException, BaseException | None]] = []
+            handled = sys.exception()
+            while handled is not None and all(handled is not seen for seen, _ in handled_chain):
+                handled_chain.append((handled, handled.__context__))
+                handled = handled.__context__
+            try:
+                record['played_audio_bytes'] = session.played_audio_bytes
+            except Exception as e:
+                record['played_audio_bytes'] = {'error': normalized(f'{type(e).__name__}: {e}')}
+            for exception, context in handled_chain:
+                exception.__context__ = context
+            record['drops'] = {name: getattr(session, name) for name in SESSION_DROP_COUNTERS}
+        finally:
+            _RECORDING_SESSION_CALL.reset(session_token)
+            _RECORDING_CORE_CALL.reset(core_token)
+        self.records.append(record)
+
+    def _wrap_core(self, cls: type[SessionCore]) -> None:
+        for name in SESSION_CORE_METHODS:
+            if name in vars(cls):
+                self._wrap_state_call(cls, name, 'core', _RECORDING_CORE_CALL)
+
+    def _wrap_lifecycle(self, cls: type[InferredLifecycle]) -> None:
+        for name in LIFECYCLE_METHODS:
+            if name in vars(cls):
+                self._wrap_state_call(cls, name, 'lifecycle', _RECORDING_LIFECYCLE_CALL, outside_connections=True)
+
+    def _wrap_state_call(
+        self, cls: type, name: str, label: str, running: ContextVar[bool], *, outside_connections: bool = False
+    ) -> None:
+        """Wrap a `SessionCore` or `InferredLifecycle` method, to record its arguments and result.
+
+        A call it makes on itself isn't recorded. With `outside_connections`, neither is one a connection's `frames`
+        or `send` makes, whose `realtime` records hold what it returns.
+        """
+        original: Callable[..., object] = vars(cls)[name]
+
+        @functools.wraps(original)
+        def recording_call(owner: object, *args: object, **kwargs: object) -> object:
+            if running.get() or (
+                outside_connections and (_READING_CONNECTION_FRAMES.get() or _RECORDING_CONNECTION_SEND.get())
+            ):
+                return original(owner, *args, **kwargs)
+            record: dict[str, object] = {
+                'kind': 'session',
+                'node': self.node,
+                'target': method_target(type(owner), name),
+                label: self._number(label, owner),
+                'args': recorded(args),
+                'kwargs': {key: recorded(value) for key, value in kwargs.items()},
+            }
+            self.records.append(record)
+            token = running.set(True)
+            try:
+                result = original(owner, *args, **kwargs)
+            except Exception as e:
+                record['error'] = normalized(f'{type(e).__name__}: {e}')
+                raise
+            finally:
+                running.reset(token)
+            record['result'] = recorded(result)
+            return result
+
+        self._monkeypatch.setattr(cls, name, recording_call)
+
+    def _wrap_infer_realtime_model(self) -> None:
+        original: Callable[..., RealtimeModel] = vars(realtime_model)['infer_realtime_model']
+        target = f'{realtime_model.__name__}.infer_realtime_model'
+
+        @functools.wraps(original)
+        def recording_infer_realtime_model(*args: object, **kwargs: object) -> RealtimeModel:
+            record: dict[str, object] = {
+                'kind': 'session',
+                'node': self.node,
+                'target': target,
+                'args': normalized(args),
+                'kwargs': normalized(kwargs),
+            }
+            self.records.append(record)
+            try:
+                model = original(*args, **kwargs)
+            except Exception as e:
+                record['error'] = normalized(f'{type(e).__name__}: {e}')
+                raise
+            record['result'] = {
+                'type': f'{type(model).__module__}.{type(model).__qualname__}',
+                'model_name': model.model_name,
+                'system': model.system,
+                'base_url': model.base_url,
+            }
+            return model
+
+        # The agent, and most tests, import it from `pydantic_ai.realtime`, which re-exports it.
+        for module in (realtime_model, pydantic_ai.realtime):
+            self._monkeypatch.setattr(module, 'infer_realtime_model', recording_infer_realtime_model)
+
+    def _wrap_api_app(self) -> None:
+        original_create: Callable[..., Starlette] = vars(web_api)['create_api_app']
+        original_call: Callable[[Starlette, Scope, Receive, Send], Awaitable[None]] = vars(Starlette)['__call__']
+
+        @functools.wraps(original_create)
+        def recording_create_api_app(*args: object, **kwargs: object) -> Starlette:
+            app = original_create(*args, **kwargs)
+            self._api_apps.add(app)
+            return app
+
+        async def recording_call(app: Starlette, scope: Scope, receive: Receive, send: Send) -> None:
+            if scope['type'] != 'http' or app not in self._api_apps:
+                return await original_call(app, scope, receive, send)
+            record: dict[str, object] = {
+                'kind': 'ui',
+                'node': self.node,
+                'target': f'{scope["method"]} {scope["path"]}',
+            }
+            self.records.append(record)
+            body = bytearray()
+
+            async def recording_send(message: Message) -> None:
+                if message['type'] == 'http.response.start':
+                    record['status'] = message['status']
+                    record['headers'] = normalized(
+                        {name.decode(): value.decode() for name, value in message['headers']}
+                    )
+                body.extend(message.get('body', b''))
+                await send(message)
+
+            try:
+                await original_call(app, scope, receive, recording_send)
+            finally:
+                record['body'] = normalized(parsed_json(body.decode(errors='backslashreplace')))
+
+        # `create_web_app` calls it through the name its module imported.
+        for module in (web_api, web_app):
+            self._monkeypatch.setattr(module, 'create_api_app', recording_create_api_app)
+        self._monkeypatch.setattr(Starlette, '__call__', recording_call)
+
+    def _wrap_send(self, client_class: type[httpx.AsyncClient] | type[httpx2.AsyncClient]) -> None:
+        original: Callable[..., Awaitable[object]] = vars(client_class)['send']
+
+        async def recording_send(
+            client: object, request: httpx.Request | httpx2.Request, *args: object, **kwargs: object
+        ) -> object:
+            if PREFECT_API_VERSION_HEADER in request.headers:
+                if request in self._prefect_requests or PREFECT_OWN_PATHS.search(request.url.path):
+                    return await original(client, request, *args, **kwargs)
+                self._prefect_requests.add(request)
+            text = (await request.aread()).decode(errors='backslashreplace')
+            self._record_request(f'{request.method} {request.url}', request.headers.items(), text)
+            return await original(client, request, *args, **kwargs)
+
+        self._monkeypatch.setattr(client_class, 'send', recording_send)
+
+    def _wrap_make_request(self) -> None:
+        original: Callable[..., object] = vars(Endpoint)['make_request']
+
+        def recording_make_request(
+            endpoint: Endpoint, operation_model: object, request_dict: BotocoreRequest
+        ) -> object:
+            body = request_dict['body']
+            text = body.decode(errors='backslashreplace') if isinstance(body, bytes) else str(body)
+            self._record_request(
+                f'{request_dict["method"]} {request_dict["url"]}', request_dict['headers'].items(), text
+            )
+            return original(endpoint, operation_model, request_dict)
+
+        self._monkeypatch.setattr(Endpoint, 'make_request', recording_make_request)
+
+    def _record_request(self, target: str, headers: Iterable[tuple[str, str]], text: str) -> None:
+        self.records.append(
+            {
+                'kind': 'request',
+                'node': self.node,
+                'target': normalized(target),
+                'headers': normalized(
+                    {name: value for name, value in headers if name.lower() not in UNRECORDED_HEADERS}
+                ),
+                'body': normalized(parsed_json(text)),
+            }
+        )
+
+    def _wrap_mock(self, mock: type, name: str) -> None:
+        original: Callable[..., object] = vars(mock)[name]
+        target = method_target(mock, name)
+
+        # Whatever the method returns, a coroutine, an async generator or a plain value, is handed back as is.
+        def recording_method(client: object, *args: object, **kwargs: object) -> object:
+            self.records.append(
+                {
+                    'kind': 'request',
+                    'node': self.node,
+                    'target': target,
+                    'args': normalized(args),
+                    'kwargs': normalized(kwargs),
+                }
+            )
+            return original(client, *args, **kwargs)
+
+        self._monkeypatch.setattr(mock, name, recording_method)
+
+    def _wrap_model(self, model_class: type[Model], name: str) -> None:
+        original: Callable[..., object] = vars(model_class)[name]
+        target = method_target(model_class, name)
+
+        # `request` returns a coroutine and `request_stream` an async context manager; either is handed back as is.
+        def recording_method(
+            model: Model,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            *args: object,
+            **kwargs: object,
+        ) -> object:
+            self.records.append(
+                {
+                    'kind': 'request',
+                    'node': self.node,
+                    'target': target,
+                    'messages': normalized(messages),
+                    'model_settings': normalized(model_settings),
+                    'model_request_parameters': normalized(model_request_parameters),
+                }
+            )
+            return original(model, messages, model_settings, model_request_parameters, *args, **kwargs)
+
+        self._monkeypatch.setattr(model_class, name, recording_method)
+
+    def _wrap_tool_hooks(self, cls: type[AbstractCapability[object]]) -> None:
+        for name in TOOL_HOOKS:
+            if inspect.iscoroutinefunction(vars(cls).get(name)):
+                self._wrap_tool_hook(cls, name)
+
+    def _wrap_tool_hook(self, cls: type[AbstractCapability[object]], name: str) -> None:
+        original: Callable[..., Awaitable[object]] = vars(cls)[name]
+
+        @functools.wraps(original)
+        async def recording_hook(capability: AbstractCapability[object], *args: object, **kwargs: object) -> object:
+            ctx = args[0] if args else kwargs.get('ctx')
+            key = (name, ctx.run_id if isinstance(ctx, RunContext) else None)
+            try:
+                running = _RUNNING_TOOL_HOOKS.get()
+                if key in running:
+                    return await original(capability, *args, **kwargs)
+                record: dict[str, object] = {
+                    'kind': 'hook',
+                    'node': self.node,
+                    'target': method_target(type(capability), name),
+                    # The run context is the run's, and the handler a function.
+                    'kwargs': {
+                        arg: normalized(
+                            f'{type(value).__name__}: {value}' if isinstance(value, BaseException) else value
+                        )
+                        for arg, value in kwargs.items()
+                        if arg not in ('ctx', 'handler')
+                    },
+                }
+                self.records.append(record)
+                if isinstance(ctx, RunContext) and isinstance(call := kwargs.get('call'), ToolCallPart):
+                    self._tool_calls.append((record, (ctx.run_id, ctx.run_step), call.tool_call_id))
+                token = _RUNNING_TOOL_HOOKS.set(running | {key})
+                try:
+                    result = await original(capability, *args, **kwargs)
+                except Exception as e:
+                    record['error'] = normalized(f'{type(e).__name__}: {e}')
+                    raise
+                finally:
+                    _RUNNING_TOOL_HOOKS.reset(token)
+                record['result'] = normalized(result)
+                return result
+            finally:
+                # An `on_*_error` hook can raise the error it's handed, whose traceback holds this frame, so holding
+                # the error here would keep the run context, and its dependencies, in a cycle with it.
+                del args, kwargs
+
+        self._monkeypatch.setattr(cls, name, recording_hook)
+
+    def _wrap_sampling_request(self) -> None:
+        original: Callable[..., Awaitable[ModelResponse]] = vars(MCPSamplingModel)['request']
+        target = method_target(MCPSamplingModel, 'request')
+
+        @functools.wraps(original)
+        async def recording_request(
+            model: MCPSamplingModel,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            record: dict[str, object] = {
+                'kind': 'request',
+                'node': self.node,
+                'target': target,
+                'messages': normalized(messages),
+                'model_settings': normalized(model_settings),
+                'model_request_parameters': normalized(model_request_parameters),
+            }
+            self.records.append(record)
+            # A mock keeps the calls it's handed; what a real session sends shows where its peer handles it.
+            create_message = getattr(model.session, 'create_message', None)
+            mock_calls = len(create_message.call_args_list) if isinstance(create_message, NonCallableMock) else 0
+            try:
+                response = await original(model, messages, model_settings, model_request_parameters)
+            except Exception as e:
+                record['error'] = normalized(f'{type(e).__name__}: {e}')
+                raise
+            finally:
+                if isinstance(create_message, NonCallableMock):
+                    self.records.extend(
+                        {
+                            'kind': 'request',
+                            'node': self.node,
+                            'target': method_target(type(model.session), 'create_message'),
+                            'args': normalized(call.args),
+                            'kwargs': normalized(call.kwargs),
+                        }
+                        for call in create_message.call_args_list[mock_calls:]
+                    )
+            record['response'] = normalized(response)
+            return response
+
+        self._monkeypatch.setattr(MCPSamplingModel, 'request', recording_request)
+
+    def _wrap_raises(self) -> None:
+        """Record each exception `pytest.raises` or `pytest.RaisesGroup` catches, which both keep with `fill_unfilled`."""
+        original: Callable[..., None] = vars(pytest.ExceptionInfo)['fill_unfilled']
+
+        @functools.wraps(original)
+        def recording_fill_unfilled(
+            excinfo: pytest.ExceptionInfo[BaseException],
+            exc_info: tuple[type[BaseException], BaseException, TracebackType],
+        ) -> None:
+            original(excinfo, exc_info)
+            self.records.append({'kind': 'exception', 'node': self.node, 'exception': described_exception(exc_info[1])})
+
+        self._monkeypatch.setattr(pytest.ExceptionInfo, 'fill_unfilled', recording_fill_unfilled)
+
+    def _wrap_warnings(self) -> None:
+        """Record each warning the filters let through, which `warnings` shows, or records, with `_showwarnmsg`."""
+        original: Callable[[warnings.WarningMessage], None] = vars(warnings)['_showwarnmsg']
+
+        @functools.wraps(original)
+        def recording_showwarnmsg(message: warnings.WarningMessage) -> None:
+            # One raised while no test runs, like an import during collection, belongs to no test node. A finalizer
+            # raises a `ResourceWarning` whenever garbage collection reaches it, which the allocations made decide.
+            if self.node is not None and not issubclass(message.category, ResourceWarning):
+                self.records.append(
+                    {
+                        'kind': 'warning',
+                        'node': self.node,
+                        'category': qualified_name(message.category),
+                        'message': normalized(str(message.message)),
+                        'frame': self._reported_frame(message),
+                    }
+                )
+            original(message)
+
+        self._monkeypatch.setattr(warnings, '_showwarnmsg', recording_showwarnmsg)
+
+    def _reported_frame(self, message: warnings.WarningMessage) -> dict[str, object]:
+        """The module and function of the frame on the stack `message` reports, and its line outside the workspace.
+
+        A line in a workspace package moves with each edit above it, so a refactor would move it. A frame the stack
+        doesn't hold, like the one `warnings.warn_explicit` is handed, is reported by its file and line.
+        """
+        location = (message.filename, message.lineno)
+        frame = inspect.currentframe()
+        try:
+            while frame is not None and (frame.f_code.co_filename, frame.f_lineno) != location:
+                frame = frame.f_back
+            if frame is None:
+                return {'file': normalized(message.filename), 'line': message.lineno}
+            module = str(frame.f_globals.get('__name__'))
+            reported: dict[str, object] = {'module': module, 'function': frame.f_code.co_qualname}
+            if module.partition('.')[0] not in self._workspace_packages:
+                reported['line'] = message.lineno
+            return reported
+        finally:
+            # A frame that holds itself would be a reference cycle.
+            del frame
+
+
+async def stream_canary(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    yield 'canary'
+
+
+def bedrock_canary_model() -> BedrockConverseModel:
+    """A Bedrock model whose client answers each request with a 400 instead of sending it."""
+    provider = BedrockProvider(region_name='us-east-1', aws_access_key_id='canary', aws_secret_access_key='canary')
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=provider)
+
+    def answer_400(request: AWSPreparedRequest, **_: object) -> AWSResponse:
+        return AWSResponse(request.url, 400, HTTPHeaders(), HTTPResponse(body=io.BytesIO(b'{}'), preload_content=False))
+
+    # botocore sends the response a `before-send` handler returns instead of the request, though the stubs type every
+    # handler as returning `None`.
+    model.client.meta.events.register_last('before-send.bedrock-runtime', answer_400)  # pyright: ignore[reportArgumentType]
+    return model
+
+
+def method_target(owner: type, name: str) -> str:
+    """The request target of a call on `owner`'s method `name`."""
+    return f'{qualified_name(owner)}.{name}'
+
+
+def qualified_name(cls: type) -> str:
+    return f'{cls.__module__}.{cls.__qualname__}'
+
+
+def workspace_roots() -> list[Path]:
+    """The root of each workspace package, relative to the repository, which its editable install puts on `sys.path`."""
+    venv = Path(sys.prefix).resolve()
+    entries = {Path(entry).resolve() for entry in sys.path if entry}
+    return sorted(
+        entry.relative_to(REPO)
+        for entry in entries
+        if entry.is_relative_to(REPO) and entry != REPO and not entry.is_relative_to(venv)
+    )
+
+
+def described_exception(exception: BaseException, chain: frozenset[int] = frozenset()) -> dict[str, object]:
+    """`exception`'s class, message and notes, and, described alike, the exceptions it groups, its cause and context.
+
+    A context that is the cause is described as `'cause'`. An exception met again along the chain, which a chain set by
+    hand can loop back to, is described without its own.
+    """
+    description: dict[str, object] = {'type': qualified_name(type(exception)), 'message': normalized(str(exception))}
+    if (notes := getattr(exception, '__notes__', None)) is not None:
+        description['notes'] = normalized(notes)
+    if id(exception) in chain:
+        return description
+    chain |= {id(exception)}
+    if isinstance(exception, BaseExceptionGroup):
+        # `isinstance` can't tell pyright what the group holds, which is always exceptions.
+        group: BaseExceptionGroup[BaseException] = exception  # pyright: ignore[reportUnknownVariableType]
+        description['exceptions'] = [described_exception(member, chain) for member in group.exceptions]
+    if exception.__cause__ is not None:
+        description['cause'] = described_exception(exception.__cause__, chain)
+    if (context := exception.__context__) is not None:
+        description['context'] = 'cause' if context is exception.__cause__ else described_exception(context, chain)
+    if exception.__suppress_context__:
+        description['suppress_context'] = True
+    return description
+
+
+def is_realtime_double_module(name: str) -> bool:
+    """Whether module `name` is in a package `REALTIME_DOUBLE_PACKAGES` lists."""
+    return any(name == package or name.startswith(f'{package}.') for package in REALTIME_DOUBLE_PACKAGES)
+
+
+def running_task_id() -> int:
+    """The `id` of the asyncio task running, or of `None` outside one."""
+    try:
+        return id(asyncio.current_task())
+    except RuntimeError:
+        return id(None)
+
+
+def recorded(value: object) -> object:
+    """`value` normalized, with each object in it, or in a list, tuple or set it is, tagged with its class.
+
+    A set is sorted, so two equal sets, like the `Owed` tokens `SessionCore.wait_tokens` returns, are recorded alike.
+    """
+    if isinstance(value, list | tuple):
+        items: list[object] = [*value]
+        return [recorded(item) for item in items]
+    if isinstance(value, Set):
+        members: list[object] = [*value]
+        return sorted((recorded(member) for member in members), key=json.dumps)
+    if value is None or isinstance(value, bool | int | float | str):
+        return normalized(value)
+    return tagged(value)
+
+
+def tagged(value: object) -> object:
+    """`value` normalized, with its class named, which no field of a realtime event or input names."""
+    if isinstance(value, StaleEvent):
+        return {'type': 'StaleEvent', 'event': tagged(value.event)}
+    return {'type': type(value).__qualname__, 'value': normalized(value)}
+
+
+def parsed_json(text: str) -> object:
+    """`text` parsed when it's JSON, else `text`."""
+    try:
+        return json.loads(text)
+    except ValueError:
+        return text
+
+
+def uncompared_fields(value: object) -> list[object]:
+    """The fields equality skips, like `FileUrl._media_type`, of each dataclass `value` holds, in order.
+
+    Serialization shows what they resolve to, like the media type a URL's extension implies, not what they hold.
+    """
+    found: list[object] = []
+    items: list[object] = []
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        fields = dataclasses.fields(value)
+        if skipped := {field.name: getattr(value, field.name) for field in fields if not field.compare}:
+            found.append({'type': type(value).__qualname__, 'fields': normalized(skipped)})
+        items = [getattr(value, field.name) for field in fields]
+    elif isinstance(value, Mapping):
+        items = [*value.values()]
+    elif isinstance(value, list | tuple):
+        items = [*value]
+    for item in items:
+        found.extend(uncompared_fields(item))
+    return found
+
+
+def normalized(value: object) -> object:
+    """`value` as JSON-compatible data, with the values that change from run to run replaced by placeholders."""
+    now = datetime.now(UTC)
+
+    def generated_timestamp(match: re.Match[str]) -> str:
+        try:
+            timestamp = datetime.fromisoformat(match[2])
+        except ValueError:
+            return match[0]
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=UTC)
+        return f'{match[1]}NOW{match[1]}' if abs(timestamp - now) < timedelta(days=1) else match[0]
+
+    def generated_local_timestamp(match: re.Match[str]) -> str:
+        try:
+            timestamp = datetime.fromisoformat(match[0])
+        except ValueError:
+            return match[0]
+        return 'NOW' if abs(timestamp - datetime.now()) < timedelta(days=1) else match[0]
+
+    def generated_epoch_milliseconds(match: re.Match[str]) -> str:
+        timestamp = datetime.fromtimestamp(int(match[1]) / 1000, UTC)
+        return '"timestamp":"NOW"' if abs(timestamp - now) < timedelta(days=1) else match[0]
+
+    # Split only between two quoted strings, so a value with a comma in it, like an HTTP date, stays whole.
+    def sorted_headers(match: re.Match[str]) -> str:
+        return "'HTTPHeaders': {" + ', '.join(sorted(re.split(r"(?<='), (?=')", match[1]))) + '}'
+
+    text = ISO_DATETIME.sub(generated_timestamp, to_json(value, fallback=repr, bytes_mode='base64').decode())
+    text = DATETIME_STR.sub(generated_local_timestamp, text)
+    text = EPOCH_MILLISECONDS.sub(generated_epoch_milliseconds, text)
+    text = BOTOCORE_ERROR_HEADERS.sub(sorted_headers, text)
+    text = SUPPORTED_NATIVE_TOOLS.sub(lambda match: f'{match[1]}{", ".join(sorted(match[2].split(", ")))}]', text)
+    for pattern, replacement in GENERATED_VALUES:
+        text = pattern.sub(replacement, text)
+    return json.loads(text)
+
+
+def _load(capture_dir: Path) -> dict[str, list[str]]:
+    nodes: defaultdict[str, list[str]] = defaultdict(list)
+    for path in sorted(capture_dir.glob('*.jsonl')):
+        for line in path.read_text().splitlines():
+            record: dict[str, object] = json.loads(line)
+            nodes[str(record['node'])].append(line)
+    return nodes
+
+
+def compare(base_dir: Path, head_dir: Path) -> int:
+    """Print how a head capture differs from a base capture. Return 1 if it does, 2 if they can't be compared."""
+    if missing := [d for d in (base_dir, head_dir) if not (d / SOURCE_FILE).exists()]:
+        print(
+            f'No capture in {", ".join(map(str, missing))}; its pytest run stopped before it started.', file=sys.stderr
+        )
+        return 2
+    base_source, head_source = (json.loads((d / SOURCE_FILE).read_text()) for d in (base_dir, head_dir))
+    if base_source == head_source:
+        print(f'Both captures imported `pydantic_ai` from the same file: {base_source}', file=sys.stderr)
+        return 2
+    # A test that fails records only what it did before it failed, so it proves nothing even when both sides match.
+    for side, capture_dir in (('base', base_dir), ('head', head_dir)):
+        if failed := sorted(
+            {node for path in capture_dir.glob(f'*{FAILED_SUFFIX}') for node in path.read_text().split()}
+        ):
+            print(f'nodes that failed, {side}: {len(failed)}')
+            for node in failed:
+                print(f'  {node}')
+    base, head = _load(base_dir), _load(head_dir)
+    if empty := [d for d, nodes in ((base_dir, base), (head_dir, head)) if not nodes]:
+        print(
+            f'Nothing recorded in {", ".join(map(str, empty))}; the selected tests may not stream, send requests, '
+            'run a UI adapter, a realtime connection or session or a tool hook, catch an exception, or warn.',
+            file=sys.stderr,
+        )
+        return 2
+    head_nodes = {node: [json.loads(line) for line in lines] for node, lines in head.items()}
+    head_records = [record for records in head_nodes.values() for record in records]
+    print(f'nodes: base {len(base)}, head {len(head)}')
+    print(f'records: base {sum(map(len, base.values()))}, head {len(head_records)}')
+    print(f'stream events: head {sum(len(record["events"]) for record in head_records if record["kind"] == "stream")}')
+    print(f'requests: head {sum(record["kind"] == "request" for record in head_records)}')
+    print(f'ui records: head {sum(record["kind"] == "ui" for record in head_records)}')
+    print(f'realtime records: head {sum(record["kind"] == "realtime" for record in head_records)}')
+    print(f'session records: head {sum(record["kind"] == "session" for record in head_records)}')
+    print(f'hook records: head {sum(record["kind"] == "hook" for record in head_records)}')
+    print(f'exception records: head {sum(record["kind"] == "exception" for record in head_records)}')
+    print(f'warning records: head {sum(record["kind"] == "warning" for record in head_records)}')
+
+    modules: Counter[str] = Counter()
+    targets: Counter[str] = Counter()
+    ui_targets: Counter[str] = Counter()
+    realtime_targets: Counter[str] = Counter()
+    session_targets: Counter[str] = Counter()
+    hook_targets: Counter[str] = Counter()
+    for records in head_nodes.values():
+        modules.update({module for record in records for module in record.get('modules', [])})
+        targets.update({record['target'] for record in records if record['kind'] == 'request'})
+        ui_targets.update({record['target'] for record in records if record['kind'] == 'ui'})
+        realtime_targets.update({record['target'] for record in records if record['kind'] == 'realtime'})
+        session_targets.update({record['target'] for record in records if record['kind'] == 'session'})
+        hook_targets.update({record['target'] for record in records if record['kind'] == 'hook'})
+    for label, counts in (
+        ('stream module', modules),
+        ('request target', targets),
+        ('ui target', ui_targets),
+        ('realtime target', realtime_targets),
+        ('session target', session_targets),
+        ('hook target', hook_targets),
+    ):
+        print(f'nodes per {label}, head:')
+        for name, count in sorted(counts.items()):
+            print(f'  {name}: {count}')
+    ran = {node for path in head_dir.glob(f'*{NODES_SUFFIX}') for node in path.read_text().splitlines()}
+    requesting = {
+        node
+        for node, records in head_nodes.items()
+        if any(record['kind'] in ('request', 'realtime', 'session') for record in records)
+    }
+    print(f'nodes that recorded no request, realtime or session record, head: {len(ran - requesting)}')
+    for node in sorted(ran - requesting):
+        print(f'  {node}')
+
+    only_base = sorted(base.keys() - head.keys())
+    only_head = sorted(head.keys() - base.keys())
+    differing = sorted(node for node in base.keys() & head.keys() if base[node] != head[node])
+    print(f'only in base: {len(only_base)}, only in head: {len(only_head)}, differing: {len(differing)}')
+    for label, nodes in (('only in base', only_base), ('only in head', only_head), ('differing', differing)):
+        for node in nodes:
+            print(f'  {label}: {node}')
+    return 1 if only_base or only_head or differing else 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Capture the selected tests on a base commit and on the working tree, then compare the captures."""
+    parser = argparse.ArgumentParser(prog='python -m tests.refactor_capture', description=main.__doc__)
+    parser.add_argument('base', help='the commit to compare against, usually the merge base with `main`')
+    parser.add_argument('pytest_args', nargs=argparse.REMAINDER, help='test nodes and pytest options')
+    args = parser.parse_args(argv)
+
+    roots = workspace_roots()
+    # DBOS resolves a workflow function's file with `os.path.realpath`, which reads each symlink on the way with
+    # `os.readlink`, and blockbuster raises on that in the event loop. On macOS, the temporary directory is reached
+    # through `/var`, a symlink, so only the base side's sources would be.
+    out = Path(tempfile.mkdtemp(prefix='refactor-capture-')).resolve()
+    archive = subprocess.run(
+        ['git', 'archive', args.base, '--', *map(str, roots)], cwd=REPO, check=True, capture_output=True
+    ).stdout
+    with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+        tar.extractall(out / 'base-src', filter='data')
+
+    failed = False
+    for side, sources in (('base', [out / 'base-src' / root for root in roots]), ('head', [])):
+        pythonpath = os.pathsep.join([*map(str, sources), *filter(None, [os.environ.get('PYTHONPATH')])])
+        command = ['-m', 'pytest', '-p', 'tests.refactor_capture', f'{CAPTURE_OPTION}={out / side}', *args.pytest_args]
+        env = os.environ | {'PYTHONPATH': pythonpath, 'PYTHONHASHSEED': '0'}
+        code = subprocess.run([sys.executable, *command], cwd=REPO, env=env).returncode
+        # Flushed, so a run stopped from outside, like by `timeout`, still says which side finished.
+        print(f'{side} capture: pytest exited {code}', flush=True)
+        failed = failed or code != 0
+    print(f'captures: {out}')
+    # Tests that fail alike on both sides compare equal, but they don't prove the refactor.
+    return compare(out / 'base', out / 'head') or int(failed)
+
+
+if __name__ == '__main__':
+    sys.exit(main())

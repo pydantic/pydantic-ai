@@ -6,6 +6,8 @@ from ..profiles.openai import OpenAIModelProfile
 from . import InlineDefsJsonSchemaTransformer, ModelProfile
 
 _QWEN_3_5_RE = re.compile(r'qwen-?3[\.\-]5')
+# Qwen3 Next reads a tool's text output more reliably as a JSON string field (`needs_json_string_tool_returns`).
+_QWEN_3_NEXT_RE = re.compile(r'qwen-?3-next')
 
 
 def qwen_model_profile(model_name: str) -> ModelProfile | None:
@@ -13,7 +15,7 @@ def qwen_model_profile(model_name: str) -> ModelProfile | None:
     if model_name.startswith('qwen-3-coder'):
         return OpenAIModelProfile(
             json_schema_transformer=InlineDefsJsonSchemaTransformer,
-            openai_supports_tool_choice_required=False,
+            supports_forced_tool_choice=False,
             openai_supports_strict_tool_definition=False,
             ignore_streamed_leading_whitespace=True,
         )
@@ -24,7 +26,10 @@ def qwen_model_profile(model_name: str) -> ModelProfile | None:
             supports_json_schema_output=True,
             supports_json_object_output=True,
         )
-    return ModelProfile(
+    profile = ModelProfile(
         json_schema_transformer=InlineDefsJsonSchemaTransformer,
         ignore_streamed_leading_whitespace=True,
     )
+    if _QWEN_3_NEXT_RE.search(model_name):
+        profile['needs_json_string_tool_returns'] = True
+    return profile

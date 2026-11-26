@@ -5,15 +5,23 @@ Based on https://github.com/lmolkova/semantic-conventions/blob/eccd1f806e426a32c
 
 from __future__ import annotations
 
-from typing import Literal, TypeAlias
+from typing import Literal, NotRequired, TypeAlias
 
 from pydantic import JsonValue
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 
 class TextPart(TypedDict):
     type: Literal['text']
     content: NotRequired[str]
+    # Not (currently?) part of the spec: `False` on a request-scoped system prompt an earlier request was
+    # sent with, which the model doesn't see on this one
+    visible: NotRequired[bool]
+
+
+def text_part(content: str, *, include_content: bool) -> TextPart:
+    """A text part, with its `content` only when content is included."""
+    return TextPart(type='text', content=content) if include_content else TextPart(type='text')
 
 
 class ToolCallPartOtelMetadata(TypedDict, total=False):
@@ -105,7 +113,7 @@ class ThinkingPart(TypedDict):
 MessagePart: TypeAlias = 'TextPart | ToolCallPart | ToolCallResponsePart | MediaUrlPart | UriPart | FilePart | BinaryDataPart | BlobPart | ThinkingPart'
 
 
-Role = Literal['system', 'user', 'assistant']
+Role = Literal['system', 'user', 'assistant', 'tool']
 
 
 class ChatMessage(TypedDict):

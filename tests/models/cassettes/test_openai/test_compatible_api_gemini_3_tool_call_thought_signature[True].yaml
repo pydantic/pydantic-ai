@@ -1,0 +1,177 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "504"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.1-flash-lite
+        stream: true
+        messages:
+        - role: user
+          content: >-
+            What's the weather in Taipei and Kaohsiung? Call get_weather once for each city
+            in parallel, then summarize.
+        stream_options:
+          include_usage: true
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_weather
+            description: Get today's weather for a city.
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            strict: true
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      cache-control:
+      - private
+      content-type:
+      - text/event-stream
+      expires:
+      - Wed, 14 Oct 2026 01:07:42 GMT
+      p3p:
+      - CP="This is not a P3P policy! See g.co/p3phelp for more info."
+      server-timing:
+      - gfet4t7; dur=645
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: text
+      content: |+
+        data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"extra_content":{"google":{"thought_signature":"EnMKcQFpFH0TIaBpCgUoiel1l979A/ggroUdUyRmOpyfS+5TUg0vmY7fsA2gEWzxqODH/Zhy6XN+nqQkm5JNSMwqC4aaaV/IXcMiCpz5U9Ww5i1FSF30n+acBVxOODUQ2yLaMC9ZhwGxnHBTYVeItVGdcnDp"}},"function":{"arguments":"{\"city\":\"Taipei\"}","name":"get_weather"},"id":"call_108766","type":"function"}]},"index":0}],"created":1791940062,"id":"3tXOasW2I-2KmtkPrtulEA","model":"gemini-3.1-flash-lite","object":"chat.completion.chunk","usage":{"completion_tokens":17,"prompt_tokens":74,"total_tokens":91}}
+
+        data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"function":{"arguments":"{\"city\":\"Kaohsiung\"}","name":"get_weather"},"id":"call_108772","type":"function"}]},"index":0}],"created":1791940063,"id":"3tXOasW2I-2KmtkPrtulEA","model":"gemini-3.1-flash-lite","object":"chat.completion.chunk","usage":{"completion_tokens":36,"prompt_tokens":74,"total_tokens":110}}
+
+        data: {"choices":[{"delta":{"role":"assistant"},"finish_reason":"stop","index":0}],"created":1791940063,"id":"3tXOasW2I-2KmtkPrtulEA","model":"gemini-3.1-flash-lite","object":"chat.completion.chunk","usage":{"completion_tokens":36,"prompt_tokens":74,"total_tokens":110}}
+
+        data: [DONE]
+
+  recorded_at: 2026-10-14T01:07:43.098619+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1124"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.1-flash-lite
+        stream: true
+        messages:
+        - role: user
+          content: >-
+            What's the weather in Taipei and Kaohsiung? Call get_weather once for each city
+            in parallel, then summarize.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_108766
+            type: function
+            function:
+              name: get_weather
+              arguments: "{\"city\":\"Taipei\"}"
+            extra_content:
+              google:
+                thought_signature: >-
+                  EnMKcQFpFH0TIaBpCgUoiel1l979A/ggroUdUyRmOpyfS+5TUg0vmY7fsA2gEWzxqODH/Zhy6XN+nqQkm5JNSMwqC4aaaV/IXcMiCpz5U9Ww5i1FSF30n+acBVxOODUQ2yLaMC9ZhwGxnHBTYVeItVGdcnDp
+          - id: call_108772
+            type: function
+            function:
+              name: get_weather
+              arguments: "{\"city\":\"Kaohsiung\"}"
+        - role: tool
+          tool_call_id: call_108766
+          content: sunny, 28°C
+        - role: tool
+          tool_call_id: call_108772
+          content: sunny, 28°C
+        stream_options:
+          include_usage: true
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_weather
+            description: Get today's weather for a city.
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            strict: true
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      cache-control:
+      - private
+      content-type:
+      - text/event-stream
+      expires:
+      - Wed, 14 Oct 2026 01:07:43 GMT
+      p3p:
+      - CP="This is not a P3P policy! See g.co/p3phelp for more info."
+      server-timing:
+      - gfet4t7; dur=843
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: text
+      content: |+
+        data: {"choices":[{"delta":{"content":"The","role":"assistant"},"index":0}],"created":1791940063,"id":"39XOasL2F8n5qtsP8qaXqQ4","model":"gemini-3.1-flash-lite","object":"chat.completion.chunk","usage":{"completion_tokens":1,"prompt_tokens":149,"total_tokens":150}}
+
+        data: {"choices":[{"delta":{"content":" weather is currently sunny and 28°C in both Taipei and Kaohsiung.","role":"assistant"},"index":0}],"created":1791940064,"id":"39XOasL2F8n5qtsP8qaXqQ4","model":"gemini-3.1-flash-lite","object":"chat.completion.chunk","usage":{"completion_tokens":20,"prompt_tokens":149,"total_tokens":169}}
+
+        data: {"choices":[{"delta":{"extra_content":{"google":{"thought_signature":"EnMKcQFpFH0TooUxicUhUJrdb7Ji0ykKm3vsdX8IvQcZ0GHLql9pRmMYQjMSKgnaDwf4iARSElYfwuuPoA8AjrgZ0HHtqP/uBZ5oR3AW+H8YCiRxKnn3rGL9PkVl3U/dLz0mMOnyCxE2oKf2q2VSxDl3mT3U"}},"role":"assistant"},"finish_reason":"stop","index":0}],"created":1791940064,"id":"39XOasL2F8n5qtsP8qaXqQ4","model":"gemini-3.1-flash-lite","object":"chat.completion.chunk","usage":{"completion_tokens":20,"prompt_tokens":149,"total_tokens":169}}
+
+        data: [DONE]
+
+  recorded_at: 2026-10-14T01:07:44.130440+00:00

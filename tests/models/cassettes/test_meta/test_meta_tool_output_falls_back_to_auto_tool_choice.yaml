@@ -1,0 +1,127 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.meta.ai/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "465"
+      content-type:
+      - application/json
+      host:
+      - api.meta.ai
+    body:
+      type: json
+      content:
+        model: muse-spark-1.3
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: Which city is the Eiffel Tower in?
+        tool_choice: auto
+        tools:
+        - name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+            additionalProperties: false
+          type: function
+          description: The final response which ends this conversation
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      connection:
+      - keep-alive
+      content-length:
+      - "4430"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        top_logprobs: 0
+        temperature: 1.0
+        top_p: 1.0
+        service_tier: auto
+        model: muse-spark-1.3
+        reasoning:
+          effort: high
+        background: false
+        tools:
+        - type: function
+          name: final_result
+          description: The final response which ends this conversation
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+          strict: true
+        tool_choice: auto
+        truncation: disabled
+        id: resp_6ace34aa05ca781bda144553
+        object: response
+        status: completed
+        created_at: 1791898794.0
+        completed_at: 1791898794.0
+        error: null
+        incomplete_details: null
+        output:
+        - type: reasoning
+          id: rs_6ace34aa05ca781bda144553:rs_54e517c4-812d-424c-958a-3d3a2d732022
+          encrypted_content: >-
+            Q-PaDgHtYtsdcZe_V24JgNSkYyjbfW19eJfmiA7AvpYxSWpiblfiUrYLWwYd5ndH5V2IMRN8Y1tXUAxmkpakpOXLwvRSpIsI-_RchU26jm_vGkhqR_zOXI3keFVxUi5DfuCoUJg3BRrsCxcTNOtrGhynTzk5ehChiyY2CpISHZCvjp_j3NYDnfWv128VtDptIncybhgNypI6ZFcpveRovAx2VGTYRzkoDnko6xUZz5BTgeRtzDQbP_6e-jIoR9I7CTT42fGNIvIL9vxvmDEDUj6m-0QhxfjcnQ93ejegB3hZWgRzL5VsteFXOA39ZpSmSN4SZu4s_IaPrnFiao1sJaqUa2LzSUrJ5D2HiwBHd_LB-u4Fj3ymwZdmE5HLoWebws0OXBpE1jyzxoh8yimc4rq8V8dO3DJsAqh-wtLT1YGUidF7KRegqRtPyNm7PoAuY5CBEt0aooHYbzxWAO-PmOnPNuD9xZhS7R8cYpftlbQ5Kh-n09EQTOelTgm4cEqqFJIdWv4srIOnica16kPEL5VowR8Xx7fl2ouDPP8IjeR-AicTPNPyv89oMIb-nkJlaS7SpZeMTGTnwYFXoMQl7Qh-zLnVR6E173HPf99KHdigJNXz-kHr-G_BHDV1ZkKpZM_8sHK_WTNLPHOUasgtgntdgUtITAAWStiZkkcxlWlQmj7zxhxuo17CaKCMLVCVD1BA26wm-3X-wUC2ysVeNtIIWq6LT4coSQIBkop5kAppufBDiwgkADKF_3K4lZM93ffAVATN9OkyV_cR3uTEeCp5JbsxxlErBPDvpSVXrvV5XTEo89TrWAJAZU8amAjQ_JK8WwPIGB5FGrnbsyc2iQ2DJU84Hg9l0VlcgzlvJ4wwsOuo8ayoUl1tzNAltTCrUf6PavDhooR_KisOPQYNmUQQS93S2zPXLKMYGI650gZ1Eml7PrFkTbiTLXkj6kpg7A6rsyiMia4GqERpwwb5JFvKpBg3cU061Jur1X5pwEt0tIY3YwFY4SeCR8vaha7gXIW3GTr-b0LTPJQ6E-oxG6SYTxXAofcE7wGIkelH8OKx5x7nNVFEtZ7yNAp8rF1_S3GRQYyKt7fG2-butek4WVA0lZ7izj_l6plZOAixjy6vvtlLacanPl7a-FoGZVG7qR475VQTVyKDG-JzX62eYqdR_UyAt_GbHf-cDlBSey1nEwTgT6d5csTqHdr2rPnQGApeeyS_YJiLXMD-zyqVNfkybmEB3idEUZ25KGeSn7w4iMLyORysSbVi691BlR65o-Mbb89yEnxrfCJQi6eGMQ8W3niQ_VO1adP3n-jv-gUmXvCu1W6emJ03jKeqoPq6PMUSoqG1EQiS8W4wYPJR3oDCqYaiUFh7K4gjmyb2TSXVePEWCwM2NCTu55RTpB2tElENZhiO8W6QW9fVcYDHK6gYaXN43LNB_NKiY7zE20_qjAEG20Xl6F-eDnQmjn4r-36IzEXwMb8pf4YLVTNicgx2J_mRs9MTzw52jz0jMfn0Eq063zdVbKevh3EISCG-JaMwgOcJT8QVIzjvB3uBiwWB6Y9wGKYfyft0wBV_tsg5j8luPSG9TARa4f5P9S19NbtV8rdX_Od6VMzXP0txESMmPlpktOaXpR1iUjh4Sweq6OHYLktq2PTU0VaMg16doPcrWBlA4VHGUueCDNXhfCxsURrF4g0GjZkWKVuG_LP0_PNvYlWQ1orBS3BLT2raSfwDW4YxtC0YXBq3DC3eX6lCqERS-N_KBZdqg2uVvXuNnRYnp4V8Dt7So3Z7JinvjBXhL1p-3-rsC1jJ8RoNaHHoQ8lmP23ThatPUB7G4HF_GKRc7D-niRDi7-YQWULBeMc8mlfp0TVC0iCvV7OE5cetJtLI7qyV4edWkcJz9ovoow4XHpHX4fl-OsfqUOtzgy6aDQibQlwbvbO0dwaIXVu3PqNtswI51a-BkkM-lPkHzGVjcgP6OxZ9cKDhaRF-e532N5JtXfq15550bGPnj8-zmpj1WhwQKh10T_izani0SxpLu2aK7cWP3ldCPWSlwpz3fDPlXRlq9mbXqhHPGCZE4n4Gbj5Dbve-ioKuUBfpZ6fqsUcPGUmZAvbaZL0iABGpNh0wmZhGW_bhZGGwaiyOJBe03WlN8DeU_X9xwVpQ6hffBLPlWWJ3unA2ivIJBpiPBfBxffInsxjGv8JFkCHCWy9_l-ZhmFCWT51M7_7WPkXPWnp0ffnRG4mki66cDBErGb3BqrbjNmsEYOx1H7d1sjgI6Ef8_di7KhG0GxXOtDKGpLvzXSLztL-LgtShdivYODEW2w9CtVvE66ow-VfBwbvoYB559x0x6tMQikY2e4EWbVpljUI74qF3nUTmbx3RiywGmOwrVHDHGxg6qA-UWJhUvZ28UQxddTQ46al8j2-Iti1n_s--FJhjHJa1-cr2-m1i0SXWTXD-du6sOyQPkatOns-BNW5EUe2_O9koMjSxq5qyKLxWZTk56E5o6XS84hwr_6gc0OmIyOIWUhCQUz8qFvAjVTURmrEc1c2xc27H-e0doPFp0ODIVDx56ZGPNq6qphQ0vbNISVtp8pRdA3hdtjJxpRPEB8NGjqVY-3YAmsnFLEVyd2kukEFQWYbzcCN8APrZ5GqH-76dRc0x7UG1SrCeBNIiICDbx0J-emqzWzhGcLWMmQNGpuBGNRLVDpxJWHmsceNS72iNrG08YBrv7xbEelv2qPdICWOHD9Ok1T-0m5SX5a1yx2JRYX4LzsscV-7K5lB1Dus48Q3lJ2YZtunILmk6GK4
+          summary: []
+          status: completed
+        - type: message
+          id: rs_34121cc4-8080-4203-9930-1464dd6baf74
+          role: assistant
+          content:
+          - type: output_text
+            text: Eiffel Tower location -- I'll pull the city and country now.
+            annotations: []
+            logprobs: []
+          phase: commentary
+          status: completed
+        - type: function_call
+          id: fc_f3872043-d8ef-4697-8638-1181226d3dce
+          call_id: call_f3872043-d8ef-4697-8638-1181226d3dce
+          name: final_result
+          arguments: "{\"city\":\"Paris\",\"country\":\"France\"}"
+          status: completed
+        instructions: null
+        usage:
+          input_tokens: 557
+          input_tokens_details:
+            cached_tokens: 0
+          output_tokens: 375
+          output_tokens_details:
+            reasoning_tokens: 289
+          total_tokens: 932
+        parallel_tool_calls: true
+        store: true
+  recorded_at: 2026-10-13T13:39:54.831958+00:00

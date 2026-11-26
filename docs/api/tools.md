@@ -2,6 +2,8 @@
 
 ::: pydantic_ai.tools
 
+::: pydantic_ai.UseEnumMemberDocstrings
+
 ::: pydantic_ai.tool_manager.ParallelExecutionMode
 
 ::: pydantic_ai.tool_manager.ToolManager

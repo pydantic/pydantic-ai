@@ -3,11 +3,10 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
-import httpx
-
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.harmony import harmony_model_profile
@@ -16,6 +15,7 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
     from openai import AsyncOpenAI
@@ -25,10 +25,13 @@ except ImportError as _import_error:
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 else:
-    from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
+    from ._openai_compatible import (
+        AsyncHTTPClient as _OpenAIHTTPClient,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
+    )
 
 
-class NebiusProvider(_OpenAICompatibleProvider):
+class NebiusProvider(_OpenAISDKProvider):
     """Provider for Nebius AI Studio API."""
 
     @property
@@ -37,7 +40,7 @@ class NebiusProvider(_OpenAICompatibleProvider):
 
     @property
     def base_url(self) -> str:
-        return 'https://api.studio.nebius.com/v1'
+        return self._base_url
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -53,13 +56,15 @@ class NebiusProvider(_OpenAICompatibleProvider):
             'openai': harmony_model_profile,  # used for gpt-oss models on Nebius
             'mistralai': mistral_model_profile,
             'moonshotai': moonshotai_model_profile,
+            'zai-org': _glm_5_3_schema_profile,
         }
 
         profile = None
+        route_profile = special_token_route_profile('nebius', model_name)
 
         model_name = model_name.lower()
         if '/' not in model_name:
-            return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer)
+            return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), route_profile)
 
         provider, model_name = model_name.split('/', 1)
         if provider in provider_to_profile:
@@ -67,16 +72,18 @@ class NebiusProvider(_OpenAICompatibleProvider):
 
         # As NebiusProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly
-        return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile, route_profile
+        )
 
     @overload
-    def __init__(self) -> None: ...
+    def __init__(self, *, base_url: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str) -> None: ...
+    def __init__(self, *, api_key: str, base_url: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
+    def __init__(self, *, api_key: str, base_url: str | None = None, http_client: _OpenAIHTTPClient) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -85,8 +92,9 @@ class NebiusProvider(_OpenAICompatibleProvider):
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
         api_key = api_key or os.getenv('NEBIUS_API_KEY')
         if not api_key and openai_client is None:
@@ -95,6 +103,8 @@ class NebiusProvider(_OpenAICompatibleProvider):
                 '`NebiusProvider(api_key=...)` to use the Nebius AI Studio provider.'
             )
 
+        assert openai_client is None or base_url is None, 'Cannot provide both `openai_client` and `base_url`'
+        self._base_url = base_url or 'https://api.studio.nebius.com/v1'
         if openai_client is not None:
             self._client = openai_client
         else:

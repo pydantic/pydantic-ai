@@ -1,0 +1,354 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    setup:
+      model: models/gemini-3.1-flash-live-preview
+      generationConfig:
+        responseModalities:
+        - AUDIO
+      systemInstruction:
+        parts:
+        - text: Keep replies to one short sentence. Use the lookup tool for any order.
+        role: user
+      tools:
+      - functionDeclarations:
+        - description: Look up an order's status.
+          name: lookup
+          parameters:
+            properties:
+              order:
+                type: STRING
+            required:
+            - order
+            type: OBJECT
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  at: 0.085
+  data:
+    setupComplete: {}
+- kind: message
+  direction: sent
+  at: 0.093
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: What is the status of my order 4411?
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  at: 0.41
+  data:
+    serverContent: {}
+- kind: message
+  direction: sent
+  at: 0.424
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: Also, what is 2 plus 2? Answer with the number.
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  at: 0.429
+  data:
+    toolCall:
+      functionCalls:
+      - name: lookup
+        args:
+          order: '4411'
+        id: fc_15705932938145417435
+- kind: message
+  direction: received
+  at: 0.462
+  data:
+    toolCallCancellation:
+      ids:
+      - fc_15705932938145417435
+- kind: message
+  direction: received
+  at: 0.463
+  data:
+    serverContent:
+      interrupted: true
+- kind: message
+  direction: received
+  at: 0.463
+  data:
+    serverContent:
+      turnComplete: true
+    usageMetadata:
+      promptTokenCount: 216
+      responseTokenCount: 13
+      totalTokenCount: 229
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 169
+- kind: message
+  direction: received
+  at: 0.75
+  data:
+    sessionResumptionUpdate:
+      newHandle: 945e45ae-cb09-405e-a86a-964f6165f6ac
+      resumable: true
+- kind: message
+  direction: received
+  at: 0.821
+  data:
+    serverContent: {}
+- kind: message
+  direction: received
+  at: 0.837
+  data:
+    toolCall:
+      functionCalls:
+      - name: lookup
+        args:
+          order: '4411'
+        id: fc_15750791025775122602
+- kind: message
+  direction: sent
+  at: 0.84
+  data:
+    tool_response:
+      functionResponses:
+      - id: fc_15750791025775122602
+        name: lookup
+        response:
+          output: Order 4411 has shipped and arrives on Friday.
+- kind: message
+  direction: received
+  at: 1.139
+  data:
+    sessionResumptionUpdate:
+      newHandle: b21f15d3-a90f-4d9c-acc3-db4f3d1ff900
+      resumable: true
+- kind: message
+  direction: received
+  at: 1.173
+  data:
+    serverContent: {}
+- kind: message
+  direction: received
+  at: 1.538
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: /P/9/////f/y/+v/6v/w//L/8f/z//H/9P/4//L/8v/0
+      outputTranscription:
+        text: Order 4411
+- kind: message
+  direction: received
+  at: 1.64
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: EzMNL1MqASajIHEbWxirFCATLRMdFKcVxhewGAMZUhgz
+- kind: message
+  direction: received
+  at: 1.729
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: Ywn1CJAIhwjMB0UHGgetBmQGkwU1BakE0gQ1BV0FCgZJ
+- kind: message
+  direction: received
+  at: 1.816
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: WOKZ4JrfV96E3Gnbi9jM1mrWgdSp063SPdC0zx3QkM/d
+- kind: message
+  direction: received
+  at: 1.929
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: WRHTEmwTlhSHFWkW0hcjGYQawhvfHOccvhwQHE0bwhsG
+- kind: message
+  direction: received
+  at: 2.026
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: gg9bD1IOogxOC34LkgvbCV8H2ASBAyMCzwDr/lD9tv3z
+- kind: message
+  direction: received
+  at: 2.118
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: mwPpAX8AjAD1/078z/cW9fL0fPba9xj4dvdI+B/70fwM
+- kind: message
+  direction: received
+  at: 2.164
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: zBLrEncTmROOEwEUWhRPFO4TNxM3EmYR/RDAEHAQ9Q9i
+- kind: message
+  direction: received
+  at: 2.208
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: PhF5BRkELQfgB04K3AvzCtkF3QCIAJcDuAxRDg0IyQC9
+- kind: message
+  direction: received
+  at: 2.251
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: FgisBuQFFAWzA0QBDf/K/Nn64/lt+Vn6Xvpf+mT5APn2
+- kind: message
+  direction: received
+  at: 2.293
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: nwLd/jz/xwCIAqICMwBc/4z/kwDy/hT/o/9XAysJVwB9
+- kind: message
+  direction: received
+  at: 2.342
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 6dCf1NrfYewL+UQGng+9EloS2g+7CqkJwwa+BL4GsAla
+- kind: message
+  direction: received
+  at: 2.394
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: GuHO/VwgjkNjWQRhS15oUuE9FSJLCOTv5dvFynW/wr2I
+- kind: message
+  direction: received
+  at: 2.434
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: OvcM9QPz/vKe8rnybPLN7/nrEeiU5i3nMOcF5NncbtXN
+- kind: message
+  direction: received
+  at: 2.479
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: Hv8eAEX9Xv/dANf/owAnAYwA4gHXACQAc/+B/zcAkP93
+- kind: message
+  direction: received
+  at: 2.548
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: t/w9/gYA4gFbA9ME8gVlB/gIwApEDCINxQ1cDpcOHg+C
+- kind: message
+  direction: received
+  at: 2.549
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: BgAPAA4AFQAUABcAFwASABYAGAAUABYAIQAZABAAEAAA
+- kind: message
+  direction: received
+  at: 2.735
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: +v/5//f/9v/7/wcACQACAAUABAADAAYABQD8//7/AAAB
+      outputTranscription:
+        text: ' 4.'
+- kind: message
+  direction: received
+  at: 2.738
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: //8WACUAIQAjAC4AFwDz/+n/BwA1AFMATABdAGkAdgBn
+- kind: message
+  direction: received
+  at: 2.782
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  at: 4.877
+  data:
+    serverContent:
+      turnComplete: true
+    usageMetadata:
+      promptTokenCount: 501
+      responseTokenCount: 99
+      totalTokenCount: 600
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 389
+      responseTokensDetails:
+      - modality: AUDIO
+        tokenCount: 86

@@ -1,10 +1,10 @@
 from dataclasses import KW_ONLY, dataclass
 from functools import partial
 from inspect import signature
-from typing import Literal, overload
+from typing import Any, Literal, overload
 
 from pydantic import TypeAdapter
-from typing_extensions import Any, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai.tools import Tool
 
@@ -166,7 +166,7 @@ def tavily_search_tool(
         original = func
         func = partial(func, **kwargs)
         func.__name__ = original.__name__  # type: ignore[union-attr]
-        func.__qualname__ = original.__qualname__
+        func.__qualname__ = original.__qualname__  # pyright: ignore[reportAttributeAccessIssue]
         # partial with keyword args only updates defaults, not removes params.
         # Set __signature__ explicitly to exclude bound params from the tool schema.
         orig_sig = signature(original)

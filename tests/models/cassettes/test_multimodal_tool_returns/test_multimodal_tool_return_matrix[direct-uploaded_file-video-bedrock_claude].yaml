@@ -1,90 +1,122 @@
+version: 1
 interactions:
 - request:
-    body: '{"messages": [{"role": "user", "content": [{"text": "Use the get_file tool now to retrieve a video file, then describe
-      what you received."}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_file",
-      "inputSchema": {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}}}], "toolChoice": {"auto":
-      {}}}}'
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse-stream
     headers:
       amz-sdk-invocation-id:
-      - !!binary |
-        ZTRmMGMyNTYtOTFkMi00NDUzLTg0ZjUtZjJkYzgwZmY3Mjdm
+      - 157f62c6-9ab5-4419-ae42-85c7c4f3c3e0
       amz-sdk-request:
-      - !!binary |
-        YXR0ZW1wdD0x
+      - attempt=1
       content-length:
-      - '365'
+      - "383"
       content-type:
-      - !!binary |
-        YXBwbGljYXRpb24vanNvbg==
-    method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Use the get_file tool now to retrieve a video file, then describe what you
+              received.
+        system: []
+        inferenceConfig:
+          maxTokens: 64000
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: get_file
+              inputSchema:
+                json:
+                  additionalProperties: false
+                  properties: {}
+                  type: object
+          toolChoice:
+            auto: {}
   response:
+    status: 200
     headers:
       connection:
       - keep-alive
+      content-type:
+      - application/vnd.amazon.eventstream
+      transfer-encoding:
+      - chunked
+    body:
+      type: binary
+      content: >-
+        000000a7000000522240ac370b3a6576656e742d7479706507000c6d65737361676553746172740d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f50222c22726f6c65223a22617373697374616e74227dee5d674f000000dd00000057e148a0d60b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2249276c6c207265747269657665207468652066696c65227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f5051525354227d691f3ddd000000db000000576e0855760b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2220666f7220796f75206e6f77227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a3031227d215df16f000000c8000000574948b8240b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a222e227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f5051525354227d83b67e33000000b900000056fafd41cd0b3a6576656e742d74797065070010636f6e74656e74426c6f636b53746f700d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a30227d880044d400000120000000579ab0e79f0b3a6576656e742d74797065070011636f6e74656e74426c6f636b53746172740d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a312c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a222c227374617274223a7b22746f6f6c557365223a7b226e616d65223a226765745f66696c65222c22746f6f6c5573654964223a22746f6f6c7573655f4e315436376b503052484572616246765170705a5269222c2274797065223a22746f6f6c5f757365227d7d7d3cd96449000000df000000579b88f3b60b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a312c2264656c7461223a7b22746f6f6c557365223a7b22696e707574223a22227d7d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a3031323334227d7247c3c70000009500000056fecc83c80b3a6576656e742d74797065070010636f6e74656e74426c6f636b53746f700d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a312c2270223a226162636465666768696a6b6c6d6e6f7071227d6adf33fa00000097000000511a68450b0b3a6576656e742d7479706507000b6d65737361676553746f700d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b2270223a226162636465666768696a6b6c6d6e6f70717273747576222c2273746f70526561736f6e223a22746f6f6c5f757365227d36a9fc1c000000de0000004ec28372c60b3a6576656e742d747970650700086d657461646174610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b226d657472696373223a7b226c6174656e63794d73223a313737377d2c2270223a22616263646566222c227573616765223a7b22696e707574546f6b656e73223a3535382c226f7574707574546f6b656e73223a34362c22736572766572546f6f6c5573616765223a7b7d2c22746f74616c546f6b656e73223a3630347d7d1b9f2795
+  recorded_at: 2026-10-20T23:06:18.000142+00:00
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse-stream
+    headers:
+      amz-sdk-invocation-id:
+      - 7c7cdf2d-92ba-4cae-b6e8-5ca4ca0ceffa
+      amz-sdk-request:
+      - attempt=1
       content-length:
-      - '493'
+      - "816"
       content-type:
       - application/json
-    parsed_body:
-      metrics:
-        latencyMs: 1980
-      output:
-        message:
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Use the get_file tool now to retrieve a video file, then describe what you
+              received.
+        - role: assistant
           content:
           - text: I'll retrieve the file for you now.
           - toolUse:
-              input: {}
+              toolUseId: tooluse_N1T67kP0RHErabFvQppZRi
               name: get_file
-              toolUseId: tooluse_1DXOdhDwtJHfyGzegF1GWH
-              type: tool_use
-          role: assistant
-      stopReason: tool_use
-      usage:
-        cacheReadInputTokenCount: 0
-        cacheReadInputTokens: 0
-        cacheWriteInputTokenCount: 0
-        cacheWriteInputTokens: 0
-        inputTokens: 558
-        outputTokens: 46
-        serverToolUsage: {}
-        totalTokens: 604
-    status:
-      code: 200
-      message: OK
-- request:
-    body: '{"messages": [{"role": "user", "content": [{"text": "Use the get_file tool now to retrieve a video file, then describe
-      what you received."}]}, {"role": "assistant", "content": [{"text": "I''ll retrieve the file for you now."}, {"toolUse":
-      {"toolUseId": "tooluse_1DXOdhDwtJHfyGzegF1GWH", "name": "get_file", "input": {}}}]}, {"role": "user", "content": [{"toolResult":
-      {"toolUseId": "tooluse_1DXOdhDwtJHfyGzegF1GWH", "content": [{"video": {"format": "mp4", "source": {"s3Location": {"uri":
-      "s3://pydantic-ai-test-files/test-files/small_video.mp4"}}}}], "status": "success"}}]}], "system": [], "inferenceConfig":
-      {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_file", "inputSchema": {"json": {"additionalProperties": false,
-      "properties": {}, "type": "object"}}}}], "toolChoice": {"auto": {}}}}'
-    headers:
-      amz-sdk-invocation-id:
-      - !!binary |
-        NjY1MmY5NGEtYjM4Mi00NmMzLTk1NDUtYzQ5OTQ0ZDQ0Nzlk
-      amz-sdk-request:
-      - !!binary |
-        YXR0ZW1wdD0x
-      content-length:
-      - '798'
-      content-type:
-      - !!binary |
-        YXBwbGljYXRpb24vanNvbg==
-    method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+              input: {}
+        - role: user
+          content:
+          - toolResult:
+              toolUseId: tooluse_N1T67kP0RHErabFvQppZRi
+              content:
+              - video:
+                  format: mp4
+                  source:
+                    s3Location:
+                      uri: s3://pydantic-ai-test-files/test-files/small_video.mp4
+              status: success
+        system: []
+        inferenceConfig:
+          maxTokens: 64000
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: get_file
+              inputSchema:
+                json:
+                  additionalProperties: false
+                  properties: {}
+                  type: object
+          toolChoice:
+            auto: {}
   response:
+    status: 400
     headers:
       connection:
       - keep-alive
       content-length:
-      - '124'
+      - "124"
       content-type:
       - application/json
-    parsed_body:
-      message: This model doesn't support the video content block that you provided. Update the content block and try again.
-    status:
-      code: 400
-      message: Bad Request
-version: 1
+    body:
+      type: json
+      content:
+        message: >-
+          This model doesn't support the video content block that you provided. Update
+          the content block and try again.
+  recorded_at: 2026-10-20T23:06:18.314814+00:00

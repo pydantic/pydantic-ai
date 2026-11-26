@@ -1,3 +1,7 @@
+---
+description: "Run steps in parallel in a pydantic-graph workflow by broadcasting one value to several steps or mapping over a collection, using the graph builder API."
+---
+
 # Parallel Execution
 
 The graph builder API provides two powerful mechanisms for parallel execution: **broadcasting** and **mapping**.
@@ -59,7 +63,7 @@ async def main():
     #> [11, 12, 13]
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 All three steps receive the same input value (`10`) and execute in parallel.
 
@@ -105,7 +109,7 @@ async def main():
     #> [1, 4, 9, 16, 25]
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ### Spreading AsyncIterables
 
@@ -153,7 +157,7 @@ async def main():
     #> [3, 6, 9]
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 This allows for progressive processing where downstream steps can start working on early results while later results are still being generated.
 
@@ -198,7 +202,7 @@ async def main():
     #> ['Value: 10', 'Value: 20', 'Value: 30']
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Empty Iterables
 
@@ -241,7 +245,7 @@ async def main():
     #> []
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Nested Parallel Operations
 
@@ -291,7 +295,7 @@ async def main():
     #> [11, 12, 21, 22]
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 The result contains:
 - From 10: `10+1=11` and `10+2=12`
@@ -343,7 +347,7 @@ async def main():
     #> ['num:1', 'num:2', 'num:3', 'num:4']
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Edge Labels
 
@@ -391,7 +395,7 @@ async def main():
     #> ['item-1', 'item-2', 'item-3']
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## State Sharing in Parallel Execution
 
@@ -440,7 +444,72 @@ async def main():
     #> Tracked: [1, 2, 3]
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
+
+## Execution Order
+
+Parallel tasks start in a fixed order, but a join reduces their outputs in the order the tasks finish:
+
+- **Start order is deterministic.** `.map()` creates one task per item, in the iterable's iteration order (for an async iterable, as each item is yielded). A broadcast creates one task per destination, in the order passed to `.to()`. The graph starts the tasks in that order, so on asyncio each one runs up to its first `await` in that order. From then on, the tasks interleave as their awaits resolve.
+- **Reduce order is completion order.** A join calls its reducer with each output as soon as that task finishes, so it reduces outputs in the order the tasks finish, not the input order. With [`reduce_list_append`][pydantic_graph.join.reduce_list_append] the list follows completion order, and [`ReduceFirstValue`][pydantic_graph.join.ReduceFirstValue] keeps the first output to arrive. When steps wait on I/O, completion order can change from one run to the next, which is why the examples on this page print `sorted(result)`.
+
+To get outputs in input order, carry each item's index through the parallel steps and sort the joined result by it:
+
+```python {title="ordered_map.py"}
+import asyncio
+from dataclasses import dataclass
+
+from pydantic_graph import GraphBuilder, StepContext, reduce_dict_update
+
+
+@dataclass
+class SimpleState:
+    pass
+
+
+async def main():
+    g = GraphBuilder(state_type=SimpleState, output_type=list[str])
+
+    @g.step
+    async def generate(ctx: StepContext[SimpleState, None, None]) -> list[tuple[int, str]]:
+        return list(enumerate(['slow', 'fast', 'medium']))
+
+    @g.step
+    async def process(ctx: StepContext[SimpleState, None, tuple[int, str]]) -> dict[int, str]:
+        index, word = ctx.inputs
+        await asyncio.sleep({'slow': 0.03, 'fast': 0.01, 'medium': 0.02}[word])
+        return {index: word.upper()}
+
+    collect = g.join(reduce_dict_update, initial_factory=dict[int, str])
+
+    @g.step
+    async def in_input_order(ctx: StepContext[SimpleState, None, dict[int, str]]) -> list[str]:
+        return [ctx.inputs[index] for index in sorted(ctx.inputs)]
+
+    g.add(
+        g.edge_from(g.start_node).to(generate),
+        g.edge_from(generate).map().to(process),
+        g.edge_from(process).to(collect),
+        g.edge_from(collect).to(in_input_order),
+        g.edge_from(in_input_order).to(g.end_node),
+    )
+
+    graph = g.build()
+    result = await graph.run(state=SimpleState())
+    print(result)
+    #> ['SLOW', 'FAST', 'MEDIUM']
+```
+
+_(To run this example, add `asyncio.run(main())`; no other changes are needed.)_
+
+### In durable workflows
+
+A durable engine replays workflow code after a crash or restart, and the replay has to make the same durable calls in the same order as the original run. When you run a graph with parallel steps inside a workflow, the start order is fixed by the graph, but anything that depends on completion order depends on the engine:
+
+- [Temporal](../../durable_execution/temporal.md) runs workflow code on its own deterministic event loop and, on replay, delivers activity results in the order the workflow history recorded them. Completion order, and therefore reduce order, replays as it originally happened, as long as the steps do their I/O only through activities.
+- [DBOS](../../durable_execution/dbos.md) numbers each step call in the order the calls are made and, on recovery, returns the output recorded under that number, after checking that the step name matches, without running the step again.
+
+On any engine, a reducer that depends on arrival order, such as `ReduceFirstValue` or a list that later steps treat as ordered, produces a result that reflects timing. Key outputs by index as shown above when downstream steps or durable calls depend on their order.
 
 ## Edge Transformations
 
@@ -481,7 +550,7 @@ async def main():
     #> The answer is: 84
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 The transform function receives a [`StepContext`][pydantic_graph.step.StepContext] with the current inputs and has access to state and dependencies. This is useful for:
 
@@ -534,7 +603,7 @@ async def main():
     #> ['Processed: 10', 'Processed: 20', 'Processed: 30']
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Next Steps
 

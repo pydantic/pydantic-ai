@@ -8,7 +8,9 @@ directory-scoped AGENTS.md / CLAUDE.md context blocks are still prepended.
 
 import re
 
+from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.messages import BinaryContent
 
 from ._backends import filesystem
 from .shared import MAX_TOOL_OUTPUT, attach_context, clip
@@ -66,8 +68,10 @@ def _fit_to_output_budget(prefix: str, body: str) -> str:
     return prefix + '\n'.join(kept).rstrip('\n') + '\n' + tail
 
 
-async def read_file(file_path: str, offset: int | None = None, limit: int | None = None) -> str:
-    """Read a UTF-8 text file. Relative paths resolve under the workspace.
+async def read_file(
+    ctx: RunContext[object], file_path: str, offset: int | None = None, limit: int | None = None
+) -> str | list[str | BinaryContent]:
+    """Read a UTF-8 text file, or view an image or PDF. Relative paths resolve under the workspace.
 
     Optional 1-based line `offset` and line `limit` mirror Claude's Read tool.
     """
@@ -79,10 +83,19 @@ async def read_file(file_path: str, offset: int | None = None, limit: int | None
     # harness applies its default line cap) rather than reading nothing.
     effective_limit = limit if limit and limit > 0 else None
     try:
-        body = await filesystem().read_file(file_path, offset=zero_based, limit=effective_limit)
+        body = await filesystem().read_file(
+            file_path, offset=zero_based, limit=effective_limit, workspace=ctx.workspace
+        )
     except (ModelRetry, OSError) as exc:
         # The harness only converts a fixed set of errors to `ModelRetry`; a bare
         # `OSError` (e.g. `ENAMETOOLONG` while resolving the path) would otherwise
         # escape and abort the whole run, where the old tool returned an error.
         return f'error: {exc}'
+    if not isinstance(body, str):
+        # An image or PDF: its header and the file, which the model sees directly.
+        return body
+    if body.startswith('Path not found: '):
+        # The harness returns a missing path as a plain result (file contents always
+        # start with its header instead); the shim's tools report it as an error.
+        return f'error: {body}'
     return _fit_to_output_budget(attach_context(file_path), _hint_to_one_based(body))

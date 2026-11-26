@@ -1,18 +1,27 @@
 from __future__ import annotations as _annotations
 
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 from textwrap import dedent
-from typing import Literal, TypeAlias, cast
+from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
 from typing_extensions import TypedDict
 
+from .._file_input import KNOWN_DOCUMENT_MEDIA_TYPES
 from .._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
 from ..exceptions import PydanticAIDeprecationWarning
+from ..messages import CachePoint, DocumentMediaType, ModelRequest, ModelResponse, UserPromptPart
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..output import StructuredOutputMode
+from ..settings import CacheRetention, FramingAnnouncement
+
+if TYPE_CHECKING:
+    from ..messages import ModelMessage
 
 __all__ = [
+    'ModelDeprecation',
     'ModelProfile',
     'ModelProfileSpec',
     'ToolAdditionMode',
@@ -23,6 +32,8 @@ __all__ = [
     'InlineDefsJsonSchemaTransformer',
     'JsonSchemaTransformer',
     'merge_profile',
+    'PromptCacheOutlook',
+    'prompt_cache_outlook',
 ]
 
 ToolDeferralMode: TypeAlias = Literal['standalone', 'with_tool_search']
@@ -44,6 +55,24 @@ DEFAULT_THINKING_TAGS: tuple[str, str] = ('<think>', '</think>')
 """Default `(start_tag, end_tag)` pair for parsing thinking content out of text responses."""
 
 
+@dataclass(frozen=True, kw_only=True)
+class ModelDeprecation:
+    """A provider's announced deprecation of a model on its API.
+
+    Set as a model's [`deprecation`][pydantic_ai.profiles.ModelProfile.deprecation], it makes each request to the
+    model emit a [`DeprecatedModelWarning`][pydantic_ai.exceptions.DeprecatedModelWarning].
+    """
+
+    source_url: str
+    """The provider's announcement of the deprecation."""
+
+    retirement_date: date | None = None
+    """The date the provider stops serving the model, or `None` if it hasn't announced one."""
+
+    replacement: str | None = None
+    """The model the provider recommends instead, or `None` if it names none."""
+
+
 class ModelProfile(TypedDict, total=False):
     """Describes how requests to and responses from specific models or families of models need to be constructed and processed to get the best results, independent of the model and provider classes used.
 
@@ -54,6 +83,9 @@ class ModelProfile(TypedDict, total=False):
 
     supports_tools: bool
     """Whether the model supports tools. Default: `True`."""
+
+    supports_text_output: bool
+    """Whether the model supports text output. Default: `True`."""
 
     supports_tool_return_schema: bool
     """Whether the model natively supports tool return schemas. Default: `False`.
@@ -91,12 +123,90 @@ class ModelProfile(TypedDict, total=False):
     provider accepts audio in user messages.
     """
 
+    supports_image_input: bool
+    """Whether the model accepts images. Default: `True`.
+
+    The file-input flags (this one, `supports_document_input`, `supports_audio_file_input`,
+    `supports_video_input`, and the `supported_*_media_types` sets that narrow each kind to media types)
+    say which files can be sent to the model. A model adapter turns off what its message mapping cannot
+    send, whatever the profile says.
+
+    A file a tool returns that the model cannot take is replaced, in the request only, by a note naming
+    it: see [Where a returned file is sent](../tools-advanced.md#tool-return-file-provenance). A file in a
+    user prompt is sent as it is, and the request fails if the model cannot take it.
+    [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding] reads the same flags to describe
+    such files in text instead.
+
+    Shipped profiles turn these off where an adapter or a model family is known not to take the file; `True`
+    means nothing says otherwise, not that the model was checked. A text-only model served through an adapter
+    that sends images (a text-only Llama on vLLM, say) needs `profile=ModelProfile(supports_image_input=False)`.
+    """
+
+    supported_image_media_types: frozenset[str]
+    """The image media types the model accepts, when it accepts images at all. Default: unset, so images are
+    judged by `supports_image_input` alone.
+
+    When set, an image of any other media type, such as `image/heic`, counts as one the model can't read.
+    Profiles set it where a provider was seen to reject other types: Anthropic and OpenAI read JPEG, PNG, GIF
+    and WebP, for example, while Gemini also reads HEIC. See `supports_image_input` for how the file-input
+    flags are used.
+    """
+
+    supports_document_input: bool
+    """Whether the model accepts documents, such as PDFs. Default: `True`.
+
+    Which document media types it accepts is narrowed by `supported_document_media_types`.
+    See `supports_image_input` for how the file-input flags are used.
+    """
+
+    supported_document_media_types: frozenset[DocumentMediaType]
+    """The document media types the model accepts, when it accepts documents at all. Default: every
+    media type in `DocumentMediaType`.
+
+    Only narrows those known types: a document with any other media type is judged by
+    `supports_document_input` alone. Anthropic, for example, reads PDFs and plain text but not Word or
+    Excel files. See `supports_image_input` for how the file-input flags are used.
+    """
+
+    supports_audio_file_input: bool
+    """Whether the model accepts audio files, such as an [`AudioUrl`][pydantic_ai.messages.AudioUrl]
+    or audio [`BinaryContent`][pydantic_ai.messages.BinaryContent]. Default: `True`.
+
+    Separate from `supports_audio_input`, which is about realtime speech history. See
+    `supports_image_input` for how the file-input flags are used.
+    """
+
+    supported_audio_media_types: frozenset[str]
+    """The audio media types the model accepts, when it accepts audio files at all. Default: unset, so audio
+    is judged by `supports_audio_file_input` alone.
+
+    When set, audio of any other media type, such as `audio/flac` on OpenAI Chat Completions, counts as audio
+    the model can't read. See `supports_image_input` for how the file-input flags are used.
+    """
+
+    supports_video_input: bool
+    """Whether the model accepts video. Default: `True`.
+
+    See `supports_image_input` for how the file-input flags are used.
+    """
+
+    supported_video_media_types: frozenset[str]
+    """The video media types the model accepts, when it accepts video at all. Default: unset, so video is
+    judged by `supports_video_input` alone.
+
+    When set, video of any other media type counts as video the model can't read. See `supports_image_input`
+    for how the file-input flags are used.
+    """
+
     supports_inline_system_prompts: bool
     """Whether the provider's API accepts `SystemPromptPart`s inline at any position. Default: `False`.
 
     When `False`, non-leading `SystemPromptPart`s are wrapped as `UserPromptPart`s with
     `<system>...</system>` content in `Model.prepare_messages`. Leading ones still hoist to the
-    provider's top-level system parameter.
+    provider's top-level system parameter, and the system prompt says what the tag means, from the request the
+    [`framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announcement] setting says. User prompts and
+    tool returns go out as written; text in them
+    that resembles a `<system>` tag gets a note instead.
 
     APIs that only accept an inline system prompt in certain positions (e.g. Anthropic requires it
     to follow a user turn) still set this to `True`; it's on their model adapters to make the
@@ -114,6 +224,85 @@ class ModelProfile(TypedDict, total=False):
     only place that knows the `<system>...</system>` fallback.
     """
 
+    needs_sealed_system_blocks: bool
+    """Whether the model follows the fallback's `<system>` blocks better sealed and after the user's words. Default: `False`.
+
+    Only meaningful where `supports_inline_system_prompts` is `False`. When `True`, `Model.prepare_messages` renders
+    each mid-conversation `SystemPromptPart` as `<system verified>...</system>` after the user's words in
+    its request, and the announcement at the start of the system prompt says the application's blocks carry that
+    attribute and that a block after the user's words already applies to the reply to them. A user lookalike's note
+    in a request with such a block names it. A `<system>` tag in text from a user, a tool or a file still gets a note
+    when it copies the attribute.
+
+    Set for Claude Sonnet 4.6, Claude Sonnet 5.5, Claude Haiku 5.5, and Grok 4.3 through 4.7 (not Grok 4.20, which
+    measured worse sealed). Sonnet 4.6, with plain `<system>` blocks, ignored two mid-conversation instruction
+    changes, and followed both with a marker and the sentence together (not with either alone). With the blocks
+    after the user's words it also followed steering after a tool result and a change next to a user lookalike,
+    where ahead of them it didn't. Haiku 5.5 honors a native mid-conversation system message but did as well or
+    better on every cell measured with this rendering, and worse with plain `<system>` blocks, so its Anthropic
+    profile doesn't use the native role. Sonnet 5.5 credited the native role's messages to the user when asked who
+    said what, and with this rendering it attributed them correctly and followed steering after a tool result more
+    reliably, so its profile doesn't use the native role either. Those Grok models followed a genuine change next to
+    a user lookalike and steering after a tool result more reliably sealed than with plain blocks.
+    """
+
+    default_framing_announcement: FramingAnnouncement
+    """The model's default for the `framing_announcement` setting. Default: `'when_needed'`.
+
+    The [`framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announcement] model setting wins when
+    it's set. Only meaningful where `supports_inline_system_prompts` is `False`.
+
+    `'when_needed'` sends the same request as `'always'` once a conversation has something to explain, and the same
+    request as `'never'` before that. Set to `'always'` for Claude Sonnet 4.6 and gpt-oss, which measured worse
+    without the announcement even on requests with nothing for it to explain: Sonnet 4.6 kept to the system prompt's
+    task against a conflicting user request in 30 of 48 runs with it and 22 of 96 without, and followed an
+    application's own reminder tags in a user turn in 24 of 24 with it and 0 of 48 without; gpt-oss kept to the
+    system prompt's task in 44 of 48 with it and 69 of 96 without. Other models measured did as well or better
+    without it on those requests. See
+    [When the announcement is sent](../message-history.md#when-the-announcement-is-sent).
+    """
+
+    needs_json_string_tool_returns: bool
+    """Whether a tool's text output is sent as an escaped JSON string field. Default: `False`.
+
+    When `True`, `Model.prepare_messages` sends the content of each successful `ToolReturnPart` whose content is a
+    string as `{"tool_output": "..."}`, with the text JSON-escaped, so its newlines and quotes don't read as plain
+    lines in the tool message. A string that holds JSON is wrapped the same way, so it's escaped a second time, which
+    measured no worse on Qwen3 Next than the JSON as is. Only the outgoing copy changes: the history keeps the tool's
+    output as returned. Lookalike notes are still decided on the output as returned.
+
+    Set for Qwen3 Next, which treated a tool's output as information more reliably in this form than as plain text,
+    on every route measured, at a few tokens per tool result and with the cached prefix unchanged.
+    """
+
+    supports_request_scoped_system_prompts: bool
+    """Whether the provider's API keeps a request-scoped `SystemPromptPart` in the conversation and stops rendering it itself. Default: `False`.
+
+    A [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] part applies to one model request.
+    When this is `True`, the model adapter sends every such part in the history, and the API stops
+    rendering each one once a later request exists, as Anthropic's `clear_at: 'next_user_message'` does.
+    Sending it unchanged keeps the cached prefix and any reasoning bound to it valid. When `False`,
+    `Model.prepare_messages` leaves a request-scoped part out of every request after its own, and the part
+    renders like any other mid-conversation `SystemPromptPart` while it's current.
+
+    Independent of `supports_inline_system_prompts`: where that's `False`, the entry holds a `<system>` block like the
+    model's other mid-conversation messages. Only set it on a model whose adapter renders a self-clearing entry,
+    currently `AnthropicModel`. On any other adapter, `True` makes every request-scoped part render as a lasting
+    system prompt on every later request.
+    """
+
+    supports_mid_conversation_effort: bool
+    """Whether the provider's API can change the thinking effort from a point in the conversation onward. Default: `False`.
+
+    When `True`, on a model whose adapter renders the change (`OpenAIResponsesModel`'s `configuration_update`
+    item, `AnthropicModel`'s per-message `output_config`, `OpenRouterModel`'s `configuration_update` system
+    message), a
+    [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] is sent in place and the request
+    keeps the conversation's earlier request-level effort, so the prompt cache survives the change. When
+    `False`, `Model.prepare_messages` drops those parts and the current effort goes out as the request-level
+    setting.
+    """
+
     default_structured_output_mode: StructuredOutputMode
     """The default structured output mode to use for the model. Default: `'tool'`."""
 
@@ -126,6 +315,63 @@ class ModelProfile(TypedDict, total=False):
     json_schema_transformer: type[JsonSchemaTransformer] | None
     """The transformer to use to make JSON schemas for tools and structured output compatible with the model. Default: `None`."""
 
+    supports_cache: bool
+    """Whether prompt caching on this model needs request-side configuration that Pydantic AI can turn on. Default: `False`.
+
+    When True, the unified [`cache`][pydantic_ai.settings.ModelSettings.cache] setting
+    translates into the provider's caching configuration. When False, it is silently ignored: the model
+    either doesn't support prompt caching, or caches implicitly without any request-side opt-in (as
+    OpenAI's models before GPT-5.6 and Gemini do), so there is nothing for the setting to turn on.
+    Set by providers rather than shared profile functions, since cache behavior is a
+    fact about the provider's API, not the model family.
+    """
+
+    supports_auto_cache: bool
+    """Whether the provider has a server-managed automatic prompt-caching mode the request can switch on. Default: `False`.
+
+    The unified `cache` setting consults it only when `supports_cache` is True: then, if this is True, the
+    conversation is cached with that mode, which places and moves the cache breakpoint itself; otherwise the
+    library places an explicit breakpoint at the end of the conversation too, as it does at the end of the tool
+    definitions and the static instructions.
+
+    On Anthropic, the explicit `anthropic_cache` setting consults it whatever `supports_cache` says: if this is
+    True, the request carries the top-level `cache_control` parameter; otherwise `anthropic_cache` falls back
+    to a breakpoint on the last block.
+    """
+
+    supported_cache_retentions: tuple[CacheRetention, ...]
+    """The prompt-cache retention tiers the request can ask for and the provider honors, shortest first. Default: `()`.
+
+    A retention requested via the unified `cache` setting snaps down to the nearest supported tier. Empty when
+    the provider has no retention tier to request, in which case a requested retention caches at the provider's
+    default retention ([`default_cache_retention`][pydantic_ai.profiles.ModelProfile.default_cache_retention]).
+    [`prompt_cache_outlook`][pydantic_ai.profiles.prompt_cache_outlook] likewise only lets a
+    [`CachePoint.ttl`][pydantic_ai.messages.CachePoint.ttl] in the history extend the expected retention
+    when it's one of these tiers, since a provider that doesn't support a tier doesn't honor it on a
+    cache point either.
+    """
+
+    default_cache_retention: timedelta | None
+    """How long the provider keeps a cached prompt prefix when the request doesn't ask for a specific retention. Default: `None` (unknown).
+
+    Measured from the last request that used the prefix. Only documented values are populated. When a
+    provider documents a range, the higher end is used: consumers of a `'cold'` outlook are about to pay
+    for a full prefix re-write, so a false `'cold'` sacrifices a live cache hit while a false `'warm'`
+    merely defers maintenance. Because retention is provider infrastructure, providers populate this
+    field; model-family profile functions must never set it. Providers without an honest documented
+    expectation boundary leave it `None`.
+
+    Retention requested through model settings, such as `anthropic_cache='1h'` or
+    `openai_prompt_cache_retention='24h'`, is resolved by
+    [`Model.resolve_cache_retention`][pydantic_ai.models.Model.resolve_cache_retention]; this field is
+    what applies when the settings request nothing.
+
+    Consumed by [`prompt_cache_outlook`][pydantic_ai.profiles.prompt_cache_outlook] to classify, from a
+    message history alone, whether the next request is likely to hit a warm cache. A `'cold'` outlook is
+    a free moment to run history-mutating maintenance (compaction, pruning, repair): the next request
+    pays a full prefix re-write either way, so the marginal cache cost of the mutation is ~zero.
+    """
+
     supports_thinking: bool
     """Whether the model supports thinking/reasoning configuration. Default: `False`.
 
@@ -135,12 +381,141 @@ class ModelProfile(TypedDict, total=False):
     thinking_always_enabled: bool
     """Whether the model always uses thinking/reasoning (e.g., OpenAI o-series, DeepSeek R1). Default: `False`.
 
-    When True, `thinking=False` is silently ignored since the model cannot disable thinking.
+    When True, the model can't disable thinking, so `thinking=False` uses the lowest effort the model accepts instead.
     Implies `supports_thinking=True`.
+    """
+
+    thinking_enabled_by_default: bool
+    """Whether the model thinks when the request doesn't configure thinking. Default: `False`.
+
+    True for models that think unless told not to, such as Claude Opus 5, DeepSeek V4 and the OpenAI o-series. Pydantic AI
+    uses it to tell whether a request without a thinking setting will think, for example to decide whether a
+    tool call can be forced. Unlike `thinking_always_enabled`, it doesn't mean thinking can't be turned off.
+    """
+
+    supports_forced_tool_choice: bool
+    """Whether the model accepts a forced tool choice: `tool_choice='required'` or a specific tool. Default: `True`.
+
+    Some models reject forcing on every request, such as Claude Opus 5.5, Claude Fable 5.1 and 5.2 and Claude
+    Mythos 5.1 and 5.2, as do some OpenAI-compatible providers, such as Moonshot AI. When False, a forced tool
+    choice that Pydantic AI resolved itself (such as an output tool's) falls back to `'auto'`, with the tools
+    filtered to the requested ones where the API can't restrict the choice. An explicit forcing
+    [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice] raises a `UserError`.
+    """
+
+    supports_forced_tool_choice_with_thinking: bool
+    """Whether the model accepts a forced tool choice while it thinks. Default: `True`.
+
+    DeepSeek's V4 models, for example, only accept forcing while thinking is off. When False and the request
+    thinks, a forced tool choice is handled as if `supports_forced_tool_choice` were False. Whether the request
+    thinks accounts for `thinking_enabled_by_default`. On OpenRouter routes other than Anthropic's, which return a
+    400 for it, an explicit forcing raises a `ModelRequestRejectedError` instead of a `UserError`.
+    """
+
+    forced_tool_choice_disables_thinking: bool
+    """Whether the model answers a forced tool choice without thinking. Default: `False`.
+
+    Claude models accept a forced tool choice alongside adaptive thinking, but return no thinking for that
+    request. When True and the request thinks, Pydantic AI doesn't force a tool choice it resolved itself (such
+    as an output tool's): it falls back to `'auto'`, and a structured `output_type` defaults to
+    [Native Output](../output.md#native-output) where the model supports it. An explicit forcing
+    [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice] is still sent.
     """
 
     thinking_tags: tuple[str, str]
     """The tags used to indicate thinking parts in the model's output. Default: [`DEFAULT_THINKING_TAGS`][pydantic_ai.profiles.DEFAULT_THINKING_TAGS]."""
+
+    may_tokenize_special_tokens_in_content: bool
+    """Whether this route may encode chat-template special tokens found in message content as real control tokens. Default: `False`.
+
+    Many hosts of open-weight models do, so a literal `<|im_start|>` in a tool result opens a real turn in the role it
+    names. When `True`, `Model.prepare_messages` puts a zero-width joiner inside each such token in user prompts, tool
+    results, inlined text files and replayed model output, on the outgoing copy only, and the joiner is removed again
+    from the tokens in each response's text and tool call arguments. Text without one is unchanged.
+
+    The host decides this, not the model family, so a provider sets it from `model_profile`, through the one table in
+    `profiles/_special_tokens.py`. An application that has pinned a route known to treat these tokens as text, or that
+    needs them sent as written, can turn it off with `profile=`.
+    See [Special tokens in content](../message-history.md#special-tokens-in-content).
+    """
+
+    mimics_assistant_message_formatting: bool
+    """Whether the model reproduces markup it finds in prior assistant messages in its own visible output. Default: `False`.
+
+    A model with this quirk reads the assistant turns of the history as examples of how it is supposed to
+    write, so replaying another model's reasoning as assistant text teaches it to emit those tags in the
+    answers the user reads — and once that answer is persisted, the next turn reinforces it.
+
+    When `True`, a `ThinkingPart` that can't be sent through the model's native reasoning channel is
+    rendered into a *user* message ahead of the assistant turn instead of into the turn itself, which
+    stops the imitation. Attributed to the user, that reasoning would read as something the user thought,
+    so it is wrapped in an `assistant_thinking` tag rather than in the model's own thinking tags. The cost
+    is that the model reports the reasoning's authorship inaccurately when asked about it, which naming the
+    source in the tag would not change.
+
+    This is used by `AnthropicModel`, `BedrockConverseModel`, `OpenAIChatModel` (and the models built on it)
+    and `OpenAIResponsesModel`, so it also covers Claude served through an OpenAI-compatible provider. An
+    `OpenAIChatModel` profile that sends reasoning back in a field (`openai_chat_send_back_thinking_parts='field'`,
+    as OpenRouter's does) never renders it as text, so there is nothing for this key to move.
+
+    Where the carried reasoning goes is each adapter's own decision rather than a shared rewrite ahead of
+    them: it has to land in front of whatever that provider renders next out of the same request — an
+    Anthropic `system` entry, for one — which has no message-level existence to insert before.
+    """
+
+    delegates_unprompted: bool
+    """Whether the model hands work to sub-agents the user didn't ask for. Default: `False`.
+
+    A sub-agent starts from a fresh context and explores the task again, so unrequested delegation multiplies tool
+    calls and cost. Instructions that tell a model not to delegate unasked can be sent only to the models with this
+    key, by reading it from the profile of the model handling the request: see
+    [Instructions for specific models](../agent.md#model-specific-instructions). Pydantic AI Harness `Coder` does.
+
+    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss or the o-series. Evidence: in a Terminal-Bench
+    ablation of `Coder`'s instructions (24 tasks, one trial each, November 2026), GPT-6.1 Terra without its instruction
+    against unrequested delegation delegated in all 24 tasks (524 `delegate_task` calls, against none with it), making
+    about 9 times as many tool calls at about 5.5 times the cost. Claude Sonnet 5.5 didn't delegate with or without it.
+    """
+
+    reinterprets_malformed_inputs: bool
+    """Whether the model explains away inputs that look inconsistent instead of checking whether the task classifies
+    them (for example as malformed or rejected). Default: `False`.
+
+    Instructions that tell a model to look for such a rule before assuming it misread can be sent only to the models
+    with this key: see [Instructions for specific models](../agent.md#model-specific-instructions). Pydantic AI
+    Harness `Coder` does, at `'max'` autonomy.
+
+    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss or the o-series, together with
+    `omits_handoff_evidence` and `ignores_stated_runtime_constraints`: the three were measured only together. Evidence:
+    on Harness-Bench SWE81 with GPT-6.2 Sol at `'max'` autonomy, one run each (November 2026), `Coder` with the three
+    instructions scored 53.2 against 51.0 without them (measured with the classify sentence in place of the shared
+    misread check; both are sent here), within that benchmark's single-run noise of about 5.6 points. So the evidence is
+    weak, and the instructions are sent only at `'max'`, where nobody reviews the result before it's used.
+    """
+
+    omits_handoff_evidence: bool
+    """Whether the model's notes or handoffs leave out the evidence a reviewer needs, such as the verification
+    commands it ran and their results. Default: `False`.
+
+    Instructions that ask a model for a structured handoff can be sent only to the models with this key: see
+    [Instructions for specific models](../agent.md#model-specific-instructions). Pydantic AI Harness `Coder` does, at
+    `'max'` autonomy.
+
+    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss or the o-series, together with
+    `reinterprets_malformed_inputs`: see its docstring for the evidence.
+    """
+
+    ignores_stated_runtime_constraints: bool
+    """Whether the model ignores constraints a task states on where or how its code will run, such as a restricted
+    interpreter or a specific Python version, when choosing language features. Default: `False`.
+
+    Instructions that tell a model to find out what's allowed before writing code can be sent only to the models with
+    this key: see [Instructions for specific models](../agent.md#model-specific-instructions). Pydantic AI Harness
+    `Coder` does, at `'max'` autonomy.
+
+    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss or the o-series, together with
+    `reinterprets_malformed_inputs`: see its docstring for the evidence.
+    """
 
     ignore_streamed_leading_whitespace: bool
     """Whether to ignore leading whitespace when streaming a response. Default: `False`.
@@ -153,6 +528,71 @@ class ModelProfile(TypedDict, total=False):
 
     supported_native_tools: frozenset[type[AbstractNativeTool]]
     """The set of native tool types that this model/profile supports. Default: `SUPPORTED_NATIVE_TOOLS` (all)."""
+
+    context_window: int | None
+    """The maximum number of tokens the model can handle in a single request, input and output combined. Default: `None` (unknown).
+
+    When no profile layer sets this, `Model.profile` fills it in from
+    [genai-prices](https://github.com/pydantic/genai-prices) data if the model is known there.
+    Set it explicitly for custom or local models, e.g. `profile={'context_window': 128_000}`.
+    """
+
+    deprecation: ModelDeprecation | None
+    """The provider's deprecation of this model on the API the model class sends requests to. Default: `None`.
+
+    When set, each request to the model emits a [`DeprecatedModelWarning`][pydantic_ai.exceptions.DeprecatedModelWarning].
+    Set by [`AnthropicProvider`][pydantic_ai.providers.anthropic.AnthropicProvider] and
+    [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] from the providers' deprecation pages, except
+    where the model is served by another platform with a schedule of its own: the Amazon Bedrock and Google Cloud
+    Vertex AI clients of `AnthropicModel`, the Azure client of the OpenAI models, and the Codex backend. Set it to
+    `None` to stop the warning for one model, or to a `ModelDeprecation` of your own for a model you serve elsewhere.
+    See [Deprecated models](../models/overview.md#deprecated-models).
+    """
+
+    tool_call_id_length: int | None
+    """The exact length of the ASCII-alphanumeric tool call IDs the model accepts. Default: `None` (any ID).
+
+    Some models only accept tool call IDs of exactly this many `a-z`, `A-Z` and `0-9` characters, and reject
+    a history whose IDs came from another provider (OpenAI's `call_...`, Anthropic's `toolu_...`) or were
+    generated by Pydantic AI (`pyd_ai_...`). When set, `Model.prepare_messages` replaces every function tool
+    call ID that doesn't fit with a hash of it that does, and leaves IDs that already fit unchanged. The
+    calls, their results and the `<pyai:tool_result>` tags that reference them keep pairing up, and since the
+    replacement depends only on the history, the same history is sent as the same bytes on every request.
+    Only the outgoing copy changes: stored message history keeps the original IDs.
+    """
+
+    tool_call_ids_are_response_scoped: bool
+    """Whether the model's tool call IDs are only unique within one response. Default: `False`.
+
+    Pydantic AI pairs each tool call with its result by `tool_call_id` across the whole message history, so an API
+    that numbers the calls in every response from scratch (`call_0`, then `call_0` again in the next response) makes
+    two different calls look like one. When set, each tool call ID the provider sends is stored with a suffix derived
+    from its response's [`provider_response_id`][pydantic_ai.messages.ModelResponse.provider_response_id], or from its
+    [`timestamp`][pydantic_ai.messages.ModelResponse.timestamp] when it has none, such as `call_0_k3ZcR9aQ`. The suffix
+    is the same every time the response is replayed, and keeps the ID within the `[a-zA-Z0-9_-]` characters that
+    Anthropic and Bedrock require. IDs Pydantic AI generates itself are already unique and are left alone, and so
+    is a call an `OpenAIResponsesModel` stream receives before the response's ID, which a request continuing that
+    response with `previous_response_id` couldn't restore from the timestamp.
+
+    When the history is sent back to the same provider and endpoint, the suffix is removed again, so the provider gets
+    the IDs it sent. Other providers and endpoints get the stored IDs.
+
+    Supported by [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] and
+    [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel], and set by the
+    [Bedrock Mantle](../models/bedrock.md) provider for the GPT-5 models it serves on the Responses API.
+    """
+
+    rejects_unpaired_tool_calls: bool
+    """Whether the API rejects a tool call that has no result, or a tool result that names no call. Default: `False`.
+
+    When set, `Model.prepare_messages` pairs the history it translates from another provider's native tool search: a
+    translated `search_tools` result whose ID names no call takes the ID of the oldest call in its response still
+    waiting for one, and a translated call that has no result gets a synthesized interrupted result. It doesn't touch
+    other unanswered tool calls, which the repair every agent run makes already handles. Set by
+    [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider], and by
+    [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] for the `AsyncAnthropic` client. See
+    [Configuring `ToolSearch`](../tools-advanced.md#configuring-toolsearch).
+    """
 
     tool_deferral_mode: ToolDeferralMode | None
     """When the provider permits a `tools` entry whose schema is withheld. Default: `None`.
@@ -189,19 +629,55 @@ class ModelProfile(TypedDict, total=False):
     """
 
 
-def _translate_legacy_profile_keys(profile: ModelProfile) -> ModelProfile:
-    """Translate keys renamed after their v2.23 release into their current spellings, warning."""
-    if 'tool_additions' not in profile and 'deferred_tools_require_tool_search' not in profile:
+_LEGACY_PROVIDER_PROFILE_KEYS: dict[str, str] = {
+    'openai_supports_tool_choice_required': 'supports_forced_tool_choice',
+    'grok_supports_tool_choice_required': 'supports_forced_tool_choice',
+    'anthropic_supports_forced_tool_choice': 'supports_forced_tool_choice',
+    'openai_supports_forced_tool_choice_with_thinking': 'supports_forced_tool_choice_with_thinking',
+    'openrouter_supports_forced_tool_choice_with_thinking': 'supports_forced_tool_choice_with_thinking',
+    'openai_reasoning_enabled_by_default': 'thinking_enabled_by_default',
+    'openai_responses_tool_call_ids_are_response_scoped': 'tool_call_ids_are_response_scoped',
+}
+"""Provider-prefixed profile keys that moved to `ModelProfile`, mapped to their current spelling."""
+
+
+def _translate_legacy_profile_keys(profile: ModelProfile, base: ModelProfile | None = None) -> ModelProfile:
+    """Translate keys renamed after their release into their current spellings, warning.
+
+    A current spelling in the same profile wins, unless `profile` was derived from `base` (as a callable
+    `ModelProfileSpec`'s result is) and it only carries `base`'s value over.
+    """
+    if (
+        'tool_additions' not in profile
+        and 'deferred_tools_require_tool_search' not in profile
+        and _LEGACY_PROVIDER_PROFILE_KEYS.keys().isdisjoint(profile)
+    ):
         return profile
-    translated = dict(profile)
+    translated: dict[str, object] = dict(profile)
+
+    def set_translated(key: str, value: object) -> None:
+        if key not in translated or (base is not None and translated[key] == base.get(key)):
+            translated[key] = value
+
+    legacy_values: dict[str, bool] = {}
+    for legacy_key, key in _LEGACY_PROVIDER_PROFILE_KEYS.items():
+        if legacy_key in translated:
+            warnings.warn(
+                f'`ModelProfile` key `{legacy_key}` is deprecated, use `{key}` instead.',
+                PydanticAIDeprecationWarning,
+                stacklevel=3,
+            )
+            # Two legacy spellings of the same capability in one profile both have to allow it.
+            legacy_values[key] = legacy_values.get(key, True) and bool(translated.pop(legacy_key))
+    for key, value in legacy_values.items():
+        set_translated(key, value)
     if 'tool_additions' in translated:
         warnings.warn(
             '`ModelProfile` key `tool_additions` is deprecated, use `tool_addition_mode` instead.',
             PydanticAIDeprecationWarning,
             stacklevel=3,
         )
-        value = translated.pop('tool_additions')
-        translated.setdefault('tool_addition_mode', value)
+        set_translated('tool_addition_mode', translated.pop('tool_additions'))
     if 'deferred_tools_require_tool_search' in translated:
         warnings.warn(
             '`ModelProfile` key `deferred_tools_require_tool_search` is deprecated, use '
@@ -210,30 +686,50 @@ def _translate_legacy_profile_keys(profile: ModelProfile) -> ModelProfile:
             stacklevel=3,
         )
         if translated.pop('deferred_tools_require_tool_search'):
-            translated.setdefault('tool_deferral_mode', 'with_tool_search')
+            set_translated('tool_deferral_mode', 'with_tool_search')
     return cast('ModelProfile', translated)
 
 
 DEFAULT_PROFILE: ModelProfile = {
     'supports_tools': True,
+    'supports_text_output': True,
     'supports_tool_return_schema': False,
     'supports_json_schema_output': False,
     'supports_json_object_output': False,
     'supports_image_output': False,
     'supports_audio_input': False,
+    'supports_image_input': True,
+    'supports_document_input': True,
+    'supported_document_media_types': KNOWN_DOCUMENT_MEDIA_TYPES,
+    'supports_audio_file_input': True,
+    'supports_video_input': True,
     'default_structured_output_mode': 'tool',
     'prompted_output_template': DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
     'native_output_requires_schema_in_instructions': False,
     'json_schema_transformer': None,
+    'supports_cache': False,
+    'supports_auto_cache': False,
+    'supported_cache_retentions': (),
+    'default_cache_retention': None,
     'supports_thinking': False,
     'thinking_always_enabled': False,
+    'thinking_enabled_by_default': False,
+    'supports_forced_tool_choice': True,
+    'supports_forced_tool_choice_with_thinking': True,
+    'forced_tool_choice_disables_thinking': False,
     'thinking_tags': DEFAULT_THINKING_TAGS,
+    'may_tokenize_special_tokens_in_content': False,
+    'mimics_assistant_message_formatting': False,
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
+    'context_window': None,
+    'tool_call_id_length': None,
+    'tool_call_ids_are_response_scoped': False,
     'tool_deferral_mode': None,
     'tool_addition_mode': None,
 }
-"""Fully populated default `ModelProfile`. Used as the base layer when resolving a model's effective profile."""
+"""Default `ModelProfile`, with a value for every key except the image, audio and video media-type sets, which are
+unset unless a profile knows them. Used as the base layer when resolving a model's effective profile."""
 
 
 ModelProfileSpec: TypeAlias = ModelProfile | Callable[['ModelProfile'], 'ModelProfile']
@@ -260,3 +756,142 @@ def merge_profile(base: ModelProfile | None, *overrides: ModelProfile | None) ->
         if override:
             result = {**result, **_translate_legacy_profile_keys(override)}
     return result
+
+
+PromptCacheOutlook: TypeAlias = Literal['warm', 'cold', 'unknown']
+"""Predicted state of the provider's prompt cache for the *next* request built on a message history.
+
+- `'warm'`: the last request happened within the provider's documented expectation boundary, so the cached
+  prefix is likely still available and the next request should hit it.
+- `'cold'`: the last request happened longer ago than the retention window, so the prefix has likely
+  been evicted and the next request will pay full input price regardless — a free moment to mutate history.
+- `'unknown'`: there's no retention figure for the model, or the history has no usable timestamp, so no
+  prediction can be made. Treat like `'warm'` for scheduling (never mutate on a guess).
+"""
+
+
+def prompt_cache_outlook(
+    messages: Sequence[ModelMessage],
+    *,
+    profile: ModelProfile | None = None,
+    retention: timedelta | None = None,
+    now: datetime | None = None,
+) -> PromptCacheOutlook:
+    """Predict whether the provider's prompt cache is still warm for the next request on this history.
+
+    This is a pure function of the message history and an expectation boundary — it holds no state and makes no
+    requests, so a history processor, capability, or plain application code can call it with just a
+    message history to decide whether the next turn is a cheap moment for history-mutating maintenance
+    (compaction, pruning, repair). When the outlook is `'cold'` the next request pays a full prefix
+    re-write anyway, so the marginal cache cost of mutating history right now is ~zero.
+
+    The prediction compares the most recent [`ModelResponse.timestamp`][pydantic_ai.messages.ModelResponse.timestamp]
+    in `messages` against `now`: an idle gap within the retention window is `'warm'`, a larger gap is `'cold'`.
+    Responses are the anchor because they mark the provider's last confirmed use of the cache — a request that
+    has no response after it (like the just-appended request a [history processor](../message-history.md#processing-message-history)
+    sees, which hasn't been sent yet) never touched the cache, so its timestamp must not reset the idle clock.
+
+    Cache points in the history extend whichever boundary applies to their largest TTL that the provider
+    honors: on a profile with [`supports_cache`][pydantic_ai.profiles.ModelProfile.supports_cache], one of its
+    [`supported_cache_retentions`][pydantic_ai.profiles.ModelProfile.supported_cache_retentions]. Without a profile,
+    or with one that doesn't describe its cache configuration, every cache point TTL is assumed to be honored.
+
+    Args:
+        messages: The message history the next request would be built on, oldest first.
+        profile: The model profile whose [`default_cache_retention`][pydantic_ai.profiles.ModelProfile.default_cache_retention]
+            is used as the expectation boundary when `retention` is `None`.
+        retention: The retention requested for these requests, replacing the profile's default. With a model
+            and its settings in hand, pass
+            [`model.resolve_cache_retention(model_settings)`][pydantic_ai.models.Model.resolve_cache_retention]:
+            it returns `None` when the settings request nothing, so the profile's default still applies.
+        now: The reference time to measure idleness against. Defaults to the current UTC time; inject a
+            fixed value for deterministic tests.
+
+    Returns:
+        `'warm'`, `'cold'`, or `'unknown'` (see [`PromptCacheOutlook`][pydantic_ai.profiles.PromptCacheOutlook]).
+    """
+    retention = _expected_cache_retention(messages, profile=profile, retention=retention)
+    if retention is None:
+        return 'unknown'
+
+    last_timestamp = _last_response_timestamp(messages)
+    if last_timestamp is None:
+        return 'unknown'
+
+    if now is None:
+        now = datetime.now(UTC)
+    # Historical messages may carry naive timestamps; assume UTC so the subtraction is well-defined.
+    if last_timestamp.tzinfo is None:
+        last_timestamp = last_timestamp.replace(tzinfo=UTC)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+
+    idle = now - last_timestamp
+    return 'warm' if idle <= retention else 'cold'
+
+
+def _expected_cache_retention(
+    messages: Sequence[ModelMessage], *, profile: ModelProfile | None, retention: timedelta | None
+) -> timedelta | None:
+    """How long the provider is expected to keep this history's cached prefix, or `None` if unknown.
+
+    `retention` (the retention requested by settings) replaces the profile's default, and cache points in
+    `messages` extend either to their largest TTL the provider honors. Cache points alone never produce a
+    boundary: without a known base, whether the provider honored them at all is unknown.
+
+    On a profile that describes its cache configuration (`supports_cache`), a TTL is honored when it's one of
+    its `supported_cache_retentions`: OpenAI, for one, ignores `CachePoint.ttl`, so a `'1h'` marker must not
+    stretch GPT-5.6's 30-minute retention, or an expired cache would read as warm (and its collapse as
+    unexpected). With no profile, or one that doesn't describe its cache configuration, every TTL is assumed
+    honored: a false `'warm'` merely defers maintenance, while a false `'cold'` would sacrifice a live cache hit,
+    the same trade-off `default_cache_retention` resolves toward the higher end.
+    """
+    if retention is None and profile is not None:
+        retention = profile.get('default_cache_retention')
+    honored = (
+        profile.get('supported_cache_retentions', ())
+        if profile is not None and profile.get('supports_cache', False)
+        else None
+    )
+    if retention is not None and (cache_point_ttl := _max_cache_point_ttl(messages, honored=honored)) is not None:
+        retention = max(retention, cache_point_ttl)
+    return retention
+
+
+_CACHE_POINT_TTLS: dict[str, timedelta] = {'5m': timedelta(minutes=5), '1h': timedelta(hours=1)}
+
+
+def _max_cache_point_ttl(
+    messages: Sequence[ModelMessage], *, honored: Sequence[CacheRetention] | None = None
+) -> timedelta | None:
+    """The largest honored [`CachePoint`][pydantic_ai.messages.CachePoint] TTL in the served history, or `None` if there are none.
+
+    Like the idle clock, this only counts requests with a response after them: a cache point on a
+    request that hasn't been sent yet hasn't written anything to the provider's cache. When `honored`
+    is given, TTLs outside it are skipped; `None` means every TTL counts.
+    """
+    served = next((index for index in range(len(messages), 0, -1) if isinstance(messages[index - 1], ModelResponse)), 0)
+    ttls = [
+        _CACHE_POINT_TTLS[content.ttl]
+        for message in messages[:served]
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+        for content in part.content
+        if isinstance(content, CachePoint) and (honored is None or content.ttl in honored)
+    ]
+    return max(ttls) if ttls else None
+
+
+def _last_response_timestamp(messages: Sequence[ModelMessage]) -> datetime | None:
+    """The most recent `ModelResponse` timestamp in the history, scanning from the end.
+
+    Responses mark the provider's last confirmed use of the cache. Requests are deliberately not
+    considered: inside an agent run, the just-appended `ModelRequest` is timestamped *before* history
+    processors see it, so anchoring on it would make the history look permanently warm — and a request
+    with no response after it never reached the provider's cache in the first place.
+    """
+    for message in reversed(messages):
+        if isinstance(message, ModelResponse):
+            return message.timestamp
+    return None

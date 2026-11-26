@@ -1,0 +1,5 @@
+{
+  "against": "v2.59.0",
+  "reason": "Adds input-support profile flags to `DEFAULT_PROFILE`; every existing key and value is unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10476"
+}

@@ -4,6 +4,7 @@
     options:
         members:
         - AbstractToolset
+        - ToolsetTool
         - CombinedToolset
         - ExternalToolset
         - ApprovalRequiredToolset

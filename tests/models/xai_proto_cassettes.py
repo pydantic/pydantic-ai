@@ -1,7 +1,7 @@
 """Proto cassette utilities for xAI SDK (gRPC) tests.
 
 Why this exists:
-- `pytest-recording`/VCR only records HTTP. The xAI SDK uses gRPC, so VCR can't record/replay model calls.
+- The HTTP cassettes only record HTTP. The xAI SDK uses gRPC, so they can't record/replay model calls.
 - However, xAI responses are protobuf messages. We can serialize them and store them in YAML cassettes.
 
 This is intentionally minimal for now:
@@ -33,10 +33,12 @@ Cassette Format:
 
 from __future__ import annotations as _annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Protocol, cast
+from typing import Any, Literal, Protocol, TypeAlias, cast
 
+from ..cassette_utils import load_cassette_yaml
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -44,7 +46,8 @@ with try_import() as imports_successful:
     import yaml
     from google.protobuf.json_format import MessageToDict
     from xai_sdk import AsyncClient
-    from xai_sdk.proto import chat_pb2, collections_pb2
+    from xai_sdk.aio.image import ImageResponse
+    from xai_sdk.proto import chat_pb2, collections_pb2, image_pb2
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +75,22 @@ class StreamInteraction:
     chunks_json: list[dict[str, Any]] | None = None
 
 
+ImageMethod = Literal['sample', 'sample_batch']
+_BINARY_PLACEHOLDER_RE = re.compile(r'<(bytes|data URL) len=(\d+)>')
+SanitizedValue: TypeAlias = str | int | float | bool | None | list['SanitizedValue'] | dict[str, 'SanitizedValue']
+
+
+@dataclass
+class ImageMethodInteraction:
+    """A single `client.image.sample()` or `sample_batch()` call."""
+
+    method: ImageMethod
+    response_raw: bytes
+    response_count: int
+    request_json: dict[str, SanitizedValue] | None = None
+    response_json: dict[str, Any] | None = None
+
+
 CollectionsMethod = Literal['create', 'upload_document', 'delete']
 CollectionsResponseProtoType = Literal['CollectionMetadata', 'DocumentMetadata', '']
 
@@ -95,7 +114,7 @@ class CollectionsMethodInteraction:
 
 
 # Union type for interactions (used for type hints in the ordered list)
-Interaction = SampleInteraction | StreamInteraction | CollectionsMethodInteraction
+Interaction = SampleInteraction | StreamInteraction | ImageMethodInteraction | CollectionsMethodInteraction
 
 
 class XaiAsyncClientLike(Protocol):
@@ -111,6 +130,9 @@ class XaiAsyncClientLike(Protocol):
     def files(self) -> Any: ...
 
     @property
+    def image(self) -> Any: ...
+
+    @property
     def collections(self) -> Any: ...
 
 
@@ -123,7 +145,7 @@ def _truthy_env(name: str) -> bool:
 
 
 def _normalize_record_mode(mode: str | None) -> ProtoCassetteRecordMode | None:
-    """Normalize pytest-recording/VCR-ish record modes to a small supported set.
+    """Normalize cassetter/VCR-ish record modes to a small supported set.
 
     Notes:
     - VCR uses: `none`, `once`, `new_episodes`, `all`
@@ -183,7 +205,7 @@ class XaiProtoCassette:
 
     @classmethod
     def load(cls, path: Path) -> XaiProtoCassette:
-        data = yaml.safe_load(path.read_text(encoding='utf-8'))
+        data = load_cassette_yaml(path.read_text(encoding='utf-8'))
 
         interactions: list[Interaction] = []
         for item in data.get('interactions', []):
@@ -218,6 +240,17 @@ class XaiProtoCassette:
                         response_raw=block.get('response_raw', b''),
                         request_json=block.get('request_json'),
                         response_json=block.get('response_json'),
+                    )
+                )
+            elif 'image_method' in item:
+                block = item['image_method']
+                interactions.append(
+                    ImageMethodInteraction(
+                        method=block['method'],
+                        response_raw=block['response_raw'],
+                        response_count=block['response_count'],
+                        request_json=block.get('request_json'),
+                        response_json=_sanitize_image_response_json(block.get('response_json')),
                     )
                 )
         return cls(interactions=interactions)
@@ -278,6 +311,18 @@ class XaiProtoCassette:
                     block['response_json'] = interaction.response_json
                 block['response_raw'] = interaction.response_raw
                 interactions_data.append({'collections_method': block})
+
+            elif isinstance(interaction, ImageMethodInteraction):
+                block = {
+                    'method': interaction.method,
+                    'response_count': interaction.response_count,
+                }
+                if interaction.request_json:
+                    block['request_json'] = interaction.request_json
+                if interaction.response_json:
+                    block['response_json'] = interaction.response_json
+                block['response_raw'] = interaction.response_raw
+                interactions_data.append({'image_method': block})
 
         data: dict[str, Any] = {
             'version': self.version,
@@ -342,6 +387,8 @@ class XaiProtoCassetteClient:
     cassette: XaiProtoCassette
     # Index into the ordered interactions list.
     interaction_idx: int = 0
+    # The `messages` each `chat.create()` was called with, as the code built them; see `get_sent_request_messages`.
+    sent_messages: list[list[chat_pb2.Message]] = field(default_factory=list[list['chat_pb2.Message']])
 
     @classmethod
     def from_path(cls, path: Path) -> XaiProtoCassetteClient:
@@ -386,10 +433,15 @@ class XaiProtoCassetteClient:
         return type('Files', (), {'upload': self._files_upload})
 
     @property
+    def image(self) -> Any:
+        return _CassetteImageStub(self)
+
+    @property
     def collections(self) -> Any:
         return _CassetteCollectionsStub(self)
 
-    def _chat_create(self, *_args: Any, **_kwargs: Any) -> _CassetteChatInstance:
+    def _chat_create(self, *_args: Any, **kwargs: Any) -> _CassetteChatInstance:
+        self.sent_messages.append(list(kwargs.get('messages', [])))
         expected_type = self.peek_interaction_type()
         return _CassetteChatInstance(self, expected_type)
 
@@ -398,6 +450,37 @@ class XaiProtoCassetteClient:
         # Keeping similar shape to the real SDK return value.
         file_id = f'file-{abs(hash((len(data), filename))) % 1_000_000:06d}'
         return type('UploadedFile', (), {'id': file_id})()
+
+
+@dataclass
+class _CassetteImageStub:
+    """Replay-only stub for `client.image.sample()` and `sample_batch()`."""
+
+    _client: XaiProtoCassetteClient
+
+    def _consume(
+        self, expected_method: ImageMethod, args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> ImageMethodInteraction:
+        interaction = self._client.next_interaction()
+        if not isinstance(interaction, ImageMethodInteraction) or interaction.method != expected_method:
+            raise RuntimeError(
+                f'Cassette out of order at interaction {self._client.interaction_idx - 1}: '
+                f'expected image.{expected_method}(), got {type(interaction).__name__}'
+                + (f' (method={interaction.method})' if isinstance(interaction, ImageMethodInteraction) else '')
+                + '. Re-record the cassette.'
+            )
+        _validate_image_request(interaction, self._client.interaction_idx - 1, args, kwargs)
+        return interaction
+
+    async def sample(self, *args: Any, **kwargs: Any) -> ImageResponse:
+        interaction = self._consume('sample', args, kwargs)
+        proto = image_pb2.ImageResponse.FromString(interaction.response_raw)
+        return ImageResponse(proto, 0)
+
+    async def sample_batch(self, *args: Any, **kwargs: Any) -> list[ImageResponse]:
+        interaction = self._consume('sample_batch', args, kwargs)
+        proto = image_pb2.ImageResponse.FromString(interaction.response_raw)
+        return [ImageResponse(proto, index) for index in range(interaction.response_count)]
 
 
 @dataclass
@@ -450,6 +533,7 @@ class XaiProtoCassetteHybridClient:
     include_debug_json: bool = False
     interaction_idx: int = 0
     dirty: bool = False
+    sent_messages: list[list[chat_pb2.Message]] = field(default_factory=list[list['chat_pb2.Message']])
 
     def _can_replay(self) -> bool:
         """Check if there are more recorded interactions to replay."""
@@ -467,6 +551,19 @@ class XaiProtoCassetteHybridClient:
         self.interaction_idx += 1
         return interaction
 
+    def peek_interaction(self) -> Interaction | None:
+        """Return the next interaction without consuming it."""
+        return self._peek_interaction()
+
+    def consume_interaction(self) -> Interaction:
+        """Consume and return the next interaction."""
+        return self._consume_interaction()
+
+    @property
+    def inner_image(self) -> Any:
+        """Return the real SDK image sub-client."""
+        return self._inner.image
+
     @property
     def chat(self) -> Any:
         return type('Chat', (), {'create': self._chat_create})
@@ -476,6 +573,10 @@ class XaiProtoCassetteHybridClient:
         return type('Files', (), {'upload': self._inner.files.upload})
 
     @property
+    def image(self) -> Any:
+        return _HybridImageStub(self)
+
+    @property
     def collections(self) -> Any:
         raise NotImplementedError(
             'hybrid mode not supported for collections.* — '
@@ -483,6 +584,7 @@ class XaiProtoCassetteHybridClient:
         )
 
     def _chat_create(self, *args: Any, **kwargs: Any) -> Any:
+        self.sent_messages.append(list(kwargs.get('messages', [])))
         inner_chat = self._inner.chat.create(*args, **kwargs)
         include_debug_json = self.include_debug_json
         client = self
@@ -578,6 +680,56 @@ class XaiProtoCassetteHybridClient:
 
 
 @dataclass
+class _HybridImageStub:
+    """Replay existing image interactions and record new episodes."""
+
+    _client: XaiProtoCassetteHybridClient
+
+    def _replay(self, method: ImageMethod, args: tuple[Any, ...], kwargs: dict[str, Any]) -> list[ImageResponse] | None:
+        interaction = self._client.peek_interaction()
+        if not isinstance(interaction, ImageMethodInteraction):
+            return None
+        if interaction.method != method:
+            raise RuntimeError(
+                f'Cassette out of order at interaction {self._client.interaction_idx}: '
+                f'expected image.{interaction.method}(), got image.{method}(). Re-record the cassette.'
+            )
+        _validate_image_request(interaction, self._client.interaction_idx, args, kwargs)
+        self._client.consume_interaction()
+        proto = image_pb2.ImageResponse.FromString(interaction.response_raw)
+        return [ImageResponse(proto, index) for index in range(interaction.response_count)]
+
+    async def sample(self, *args: Any, **kwargs: Any) -> ImageResponse:
+        if responses := self._replay('sample', args, kwargs):
+            return responses[0]
+
+        response = await self._client.inner_image.sample(*args, **kwargs)
+        self._record('sample', [response], args, kwargs)
+        return response
+
+    async def sample_batch(self, *args: Any, **kwargs: Any) -> list[ImageResponse]:
+        if responses := self._replay('sample_batch', args, kwargs):
+            return responses
+
+        responses = list(await self._client.inner_image.sample_batch(*args, **kwargs))
+        self._record('sample_batch', responses, args, kwargs)
+        return responses
+
+    def _record(
+        self,
+        method: ImageMethod,
+        responses: list[ImageResponse],
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> None:
+        self._client.cassette.interactions.append(
+            _make_image_interaction(method, responses, args, kwargs, self._client.include_debug_json)
+        )
+        self._client.interaction_idx += 1
+        self._client.dirty = True
+
+
+@dataclass
 class XaiProtoRecorder:
     """Record `chat.sample()` and `chat.stream()` responses as protobuf bytes.
 
@@ -590,6 +742,7 @@ class XaiProtoRecorder:
     _inner: AsyncClient
     cassette: XaiProtoCassette = field(default_factory=XaiProtoCassette)
     include_debug_json: bool = False
+    sent_messages: list[list[chat_pb2.Message]] = field(default_factory=list[list['chat_pb2.Message']])
 
     @property
     def client(self) -> Any:
@@ -604,6 +757,10 @@ class XaiProtoRecorder:
         return type('Files', (), {'upload': self._inner.files.upload})
 
     @property
+    def image(self) -> Any:
+        return _RecorderImageStub(self._inner.image, self.cassette, self.include_debug_json)
+
+    @property
     def collections(self) -> Any:
         return _RecorderCollectionsStub(
             inner_collections=self._inner.collections,
@@ -615,6 +772,7 @@ class XaiProtoRecorder:
         self.cassette.dump(path)
 
     def _chat_create(self, *args: Any, **kwargs: Any) -> Any:
+        self.sent_messages.append(list(kwargs.get('messages', [])))
         inner_chat = self._inner.chat.create(*args, **kwargs)
         recorder = self
         include_debug_json = recorder.include_debug_json
@@ -682,6 +840,29 @@ class XaiProtoRecorder:
 
 
 @dataclass
+class _RecorderImageStub:
+    """Record-mode stub for `client.image.sample()` and `sample_batch()`."""
+
+    inner_image: Any
+    cassette: XaiProtoCassette
+    include_debug_json: bool = False
+
+    async def sample(self, *args: Any, **kwargs: Any) -> ImageResponse:
+        response = await self.inner_image.sample(*args, **kwargs)
+        self.cassette.interactions.append(
+            _make_image_interaction('sample', [response], args, kwargs, self.include_debug_json)
+        )
+        return response
+
+    async def sample_batch(self, *args: Any, **kwargs: Any) -> list[ImageResponse]:
+        responses = list(await self.inner_image.sample_batch(*args, **kwargs))
+        self.cassette.interactions.append(
+            _make_image_interaction('sample_batch', responses, args, kwargs, self.include_debug_json)
+        )
+        return responses
+
+
+@dataclass
 class _RecorderCollectionsStub:
     """Record-mode stub for `client.collections.*` async methods.
 
@@ -739,13 +920,13 @@ class _RecorderCollectionsStub:
         )
 
 
-def _sanitize_kwargs(args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:
+def _sanitize_kwargs(args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, SanitizedValue]:
     """Return a JSON-friendly snapshot of method args for cassette debuggability.
 
     Strips binary payloads (`bytes`) and replaces non-serializable values with their repr so
     large proto/config objects still show up in a readable form.
     """
-    sanitized: dict[str, Any] = {}
+    sanitized: dict[str, SanitizedValue] = {}
     if args:
         sanitized['_args'] = [repr(a) for a in args]
     for key, value in kwargs.items():
@@ -753,9 +934,97 @@ def _sanitize_kwargs(args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str,
     return sanitized
 
 
-def _sanitize_value(value: Any) -> Any:
+def _validate_image_request(
+    interaction: ImageMethodInteraction,
+    interaction_idx: int,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> None:
+    """Reject a replay request that differs from the recorded image request."""
+    if interaction.request_json is None:
+        return
+
+    actual_request = _sanitize_kwargs(args, kwargs)
+    if not _matches_sanitized_request(interaction.request_json, actual_request):
+        raise RuntimeError(
+            f'Cassette request mismatch at interaction {interaction_idx}: '
+            f'expected {interaction.request_json!r}, got {actual_request!r}. Re-record the cassette.'
+        )
+
+
+def _matches_sanitized_request(recorded: SanitizedValue, actual: SanitizedValue) -> bool:
+    """Compare request snapshots while treating binary-content placeholders as opaque.
+
+    The content is opaque, but its length is not: reference images are fixed repo assets encoded by
+    pure stdlib base64, so pinning the length catches a swapped image that the kind alone would miss.
+    """
+    if isinstance(recorded, str) and (recorded_match := _BINARY_PLACEHOLDER_RE.fullmatch(recorded)):
+        return (
+            isinstance(actual, str)
+            and (actual_match := _BINARY_PLACEHOLDER_RE.fullmatch(actual)) is not None
+            and (recorded_match.groups() == actual_match.groups())
+        )
+    if isinstance(recorded, dict) and isinstance(actual, dict):
+        return recorded.keys() == actual.keys() and all(
+            _matches_sanitized_request(recorded[key], actual[key]) for key in recorded
+        )
+    if isinstance(recorded, list) and isinstance(actual, list):
+        return len(recorded) == len(actual) and all(
+            _matches_sanitized_request(recorded_value, actual_value)
+            for recorded_value, actual_value in zip(recorded, actual, strict=True)
+        )
+    return recorded == actual
+
+
+def _make_image_interaction(
+    method: ImageMethod,
+    responses: list[ImageResponse],
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    include_debug_json: bool,
+) -> ImageMethodInteraction:
+    if not responses:
+        raise RuntimeError(f'xAI image.{method}() returned no responses')
+
+    proto = responses[0].proto
+    response_json = (
+        _sanitize_image_response_json(MessageToDict(proto, preserving_proto_field_name=True))
+        if include_debug_json
+        else None
+    )
+    return ImageMethodInteraction(
+        method=method,
+        response_raw=proto.SerializeToString(),
+        response_count=len(responses),
+        request_json=_sanitize_kwargs(args, kwargs),
+        response_json=response_json,
+    )
+
+
+def _sanitize_image_response_json(response_json: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Keep image response debug JSON useful without duplicating large or temporary payloads."""
+    if response_json is None:
+        return None
+
+    images = response_json.get('images')
+    if isinstance(images, list):
+        for image in cast(list[Any], images):
+            if not isinstance(image, dict):
+                continue
+            image_dict = cast(dict[str, Any], image)
+            if isinstance(encoded := image_dict.get('base64'), str):
+                image_dict['base64'] = f'<base64 image len={len(encoded)}>'
+            if isinstance(image_dict.get('url'), str):
+                image_dict['url'] = '<image URL redacted>'
+
+    return response_json
+
+
+def _sanitize_value(value: Any) -> SanitizedValue:
     if isinstance(value, bytes):
         return f'<bytes len={len(value)}>'
+    if isinstance(value, str) and value.startswith('data:'):
+        return f'<data URL len={len(value)}>'
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     if isinstance(value, (list, tuple)):
@@ -877,6 +1146,20 @@ def get_recorded_request_messages(async_client: AsyncClient) -> list[list[dict[s
             proto.ParseFromString(interaction.request_raw)
             requests.append([MessageToDict(m, preserving_proto_field_name=True) for m in proto.messages])
     return requests
+
+
+def get_sent_request_messages(async_client: AsyncClient) -> list[list[dict[str, Any]]]:
+    """Return the `messages` of each chat request the code built, as dicts, in replay and record mode alike.
+
+    Unlike `get_recorded_request_messages`, which reads the requests frozen in the cassette, this reads what
+    `XaiModel` passed to `chat.create()` in this run, so a test fails if the code stops sending what it asserts.
+    """
+    if not isinstance(async_client, (XaiProtoCassetteClient, XaiProtoRecorder, XaiProtoCassetteHybridClient)):
+        raise RuntimeError('Not a cassette-backed xAI client')  # pragma: no cover
+    return [
+        [MessageToDict(m, preserving_proto_field_name=True) for m in messages]
+        for messages in async_client.sent_messages
+    ]
 
 
 def xai_sdk_available() -> bool:

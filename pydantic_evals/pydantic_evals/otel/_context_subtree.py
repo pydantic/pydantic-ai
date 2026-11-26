@@ -20,7 +20,7 @@ def _context_subtree_fallback() -> typing.Generator[SpanTree | SpanTreeRecording
         'To make use of the `span_tree` in an evaluator, you must install `logfire` or'
         ' `opentelemetry-sdk`,  configure appropriate instrumentations, and set a tracer provider (e.g. by calling'
         ' `logfire.configure()`).'
-        ' For more information, refer to the documentation at https://ai.pydantic.dev/evals/#opentelemetry-integration.'
+        ' For more information, refer to the documentation at https://pydantic.dev/docs/ai/evals/evaluators/span-based/.'
     )
     exc.__context__ = _IMPORT_ERROR
     yield exc

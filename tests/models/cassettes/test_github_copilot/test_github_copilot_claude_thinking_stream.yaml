@@ -1,0 +1,69 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '260'
+      content-type:
+      - application/json
+      copilot-integration-id:
+      - vscode-chat
+      editor-plugin-version:
+      - copilot-chat/0.26.7
+      editor-version:
+      - vscode/1.95.0
+      host:
+      - api.githubcopilot.com
+      openai-intent:
+      - conversation-panel
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise.
+        role: system
+      - content: Factor 3599 into two primes. Show only the answer.
+        role: user
+      model: claude-sonnet-5
+      reasoning_effort: medium
+      stream: true
+      stream_options:
+        include_usage: true
+    uri: https://api.githubcopilot.com/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"choices":[{"index":0,"delta":{"content":null,"role":"assistant","reasoning_text":"3"}}],"created":1788836905,"id":"msg_011CeqEeKk15B8pYahZWJB82","model":"claude-sonnet-5"}
+
+        data: {"choices":[{"index":0,"delta":{"content":null,"role":"assistant","reasoning_text":"599 factors as a difference of squares: 60²-1² = 59×61."}}],"created":1788836905,"id":"msg_011CeqEeKk15B8pYahZWJB82","model":"claude-sonnet-5"}
+
+        data: {"choices":[{"index":0,"delta":{"content":null,"role":"assistant","reasoning_text":"\n\n"}}],"created":1788836905,"id":"msg_011CeqEeKk15B8pYahZWJB82","model":"claude-sonnet-5"}
+
+        data: {"choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning_opaque":"4tCLygdtFeNjgy85iuz9fzwG/r6A0BA9GFkd4tVb5Xax86xgJNQMw3kGTHDIy9dptR8G0h59HfGLMaEwnknFbOvup55yFkPVaUUvbk2LMe6DJVG5SzaSUmy5u+hdRTuuVVTN/U/V+92+4R+qGoq1/A/KVDNXEpzjGoozp6wX+vGuPQzFmorKmCftI3SNsYZwulLkYnvPIf81/T9/N95+xUmfGLejpyDuEB1+CO+5RGt2pmWz7lGFlKOl+Jr/me0llZVPL4JJymvlSb1YhaputDtdryzvRW22OG9EMUGsSH1Hmq7IEupNW35VbPpMPKzWvDioMbxy5yGFeHgbKfvmU6OvrpOW14tFtENuD57n3edGzfvI55Nd/VRvP5E6g3g4ckxrE40mJoFPuJigB9zVcj06kWwqBUc8bVPaU2KHWeUFpIlhRGm06uZFaEtc8KCCiUIBptEleDQc/DK2n5/wZ0stFVnGWtz23kIxZ6pMxIBmQ0198szVWKVl+XYE0hb1tmSgLdZSCw2YxDHj/eh1w7W3/WejK5uJvR4Zl0rdGbzPdn4neoXg32+UY+PNcJ2EYFbIGlnrapyvFbLrCIptBkCDyuqpEzvolYXrapy0/1gHd/Cs3dbpMWINGIQ/OMfe+00bGP2CHPdgkQwizWGqwDfIpML1upxY7DDjLtf4whGUCaezyj+SQZAwNIU6PSuo5wsdA/1TQFZCGmFdGjNVRsgeCbkn5DsxlPL9q/iUs/hwyqW0flNA1/hf9aoCmextrVHmF98C8OdevLJuBiEQ8U0KqKJAe1DIAVWqYXna0OiOYCfLW+MFGPRSrg6wQ9murcL4CMbqgzfMZ8xwO5tsBv6oGA3X46wZQPmEnIgOyI1QLsGkGK6t0Vb6Bu2WNDogj6uxu2i08IHyZIBUWO7Pi4Q="}}],"created":1788836905,"id":"msg_011CeqEeKk15B8pYahZWJB82","model":"claude-sonnet-5"}
+
+        data: {"choices":[{"index":0,"delta":{"content":"**3599 = 59 × 61**","role":"assistant"}}],"created":1788836905,"id":"msg_011CeqEeKk15B8pYahZWJB82","model":"claude-sonnet-5"}
+
+        data: {"choices":[{"finish_reason":"stop","index":0,"delta":{"content":null}}],"created":1788836905,"id":"msg_011CeqEeKk15B8pYahZWJB82","usage":{"completion_tokens":41,"prompt_tokens":31,"prompt_tokens_details":{"cached_tokens":0},"total_tokens":72},"model":"claude-sonnet-5","copilot_usage":{"token_details":[{"batch_size":1000000,"cost_per_batch":200000000000,"model":"claude-sonnet-5","token_count":31,"token_type":"input"},{"batch_size":1000000,"cost_per_batch":20000000000,"model":"claude-sonnet-5","token_count":0,"token_type":"cache_read"},{"batch_size":1000000,"cost_per_batch":250000000000,"model":"claude-sonnet-5","token_count":0,"token_type":"cache_write"},{"batch_size":1000000,"cost_per_batch":1000000000000,"model":"claude-sonnet-5","token_count":41,"token_type":"output"}],"total_nano_aiu":47200000}}
+
+        data: [DONE]
+
+    headers:
+      cache-control:
+      - no-cache
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - text/event-stream
+      strict-transport-security:
+      - max-age=31536000
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...
