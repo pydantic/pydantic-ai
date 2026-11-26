@@ -600,15 +600,25 @@ async def test_select_model_whose_provider_sdk_is_missing_fails_before_saving(
     assert SettingsSource(context).apply(model_row, model) == f'model: {message}'
 
 
-def test_missing_sdk_without_a_pax_extra_reports_core_error(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    'error',
+    ['Please install the SDK for groq.', 'Please install `groq` to use it: `pip install "pydantic-ai-slim[cli]"`.'],
+    ids=['no-extra-named', 'extra-pax-does-not-offer'],
+)
+def test_missing_sdk_without_a_pax_extra_reports_core_error(monkeypatch: pytest.MonkeyPatch, error: str) -> None:
+    """Without a Pax extra to name, Pax passes core's error on instead of suggesting a `pydantic-ai-pax[...]` install.
+
+    A unit test, not a VCR test: an installed SDK is what makes a recorded request possible, so the missing-SDK
+    error, and an extra Pax does not offer such as `cli`, can only be produced by raising it here.
+    """
+
     def missing(provider: str) -> type:
-        raise ImportError(f'Please install the SDK for {provider}.')
+        raise ImportError(error)
 
     monkeypatch.setattr(model_catalog, 'infer_provider_class', missing)
-    with pytest.raises(
-        ValueError, match=r'^Cannot use groq:llama with the Python Pax runs on .*: Please install the SDK for groq\.$'
-    ):
+    with pytest.raises(ValueError) as exc_info:
         model_catalog.check_installed('groq:llama')
+    assert str(exc_info.value) == f'Cannot use groq:llama with the Python Pax runs on ({sys.executable}): {error}'
 
 
 async def test_shell_registers_model_subcommands_and_deprecated_aliases(tmp_path: Path) -> None:
