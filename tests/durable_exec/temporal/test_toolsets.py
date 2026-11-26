@@ -36,6 +36,7 @@ from pydantic_ai import (
     TextPart,
     Tool,
     ToolCallPart,
+    ToolResultAttachment,
     ToolReturn,
     ToolReturnPart,
     ToolsetTool,
@@ -1491,8 +1492,12 @@ async def test_tool_return_metadata_survives_temporal(allow_model_requests: None
                         tool_call_id=IsStr(),
                         metadata={'key': 'value', 'count': 42},
                         timestamp=IsDatetime(),
+                        attachments=[
+                            ToolResultAttachment(
+                                content='extra content for model', tool_call_id=IsStr(), tool_name='analyze_data'
+                            )
+                        ],
                     ),
-                    UserPromptPart(content='extra content for model', timestamp=IsDatetime()),
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -1500,7 +1505,7 @@ async def test_tool_return_metadata_survives_temporal(allow_model_requests: None
             ),
             ModelResponse(
                 parts=[TextPart(content='done')],
-                usage=RequestUsage(input_tokens=57, output_tokens=3),
+                usage=RequestUsage(input_tokens=93, output_tokens=3),
                 model_name='function:_tool_return_metadata_model:',
                 model_id='function:function:_tool_return_metadata_model:',
                 timestamp=IsDatetime(),

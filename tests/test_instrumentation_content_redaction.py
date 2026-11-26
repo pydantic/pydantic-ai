@@ -49,6 +49,8 @@ from pydantic_ai import (
     ToolApproved,
     ToolCallPart,
     ToolDenied,
+    ToolReturn,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai._instrumentation import (
@@ -122,6 +124,7 @@ SECRETS = {
     'tool_args': 'SENTINEL-tool-args',
     'validated_args': 'SENTINEL-validated-args',
     'tool_return': 'SENTINEL-tool-return',
+    'tool_attachment': 'SENTINEL-tool-attachment',
     'tool_retry': 'SENTINEL-tool-retry',
     'tool_failed': 'SENTINEL-tool-failed',
     'tool_exception': 'SENTINEL-tool-exception',
@@ -901,6 +904,32 @@ async def test_no_content_reaches_telemetry_on_a_successful_run(include_content:
             'final_output',
         },
     )
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_from_a_tool_result_attachment(include_content: bool) -> None:
+    """`ToolReturn.content`, kept with the call's result as an attachment, in the messages and the tool's span."""
+    settings, exporter = redacted_setup(include_content)
+
+    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('look', {})])
+        return ModelResponse(parts=[TextPart(SECRETS['model_text'])])
+
+    agent = Agent(FunctionModel(respond), capabilities=[Instrumentation(settings=settings)])
+
+    @agent.tool_plain
+    def look() -> ToolReturn:
+        return ToolReturn(return_value='Looked.', content=SECRETS['tool_attachment'])
+
+    result = await agent.run(SECRETS['user_prompt'])
+    [tool_return] = [
+        part for message in result.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)
+    ]
+    # The content has to be an attachment, or its sentinel proves nothing about that channel.
+    assert [attachment.content for attachment in tool_return.attachments] == [SECRETS['tool_attachment']]
+
+    check(exporter, include_content, {'user_prompt', 'tool_attachment', 'model_text'})
 
 
 @pytest.mark.parametrize('include_content', [True, False])

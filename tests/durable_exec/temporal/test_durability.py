@@ -63,6 +63,7 @@ from pydantic_ai import (
     Tool,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
+    ToolResultAttachment,
     ToolReturn,
     ToolReturnPart,
     ToolsetTool,
@@ -6182,8 +6183,14 @@ async def test_durability_tool_return_metadata_survives(allow_model_requests: No
                         tool_call_id=IsStr(),
                         metadata={'key': 'value', 'count': 42},
                         timestamp=IsDatetime(),
+                        attachments=[
+                            ToolResultAttachment(
+                                content='extra content for model',
+                                tool_call_id=IsStr(),
+                                tool_name='durability_analyze_data',
+                            )
+                        ],
                     ),
-                    UserPromptPart(content='extra content for model', timestamp=IsDatetime()),
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),

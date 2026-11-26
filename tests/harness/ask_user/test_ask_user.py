@@ -141,15 +141,15 @@ class Observer(AbstractCapability[None]):
         self.answered.append(event)
 
 
-def calling(arguments: object) -> FunctionModel:
-    """A model that calls the tool once with `arguments`, then answers with the tool result.
+def calling(arguments: object, tool_name: str = TOOL_NAME) -> FunctionModel:
+    """A model that calls the tool, named `tool_name`, once with `arguments`, then answers with the tool result.
 
     Streams too, since a run with event listeners is a streamed run.
     """
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
-            return ModelResponse(parts=[ToolCallPart(TOOL_NAME, {'questions': arguments}, tool_call_id='c1')])
+            return ModelResponse(parts=[ToolCallPart(tool_name, {'questions': arguments}, tool_call_id='c1')])
         part = next(part for part in messages[-1].parts if isinstance(part, ToolReturnPart))
         if part.outcome == 'retried':
             return ModelResponse(parts=[TextPart(part.model_response_str(wrap_if_error=False))])
@@ -1439,6 +1439,27 @@ class TestAnswerNotes:
             ),
         ]
         assert notes[2] == image_content
+
+    async def test_notes_reach_the_user_channel_when_the_tool_is_renamed(self) -> None:
+        """`AskUser` knows its tool by the capability that contributed it, so a prefix doesn't make its notes data."""
+        response = AskUserResponse(
+            answers=(
+                AskUserAnswer(header='Approach', selected=('Patch',), note=('Keep it',)),
+                AskUserAnswer(header='Targets', custom_answer='all files'),
+            )
+        )
+        agent = Agent(
+            calling(raw_questions(), tool_name=f'later_{TOOL_NAME}'),
+            deps_type=type(None),
+            capabilities=[
+                PrefixTools(AskUser(answerer=ScriptedAnswerer(response), id='later_ask_user'), prefix='later')
+            ],
+        )
+        result = await agent.run('go')
+        tool_part, user_part = result.all_messages()[-2].parts
+        assert isinstance(tool_part, ToolReturnPart)
+        assert tool_part.attachments == ()
+        assert isinstance(user_part, UserPromptPart)
 
     def test_only_answers_with_notes_get_frames_and_multi_select_is_unchanged(self) -> None:
         request = AskUserRequest(questions=(question(), question('Targets', multi_select=True)))

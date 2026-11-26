@@ -18,6 +18,7 @@ import json
 import re
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from dataclasses import dataclass, field
+from itertools import groupby
 from pathlib import Path
 from typing import Literal, get_args
 
@@ -26,7 +27,6 @@ import pytest
 from _pytest.mark import ParameterSet
 
 from pydantic_ai import Agent, AgentRunResult, RunContext, ToolReturn
-from pydantic_ai._capability_parts import tool_result_attachment_parts
 from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools, ValidatedToolArgs
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -38,6 +38,8 @@ from pydantic_ai.messages import (
     ModelResponse,
     TextPart,
     ToolCallPart,
+    ToolResultAttachment,
+    ToolResultSource,
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -175,11 +177,27 @@ _CARRIERS = (ToolReturnPart, BackgroundToolResultPart)
 """Parts that carry what a call returned, which each route wraps its own way."""
 
 
+def _attachments_seen(attachments: Sequence[ToolResultAttachment]) -> Iterator[Seen]:
+    """What the model sees of a tool result's attachments, which are always data.
+
+    Each run of items one producer made reaches the model as one framed part: content its capability would enqueue at
+    `'none'` when a capability contributed the tool, and the tool's content, behind a note naming it, otherwise.
+    """
+    for (tool_call_id, tool_name, capability_id), _ in groupby(
+        attachments, key=lambda attachment: (attachment.tool_call_id, attachment.tool_name, attachment.capability_id)
+    ):
+        if capability_id is None:
+            source = ToolResultSource(tool_name=tool_name, tool_call_id=tool_call_id)
+            yield Seen('pydantic_ai.tool_content', source, None, source.authority, ('data', 'tool_content'))
+        else:
+            source = CapabilitySource(capability_id, authority='none')
+            yield Seen('pydantic_ai.capability_content', source, capability_id, 'none', ('data', 'capability_content'))
+
+
 def _parts_seen(part: object) -> Iterator[Seen]:
-    """What the model sees of `part`: a carrier's attachments as the parts they reach the model as, or the part."""
+    """What the model sees of `part`: a carrier's attachments, or the part."""
     if isinstance(part, ToolReturnPart):
-        for attachment_part in tool_result_attachment_parts(part.attachments, timestamp=part.timestamp):
-            yield _seen(attachment_part)
+        yield from _attachments_seen(part.attachments)
     elif not isinstance(part, _CARRIERS):
         yield _seen(part)
 

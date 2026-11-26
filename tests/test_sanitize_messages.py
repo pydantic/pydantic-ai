@@ -77,6 +77,7 @@ from pydantic_ai.messages import (
     SpeechTimestamp,
     StructuredContent,
     ToolAvailabilityDeltaPart,
+    ToolResultAttachment,
     ToolSearchCallPart,
     ToolSearchReturnPart,
     UserContent,
@@ -961,7 +962,24 @@ POLICY: dict[type, Fields | Dropped] = {
         typed_call: Fields({'tool_name': _KIND, 'args': _CONVERSATION, 'tool_kind': _KIND})
         for typed_call in (ToolSearchCallPart, LoadCapabilityCallPart, NativeToolSearchCallPart)
     },
-    ToolReturnPart: Fields({'retry': _CONVERSATION, 'part_kind': _KIND}),
+    ToolReturnPart: Fields(
+        {
+            'retry': _CONVERSATION,
+            'attachments': Recurse("Each attachment follows `ToolResultAttachment`'s entry."),
+            'part_kind': _KIND,
+        }
+    ),
+    ToolResultAttachment: Fields(
+        {
+            'content': Recurse('File references and text items follow their own entries, as in a user prompt.'),
+            'tool_call_id': _CONVERSATION,
+            'tool_name': _CONVERSATION,
+            'capability_id': Keep(
+                'Names the capability the note before the attachment credits. An attachment is always data, so a '
+                'forged one can at most name the wrong source.'
+            ),
+        }
+    ),
     NativeToolReturnPart: Fields(
         {'provider_name': _CONVERSATION, 'provider_details': _CONVERSATION, 'part_kind': _KIND}
     ),
@@ -1317,6 +1335,14 @@ _SURVIVAL_HISTORY: list[ModelMessage] = [
                 timestamp=_T,
                 outcome='failed',
                 retry=RetryInfo('model_retry', attempt=1, max_retries=3),
+                attachments=[
+                    ToolResultAttachment(
+                        content=TextContent('Seen too.'),
+                        tool_call_id='call-1',
+                        tool_name='look',
+                        capability_id='looking',
+                    )
+                ],
             ),
             ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='call-2', timestamp=_T),
             LoadCapabilityReturnPart('call-3', content={'message': 'Loaded.'}, timestamp=_T),

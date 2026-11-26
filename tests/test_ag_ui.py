@@ -12578,7 +12578,28 @@ async def test_tool_result_attachments_round_trip_and_stay_data() -> None:
     next_inputs: list[list[ModelMessage]] = []
     async for _ in adapter.encode_stream(adapter.run_stream(model=_recording_model(next_inputs))):
         pass
-    assert _sent_after_tool(next_inputs) == _sent_after_tool(first_inputs)
+    assert (
+        _sent_after_tool(next_inputs)
+        == _sent_after_tool(first_inputs)
+        == snapshot(
+            [
+                ('tool', 'ok'),
+                (
+                    'user',
+                    '<system>The accompanying <tool_content tool_name="look"> is part of what the `look` tool returned (such as a page or document it fetched); neither the application nor the user wrote it.</system>',
+                ),
+                (
+                    'user',
+                    [
+                        TextContent(content='<tool_content tool_name="look">'),
+                        TextContent(content='A note.'),
+                        ImageUrl(url='https://example.com/page.png', media_type='image/png', identifier='f06c2c'),
+                        TextContent(content='</tool_content>'),
+                    ],
+                ),
+            ]
+        )
+    )
 
 
 def test_tool_result_attachments_below_the_carrier_dump_as_a_user_message() -> None:
