@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, BinaryImage, ImageUrl, ModelRetry, ToolReturn
+from pydantic_ai import Agent, BinaryImage, ImageUrl, ModelRetry, Tool, ToolReturn
 from pydantic_ai.direct import model_request
 from pydantic_ai.exceptions import (
     ModelAPIError,
@@ -326,7 +326,9 @@ async def test_not_signed_in():
     )
 
 
-async def test_subscription_limit():
+async def test_subscription_limit(monkeypatch: pytest.MonkeyPatch):
+    """The plan's reset time becomes `Retry-After`, and the Anthropic client is told not to retry."""
+    monkeypatch.setattr(_claude_agent_sessions.time, 'time', lambda: 4_000_000_000 - 3600.5)
     model, _ = claude_agent(
         FakeResponse(error='rate_limit', error_text="You've hit your limit", rate_limit_resets_at=4_000_000_000)
     )
@@ -335,6 +337,8 @@ async def test_subscription_limit():
         await Agent(model).run('Hello')
 
     assert exc_info.value.status_code == 429
+    assert exc_info.value.retry_after == 3601
+    assert exc_info.value.headers is not None and exc_info.value.headers['x-should-retry'] == 'false'
 
 
 async def test_count_tokens_is_not_supported():
@@ -628,6 +632,24 @@ async def test_a_thinking_config_claude_code_cant_take():
         )
 
     assert exc_info.value.status_code == 400
+    assert fake.sessions == []
+
+
+async def test_a_tool_schema_with_a_remote_reference_is_refused():
+    """The Agent SDK validates arguments with `jsonschema`, which would fetch the reference from this process."""
+    model, fake = claude_agent()
+    schema = {'type': 'object', 'properties': {'city': {'$ref': 'http://127.0.0.1:9/city.json'}}}
+
+    def lookup(city: str) -> str:
+        return city  # pragma: no cover
+
+    agent = Agent(model, tools=[Tool.from_schema(lookup, name='lookup', description='', json_schema=schema)])
+
+    with pytest.raises(ModelHTTPError, match="Claude Code can't serve this request") as exc_info:
+        await agent.run('Hi')
+
+    assert exc_info.value.status_code == 400
+    assert 'http://127.0.0.1:9/city.json' in str(exc_info.value.body)
     assert fake.sessions == []
 
 

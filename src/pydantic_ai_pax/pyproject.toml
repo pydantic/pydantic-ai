@@ -96,6 +96,7 @@ zai = ["pydantic-ai-slim[zai]=={{ major }}.{{ minor }}.{{ patch }}{% if distance
 snowflake = ["pydantic-ai-slim[snowflake]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 crusoe = ["pydantic-ai-slim[crusoe]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 cerebras = ["pydantic-ai-slim[cerebras]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+claude-agent = ["pydantic-ai-slim[claude-agent]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 typesafe = ["pydantic-ai-slim[typesafe]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 huggingface = ["pydantic-ai-slim[huggingface]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 # END provider extras
@@ -113,7 +114,7 @@ render = ["pydantic-ai-harness[render]==0.{{ minor }}.{{ patch }}{% if distance 
 sprites = ["pydantic-ai-harness[sprites]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 # Every extra above that installs on every platform: all but `local`, whose SDKs have no Windows wheel.
 all = [
-    "pydantic-ai-slim[anthropic,bedrock,bedrock-mantle,cerebras,cohere,crusoe,google,groq,huggingface,mistral,openai,openrouter,snowflake,typesafe,xai,zai]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
+    "pydantic-ai-slim[anthropic,bedrock,bedrock-mantle,cerebras,claude-agent,cohere,crusoe,google,groq,huggingface,mistral,openai,openrouter,snowflake,typesafe,xai,zai]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
     "pydantic-ai-harness[boxd,daytona,e2b,kubernetes,modal,opensandbox,render,sprites]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
 ]
 

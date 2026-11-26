@@ -25,11 +25,12 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection,
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal, NotRequired, cast
 
 import anyio
 import httpx2
-from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError, field_validator
+from typing_extensions import TypedDict
 
 from .. import __version__
 from ._claude_agent_mcp import MCP_PREFIX, ResponseEvents, replay_blocks, server_and_tool, tool_name_server
@@ -66,7 +67,7 @@ try:
         UserMessage,
         create_sdk_mcp_server,
     )
-    from claude_agent_sdk.types import EffortLevel, ThinkingConfig
+    from claude_agent_sdk.types import EffortLevel
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install `claude-agent-sdk` to use the Claude Agent provider, '
@@ -154,6 +155,29 @@ class _Tool(BaseModel):
     description: str = ''
     input_schema: dict[str, JsonValue]
 
+    @field_validator('input_schema')
+    @classmethod
+    def _local_references_only(cls, schema: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        """The Agent SDK validates tool arguments with `jsonschema`, which fetches a schema's remote references."""
+        if remote := sorted(_remote_references(schema)):
+            raise ValueError(f'A tool schema can only reference its own definitions, not {", ".join(remote)}.')
+        return schema
+
+
+_REFERENCE_KEYS = frozenset({'$ref', '$dynamicRef', '$recursiveRef'})
+
+
+def _remote_references(schema: JsonValue) -> Iterator[str]:
+    if isinstance(schema, dict):
+        for key, value in schema.items():
+            if key in _REFERENCE_KEYS and isinstance(value, str) and not value.startswith('#'):
+                yield value
+            else:
+                yield from _remote_references(value)
+    elif isinstance(schema, list):
+        for item in schema:
+            yield from _remote_references(item)
+
 
 class _TextBlock(BaseModel):
     model_config = ConfigDict(extra='ignore')
@@ -178,6 +202,25 @@ class _Message(BaseModel):
         return [_without_cache_control(block) for block in self.content]
 
 
+class _ThinkingAdaptive(TypedDict):
+    type: Literal['adaptive']
+    display: NotRequired[Literal['summarized', 'omitted']]
+
+
+class _ThinkingEnabled(TypedDict):
+    type: Literal['enabled']
+    budget_tokens: int
+    display: NotRequired[Literal['summarized', 'omitted']]
+
+
+class _ThinkingDisabled(TypedDict):
+    type: Literal['disabled']
+
+
+_ThinkingConfig = _ThinkingAdaptive | _ThinkingEnabled | _ThinkingDisabled
+"""The SDK's `ThinkingConfig`, as `typing_extensions` TypedDicts, which Pydantic validates on Python 3.11."""
+
+
 class _ToolChoice(BaseModel):
     model_config = ConfigDict(extra='ignore')
 
@@ -195,7 +238,7 @@ class _MessagesRequest(BaseModel):
     system: str | list[_TextBlock] | None = None
     tools: list[_Tool] = []
     tool_choice: _ToolChoice | None = None
-    thinking: ThinkingConfig | None = None
+    thinking: _ThinkingConfig | None = None
     """Claude Code takes only the thinking configs it has a CLI flag for: a request with another can't be served."""
     output_config: _OutputConfig | None = None
     stream: bool = False
@@ -203,9 +246,18 @@ class _MessagesRequest(BaseModel):
     """`claude_agent_inherit_mcp_servers`, from its header: the user's own MCP servers Claude Code may bring."""
 
     @property
+    def calls_tools(self) -> bool:
+        """Whether the model may call tools: not when `tool_choice` says so, as Claude Code has no such setting."""
+        return self.tool_choice is None or self.tool_choice.type != 'none'
+
+    @property
     def callable_tools(self) -> list[_Tool]:
-        """The tools the model may call: none when `tool_choice` says so, since Claude Code has no such setting."""
-        return [] if self.tool_choice is not None and self.tool_choice.type == 'none' else self.tools
+        return self.tools if self.calls_tools else []
+
+    @property
+    def inherited_servers(self) -> bool | list[str]:
+        """The user's own MCP servers the session brings: none when the model may call no tools."""
+        return self.inherit_mcp_servers if self.calls_tools else False
 
 
 _stream_event_ta: TypeAdapter[BetaRawMessageStreamEvent] = TypeAdapter(BetaRawMessageStreamEvent)
@@ -247,7 +299,7 @@ class _SessionConfig:
             thinking=json.dumps(request.thinking, sort_keys=True),
             effort=request.output_config.effort if request.output_config else None,
             max_tokens=request.max_tokens,
-            inherit_mcp_servers=json.dumps(request.inherit_mcp_servers),
+            inherit_mcp_servers=json.dumps(request.inherited_servers),
         )
 
 
@@ -259,7 +311,9 @@ class ClaudeCodeOptions:
     cwd: str | Path | None = None
 
 
-_PROJECTED_FIELDS = frozenset({'type', 'text', 'thinking', 'data', 'id', 'name', 'input'})
+_PROJECTED_FIELDS = frozenset(
+    {'type', 'text', 'thinking', 'data', 'id', 'name', 'input', 'server_name', 'tool_use_id', 'is_error', 'content'}
+)
 
 
 def _response_projection(blocks: Sequence[Mapping[str, JsonValue]]) -> list[dict[str, JsonValue]]:
@@ -268,10 +322,20 @@ def _response_projection(blocks: Sequence[Mapping[str, JsonValue]]) -> list[dict
     Signatures and citations are left out, and so are empty text blocks, which a stored response may drop.
     """
     return [
-        {key: value for key, value in block.items() if key in _PROJECTED_FIELDS}
+        {
+            key: _content_projection(value) if key == 'content' else value
+            for key, value in block.items()
+            if key in _PROJECTED_FIELDS
+        }
         for block in blocks
         if block.get('type') != 'text' or block.get('text')
     ]
+
+
+def _content_projection(content: JsonValue) -> JsonValue:
+    """An MCP result's content, compared by its text: an edited or redacted result is a different history."""
+    blocks = content if isinstance(content, list) else [content]
+    return [{key: block.get(key) for key in ('type', 'text')} if isinstance(block, dict) else block for block in blocks]
 
 
 def _mcp_content(content: JsonValue) -> list[JsonValue] | None:
@@ -563,7 +627,7 @@ class ClaudeCodeSessions:
         config = session.config
         server = create_sdk_mcp_server(_MCP_SERVER, tools=[session.tool(tool) for tool in request.callable_tools])
         hooks = [HookMatcher(matcher=f'^{_TOOL_PREFIX}', hooks=[session.pre_tool_use])]
-        if request.inherit_mcp_servers:
+        if request.inherited_servers:
             hooks.append(HookMatcher(matcher=f'^{MCP_PREFIX}', hooks=[session.pre_external_tool_use]))
         return ClaudeAgentOptions(
             model=config.model,
@@ -571,7 +635,7 @@ class ClaudeCodeSessions:
             tools=[],
             mcp_servers={_MCP_SERVER: server},
             # Only `claude_agent_inherit_mcp_servers` lets Claude Code bring the user's own MCP servers and connectors.
-            strict_mcp_config=not request.inherit_mcp_servers,
+            strict_mcp_config=not request.inherited_servers,
             disallowed_tools=disallowed_tools,
             setting_sources=[],
             skills=[],
@@ -626,13 +690,13 @@ class ClaudeCodeSessions:
 
     async def _start(self, request: _MessagesRequest) -> _Session:
         session = _Session(config=_SessionConfig.of(request), loop=asyncio.get_running_loop())
-        disallowed_tools = await self._inherited_servers(session, request.inherit_mcp_servers)
+        disallowed_tools = await self._inherited_servers(session, request.inherited_servers)
         options = self._client_options(session, request, disallowed_tools)
         transport = self.transport_factory(options) if self.transport_factory is not None else None
         session.client = ClaudeSDKClient(options=options, transport=transport)
         try:
             await session.client.connect()
-            if request.inherit_mcp_servers:
+            if request.inherited_servers:
                 # Claude Code loads the user's servers and connectors in the background: without them, its first
                 # request would offer the model none of their tools.
                 await _settled_mcp_servers(session.client, expected=session.offered_servers)

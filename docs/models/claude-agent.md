@@ -97,6 +97,24 @@ With your instructions as its system prompt, Claude Code still adds:
 - in the first user message, a `<system-reminder>` with the email address of the Claude account;
 - after the latest user message, a system message describing the environment: the working directory, platform, shell, model name and date.
 
+Compared with the same agent on the [`anthropic` provider](anthropic.md), a request looks like this, with Claude Code's additions marked `+`:
+
+```diff
+  system:
++   (billing block)
++   You are a Claude agent, built on Anthropic's Claude Agent SDK.
+    <your instructions>
+  tools:
+    <your agent's tools>
+  messages:
+    user:
++     <system-reminder> with your Claude account's email address
+      <your first prompt>
+    ...
+    user: <your latest prompt>
++   system: the environment (working directory, platform, shell, model name, date)
+```
+
 ## Limitations
 
 - Claude Code sets up the request itself, so [`ClaudeAgentModel`][pydantic_ai.models.claude_agent.ClaudeAgentModel] ignores the sampling settings (`temperature`, `top_p`, `top_k`, `seed`, `presence_penalty`, `frequency_penalty` and `logit_bias`), as well as `stop_sequences`, `parallel_tool_calls=False`, `extra_headers`, `extra_body`, `service_tier` and `timeout`. `max_tokens`, `max_retries` (Pydantic AI retries a failed request, as Claude Code is set not to, but doesn't wait for a plan's usage limit to reset; a [durable execution](../durable_execution/overview.md) engine that retries the model request may still wait for it, until its `Retry-After`), [`thinking`][pydantic_ai.settings.ModelSettings.thinking], `tool_choice` (except values that force a tool call, which raise a `UserError`), `anthropic_thinking` and `anthropic_effort` apply. Other `anthropic_*` settings are ignored with an `UnsupportedSettingWarning`.
