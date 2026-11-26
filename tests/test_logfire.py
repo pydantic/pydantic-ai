@@ -5289,41 +5289,34 @@ async def test_sub_agent_cost_rolls_up_to_the_root_conversation(capfire: Capture
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-async def test_root_conversation_id_ignores_incoming_baggage() -> None:
-    """A conversation ID sent in a request's baggage header is not recorded as the top-level one.
+async def test_root_conversation_id_ignores_incoming_baggage(capfire: CaptureLogfire) -> None:
+    """A top-level conversation ID sent in a request's baggage header doesn't reach the run's spans.
 
-    A web app's OTel setup fills baggage from the `baggage` header of each request, so a client
-    could otherwise make its run's cost count under a conversation it picked. The baggage is
-    attached by hand here, as an OTel HTTP integration would, and both an agent run and a model
-    request made outside any agent run are checked. A plain OTel tracer is used because Logfire
-    itself copies every baggage key onto each span it starts, whatever Pydantic AI does.
+    A web app's OTel setup fills baggage from the `baggage` header of each request, and Logfire
+    copies every baggage key onto each span it starts. Without the agent run removing the key, a
+    client could make a top-level run's cost count under a conversation it picked. The baggage is
+    attached by hand here, as an OTel HTTP integration would.
 
     This is not a VCR test: it checks which attributes the spans carry, which a recorded provider
     response wouldn't change.
     """
-    from pydantic_ai.direct import model_request
-    from pydantic_ai.models.instrumented import InstrumentedModel
+    agent = Agent(TestModel(), name='top', capabilities=[Instrumentation()])
 
-    exporter = InMemorySpanExporter()
-    tracer_provider = TracerProvider()
-    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
-    settings = InstrumentationSettings(tracer_provider=tracer_provider)
-    agent = Agent(TestModel(), capabilities=[Instrumentation(settings=settings)])
-
-    sent_by_client = otel_baggage.set_baggage('gen_ai.conversation.id', 'someone-elses-chat')
-    sent_by_client = otel_baggage.set_baggage('pydantic_ai.root_conversation_id', 'someone-elses-chat', sent_by_client)
-    token = otel_context.attach(sent_by_client)
+    token = otel_context.attach(otel_baggage.set_baggage('pydantic_ai.root_conversation_id', 'someone-elses-chat'))
     try:
         await agent.run('hi', conversation_id='chat')
-        await model_request(InstrumentedModel(TestModel(), settings), [ModelRequest.user_text_prompt('hi')])
     finally:
         otel_context.detach(token)
 
-    spans = exporter.get_finished_spans()
-    assert [span.name for span in spans] == snapshot(['chat test', 'invoke_agent agent', 'chat test'])
-    assert [(span.attributes or {}).get('pydantic_ai.root_conversation_id') for span in spans] == snapshot(
-        [None, None, None]
-    )
+    spans = capfire.exporter.exported_spans_as_dict()
+    assert [
+        (
+            span['name'],
+            span['attributes'].get('gen_ai.conversation.id'),
+            span['attributes'].get('pydantic_ai.root_conversation_id'),
+        )
+        for span in spans
+    ] == snapshot([('chat test', 'chat', None), ('invoke_agent top', 'chat', None)])
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')

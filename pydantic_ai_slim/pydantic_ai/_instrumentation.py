@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeAlias, c
 from urllib.parse import urlparse
 
 from opentelemetry import context as otel_context
-from opentelemetry.baggage import get_baggage
+from opentelemetry.baggage import get_baggage, remove_baggage
 from opentelemetry.trace import INVALID_SPAN, Span, SpanKind, Status, StatusCode, Tracer, get_current_span
 from opentelemetry.util.types import AttributeValue
 from pydantic import ConfigDict, PydanticUserError, TypeAdapter
@@ -313,11 +313,19 @@ def root_conversation_attributes(conversation_id: object) -> dict[str, str]:
 
 @contextmanager
 def track_top_level_conversation(conversation_id: str | None) -> Generator[None]:
-    """Make the top-level run's `conversation_id` visible to the runs started inside this one."""
+    """Make the top-level run's `conversation_id` visible to the runs started inside this one.
+
+    Also removes `pydantic_ai.root_conversation_id` from the OTel baggage for the run, so that no
+    span started inside it can take that attribute from the baggage. Logfire copies every baggage
+    key onto each span, and a web app fills baggage from the `baggage` header of each request, so
+    without this any client could choose the value on the spans of a top-level run.
+    """
     token = _top_level_conversation_id.set(_top_level_conversation_id.get() or conversation_id)
+    baggage_token = otel_context.attach(remove_baggage(ROOT_CONVERSATION_ID_ATTRIBUTE))
     try:
         yield
     finally:
+        otel_context.detach(baggage_token)
         _top_level_conversation_id.reset(token)
 
 

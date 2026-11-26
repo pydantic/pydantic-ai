@@ -318,6 +318,8 @@ class Instrumentation(AbstractCapability[Any]):
                 span_attributes['gen_ai.agent.description'] = rendered
 
         with (
+            # Entered before the span starts, so the span can't take the attribute from baggage.
+            track_top_level_conversation(ctx.conversation_id),
             start_as_current_span(
                 settings.tracer,
                 names.get_agent_run_span_name(agent_name),
@@ -326,7 +328,6 @@ class Instrumentation(AbstractCapability[Any]):
                 set_status_on_exception=False,
             ) as span,
             _record_uncaught_errors(span, include_content=settings.include_content),
-            track_top_level_conversation(ctx.conversation_id),
             # Entered with the span and exited with it, so `_run_usage` ends up holding exactly
             # the usage this run recorded — nested runs report their own on their own spans.
             _usage_attribution.accumulate(self._run_usage),
