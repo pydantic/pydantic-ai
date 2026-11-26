@@ -72,6 +72,9 @@ class ModelDeprecation:
     replacement: str | None = None
     """The model the provider recommends instead, or `None` if it names none."""
 
+    rerouted_to: str | None = None
+    """The model the provider answers this model's requests with from `retirement_date`, or `None` if they fail then."""
+
 
 class ModelProfile(TypedDict, total=False):
     """Describes how requests to and responses from specific models or families of models need to be constructed and processed to get the best results, independent of the model and provider classes used.

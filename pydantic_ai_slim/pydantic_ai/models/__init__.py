@@ -1989,7 +1989,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         deprecation = self.profile.get('deprecation')
         if deprecation is None or DEPRECATED_MODEL_WARNING_SUPPRESSED.get():
             return
-        retirement = f', with a retirement date of {deprecation.retirement_date}' if deprecation.retirement_date else ''
+        retirement_date, rerouted_to = deprecation.retirement_date, deprecation.rerouted_to
+        retirement = f', with a retirement date of {retirement_date}' if retirement_date else ''
+        if rerouted_to:
+            retirement += (
+                f', from which it routes requests to {rerouted_to!r}'
+                if retirement_date
+                else f', and it routes requests to {rerouted_to!r}'
+            )
         replacement = f' It recommends {deprecation.replacement!r} instead.' if deprecation.replacement else ''
         # Attributed to this line, so the default filters don't repeat it for a model until something changes the filters.
         warnings.warn(

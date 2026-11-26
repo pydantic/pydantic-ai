@@ -73,6 +73,7 @@ GEMINI_API_DEPRECATION = ModelDeprecation(
     source_url='https://example.com/gemini-api',
     retirement_date=date(2026, 12, 1),
     replacement='gemini-current',
+    rerouted_to='gemini-routed',
 )
 GOOGLE_CLOUD_DEPRECATION = ModelDeprecation(
     source_url='https://example.com/google-cloud',
@@ -177,35 +178,50 @@ def test_each_request_warns(allow_model_requests: None):
     assert len([w for w in record if w.category is DeprecatedModelWarning]) == 2
 
 
-GOOGLE_MODELS: dict[str, tuple[Callable[[], Model], ModelDeprecation]] = {
+GEMINI_API_MESSAGE = (
+    'is deprecated by its provider, with a retirement date of 2026-12-01, from which it routes requests to '
+    "'gemini-routed'. It recommends 'gemini-current' instead. See https://example.com/gemini-api"
+)
+GOOGLE_CLOUD_MESSAGE = (
+    "is deprecated by its provider, with a retirement date of 2026-10-20. It recommends 'gemini-current' instead. "
+    'See https://example.com/google-cloud'
+)
+GOOGLE_MODELS: dict[str, tuple[Callable[[], Model], ModelDeprecation, str]] = {
     'google': (
         lambda: GoogleModel(GEMINI, provider=GoogleProvider(api_key='mock-api-key', http_client=not_found_client())),
         GEMINI_API_DEPRECATION,
+        GEMINI_API_MESSAGE,
     ),
     'google-cloud': (
         lambda: GoogleModel(
             GEMINI, provider=GoogleCloudProvider(api_key='mock-api-key', http_client=not_found_client())
         ),
         GOOGLE_CLOUD_DEPRECATION,
+        GOOGLE_CLOUD_MESSAGE,
     ),
     'gateway/google': (
         lambda: GoogleModel(
             GEMINI, provider=gateway_provider('google', api_key='pylf_v1_us_mock', http_client=not_found_client())
         ),
         GOOGLE_CLOUD_DEPRECATION,
+        GOOGLE_CLOUD_MESSAGE,
     ),
 }
 
 
 @pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
-@pytest.mark.parametrize(('model_factory', 'deprecation'), GOOGLE_MODELS.values(), ids=GOOGLE_MODELS.keys())
+@pytest.mark.parametrize(('model_factory', 'deprecation', 'message'), GOOGLE_MODELS.values(), ids=GOOGLE_MODELS.keys())
 async def test_google_takes_its_transports_dates(
-    allow_model_requests: None, model_factory: Callable[[], Model], deprecation: ModelDeprecation, stream: bool
+    allow_model_requests: None,
+    model_factory: Callable[[], Model],
+    deprecation: ModelDeprecation,
+    message: str,
+    stream: bool,
 ):
-    """A request to a deprecated Google model warns once, with the dates of the API it reaches.
+    """A request to a deprecated Google model warns once, with the schedule of the API it reaches.
 
-    The Gemini API and Google Cloud date the same model differently, and the Gateway's Google route reaches Google
-    Cloud.
+    The Gemini API and Google Cloud date the same model differently, only the Gemini API routes it to another model,
+    and the Gateway's Google route reaches Google Cloud.
     """
     model = model_factory()
     assert model.profile.get('deprecation') == deprecation
@@ -219,8 +235,7 @@ async def test_google_takes_its_transports_dates(
             await agent.run('hello')
 
     assert [str(w.message) for w in record if w.category is DeprecatedModelWarning] == [
-        f"Model '{model.model_id}' is deprecated by its provider, with a retirement date of "
-        f"{deprecation.retirement_date}. It recommends 'gemini-current' instead. See {deprecation.source_url}"
+        f"Model '{model.model_id}' {message}"
     ]
 
 
@@ -311,6 +326,25 @@ def test_profile_overrides():
         custom.prepare_request(None, ModelRequestParameters())
     assert [str(w.message) for w in record] == snapshot(
         ["Model 'openrouter:openai/gpt-elsewhere' is deprecated by its provider. See https://example.com/openrouter"]
+    )
+
+
+def test_rerouted_without_a_retirement_date():
+    """A deprecation that routes requests to another model with no retirement date still reads as a sentence."""
+    model = OpenAIChatModel(
+        'openai/gpt-elsewhere',
+        provider=OpenRouterProvider(api_key='mock-api-key'),
+        profile={
+            'deprecation': ModelDeprecation(source_url='https://example.com/openrouter', rerouted_to='gpt-current')
+        },
+    )
+    with pytest.warns(DeprecatedModelWarning) as record:
+        model.prepare_request(None, ModelRequestParameters())
+    assert [str(w.message) for w in record] == snapshot(
+        [
+            "Model 'openrouter:openai/gpt-elsewhere' is deprecated by its provider, and it routes requests to "
+            "'gpt-current'. See https://example.com/openrouter"
+        ]
     )
 
 

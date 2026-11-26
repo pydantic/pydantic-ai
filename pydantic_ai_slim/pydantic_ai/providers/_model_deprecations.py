@@ -14,6 +14,8 @@ announces a deprecation, following `.agents/skills/add-new-model/SKILL.md`. Each
 - Set `source_url` to the section of the provider's page that lists the model.
 - Set `replacement` to the first model id the notice recommends, or leave it `None` when the notice names none. A
   qualifier the notice adds, such as a reasoning mode, stays on the linked page.
+- Set `rerouted_to` to the model the notice says the API answers the id with from its retirement date, or leave it
+  `None` when the notice says nothing of the kind.
 - Keep an entry after its retirement date: the warning then explains why the request fails, or, where the provider
   routes the id to another model, why another model answers it.
 """
@@ -966,11 +968,13 @@ GEMINI_API_MODEL_DEPRECATIONS: dict[str, ModelDeprecation] = {
         source_url='https://aistudio.google.com/docs/deprecations#gemini-2.5-pro-models',
         retirement_date=date(2026, 12, 1),
         replacement='gemini-3.8-flash',
+        rerouted_to='gemini-3.8-flash',
     ),
     'gemini-2.5-flash': ModelDeprecation(
         source_url='https://aistudio.google.com/docs/deprecations#gemini-2.5-flash-models',
         retirement_date=date(2026, 12, 1),
         replacement='gemini-3.5-flash-lite',
+        rerouted_to='gemini-3.5-flash-lite',
     ),
 }
 """Models deprecated on the Gemini API: https://aistudio.google.com/docs/deprecations."""
