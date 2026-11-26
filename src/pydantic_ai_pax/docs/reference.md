@@ -1811,8 +1811,9 @@ or by the capability's 16 KB event preview cap, the row shows the log path, wher
 output remains. Background commands can keep writing
 after the snapshot; those future lines are not included in its count.
 
-Read headers show the path, zero-based offset, and effective line limit (Coder
-default and maximum: 2000). Listing headers show the directory, recursive mode,
+Read headers show the path and, when the model set them, the lines read, as in
+`lines 20-34` or `from line 20`, numbered like `read_file`'s output (Coder
+default and maximum limit: 2000). Listing headers show the directory, recursive mode,
 result limit (default 200), and optional glob. Coder listings recurse using
 ripgrep and honor ignore rules. These displayed defaults describe Coder tools.
 Read and listing calls add no result row on success.
