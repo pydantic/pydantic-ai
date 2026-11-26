@@ -28,9 +28,6 @@ class _Pipe:
     def __init__(self) -> None:
         self.closed = False
 
-    def fileno(self) -> int:
-        return 3
-
     def close(self) -> None:
         self.closed = True
 
