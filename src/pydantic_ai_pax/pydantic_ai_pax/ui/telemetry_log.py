@@ -8,7 +8,7 @@ to stderr, over the editor. While the interactive session runs they go to small 
 import logging
 import os
 from collections.abc import Generator
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import contextmanager
 from io import TextIOWrapper
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -17,7 +17,6 @@ from rich.console import Console
 
 from pydantic_ai_pax.ui.rendering import theme
 
-_LOGGERS = ('logfire', 'opentelemetry')
 _MAX_BYTES = 1_000_000
 
 
@@ -70,26 +69,9 @@ def _unhandled_below(record: logging.LogRecord) -> bool:
     )
 
 
-def telemetry_log(path: Path, *, console: Console) -> AbstractContextManager[None]:
-    """Send warnings and errors from the Logfire and OpenTelemetry loggers to `path`, and name it on exit if written."""
-    return _unhandled_log(
-        path, _LOGGERS, problems='Logfire or OpenTelemetry reported problems, such as failed exports', console=console
-    )
-
-
-def event_loop_log(path: Path, *, console: Console) -> AbstractContextManager[None]:
-    """Send the event loop's unhandled callback errors, such as Windows' `WinError 10054` on teardown, to `path`."""
-    return _unhandled_log(
-        path,
-        ('asyncio',),
-        problems='The event loop reported errors, such as connections reset while closing',
-        console=console,
-    )
-
-
 @contextmanager
-def _unhandled_log(path: Path, names: tuple[str, ...], *, problems: str, console: Console) -> Generator[None]:
-    """Send warnings and errors from the `names` loggers to `path`, and print `problems` naming it on exit if written.
+def unhandled_log(path: Path, names: tuple[str, ...], *, notice: str, console: Console) -> Generator[None]:
+    """Send warnings and errors from the `names` loggers to `path`, and print `notice` naming it on exit if written.
 
     A logger that already reaches a handler, one the embedding application configured on it, an ancestor, or a
     descendant, is left alone: only records no handler would write out are redirected, whether they would fall
@@ -113,7 +95,7 @@ def _unhandled_log(path: Path, names: tuple[str, ...], *, problems: str, console
         handler.close()
         if handler.wrote:
             console.print(
-                f'{problems}. See {path}.',
+                f'{notice}. See {path}.',
                 style=theme.color(theme.MUTED),
                 markup=False,
             )

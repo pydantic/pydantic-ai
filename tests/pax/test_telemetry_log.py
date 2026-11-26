@@ -1,4 +1,4 @@
-"""Telemetry SDK warnings, such as failed Logfire exports, go to a file instead of over the interactive editor."""
+"""Telemetry SDK warnings and event loop errors go to files instead of over the interactive editor."""
 
 import asyncio
 import io
