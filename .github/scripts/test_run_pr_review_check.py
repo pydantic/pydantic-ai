@@ -643,7 +643,7 @@ def test_go_provider_failure_restarts_the_review_on_the_next_link(
     steps: str,
     restart: dict[str, object],
 ) -> None:
-    """A transport, internal or invalid-output failure that outlasted OpenCode's own retries on Go reruns the review.
+    """A transport, internal or invalid-output failure on Go reruns the review.
 
     The next link reviews from scratch, whether or not Go's run took a step.
     """

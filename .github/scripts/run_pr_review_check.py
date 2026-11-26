@@ -330,11 +330,11 @@ def main() -> None:
             trace_id=trace_id,
             parent_id=span_id,
             configured_chain=env.get('PR_REVIEW_MODEL_CHAIN', ''),
-            # OpenCode 2.2.5 retries a failed step up to 10 times when `isRetryable` accepts its error, which it does for
-            # an internal error and most transport errors, and not for most invalid provider output, so an internal or
-            # transport error in the stream has usually outlasted those retries. The next link can still serve. See
-            # `isRetryable` in https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/provider-error.ts, and
-            # its callers in packages/core/src/session/runner/step.ts and packages/core/src/model-retry.ts.
+            # OpenCode 2.2.5 retries a failed step up to 10 times when `isRetryable` accepts its error, so such an error
+            # in the stream either outlasted those retries or was one OpenCode does not retry, and the next link's
+            # provider can still serve. See `isRetryable` in
+            # https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/provider-error.ts, and its callers in
+            # packages/core/src/session/runner/step.ts and packages/core/src/model-retry.ts.
             go_restart_errors=frozenset({'provider.transport', 'provider.internal', 'provider.invalid-output'}),
             # A rejected answer hands the review to the next link; the last link's answer fails it below.
             validate=lambda served: check_result(check, files, stream, served, changed=changed),
