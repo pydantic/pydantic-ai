@@ -9697,6 +9697,23 @@ def test_bedrock_drops_stop_sequences_where_converse_rejects_them(
         )
 
 
+@pytest.mark.parametrize(
+    ('model_name', 'cites'),
+    [
+        ('us.anthropic.claude-haiku-5-5', True),
+        ('amazon.nova-pro-v1:0', False),
+        ('meta.llama3-70b-instruct-v1:0', False),
+    ],
+)
+def test_bedrock_declares_citations_on_models_that_never_cite(
+    bedrock_provider: BedrockProvider, model_name: str, cites: bool
+):
+    """Only the models with `bedrock_supports_citations` cite, so the others declare `citations` unsupported."""
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+
+    assert ('citations' in model._unsupported_settings()) is not cites  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_bedrock_stop_sequences_dropped_where_converse_rejects_them(
     allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
 ):
