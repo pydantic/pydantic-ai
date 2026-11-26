@@ -112,7 +112,9 @@ def _root_conversation_attributes(conversation_id: str | None) -> dict[str, str]
 
     A run started inside another run, such as a sub-agent, still sees the outer run's baggage when
     its own span starts. Sub-agents get a conversation of their own, so recording the outermost one
-    lets cost be summed per conversation across them.
+    lets cost be summed per conversation across them. "Outer" is whatever conversation the current
+    OTel baggage holds, so baggage propagated from another process counts too: that is how a remote
+    sub-agent worker gets its parent's.
     """
     outer = _otel_get_baggage(ROOT_CONVERSATION_ID_BAGGAGE_KEY) or _otel_get_baggage(CONVERSATION_ID_BAGGAGE_KEY)
     if not outer or outer == conversation_id:

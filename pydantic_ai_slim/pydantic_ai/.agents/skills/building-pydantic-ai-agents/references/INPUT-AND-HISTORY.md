@@ -104,7 +104,8 @@ Each message carries two identifiers:
 
 - `run_id` — unique per `Agent.run` call (including deferred-tool resume). Surfaces on `RunContext.run_id`, `AgentRunResult.run_id`, message stamps, and OTel `gen_ai.agent.call.id`.
 - `conversation_id` — shared across turns that pass the same `message_history`. Surfaces on `AgentRunResult.conversation_id`, message stamps, and OTel `gen_ai.conversation.id`.
-- A run started inside another run (a sub-agent, an agent called from a tool) with a different conversation also carries the outermost conversation as OTel `pydantic_ai.root_conversation_id`. To sum cost per conversation including sub-agents, group by it and fall back to `gen_ai.conversation.id`.
+
+A run started inside another run (a sub-agent, an agent called from a tool) with a different conversation also puts the outermost conversation on its spans as OTel `pydantic_ai.root_conversation_id`, read from the current OTel baggage (including baggage propagated from another process). To sum cost per conversation including sub-agents, group by it and fall back to `gen_ai.conversation.id`.
 
 ```python
 from pydantic_ai import Agent
