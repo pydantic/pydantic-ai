@@ -10148,6 +10148,7 @@ def test_tool_call_with_validation_value_error_serializable():
                     'tool_name': 'foo_tool',
                     'tool_call_id': IsStr(),
                     'tool_kind': None,
+                    'ui_visibility': None,
                     'metadata': None,
                     'timestamp': IsStr(),
                     'outcome': 'retried',

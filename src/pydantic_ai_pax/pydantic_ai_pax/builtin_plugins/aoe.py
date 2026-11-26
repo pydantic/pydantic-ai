@@ -30,7 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_ai import AgentRunResult, RunContext
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, WrapRunHandler, on_event
 from pydantic_ai_harness.ask_user import AskUserAnsweredEvent, AskUserRequestedEvent
-from pydantic_ai_pax.config.settings_store import state_dir
+from pydantic_ai_pax.paths import state_dir
 from pydantic_ai_pax.plugins import (
     ConversationChanged,
     Plugin,
@@ -80,7 +80,7 @@ def hooks_base() -> Path:
 
 
 def state_directory() -> Path:
-    """Where the AoE session to conversation mapping lives: `$XDG_STATE_HOME/pydantic-clai2/aoe`."""
+    """Where the AoE session to conversation mapping lives: `$XDG_STATE_HOME/pydantic-ai-pax/aoe`."""
     return state_dir() / 'aoe'
 
 

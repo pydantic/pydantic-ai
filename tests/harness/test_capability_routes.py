@@ -20,7 +20,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, get_args
 
-import anyio
 import pytest
 from _pytest.mark import ParameterSet
 
@@ -32,18 +31,25 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
-    ModelResponse,
-    TextPart,
     ToolCallPart,
     ToolReturnPart,
 )
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import AgentInfo
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness import BackgroundTools, CodeMode, SubAgent, SubAgents, ToolBridge
 from pydantic_ai_harness.background_tools import BackgroundToolResultPart
 
 from .. import capability_cases as core
-from ..append_only import ToolArgs, ToolCall, discover_capabilities, drain_events, run_through_ui, ui_imports_successful
+from ..append_only import (
+    OneCallPerResponse,
+    ToolArgs,
+    ToolCall,
+    build_calls,
+    discover_capabilities,
+    drain_events,
+    run_through_ui,
+    ui_imports_successful,
+)
 from ..capability_cases import CORE_CAPABILITY_PACKAGES, Calls, CapabilityCase
 from ..conftest import try_import
 from .capability_cases import CASES as HARNESS_CASES, HARNESS_CAPABILITY_PACKAGES
@@ -195,41 +201,6 @@ class _Observer(AbstractCapability[None]):
         return result
 
 
-@dataclass
-class _Script:
-    """A model that makes the calls in order, one per response, then answers.
-
-    With `wrap`, a call to a tool the model isn't offered directly goes through the route's dispatcher.
-    """
-
-    calls: Sequence[ToolCall]
-    wrap: Callable[[str, ToolArgs, AgentInfo], ToolCall] | None = None
-    wrapped: int = 0
-
-    def respond(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        step = sum(isinstance(message, ModelResponse) for message in messages)
-        if step >= len(self.calls):
-            return ModelResponse(parts=[TextPart('done')])
-        name, args = self.calls[step]
-        if self.wrap is not None and name not in {tool.name for tool in info.function_tools}:
-            self.wrapped += 1
-            name, args = self.wrap(name, args, info)
-        return ModelResponse(parts=[ToolCallPart(name, args, tool_call_id=f'call_{step}')])
-
-    async def stream(self, messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-        # Streamed, so a tool that emits a capability event has a handler to deliver it to.
-        [part] = self.respond(messages, info).parts
-        if isinstance(part, TextPart):
-            yield part.content
-        else:
-            assert isinstance(part, ToolCallPart)
-            yield {0: DeltaToolCall(part.tool_name, part.args_as_json_str(), tool_call_id=part.tool_call_id)}
-
-    @property
-    def model(self) -> FunctionModel:
-        return FunctionModel(self.respond, stream_function=self.stream)
-
-
 async def _rebuild_definitions(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
     """A prepare hook that builds each definition anew from the fields a user sets, leaving out the stamped ids."""
     return [
@@ -263,17 +234,9 @@ class RouteRun:
     """The tools the calls executed, in order, leaving out the route's own dispatchers."""
 
 
-def _lowered(calls: Calls, directory: Path) -> list[AbstractCapability[None]]:
-    built = calls.build(directory)
-    capabilities = [built] if isinstance(built, AbstractCapability) else list(built)
-    return [capability.with_authority('none') for capability in capabilities]
-
-
 async def _built(calls: Calls, directory: Path) -> tuple[list[AbstractCapability[None]], _Observer]:
-    directory.mkdir()
-    # Built off the event loop, as an app builds its agent: building can import a client library.
-    capabilities = await anyio.to_thread.run_sync(_lowered, calls, directory)
-    return capabilities, _Observer()
+    capabilities = await build_calls(calls.build, directory)
+    return [capability.with_authority('none') for capability in capabilities], _Observer()
 
 
 def _ran(calls: Calls, observer: _Observer) -> list[str]:
@@ -283,7 +246,7 @@ def _ran(calls: Calls, observer: _Observer) -> list[str]:
 
 async def _native(calls: Calls, directory: Path) -> RouteRun:
     capabilities, observer = await _built(calls, directory)
-    agent = Agent(_Script(calls.made).model, deps_type=type(None), capabilities=[*capabilities, observer])
+    agent = Agent(OneCallPerResponse(calls.made).model, deps_type=type(None), capabilities=[*capabilities, observer])
     result = await agent.run('go', event_stream_handler=drain_events)
     return RouteRun(result.all_messages(), _ran(calls, observer))
 
@@ -295,7 +258,8 @@ async def _through(route: Route, calls: Calls, directory: Path, kernel: IPythonK
         loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(native.messages))
         return RouteRun(loaded, native.ran)
     capabilities, observer = await _built(calls, directory)
-    script = _Script(calls.made, _WRAPS.get(route))
+    # A sub-agent's run doesn't stream.
+    script = OneCallPerResponse(calls.made, wrap=_WRAPS.get(route), unstreamed=route == 'sub_agent')
     if route in ('vercel_ai', 'ag_ui'):
         agent = Agent(script.model, deps_type=type(None), capabilities=[*capabilities, observer])
         protocol: Literal['vercel', 'agui'] = 'vercel' if route == 'vercel_ai' else 'agui'
@@ -306,7 +270,7 @@ async def _through(route: Route, calls: Calls, directory: Path, kernel: IPythonK
     if route == 'sub_agent':
         child = Agent(script.model, deps_type=type(None), name='child', capabilities=[observer])
         parent = Agent(
-            _Script([('delegate_task', {'agent_name': 'child', 'task': 'go'})]).model,
+            OneCallPerResponse([('delegate_task', {'agent_name': 'child', 'task': 'go'})]).model,
             deps_type=type(None),
             capabilities=[SubAgents(agents=[SubAgent(child)], shared_capabilities=capabilities)],
         )
