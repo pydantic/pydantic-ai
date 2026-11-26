@@ -475,8 +475,8 @@ request-rate limits and `1305` overload; see `classify` in
 [`provider-error.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/provider-error.ts). A rate
 limit that outlasts those retries hands the run to the other account too, before or after the run took steps.
 
-Every other failure fails the job, including a rejected key, a provider outage, a time-budget stop, a timeout, and an
-invalid answer outside `PR Review Checks`. A run the other account also refuses or rate-limits fails the job. A
+Every other failure fails the job, including a rejected key, a provider outage, a time-budget stop, a timeout and an
+invalid answer that no case above hands on. A run the other account also refuses or rate-limits fails the job. A
 fallback run, a restart included, gets only the rest of the time budget. OpenCode 2.2.5 reads the Coding Plan key from `ZHIPU_API_KEY` only,
 so each Z.AI run sets that variable to its account's key. Each run's config allows only its provider and pins the `title`,
 `compaction` and `summary` agents to its model. Its environment holds no provider key but that account's. The job log names the
