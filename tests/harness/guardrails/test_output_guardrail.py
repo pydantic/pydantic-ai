@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from collections.abc import Callable
 
 import pytest
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
@@ -315,7 +315,7 @@ class TestOutputGuardrailTracing:
 
     async def test_a_guard_that_empties_its_chain_still_blocks(self):
         """Naming the guard on the span must not validate the chain again and turn the verdict into an error."""
-        guards: list[Any] = []
+        guards: list[Callable[[object], GuardrailResult]] = []
 
         def clear_and_block(output: object) -> GuardrailResult:
             guards.clear()
