@@ -8913,6 +8913,62 @@ async def test_bedrock_leading_assistant_message_prepended_for_nova(bedrock_prov
     )
 
 
+@pytest.mark.parametrize('model_name', ['mistral.mistral-large-3-675b-instruct', 'mistral.ministral-3-8b-instruct'])
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_bedrock_mistral_3_leading_assistant_and_tool_result_with_text(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette, model_name: str
+):
+    """Mistral Large 3 and Ministral 3 accept a leading assistant turn and text next to a `toolResult`.
+
+    So the history is sent without a synthetic leading user turn, and the tool result and the next prompt share one
+    user turn instead of being split by a synthetic assistant turn. Pixtral Large still needs both.
+    """
+    agent = Agent(BedrockConverseModel(model_name, provider=bedrock_provider))
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return '18C and sunny'  # pragma: no cover
+
+    result = await agent.run(
+        'Should I bring a jacket? Answer in one sentence.',
+        message_history=[
+            ModelResponse(parts=[TextPart(content='Hi! I can look up the weather for you.')]),
+            ModelRequest(parts=[UserPromptPart(content='What is the weather in Paris?')]),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_weather', args={'city': 'Paris'}, tool_call_id='weather01')]
+            ),
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name='get_weather', content='18C and sunny', tool_call_id='weather01')]
+            ),
+        ],
+    )
+
+    assert single_request_body(vcr)['messages'] == snapshot(
+        [
+            {'role': 'assistant', 'content': [{'text': 'Hi! I can look up the weather for you.'}]},
+            {'role': 'user', 'content': [{'text': 'What is the weather in Paris?'}]},
+            {
+                'role': 'assistant',
+                'content': [{'toolUse': {'toolUseId': 'weather01', 'name': 'get_weather', 'input': {'city': 'Paris'}}}],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'weather01',
+                            'content': [{'text': '18C and sunny'}],
+                            'status': 'success',
+                        }
+                    },
+                    {'text': 'Should I bring a jacket? Answer in one sentence.'},
+                ],
+            },
+        ]
+    )
+    assert 'jacket' in result.output.lower()
+
+
 async def test_bedrock_empty_history_prepended_for_anthropic(bedrock_provider: BedrockProvider):
     """Even Anthropic needs a synthetic user turn when there are no messages, since Converse requires at least one.
 

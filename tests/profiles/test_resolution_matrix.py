@@ -1621,6 +1621,65 @@ def test_bedrock_mistral_large():
             'json_schema_transformer': BedrockJsonSchemaTransformer,
             'bedrock_supports_strict_tool_definition': False,
             'bedrock_tool_result_colocatable_content': frozenset(),
+            'bedrock_supports_leading_assistant_message': False,
+            'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document'}),
+            'supports_video_input': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_mistral_large_3():
+    profile = BedrockProvider.model_profile('mistral.mistral-large-3-675b-instruct')
+    assert _normalize(profile) == snapshot(
+        {
+            'tool_call_id_length': 9,
+            'supported_native_tools': frozenset(),
+            'bedrock_tool_result_format': 'json',
+            'bedrock_supports_stop_sequences': False,
+            'json_schema_transformer': BedrockJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'bedrock_supports_strict_tool_definition': True,
+            'bedrock_tool_result_colocatable_content': frozenset({'image', 'text'}),
+            'bedrock_supports_leading_assistant_message': True,
+            'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document'}),
+            'supports_video_input': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_ministral_3():
+    profile = BedrockProvider.model_profile('mistral.ministral-3-8b-instruct')
+    assert _normalize(profile) == snapshot(
+        {
+            'tool_call_id_length': 9,
+            'supported_native_tools': frozenset(),
+            'bedrock_tool_result_format': 'json',
+            'bedrock_supports_stop_sequences': False,
+            'json_schema_transformer': BedrockJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'bedrock_supports_strict_tool_definition': True,
+            'bedrock_tool_result_colocatable_content': frozenset({'image', 'text'}),
+            'bedrock_supports_leading_assistant_message': True,
+            'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document'}),
+            'supports_video_input': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_mistral_pixtral_large():
+    profile = BedrockProvider.model_profile('us.mistral.pixtral-large-2502-v1:0')
+    assert _normalize(profile) == snapshot(
+        {
+            'tool_call_id_length': 9,
+            'supported_native_tools': frozenset(),
+            'bedrock_tool_result_format': 'json',
+            'json_schema_transformer': BedrockJsonSchemaTransformer,
+            'bedrock_supports_strict_tool_definition': False,
+            'bedrock_tool_result_colocatable_content': frozenset(),
+            'bedrock_supports_leading_assistant_message': False,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document'}),
             'supports_video_input': False,
         }
