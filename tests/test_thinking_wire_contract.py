@@ -33,6 +33,7 @@ with try_import() as cerebras_imports:
 
 with try_import() as google_imports:
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel
     from pydantic_ai.providers.google import GoogleProvider
 
 with try_import() as mistral_imports:
@@ -55,8 +56,10 @@ _PROVIDER_SKIP_MARKS: dict[str, pytest.MarkDecorator] = {
     'groq': pytest.mark.skipif(not groq_imports(), reason='groq not installed'),
     'cerebras': pytest.mark.skipif(not cerebras_imports(), reason='cerebras (openai) not installed'),
     'google': pytest.mark.skipif(not google_imports(), reason='google-genai not installed'),
+    'google-interactions': pytest.mark.skipif(not google_imports(), reason='google-genai not installed'),
     'mistral': pytest.mark.skipif(not mistral_imports(), reason='mistral not installed'),
     'deepinfra': pytest.mark.skipif(not openai_imports(), reason='openai not installed'),
+    'openai': pytest.mark.skipif(not openai_imports(), reason='openai not installed'),
 }
 
 
@@ -71,6 +74,8 @@ class WireCase:
     """Explicit `GroqModelSettings.groq_reasoning_effort`, to exercise the effort setting independently of `thinking`."""
     extra_body: dict[str, object] | None = None
     """User-supplied `extra_body` passed via `ModelSettings`, to exercise the disable-signal merge path."""
+    temperature: float | None = None
+    """`ModelSettings.temperature`, to show a sampling parameter stays dropped while reasoning stays on."""
     present: dict[str, object] = field(default_factory=dict[str, object])
     """Keys that must appear in the request body with exactly these values."""
     absent: tuple[str, ...] = ()
@@ -98,6 +103,69 @@ class WireCase:
 
 
 CASES = [
+    WireCase(
+        id='google-interactions-unset',
+        provider='google-interactions',
+        model_name='gemini-3.8-flash',
+        absent=('generation_config',),
+        match_body=True,
+    ),
+    WireCase(
+        id='google-interactions-enabled',
+        provider='google-interactions',
+        model_name='gemini-3.8-flash',
+        thinking=True,
+        present={'generation_config': {'thinking_summaries': 'auto'}},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-interactions-disabled',
+        provider='google-interactions',
+        model_name='gemini-3.8-flash',
+        thinking=False,
+        present={'generation_config': {'thinking_summaries': 'none', 'thinking_level': 'low'}},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-interactions-high',
+        provider='google-interactions',
+        model_name='gemini-3.8-flash',
+        thinking='high',
+        present={'generation_config': {'thinking_summaries': 'auto', 'thinking_level': 'high'}},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-interactions-gemini-4-neon-disabled',
+        provider='google-interactions',
+        model_name='gemini-4-neon',
+        thinking=False,
+        present={'generation_config': {'thinking_summaries': 'none', 'thinking_level': 'low'}},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-interactions-gemini-4-neon-xhigh',
+        provider='google-interactions',
+        model_name='gemini-4-neon',
+        thinking='xhigh',
+        present={'generation_config': {'thinking_summaries': 'auto', 'thinking_level': 'xhigh'}},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-interactions-gemini-3.1-flash-image-medium',
+        provider='google-interactions',
+        model_name='gemini-3.1-flash-image',
+        thinking='medium',
+        present={'generation_config': {'thinking_summaries': 'auto', 'thinking_level': 'high'}},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-interactions-prefixed-minimal',
+        provider='google-interactions',
+        model_name='models/gemini-3.8-flash',
+        thinking='minimal',
+        present={'generation_config': {'thinking_summaries': 'auto', 'thinking_level': 'low'}},
+        match_body=True,
+    ),
     WireCase(
         id='groq-qwen3-disable',
         provider='groq',
@@ -241,9 +309,20 @@ CASES = [
     WireCase(
         id='google-gemini-25-disable',
         provider='google',
-        model_name='gemini-2.5-flash',
+        model_name='gemini-2.5-flash-lite',
         thinking=False,
         present={'generationConfig.thinkingConfig.thinking_budget': 0},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-gemini-25-flash-false-min-budget',
+        provider='google',
+        model_name='gemini-2.5-flash',
+        thinking=False,
+        # From 2026-12-01 the Gemini API routes `gemini-2.5-flash` to `gemini-3.5-flash-lite`, which rejects
+        # `thinking_budget=0`, so `thinking=False` sends the minimum budget, as for Gemini 2.5 Pro.
+        present={'generationConfig.thinkingConfig.thinking_budget': 128},
+        match_body=True,
     ),
     WireCase(
         id='google-gemini-25-pro-false-min-budget',
@@ -253,6 +332,24 @@ CASES = [
         # Gemini 2.5 Pro can't turn thinking off (`thinking_budget=0` → 400 "This model only works in thinking
         # mode"), so `thinking=False` sends its minimum budget, without asking for the thoughts back.
         present={'generationConfig.thinkingConfig.thinking_budget': 128},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-gemini-25-flash-minimal-budget',
+        provider='google',
+        model_name='gemini-2.5-flash',
+        thinking='minimal',
+        present={'generationConfig.thinkingConfig.thinking_budget': 128},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-gemini-25-flash-lite-minimal-budget',
+        provider='google',
+        model_name='gemini-2.5-flash-lite',
+        thinking='minimal',
+        # Gemini 2.5 Flash-Lite 400s on a budget below 512 ("Please choose a value between 512 and 24576"), so
+        # `minimal` sends 512 there rather than the 128 the other Gemini 2.5 models get.
+        present={'generationConfig.thinkingConfig.thinking_budget': 512},
         match_body=True,
     ),
     WireCase(
@@ -326,6 +423,15 @@ CASES = [
         thinking='xhigh',
         present={'generationConfig.thinkingConfig.thinking_level': 'XHIGH'},
         # `google-genai`'s `ThinkingLevel` enum doesn't list `XHIGH` yet; it warns and sends the value.
+        expect_warning='XHIGH is not a valid ThinkingLevel',
+        match_body=True,
+    ),
+    WireCase(
+        id='google-gemini-4-neon-xhigh',
+        provider='google',
+        model_name='gemini-4-neon',
+        thinking='xhigh',
+        present={'generationConfig.thinkingConfig.thinking_level': 'XHIGH'},
         expect_warning='XHIGH is not a valid ThinkingLevel',
         match_body=True,
     ),
@@ -441,6 +547,38 @@ CASES = [
         absent=('reasoning_effort',),
         match_body=True,
     ),
+    # OpenAI's API answers any `reasoning_effort` on `gpt-5-search-api` with a 400, so `thinking` sends none. The
+    # model still counts as always reasoning, so `temperature`, which it rejects too, stays dropped.
+    WireCase(
+        id='openai-gpt-5-search-api-disable',
+        provider='openai',
+        model_name='gpt-5-search-api',
+        thinking=False,
+        temperature=0.5,
+        present={'model': 'gpt-5-search-api'},
+        absent=('reasoning_effort', 'temperature'),
+        expect_warning='Sampling parameters',
+        match_body=True,
+    ),
+    WireCase(
+        id='openai-gpt-5-search-api-thinking-low',
+        provider='openai',
+        model_name='gpt-5-search-api',
+        thinking='low',
+        temperature=0.5,
+        present={'model': 'gpt-5-search-api'},
+        absent=('reasoning_effort', 'temperature'),
+        expect_warning='Sampling parameters',
+        match_body=True,
+    ),
+    WireCase(
+        id='openai-gpt-5-search-api-unset-omits-effort',
+        provider='openai',
+        model_name='gpt-5-search-api',
+        present={'model': 'gpt-5-search-api'},
+        absent=('reasoning_effort',),
+        match_body=True,
+    ),
 ]
 
 
@@ -452,6 +590,7 @@ def _build_model(
     gemini_api_key: str,
     mistral_api_key: str,
     deepinfra_api_key: str,
+    openai_api_key: str,
 ) -> Model:
     if case.provider == 'groq':
         return GroqModel(case.model_name, provider=GroqProvider(api_key=groq_api_key))
@@ -459,6 +598,8 @@ def _build_model(
         return CerebrasModel(case.model_name, provider=CerebrasProvider(api_key=cerebras_api_key))
     if case.provider == 'google':
         return GoogleModel(case.model_name, provider=GoogleProvider(api_key=gemini_api_key))
+    if case.provider == 'google-interactions':
+        return GoogleInteractionsModel(case.model_name, provider=GoogleProvider(api_key=gemini_api_key))
     if case.provider == 'mistral':
         return MistralModel(case.model_name, provider=MistralProvider(api_key=mistral_api_key))
     if case.provider == 'deepinfra':
@@ -466,6 +607,8 @@ def _build_model(
             'deepinfra', base_url='https://api.deepinfra.com/v1/openai', api_key=deepinfra_api_key
         )
         return OpenAIChatModel(case.model_name, provider=provider)
+    if case.provider == 'openai':
+        return OpenAIChatModel(case.model_name, provider=OpenAIProvider(api_key=openai_api_key))
     raise ValueError(f'unknown provider {case.provider!r}')  # pragma: no cover
 
 
@@ -478,6 +621,7 @@ async def test_reasoning_wire_contract(
     gemini_api_key: str,
     mistral_api_key: str,
     deepinfra_api_key: str,
+    openai_api_key: str,
     vcr: Cassette,
 ):
     """Reasoning settings produce the correct request wire body: a `thinking` disable signal where the model
@@ -489,6 +633,7 @@ async def test_reasoning_wire_contract(
         gemini_api_key=gemini_api_key,
         mistral_api_key=mistral_api_key,
         deepinfra_api_key=deepinfra_api_key,
+        openai_api_key=openai_api_key,
     )
     if case.groq_reasoning_effort is not None:
         settings = GroqModelSettings(groq_reasoning_effort=case.groq_reasoning_effort)
@@ -498,6 +643,8 @@ async def test_reasoning_wire_contract(
         settings['thinking'] = case.thinking
     if case.extra_body is not None:
         settings['extra_body'] = case.extra_body
+    if case.temperature is not None:
+        settings['temperature'] = case.temperature
     agent = Agent(model, model_settings=settings)
     if case.expect_warning is not None:
         with pytest.warns(UserWarning, match=case.expect_warning):

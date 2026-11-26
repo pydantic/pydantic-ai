@@ -40,6 +40,7 @@ from ..messages import (
     ToolCallPart,
     UserContent,
 )
+from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._lifecycle import LifecycleEvent, RealtimeFrame, StaleEvent
 from .profiles import DEFAULT_AUDIO_SAMPLE_RATE, DEFAULT_REALTIME_PROFILE, merge_realtime_profile
@@ -77,9 +78,45 @@ class ToolResult:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass(repr=False)
+class UpdateTools:
+    """Replace the function tools the model can call, mid-session.
+
+    Sent by [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] when a tool call reveals tools the session
+    didn't open with, such as an [on-demand capability](../capabilities/on-demand.md)'s tools as it loads, ahead of
+    that call's [`ToolResult`][pydantic_ai.realtime.codec.ToolResult] and in the same send, so the model can call
+    them as soon as it hears the result. Only sent to a model whose profile sets
+    [`supports_tool_updates`][pydantic_ai.realtime.RealtimeModelProfile.supports_tool_updates].
+
+    The connection should keep the new tools for a reconnect too, as it keeps the ones it opened with.
+    """
+
+    tools: Sequence[ToolDefinition]
+    """Every function tool the model can call from now on, not only the new ones, already narrowed by the session's
+    [`tool_choice`][pydantic_ai.realtime.RealtimeModelSettings.tool_choice]."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 @dataclass
 class TextContext:
     """A text item added to the conversation as context, without asking the model to respond (like an image)."""
+
+    text: str
+
+
+@dataclass
+class AppendVoiceInstructions:
+    """Add to the instructions of the voice model the caller hears, mid-session.
+
+    Sent by [`append_voice_instructions`][pydantic_ai.realtime.RealtimeSession.append_voice_instructions], only to a
+    model whose profile sets
+    [`supports_appending_voice_instructions`][pydantic_ai.realtime.RealtimeModelProfile.supports_appending_voice_instructions]:
+    one whose voice model takes instructions of its own, apart from the agent's, such as OpenAI GPT-Live. It is
+    not part of the conversation, so history doesn't record it.
+
+    The connection should keep the instructions for a reconnect too, as it keeps the ones it opened with.
+    """
 
     text: str
 
@@ -157,15 +194,16 @@ raw PCM before it is streamed, matching the history-seeding path), or a raw PCM 
 (`media_type='audio/pcm'`), and a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is a
 system prompt added mid-session, delivered on the provider's channel for the operator's own text. The session normalizes these before forwarding them to the connection.
 Turn-control verbs (`CommitAudio`, `ClearAudio`, `CreateResponse`, `CancelResponse`,
-`TruncateOutput`) are connection-level vocabulary driven through the dedicated `RealtimeSession`
-methods (`commit_audio()`, `clear_audio()`, `create_response()`, `interrupt()`), and
-[`ToolResult`][pydantic_ai.realtime.codec.ToolResult] is sent by the session itself when a tool
-completes — neither is accepted by `send()`.
+`TruncateOutput`) and [`AppendVoiceInstructions`][pydantic_ai.realtime.codec.AppendVoiceInstructions] are
+connection-level vocabulary driven through the dedicated `RealtimeSession` methods (`commit_audio()`,
+`clear_audio()`, `create_response()`, `interrupt()`, `append_voice_instructions()`), and
+[`ToolResult`][pydantic_ai.realtime.codec.ToolResult] and [`UpdateTools`][pydantic_ai.realtime.codec.UpdateTools] are
+sent by the session itself when a tool completes — none of these is accepted by `send()`.
 """
 
 RealtimeInput = TypeAliasType(
     'RealtimeInput',
-    'str | TextContext | BinaryAudio | BinaryImage | CommitAudio | ClearAudio | CreateResponse | CancelResponse | TruncateOutput | ToolResult | NativeToolApproval',
+    'str | TextContext | BinaryAudio | BinaryImage | CommitAudio | ClearAudio | CreateResponse | CancelResponse | TruncateOutput | ToolResult | UpdateTools | AppendVoiceInstructions | NativeToolApproval',
 )
 """Union of content types accepted by [`RealtimeConnection.send`][pydantic_ai.realtime.codec.RealtimeConnection.send].
 
@@ -176,7 +214,8 @@ already normalized: a `str` is a complete text turn that solicits a response,
 [`audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate]
 (`media_type='audio/pcm'`), and a [`BinaryImage`][pydantic_ai.messages.BinaryImage] an image frame.
 The connection additionally accepts the turn-control verbs,
-[`ToolResult`][pydantic_ai.realtime.codec.ToolResult], and
+[`AppendVoiceInstructions`][pydantic_ai.realtime.codec.AppendVoiceInstructions],
+[`ToolResult`][pydantic_ai.realtime.codec.ToolResult], [`UpdateTools`][pydantic_ai.realtime.codec.UpdateTools], and
 [`NativeToolApproval`][pydantic_ai.realtime.codec.NativeToolApproval], which
 [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] sends on the caller's behalf.
 """
@@ -776,6 +815,7 @@ __all__ = (
     'InputTranscript',
     'ToolCall',
     'ToolResult',
+    'UpdateTools',
     'ToolCallCancelled',
     'ResponseDone',
     'ConversationCreated',
@@ -790,6 +830,7 @@ __all__ = (
     'TextContext',
     'CancelResponse',
     'TruncateOutput',
+    'AppendVoiceInstructions',
     'NativeToolApproval',
     # Model-profile helpers for provider implementations.
     'merge_realtime_profile',

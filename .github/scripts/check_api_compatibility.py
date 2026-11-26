@@ -18,13 +18,13 @@ PACKAGES = {
     'pydantic_evals': 'pydantic_evals',
     'clai': 'clai',
     'pydantic_ai_harness': 'src/pydantic_ai_harness',
-    'pydantic_clai2': 'src/pydantic_clai2',
+    'pydantic_ai_pax': 'src/pydantic_ai_pax',
 }
 # The `clai2` web UI and the `workspaces` plugin behind it are application code, not an SDK for others to build on,
 # so their changes need no compatibility waiver. Each excludes every module in the package.
 EXCLUDED_PACKAGES = (
-    'pydantic_clai2.builtin_plugins.web',
-    'pydantic_clai2.builtin_plugins.workspaces',
+    'pydantic_ai_pax.builtin_plugins.web',
+    'pydantic_ai_pax.builtin_plugins.workspaces',
 )
 # Run from its own tool environment: `griffe` 1.x, which `prefect` accepts, installs over `griffelib`'s `griffe`
 # module, and `griffecli` crashes against it. A bump of either package can reword or add findings, which changes
@@ -67,10 +67,10 @@ class ModelNameLiteral(BaseModel):
 
 
 class GrowingCollection(BaseModel):
-    """A public `dict` or `set` constant that registers entries, such as CLAI's settings, which can gain entries without a waiver.
+    """A public `dict` or `set` constant that registers entries, such as Pax's settings, which can gain entries without a waiver.
 
     The constant can also be a comprehension over a tuple or list of names, such as the capability types registry,
-    or `tuple()` of a generator expression over one, such as CLAI's Codex model menu. It then gains entries when a
+    or `tuple()` of a generator expression over one, such as Pax's Codex model menu. It then gains entries when a
     name is added to that sequence.
 
     Removing an entry or changing an entry's value still needs a waiver.
@@ -375,6 +375,14 @@ def _field_without_description(value: str) -> str | None:
 
 
 def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
+    # A package new since `against`, such as `pydantic_ai_pax` until its first release, has no released API to stay
+    # compatible with. One missing here too still fails.
+    module = Path(search_path, package)
+    released = subprocess.run(
+        ['git', 'cat-file', '-e', f'{against}:{module.as_posix()}'], check=False, capture_output=True
+    )
+    if module.is_dir() and released.returncode != 0:
+        return []
     result = subprocess.run(
         [
             'uvx',

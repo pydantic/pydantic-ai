@@ -106,6 +106,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.workspaces import WorkspaceUnavailableError
 from pydantic_graph import End
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 if TYPE_CHECKING:
@@ -129,8 +130,10 @@ if TYPE_CHECKING:
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
+    from pydantic_ai.providers.otari import OtariProvider
     from pydantic_ai.providers.ovhcloud import OVHcloudProvider
     from pydantic_ai.providers.sambanova import SambaNovaProvider
+    from pydantic_ai.providers.stav import StavProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
     from pydantic_ai.providers.vllm import VLLMProvider
@@ -150,8 +153,10 @@ else:
         from pydantic_ai.providers.ollama import OllamaProvider
         from pydantic_ai.providers.openai import OpenAIProvider
         from pydantic_ai.providers.openrouter import OpenRouterProvider
+        from pydantic_ai.providers.otari import OtariProvider
         from pydantic_ai.providers.ovhcloud import OVHcloudProvider
         from pydantic_ai.providers.sambanova import SambaNovaProvider
+        from pydantic_ai.providers.stav import StavProvider
         from pydantic_ai.providers.together import TogetherProvider
         from pydantic_ai.providers.vercel import VercelProvider
         from pydantic_ai.providers.vllm import VLLMProvider
@@ -159,7 +164,7 @@ else:
         AlibabaProvider = AzureProvider = CerebrasProvider = DeepSeekProvider = None
         CrusoeProvider = FireworksProvider = GitHubProvider = HerokuProvider = None
         MetaProvider = MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None
-        OpenRouterProvider = OVHcloudProvider = SambaNovaProvider = None
+        OpenRouterProvider = OtariProvider = OVHcloudProvider = SambaNovaProvider = StavProvider = None
         TogetherProvider = VercelProvider = VLLMProvider = None
 
     try:
@@ -215,11 +220,6 @@ requires_google = pytest.mark.skipif(GoogleProvider is None, reason='google-gena
 requires_groq = pytest.mark.skipif(GroqProvider is None, reason='groq not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_litellm = pytest.mark.skipif(LiteLLMProvider is None, reason='litellm not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_mistral = pytest.mark.skipif(MistralProvider is None, reason='mistral not installed')  # pyright: ignore[reportUnnecessaryComparison]
-
-# Wall-clock guard for the readiness `Event.wait()`s in the cancellation tests below. The events are set
-# near-instantly; the timeout only exists to fail fast on a genuine hang, since no global pytest timeout is
-# configured. `timeout=1` was too tight under heavy xdist load and flaked (#5399), so allow generous headroom.
-READINESS_WAIT_TIMEOUT = 10
 
 
 def test_run_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):
@@ -4493,8 +4493,14 @@ async def test_agent_run_id_stamped_on_request_before_hooks() -> None:
 
     agent = Agent(TestModel(custom_output_text='ok'), capabilities=[Hooks(before_model_request=capture)])
     await agent.run('hi', run_id='run-pre-hook')
+    # A trailing request from `message_history`, as UI adapters send it, is stamped before hooks too.
+    result = await agent.run(message_history=[ModelRequest(parts=[UserPromptPart('hi')])], run_id='run-from-history')
+    # It is still prior context, not a new message.
+    assert [type(message) for message in result.new_messages()] == [ModelResponse]
+    # One that already has a `run_id` keeps it.
+    await agent.run(message_history=[ModelRequest(parts=[UserPromptPart('hi')], run_id='run-earlier')])
 
-    assert seen == ['run-pre-hook']
+    assert seen == ['run-pre-hook', 'run-from-history', 'run-earlier']
 
 
 def test_agent_run_id_duplicate_on_model_response_raises() -> None:
@@ -5110,6 +5116,58 @@ def test_unknown_tool_per_tool_retries_exceeded():
 
     with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 1"):
         agent.run_sync('Hello')
+
+
+@pytest.mark.parametrize('external', [pytest.param(True, id='external'), pytest.param(False, id='requires_approval')])
+def test_deferred_tool_cutoff_raises_incomplete_tool_call(external: bool):
+    """A deferred tool call cut off by the token limit raises `IncompleteToolCall`, as a function tool call does.
+
+    `FunctionModel` scripts the cut-off response: what's under test is how the agent graph handles it,
+    not how a provider reports a `'length'` finish reason.
+    """
+    requests = 0
+
+    def model_function(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal requests
+        requests += 1
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='deferred_tool', args='{"value":', tool_call_id='call-1')],
+            finish_reason='length',
+        )
+
+    toolset: AbstractToolset[object]
+    if external:
+        toolset = ExternalToolset(
+            [
+                ToolDefinition(
+                    name='deferred_tool',
+                    parameters_json_schema={
+                        'type': 'object',
+                        'properties': {'value': {'type': 'string'}},
+                        'required': ['value'],
+                    },
+                )
+            ]
+        )
+    else:
+        toolset = FunctionToolset()
+
+        @toolset.tool_plain(requires_approval=True)
+        def deferred_tool(value: str) -> str:
+            assert False
+
+    agent = Agent(FunctionModel(model_function), output_type=[str, DeferredToolRequests], toolsets=[toolset])
+
+    with pytest.raises(IncompleteToolCall) as exc_info:
+        agent.run_sync('test')
+
+    assert str(exc_info.value) == (
+        'Model token limit (provider default) exceeded while generating a tool call, '
+        'resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt '
+        'to result in a shorter response that will fit within the limit.'
+    )
+    # An external tool gets no retries; an approval-required tool gets the default one retry first.
+    assert requests == (1 if external else 2)
 
 
 def test_tool_exceeds_token_limit_error():
@@ -6315,7 +6373,7 @@ class TestMultipleToolCalls:
             assert info.output_tools is not None
             return ModelResponse(
                 parts=[
-                    ToolCallPart('deferred_tool'),
+                    ToolCallPart('deferred_tool', tool_call_id='deferred_tool'),
                     ToolCallPart('regular_tool', {'x': 1}),
                 ],
             )
@@ -6337,7 +6395,10 @@ class TestMultipleToolCalls:
 
         result = agent.run_sync('test early strategy with deferred tool call')
         assert result.output == snapshot(
-            DeferredToolRequests(calls=[ToolCallPart(tool_name='deferred_tool', tool_call_id=IsStr())])
+            DeferredToolRequests(
+                calls=[ToolCallPart(tool_name='deferred_tool', tool_call_id=IsStr())],
+                validated_args={'deferred_tool': {}},
+            )
         )
         messages = result.all_messages()
 
@@ -6383,6 +6444,7 @@ class TestMultipleToolCalls:
                     timestamp=IsNow(tz=UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'deferred_pause': True}},
                 ),
             ]
         )
@@ -10022,8 +10084,10 @@ async def test_azure_provider_lifecycle_closes_client():
             lambda: OllamaProvider(base_url='http://localhost:11434/v1'), marks=[requires_openai], id='ollama'
         ),
         pytest.param(lambda: OpenRouterProvider(api_key='t'), marks=[requires_openai], id='openrouter'),
+        pytest.param(lambda: OtariProvider(api_key='t'), marks=[requires_openai], id='otari'),
         pytest.param(lambda: OVHcloudProvider(api_key='t'), marks=[requires_openai], id='ovhcloud'),
         pytest.param(lambda: SambaNovaProvider(api_key='t'), marks=[requires_openai], id='sambanova'),
+        pytest.param(lambda: StavProvider(api_key='t'), marks=[requires_openai], id='stav'),
         pytest.param(lambda: TogetherProvider(api_key='t'), marks=[requires_openai], id='together'),
         pytest.param(lambda: VercelProvider(api_key='t'), marks=[requires_openai], id='vercel'),
         pytest.param(lambda: AlibabaProvider(api_key='t'), marks=[requires_openai], id='alibaba'),
@@ -10084,6 +10148,7 @@ def test_tool_call_with_validation_value_error_serializable():
                     'tool_name': 'foo_tool',
                     'tool_call_id': IsStr(),
                     'tool_kind': None,
+                    'ui_visibility': None,
                     'metadata': None,
                     'timestamp': IsStr(),
                     'outcome': 'retried',
@@ -11353,7 +11418,7 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
                 ToolCallPart(tool_name='call_first'),
                 ToolCallPart(tool_name='call_first'),
                 ToolCallPart(tool_name='increment_integer_holder'),
-                ToolCallPart(tool_name='requires_approval'),
+                ToolCallPart(tool_name='requires_approval', tool_call_id='requires_approval'),
                 ToolCallPart(tool_name='call_second'),
                 ToolCallPart(tool_name='call_second'),
                 ToolCallPart(tool_name='call_second'),
@@ -11402,7 +11467,10 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
         result = agent.run_sync(user_prompt)
 
     assert result.output == snapshot(
-        DeferredToolRequests(approvals=[ToolCallPart(tool_name='requires_approval', tool_call_id=IsStr())])
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='requires_approval', tool_call_id=IsStr())],
+            validated_args={'requires_approval': {}},
+        )
     )
     assert integer_holder == 2
 
@@ -11918,6 +11986,7 @@ async def test_hitl_tool_approval(serialize_history: bool):
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
             ),
         ]
     )
@@ -11926,7 +11995,8 @@ async def test_hitl_tool_approval(serialize_history: bool):
             approvals=[
                 ToolCallPart(tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'),
                 ToolCallPart(tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'),
-            ]
+            ],
+            validated_args={'ok_to_delete': {'path': 'ok_to_delete.py'}, 'never_delete': {'path': 'never_delete.py'}},
         )
     )
 
@@ -11987,6 +12057,7 @@ async def test_hitl_tool_approval(serialize_history: bool):
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
             ),
             ModelRequest(
                 parts=[
@@ -13334,14 +13405,17 @@ async def test_run_with_unapproved_tool_call_in_history():
 
     messages = [
         ModelRequest(parts=[UserPromptPart(content='Hello')]),
-        ModelResponse(parts=[ToolCallPart(tool_name='delete_file')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='delete_file', tool_call_id='delete_file')]),
     ]
 
     result = await agent.run(message_history=messages)
 
     assert result.all_messages() == messages
     assert result.output == snapshot(
-        DeferredToolRequests(approvals=[ToolCallPart(tool_name='delete_file', tool_call_id=IsStr())])
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='delete_file', tool_call_id=IsStr())],
+            validated_args={'delete_file': {}},
+        )
     )
 
 

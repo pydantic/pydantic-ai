@@ -65,7 +65,7 @@ Its description `Requires a marked, successful douwebot approval on the current 
 If douwebot already reviewed the head, triage its findings in step 4; otherwise trigger douwebot as step 3 of the loop says. Do not debug that failure as a CI failure.
 
 `PR Review Checks` passed means its commit status reads `success` on the current head.
-[`.github/workflows/AGENTS.md`](../../../.github/workflows/AGENTS.md#pr-review-checks-reviews-every-pull-request-head) and [`publish_pr_review_checks.py`](../../../.github/scripts/publish_pr_review_checks.py) define the workflow and its verdict.
+[`.github/workflows/AGENTS.md`](../../../.github/workflows/AGENTS.md#pr-review-checks-reviews-every-same-repository-pull-request-head) and [`publish_pr_review_checks.py`](../../../.github/scripts/publish_pr_review_checks.py) define the workflow and its verdict.
 A maintainer can pass a head despite its findings by applying `pr-review-checks:accepted`. That label covers only the current head; a push removes it.
 Never apply `pr-review-checks:accepted` yourself.
 `PR Review Checks` posts as `github-actions[bot]` with its own `<!-- pr-review-checks run=… head=… -->` receipt. Its comments are not douwebot comments.
@@ -130,7 +130,7 @@ All of these must hold:
 - The diff removes no test.
 - The diff adds no `skip`, `skipif`, `xfail`, `flaky` or rerun marker.
 - The diff deletes no assertion.
-- The diff loosens no assertion: no wider tolerance, longer timeout or weaker matcher. Replacing a short readiness wait with the module's `READINESS_WAIT_TIMEOUT`, as `agent_docs/concurrency.md` recommends, is not a longer timeout.
+- The diff loosens no assertion: no wider tolerance, longer timeout or weaker matcher. Replacing a short readiness wait with `READINESS_WAIT_TIMEOUT` from `tests/_timeouts.py`, as `agent_docs/concurrency.md` recommends, is not a longer timeout.
 - The diff adds no real wait or in-test retry. A `sleep` or a polling loop is a real wait; waiting on an `Event` is not.
 
 If any condition fails, hand the PR to a maintainer.
@@ -193,22 +193,33 @@ end of the body, before the checklist. Skip the section entirely when the log is
 ```
 
 Do not copy the decisions template's instructions into the PR body.
+Wrap every closing keyword inside a copied entry in backticks (`close`, `fix` or `resolve` in any form, followed by an issue reference). A bare closing keyword in the body closes that issue when the PR merges.
 The section is public. Leave out confidential or privileged reasoning. Keep session ids: a later agent uses them to find the session that made the decision.
 
 ### Keep labels current with the title and body
 
-For prose-only documentation, handle title, body, and labels directly. Otherwise, assign updates to the same subagent.
+For prose-only documentation, handle title, body, and labels directly. Otherwise, assign updates to the final metadata check's session.
 Reconcile labels whenever the title or body changes.
 
-Run `.agents/skills/pushing-commits-to-the-repo/label-catalog`. Read the printed file directly for prose-only documentation; otherwise give it to the subagent.
+Run `.agents/skills/pushing-commits-to-the-repo/label-catalog`. Read the printed file directly for prose-only documentation; otherwise give it to that session.
 The checked-in catalog supplies clones and worktrees without label-read requests.
 Run the helper with `--refresh` after creating, renaming, or updating repository labels.
 Commit refreshed catalog changes.
 The helper uses at most two requests and verifies completeness before replacing the catalog.
 Never fetch labels individually or pass raw label API responses.
 
-Keep the category label aligned with the PR's purpose: `bug`, `feature`, `docs`, `chore` or `dependency`. A refactor also carries `refactor`, alongside `chore`.
-A PR labelled `test-suite` or `github-actions` takes `chore`, never `bug`; `.github/workflows/package-label.yml` fails it otherwise.
+Keep the category label aligned with the PR's purpose: `bug`, `bug:unreleased`, `feature`, `docs`, `chore` or `dependency`. A refactor also carries `refactor`, alongside `chore`.
+A bug fix takes `bug:unreleased` in place of `bug` when no release shipped the defect. Remove `bug` if the PR carries it.
+Release notes leave `bug:unreleased` PRs out, because no user saw the bug.
+To check, find the commit that introduced the defect and the PR that merged it.
+A `v1` backport PR names that PR in its body.
+`gh pr list -R pydantic/pydantic-ai --base v1 --state merged --search '<number> in:body' --json mergeCommit` prints each backport's commit.
+Fetch the tags of `pydantic/pydantic-ai`, then run `git tag --contains <sha> --list 'v[0-9]*'` on the introducing commit and each backport commit.
+Ignore pre-release tags such as `v2.0.0b7`.
+When every output is then empty, no release shipped the defect.
+When you cannot identify the introducing commit, use `bug`.
+A PR labelled `test-suite` or `github-actions` takes `chore`, never `bug` or `bug:unreleased`.
+`.github/workflows/package-label.yml` fails such a PR when it lacks `chore` or carries `bug`.
 Add existing topic labels for every subject materially covered by the final title, body, and diff.
 Choose the `area:` and `provider:` topic labels this way:
 
@@ -277,7 +288,7 @@ Prose-only documentation changes only natural-language text, including docstring
 Substantive changes to instruction or review policy do not qualify.
 Executable code, code examples/snippets, configuration, schemas, CI logic, and machine-consumed data changes do not qualify.
 
-Skip `pre-push-review`, all local reviewers, the second-opinion choice, and the final metadata-subagent review.
+Skip `pre-push-review`, all local reviewers, the second-opinion choice, and the final metadata check.
 Handle metadata directly. Keep CI checks and triage comments already posted before handoff.
 Apply the merge bar, including its trivial-S exception, to required hosted reviews.
 
@@ -322,7 +333,7 @@ reviewers own that separate boundary. Every fresh reviewer here runs under the s
   Include the full branch diff as context for follow-ups, plus the prior findings to verify.
   Disable external diff and text conversion while gathering diffs.
 - Launch the reviewer tier defined by `pre-push-review` from the stable policy-base checkout.
-  Use the current harness's native no-history primitive and native read and search tools.
+  Start it as a fresh session of the current harness, with no prior history. A subagent of your own session does not qualify: it inherits the candidate's working directory and instructions instead of the policy base's.
   Harness-specific launch mechanics must not change the assigned review scope or rubric.
 - The reviewer may work the review rubric, or decompose this diff and fan out to subagents of its
   own where the diff's risk is specific enough that the rubric would not name it. That
@@ -348,7 +359,7 @@ reviewers own that separate boundary. Every fresh reviewer here runs under the s
   review material.
 - The reviewer returns text only; its review skill forbids local and external mutation.
 
-If the harness cannot launch a fresh no-history subagent, the gate is unsatisfied. Do not pass it
+If the harness cannot launch a fresh no-history session, the gate is unsatisfied. Do not pass it
 silently. Tell the author the gate cannot be met in this harness and offer the one substitute there
 is: clear the session and review the diff from a fresh read. Say plainly what it costs — you are
 still the agent that wrote the diff, now without the memory of writing it, and a cleared session
@@ -368,10 +379,21 @@ Apply the prose-only documentation and mechanical text/data exceptions above fir
 Otherwise, run this gate before the first push and later pushes while the review budget remains.
 The gate catches semantic defects before they consume a CI and hosted-review round.
 
-Dispatch `pre-push-review` at most three times per PR during one task. Count every dispatch,
-including repeated reviews after findings. Reserve the next count before dispatch and include
-`call N of 3` in the reviewer prompt. The final metadata review does not count against this budget,
-and neither does an additional local review the author asks for after the loop completes.
+Dispatch `pre-push-review` at most three times per PR during one task, plus the one remediation
+review below. Count every dispatch, including repeated reviews after findings. Reserve the next
+count before dispatch and include `call N of 3` in the reviewer prompt. The final metadata review
+does not count against this budget, and neither does an additional local review the author asks for
+after the loop completes.
+
+After the third review, the budget holds one remediation review. Dispatch it for the first
+remediation after the third review whose delta is neither [prose-only
+documentation](#prose-only-documentation) nor exempt under the exempt-delta table below. Apply the
+prose-only definition to the remediation delta, not to the whole PR. The remediation may fix a
+review finding or a CI failure. Scope the remediation review to the remediation delta: the diff from
+the last reviewed SHA to the remediation commit, plus the affected callers and invariants that
+[Review scope](#review-scope) names for follow-ups. Include `remediation review after call 3 of 3`
+in the reviewer prompt, and title its record `pre-push remediation review at <candidate-head-sha>`.
+That record in `pr-decisions.md` spends the remediation review.
 
 Record each dispatch in `pr-decisions.md` — not in the session, which does not survive a handoff:
 
@@ -405,7 +427,7 @@ session reads the budget off the log; without it the cap silently resets.
    instructions: whether the reviewer may decompose the diff turns on it, so skipping it would let
    your launch choice decide the review's scope, which the contract forbids you.
 3. Select the review scope above. Prepare the review bundle under the context contract.
-4. Launch the fresh subagent under the context contract above. Require actionable findings or
+4. Launch the fresh reviewer session under the context contract above. Require actionable findings or
    `current at <full-candidate-head-sha>`.
 5. Triage every finding. Remediate valid findings, rerun affected verification, and commit. Dismiss
    invalid findings only with concrete evidence. If a finding exposes a real design choice, API
@@ -413,20 +435,22 @@ session reads the budget off the log; without it the cap silently resets.
    evidence, and a recommendation; record the resulting decision. A remediation changes the
    candidate content. Reapply this gate, including its scope and exemptions, only while the budget remains.
    After a maintainer decision
-   changes the acceptance criteria, dispatch a different fresh subagent when the budget remains.
+   changes the acceptance criteria, dispatch a different fresh reviewer session when the budget remains.
    An evidence-backed dismissal on unchanged reviewed content does not require another pass.
    Escalate persistent disagreement.
 
 Stop after a review returns no findings. After the third review, remediate its findings and run the
-relevant local checks. Do not dispatch a fourth review. Continue with the push, CI, and hosted
-review. Budget exhaustion is one of four ways a pushed SHA can go un-reviewed; the others are an
-evidence-backed dismissal on unchanged reviewed content, above, an exempt delta from the table
-below, and a push the author authorized over a gate that could not be met, recorded under their
-name. The first three you may decide. The fourth only they may. Nothing else.
+relevant local checks. Do not dispatch a fourth review other than the remediation review above.
+Remediate the remediation review's findings, run the relevant local checks, and dispatch no further
+review. Continue with the push, CI, and hosted review. Budget exhaustion is one of four ways a
+pushed SHA can go un-reviewed; the others are an evidence-backed dismissal on unchanged reviewed
+content, above, an exempt delta from the table below, and a push the author authorized over a gate
+that could not be met, recorded under their name. The first three you may decide. The fourth only
+they may. Nothing else.
 
 Immediately before pushing, verify the worktree is clean and its tree equals the recorded reviewed tree.
 A different commit with the same tree keeps the verdict; record the new commit alongside the reviewed anchor.
-After third-review remediation, verify HEAD equals the locally checked remediation commit instead. Any other mismatch restarts the gate while the budget remains, unless
+When no review covers the last remediation, verify HEAD equals the locally checked remediation commit instead. Any other mismatch restarts the gate while the budget remains, unless
 the delta is exempt below.
 
 ### When a later push does not need another review
@@ -460,7 +484,7 @@ To claim an exemption the table does not name, write down the rubric rung the de
 why it cannot, in `pr-decisions.md`.
 
 Never use the implementing agent as the reviewer. The one exception is the substitute the contract
-names for a harness that cannot launch a fresh no-history subagent at all — the author accepts it,
+names for a harness that cannot launch a fresh no-history session at all — the author accepts it,
 and it leaves this gate unsatisfied. Never treat this gate as test execution.
 
 Never force-push an open PR branch. Push follow-up commits so previous reviews remain valid;
@@ -502,9 +526,13 @@ if the head changes, capture the new SHA and restart the loop.
      `gh api repos/pydantic/pydantic-ai/commits/<sha>/status --jq '.statuses[] | select(.context == "PR Review Checks")'`.
      No status yet, or `pending`, means the review has not finished; wait for `success` or `failure`.
      When the status reads "Awaiting maintainer", the author lacks write access.
-     Ask a maintainer to apply `pr-review-checks:run`; the label also covers later pushes.
+     Ask a maintainer to apply `trusted:ci-run`; the label also covers later pushes and starts the PR Bots labels.
+     It does nothing on a PR whose author has write access.
+     A fork PR gets no `PR Review Checks` status: recreate it as a same-repository PR.
+     A Dependabot push gets none either: a maintainer removes and reapplies `trusted:ci-run`.
      A `failure` leaves the gate unsatisfied until a later head passes or a maintainer applies `pr-review-checks:accepted`.
      A `failure` whose description names `Incomplete`, `No result` or a rerun, and not `Blocking findings`, has no finding to triage. Rerun that `PR Review Checks` run once, then escalate.
+     A rerun keeps the original run's `pr-review-checks.yml`, including the secrets its steps receive, but checks out its scripts from current `main`. When a fix to that workflow file has merged since, push a new head instead.
      When the run posted findings, its `target_url` links that review. Triage the findings in step 4.
    - **`CI Review`:** do not wait for it unless explicitly requested. On same-repository PRs, it runs
      when a user with write access approves the current head, when someone adds the `final-review`
@@ -513,8 +541,8 @@ if the head changes, capture the new SHA and restart the loop.
      is the source of truth). Do not add that label or dispatch the workflow unless the person
      driving you asks. When `CI Review` posts on your PR, triage its findings in step 4 like any
      other review.
-   - **Douwebot:** required for both same-repository and fork PRs, except an obviously trivial S PR.
-     `CI Review` deliberately skips forks without leaving a head check. First apply the
+   - **Douwebot:** required for every same-repository PR, except an obviously trivial S PR.
+     A fork PR gets no douwebot review: recreate it as a same-repository PR. First apply the
      agent-config guard from `.github/workflows/bots.yml` to the captured base-to-head diff. If the
      PR changes an `AGENTS.md` or `CLAUDE.md` at any depth, `CLAUDE.local.md`, `.mcp.json`,
      `.claude/`, `.agents/`, or `agent_docs/`, check whether the PR author has write or admin access.
@@ -621,8 +649,8 @@ if the head changes, capture the new SHA and restart the loop.
 
 Skip this choice for prose-only documentation, mechanical text/data refreshes defined above, and [flake fixes](#flake-fixes).
 
-The required reviews are not on this menu. Step 3 applies the merge bar to both same-repository
-and fork PRs. `CI Review` starts on a write-access approval of the head, a `final-review` label,
+The required reviews are not on this menu. Step 3 applies the merge bar to them.
+`CI Review` starts on a write-access approval of the head, a `final-review` label,
 or a dispatch. Green CI alone never starts `CI Review`.
 
 What this section chooses is a second opinion on top of the required reviews, and the choice belongs to the
@@ -691,14 +719,14 @@ maintainers run them, not something this repo can show you.
 
 For prose-only documentation, check the title, body, and labels directly against this skill, root `AGENTS.md`, and the PR template.
 Correct metadata directly, then hand the PR diff to a maintainer after the merge bar and comment triage are complete.
-Skip the subagent steps below.
+Skip the numbered steps below.
 
 For other diffs, run this final metadata check after CI, any required hosted review, and comments have settled.
 Any author-selected additional review must also have settled.
 
-1. Capture the current title, body, and labels. Dispatch a fresh subagent under the context contract above.
-   The metadata subagent has not worked on the PR and never decomposes the diff.
-   Run the subagent on the light tier from [Model tiers](#model-tiers).
+1. Capture the current title, body, and labels. Start a fresh session under the context contract above.
+   The metadata session has not worked on the PR and never decomposes the diff.
+   Run the session on the light tier from [Model tiers](#model-tiers).
    Set effort from the PR's complexity. The check compares text
    against written rules.
 2. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, captured metadata, complete catalog, and the local dated PR decisions.
@@ -716,7 +744,7 @@ Any author-selected additional review must also have settled.
    The edit is done when all three hold:
    - The edited title, body, and labels follow every rule a kept correction cites.
    - The edited title, body, and labels break no rule that the current ones follow.
-   - The edit applies no subagent text that no kept correction covers.
+   - The edit applies no metadata-session text that no kept correction covers.
 
    Committed changes restart the post-push loop; GitHub metadata-only changes do not.
 7. Verify the live title, body, and labels match the checked metadata.

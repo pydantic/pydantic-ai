@@ -37,6 +37,7 @@ from ._event_stream import (
     stream_agent_events,
     workflow_stream_event_handler,
 )
+from ._external_events import fail_external_event, resolve_external_event
 from ._logfire import LogfirePlugin
 from ._operation_names import TemporalOperationNamer
 from ._payload_converter import PydanticAIPayloadConverter
@@ -61,6 +62,8 @@ __all__ = [
     'DurableAgentRunEvents',
     'workflow_stream_event_handler',
     'stream_agent_events',
+    'resolve_external_event',
+    'fail_external_event',
 ]
 
 # We need eagerly import the anyio backends or it will happens inside workflow code and temporal has issues
@@ -156,6 +159,11 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             # sandbox. Safe to pass through: the call only happens once at module init.
             'fastmcp',
             'mcp',
+            # `fastmcp_tasks` builds a `pydantic_settings` object at import time, which reads dotenv
+            # files and so calls `Path.expanduser` too. `MCPToolset` imports it on the MCP SDK v2
+            # path, so a toolset constructed inside a workflow reaches it. Same reasoning as above:
+            # the call happens once at module init.
+            'fastmcp_tasks',
             # The `anthropic` SDK (>=0.99.0) calls `Path.home()` during client construction to
             # resolve its credentials/profile config directory (`~/.config/anthropic`) — restricted
             # by the workflow sandbox. This trips when a model is constructed inside the workflow,
@@ -246,30 +254,34 @@ class PydanticAIPlugin(SimplePlugin):
                     f'__pydantic_ai_agents__ must be a Sequence of TemporalAgent instances, got {type(agents)}'
                 )
             for agent in agents:  # type: ignore[reportUnknownVariableType]
-                if isinstance(agent, TemporalAgent):  # pyright: ignore[reportDeprecated]
-                    # Deprecated path: `TemporalAgent` is being phased out in favor of
-                    # `capabilities=[TemporalDurability(...)]` on a regular `Agent`. Kept
-                    # working so existing workers keep loading without changes.
-                    activities.extend(agent.temporal_activities)
-                elif isinstance(agent, AbstractAgent):
-                    durability = TemporalDurability.from_agent(agent)  # type: ignore[reportUnknownArgumentType]
-                    if durability is None:
-                        raise UserError(
-                            f'Agent {agent.name!r} listed in `__pydantic_ai_agents__` has no '
-                            '`TemporalDurability` capability; add one to `capabilities=[...]`.'
-                        )
-                    agent_activities, agent_workflows = worker_registrations(durability)
-                    activities.extend(agent_activities)
-                    child_workflows.extend(agent_workflows)
-                else:
-                    raise TypeError(  # pragma: no cover
-                        f'__pydantic_ai_agents__ items must be TemporalAgent or AbstractAgent, got {type(agent)}'  # type: ignore[reportUnknownVariableType]
-                    )
+                agent_activities, agent_workflows = _listed_agent_registrations(agent)  # type: ignore[reportUnknownArgumentType]
+                activities.extend(agent_activities)
+                child_workflows.extend(agent_workflows)
 
         config['activities'] = activities
         config['workflows'] = [*workflows, *child_workflows]
 
         return _dedupe_registrations(config)
+
+
+def _listed_agent_registrations(agent: object) -> tuple[list[Callable[..., Any]], list[type]]:
+    """The activities and child workflows a worker registers for an agent listed in `__pydantic_ai_agents__`."""
+    if isinstance(agent, TemporalAgent):  # pyright: ignore[reportDeprecated]
+        # Deprecated path: `TemporalAgent` is being phased out in favor of
+        # `capabilities=[TemporalDurability(...)]` on a regular `Agent`. Kept
+        # working so existing workers keep loading without changes.
+        return agent.temporal_activities, []
+    if isinstance(agent, AbstractAgent):
+        durability = TemporalDurability.from_agent(agent)  # type: ignore[reportUnknownArgumentType]
+        if durability is None:
+            raise UserError(
+                f'Agent {agent.name!r} listed in `__pydantic_ai_agents__` has no '
+                '`TemporalDurability` capability; add one to `capabilities=[...]`.'
+            )
+        return worker_registrations(durability)
+    raise TypeError(  # pragma: no cover
+        f'__pydantic_ai_agents__ items must be TemporalAgent or AbstractAgent, got {type(agent)}'
+    )
 
 
 class AgentPlugin(SimplePlugin):

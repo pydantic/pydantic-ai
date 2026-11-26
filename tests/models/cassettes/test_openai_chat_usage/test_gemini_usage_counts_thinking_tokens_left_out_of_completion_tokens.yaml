@@ -1,0 +1,66 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "123"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.5-flash
+        stream: false
+        messages:
+        - role: user
+          content: Write three short sentences about tea.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=3519
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        choices:
+        - finish_reason: stop
+          index: 0
+          message:
+            content: >-
+              Tea is one of the world's most popular beverages. It comes in a rich variety of
+              flavors, from fresh green to bold black. A warm cup provides a soothing break in
+              any day.
+            extra_content:
+              google:
+                thought_signature: >-
+                  EpQMCpEMAWkUfRO7o4RGphHCl8Q0ugMpqd+N13Cblf6OABPfg6KmNwIKye/n6ojF1cnZdqYVkRaTQasHXMzNTcQPgx1GBTfLk84Mnz7Nwy3toUNH0hxCSq3OOVnjHM5YfBBa9/fnI7/Cs5d4FWqbOm8XWByUucG4oljJz6q3kjWS2YdQtIPpGVfArjEFeCELVViha6ORcBfyLFJbmsLHpPlrIVd9RSmdLEQb+oOpRqUTzXCXNDtzfR1HJFEGxY9Ap4YR/abVTzH5lnh0eoQZW1awRPn9D6gGBlkBRRgxuWCuassV91AHot82F3DjPzN2ZjfuTf1F40zwGxTGdK2zdxWBW8O6taEwoyUAGQ7nhLrBeJgSnHzX7qTk0AxmMo6+oWOHYJ5TLqQtTI/PP9MMwXxk433/EWMx5HIJR3QiOxldfBdzDaPxIePioSGFu3MNUH7lr38XL5Ro9YCTQDwAMMxz1Nxs8HGbH06AimOLOvRCpUopeLckn0rd7GeKcTT+J4qWnOsuAWEBs5WT3iZMMHJH4PA2dnQAKCWhEiS2lM3C4DfMDq9Muox+8SfPqEZN7LUBYDERBI1LAjLEXGL3tknnSXqjR9k6QutPe7humbBSv8yJUpxdlgRv82nOM7PYDHOwUAQxllEb8o4IcoQKbY5QVDZ2H4mxVAI9YxxSRW4k/1KdIzcZxapXBjs9e+Rvzxiqq1JfYicDEiewdkCfSIuUg8KAyjrusBx5EhzpyTOAmjI1TIBxUslpaSqSet5m8Vy2kp8kRjBnwRCwLdrUzQqwISbEViTFTGY9M+s/ZTEgAd5C+l+B3nzJFNQRnH8hxi6Qaq8nqFtgDwlPkBi8mlerUrTpUIYh0xsWTOFbC4ZXd8a21UU0G3f/Xn1+jnQNMXBOQs0RTbjZ7YEVXBi1YtS9FVvfN2CoujkY9ybbjMjbl+YjYL2/R04VN1ZP4IkkYcssbyqoW1LDZELDIc1Qv/+EdF1xv+Wj+X6aPITnnnfoehqZDFHi1eACIqmP264PNHdOZaKBbGdhcrak/qx/kgSr6k3Oi9LrbOplutkFm0XYzoh8AU7r6wPBIh7qHHNMkix9GCIj3MG7c8AyUec84teGUcNVEm7GaWgWn6LqUnijQnd6AsfMyAMl0MKhd0AULnNH7fGMNQijtk19XZ5PTXNDyMBGFSu3DftmLMQ/46BMVY1shvh6JV7ViYxesSIWmEiUldosIELjl0x+oOQZqhJfhcka0sodxdxbTCC1Ooe6XFliucetV3UkFlKOqvTapvUgVmjgJCDQaFiM09jwJvQugafpD+J6Eft7dt0A5yl1AaAbZWO7uC/53H9fKgiw3etWz5eDc71krshhIQNziUjXMISkyFkhZlSF2FoK6SBBuFavROyW1kYU4l19MG9Ar6clO6+6+CDyz+8ZeuWFO6XS6+xKXqnel2OWnL3eAkxFu8J/Ozun8TSDpiidadfrleOd/xKFh2Nh6Ov7FxVDWiDnR1CKaHa93rGBqPbzObYqAJVwUfQ+xLbiUl8UhFw8dFA4CP2Wef/fjXM4UK7exNNdjgJBnK9ejnB9OzWEybuFRrw/vL7j/ehVbR9xNZEiSTF2aGhkOgGJ9wDvmH9MaHYMTX6bKiJRAjQpkJfrwv917T3tm+dG9YvPMIl1wMoOFiMus1qe9qrTvFWzRdAyacVPQROqw5Fv/pjjHq+TDhdWv5Ro5366xjyhnb6gIGXrBFWYKk/4VXBfN25WTBlsStcBAvixZh57ky/sfsNLdjwczOciE+W6fXguwVcmjP/pmxDKPzTIqcuhy/aNP4p5REXtv8k3ucfi7vMesxi+C3Idyv68iVN72fPHozSbS9PoUG/vOu3N5QjFAK3cIwjje/SEzwpE4xbkzuv0lghxrYYij2w9O5fCX3t0DNoialSRqiCiR95rXhqQrGjzXOVB204OAh7X+flvkM5j7Te2wTEcTSeGxC6SmqDeaeZE7ihhZFTv5iOc779iiMJyBGSCDORLTzknkpMHDs+KWlr2PZEa05ZaZgE+ky/XrzSllf8CgL+bwpB5jyCwE5l2PWlP6teCyo/L9TA=
+            role: assistant
+        created: 1795546833
+        id: zd4Fa6HtMf6jvdIPiPWlAQ
+        model: gemini-3.5-flash
+        object: chat.completion
+        usage:
+          completion_tokens: 39
+          prompt_tokens: 8
+          total_tokens: 439
+  recorded_at: 2026-11-24T19:00:33.056065+00:00

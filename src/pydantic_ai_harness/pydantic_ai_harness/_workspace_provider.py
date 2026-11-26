@@ -123,7 +123,7 @@ async def stop_shielded(stop: Callable[[], Awaitable[object]], *, grace: float =
             with anyio.CancelScope(shield=True):
                 while True:
                     try:
-                        await asyncio.sleep(0)
+                        await asyncio.sleep(0)  # noqa: TID251  (not converted to anyio yet)
                     except asyncio.CancelledError:
                         continue
                     break

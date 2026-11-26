@@ -1,5 +1,0 @@
-{
-  "against": "v2.69.0",
-  "reason": "Adds `NativeToolApproval` to the `RealtimeInput` union a connection takes, the session's answer to a `NativeToolApprovalRequest`; every existing member is unchanged, and connections that never ask reject it.",
-  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10387"
-}

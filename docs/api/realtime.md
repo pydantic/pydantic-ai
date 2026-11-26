@@ -102,10 +102,17 @@ turn-control verbs ([`CommitAudio`][pydantic_ai.realtime.codec.CommitAudio],
 [`ClearAudio`][pydantic_ai.realtime.codec.ClearAudio],
 [`CreateResponse`][pydantic_ai.realtime.codec.CreateResponse],
 [`CancelResponse`][pydantic_ai.realtime.codec.CancelResponse], and
-[`TruncateOutput`][pydantic_ai.realtime.codec.TruncateOutput]) that those session methods emit, plus
-[`ToolResult`][pydantic_ai.realtime.codec.ToolResult] and
-[`NativeToolApproval`][pydantic_ai.realtime.codec.NativeToolApproval] — which the session sends itself as
-each tool completes, or as its approval handler decides on a call the provider runs itself.
+[`TruncateOutput`][pydantic_ai.realtime.codec.TruncateOutput]) that those session methods emit,
+[`AppendVoiceInstructions`][pydantic_ai.realtime.codec.AppendVoiceInstructions], which
+[`append_voice_instructions()`][pydantic_ai.realtime.RealtimeSession.append_voice_instructions] sends only to a
+connection whose model's profile sets
+[`supports_appending_voice_instructions`][pydantic_ai.realtime.RealtimeModelProfile.supports_appending_voice_instructions],
+plus [`ToolResult`][pydantic_ai.realtime.codec.ToolResult] — which the session sends itself as each tool
+completes — [`UpdateTools`][pydantic_ai.realtime.codec.UpdateTools], which it sends ahead of a result that
+reveals tools, only to a connection whose model's profile sets
+[`supports_tool_updates`][pydantic_ai.realtime.RealtimeModelProfile.supports_tool_updates], and
+[`NativeToolApproval`][pydantic_ai.realtime.codec.NativeToolApproval], which it sends as its approval handler
+decides on a call the provider runs itself.
 
 **Connection events** — [`RealtimeCodecEvent`][pydantic_ai.realtime.codec.RealtimeCodecEvent], the low-level codec
 vocabulary yielded by a connection:

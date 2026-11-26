@@ -51,15 +51,20 @@ from ..models import (
     _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
     _wrap_non_leading_system_prompts,  # pyright: ignore[reportPrivateUsage]
     download_item,
+    prepare_return_schemas,
+    resolve_request_tools,
 )
 from ..models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from ..settings import ToolChoice
 from ..tools import ToolDefinition
 from .codec import TextContext
+from .profiles import RealtimeModelProfile
 from .settings import ReconnectPolicy
 
 if TYPE_CHECKING:
     from websockets.exceptions import InvalidStatus
+
+    from ..native_tools import AbstractNativeTool
 
 
 def _standing_system_prompt(messages: Sequence[ModelMessage]) -> list[SystemPromptPart]:
@@ -159,6 +164,32 @@ def replay_recorded_system_prompts_in_place(messages: Sequence[ModelMessage]) ->
         for position, part in enumerate(first_request.parts)
     ]
     return [*messages[:index], replace(first_request, parts=parts), *messages[index + 1 :]]
+
+
+def resolve_realtime_request_tools(
+    parameters: ModelRequestParameters,
+    profile: RealtimeModelProfile,
+    *,
+    unsupported_settings: Callable[[AbstractNativeTool], frozenset[str]] | None = None,
+) -> ModelRequestParameters:
+    """Resolve the tools a realtime session gives the model: when it opens, and when a tool call reveals more.
+
+    Return schemas resolve as `Model.prepare_request` resolves them: cleared on tools that didn't opt in, kept for a
+    model that renders them natively (Gemini Live's function-declaration `response` schema), and put in the
+    description elsewhere. Then the native tool <-> local tool swap a standard request applies drops an unsupported
+    native tool for its local fallback, or the local tool for a supported native one, and raises the shared
+    `UserError` when an unsupported native tool has no fallback. A realtime model supports no native tools unless its
+    profile says so.
+
+    A realtime connection can't withhold a schema or announce a tool in history, so a deferred tool is `'withheld'`
+    until revealed, and `'visible'` after.
+    """
+    parameters = prepare_return_schemas(
+        parameters, supports_tool_return_schema=profile.get('supports_tool_return_schema', False)
+    )
+    return resolve_request_tools(
+        parameters, profile.get('supported_native_tools', frozenset()), unsupported_settings=unsupported_settings
+    )
 
 
 def resolve_advertised_tools(
@@ -300,8 +331,8 @@ async def _seed_image_url(item: ImageUrl, *, provider_name: str, supports_images
     image = BinaryContent(data=downloaded['data'], media_type=downloaded['data_type'])
     if not image.is_image:
         raise UserError(
-            f'`ImageUrl` resolved to unsupported media type {image.media_type!r} in a '
-            f'{provider_name} realtime session. Use a URL that returns an image, or remove it.'
+            f'`ImageUrl` resolved to media type {image.media_type!r}, which cannot be sent to {provider_name} '
+            'in a realtime session. Use a URL that returns an image, or remove it.'
         )
     return image
 
@@ -366,26 +397,38 @@ def seed_speech_content(*, part: SpeechPart, provider_name: str, supports_audio:
 
 
 def seed_pcm_audio(*, audio: BinaryContent, provider_name: str, sample_rate: int) -> bytes:
-    """Extract mono PCM16 bytes from retained WAV audio."""
+    """Extract mono PCM16 bytes from retained WAV audio seeded into history."""
     if audio.media_type != 'audio/wav':
         raise UserError(
             f'`SpeechPart.audio` with media type {audio.media_type!r} cannot be seeded into '
             f'{provider_name} realtime history. Use WAV audio matching the target session input format.'
         )
+    return pcm_from_wav(
+        audio.data,
+        sample_rate=sample_rate,
+        error_prefix=f'Cannot seed retained audio into {provider_name} realtime history',
+    )
+
+
+def pcm_from_wav(data: bytes, *, sample_rate: int, error_prefix: str) -> bytes:
+    """Extract mono PCM16 bytes from WAV data recorded at `sample_rate`.
+
+    `error_prefix` opens each error and says what the caller was doing with the audio.
+    """
     try:
-        with wave.open(io.BytesIO(audio.data), 'rb') as wav:
+        with wave.open(io.BytesIO(data), 'rb') as wav:
             source_rate = wav.getframerate()
             channels = wav.getnchannels()
             sample_width = wav.getsampwidth()
             compression = wav.getcomptype()
             if source_rate != sample_rate:
                 raise UserError(
-                    f'Cannot seed retained audio recorded at {source_rate} Hz into a {provider_name} realtime session '
-                    f'expecting {sample_rate} Hz. Resample it before passing `message_history`.'
+                    f'{error_prefix}: it was recorded at {source_rate} Hz, but the session expects {sample_rate} Hz. '
+                    'Resample it first.'
                 )
             if channels != 1 or sample_width != 2 or compression != 'NONE':
                 raise UserError(
-                    f'Cannot seed retained audio into {provider_name} realtime history: expected mono 16-bit PCM WAV, '
+                    f'{error_prefix}: expected mono 16-bit PCM WAV, '
                     f'got {channels} channel(s), {sample_width * 8}-bit samples, compression {compression!r}.'
                 )
             frame_count = wav.getnframes()
@@ -393,9 +436,7 @@ def seed_pcm_audio(*, audio: BinaryContent, provider_name: str, sample_rate: int
             if len(pcm) != frame_count * channels * sample_width:
                 raise wave.Error('truncated audio data')
     except (EOFError, wave.Error) as e:
-        raise UserError(
-            f'`SpeechPart.audio` cannot be seeded into {provider_name} realtime history because it is not valid WAV audio.'
-        ) from e
+        raise UserError(f'{error_prefix}: it is not valid WAV audio.') from e
     return pcm
 
 

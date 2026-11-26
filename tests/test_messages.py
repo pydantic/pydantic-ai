@@ -1349,6 +1349,7 @@ def test_deferred_tool_events_serialization_roundtrip():
                         'args': {'x': 0},
                         'tool_call_id': 'call_1',
                         'tool_kind': None,
+                        'ui_visibility': None,
                         'id': None,
                         'provider_name': None,
                         'provider_details': None,
@@ -1361,6 +1362,7 @@ def test_deferred_tool_events_serialization_roundtrip():
                         'args': {'x': 1},
                         'tool_call_id': 'approval_1',
                         'tool_kind': None,
+                        'ui_visibility': None,
                         'id': None,
                         'provider_name': None,
                         'provider_details': None,
@@ -1368,6 +1370,7 @@ def test_deferred_tool_events_serialization_roundtrip():
                     }
                 ],
                 'metadata': {'call_1': {'foo': 'bar'}},
+                'validated_args': {},
             },
             'event_kind': 'deferred_tool_requests',
         }

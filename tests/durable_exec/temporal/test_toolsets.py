@@ -130,9 +130,12 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
+    from fastmcp import FastMCP
     from fastmcp.client.transports import StdioTransport
 
+    from pydantic_ai._mcp_compat import MCP_SDK_V2
     from pydantic_ai.mcp import MCPToolset
+    from tests.mcp_task_server import TASK_SERVER_UNAVAILABLE
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
@@ -206,7 +209,8 @@ async def test_mcp_tools_cached_across_activities(allow_model_requests: None, cl
     methods_called: list[str] = []
 
     async def tracking_send_request(self_: ClientSession, request: ClientRequest, *args: Any, **kwargs: Any) -> Any:
-        methods_called.append(request.root.method)
+        # SDK v1 wraps requests in a `RootModel`; SDK v2 passes the request itself.
+        methods_called.append(getattr(request, 'root', request).method)
         return await original_send_request(self_, request, *args, **kwargs)
 
     with patch.object(ClientSession, 'send_request', tracking_send_request):
@@ -498,6 +502,72 @@ async def test_dynamic_toolset_outside_workflow():
         'Get the weather for Paris', deps=DynamicToolsetDeps(user_name='Bob')
     )
     assert result.output == snapshot('{"get_dynamic_weather":"Weather in a for Bob: sunny."}')
+
+
+# --- A `per_run_step=False` dynamic toolset's result is prepared in activities, not in the workflow ---
+
+
+class _PreparedOffThreadToolset(FunctionToolset[None]):
+    """Prepares itself with off-thread work in `for_run`, which Temporal's workflow event loop refuses."""
+
+    async def for_run(self, ctx: RunContext[None]) -> _PreparedOffThreadToolset:
+        await asyncio.get_running_loop().run_in_executor(None, lambda: None)
+        return self
+
+
+def _prepared_greet(name: str) -> str:
+    return f'hi {name}'
+
+
+def _call_greet_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('_prepared_greet', {'name': 'x'})])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+prepared_in_activity_agent = Agent(
+    FunctionModel(_call_greet_then_finish),
+    deps_type=type(None),
+    name='prepared_in_activity_agent',
+    toolsets=[
+        DynamicToolset(
+            lambda ctx: _PreparedOffThreadToolset([_prepared_greet], id='prepared-inner'),
+            per_run_step=False,
+            id='prepared_in_activity',
+        )
+    ],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class PreparedInActivityWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await prepared_in_activity_agent.run(prompt)).output
+
+
+async def test_per_run_step_false_dynamic_toolset_result_is_prepared_in_activities(client: Client):
+    """The toolset a `per_run_step=False` factory returns is prepared inside activities, never in the workflow.
+
+    Temporal activities can run in another process, so no activity can reach a toolset the workflow
+    resolved: each one resolves its own. The workflow must not resolve one too, or the result's
+    `for_run` runs in workflow code, where off-thread work like an `auth` function's I/O fails.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[PreparedInActivityWorkflow],
+        plugins=[AgentPlugin(prepared_in_activity_agent)],
+    ):
+        output = await client.execute_workflow(
+            PreparedInActivityWorkflow.run,
+            args=['go'],
+            id='test_per_run_step_false_dynamic_toolset_result_is_prepared_in_activities',
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+    assert output == 'done'
 
 
 # --- DynamicToolset.get_instructions test (issue #5282) ---
@@ -823,8 +893,14 @@ async def test_dynamic_toolset_instructions_replay_deterministic(allow_model_req
 
 # --- MCP-based DynamicToolset test ---
 # Tests that @agent.toolset returning an MCPToolset works with Temporal workflows.
-# Uses an HTTP-based MCP server rather than subprocess-based since the subprocess transports
-# don't play nicely with Temporal's sandbox.
+# The server is an in-process stand-in for DeepWiki's MCP server, with the one tool the recorded model
+# responses call: a recorded remote handshake can't replay on both MCP SDK v1 and v2.
+deepwiki_stand_in = FastMCP('deepwiki')
+
+
+@deepwiki_stand_in.tool
+def ask_question(repoName: str, question: str) -> str:
+    return f'{repoName} is a Python agent framework built by the Pydantic team.'
 
 
 mcptoolset_dynamic_toolset_agent = Agent(model, name='mcptoolset_dynamic_toolset_agent')
@@ -833,7 +909,7 @@ mcptoolset_dynamic_toolset_agent = Agent(model, name='mcptoolset_dynamic_toolset
 @mcptoolset_dynamic_toolset_agent.toolset(id='mcptoolset_dynamic')
 def my_mcptoolset_dynamic_toolset(ctx: RunContext) -> MCPToolset:
     """Dynamic toolset that returns an `MCPToolset` — exercises lifecycle + `TemporalMCPToolset`."""
-    return MCPToolset('https://mcp.deepwiki.com/mcp')
+    return MCPToolset(deepwiki_stand_in)
 
 
 mcptoolset_dynamic_toolset_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
@@ -952,7 +1028,8 @@ async def test_temporal_agent_run_in_workflow_with_runtime_external_toolset(allo
             task_queue=TASK_QUEUE,
         )
         assert result.output == DeferredToolRequests(
-            calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')]
+            calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')],
+            validated_args={'call-1': {'query': 'runtime'}},
         )
 
 
@@ -1437,7 +1514,7 @@ async def test_tool_return_metadata_survives_temporal(allow_model_requests: None
 mcptoolset_agent = Agent(
     model,
     name='mcptoolset_agent',
-    toolsets=[MCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],
+    toolsets=[MCPToolset(deepwiki_stand_in, id='deepwiki')],
 )
 
 
@@ -1485,6 +1562,8 @@ _mcp_task_agent = Agent(
     ],
 )
 
+_OPTIONAL_TASK_ROUTING = 'optional_task' if MCP_SDK_V2 else 'optional_sync'
+
 _mcp_task_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     _mcp_task_agent,
     activity_config=BASE_ACTIVITY_CONFIG,
@@ -1499,8 +1578,13 @@ class MCPTaskSupportWorkflow:
 
 
 @pytest.mark.subprocess(reason='connects to `tests.mcp_task_server` over stdio')
+@pytest.mark.skipif(TASK_SERVER_UNAVAILABLE, reason='fastmcp-tasks not installed')
 async def test_temporal_mcptoolset_preserves_task_routing(client: Client):
-    """Effective task routing in `ToolDefinition.metadata` survives Temporal activities."""
+    """Effective task routing in `ToolDefinition.metadata` survives Temporal activities.
+
+    Which way the optional tool routes is the installed generation's call: FastMCP 3 speaks
+    SEP-1686, where the client asks and `prefer_tasks` is off, so it runs inline; FastMCP 4 speaks
+    SEP-2663, where the server directs task creation and takes it up."""
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -1514,7 +1598,7 @@ async def test_temporal_mcptoolset_preserves_task_routing(client: Client):
             task_queue=TASK_QUEUE,
         )
 
-    assert output == '{"required_task_tool":"required_completed","optional_task_tool":"optional_sync"}'
+    assert output == f'{{"required_task_tool":"required_completed","optional_task_tool":"{_OPTIONAL_TASK_ROUTING}"}}'
 
 
 nested_multimodal_tool_return_agent = Agent(TestModel(), name='nested_multimodal_tool_return_agent')
@@ -1616,6 +1700,7 @@ def test_resolve_tool_activity_config_reads_metadata():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'UsageLimitExceeded',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
         'WorkspaceReadOnlyError',
@@ -1694,6 +1779,7 @@ def test_resolve_tool_activity_config_restores_round_tripped_types():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'UsageLimitExceeded',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
         'WorkspaceReadOnlyError',
@@ -2062,6 +2148,8 @@ async def test_every_registered_activity_heartbeats(allow_model_requests: None):
             activity_name = ActivityDefinition.must_from_callable(activity_fn).name  # pyright: ignore[reportUnknownMemberType]
             assert activity_name is not None
             activities_by_name[activity_name] = activity_fn
+        # Temporal runs it as a local activity, which doesn't heartbeat.
+        del activities_by_name[f'{prefix}__external_event_ask']
         assert activities_by_name.keys() == args_by_activity_name.keys()
 
         for name, activity_fn in activities_by_name.items():

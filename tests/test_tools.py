@@ -213,6 +213,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'metadata': None,
             'timeout': None,
             'durable': None,
+            'ui_visibility': None,
             'defer_loading': False,
             'toolset_id': '<agent>',
             'unless_native': None,
@@ -258,6 +259,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'metadata': None,
             'timeout': None,
             'durable': None,
+            'ui_visibility': None,
             'defer_loading': False,
             'toolset_id': '<agent>',
             'unless_native': None,
@@ -311,6 +313,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'metadata': None,
             'timeout': None,
             'durable': None,
+            'ui_visibility': None,
             'defer_loading': False,
             'toolset_id': '<agent>',
             'unless_native': None,
@@ -412,6 +415,7 @@ def test_google_style_with_returns():
             'metadata': None,
             'timeout': None,
             'durable': None,
+            'ui_visibility': None,
             'defer_loading': False,
             'toolset_id': '<agent>',
             'unless_native': None,
@@ -463,6 +467,7 @@ def test_sphinx_style_with_returns():
             'metadata': None,
             'timeout': None,
             'durable': None,
+            'ui_visibility': None,
             'defer_loading': False,
             'toolset_id': '<agent>',
             'unless_native': None,
@@ -520,6 +525,7 @@ def test_numpy_style_with_returns():
             'metadata': None,
             'timeout': None,
             'durable': None,
+            'ui_visibility': None,
             'defer_loading': False,
             'toolset_id': '<agent>',
             'unless_native': None,
@@ -564,6 +570,7 @@ def test_only_returns_type():
             'metadata': None,
             'timeout': None,
             'durable': None,
+            'ui_visibility': None,
             'defer_loading': False,
             'toolset_id': '<agent>',
             'unless_native': None,
@@ -600,6 +607,7 @@ def test_docstring_unknown():
             'metadata': None,
             'timeout': None,
             'durable': None,
+            'ui_visibility': None,
             'defer_loading': False,
             'toolset_id': '<agent>',
             'unless_native': None,
@@ -654,6 +662,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'metadata': None,
             'timeout': None,
             'durable': None,
+            'ui_visibility': None,
             'defer_loading': False,
             'toolset_id': '<agent>',
             'unless_native': None,
@@ -732,6 +741,7 @@ def test_takes_just_model():
             'metadata': None,
             'timeout': None,
             'durable': None,
+            'ui_visibility': None,
             'defer_loading': False,
             'toolset_id': '<agent>',
             'unless_native': None,
@@ -788,6 +798,7 @@ def test_takes_model_and_int():
             'metadata': None,
             'timeout': None,
             'durable': None,
+            'ui_visibility': None,
             'defer_loading': False,
             'toolset_id': '<agent>',
             'unless_native': None,
@@ -1189,6 +1200,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'metadata': None,
             'timeout': None,
             'durable': None,
+            'ui_visibility': None,
             'defer_loading': False,
             'toolset_id': '<agent>',
             'unless_native': None,
@@ -1360,6 +1372,7 @@ def test_json_schema_required_parameters():
                 'metadata': None,
                 'timeout': None,
                 'durable': None,
+                'ui_visibility': None,
                 'defer_loading': False,
                 'toolset_id': '<agent>',
                 'unless_native': None,
@@ -1386,6 +1399,7 @@ def test_json_schema_required_parameters():
                 'metadata': None,
                 'timeout': None,
                 'durable': None,
+                'ui_visibility': None,
                 'defer_loading': False,
                 'toolset_id': '<agent>',
                 'unless_native': None,
@@ -1483,6 +1497,7 @@ def test_schema_generator():
                 'metadata': None,
                 'timeout': None,
                 'durable': None,
+                'ui_visibility': None,
                 'defer_loading': False,
                 'toolset_id': '<agent>',
                 'unless_native': None,
@@ -1508,6 +1523,7 @@ def test_schema_generator():
                 'metadata': None,
                 'timeout': None,
                 'durable': None,
+                'ui_visibility': None,
                 'defer_loading': False,
                 'toolset_id': '<agent>',
                 'unless_native': None,
@@ -1556,6 +1572,7 @@ def test_tool_parameters_with_attribute_docstrings():
             'metadata': None,
             'timeout': None,
             'durable': None,
+            'ui_visibility': None,
             'defer_loading': False,
             'toolset_id': '<agent>',
             'unless_native': None,
@@ -1900,7 +1917,10 @@ def test_tool_raises_call_deferred():
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot(
-        DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
+        DeferredToolRequests(
+            calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+            validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}},
+        )
     )
 
 
@@ -1975,7 +1995,10 @@ def test_tool_raises_approval_required():
     result = agent.run_sync('Hello')
     messages = result.all_messages()
     assert result.output == snapshot(
-        DeferredToolRequests(approvals=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='my_tool')])
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='my_tool')],
+            validated_args={'my_tool': {'x': 1}},
+        )
     )
 
     result = agent.run_sync(
@@ -2119,7 +2142,9 @@ def test_prepare_preserves_approval_requirement(
 
     result = agent.run_sync('Run the tool')
     assert result.output == snapshot(
-        DeferredToolRequests(approvals=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='call-1')])
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='call-1')], validated_args={'call-1': {}}
+        )
     )
     assert not executed
 
@@ -2149,7 +2174,9 @@ def test_toolset_requires_approval_applies_to_tool_instances(added_with: Literal
         'Run the tool'
     )
     assert result.output == snapshot(
-        DeferredToolRequests(approvals=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='call-1')])
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='call-1')], validated_args={'call-1': {}}
+        )
     )
     assert not executed
 
@@ -2340,7 +2367,10 @@ def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot(
-        DeferredToolRequests(approvals=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='approval_call')])
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='approval_call')],
+            validated_args={'approval_call': {'x': 1}},
+        )
     )
     message_history = result.all_messages()
 
@@ -2414,6 +2444,7 @@ def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'deferred_pause': True}},
                 ),
                 ModelRequest(
                     parts=[
@@ -2518,6 +2549,7 @@ def test_call_deferred_with_metadata():
         DeferredToolRequests(
             calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
             metadata={'pyd_ai_tool_call_id__my_tool': {'task_id': 'task-123', 'estimated_cost': 25.5}},
+            validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}},
         )
     )
 
@@ -2558,6 +2590,7 @@ def test_approval_required_with_metadata():
         DeferredToolRequests(
             approvals=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id=IsStr())],
             metadata={'my_tool': {'reason': 'High compute cost', 'estimated_time': '5 minutes', 'cost_usd': 100.0}},
+            validated_args={'my_tool': {'x': 1}},
         )
     )
 
@@ -2878,6 +2911,7 @@ def test_parallel_tool_return_with_deferred():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
             ),
         ]
     )
@@ -2887,7 +2921,12 @@ def test_parallel_tool_return_with_deferred():
                 ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple'),
                 ToolCallPart(tool_name='buy', args={'fruit': 'banana'}, tool_call_id='buy_banana'),
                 ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
-            ]
+            ],
+            validated_args={
+                'buy_apple': {'fruit': 'apple'},
+                'buy_banana': {'fruit': 'banana'},
+                'buy_pear': {'fruit': 'pear'},
+            },
         )
     )
 
@@ -2981,6 +3020,7 @@ def test_parallel_tool_return_with_deferred():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
             ),
             ModelRequest(
                 parts=[
@@ -3175,6 +3215,7 @@ def test_parallel_tool_return_with_deferred():
                     ),
                 ],
                 timestamp=IsDatetime(),
+                metadata={'__pydantic_ai__': {}},
             ),
         ]
     )
@@ -3199,7 +3240,9 @@ def test_deferred_tool_call_approved_fails():
 
     result = agent.run_sync('foo')
     assert result.output == snapshot(
-        DeferredToolRequests(calls=[ToolCallPart(tool_name='foo', args={'x': 0}, tool_call_id='foo')])
+        DeferredToolRequests(
+            calls=[ToolCallPart(tool_name='foo', args={'x': 0}, tool_call_id='foo')], validated_args={'foo': {'x': 0}}
+        )
     )
 
     with pytest.raises(RuntimeError, match='External tools cannot be called'):
@@ -3329,6 +3372,7 @@ async def test_approval_required_toolset():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
             ),
         ]
     )
@@ -3337,7 +3381,8 @@ async def test_approval_required_toolset():
             approvals=[
                 ToolCallPart(tool_name='foo', args={'x': 1}, tool_call_id='foo1'),
                 ToolCallPart(tool_name='foo', args={'x': 2}, tool_call_id='foo2'),
-            ]
+            ],
+            validated_args={'foo1': {'x': 1}, 'foo2': {'x': 2}},
         )
     )
 
@@ -3388,6 +3433,7 @@ async def test_approval_required_toolset():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'deferred_pause': True}},
             ),
             ModelRequest(
                 parts=[
@@ -3512,7 +3558,10 @@ def test_deferred_tool_call_result_tool_failed():
 
     result = agent.run_sync('Buy me an apple')
     assert result.output == snapshot(
-        DeferredToolRequests(calls=[ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple')])
+        DeferredToolRequests(
+            calls=[ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple')],
+            validated_args={'buy_apple': {'fruit': 'apple'}},
+        )
     )
 
     result = agent.run_sync(
@@ -4857,6 +4906,7 @@ def test_args_validator_requests_approval():
         DeferredToolRequests(
             approvals=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')],
             metadata={'pyd_ai_tool_call_id__my_tool': {'reason': 'sensitive'}},
+            validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}},
         )
     )
     assert executed == []
@@ -4938,6 +4988,7 @@ def test_args_validator_defers_call():
         DeferredToolRequests(
             calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')],
             metadata={'pyd_ai_tool_call_id__my_tool': {'job_id': 'abc'}},
+            validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}},
         )
     )
     assert executed == []
@@ -5011,6 +5062,11 @@ def test_args_validator_deferral_metadata_kept_for_already_deferred_kinds():
                 ToolCallPart(tool_name='body_defers', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__body_defers'),
             ],
             metadata={'pyd_ai_tool_call_id__validator_defers': {'from': 'validator'}},
+            validated_args={
+                'pyd_ai_tool_call_id__validator_defers': {'x': 0},
+                'pyd_ai_tool_call_id__validator_hands_off': {'x': 0},
+                'pyd_ai_tool_call_id__body_defers': {'x': 0},
+            },
         )
     )
     assert executed == []
@@ -5044,7 +5100,8 @@ def test_args_validator_approval_resolved_inline_by_capability():
             DeferredToolRequests(
                 approvals=[
                     ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')
-                ]
+                ],
+                validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}},
             )
         ]
     )

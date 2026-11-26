@@ -98,6 +98,7 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_graph import End
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._inline_snapshot import snapshot
 from .canonical_system_utils import PROVIDER_NAME, StampedModel
@@ -111,9 +112,6 @@ from .conftest import (
     message_part,
 )
 from .realtime.simulation._loop import SimulatedLoop
-
-READINESS_WAIT_TIMEOUT = 5
-"""Seconds to wait for something that should happen promptly: only a hang should exceed it on a loaded runner."""
 
 
 class Foo(BaseModel):
@@ -2677,6 +2675,46 @@ class TestStreamingCachedOutput:
         # Second output should be the original cached value (not mutated)
         assert output2 == Foo(a=42, b='FOO')
 
+    @pytest.mark.parametrize(
+        'reads',
+        [
+            pytest.param(('get_output',), id='get_output'),
+            pytest.param(('get_output', 'get_output'), id='get_output_twice'),
+            pytest.param(('stream_output',), id='stream_output'),
+            pytest.param(('stream_output', 'stream_output'), id='stream_output_twice'),
+            pytest.param(('stream_output', 'get_output'), id='stream_output_then_get_output'),
+            pytest.param(('get_output', 'stream_output'), id='get_output_then_stream_output'),
+        ],
+    )
+    async def test_none_output_validated_once(self, reads: tuple[Literal['get_output', 'stream_output'], ...]):
+        """A final output of `None` runs the output function and each validator once, however it is read.
+
+        Not a VCR test: how often they run is local and provider-independent, and a cassette records none of it.
+        """
+        final_calls: list[str] = []
+
+        def lookup(ctx: RunContext, key: int) -> int | None:
+            if not ctx.partial_output:
+                final_calls.append('function')
+            return None
+
+        agent: Agent[None, int | None] = Agent(TestModel(), output_type=lookup)
+
+        @agent.output_validator
+        def check(ctx: RunContext, value: int | None) -> int | None:
+            if not ctx.partial_output:
+                final_calls.append('validator')
+            return value
+
+        async with agent.run_stream('test') as result:
+            for read in reads:
+                if read == 'get_output':
+                    assert await result.get_output() is None
+                else:
+                    assert [output async for output in result.stream_output(debounce_by=None)][-1] is None
+
+        assert final_calls == ['function', 'validator']
+
 
 class OutputType(BaseModel):
     """Result type used by multiple tests."""
@@ -3279,6 +3317,7 @@ class TestMultipleToolCalls:
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'deferred_pause': True}},
                 ),
             ]
         )
@@ -3289,7 +3328,7 @@ class TestMultipleToolCalls:
 
         async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
             assert info.output_tools is not None
-            yield {1: DeltaToolCall('deferred_tool')}
+            yield {1: DeltaToolCall('deferred_tool', tool_call_id='deferred_tool')}
             yield {2: DeltaToolCall('regular_tool', '{"x": 1}')}
 
         agent = Agent(
@@ -3310,7 +3349,10 @@ class TestMultipleToolCalls:
         async with agent.run_stream('test early strategy with external tool call') as result:
             response = await result.get_output()
             assert response == snapshot(
-                DeferredToolRequests(calls=[ToolCallPart(tool_name='deferred_tool', tool_call_id=IsStr())])
+                DeferredToolRequests(
+                    calls=[ToolCallPart(tool_name='deferred_tool', tool_call_id=IsStr())],
+                    validated_args={'deferred_tool': {}},
+                )
             )
             messages = result.all_messages()
 
@@ -3359,6 +3401,7 @@ class TestMultipleToolCalls:
                     timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'deferred_pause': True}},
                 ),
             ]
         )
@@ -5297,10 +5340,18 @@ async def test_tool_raises_call_deferred():
         assert isinstance(result.run_id, str)
         assert isinstance(result.conversation_id, str)
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])]
+            [
+                DeferredToolRequests(
+                    calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+                    validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}},
+                )
+            ]
         )
         assert await result.get_output() == snapshot(
-            DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
+            DeferredToolRequests(
+                calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+                validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}},
+            )
         )
         responses = [c async for c in result.stream_response(debounce_by=None)]
         assert responses == snapshot(
@@ -5318,7 +5369,10 @@ async def test_tool_raises_call_deferred():
             ]
         )
         assert await result.validate_response_output(responses[0]) == snapshot(
-            DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
+            DeferredToolRequests(
+                calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+                validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}},
+            )
         )
         assert result.usage == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=4))
         assert result.timestamp == IsNow(tz=datetime.UTC)
@@ -5345,7 +5399,10 @@ async def test_tool_raises_approval_required():
         messages = result.all_messages()
         output = await result.get_output()
         assert output == snapshot(
-            DeferredToolRequests(approvals=[ToolCallPart(tool_name='my_tool', args='{"x": 1}', tool_call_id=IsStr())])
+            DeferredToolRequests(
+                approvals=[ToolCallPart(tool_name='my_tool', args='{"x": 1}', tool_call_id=IsStr())],
+                validated_args={'my_tool': {'x': 1}},
+            )
         )
         assert result.is_complete
 
@@ -5492,6 +5549,10 @@ async def test_deferred_tool_iter():
                             tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
                         )
                     ],
+                    validated_args={
+                        'pyd_ai_tool_call_id__my_tool': {'x': 0},
+                        'pyd_ai_tool_call_id__my_other_tool': {'x': 0},
+                    },
                 ),
             ),
         ]
@@ -5609,6 +5670,10 @@ async def test_tool_raises_call_deferred_approval_required_iter():
                             tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
                         )
                     ],
+                    validated_args={
+                        'pyd_ai_tool_call_id__my_tool': {'x': 0},
+                        'pyd_ai_tool_call_id__my_other_tool': {'x': 0},
+                    },
                 ),
             ),
         ]
@@ -5619,6 +5684,7 @@ async def test_tool_raises_call_deferred_approval_required_iter():
         DeferredToolRequests(
             calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
             approvals=[ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr())],
+            validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}, 'pyd_ai_tool_call_id__my_other_tool': {'x': 0}},
         )
     )
 
@@ -6507,7 +6573,7 @@ async def test_args_validator_deferral_not_triggered_by_partial_args():
     validator_calls: list[tuple[int, int, bool]] = []
 
     async def stream_args(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
-        yield {0: DeltaToolCall(name='add_numbers')}
+        yield {0: DeltaToolCall(name='add_numbers', tool_call_id='add_numbers')}
         yield {0: DeltaToolCall(json_args='{"x": 1,')}
         yield {0: DeltaToolCall(json_args=' "y": 2}')}
 
@@ -6568,7 +6634,8 @@ async def test_args_validator_deferral_not_triggered_by_partial_args():
                             args='{"x": 1, "y": 2}',
                             tool_call_id=IsStr(),
                         )
-                    ]
+                    ],
+                    validated_args={'add_numbers': {'x': 1, 'y': 2}},
                 )
             ),
             AgentRunResultEvent(
@@ -6580,7 +6647,8 @@ async def test_args_validator_deferral_not_triggered_by_partial_args():
                                 args='{"x": 1, "y": 2}',
                                 tool_call_id=IsStr(),
                             )
-                        ]
+                        ],
+                        validated_args={'add_numbers': {'x': 1, 'y': 2}},
                     )
                 )
             ),
