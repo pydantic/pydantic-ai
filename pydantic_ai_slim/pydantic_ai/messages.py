@@ -3297,6 +3297,11 @@ class AgentInstructionSource:
     There is exactly one agent in scope, so it carries no id.
     """
 
+    _: KW_ONLY
+
+    kind: Literal['agent'] = 'agent'
+    """Source type identifier, used as a discriminator for deserialization."""
+
     def __str__(self) -> str:
         return 'agent'
 
@@ -3309,6 +3314,11 @@ class ToolsetInstructionSource:
 
     id: str
 
+    _: KW_ONLY
+
+    kind: Literal['toolset'] = 'toolset'
+    """Source type identifier, used as a discriminator for deserialization."""
+
     def __str__(self) -> str:
         return f'toolset:{self.id}'
 
@@ -3320,6 +3330,11 @@ class CapabilityInstructionSource:
     """A capability with an `id`."""
 
     id: str
+
+    _: KW_ONLY
+
+    kind: Literal['capability'] = 'capability'
+    """Source type identifier, used as a discriminator for deserialization."""
 
     def __str__(self) -> str:
         return f'capability:{self.id}'
@@ -3336,6 +3351,11 @@ class RunInstructionSource:
     a value passed to a later run of the same conversation is the same block.
     """
 
+    _: KW_ONLY
+
+    kind: Literal['run'] = 'run'
+    """Source type identifier, used as a discriminator for deserialization."""
+
     def __str__(self) -> str:
         return 'run'
 
@@ -3348,11 +3368,33 @@ InstructionSource: TypeAlias = (
 """The source that authored an instruction part."""
 
 
+_INSTRUCTION_SOURCE_KINDS = frozenset({'agent', 'toolset', 'capability', 'run'})
+
+
+def _instruction_source_kind(value: Any) -> str | None:
+    """Discriminate an `InstructionSource`, including one serialized before the sources carried a `kind`.
+
+    An instruction id persists as its string, but a serializer that doesn't use the field's schema, like the
+    Temporal payload converter's, writes the source's fields. Without a `kind`, `{}` reads as the agent and
+    `{'id': ...}` as a toolset, which is what such a payload has always loaded as.
+    """
+    if isinstance(value, dict):
+        fields = cast(dict[str, Any], value)
+        return fields.get('kind') or ('toolset' if 'id' in fields else 'agent')
+    return getattr(value, 'kind', None)
+
+
 @dataclass(frozen=True, repr=False)
 class InstructionId:
     """The key an instruction part is addressed by: who contributed it, and which of their parts it is."""
 
-    source: InstructionSource
+    source: Annotated[
+        Annotated[AgentInstructionSource, pydantic.Tag('agent')]
+        | Annotated[ToolsetInstructionSource, pydantic.Tag('toolset')]
+        | Annotated[CapabilityInstructionSource, pydantic.Tag('capability')]
+        | Annotated[RunInstructionSource, pydantic.Tag('run')],
+        pydantic.Discriminator(_instruction_source_kind),
+    ]
     """Who contributed the part: the agent, a toolset with an `id`, a capability with an `id`, or a run."""
 
     _: KW_ONLY
@@ -3366,12 +3408,20 @@ class InstructionId:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-def _deserialize_instruction_id(value: str | InstructionId | None) -> InstructionId | None:
+def _deserialize_instruction_id(
+    value: str | InstructionId | dict[str, Any] | None,
+) -> InstructionId | dict[str, Any] | None:
     """Rebuild a key from the string it renders to.
 
     A namespace this version doesn't know can only come from a newer one, whose keys it has no way to
-    address anyway, so it reads as unaddressable rather than failing the message it arrived on.
+    address anyway, so it reads as unaddressable rather than failing the message it arrived on. The same
+    goes for a source `kind` it doesn't know in an id written as an object.
     """
+    if isinstance(value, dict):
+        source = value.get('source')
+        if isinstance(source, dict) and (kind := cast(dict[str, Any], source).get('kind')) is not None:
+            return value if kind in _INSTRUCTION_SOURCE_KINDS else None
+        return value
     if not isinstance(value, str):
         return value
     if value == 'agent':
@@ -3498,10 +3548,10 @@ class InstructionPart:
 
 @dataclass(repr=False, kw_only=True)
 class InstructionDeltaPart:
-    """Replace or withdraw one operator-authored instruction from this point in history onward.
+    """Replace or withdraw one instruction block from this point in history onward.
 
-    Earlier statements remain in history; the latest statement for an id is effective. This is
-    trusted operator content, so `sanitize_messages(strip_system_prompts=True)` strips it.
+    Earlier statements remain in history; the latest statement for an id is effective. History holding it is
+    trusted server state, so `sanitize_messages(strip_system_prompts=True)` strips it, whatever its `authority`.
     """
 
     id: SerializedInstructionId
@@ -3520,6 +3570,19 @@ class InstructionDeltaPart:
     A model can then send the change as a diff against the text it sent before, and only when that text
     is still what this change was computed against: if a history processor dropped an earlier change,
     the hashes differ and the model sends `content` in full instead.
+    """
+
+    authority: Authority = 'operator'
+    """The [authority][pydantic_ai.messages.Authority] the block's text carries, stored when the change is recorded.
+
+    `'operator'` for the agent's own instructions and those of capabilities at operator authority: the block is part of
+    the instruction prefix, and its changes reach the model in the application's voice. Below `'operator'`, the
+    block is the instructions of a capability whose authority is lowered, by
+    [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority] or its class's `authority`, such as
+    an MCP server you don't trust. Such a block never enters the prefix: every statement of it is a change like this
+    one, keyed `capability:<id>`, rendered as framed data at this authority the way a
+    [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] at that authority is, never in the application's voice.
+    A compaction ends it.
     """
 
     part_kind: Literal['instruction-delta'] = 'instruction-delta'
@@ -4918,7 +4981,8 @@ class WorkspaceSource:
     """
 
     path: str
-    """The path the content was read from."""
+    """The path the content was read from, as the model sees it: the `label` passed to
+    [`from_workspace`][pydantic_ai.messages.WorkspaceSource.from_workspace], if any."""
 
     authority: Authority
     """The [authority][pydantic_ai.workspaces.Workspace.authority_of] of the file when the content was read.
@@ -4933,15 +4997,21 @@ class WorkspaceSource:
     """Who wrote content from this source, for the lookalike note."""
 
     @classmethod
-    async def from_workspace(cls, workspace: Workspace, path: str) -> WorkspaceSource:
+    async def from_workspace(cls, workspace: Workspace, path: str, *, label: str | None = None) -> WorkspaceSource:
         """The source for content read from `path` in `workspace`, with the authority of that file.
 
         That's [`workspace.authority_of(path)`][pydantic_ai.workspaces.Workspace.authority_of]: `'operator'` unless an
         [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace] lowers it for the workspace or for the path.
+
+        Args:
+            workspace: The workspace the content was read from.
+            path: The path the content was read from. The authority always comes from this path.
+            label: The path to show the model instead of `path`, such as a file name without the private directory
+                it lives in. It only changes what the model sees, never the authority.
         """
         source = cls.__new__(cls)
         # Frozen, and with no generated `__init__`, so the fields are set the way a frozen dataclass sets them.
-        object.__setattr__(source, 'path', path)
+        object.__setattr__(source, 'path', path if label is None else label)
         object.__setattr__(source, 'authority', await _workspace_authority(workspace, path))
         object.__setattr__(source, 'source_kind', 'workspace')
         return source
@@ -5565,6 +5635,16 @@ class _CapabilityInstructionPart(InstructionCapabilityPart, namespace='pydantic_
 
     `ctx.enqueue` turns such a capability's system prompt into this, so it can't reach the model in the application's
     voice.
+    """
+
+
+@dataclass(repr=False, kw_only=True)
+class _CapabilityInstructionsPart(InstructionCapabilityPart, namespace='pydantic_ai', name='capability_instructions'):
+    """The instructions of a capability with less than `'operator'` authority, as one statement renders them.
+
+    Never stored: `Model.prepare_messages` builds it from an
+    [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] below `'operator'`, so the statement renders
+    like any capability part at that authority.
     """
 
 

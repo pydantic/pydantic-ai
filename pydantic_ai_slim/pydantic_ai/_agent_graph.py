@@ -111,9 +111,11 @@ from ._instructions import (
     LoadedInstructionValues,
     instruction_window,
     loaded_part_capability_id,
+    lowered_block_id,
     recorded_prefix,
     update_instruction_history,
     update_loaded_instruction_history,
+    update_lowered_instruction_history,
 )
 from ._run_context import (
     AnchoredEvidence,
@@ -168,6 +170,7 @@ from .tools import (
 from .toolsets._deferred_capability_loader import (
     capability_load_window,
     capability_tool_names,
+    resolve_capability_block_instructions,
     resolve_loaded_capability_instructions,
 )
 from .toolsets._instruction_collection import collect_toolset_instructions
@@ -1772,6 +1775,31 @@ async def _get_loaded_instructions(
     return resolved
 
 
+async def _get_lowered_instructions(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+    run_context: RunContext[DepsT],
+) -> tuple[dict[str, list[_messages.InstructionPart]], dict[str, _messages.Authority]]:
+    """Resolve the instructions of the capabilities below operator authority, each as one block, by the block's id.
+
+    They reach the model through history, as framed data at their authority, rather than in the prefix: like a loaded
+    capability's, they go into `instruction_parts` marked `'via_history'`, and `update_lowered_instruction_history`
+    records their changes. Also returns each block's authority: the lowest of the capabilities stating it.
+    """
+    parts: dict[str, list[_messages.InstructionPart]] = {}
+    authorities: dict[str, _messages.Authority] = {}
+    for source in ctx.deps.root_capability._lowered_instruction_sources():  # pyright: ignore[reportPrivateUsage]
+        capability = source.capability
+        block_id = lowered_block_id(capability)
+        parts.setdefault(block_id, []).extend(
+            await resolve_capability_block_instructions(
+                capability, block_id, ctx.deps.tool_manager.toolset, run_context, own=source.own
+            )
+        )
+        authority = capability._effective_authority  # pyright: ignore[reportPrivateUsage]
+        authorities[block_id] = _messages._lower_authority(authorities.get(block_id, authority), authority)  # pyright: ignore[reportPrivateUsage]
+    return parts, authorities
+
+
 def _split_loaded_instruction_parts(
     params: models.ModelRequestParameters,
     resolved: Sequence[_messages.InstructionPart],
@@ -2708,7 +2736,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     _resolved_loaded_parts: dict[str, list[_messages.InstructionPart]] = field(
         repr=False, init=False, default_factory=dict[str, list[_messages.InstructionPart]]
     )
-    """The loaded capabilities' instruction parts this request resolved, before the hooks ran, by capability id."""
+    """The loaded capabilities' instruction parts this request resolved, before the hooks ran, by capability id.
+
+    Also those of the capabilities below operator authority, by the id of their block (`_lowered_authorities`).
+    """
+    _lowered_authorities: dict[str, _messages.Authority] = field(
+        repr=False, init=False, default_factory=dict[str, _messages.Authority]
+    )
+    """The capabilities below operator authority whose instructions this request resolved, by their block's id."""
     _step_instruction_parts: list[_messages.InstructionPart] | None = field(repr=False, init=False, default=None)
     """The instruction parts this request step resolved for its model, before the hooks ran, without the loaded ones."""
     _step_toolset_instruction_parts: list[_messages.InstructionPart] = field(
@@ -3425,6 +3460,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self._resolved_loaded_parts = await _get_loaded_instructions(
             ctx, run_context, LoadedInstructionValues.of(ctx.state.message_history).values
         )
+        # Instructions below operator authority are delivered through history too, so hooks see them as loaded ones.
+        lowered_parts, self._lowered_authorities = await _get_lowered_instructions(ctx, run_context)
+        # A lowered block's key is never a loaded capability's (`lowered_block_id`), so neither replaces the other.
+        assert not lowered_parts.keys() & self._resolved_loaded_parts.keys()
+        self._resolved_loaded_parts |= lowered_parts
         self._native_tool_factories = []
         self._step_loaded_parts = [part for parts in self._resolved_loaded_parts.values() for part in parts]
         model_request_parameters = await _prepare_request_parameters(
@@ -3735,18 +3775,16 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # prefix.
         # Loaded capabilities' instructions reach the model through history: changes to them are appended
         # after the prefix's, and they leave the parts the model is sent.
-        loaded_capability_ids = LoadedInstructionValues.of(messages).values
+        loaded = LoadedInstructionValues.of(messages).values
         # A hook that added a `load_capability` exchange loaded a capability after the instructions were
         # resolved. Its instructions are resolved now, so they're stated on the request that reveals its tools.
         self._resolved_loaded_parts |= await _get_loaded_instructions(
             ctx,
             run_context,
-            [
-                capability_id
-                for capability_id in loaded_capability_ids
-                if capability_id not in self._resolved_loaded_parts
-            ],
+            [capability_id for capability_id in loaded if capability_id not in self._resolved_loaded_parts],
         )
+        # The blocks delivered through history: the loaded capabilities', then those below operator authority.
+        loaded_capability_ids = [*loaded, *self._lowered_authorities]
         hook_parameters = request_context.model_request_parameters
         resolved_loaded_parts = [part for parts in self._resolved_loaded_parts.values() for part in parts]
         prefix_parts, loaded_parts = _split_loaded_instruction_parts(
@@ -3780,6 +3818,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 for capability_id, capability in ctx.deps.capabilities.items()
                 if capability.defer_loading is not True
             },
+            authorities={
+                capability_id: capability._effective_authority  # pyright: ignore[reportPrivateUsage]
+                for capability_id, capability in ctx.deps.capabilities.items()
+            },
+        )
+        update_lowered_instruction_history(
+            messages, loaded_parts, self._lowered_authorities, recording_targets, loaded=loaded
         )
         # A hook that rewrote the history (`ctx.messages[:] = ...`) with a copy of this request left
         # `self.request` out of it, so the instructions sent are recorded where the history now holds them.
