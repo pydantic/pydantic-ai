@@ -27,7 +27,7 @@ workspaces are plugins too, so where the agent runs and where it works are yours
 choose. To run an agent of your own instead, use `pax --agent my_module:agent`, which
 loads that agent on its own without Pax's plugins.
 
-![Pax starting up in a project and adding a flag: its thinking, the files it read, the diff it made, and the test run](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/hero.png)
+![Pax in a terminal running anthropic:claude-opus-5-5: the PAX banner, a question about how a forecast is fetched, the tool calls it made with counts, a three-step answer, and the status row with the model, its context meter at 12k of 1m tokens and the cost](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/hero.png)
 
 - **Any model, any account.** Switch models mid-conversation. Sign in to several
   accounts and let Pax move to the next one when you hit a limit.
@@ -78,12 +78,13 @@ the `pydantic-clai2` package installed, or its imports changed to `pydantic_ai_p
 `/update now` uses it too. To try Pax without installing, run `uvx pydantic-ai-pax`; set
 `UV_COMPILE_BYTECODE=1` to compile the bytecode up front there too.
 
-Pax comes with the OpenAI and Anthropic SDKs. Other providers may need their SDK
-installed too; `/model` tells you which one when you pick the model. TypeSafe's Jev
-models need an extra:
+Pax comes with the OpenAI, Anthropic, and Google SDKs. Every other model provider has a Pax
+extra of the same name as its `pydantic-ai-slim` extra, such as `bedrock`, `groq`, or `typesafe`
+(TypeSafe's Jev), and `/model` tells you which one when you pick the model. `all` installs every
+provider and every `/sandbox` provider but `local`:
 
 ```bash
-uv tool install --compile-bytecode 'pydantic-ai-pax[typesafe]'
+uv tool install --compile-bytecode 'pydantic-ai-pax[groq]'
 ```
 
 ## First run
@@ -126,10 +127,9 @@ the folder (or a parent) has a `.env` file, Pax loads it at startup.
 The first time you start Pax in a folder, it asks whether you trust the files in it, and lists
 the instruction files, skills, and agent folders it found there. Answer **Yes** for your own
 projects. **No**, the default, keeps the folder untrusted: the agent still reads, edits, and runs
-code there, and capabilities that check workspace authority treat the folder's files as the
-repository's, not yours (walk-up instruction files, skills, and agent folders still load as before
-until they check authority). Pax remembers the answer for the whole repository, and `/trust` shows
-or changes it. The status row says `trusted` or `untrusted`. See
+code there, and instruction files and skills reach the model as the repository's, not yours
+(agent folders still reach it as yours either way, for now). Pax remembers the answer for the
+whole repository, and `/trust` shows or changes it. The status row says `trusted` or `untrusted`. See
 [folder trust](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#folder-trust)
 in the reference.
 
@@ -485,9 +485,10 @@ covers everything in detail:
 - [The plugin guide](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/PLUGINS.md):
   every plugin method, event, and rule
 
-The screenshots are real Pax sessions. Only the model is scripted (`demo:tour`), so they
-need no account and cost nothing. To make them again, run
-`src/pydantic_ai_pax/scripts/screenshots/capture.sh`.
+The screenshots are real Pax sessions. Every shot but the hero at the top uses a scripted model
+(`demo:tour`), so they need no account and cost nothing: run
+`src/pydantic_ai_pax/scripts/screenshots/capture.sh` to make them again. The hero shows a real
+`anthropic:claude-opus-5-5` turn; the top of `capture.sh` says how to re-render it.
 
 ## Legacy CLI
 
