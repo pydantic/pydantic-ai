@@ -352,10 +352,16 @@ def test_search_api_has_no_reasoning_effort_only_on_openai_provider(model_name: 
     ],
 )
 def test_delegates_unprompted(model_name: str, delegates: bool):
-    """Only OpenAI's GPT models delegate unprompted, not gpt-oss or other models served through the OpenAI API."""
+    """Only OpenAI's GPT models delegate unprompted, not gpt-oss or other models served through the OpenAI API.
+
+    The flags behind `Coder`'s `'max'` guidance go to the same models.
+    """
     profile = OpenAIProvider.model_profile(model_name)
     assert isinstance(profile, dict)
     assert profile.get('delegates_unprompted', False) is delegates
+    assert profile.get('reinterprets_malformed_inputs', False) is delegates
+    assert profile.get('omits_handoff_evidence', False) is delegates
+    assert profile.get('ignores_stated_runtime_constraints', False) is delegates
 
 
 @pytest.mark.parametrize(

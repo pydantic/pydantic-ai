@@ -72,6 +72,9 @@ class ModelDeprecation:
     replacement: str | None = None
     """The model the provider recommends instead, or `None` if it names none."""
 
+    rerouted_to: str | None = None
+    """The model the provider answers this model's requests with from `retirement_date`, or `None` if they fail then."""
+
 
 class ModelProfile(TypedDict, total=False):
     """Describes how requests to and responses from specific models or families of models need to be constructed and processed to get the best results, independent of the model and provider classes used.
@@ -471,10 +474,50 @@ class ModelProfile(TypedDict, total=False):
     key, by reading it from the profile of the model handling the request: see
     [Instructions for specific models](../agent.md#model-specific-instructions). Pydantic AI Harness `Coder` does.
 
-    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss. Evidence: in a Terminal-Bench ablation of
-    `Coder`'s instructions (24 tasks, one trial each, November 2026), GPT-6.1 Terra without its instruction against
-    unrequested delegation delegated in all 24 tasks (524 `delegate_task` calls, against none with it), making about 9
-    times as many tool calls at about 5.5 times the cost. Claude Sonnet 5.5 didn't delegate with or without it.
+    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss or the o-series. Evidence: in a Terminal-Bench
+    ablation of `Coder`'s instructions (24 tasks, one trial each, November 2026), GPT-6.1 Terra without its instruction
+    against unrequested delegation delegated in all 24 tasks (524 `delegate_task` calls, against none with it), making
+    about 9 times as many tool calls at about 5.5 times the cost. Claude Sonnet 5.5 didn't delegate with or without it.
+    """
+
+    reinterprets_malformed_inputs: bool
+    """Whether the model explains away inputs that look inconsistent instead of checking whether the task classifies
+    them (for example as malformed or rejected). Default: `False`.
+
+    Instructions that tell a model to look for such a rule before assuming it misread can be sent only to the models
+    with this key: see [Instructions for specific models](../agent.md#model-specific-instructions). Pydantic AI
+    Harness `Coder` does, at `'max'` autonomy.
+
+    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss or the o-series, together with
+    `omits_handoff_evidence` and `ignores_stated_runtime_constraints`: the three were measured only together. Evidence:
+    on Harness-Bench SWE81 with GPT-6.2 Sol at `'max'` autonomy, one run each (November 2026), `Coder` with the three
+    instructions scored 53.2 against 51.0 without them (measured with the classify sentence in place of the shared
+    misread check; both are sent here), within that benchmark's single-run noise of about 5.6 points. So the evidence is
+    weak, and the instructions are sent only at `'max'`, where nobody reviews the result before it's used.
+    """
+
+    omits_handoff_evidence: bool
+    """Whether the model's notes or handoffs leave out the evidence a reviewer needs, such as the verification
+    commands it ran and their results. Default: `False`.
+
+    Instructions that ask a model for a structured handoff can be sent only to the models with this key: see
+    [Instructions for specific models](../agent.md#model-specific-instructions). Pydantic AI Harness `Coder` does, at
+    `'max'` autonomy.
+
+    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss or the o-series, together with
+    `reinterprets_malformed_inputs`: see its docstring for the evidence.
+    """
+
+    ignores_stated_runtime_constraints: bool
+    """Whether the model ignores constraints a task states on where or how its code will run, such as a restricted
+    interpreter or a specific Python version, when choosing language features. Default: `False`.
+
+    Instructions that tell a model to find out what's allowed before writing code can be sent only to the models with
+    this key: see [Instructions for specific models](../agent.md#model-specific-instructions). Pydantic AI Harness
+    `Coder` does, at `'max'` autonomy.
+
+    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss or the o-series, together with
+    `reinterprets_malformed_inputs`: see its docstring for the evidence.
     """
 
     ignore_streamed_leading_whitespace: bool
@@ -504,8 +547,11 @@ class ModelProfile(TypedDict, total=False):
     Set by [`AnthropicProvider`][pydantic_ai.providers.anthropic.AnthropicProvider] and
     [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] from the providers' deprecation pages, except
     where the model is served by another platform with a schedule of its own: the Amazon Bedrock and Google Cloud
-    Vertex AI clients of `AnthropicModel`, the Azure client of the OpenAI models, and the Codex backend. Set it to
-    `None` to stop the warning for one model, or to a `ModelDeprecation` of your own for a model you serve elsewhere.
+    Vertex AI clients of `AnthropicModel`, the Azure client of the OpenAI models, and the Codex backend. Set by
+    [`GoogleModel`][pydantic_ai.models.google.GoogleModel] and
+    [`GoogleInteractionsModel`][pydantic_ai.models.google_interactions.GoogleInteractionsModel] from the Gemini API's or
+    Google Cloud's deprecation page, whichever its client reaches. Set it to `None` to stop the warning for one model, or to a `ModelDeprecation` of
+    your own for a model you serve elsewhere.
     See [Deprecated models](../models/overview.md#deprecated-models).
     """
 

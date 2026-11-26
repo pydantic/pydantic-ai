@@ -182,19 +182,20 @@ def _without_parts(messages: Sequence[ModelMessage], parts: Sequence[SystemPromp
     """
     dynamic_refs = {part.dynamic_ref for part in parts if part.dynamic_ref is not None}
 
-    def drop(part: ModelRequestPart) -> bool:
-        return isinstance(part, SystemPromptPart) and (part in parts or part.dynamic_ref in dynamic_refs)
-
     kept: list[ModelMessage] = []
     for msg in messages:
         if isinstance(msg, ModelRequest):
-            filtered_parts = [p for p in msg.parts if not drop(p)]
+            filtered_parts = [p for p in msg.parts if not _is_dropped(p, parts, dynamic_refs)]
             if not filtered_parts:
                 continue
             if len(filtered_parts) != len(msg.parts):
                 msg = replace(msg, parts=filtered_parts)
         kept.append(msg)
     return kept
+
+
+def _is_dropped(part: ModelRequestPart, parts: Sequence[SystemPromptPart], dynamic_refs: set[str]) -> bool:
+    return isinstance(part, SystemPromptPart) and (part in parts or part.dynamic_ref in dynamic_refs)
 
 
 def _reinject_system_prompt(
