@@ -257,7 +257,7 @@ def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
 
 def resolve(name: str) -> Model:
     """Build the scripted model; `name` is what follows `demo:`."""
-    return FunctionModel(respond, stream_function=stream, model_name=name)
+    return FunctionModel(respond, stream_function=stream, model_name=name, profile={'context_window': 1_000_000})
 
 
 class Demo(Plugin):
