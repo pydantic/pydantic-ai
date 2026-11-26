@@ -170,7 +170,7 @@ def test_startup_saved_splash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, s
     monkeypatch.setenv('PYDANTIC_AI_NO_BANNER', '1')  # `main` sets it; this restores it after the test.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, 'argv', ['clai2'])
-    path = tmp_path / 'pydantic-clai2' / 'config.db'
+    path = tmp_path / 'pydantic-ai-pax' / 'config.db'
     store = SettingsStore(path)
     if state == 'corrupt':
         path.write_text('not sqlite')
