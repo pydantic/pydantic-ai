@@ -110,7 +110,7 @@ A model can refuse a request on safety grounds that another model will answer (c
 
 Without `ModelFallback`, an empty or thinking-only refusal raises [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] (a subclass of [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], not `ModelAPIError`), while a refusal containing text is returned as output unless you add [`RaiseContentFilterError`](raise-content-filter-error.md).
 
-`ModelFallback` includes `ContentFilterError` in its default `fallback_on`, so it automatically falls back to the next model on any non-streamed refusal — empty or with partial text:
+`ModelFallback` includes `ContentFilterError` in its default `fallback_on`, so it automatically falls back to the next model on any non-streamed refusal — empty or with partial text, since Anthropic [recommends](https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback) treating a refused response's partial output as incomplete and retrying on a different model, which is less likely to refuse again:
 
 ```python {title="model_fallback_on_refusal.py"}
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart
@@ -145,10 +145,16 @@ for attempt in result.response.failed_attempts or []:
     #> anthropic-stand-in rejected
 ```
 
-If you aren't using `ModelFallback` — or on a [streamed](#streaming) run, where a refusal is only known after streaming ends — catch `ContentFilterError` and retry with another model:
+If you aren't using `ModelFallback` — or on a [streamed](#streaming) run, where a refusal is only known after streaming ends — catch `ContentFilterError` and retry with another model. Wrap the run in [`capture_run_messages`][pydantic_ai.capture_run_messages] and drop the trailing refused response so any earlier tool calls aren't re-run:
 
 ```python {title="catch_content_filter_error.py"}
-from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelResponse,
+    TextPart,
+    capture_run_messages,
+)
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -172,21 +178,29 @@ primary = FunctionModel(refuse, model_name='primary')
 backup = FunctionModel(answer, model_name='backup')
 agent = Agent(primary)
 
-try:
-    result = agent.run_sync('Review this transcript.')
-except ContentFilterError:
-    result = agent.run_sync('Review this transcript.', model=backup)
+with capture_run_messages() as messages:
+    try:
+        result = agent.run_sync('Review this transcript.')
+    except ContentFilterError:
+        history = (
+            messages[:-1]
+            if messages and isinstance(messages[-1], ModelResponse)
+            else messages
+        )
+        result = agent.run_sync(message_history=history, model=backup)
 
 print(result.output)
 #> Here is the review.
 ```
 
+See [Recovering a failed run's messages](../agent.md#recovering-a-failed-run) for details (the failed run's conversation is also available on [`AgentRunError.conversation`][pydantic_ai.exceptions.AgentRunError.conversation]).
+
 Key details:
 
 - **Opting out**: Pass `fallback_on=(ModelAPIError, OutputTokenLimitExceeded)` if you want refusals to stop the run instead of falling back.
 - **[`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]**: Does not fall back on refusals by default; pass `fallback_on=(ModelAPIError, ContentFilterError)`.
-- **Staying on the fallback model**: Fallback runs per request, so the next turn tries the primary model again unless you set [`sticky=True`](#staying-on-the-model-that-answered).
-- **Inspecting `ContentFilterError`**: `exc.message` includes the finish reason (e.g. `Finish reason: 'refusal'`) and, when the provider sends explanation text, `Refusal: '...'`. `exc.body` is a one-element JSON list containing the serialized `ModelResponse` (loadable with [`ModelMessagesTypeAdapter.validate_json(exc.body)[0]`][pydantic_ai.messages.ModelMessagesTypeAdapter]), including `provider_details` such as `refusal_category`.
+- **Per-step fallback and `sticky=True`**: Fallback happens per request step — earlier responses from the first model stay in message history, and the next step starts from the first model again unless you set [`sticky=True`](#staying-on-the-model-that-answered).
+- **Inspecting refusals**: Under `ModelFallback`, a refused attempt is recorded in [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts] as `rejected`, without its `provider_details`. When `ContentFilterError` is raised, `exc.message` includes the finish reason (e.g. `Finish reason: 'refusal'`) and, when the provider sends explanation text, `Refusal: '...'`; `exc.body` is a one-element JSON list containing the serialized `ModelResponse` (loadable with [`ModelMessagesTypeAdapter.validate_json(exc.body)[0]`][pydantic_ai.messages.ModelMessagesTypeAdapter]), including `provider_details` such as `refusal_category`.
 - **Prompt-driven refusals**: Anthropic's `reasoning_extraction` classifier can fire on prompts or tool schemas that ask the model to put its reasoning in its output, which Anthropic recommends changing instead (see [Refusals on repeated prompts](../models/anthropic.md#refusals-on-repeated-prompts)); falling back to another provider still works for these.
 
 ## Falling back when the output is cut off {#token-limit}
