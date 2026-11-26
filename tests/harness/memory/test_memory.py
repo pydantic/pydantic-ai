@@ -17,9 +17,12 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import Tracer
+from pydantic import ConfigDict, TypeAdapter, with_config
+from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
+    AgentRunResult,
     AgentSpec,
     DeferredToolRequests,
     DeferredToolResults,
@@ -28,7 +31,7 @@ from pydantic_ai import (
     ToolReturn,
     capture_run_messages,
 )
-from pydantic_ai.capabilities import AbstractCapability, ToolSearch
+from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, ToolSearch
 from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -45,6 +48,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    WorkspaceSource,
     post_compaction_window,
 )
 from pydantic_ai.models import ModelRequestContext
@@ -54,6 +58,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
+    AuthorityWorkspace,
     CommandResult,
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
@@ -176,6 +181,17 @@ async def test_file_store_hides_mutations_on_read_only_run(tmp_path: Path) -> No
 _MAIN_SCOPE_HASH = hashlib.sha256(b'main').hexdigest()[:16]
 
 
+@with_config(ConfigDict(extra='forbid'))
+class _JournaledOperation(TypedDict):
+    """A durable operation's result as `RecordingDurability` journals it."""
+
+    value: tuple[object, object, object, object, object]
+    usage_delta: dict[str, object]
+
+
+_JOURNALED_OPERATION = TypeAdapter(_JournaledOperation)
+
+
 class _RefusingRenameBackend(LocalWorkspaceBackend):
     """A local workspace whose `mv` exits with an error, so `FileMemoryStore` cannot replace a file."""
 
@@ -275,6 +291,48 @@ def _memory_contexts(messages: list[ModelMessage]) -> list[str]:
             else:
                 contexts.extend(text for text in texts if text.startswith('<memory>\n'))
     return contexts
+
+
+@dataclass
+class _CompactAtStepTwo(AbstractCapability[None]):
+    """Replaces the history with an OpenAI compaction and the current request on the run's second step."""
+
+    async def before_model_request(
+        self, ctx: RunContext[None], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if ctx.run_step == 2:
+            compaction = CompactionPart(provider_name='openai', provider_details={'encrypted_content': 'x'})
+            ctx.messages[:] = [ModelResponse(parts=[compaction]), ctx.messages[-1]]
+            request_context.messages = list(ctx.messages)
+        return request_context
+
+
+async def _rerun_unreadable_after_compaction(
+    history: list[ModelMessage], workspace: Workspace, monkeypatch: pytest.MonkeyPatch
+) -> AgentRunResult[str]:
+    """Run on `history` again with a `.memory` store that can't be read, compacting after one tool call."""
+
+    async def unreadable(self: FileMemoryStore, path: str, *, max_chars: int) -> MemoryFile | None:
+        raise OSError('the store is unreachable')
+
+    monkeypatch.setattr(FileMemoryStore, 'read', unreadable)
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if not any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
+            return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model),
+        deps_type=type(None),
+        capabilities=[_CompactAtStepTwo(), Memory(store=FileMemoryStore('.memory'))],
+    )
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'found'
+
+    return await agent.run('next', message_history=history, workspace=workspace)
 
 
 def _snapshot_parts(messages: list[ModelMessage]) -> list[MemorySnapshotPart]:
@@ -1597,6 +1655,164 @@ class TestInjection:
         # Text the agent wrote in earlier runs: another model's, with no authority.
         assert snapshot.source == ModelSource('agent in an earlier run')
         assert snapshot.source.authority == 'none'
+
+    async def test_snapshot_from_an_untrusted_workspace_names_the_file_author(self, tmp_path: Path) -> None:
+        # A repository the operator doesn't control can hold a `MEMORY.md` the agent never wrote.
+        (tmp_path / '.memory' / 'main').mkdir(parents=True)
+        (tmp_path / '.memory' / 'main' / 'MEMORY.md').write_text('- a planted fact')
+        agent = Agent(TestModel(call_tools=[]), capabilities=[Memory(store=FileMemoryStore('.memory'))])
+
+        result = await agent.run(
+            'go', workspace=AuthorityWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)), authority='none')
+        )
+
+        [snapshot] = _snapshot_parts(result.all_messages())
+        assert isinstance(snapshot.source, WorkspaceSource)
+        assert (snapshot.source.path, snapshot.source.authority) == ('.memory/main/MEMORY.md', 'none')
+        assert 'a planted fact' in _snapshot_text(snapshot)
+
+    async def test_snapshot_source_is_journaled_with_the_read(self, tmp_path: Path) -> None:
+        # Asked inside the durable `load_snapshot`, so a replay reuses the level instead of reading the workspace.
+        untrusted, empty = tmp_path / 'untrusted', tmp_path / 'empty'
+        (untrusted / '.memory' / 'main').mkdir(parents=True)
+        (untrusted / '.memory' / 'main' / 'MEMORY.md').write_text('- a planted fact')
+        empty.mkdir()
+
+        async def run(workspace: LocalWorkspace[object], durability: RecordingDurability) -> MemorySnapshotPart:
+            agent = Agent(
+                TestModel(call_tools=[]),
+                name='memory',
+                capabilities=[workspace, Memory(store=FileMemoryStore('.memory')), durability],
+            )
+            [snapshot] = _snapshot_parts((await agent.run('go')).all_messages())
+            return snapshot
+
+        recorded = RecordingDurability()
+        first = await run(LocalWorkspace(untrusted, authority='none'), recorded)
+        assert isinstance(first.source, WorkspaceSource)
+        assert (first.source.path, first.source.authority) == ('.memory/main/MEMORY.md', 'none')
+
+        journal = {name: result for name, result in recorded.results if name.endswith('.load_snapshot')}
+        # Replayed in an operator workspace with no memory file: the source still comes from the journal.
+        replay = await run(LocalWorkspace(empty), RecordingDurability(journal=journal))
+        assert (replay.source, replay.content) == (first.source, first.content)
+
+    async def test_a_snapshot_journaled_without_its_source_replays_as_the_agents(self, tmp_path: Path) -> None:
+        # Up to v2.73.0 `load_snapshot` journaled four items; a run journaled then still replays, as the agent's own memory.
+        untrusted, empty = tmp_path / 'untrusted', tmp_path / 'empty'
+        (untrusted / '.memory' / 'main').mkdir(parents=True)
+        (untrusted / '.memory' / 'main' / 'MEMORY.md').write_text('- a planted fact')
+        empty.mkdir()
+
+        async def run(workspace: LocalWorkspace[object], durability: RecordingDurability) -> MemorySnapshotPart:
+            agent = Agent(
+                TestModel(call_tools=[]),
+                name='memory',
+                capabilities=[workspace, Memory(store=FileMemoryStore('.memory')), durability],
+            )
+            [snapshot] = _snapshot_parts((await agent.run('go')).all_messages())
+            return snapshot
+
+        recorded = RecordingDurability()
+        first = await run(LocalWorkspace(untrusted, authority='none'), recorded)
+        [(name, result)] = [(name, result) for name, result in recorded.results if name.endswith('.load_snapshot')]
+        recorded_result = _JOURNALED_OPERATION.validate_python(result)
+        main, subfiles, files_truncated, error_type, _ = recorded_result['value']
+        journal = {name: {**recorded_result, 'value': [main, subfiles, files_truncated, error_type]}}
+        replay = await run(LocalWorkspace(empty), RecordingDurability(journal=journal))
+        assert replay.content == first.content
+        assert replay.source == ModelSource('agent in an earlier run')
+
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+    async def test_a_failed_reload_keeps_the_recorded_source_for_a_put_back(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The next run can't read the store, so it keeps the snapshot history recorded; when a compaction drops
+        # it, it's put back attributed to the file's author, not to the agent.
+        (tmp_path / '.memory' / 'main').mkdir(parents=True)
+        (tmp_path / '.memory' / 'main' / 'MEMORY.md').write_text('- a planted fact')
+        workspace = AuthorityWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)), authority='none')
+        first = await Agent(TestModel(call_tools=[]), capabilities=[Memory(store=FileMemoryStore('.memory'))]).run(
+            'go', workspace=workspace
+        )
+
+        result = await _rerun_unreadable_after_compaction(first.all_messages(), workspace, monkeypatch)
+
+        [put_back] = _snapshot_parts(post_compaction_window(result.all_messages()))
+        assert isinstance(put_back.source, WorkspaceSource)
+        assert put_back.source.authority == 'none'
+
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+    async def test_a_legacy_latest_snapshot_is_put_back_as_the_agents(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The latest snapshot is a legacy one, which recorded no source, after an older one attributed to a file:
+        # the put-back carries the legacy content and the agent's source, not the older part's.
+        (tmp_path / '.memory' / 'main').mkdir(parents=True)
+        (tmp_path / '.memory' / 'main' / 'MEMORY.md').write_text('- a planted fact')
+        workspace = AuthorityWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)), authority='none')
+        first = await Agent(TestModel(call_tools=[]), capabilities=[Memory(store=FileMemoryStore('.memory'))]).run(
+            'go', workspace=workspace
+        )
+        [older] = _snapshot_parts(first.all_messages())
+        assert isinstance(older.source, WorkspaceSource)
+        history = [
+            *first.all_messages(),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        [TextContent('<memory>\n- a legacy fact\n</memory>', metadata='pydantic-ai-harness.memory.v1')]
+                    )
+                ]
+            ),
+            ModelResponse(parts=[TextPart('ok')]),
+        ]
+
+        result = await _rerun_unreadable_after_compaction(history, workspace, monkeypatch)
+
+        [put_back] = _snapshot_parts(post_compaction_window(result.all_messages()))
+        assert put_back.content == '- a legacy fact'
+        assert put_back.source == ModelSource('agent in an earlier run')
+
+    async def test_snapshot_from_a_store_of_its_own_stays_the_agents(self, tmp_path: Path) -> None:
+        # The run's workspace is untrusted, but the store keeps its files in an operator workspace of its own.
+        (tmp_path / 'memory' / 'main').mkdir(parents=True)
+        (tmp_path / 'memory' / 'main' / 'MEMORY.md').write_text('- a fact')
+        (tmp_path / 'repo').mkdir()
+        store = FileMemoryStore('.', workspace=LocalWorkspaceBackend(tmp_path / 'memory'))
+        agent = Agent(TestModel(call_tools=[]), capabilities=[Memory(store=store)])
+
+        result = await agent.run(
+            'go', workspace=AuthorityWorkspace(Workspace(LocalWorkspaceBackend(tmp_path / 'repo')), authority='none')
+        )
+
+        [snapshot] = _snapshot_parts(result.all_messages())
+        assert snapshot.source == ModelSource('agent in an earlier run')
+
+    async def test_a_lowered_store_of_its_own_keeps_its_location_and_scope_from_the_model(self, tmp_path: Path) -> None:
+        # The note names the file's author, but not where the store keeps it, its namespace or the agent's name.
+        (tmp_path / 'secretdir' / 'tenantsecret' / 'agentsecret').mkdir(parents=True)
+        (tmp_path / 'secretdir' / 'tenantsecret' / 'agentsecret' / 'MEMORY.md').write_text('- a planted fact')
+        store = FileMemoryStore(
+            'secretdir',
+            workspace=AuthorityWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)), authority='none'),
+        )
+        sent: list[str] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(str(messages) + (info.instructions or ''))
+            return ModelResponse(parts=[TextPart('done')])
+
+        result = await Agent(
+            FunctionModel(model),
+            capabilities=[Memory(store=store, namespace='tenantsecret', agent_name='agentsecret')],
+        ).run('go')
+
+        [snapshot] = _snapshot_parts(result.all_messages())
+        assert isinstance(snapshot.source, WorkspaceSource)
+        assert (snapshot.source.path, snapshot.source.authority) == ('MEMORY.md', 'none')
+        assert 'a planted fact' in sent[0]
+        assert not any(secret in sent[0] for secret in ('secretdir', 'tenantsecret', 'agentsecret'))
 
     async def test_emptied_memory_appends_an_empty_snapshot(self) -> None:
         store = InMemoryMemoryStore()

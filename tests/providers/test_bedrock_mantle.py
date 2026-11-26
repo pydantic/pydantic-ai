@@ -351,6 +351,9 @@ def test_bedrock_mantle_profiles() -> None:
             'bedrock_mantle_interface': 'openai-responses',
             'openai_supports_minimal_reasoning_effort': False,
             'delegates_unprompted': True,
+            'reinterprets_malformed_inputs': True,
+            'omits_handoff_evidence': True,
+            'ignores_stated_runtime_constraints': True,
             'tool_call_ids_are_response_scoped': True,
             'supported_native_tools': frozenset({ComputerTool}),
         }

@@ -787,8 +787,11 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         # `harmony_model_profile`, which builds on this one, because not every host of gpt-oss uses that.
         profile['default_framing_announcement'] = 'always'
     elif model_name.startswith('gpt-'):
-        # OpenAI's own GPT models, not other models served through an OpenAI-compatible API (see the field's docstring).
+        # OpenAI's own GPT models, not other models served through an OpenAI-compatible API (see the fields' docstrings).
         profile['delegates_unprompted'] = True
+        profile['reinterprets_malformed_inputs'] = True
+        profile['omits_handoff_evidence'] = True
+        profile['ignores_stated_runtime_constraints'] = True
     return profile
 
 
@@ -848,6 +851,9 @@ def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
         # Speech and delegated work run independently: the Live model can keep the conversation going
         # while the backend works, so a tool call doesn't hold up speech, and there's no mode that waits.
         'async_tool_call_mode': 'always',
+        # The tools are the backend's, and a `session.update` of `delegation.responses.tools` replaces them
+        # mid-session: the backend calls a tool it adds from its next response on (checked live).
+        'supports_tool_updates': True,
         # The backend runs web search; Live refuses every other native Responses tool (checked live).
         'supported_native_tools': frozenset({WebSearchTool}),
         # The delegated backend does the reasoning, so `thinking` sets its effort. Whether a given backend
@@ -888,6 +894,9 @@ def openai_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # wire flag to set, unlike Gemini. The session already runs tools in the background and
         # defers `response.create` while a response is active, so this is true end to end.
         'async_tool_call_mode': 'always',
+        # A `session.update` with a new `tools` array mid-session takes effect: a tool it adds is called from the next
+        # response on, and the conversation so far is kept (checked live on `gpt-realtime`, and on Azure).
+        'supports_tool_updates': True,
         'emits_input_speech_events': True,
         'audio_input_sample_rate': 24000,
         'audio_output_sample_rate': 24000,
