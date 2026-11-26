@@ -161,12 +161,12 @@ class HTTPX2TenacityTransport(httpx2.BaseTransport):
         wrapped: The underlying transport to wrap and add retry functionality to.
             Defaults to a new `httpx2.HTTPTransport` with the connection pool limits of the clients
             Pydantic AI creates: 1000 connections, of which up to 100 are kept alive while idle.
-        validate_response: Optional callable that takes a Response and can raise an exception
-            to be handled by the controller if the response should trigger a retry.
-            Common use case is to raise exceptions for certain HTTP status codes.
-            When it raises for a 4xx or 5xx status, the transport reads the response body before closing the
-            response, so an exception holding the response, like `httpx2.HTTPStatusError`, keeps the body.
-            If None, no response validation is performed.
+        validate_response: Optional synchronous callable that takes a `Response` and raises an exception
+            if the response should be rejected (for example, `lambda r: r.raise_for_status()`).
+            Runs before the response body is read. When it raises for a 4xx or 5xx status, the transport reads
+            the body before closing the response, so tenacity's `retry` predicate and callers inspecting
+            `httpx2.HTTPStatusError.response` can read it. When it raises for a 2xx or 3xx status, the response
+            is closed without reading its body. If `None`, no response validation is performed.
 
     Example:
         ```python
@@ -270,12 +270,12 @@ class AsyncHTTPX2TenacityTransport(httpx2.AsyncBaseTransport):
         wrapped: The underlying async transport to wrap and add retry functionality to.
             Defaults to a new `httpx2.AsyncHTTPTransport` with the connection pool limits of the clients
             Pydantic AI creates: 1000 connections, of which up to 100 are kept alive while idle.
-        validate_response: Optional callable that takes a Response and can raise an exception
-            to be handled by the controller if the response should trigger a retry.
-            Common use case is to raise exceptions for certain HTTP status codes.
-            When it raises for a 4xx or 5xx status, the transport reads the response body before closing the
-            response, so an exception holding the response, like `httpx2.HTTPStatusError`, keeps the body.
-            If None, no response validation is performed.
+        validate_response: Optional synchronous callable that takes a `Response` and raises an exception
+            if the response should be rejected (for example, `lambda r: r.raise_for_status()`).
+            Runs before the response body is read. When it raises for a 4xx or 5xx status, the transport reads
+            the body before closing the response, so tenacity's `retry` predicate and callers inspecting
+            `httpx2.HTTPStatusError.response` can read it. When it raises for a 2xx or 3xx status, the response
+            is closed without reading its body. If `None`, no response validation is performed.
 
     Example:
         ```python
