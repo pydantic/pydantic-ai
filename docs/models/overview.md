@@ -24,6 +24,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [Google Cloud / Vertex AI](google-cloud.md) | Cloud platform | `google-cloud:`; Anthropic client |
 | [Microsoft Azure / Foundry](azure.md) | Cloud platform | `azure:`, `azure-responses:`; Anthropic client |
 | [Alibaba Cloud / Qwen (DashScope)](compatible-apis.md#alibaba-cloud-model-studio-dashscope) | Cloud platform; model developer | `alibaba:` |
+| [bf16.ai](compatible-apis.md#bf16ai) | Inference platform | `bf16:` |
 | [Cerebras](cerebras.md) | Inference platform | `cerebras:` |
 | [Cohere](cohere.md) | Model developer | `cohere:` |
 | [Crusoe](crusoe.md) | Inference platform | `crusoe:` |

@@ -14,6 +14,7 @@ from . import ModelProfile
 
 _SpecialTokenRoute = Literal[
     'azure',
+    'bf16',
     'cerebras',
     'crusoe',
     'groq',
@@ -41,6 +42,7 @@ _EVERY_MODEL: Final[frozenset[_SpecialTokenRoute]] = frozenset(
         'ollama',
         'vllm',
         # Hosts of open-weight models.
+        'bf16',
         'cerebras',
         'crusoe',
         'groq',

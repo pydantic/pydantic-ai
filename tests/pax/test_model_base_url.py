@@ -37,6 +37,7 @@ KEYS = (
     'AWS_BEARER_TOKEN_BEDROCK',
     'AZURE_OPENAI_API_KEY',
     'CEREBRAS_API_KEY',
+    'BF16_API_KEY',
     'CO_API_KEY',
     'CRUSOE_API_KEY',
     'DEEPSEEK_API_KEY',
@@ -71,6 +72,7 @@ KEYS = (
 ENV_URLS = (
     'ANTHROPIC_BASE_URL',
     'AZURE_OPENAI_ENDPOINT',
+    'BF16_BASE_URL',
     'CO_BASE_URL',
     'GITHUB_COPILOT_BASE_URL',
     'GROQ_BASE_URL',
@@ -94,6 +96,7 @@ PROVIDERS = (
     'azure-responses',
     'bedrock',
     'bedrock-mantle',
+    'bf16',
     'cerebras',
     'cohere',
     'crusoe',

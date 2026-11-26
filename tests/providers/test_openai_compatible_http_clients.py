@@ -23,6 +23,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.alibaba import AlibabaProvider
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
+    from pydantic_ai.providers.bf16 import BF16Provider
     from pydantic_ai.providers.cerebras import CerebrasProvider
     from pydantic_ai.providers.crusoe import CrusoeProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
@@ -193,6 +194,11 @@ CASES = [
         lambda http_client: VLLMProvider(base_url='http://localhost:8000/v1', api_key='test', http_client=http_client),
     ),
     Case(
+        'bf16',
+        lambda: BF16Provider(api_key='test'),
+        lambda http_client: BF16Provider(api_key='test', http_client=http_client),
+    ),
+    Case(
         'zai',
         lambda: ZaiProvider(api_key='test'),
         lambda http_client: ZaiProvider(api_key='test', http_client=http_client),
@@ -203,6 +209,7 @@ IMPORT_GUARD_CASES = [
     ('alibaba', 'use the Alibaba provider'),
     ('azure', 'use the Azure provider'),
     ('bedrock_mantle', 'use the Bedrock Mantle provider'),
+    ('bf16', 'use the bf16.ai provider'),
     ('cerebras', 'use the Cerebras provider'),
     ('crusoe', 'use the Crusoe provider'),
     ('deepseek', 'use the DeepSeek provider'),

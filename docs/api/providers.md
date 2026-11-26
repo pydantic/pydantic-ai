@@ -50,6 +50,8 @@
 
 ::: pydantic_ai.providers.sentence_transformers.SentenceTransformersProvider
 
+::: pydantic_ai.providers.bf16.BF16Provider
+
 ::: pydantic_ai.providers.cerebras.CerebrasProvider
 
 ::: pydantic_ai.providers.mistral.MistralProvider

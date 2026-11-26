@@ -72,6 +72,34 @@ agent = Agent(model)
 !!! note "Document input is not supported"
     The DashScope compatible-mode Chat Completions API does not accept document content parts, so passing a [`DocumentUrl`][pydantic_ai.messages.DocumentUrl] or document [`BinaryContent`][pydantic_ai.messages.BinaryContent] to an [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] backed by [`AlibabaProvider`][pydantic_ai.providers.alibaba.AlibabaProvider] raises a `UserError`.
 
+## bf16.ai
+
+[bf16.ai](https://bf16.ai) serves open-weight 1M-context models (including DeepSeek V4.1 Flash, GLM-5.3, GLM-5.3 Flash, and Kimi K3.1 Pro) behind OpenAI-compatible Chat Completions and Responses endpoints with prompt caching and Zero Data Retention (ZDR).
+
+Create an API key on the [bf16.ai API keys page](https://bf16.ai/dashboard/keys), set the `BF16_API_KEY` environment variable, and use [`BF16Provider`][pydantic_ai.providers.bf16.BF16Provider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('bf16:deepseek/deepseek-v4.1-flash-uncensored')
+...
+```
+
+Or pass an explicit [`BF16Provider`][pydantic_ai.providers.bf16.BF16Provider] to [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] or [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.bf16 import BF16Provider
+
+model = OpenAIChatModel(
+    'zai-org/glm-5.3-uncensored',
+    provider=BF16Provider(api_key='your-bf16-api-key'),
+)
+agent = Agent(model)
+...
+```
+
 ## Fireworks AI
 
 Go to [Fireworks.AI](https://fireworks.ai/) and create an API key in your account settings.

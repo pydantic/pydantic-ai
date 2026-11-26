@@ -114,6 +114,7 @@ with try_import() as openai_imports:
         AzureProvider,
         _AzureGrokJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.providers.bf16 import BF16Provider
     from pydantic_ai.providers.cerebras import CerebrasProvider
     from pydantic_ai.providers.crusoe import CrusoeProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
@@ -5008,6 +5009,7 @@ def test_openai_compatible_endpoints_do_not_get_tool_availability_delta():
 _RouteProvider = Literal[
     'anthropic',
     'bedrock',
+    'bf16',
     'cerebras',
     'deepseek',
     'github-copilot',
@@ -5036,6 +5038,8 @@ def _route_provider(provider_name: _RouteProvider) -> type[Provider[Any]]:  # no
             return AnthropicProvider
         case 'bedrock':
             return BedrockProvider
+        case 'bf16':
+            return BF16Provider
         case 'cerebras':
             return CerebrasProvider
         case 'deepseek':
@@ -5313,7 +5317,7 @@ def test_vercel_open_weight_family(model_name: str, thinking: dict[str, bool], r
         ('stepfun/step-5-preview', 'stepfun/step-4', _ALWAYS_THINKING),
     ],
 )
-@pytest.mark.parametrize('provider_name', ['stav', 'otari'])
+@pytest.mark.parametrize('provider_name', ['bf16', 'stav', 'otari'])
 def test_family_map_routes_add_only_open_weight_thinking(
     provider_name: _RouteProvider, model_name: str, unprofiled_model_name: str, thinking: dict[str, bool]
 ):

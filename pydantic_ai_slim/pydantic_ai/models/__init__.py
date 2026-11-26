@@ -301,6 +301,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
     Literal[
         'alibaba',
         'azure',
+        'bf16',
         'cerebras',
         'crusoe',
         'deepseek',
@@ -329,6 +330,7 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
     'OpenAIResponsesCompatibleProvider',
     Literal[
         'azure',
+        'bf16',
         'deepseek',
         'fireworks',
         'meta',

@@ -18,6 +18,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.bedrock import BedrockProvider
+    from pydantic_ai.providers.bf16 import BF16Provider
     from pydantic_ai.providers.cerebras import CerebrasProvider
     from pydantic_ai.providers.cohere import CohereProvider
     from pydantic_ai.providers.crusoe import CrusoeProvider
@@ -77,6 +78,7 @@ with try_import() as imports_successful:
         ('otari', OtariProvider, 'OTARI_API_KEY'),
         ('ovhcloud', OVHcloudProvider, 'OVHCLOUD_API_KEY'),
         ('snowflake', SnowflakeProvider, 'SNOWFLAKE_ACCOUNT'),
+        ('bf16', BF16Provider, 'BF16_API_KEY'),
         ('stav', StavProvider, 'STAV_API_KEY'),
         ('gateway/chat', OpenAIProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/groq', GroqProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
@@ -85,6 +87,7 @@ with try_import() as imports_successful:
         ('gateway/converse', BedrockProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
     ]
     default_url_providers = [
+        BF16Provider,
         CerebrasProvider,
         CrusoeProvider,
         DeepSeekProvider,
@@ -153,7 +156,8 @@ def test_infer_provider_class(provider: str, provider_cls: type[Provider[Any]], 
 @pytest.mark.parametrize('provider_cls', default_url_providers)
 def test_provider_base_url_replaces_the_default(
     provider_cls: type[
-        CerebrasProvider
+        BF16Provider
+        | CerebrasProvider
         | CrusoeProvider
         | DeepSeekProvider
         | FireworksProvider

@@ -405,6 +405,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
             from .alibaba import AlibabaProvider
 
             return AlibabaProvider
+        case 'bf16':
+            from .bf16 import BF16Provider
+
+            return BF16Provider
         case 'sambanova':
             from .sambanova import SambaNovaProvider
 
