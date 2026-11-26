@@ -2,7 +2,7 @@
 Source tapes/common.tape
 Output shots/rewind.txt
 Hide
-Type 'clai-demo' Enter
+Type 'pax-demo' Enter
 Wait+Screen /\| ready/
 Type 'Explain how a forecast is fetched' Enter
 Wait+Screen /tests run offline/

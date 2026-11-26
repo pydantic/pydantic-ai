@@ -354,3 +354,12 @@ agent = Agent(
 Forwarding the transcript gives the advisor more context, but also sends more input tokens. See the
 [OpenRouter advisor documentation](https://openrouter.ai/docs/guides/features/server-tools/advisor)
 for details.
+
+## Errors
+
+OpenRouter reports some errors from the upstream provider as a generic `Provider returned error` rejection, with
+the provider's own error in the error's `metadata.raw`. When that error says the input exceeds the model's context
+window, Pydantic AI raises a
+[`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] instead, as it does
+for any other overflow. See [Handling Model API Errors](overview.md#handling-model-api-errors) for the other error
+categories.

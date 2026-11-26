@@ -19,7 +19,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [Pydantic AI Gateway](../gateway.md) | Gateway | `gateway/<provider>:` |
 | [OpenAI](openai.md) | Model developer | `openai:`, `openai-chat:`, `openai-responses:` |
 | [Anthropic](anthropic.md) | Model developer | `anthropic:` |
-| [Google / Gemini API](google.md) | Model developer | `google:` |
+| [Google / Gemini API](google.md) | Model developer | `google:`, `google-interactions:` |
 | [AWS Bedrock](bedrock.md) | Cloud platform | `bedrock:`, `bedrock-mantle:`; Anthropic client |
 | [Google Cloud / Vertex AI](google-cloud.md) | Cloud platform | `google-cloud:`; Anthropic client |
 | [Microsoft Azure / Foundry](azure.md) | Cloud platform | `azure:`, `azure-responses:`; Anthropic client |
@@ -331,6 +331,27 @@ why: a `ModelContextWindowExceededError`, a `ModelNotFoundError`, or a `ModelAut
 sends `API_KEY_INVALID` as a 400). Exhausted credits, a reached spend limit, or disabled billing are a
 `ModelQuotaExceededError` instead, even when the provider sends them as a 400, as Anthropic and the Gemini API do.
 
+A request can also succeed while the response the provider sent in reply can't be used. The chat model adapters
+raise that as a model error too, before the agent sees the response, so it's handled like a failed request:
+
+| Exception | Raised when |
+|---|---|
+| [`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError] | The provider sent no response, e.g. a stream that ended before its first event, or a completion without choices. Often a transient glitch, so sending the request again may help. [`RetryOnModelErrors`](../capabilities/retry-on-model-errors.md) doesn't retry it by default; pass `retry_on=(*TRANSIENT_MODEL_ERRORS, ModelEmptyResponseError)` to include it. |
+| [`ModelInvalidResponseError`][pydantic_ai.exceptions.ModelInvalidResponseError] | The response couldn't be read, e.g. a completion that doesn't match the API's schema. Sending the same request again often gets the same response. |
+
+Both are also an [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], which these responses used
+to raise, so existing `except UnexpectedModelBehavior` blocks keep catching them. As model errors, though, they're now
+also what a [`FallbackModel`](#fallback-model) or [`ModelFallback`](../capabilities/model-fallback.md) falls back on by
+default, so when every model in the chain fails, the run raises a
+[`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup], which only `except*` or `except
+FallbackExceptionGroup` catches. A response the agent can't use once the model has returned it, like one with no output
+or one cut off at the token limit, is judged in the [agent loop](../agent.md) instead, and raises a plain
+`UnexpectedModelBehavior` or is re-prompted.
+
+Some adapters still raise a plain [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] for the same kind of
+response, like OpenRouter's `null` `choices`, or a body that isn't JSON on most providers, so to handle all of them,
+catch `ModelAPIError`.
+
 Other errors are raised as a plain `ModelAPIError` or [`ModelHTTPError`](#handling-http-errors), as they always were.
 Categories are assigned from the provider's error code or type where it sends one, and from the error message
 only where the provider offers nothing else. Every `ModelAPIError` also exposes the provider's
@@ -396,6 +417,17 @@ print(should_retry(ModelHTTPError.for_category(ModelRateLimitError, status_code=
 [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] are all a
 `ModelRequestRejectedError`, so `should_retry` skips them too. Under [Temporal](../durable_execution/temporal.md#activity-retries), the activity
 doesn't retry them either, as they're in `non_retryable_model_errors` by default.
+
+Match model errors by type, with `except` or `isinstance`, or by a `ModelHTTPError`'s `status_code`, not by
+comparing the class name, as in `type(error).__name__ == 'ModelHTTPError'`. A later version may raise an error as a
+more specific category, which `except ModelHTTPError` still catches but a name comparison doesn't. A Temporal retry
+policy's `non_retryable_error_types` can only match names, so it sees every categorized error as `ModelHTTPError` or
+`ModelAPIError`; see [Activity Retries](../durable_execution/temporal.md#activity-retries).
+
+!!! tip "Logging error class names to Logfire"
+    Logfire's [default scrubbing](https://pydantic.dev/docs/logfire/instrument/python/scrubbing/) redacts any value
+    you log whose text matches a pattern like `auth`, so a class name like `ModelAuthenticationError` logged as an
+    attribute shows up as `[Scrubbed due to 'Auth']`. The `exception.type` on Pydantic AI's own spans isn't scrubbed.
 
 ### HTTP errors {#handling-http-errors}
 
@@ -488,7 +520,9 @@ common use case. That includes every [error category](#handling-model-api-errors
 unavailable or overloaded providers, server errors, connection failures and timeouts,
 and rejected requests, including [context window overflows](#context-window-overflow): another model or provider may
 accept a request, credentials or model name the first one rejected, and a model with a larger context window may
-accept an input that overflowed another model's. To fall back only on some of them, pass those categories
+accept an input that overflowed another model's. It also includes a response the model couldn't use, a
+[`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError] or
+[`ModelInvalidResponseError`][pydantic_ai.exceptions.ModelInvalidResponseError]. To fall back only on some of them, pass those categories
 as `fallback_on`, e.g. `fallback_on=(ModelRateLimitError, ModelUnavailableError, ModelServerError)`.
 
 This behavior is controlled by the `fallback_on` parameter (see

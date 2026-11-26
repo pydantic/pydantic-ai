@@ -112,6 +112,7 @@ Finding and reading things on the open web.
 | [You.com Research](https://pydantic.dev/docs/ai/harness/youdotcom/) | Harness | Cited answers and multi-step research via the You.com Answer, Research, and Finance Research APIs |
 | [Keenable Search](../harness/keenable-search.md) | Harness | Web research via [Keenable](https://keenable.ai): excerpted search and full-page reads, keyless and with no extra to install |
 | [Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) | Harness | Hand web tasks to an autonomous [browser-use](https://github.com/browser-use/browser-use) agent driving a real browser |
+| [CDP Browser](https://pydantic.dev/docs/ai/harness/cdp-browser/) | Harness | Drive a throwaway Chrome tab with raw DevTools Protocol commands, best from Code Mode |
 | [Playwright Browser](https://pydantic.dev/docs/ai/harness/playwright/) | Harness | Drive a real Chromium page yourself: navigate, click, type, read, and inspect what the page did |
 | [Computer Use](https://pydantic.dev/docs/ai/harness/computer-use/) | Harness | See and control the desktop of the run's workspace with screenshots, mouse, and keyboard |
 
@@ -171,11 +172,15 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [Artifact Scanning](https://pydantic.dev/docs/ai/harness/artifact-scanning/) | Harness | Scan memory files and skills for prompt injection, credential exfiltration, and hidden content before they are stored or loaded |
 | [Spend Limits](https://pydantic.dev/docs/ai/harness/spend/) | Harness | Cross-window USD/token budgets and per-response cost tracking, per model and per tenant |
 | [Ask User](https://pydantic.dev/docs/ai/harness/ask-user/) | Harness | Let the model ask the user multiple-choice questions mid-run; you supply the answerer (terminal, web, test) |
+| [Deny Unanswered](https://pydantic.dev/docs/ai/harness/deny-unanswered/) | Harness | Deny approval and question calls that nobody answered by the end of an unattended run, in parent and child agents |
 | [Tool approval](../deferred-tools.md#human-in-the-loop-tool-approval) | Core | Flag tool calls that need human approval before they run |
-| [Handle Deferred Tool Calls](handle-deferred-tool-calls.md) | Core | Resolve approvals, answers and external results on deferred tool calls inside the run, in place or by waiting for them, durably on AWS Lambda |
+| [Handle Deferred Tool Calls](handle-deferred-tool-calls.md) | Core | Resolve approvals, answers and external results on deferred tool calls inside the run, in place or by waiting for them, durably on Temporal and AWS Lambda |
+| [Approval Reviewer](https://pydantic.dev/docs/ai/harness/approval-reviewer/) | Harness | A second model answers one risk question per call waiting for approval, approves the low-risk ones, and leaves the rest to a person |
+| [Permissions](https://pydantic.dev/docs/ai/harness/permissions/) | Harness | Ask a person before file writes and commands, by permission mode: full access, auto (asks before risky commands), or read-only; allow, ask about, or deny tool calls and shell commands by rule |
 | [System Reminders](https://pydantic.dev/docs/ai/harness/system-reminders/) | Harness | Cache-safe re-injection of guidance mid-run to counter instruction fade |
 | [Detect Loops](https://pydantic.dev/docs/ai/harness/detect-loops/) | Harness | Notice repeated tool calls, results, alternations, or responses, or a response repeating itself as it streams, and nudge the model, stop the run, or call your handler |
 | [Trajectory Judge](https://pydantic.dev/docs/ai/harness/trajectory-judge/) | Harness | A second model reviews the live run every N requests over a sliding token window and steers it mid-run |
+| [Tool Call Judge](https://pydantic.dev/docs/ai/harness/tool-call-judge/) | Harness | A second model answers one risk question about selected tool calls, blocking the risky ones before the tool function runs, with no person on the other end |
 | [Refine Output](https://pydantic.dev/docs/ai/harness/refine-output/) | Harness | Send the agent back to review and revise its output before the run ends |
 | [Require Verification](https://pydantic.dev/docs/ai/harness/require-verification/) | Harness | Send the agent back to run its checks when it tries to finish after editing code without a passing check since its last edit |
 

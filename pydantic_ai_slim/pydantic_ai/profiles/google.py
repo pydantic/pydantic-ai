@@ -36,6 +36,19 @@ _GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES: tuple[str, ...] = (
     'text/plain',
 )
 
+_INTERACTIONS_NATIVE_TOOL_RETURN_MIME_TYPES: tuple[str, ...] = (
+    *_GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES,
+    'audio/mpeg',
+    'video/mp4',
+)
+_INTERACTIONS_TOOL_RETURN_MIME_TYPES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ('gemini-3.8-flash', _INTERACTIONS_NATIVE_TOOL_RETURN_MIME_TYPES),
+    ('gemini-4-argon', _INTERACTIONS_NATIVE_TOOL_RETURN_MIME_TYPES),
+    # Verified live 2026-11-18 on the Gemini API: PDF, MP3 and MP4 `function_result` items are read natively.
+    ('gemini-4-carbon', _INTERACTIONS_NATIVE_TOOL_RETURN_MIME_TYPES),
+    ('gemini-4-hydrogen', _INTERACTIONS_NATIVE_TOOL_RETURN_MIME_TYPES),
+)
+
 _SCHEMA_VALUED_KEYWORDS = frozenset({'items', 'additionalProperties'})
 _SCHEMA_LIST_KEYWORDS = frozenset({'anyOf'})
 _SCHEMA_MAP_KEYWORDS = frozenset({'properties'})
@@ -143,7 +156,8 @@ class GoogleModelProfile(ModelProfile, total=False):
     """
 
     google_supported_mime_types_in_tool_returns: tuple[str, ...]
-    """MIME types supported in native FunctionResponseDict.parts. Default: `()`.
+    """MIME types supported in native tool results: GenerateContent's `FunctionResponseDict.parts`
+    or Interactions' `function_result`. Default: `()`.
     See https://ai.google.dev/gemini-api/docs/function-calling#multimodal-function-responses"""
 
     google_supports_thinking_level: bool
@@ -227,13 +241,25 @@ class GoogleModelProfile(ModelProfile, total=False):
     or BigQuery rather than the uploaded files `GoogleModel` submits.
     """
 
+    google_supports_computer_use: bool
+    """Whether the model takes Google's [computer use tool](https://ai.google.dev/gemini-api/docs/computer-use).
+    Default: `False`.
+
+    Without it, `GoogleModel` leaves [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] out of
+    `supported_native_tools`, so a computer tool goes to the model as a function tool. `google_model_profile` sets it for
+    the models Google lists, and `GoogleModel` turns it off on Google Cloud (Vertex AI), where the tool is unverified.
+    Set it with `profile=` for a model you have checked.
+    """
+
+
+_COMPUTER_USE_MODEL_PREFIXES = ('gemini-4-', 'gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3-flash-preview')
+"""The models Google lists for computer use: https://ai.google.dev/gemini-api/docs/computer-use#model-versions."""
 
 _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] = (
     # Documented per-model thinking levels, most specific prefix first. Gemini 3+ models not
-    # listed support the default `GOOGLE_THINKING_LEVELS`, except where a level set holds on one
-    # API only: `GoogleModel.profile` applies that set by the client's transport, as it does on the
-    # Gemini API for `gemini-3.1-flash-image`, which only that API enforces, and for `gemini-4-neon`,
-    # which Vertex's thinking table doesn't list.
+    # listed support the default `GOOGLE_THINKING_LEVELS`, except where a level set holds on the Gemini
+    # API only: `_google_common.GEMINI_API_THINKING_LEVELS` lists those, and both Google models apply them
+    # by the client's transport.
     # https://ai.google.dev/gemini-api/docs/thinking
     ('gemini-3.1-flash-lite-image', frozenset(('MINIMAL', 'HIGH'))),
     ('gemini-3.7-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
@@ -369,6 +395,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         google_supports_strict_tool_definition=supports_strict_tool_definition,
         google_web_search_billed_per_prompt=is_older_gemini,
         google_supports_penalties=_google_cloud_supports_penalties(model_name),
+        google_supports_computer_use=model_name.startswith(_COMPUTER_USE_MODEL_PREFIXES),
     )
     if thinking_levels is not None:
         profile['google_thinking_levels'] = thinking_levels
@@ -396,6 +423,18 @@ def _set_gemini_file_input(profile: ModelProfile, *, is_gemma: bool, is_gemini_2
         # Gemini 2.5 answers Word and Excel files with a 500 on the Gemini API and Vertex AI alike, where
         # Gemini 3 reads them (checked live 2026-11-04).
         profile['supported_document_media_types'] = KNOWN_DOCUMENT_MEDIA_TYPES - _OFFICE_DOCUMENT_MEDIA_TYPES
+
+
+def google_interactions_model_profile(model_name: str) -> GoogleModelProfile:
+    """Profile overrides for Google's Interactions API, independent of GenerateContent."""
+    profile = GoogleModelProfile(supports_tool_return_schema=False)
+    model_name = model_name.rsplit('/', 1)[-1]
+    mime_types = next(
+        (types for prefix, types in _INTERACTIONS_TOOL_RETURN_MIME_TYPES if model_name.startswith(prefix)), None
+    )
+    if mime_types is not None:
+        profile['google_supported_mime_types_in_tool_returns'] = mime_types
+    return profile
 
 
 _REALTIME_MODELS_MISSING_VIDEO_IN_TEXT_TURNS = (

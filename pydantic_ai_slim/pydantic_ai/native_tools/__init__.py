@@ -812,7 +812,7 @@ class ImageGenerationTool(AbstractNativeTool):
     Supported by:
 
     * OpenAI Responses. Only supported for 'jpeg' and 'webp' output formats. Default: 100.
-    * Google (Vertex AI only). Only supported for 'jpeg' output format. Default: 75.
+    * Google GenerateContent (Vertex AI only). Only supported for 'jpeg' output format. Default: 75.
       Setting this will default `output_format` to 'jpeg' if not specified.
     """
 
@@ -822,7 +822,8 @@ class ImageGenerationTool(AbstractNativeTool):
     Supported by:
 
     * OpenAI Responses. Default: 'png'.
-    * Google (Vertex AI only). Default: 'png', or 'jpeg' if `output_compression` is set.
+    * Google GenerateContent (Vertex AI only). Default: 'png', or 'jpeg' if `output_compression` is set.
+    * Google Interactions. Supports 'png' (default) and 'jpeg'.
     """
 
     partial_images: Annotated[int, _moved_to_provider_settings('openai', 'partial_images')] = 0
@@ -911,7 +912,9 @@ class ComputerTool(AbstractNativeTool):
 
     Supported by:
 
+    * Anthropic, on the models listed under [Anthropic](../models/anthropic.md#computer-use)
     * OpenAI Responses, on the models listed under [OpenAI](../models/openai.md#computer-use)
+    * Google, on the models listed under [Google](../models/google.md#computer-use)
     """
 
     display_size: tuple[int, int]
@@ -919,7 +922,7 @@ class ComputerTool(AbstractNativeTool):
 
     `ComputerUse` fills it in from the latest screenshot, or from the display before the first one. Anthropic's
     `computer_20250124` and `computer_20251124` tools send it to the model as the display size;
-    `computer_toolset_20260801` has no size field.
+    `computer_toolset_20260801` has no size field. Gemini uses it to turn its 0-999 positions into pixels.
     """
 
     kind: str = 'computer'
@@ -939,6 +942,7 @@ class MCPServerTool(AbstractNativeTool):
     * OpenAI Responses
     * Anthropic
     * xAI
+    * Google Interactions
     """
 
     id: str
@@ -958,6 +962,7 @@ class MCPServerTool(AbstractNativeTool):
     * OpenAI Responses
     * Anthropic
     * xAI
+    * Google Interactions
     """
 
     description: str | None = None
@@ -977,6 +982,7 @@ class MCPServerTool(AbstractNativeTool):
     * OpenAI Responses
     * Anthropic
     * xAI
+    * Google Interactions
     """
 
     headers: dict[str, str] | None = None
@@ -988,6 +994,7 @@ class MCPServerTool(AbstractNativeTool):
 
     * OpenAI Responses
     * xAI
+    * Google Interactions
     """
 
     kind: str = 'mcp_server'
@@ -1055,6 +1062,7 @@ class FileSearchTool(AbstractNativeTool):
 
     Supported by:
 
+    * Google Interactions (maps to `top_k`)
     * OpenAI Responses (mapped to `max_num_results`; OpenAI accepts 1 to 50)
     * xAI (mapped to collections search `limit`, defaults to 10 server-side)
     """

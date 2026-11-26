@@ -312,9 +312,12 @@ class TestCodeModeReplStore:
     async def test_a_save_past_the_timeout_is_abandoned(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """A timeout already spent stops the save before it reaches the store, as a hung dump or store would be."""
+        """A save still running when the timeout passes is abandoned, so a store that stops responding keeps nothing.
+
+        The store hangs because the dump alone may finish before the cancellation reaches it.
+        """
         monkeypatch.setattr('pydantic_ai_harness.code_mode._repl_store.SAVE_TIMEOUT_SECONDS', 0)
-        store = MemoryReplStore()
+        store = MemoryReplStore(save_hangs=True)
         agent = agent_with(store)
 
         with caplog.at_level(logging.WARNING):

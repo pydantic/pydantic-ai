@@ -315,6 +315,8 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   posted, and says how many it left out; the status still counts it. The job summary always carries
   the usage table. A `critical` or `high` finding,
   an `INCOMPLETE` check, or a check without a result fails the status. `medium` findings do not.
+  The artifact service can list a finalized upload seconds late, so when every review job
+  succeeded and a result is still missing, `publish` waits 30 s and downloads the results once more.
 - A `User` with write access applies `pr-review-checks:accepted` to pass the current head despite its
   findings. Every event that reviews the head again, a push included, removes the label; apply it
   again after that review.
@@ -619,7 +621,7 @@ The repository's own automation, such as the provider-health controller, uses `a
 gh-aw runs threat detection only on its Copilot, Claude and Codex engines.
 `shared/engine-zai.md` sets `safe-outputs.threat-detection.engine: false` and runs our own detector as detection post-steps.
 `.github/scripts/gh_aw_opencode_detect.py` runs OpenCode with `opencode-go/deepseek-v4.1-flash` and its [Coding Plan fallback](#opencode-falls-back-from-opencode-go-to-the-glm-coding-plan).
-The post-steps check the script out at `github.workflow_sha` and install OpenCode with `setup-douwebot-tools`.
+The post-steps check the script out from the default branch and install OpenCode with `setup-douwebot-tools`.
 
 - Keep the detector step's id `detection_agentic_execution`. gh-aw's conclusion step reads that step's outcome.
 - The detector sends the prompt gh-aw renders to `GH_AW_PROMPT`. It checks the agent's outputs, never the PR under review.
