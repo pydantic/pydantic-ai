@@ -321,10 +321,10 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
     _safe_at_runtime: ClassVar[bool] = False
     """Whether this capability can be added per-run when a durability capability is bound.
 
-    Internal, in-tree only. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation]
-    is the only built-in capability that sets this to `True`; the bundled `durable_exec`
-    integrations read it to allow `Instrumentation` to attach per-run despite the
-    blanket restriction on runtime capability additions.
+    Internal, in-tree only. Built-in capabilities that are safe to attach per-run, such as
+    [`Instrumentation`][pydantic_ai.capabilities.Instrumentation], set this to `True`; the bundled
+    `durable_exec` integrations read it to allow them despite the blanket restriction on runtime
+    capability additions.
 
     A first-class extension point that derives this from a capability's overridden
     hooks (so third-party capabilities don't need to set a flag manually) is tracked
@@ -1943,21 +1943,11 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     earlier, and reading "last" off the tree would turn a run-level override into the agent-level
     capability winning.
     """
-    from .wrapper import WrapperCapability
-
     # `CombinedCapability` may sort top-level branches, but it retains each branch it doesn't flatten
     # (see `_combination_roots`) as the object supplied by its source layer. Associate provenance
     # with that branch before walking its leaves: a wrapper can move ahead of an earlier layer while
     # the same leaf object appears both inside that wrapper and on its own.
-    root_locations: dict[int, list[tuple[int, dict[int, list[int]]]]] = {}
-    position = 0
-    for layer_index, layer in enumerate(layers):
-        for root in chain.from_iterable(map(_combination_roots, layer)):
-            leaf_positions: dict[int, list[int]] = {}
-            for leaf in leaf_capabilities(root):
-                leaf_positions.setdefault(id(leaf), []).append(position)
-                position += 1
-            root_locations.setdefault(id(root), []).append((layer_index, leaf_positions))
+    root_locations = _root_locations(layers)
 
     visited: list[tuple[AbstractCapability[AgentDepsT], int, int]] = []
     for root in _combination_roots(capability):
@@ -1983,32 +1973,7 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     # per visit lines the decisions up with the occurrences they were made for.
     replacements: dict[int, list[AbstractCapability[AgentDepsT] | None]] = {}
     for capability_id, duplicates in duplicate_groups.items():
-        # Only the last layer to state this id has a say; everything an earlier layer said under it
-        # is overridden, not merged in. `combine` then settles what the survivors within that one
-        # layer mean -- and with a single survivor there is nothing to settle, so it isn't called.
-        _reject_derived_id_collision(capability_id, [duplicate.capability for duplicate in duplicates])
-        last_layer = max(duplicate.layer_index for duplicate in duplicates)
-        surviving = [duplicate.capability for duplicate in duplicates if duplicate.layer_index == last_layer]
-        # Transparent wrappers name the same capability across layers, not the same mergeable class
-        # within a layer, so a group confined to one layer is compared as written: there, a wrapper
-        # and what it wraps are two capabilities claiming one id. Across layers they are one
-        # capability named twice, so the wrappers come off and the comparison is between what they
-        # hold. Explicitly renamed wrappers keep their own identity either way.
-        spans_layers = last_layer != duplicates[0].layer_index
-        identity_types: set[type[AbstractCapability[AgentDepsT]]] = set()
-        for duplicate in duplicates:
-            identity = duplicate.capability
-            while spans_layers and isinstance(identity, WrapperCapability) and identity.id == identity.wrapped.id:
-                identity = identity.wrapped
-            identity_types.add(type(identity))
-        _reject_class_crossing_id(capability_id, identity_types)
-        # With a single survivor there is nothing to settle, so `combine` isn't called.
-        combined_duplicate = surviving[-1]
-        if len(surviving) > 1:
-            _reject_class_crossing_id(capability_id, {type(survivor) for survivor in surviving})
-            if not _declares_default_id(type(combined_duplicate)):
-                raise UserError(_repeated_id_message(capability_id, surviving))
-            combined_duplicate = combined_duplicate.combine(surviving)
+        combined_duplicate = _resolve_duplicates(capability_id, duplicates)
         replacements.update(
             {id(duplicate.capability): [None] * occurrence_counts[id(duplicate.capability)] for duplicate in duplicates}
         )
@@ -2028,6 +1993,57 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     # Every duplicated id keeps one occurrence, so the tree can never be emptied.
     assert combined is not None, 'combining duplicate capabilities cannot empty the tree'
     return combined
+
+
+def _root_locations(
+    layers: Sequence[Sequence[AbstractCapability[AgentDepsT]]],
+) -> dict[int, list[tuple[int, dict[int, list[int]]]]]:
+    """Where each branch a layer supplies sits: its layer, and the application position of each of its leaves."""
+    root_locations: dict[int, list[tuple[int, dict[int, list[int]]]]] = {}
+    position = 0
+    for layer_index, layer in enumerate(layers):
+        for root in chain.from_iterable(map(_combination_roots, layer)):
+            leaf_positions: dict[int, list[int]] = {}
+            for leaf in leaf_capabilities(root):
+                leaf_positions.setdefault(id(leaf), []).append(position)
+                position += 1
+            root_locations.setdefault(id(root), []).append((layer_index, leaf_positions))
+    return root_locations
+
+
+def _resolve_duplicates(
+    capability_id: str, duplicates: Sequence[_CapabilityOccurrence[AgentDepsT]]
+) -> AbstractCapability[AgentDepsT]:
+    """The one capability the occurrences sharing `capability_id`, in application order, resolve to."""
+    from .wrapper import WrapperCapability
+
+    # Only the last layer to state this id has a say; everything an earlier layer said under it
+    # is overridden, not merged in. `combine` then settles what the survivors within that one
+    # layer mean -- and with a single survivor there is nothing to settle, so it isn't called.
+    _reject_derived_id_collision(capability_id, [duplicate.capability for duplicate in duplicates])
+    last_layer = max(duplicate.layer_index for duplicate in duplicates)
+    surviving = [duplicate.capability for duplicate in duplicates if duplicate.layer_index == last_layer]
+    # Transparent wrappers name the same capability across layers, not the same mergeable class
+    # within a layer, so a group confined to one layer is compared as written: there, a wrapper
+    # and what it wraps are two capabilities claiming one id. Across layers they are one
+    # capability named twice, so the wrappers come off and the comparison is between what they
+    # hold. Explicitly renamed wrappers keep their own identity either way.
+    spans_layers = last_layer != duplicates[0].layer_index
+    identity_types: set[type[AbstractCapability[AgentDepsT]]] = set()
+    for duplicate in duplicates:
+        identity = duplicate.capability
+        while spans_layers and isinstance(identity, WrapperCapability) and identity.id == identity.wrapped.id:
+            identity = identity.wrapped
+        identity_types.add(type(identity))
+    _reject_class_crossing_id(capability_id, identity_types)
+    # With a single survivor there is nothing to settle, so `combine` isn't called.
+    combined_duplicate = surviving[-1]
+    if len(surviving) > 1:
+        _reject_class_crossing_id(capability_id, {type(survivor) for survivor in surviving})
+        if not _declares_default_id(type(combined_duplicate)):
+            raise UserError(_repeated_id_message(capability_id, surviving))
+        combined_duplicate = combined_duplicate.combine(surviving)
+    return combined_duplicate
 
 
 def _repeated_id_message(capability_id: str, capabilities: Sequence[AbstractCapability[Any]]) -> str:

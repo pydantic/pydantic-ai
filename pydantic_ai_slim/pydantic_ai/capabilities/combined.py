@@ -147,34 +147,38 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         # are built from the same list, and `sort_capabilities` is stable, so neither reorders one
         # occurrence of an object past another.
         pending = {key: list(decisions) for key, decisions in replacements.items()}
-
-        def take(capability: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT] | None:
-            decisions = pending[id(capability)]
-            return decisions.pop(0) if len(decisions) > 1 else decisions[0]
-
-        def rebind(source: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT] | None:
-            if id(source) in replacements:
-                return take(source)
-            # Anything else is a retained container: `_instruction_sources` holds either direct
-            # children, replaced above, or the containers flattening splatted out. Those are not in
-            # `capabilities` and so not in `replacements`, and left alone one would keep answering
-            # from the children it had before the bind, with its leaves absent from the ordering
-            # positions sorting its part last. Its children *are* in `replacements`, having been
-            # flattened into the very list that was just rebound, so rebuild it from those.
-            assert isinstance(source, CombinedCapability)
-            rebound_children = [
-                child if id(child) not in replacements else take(child) for child in source.capabilities
-            ]
-            surviving = [child for child in rebound_children if child is not None]
-            # A retained container that lost every child contributes no instructions any more, so
-            # it drops out of the composition view rather than lingering as an empty source.
-            return source._rebound(surviving, replacements) if surviving else None
-
         new_self._instruction_sources = [
-            rebound for source in new_self._instruction_sources if (rebound := rebind(source)) is not None
+            rebound
+            for source in new_self._instruction_sources
+            if (rebound := self.__rebind_source(source, replacements, pending)) is not None
         ]
         new_self.__normalize_capabilities()
         return new_self
+
+    # Name-mangled for the same reason as `__normalize_capabilities`: it is part of the rebind invariant.
+    def __rebind_source(
+        self,
+        source: AbstractCapability[AgentDepsT],
+        replacements: Mapping[int, Sequence[AbstractCapability[AgentDepsT] | None]],
+        pending: dict[int, list[AbstractCapability[AgentDepsT] | None]],
+    ) -> AbstractCapability[AgentDepsT] | None:
+        """What an instruction source of a rebound container becomes, taking its decisions from `pending`."""
+        if id(source) in replacements:
+            return _take_decision(source, pending)
+        # Anything else is a retained container: `_instruction_sources` holds either direct
+        # children, replaced above, or the containers flattening splatted out. Those are not in
+        # `capabilities` and so not in `replacements`, and left alone one would keep answering
+        # from the children it had before the bind, with its leaves absent from the ordering
+        # positions sorting its part last. Its children *are* in `replacements`, having been
+        # flattened into the very list that was just rebound, so rebuild it from those.
+        assert isinstance(source, CombinedCapability)
+        rebound_children = [
+            child if id(child) not in replacements else _take_decision(child, pending) for child in source.capabilities
+        ]
+        surviving = [child for child in rebound_children if child is not None]
+        # A retained container that lost every child contributes no instructions any more, so
+        # it drops out of the composition view rather than lingering as an empty source.
+        return source._rebound(surviving, replacements) if surviving else None
 
     # Name-mangled deliberately: this upholds a base-class invariant on rebinds, so a
     # subclass attribute of the same name must not be able to override it.
@@ -1120,6 +1124,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 break
             remaining = remaining_or_none
         return accumulated if any_handled else None
+
+
+def _take_decision(
+    capability: AbstractCapability[AgentDepsT],
+    pending: dict[int, list[AbstractCapability[AgentDepsT] | None]],
+) -> AbstractCapability[AgentDepsT] | None:
+    decisions = pending[id(capability)]
+    return decisions.pop(0) if len(decisions) > 1 else decisions[0]
 
 
 # --- Composition helpers ---
