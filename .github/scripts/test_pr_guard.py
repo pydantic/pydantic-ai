@@ -93,7 +93,7 @@ elif args[:1] == ['api']:
             not_found()
         respond({'role_name': role})
     elif endpoint == f'repos/{repo}/issues/{pr}/timeline':
-        respond([])
+        respond(state['pr_timeline'])
     elif endpoint == f'repos/{repo}/issues/{issue}/timeline':
         if state['issue_timeline'] is None:
             not_found()
@@ -134,6 +134,7 @@ class Case:
     fails: bool = False
     # A closing reference to a pull request links no issue.
     issue_is_pull_request: bool = False
+    pr_timeline: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
 
 
 PYDANTY_TRIAGE = [
@@ -199,6 +200,10 @@ CASES: list[Case] = [
         issue_author='reporter',
         issue_timeline=[_event('commented', 'writer')],
     ),
+    # Each case runs the guard as the contributor, as the sweep does when the author's event in its window is the
+    # latest, even when a maintainer reopened the PR after it.
+    Case(id='reopened-by-a-maintainer', closed=False, pr_timeline=[_event('reopened', 'lead')]),
+    Case(id='reopened-only-by-its-author', closed=True, pr_timeline=[_event('reopened', CONTRIBUTOR)]),
 ]
 
 
@@ -223,6 +228,7 @@ def _run_guard(case: Case, tmp_path: Path) -> tuple[subprocess.CompletedProcess[
             **({'pull_request': {}} if case.issue_is_pull_request else {}),
         },
         'issue_timeline': case.issue_timeline,
+        'pr_timeline': case.pr_timeline,
         'roles': ROLES,
         'files': [{'filename': 'pydantic_ai_slim/pydantic_ai/agent.py'}],
     }
