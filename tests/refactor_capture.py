@@ -671,7 +671,7 @@ class RefactorCapture:
         self._tool_calls: list[tuple[dict[str, object], tuple[str | None, int], str]] = []
         # Each span record with its span's number, and the number of each span started since the records were last
         # written, by span ID, in the order they started, which `write` records the spans in: concurrent tool calls
-        # end theirs in any order. `next` on a count is atomic, so spans started on two threads at once get two numbers.
+        # end theirs in any order. Numbers come from a count, not the dict's length, which two threads can read at once.
         self._spans: list[tuple[int, dict[str, object]]] = []
         self._span_numbers: dict[int, int] = {}
         self._span_count = itertools.count()
@@ -1827,9 +1827,10 @@ class RefactorCapture:
 
     def _span_number(self, span_id: int) -> int:
         """The number of the span `span_id`, which it takes from the count the first time."""
-        if span_id not in self._span_numbers:
-            self._span_numbers[span_id] = next(self._span_count)
-        return self._span_numbers[span_id]
+        number = self._span_numbers.get(span_id)
+        if number is None:
+            number = self._span_numbers.setdefault(span_id, next(self._span_count))
+        return number
 
     def _span_record(self, span: ReadableSpan, number: int) -> dict[str, object]:
         """A record of `span`, which has ended, numbered `number`, with its parent named by its number."""

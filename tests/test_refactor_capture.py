@@ -1227,6 +1227,10 @@ def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCaptur
     """
     monkeypatch.setenv('PYTEST_DISABLE_PLUGIN_AUTOLOAD', '1')
     monkeypatch.delenv('PYTEST_XDIST_WORKER', raising=False)
+    # The Anthropic SDK traces each request through the global tracer provider, which an earlier test in this worker
+    # may have set, like one that calls `logfire.configure()`, so the inner sessions would record its spans or not
+    # depending on what ran before them.
+    monkeypatch.setenv('ANTHROPIC_OPEN_TELEMETRY', 'false')
     # The inner sessions share this worker's `random` with every thread an earlier test left running, and such a
     # thread can draw from it between the capture's seed and an inner test's draw: Prefect's events client keeps a
     # `websockets` connection open whose pings draw `random.getrandbits(32)`. So the capture's seed also seeds `rng`,
