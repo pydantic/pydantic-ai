@@ -6093,12 +6093,6 @@ class ModelResponse:
         already holds the gateway-reported cost when available, whereas `cost()` always computes a local estimate
         via `genai-prices`.
 
-        Raises:
-            ValueError: If the response omitted usage (`usage.unmeasured_requests` is non-zero) or contains
-                inconsistent usage counts.
-            LookupError: If `genai-prices` has no pricing data for the provider or model — for example, on a custom
-                OpenAI-compatible endpoint whose provider `genai-prices` can't infer.
-
         If `cost()` raises `LookupError` because the provider wasn't matched, call `genai_prices.calc_price` directly
         with an explicit `provider_id`:
 
@@ -6127,6 +6121,12 @@ class ModelResponse:
                 price_context=response.provider_details,
             )
         ```
+
+        Raises:
+            ValueError: If the response omitted usage (`usage.unmeasured_requests` is non-zero) or contains
+                inconsistent usage counts.
+            LookupError: If `genai-prices` has no pricing data for the provider or model — for example, on a custom
+                OpenAI-compatible endpoint whose provider `genai-prices` can't infer.
         """
         assert self.model_name, 'Model name is required to calculate price'
         if self.usage.unmeasured_requests:
