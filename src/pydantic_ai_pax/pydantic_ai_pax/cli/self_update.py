@@ -1,18 +1,17 @@
-"""`/update`: find a newer CLAI on the chosen channel and reinstall the `uv tool` environment with it.
+"""`/update`: find a newer Pax on the chosen channel and reinstall the `uv tool` environment with it.
 
 `stable` follows PyPI releases. `main` follows the `clai2-bleeding` GitHub release, which CI refreshes with
-sdists built from each `main` commit that changes CLAI or a package it pins. It installs CLAI with the harness
+sdists built from each `main` commit that changes Pax or a package it pins. It installs Pax with the harness
 and core sdists from the same commit, whose exact dev pins are not on PyPI. Release downloads are not GitHub
 API requests, so neither the check nor the install needs `git` or meets the unauthenticated API rate limit. A
-source checkout is updated the same way: the install becomes a `uv tool` CLAI. CLAI then restarts as the new build and resumes the conversation,
+source checkout is updated the same way: the install becomes a `uv tool` Pax. Pax then restarts as the new build and resumes the conversation,
 serving its web UI again on the same port with the same token when one ran.
 The install replaces the environment's files, so it is refused while another `pax` process runs from it; one
 started while uv installs is not covered.
 On Windows, which locks the files of a running program, the install runs in a new PowerShell window after
-CLAI exits.
+Pax exits.
 """
 
-import base64
 import os
 import re
 import secrets
@@ -45,7 +44,7 @@ PACKAGES = (
     'pydantic-ai-pax',
     'pydantic-clai2',
     'pydantic-ai-harness[coder,skills]',
-    'pydantic-ai-slim[anthropic,mcp,openai]',
+    'pydantic-ai-slim[anthropic,google,mcp,openai]',
     'pydantic-graph',
 )
 """Requirements installed together from one commit's sdists; `scripts/build_bleeding.sh` builds the same list."""
@@ -89,13 +88,13 @@ _MANIFEST = TypeAdapter(_Manifest)
 
 
 def bleeding_url(*, environ: Mapping[str, str] = os.environ) -> str:
-    """The `clai2-bleeding` release's download folder: `CLAI_BLEEDING_URL` when set, otherwise CLAI's own release."""
+    """The `clai2-bleeding` release's download folder: `CLAI_BLEEDING_URL` when set, otherwise Pax's own release."""
     return environ.get(BLEEDING_URL_VARIABLE, '').rstrip('/') or BLEEDING_URL
 
 
 @dataclass(frozen=True, kw_only=True)
 class Installed:
-    """The running CLAI: its version, the commit it was built from, and whether `uv tool` owns it."""
+    """The running Pax: its version, the commit it was built from, and whether `uv tool` owns it."""
 
     version: str
     commit: str | None = None
@@ -138,7 +137,7 @@ def latest(channel: UpdateChannel, *, transport: 'httpx.BaseTransport | None' = 
 
 @dataclass(frozen=True, kw_only=True)
 class Update:
-    """A newer CLAI: a PyPI version for `stable`, a full commit SHA for `main`."""
+    """A newer Pax: a PyPI version for `stable`, a full commit SHA for `main`."""
 
     channel: UpdateChannel
     target: str
@@ -154,7 +153,7 @@ class Update:
         return f'{name} @ {bleeding_url()}/{stem}-{self.target}.tar.gz'
 
     def overrides(self) -> str:
-        """Install CLAI and its pinned packages from one commit, preserving extras that uv overrides replace."""
+        """Install Pax and its pinned packages from one commit, preserving extras that uv overrides replace."""
         return ''.join(f'{self.requirement(name)}\n' for name in PACKAGES)
 
     def command(self, *, uv: str, overrides: Path | None) -> list[str]:
@@ -205,18 +204,18 @@ def powershell(command: Sequence[str]) -> str:
 
 
 def after_exit_script(command: Sequence[str], *, pid: int, overrides: Path | None) -> str:
-    """A PowerShell script that waits for CLAI to exit, installs, removes `overrides`, and keeps its window open.
+    """A PowerShell script that waits for Pax to exit, installs, removes `overrides`, and keeps its window open.
 
-    Windows refuses to replace files a running program uses, so the install cannot run inside CLAI.
+    Windows refuses to replace files a running program uses, so the install cannot run inside Pax.
     """
     lines = [
         f'Wait-Process -Id {pid} -ErrorAction SilentlyContinue',
-        # The `clai2.exe` launcher exits just after the Python process it started.
+        # The `pax.exe` (or legacy `clai2.exe`) launcher exits just after the Python process it started.
         'Start-Sleep -Seconds 1',
         powershell(command),
         '$code = $LASTEXITCODE',
         *([f'Remove-Item -LiteralPath {_powershell_quote(str(overrides))}'] if overrides is not None else []),
-        f'if ($code -eq 0) {{ \'Updated CLAI. Start {command_name()} again.\' }} else {{ "uv exited with status $code." }}',
+        f'if ($code -eq 0) {{ \'Updated Pax. Start {command_name()} again.\' }} else {{ "uv exited with status $code." }}',
         "Read-Host 'Press Enter to close'",
     ]
     return '\n'.join(lines)
@@ -226,26 +225,36 @@ _CREATE_NEW_CONSOLE = 0x10
 """`subprocess.CREATE_NEW_CONSOLE`, which the module defines only on Windows."""
 
 
-def _start_detached(argv: Sequence[str]) -> None:  # pragma: no cover -- `creationflags` exists only on Windows
-    subprocess.Popen(argv, creationflags=_CREATE_NEW_CONSOLE, close_fds=True)
+def _start_detached(argv: Sequence[str], env: Mapping[str, str]) -> None:  # pragma: no cover -- Windows only
+    subprocess.Popen(argv, creationflags=_CREATE_NEW_CONSOLE, close_fds=True, env=env)
+
+
+_SCRIPT_VARIABLE = 'CLAI_UPDATE_SCRIPT'
 
 
 def install_after_exit(
     script: str,
     *,
     environ: Mapping[str, str] = os.environ,
-    start: Callable[[Sequence[str]], None] = _start_detached,
+    start: Callable[[Sequence[str], Mapping[str, str]], None] = _start_detached,
 ) -> None:
-    """Run `script` in a new console with Windows PowerShell, found by full path rather than a `PATH` search."""
+    """Run `script` in a new console with Windows PowerShell, found by full path rather than a `PATH` search.
+
+    The script reaches PowerShell in an environment variable, which it unsets before running the script, not on
+    its command line, where antivirus software flags an `-EncodedCommand` launch.
+    """
     root = environ.get('SystemRoot', r'C:\Windows')
     executable = f'{root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
-    encoded = base64.b64encode(script.encode('utf-16-le')).decode('ascii')
-    start([executable, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded])
+    bootstrap = f'$s = $env:{_SCRIPT_VARIABLE}; Remove-Item Env:{_SCRIPT_VARIABLE}; & ([ScriptBlock]::Create($s))'
+    start(
+        [executable, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', bootstrap],
+        {**environ, _SCRIPT_VARIABLE: script},
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
 class WebHandoff:
-    """The web UI a CLAI served when `/update` restarted it: the new build serves it again, so open pages reconnect."""
+    """The web UI a Pax served when `/update` restarted it: the new build serves it again, so open pages reconnect."""
 
     port: int
     token: str
@@ -254,7 +263,7 @@ class WebHandoff:
 class Relaunch(SystemExit):
     """Raised by `chat` and `run_web` once the shell has closed after `/update`: the CLI starts `executable` in its place.
 
-    A `SystemExit`, so a caller other than the CLI exits as it did before CLAI restarted itself.
+    A `SystemExit`, so a caller other than the CLI exits as it did before Pax restarted itself.
     """
 
     def __init__(
@@ -298,7 +307,7 @@ def _process_prefix() -> str:
 def hold_environment(prefix: Path = Path(sys.prefix)) -> IO[bytes] | None:
     """Mark this process as running from the `uv tool` environment at `prefix` while the returned file stays open.
 
-    `None` outside a `uv tool` environment, on Windows (whose install waits for CLAI to exit), or where the lock
+    `None` outside a `uv tool` environment, on Windows (whose install waits for Pax to exit), or where the lock
     cannot be taken. The kernel releases the lock however the process ends; `running_elsewhere` then removes the file.
     """
     if sys.platform == 'win32' or not (prefix / 'uv-receipt.toml').is_file():
@@ -325,7 +334,7 @@ def hold_environment(prefix: Path = Path(sys.prefix)) -> IO[bytes] | None:
 
 def running_elsewhere(environment: Path) -> list[str]:
     """The PIDs of the other `pax` processes running from `environment`; removes the files of ones that exited."""
-    if sys.platform == 'win32':  # pragma: no cover -- `fcntl` is POSIX only, and Windows installs after CLAI exits.
+    if sys.platform == 'win32':  # pragma: no cover -- `fcntl` is POSIX only, and Windows installs after Pax exits.
         return []
     import fcntl
 
@@ -352,7 +361,7 @@ async def sibling_processes(uv: str) -> list[str]:
 
 
 def _in_thread(work: Callable[[], None]) -> None:
-    threading.Thread(target=work, name='clai-update-check', daemon=True).start()
+    threading.Thread(target=work, name='pax-update-check', daemon=True).start()
 
 
 Output = Callable[[str], Awaitable[None]]
@@ -388,19 +397,19 @@ async def _print_line(line: bytes, output: Output) -> None:
 
 def _write_overrides(text: str) -> Path:
     # A private file, not a fixed name in a shared temporary folder another user could plant first.
-    descriptor, name = tempfile.mkstemp(prefix='clai2-overrides-', suffix='.txt')
+    descriptor, name = tempfile.mkstemp(prefix='pax-overrides-', suffix='.txt')
     with os.fdopen(descriptor, 'w', encoding='utf-8') as file:
         file.write(text)
     return Path(name)
 
 
 CHECK_MAX_AGE = 3600.0
-"""Seconds before the footer checks for a newer CLAI again."""
+"""Seconds before the footer checks for a newer Pax again."""
 
 
 @dataclass(frozen=True, kw_only=True)
 class UpdateCheck:
-    """What a check of `channel` found: a newer CLAI in `update`, none, or the `error` that kept it from telling."""
+    """What a check of `channel` found: a newer Pax in `update`, none, or the `error` that kept it from telling."""
 
     channel: UpdateChannel
     update: Update | None = None
@@ -427,11 +436,11 @@ class Updates:
     capture: Callable[[], bool] = lambda: False
     """Whether to read uv's lines for `report`, which turns uv's progress bars into plain lines: only for a page."""
     serving: Callable[[], WebHandoff | None] = lambda: None
-    """The web UI served now, for the new `pax` to serve again once `/update` restarts CLAI."""
+    """The web UI served now, for the new `pax` to serve again once `/update` restarts Pax."""
     find_uv: Callable[[], str | None] = find_uv
     windows: bool = os.name == 'nt'
     hand_off: Callable[[str], None] = install_after_exit
-    """Starts the Windows install that runs after CLAI exits."""
+    """Starts the Windows install that runs after Pax exits."""
     locate: Callable[[str], Awaitable[str | None]] = tool_executable
     """Finds the installed `pax` from the uv executable."""
     others: Callable[[str], Awaitable[list[str]]] = sibling_processes
@@ -503,19 +512,19 @@ class Updates:
         done.set()
 
     async def command(self, args: list[str]) -> str:
-        """Install the newest CLAI on the current channel with `uv tool install`, then restart into it.
+        """Install the newest Pax on the current channel with `uv tool install`, then restart into it.
 
         `/update now` in a session, where bare `/update` opens the menu; `pax --update` passes no arguments.
         """
         if args not in ([], ['now']):
             raise ValueError(
-                'Usage: /update opens the update menu; /update now installs the newest CLAI. '
+                'Usage: /update opens the update menu; /update now installs the newest Pax. '
                 'Pick the channel with /set updates.channel stable|main.'
             )
         channel = self.channel()
         update = find_update(channel, self.current, await to_thread.run_sync(self.fetch, channel))
         if update is None:
-            return f'CLAI {self.current.label} is the newest on the {channel} channel.'
+            return f'Pax {self.current.label} is the newest on the {channel} channel.'
         uv = await to_thread.run_sync(self.find_uv)
         if (refusal := await self._in_use(uv, update)) is not None:
             return refusal
@@ -526,7 +535,7 @@ class Updates:
             # Keep the overrides file: the printed command reads it.
             shown = powershell(command) if self.windows else shlex.join(command)
             return (
-                f'CLAI {update.label} is available on the {channel} channel. CLAI updates itself only when uv is '
+                f'Pax {update.label} is available on the {channel} channel. Pax updates itself only when uv is '
                 f'on PATH. To update by hand, run:\n{shown}'
             )
         if self.windows:
@@ -534,7 +543,7 @@ class Updates:
             self.hand_off(after_exit_script(command, pid=os.getpid(), overrides=overrides))
             self.restart_required = True
             return (
-                f'Installing CLAI {update.label} ({channel}) in a new window once CLAI exits. '
+                f'Installing Pax {update.label} ({channel}) in a new window once Pax exits. '
                 f'Exiting; start {command_name()} again when it finishes.'
             )
         report = self.report()
@@ -569,5 +578,5 @@ class Updates:
         self.web = served if self.relaunch is not None else None
         await tell('installed' if self.relaunch is None else 'restarting')
         if self.relaunch is None:
-            return f'Updated CLAI to {update.label} ({channel}). Exiting; start {command_name()} again to use it.'
-        return f'Updated CLAI to {update.label} ({channel}). Restarting...'
+            return f'Updated Pax to {update.label} ({channel}). Exiting; start {command_name()} again to use it.'
+        return f'Updated Pax to {update.label} ({channel}). Restarting...'

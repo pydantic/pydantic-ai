@@ -1,24 +1,26 @@
 """The terminal app: `chat`, its stock agent, and `open_stock_agent` for runs from code."""
 
 import os
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+import sys
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager, nullcontext
+from functools import partial
 from pathlib import Path
 from threading import Thread
 from typing import TypeVar
 
-from anyio import CancelScope, create_task_group
+from anyio import CancelScope, create_task_group, to_thread
 from pydantic import JsonValue
 from rich.console import Console
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
+from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_pax import warm_imports
-from pydantic_ai_pax.clai_docs import ClaiDocs
 from pydantic_ai_pax.cli.self_update import WebHandoff
 from pydantic_ai_pax.commands import (
     Commands,
@@ -28,6 +30,7 @@ from pydantic_ai_pax.config.builtins import DEFAULT_PLUGINS, STOCK_PLUGINS
 from pydantic_ai_pax.config.project_settings import ProjectSettings, load_project_settings, with_current_approvals
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.models.resolver import ModelResolver
+from pydantic_ai_pax.pax_docs import LEGACY_CAPABILITY_ID, ClaiDocs, PaxDocs
 from pydantic_ai_pax.plugins import (
     SessionEndReason,
     SessionStart,
@@ -40,12 +43,14 @@ from pydantic_ai_pax.runtime.session import (
     ModelDefaults,
     SessionModels,
     StockAgent,
+    WorkspacelessCapability,
     local_workspace,
     resolve_model_name,
 )
 from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_ai_pax.runtime.strict_schemas import NON_STRICT_SCHEMAS
 from pydantic_ai_pax.runtime.temporary_directory import temporary_directory
+from pydantic_ai_pax.runtime.workspace_trust import describe
 from pydantic_ai_pax.runtime.worktrees import Worktree
 from pydantic_ai_pax.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_ai_pax.ui.prompt.terminal import Terminal
@@ -53,14 +58,19 @@ from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.welcome import print_welcome
 from pydantic_ai_pax.ui.stderr_relay import relay_stderr
 from pydantic_ai_pax.ui.telemetry_log import telemetry_log
+from pydantic_ai_pax.ui.terminal_background import terminal_background
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 
 
+def _resumed_docs(ctx: RunContext[None]) -> ClaiDocs | None:
+    return ClaiDocs() if LEGACY_CAPABILITY_ID in parse_loaded_capabilities(ctx.messages) else None
+
+
 def create_agent(model: str | None = None) -> Agent[None, str]:
-    """Build the base CLAI agent. The coding tools come from the built-in `coder` plugin, not from here."""
-    return Agent(model, deps_type=type(None), capabilities=[ClaiDocs()])
+    """Build the base Pax agent. The coding tools come from the built-in `coder` plugin, not from here."""
+    return Agent(model, deps_type=type(None), capabilities=[PaxDocs(), WorkspacelessCapability(_resumed_docs)])
 
 
 def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str]:
@@ -68,7 +78,13 @@ def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str
 
     It is named `clai2`, which its run spans carry and which Logfire Agent Control addresses it by.
     """
-    return StockAgent(model, deps_type=type(None), output_type=str, capabilities=[ClaiDocs()], name='clai2')
+    return StockAgent(
+        model,
+        deps_type=type(None),
+        output_type=str,
+        capabilities=[PaxDocs(), WorkspacelessCapability(_resumed_docs)],
+        name='clai2',
+    )
 
 
 @asynccontextmanager
@@ -79,13 +95,13 @@ async def open_stock_agent(
     capabilities: Sequence[AgentCapability[None]] = (),
     plugin_settings: Mapping[str, Mapping[str, JsonValue]] | None = None,
 ) -> AsyncGenerator[Agent[None, str]]:
-    """Open CLAI's stock coding agent for runs from code, without the terminal.
+    """Open Pax's stock coding agent for runs from code, without the terminal.
 
     The agent has the `coder`, `repo_context`, and `compaction` built-ins as the CLI configures them,
     then `capabilities`, all bound at construction so delegated tasks carry them too. It works in
     `workspace` on this machine unless one of `capabilities` supplies a workspace, such as a sandbox.
     Commands get this process's environment minus LLM provider API keys. Model names, the agent's own
-    and any a run passes, resolve as in the CLI and get CLAI's per-model defaults. Without `model`,
+    and any a run passes, resolve as in the CLI and get Pax's per-model defaults. Without `model`,
     each run must pass one.
 
     `plugin_settings` maps a built-in's id to settings merged over its stock ones, such as
@@ -121,7 +137,7 @@ async def open_stock_agent(
     reason: SessionEndReason = 'error'
     # A private settings store keeps the user's saved and drop-in plugins out; plugin output goes nowhere.
     root = Path(workspace).resolve()
-    async with temporary_directory(prefix='clai2-') as config:
+    async with temporary_directory(prefix='pax-') as config:
         with open(os.devnull, 'w', encoding='utf-8') as sink:
             console = Console(file=sink, force_terminal=False)
             store = SettingsStore(config / 'config.db')
@@ -184,7 +200,7 @@ async def chat(
 ) -> None:
     """Start an asyncio terminal conversation with a caller-supplied agent.
 
-    Esc cancels the current turn; Ctrl-C also clears idle input. Ctrl-D and `/exit` quit.
+    Esc cancels the current turn; Ctrl+C also clears idle input. Ctrl+D and `/exit` quit.
     Failed and cancelled turns retain their captured history. Resume never replays tools.
     `resume_from` imports `resume` from Claude Code or Codex instead; an empty `resume` browses its sessions.
     `project` is the parsed `.clai/settings.json`; layer its overrides into `settings` yourself.
@@ -194,7 +210,7 @@ async def chat(
     `session_id` names the new conversation, or the copy. These follow the CLI's rules: a bad combination,
     or a `session_id` that is not a UUID, raises `ValueError` before anything is drawn.
     `worktree` is the checkout `--worktree` opened; its path and branch are shown under the launch banner.
-    `web` is the web UI CLAI served before `/update` restarted it: the `web` plugin serves it again, with no
+    `web` is the web UI Pax served before `/update` restarted it: the `web` plugin serves it again, with no
     browser opening, so its open pages reconnect.
     `settings_for` gives the settings of a session the web UI opens in another directory, beside that one's
     project file; without it, such a session starts with `settings`. The terminal shows one session at a
@@ -207,7 +223,9 @@ async def chat(
     transcript = TranscriptBuffer()
     use_defaults = builtin_plugins is DEFAULT_PLUGINS
     use_stock_defaults = builtin_plugins is STOCK_PLUGINS
-    shell = _create_home_shell(
+    # Before the banner, the first output painted in the theme's colours.
+    background = _terminal_background(console)
+    shell: SessionRuntime[DepsT, OutputT] = _create_home_shell(
         agent,
         deps=deps,
         plugins=plugins,
@@ -221,7 +239,10 @@ async def chat(
         load_plugins=load_plugins,
         settings_for=settings_for,
         worktree=worktree,
+        background=background,
     )
+    with theme.use(lambda: shell.context.settings.theme, background=background), transcript.capture(console):
+        await _decide_trust(shell, console=console)
     fresh = False
     warming: Thread | None = None
     served: WebHandoff | None = None
@@ -251,6 +272,7 @@ async def chat(
                 with theme.use(
                     lambda terminal=terminal: (terminal.shown or shell).context.settings.theme,
                     output=console.file if console.is_terminal else None,
+                    background=background,
                 ):
                     try:
                         # Sessions the web UI opens run beside this one, from the start: plugins may open some.
@@ -310,10 +332,15 @@ async def chat(
                     resume = _continued_conversation(last, home=shell)
                 else:
                     with transcript.capture(console):
-                        console.print('CLAI2 reloaded. Conversation preserved.', style=theme.color(theme.INFO))
+                        console.print('Pax reloaded. Conversation preserved.', style=theme.color(theme.INFO))
                     fresh = True
             if (relaunch := last.relaunch(web=served)) is not None:
                 raise relaunch
+
+
+def _terminal_background(console: Console) -> str | None:
+    """The terminal's background, asked only when `console` is that terminal, as `theme.use(output=...)` is gated."""
+    return terminal_background() if console.is_terminal else None
 
 
 def _create_home_shell(
@@ -331,9 +358,13 @@ def _create_home_shell(
     load_plugins: bool,
     settings_for: Callable[[ProjectSettings], Settings] | None,
     worktree: Worktree | None,
+    background: str | None,
 ) -> SessionRuntime[DepsT, OutputT]:
-    """Build the session CLAI starts with, under the launch banner."""
-    with theme.use(lambda: settings.theme if settings is not None else 'default'), transcript.capture(console):
+    """Build the session Pax starts with, under the launch banner, in colours for the terminal's `background`."""
+    with (
+        theme.use(lambda: settings.theme if settings is not None else 'default', background=background),
+        transcript.capture(console),
+    ):
         project = project or ProjectSettings()
         print_welcome(project, console, worktree=worktree)
         return create_shell(
@@ -350,6 +381,42 @@ def _create_home_shell(
             load_plugins=load_plugins,
             settings_for=settings_for,
         )
+
+
+async def _decide_trust(
+    shell: SessionRuntime[DepsT, OutputT],
+    *,
+    console: Console,
+    ask: Callable[[str], Awaitable[bool | None]] | None = None,
+) -> None:
+    """Ask whether you trust the folder of `shell`, the session Pax starts with, unless you decided before.
+
+    Asked only with a terminal to answer in, before any plugin loads or turn runs, through `ask` (by default
+    the inline question), and kept in your settings unless dismissed (`None`), which keeps the folder untrusted
+    for this session and asks again next launch. Nothing the folder holds is read to decide whether to ask,
+    only its file names to say what trusting it covers.
+    """
+    trust = shell.session.trust
+    assert trust is not None, 'create_shell sets the trust of every session it builds'
+    if trust.decided or not (console.is_terminal and sys.stdin.isatty()):
+        return
+    if ask is None:
+        from pydantic_ai_pax.ui.menus.trust_prompt import ask_trust
+
+        ask = partial(ask_trust, console=console)
+    trusted = await ask(await to_thread.run_sync(describe, trust, Path(shell.session.workspace)))
+    if trusted is None:
+        console.print(
+            "Untrusted for this session: instruction files and skills reach the model as the repository's. "
+            '/trust changes it.',
+            style=theme.color(theme.INFO),
+            markup=False,
+        )
+        return
+    await shell.process.decide_trust(trust, trusted=trusted)
+    level = 'Trusted' if trusted else "Untrusted: instruction files and skills reach the model as the repository's"
+    held = '' if trust.scope.remembered else ' for this session'
+    console.print(f'{level}{held}. /trust changes it.', style=theme.color(theme.INFO), markup=False)
 
 
 async def _start_session(
@@ -393,12 +460,12 @@ async def _close_home_shell(
     transcript: TranscriptBuffer,
     console: Console,
 ) -> SessionRuntime[DepsT, OutputT]:
-    """Close `shell`, the session CLAI started with, unless it closed already; return the session shown last."""
-    # The session shown last restarts CLAI: `/reload` and `/update` work in it.
+    """Close `shell`, the session Pax started with, unless it closed already; return the session shown last."""
+    # The session shown last restarts Pax: `/reload` and `/update` work in it.
     last = terminal.ended_in or shell
     if not terminal.home_closed:
         with transcript.capture(console):
-            # It ends for good when another session's reload or exit restarts or ends CLAI.
+            # It ends for good when another session's reload or exit restarts or ends Pax.
             await shell.close(reason if last is shell else 'exit')
     return last
 
@@ -417,7 +484,7 @@ def _reload_shell(
     transcript: TranscriptBuffer,
     load_plugins: bool,
 ) -> SessionRuntime[DepsT, OutputT]:
-    """Reload CLAI's modules and rebuild the session CLAI started with from `last`, the session shown last."""
+    """Reload Pax's modules and rebuild the session Pax started with from `last`, the session shown last."""
     return reload_clai(
         lambda shell=last: create_shell(
             rebuild_stock(()) if rebuild_stock is not None else agent,
@@ -438,6 +505,8 @@ def _reload_shell(
             load_plugins=load_plugins,
             workspace=Path(shell.session.workspace),
             settings_for=shell.context.settings_for,
+            # A reload keeps the decision, also one held for the session only, as in your home folder.
+            trust=shell.session.trust,
         )
     )
 
@@ -447,7 +516,7 @@ def _continued_conversation(
 ) -> str | None:
     """The conversation `home` resumes after a failed reload: that of `last`, the session shown that asked for it.
 
-    `home`, the session CLAI started with, resumes nothing when it asked for the reload itself.
+    `home`, the session Pax started with, resumes nothing when it asked for the reload itself.
     """
     return None if last is home else last.session.conversation_id
 
@@ -456,7 +525,7 @@ def _report_reload_failure(exc: Exception, *, console: Console) -> None:
     console.print(f'Reload failed: {type(exc).__name__}: {exc}', style=theme.color(theme.ERROR), markup=False)
     if isinstance(exc, ImportError) and exc.name and exc.name.startswith('pydantic_ai_harness'):
         console.print(
-            'Harness is not refreshed by /reload. Restart CLAI2 with the same launch options and '
+            'Harness is not refreshed by /reload. Restart Pax with the same launch options and '
             '--resume to continue this session. Keep the worktree if asked to remove it.',
             style=theme.color(theme.INFO),
             markup=False,
@@ -464,7 +533,7 @@ def _report_reload_failure(exc: Exception, *, console: Console) -> None:
 
 
 async def _serve_again(loader: SessionPlugins[DepsT], web: WebHandoff | None, *, console: Console) -> None:
-    """Serve `web` again, the web UI CLAI served before `/update` restarted it; nothing without one."""
+    """Serve `web` again, the web UI Pax served before `/update` restarted it; nothing without one."""
     if web is not None:
         from pydantic_ai_pax.cli.web import serve_again
 
@@ -481,7 +550,7 @@ def _opener(
     load_plugins: bool,
     console: Callable[[], Console],
 ) -> Callable[[Path | None], SessionRuntime[DepsT, OutputT]]:
-    """Builds a session the web UI opens beside `shell`, in a directory, by default the one CLAI started in."""
+    """Builds a session the web UI opens beside `shell`, in a directory, by default the one Pax started in."""
     launched_in, launch_project = Path(shell.session.workspace), shell.context.project
 
     def build(directory: Path | None) -> SessionRuntime[DepsT, OutputT]:

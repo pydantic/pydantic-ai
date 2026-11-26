@@ -22,16 +22,27 @@ from rich.text import Text
 from termflow.ansi import make_clipboard_copy
 from termflow.tui.completion import Completion
 
-from pydantic_ai import PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta, ThinkingPart
-from pydantic_ai.messages import BinaryContent
+from pydantic_ai import (
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+    ThinkingPart,
+)
+from pydantic_ai.messages import BinaryContent, ToolCallPart, ToolReturnPart
+from pydantic_ai_harness.shell import CommandFinishedEvent
 from pydantic_ai_pax import StreamRenderer
 from pydantic_ai_pax.commands import Command, Commands
 from pydantic_ai_pax.ui.prompt.image_input import ImageInput
 from pydantic_ai_pax.ui.prompt.interrupts import Interrupts
 from pydantic_ai_pax.ui.prompt.live_prompt import IDLE_REPAINT, LivePrompt, PromptWakeup
 from pydantic_ai_pax.ui.prompt.prompt_completion import CompletionWorker
+from pydantic_ai_pax.ui.prompt.prompt_selection import LINK_END, LINK_START, hyperlink
 from pydantic_ai_pax.ui.prompt.prompt_surface import ENTER, KEYS_ON, LEAVE, MODES_OFF, WHEEL_ROWS
 from pydantic_ai_pax.ui.rendering import theme
+from pydantic_ai_pax.ui.rendering.status import Status, StatusLink
 from tests.conftest import no_leaked_tasks
 from tests.pax.surface_terminal import SurfaceTerminal
 
@@ -45,6 +56,7 @@ async def editor(
     panel: Callable[[str], Sequence[str]] = lambda _: (),
     key_wait_limit: float = 5,
     inline: bool = False,
+    width: int = 80,
 ) -> AsyncGenerator[tuple[LivePrompt, PipeInput, io.StringIO]]:
     """An opened editor on a pipe; `key_wait_limit` fails a test left waiting for keys that never come.
 
@@ -53,7 +65,7 @@ async def editor(
     A test that feeds no keys and writes to a real store passes a limit no stall reaches: a slow disk is no hang.
     """
     output = output if output is not None else io.StringIO()
-    console = Console(file=output, force_terminal=True, width=80, height=24)
+    console = Console(file=output, force_terminal=True, width=width, height=24)
     commands = Commands()
     commands.register(Command(name='help', description='Help', handler=lambda args: 'help'))
     with (
@@ -226,6 +238,50 @@ async def test_interrupt_targets_work_and_preserves_draft(key: str) -> None:
         assert live.buffer.text == 'retained draft'
 
 
+async def test_working_rule_counts_the_turn_and_names_esc() -> None:
+    now = [100.0]
+    async with editor() as (live, pipe, _):
+        live.interrupts = Interrupts(clock=lambda: now[0])
+        live.ctrl_enter_steers = False
+        started, done = anyio.Event(), anyio.Event()
+
+        async def operation() -> None:
+            started.set()
+            await anyio.sleep_forever()
+
+        async def run() -> None:
+            assert not await live.interrupts.run(operation())
+            done.set()
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(run)
+            await started.wait()
+            now[0] += 72
+            rule = next(Text.from_ansi(row).plain for row in live.frame() if 'Working' in row)
+            assert rule.startswith('─ Working ⠋ 1m 12s · Esc to interrupt ─')
+            # Too narrow for every hint: a draft's own keys outrank the Esc hint.
+            live.buffer.replace('typed')
+            live.console.width = 60
+            rule = next(Text.from_ansi(row).plain for row in live.frame() if 'Working' in row)
+            assert rule == '─ Working ⠋ 1m 12s · Enter to queue · Alt+Enter to steer ───'
+            live.console.width = 50
+            rule = next(Text.from_ansi(row).plain for row in live.frame() if 'Working' in row)
+            assert rule == '─ Working ⠋ Enter to queue · Alt+Enter to steer ──'
+            live.buffer.replace('')
+            live.console.width = 30
+            rule = next(Text.from_ansi(row).plain for row in live.frame() if 'Working' in row)
+            assert rule == '─ Working ⠋ Esc to interrupt ─'
+            # A queued prompt keeps the hints with an empty draft: it can still be steered in.
+            live.submit('follow-up')
+            live.console.width = 50
+            rule = next(Text.from_ansi(row).plain for row in live.frame() if 'Working' in row)
+            assert rule == '─ Working ⠋ Enter to queue · Alt+Enter to steer ──'
+            pipe.send_text('\x1b')
+            await done.wait()
+        assert not live.interrupts.exit_requested
+        assert live.interrupts.elapsed == 0
+
+
 async def test_ctrl_l_clears_the_screen_but_keeps_the_draft_and_queue() -> None:
     terminal = SurfaceTerminal(width=80, height=24)
     async with editor(output=terminal) as (live, pipe, _):
@@ -364,6 +420,25 @@ async def test_queue_labels_and_small_terminal() -> None:
         assert await live.read() == '/help'
         live.console.size = (3, 3)
         assert len(live.frame()) == 1
+
+
+async def test_draft_rows_follow_a_prompt_marker() -> None:
+    async with editor() as (live, _, _):
+        live.buffer.replace('a' * 79 + '\nxy')
+        frame = live.frame()
+        # The title rule, three draft rows, the bottom rule, and the footer.
+        draft = frame[1:-2]
+        assert [Text.from_ansi(row).plain for row in draft] == ['❯ ' + 'a' * 78, '  a', '  xy ']
+        # The cursor paints after the indent, not at the left edge.
+        assert draft[-1].endswith('  xy\x1b[7m \x1b[27m')
+        live.buffer.cursor = 0
+        first = live.frame()[1]
+        assert Text.from_ansi(first).plain == '❯ ' + 'a' * 78
+        assert first.index('❯') < first.index('\x1b[7ma\x1b[27m')
+        # A draft taller than its rows scrolls to the cursor, and the marker stays on the top row shown.
+        live.buffer.replace('\n'.join(f'line {index}' for index in range(20)))
+        plain = [Text.from_ansi(row).plain for row in live.frame()[1:-2]]
+        assert plain == ['❯ line 12', *(f'  line {index}' for index in range(13, 19)), '  line 19 ']
 
 
 async def test_completion_acceptance_and_cycling() -> None:
@@ -514,7 +589,7 @@ async def test_suggestions_expand_the_prompt_box() -> None:
         dashes = [index for index, row in enumerate(plain) if row and set(row) == {'─'}]
         top, bottom = dashes[0], dashes[-1]
         inside = plain[top + 1 : bottom]
-        assert inside[0].startswith('/he')
+        assert inside[0].startswith('❯ /he')
         assert inside[1].startswith('/help Help')
         assert inside[2].startswith('/hello Hello command')
         assert all('│' not in row and not row.startswith('>') for row in inside)
@@ -553,7 +628,7 @@ async def test_completion_iteration_is_bounded_before_materializing() -> None:
             assert live.buffer.text == '/many '
 
 
-async def test_recalled_history_gets_completions_and_completed_draft_survives_navigation() -> None:
+async def test_recalled_completion_preserves_the_nonempty_draft_and_is_undoable() -> None:
     ready = anyio.Event()
 
     class Output(io.StringIO):
@@ -570,10 +645,12 @@ async def test_recalled_history_gets_completions_and_completed_draft_survives_na
         live.feed('tab')
         assert live.buffer.text == '/help'
         live.feed('escape')
-        live.feed('up')
-        assert live.buffer.text == '/he'
         live.feed('down')
+        assert live.buffer.text == 'original draft'
+        live.feed('ctrl-z')
         assert live.buffer.text == '/help'
+        live.feed('ctrl-y')
+        assert live.buffer.text == 'original draft'
 
 
 async def popup_shows(live: LivePrompt, text: str) -> None:
@@ -640,6 +717,66 @@ async def test_history_walk_keeps_arrows_through_recalled_commands() -> None:
         assert live.buffer.text == 'newest'
         live.feed('down')
         assert live.buffer.text == 'draft'
+
+
+async def test_edited_recalled_command_keeps_history_arrows_until_tab_selects() -> None:
+    async with editor() as (live, _, _):
+        live.commands.register(Command(name='hello', description='Hello command', handler=lambda args: 'hi'))
+        live.buffer.history = ['oldest', '/h']
+        live.buffer.insert('draft')
+        live.feed('up')
+        live.feed('e')
+        await popup_shows(live, 'Hello command')
+        assert highlighted(live) == []
+        live.feed('up')
+        assert live.buffer.text == 'oldest'
+        live.feed('down')
+        live.feed('down')
+        assert live.buffer.text == 'draft'
+
+    async with editor() as (live, _, _):
+        live.commands.register(Command(name='hello', description='Hello command', handler=lambda args: 'hi'))
+        live.buffer.history = ['/h']
+        live.buffer.insert('draft')
+        live.feed('up')
+        live.feed('e')
+        await popup_shows(live, 'Hello command')
+        live.feed('tab')
+        assert highlighted(live)[0].startswith('/help ')
+        live.feed('down')
+        assert live.buffer.text == '/he'
+        assert highlighted(live)[0].startswith('/hello ')
+        live.feed('escape')
+        live.feed('down')
+        assert live.buffer.text == 'draft'
+        live.feed('ctrl-z')
+        assert live.buffer.text == '/he'
+
+
+async def test_edited_multiline_recall_restores_draft_only_at_the_boundary() -> None:
+    async with editor() as (live, _, _):
+        live.buffer.history = ['first\nsecond']
+        live.buffer.insert('draft')
+        live.feed('up')
+        live.feed('x')
+        live.feed('up')
+        assert (live.buffer.text, live.buffer.cursor) == ('first\nsecondx', 5)
+        live.feed('down')
+        assert live.buffer.text == 'first\nsecondx'
+        live.feed('down')
+        assert live.buffer.text == 'draft'
+        live.feed('ctrl-z')
+        assert live.buffer.text == 'first\nsecondx'
+        live.feed('ctrl-y')
+        live.feed('enter')
+        assert await live.read() == 'draft'
+        for key in ('ctrl-z', 'ctrl-y'):
+            live.feed(key)
+            assert live.buffer.text == ''
+        live.feed('up')
+        live.feed('x')
+        live.feed('down')
+        assert live.buffer.text == 'draftx'
 
 
 async def test_tab_hands_arrows_to_popup_during_history_walk() -> None:
@@ -844,6 +981,47 @@ async def test_wheel_reports_arrive_through_the_decoder() -> None:
                 await anyio.sleep(0.01)
 
 
+@pytest.mark.parametrize('inline', [False, True])
+async def test_clicking_a_status_row_link_opens_it(inline: bool) -> None:
+    """Full screen, a click opens it; inline, the mouse is the terminal's, so the row carries an OSC 8 hyperlink."""
+    url = 'https://desktop.example/vnc.html?token=t'
+    status = Status(
+        model='m',
+        fields=lambda: ('plugins',),
+        status_segments=(lambda: 'docker sandbox', lambda: StatusLink(text='watch live', url=url)),
+    )
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal, toolbar=status.toolbar, inline=inline) as (live, _, _):
+        opened: list[str] = []
+        live.output.open_url = opened.append
+        live.paint()
+        if inline:
+            assert hyperlink('watch live ↗', url=url) in terminal.getvalue()
+            return
+        footer = terminal.lines()[-1]
+        assert footer.strip() == 'docker sandbox | watch live ↗'
+        column = footer.index('watch') + 1
+        live.feed('mouse', f'\x1b[<0;{column};24M')
+        live.feed('mouse', f'\x1b[<0;{column};24m')
+        assert opened == [url]
+
+
+async def test_a_footer_cut_inside_a_link_closes_it() -> None:
+    """Otherwise the terminal would link everything printed after the footer."""
+    url = 'https://desktop.example/vnc.html'
+    status = Status(
+        model='m',
+        fields=lambda: ('plugins',),
+        status_segments=(lambda: 'docker sandbox', lambda: StatusLink(text='watch live', url=url)),
+    )
+    terminal = SurfaceTerminal(width=24, height=24)
+    async with editor(output=terminal, toolbar=status.toolbar, inline=True, width=24) as (live, _, _):
+        live.paint()
+    cut = terminal.getvalue().rpartition(f'{LINK_START};{url}\x1b\\')[2]
+    row = cut.partition('\r')[0]
+    assert row.startswith('watch …') and LINK_END in row
+
+
 async def test_a_mouse_drag_copies_the_transcript_without_touching_the_draft() -> None:
     terminal = SurfaceTerminal(width=80, height=24)
     async with editor(output=terminal) as (live, pipe, _):
@@ -932,7 +1110,7 @@ async def test_windows_ctrl_enter_steers_and_shift_enter_inserts_a_newline(shift
         if windows:
             assert await live.read() == 'one\ntwo'
         else:
-            # Ctrl+Enter is Enter and Ctrl-J a newline, as before.
+            # Ctrl+Enter is Enter and Ctrl+J a newline, as before.
             assert await live.read() == 'steer'
             assert await live.read() == 'LF\none\ntwo'
     assert steered == (['steer', 'LF'] if windows else [])
@@ -1070,7 +1248,7 @@ async def test_the_editor_opens_compact_below_the_shell() -> None:
         assert not terminal.alternate
         lines = terminal.lines()
         assert lines[0] == '$ clai2' and lines[1] == ''
-        assert any(line.startswith('draft') for line in lines[2:6])
+        assert any(line.startswith('❯ draft') for line in lines[2:6])
         assert lines[-1] == '', 'the panel takes only the rows it needs'
 
 
@@ -1083,3 +1261,70 @@ async def test_the_full_screen_editor_takes_the_terminal_from_the_start() -> Non
         assert terminal.alternate
         assert terminal.lines()[0] == ''
         assert terminal.lines()[-1].strip() == 'ready', 'the editor sits at the bottom of the terminal'
+
+
+async def run_command(renderer: StreamRenderer, *, call_id: str, command: str, output: str) -> None:
+    """Stream a finished foreground command and its tool result, whose output ends with the harness's handles."""
+    await renderer.on_stream_event(
+        FunctionToolCallEvent(part=ToolCallPart('shell', {'command': command}, tool_call_id=call_id))
+    )
+    lines = output.count('\n')
+    await renderer.on_stream_event(
+        CommandFinishedEvent(
+            tool_call_id=call_id,
+            pid=7,
+            output_path='/tmp/out',
+            status_path='/tmp/status',
+            exit_code=0,
+            truncated=False,
+            line_count=lines,
+        )
+    )
+    result = f'{output}PID: 7 (supervisor; use `kill` to stop)\nOutput: /tmp/out\nStatus: /tmp/status'
+    await renderer.on_stream_event(FunctionToolResultEvent(part=ToolReturnPart('shell', result, tool_call_id=call_id)))
+    await renderer.finish()
+
+
+@pytest.mark.parametrize('inline', [False, True])
+async def test_ctrl_o_expands_command_output_in_place_and_keeps_it_across_a_resize(inline: bool) -> None:
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal, inline=inline) as (live, _, _):
+        renderer = StreamRenderer(live.console, stop_loading=lambda: None)
+        await run_command(renderer, call_id='s', command='make test', output='passed one\npassed two\n')
+
+        def shown() -> list[str]:
+            live.output.refresh()
+            live.paint()
+            return [line for line in terminal.lines() if line][:8]
+
+        assert shown()[:2] == ['● shell make test', '  ⎿ exit 0 · 2 lines · ctrl+o to expand']
+        live.feed('ctrl-o')
+        assert live.notice == 'Showing command output.'
+        expanded = ['● shell make test', '  ⎿ exit 0 · 2 lines', '    passed one', '    passed two']
+        assert shown()[:4] == expanded
+        assert live.output.full_screen is not inline, 'inline output that still fits stays inline'
+        # A result that arrives while output is shown opens expanded.
+        await run_command(renderer, call_id='l', command='ls', output='app.py\n')
+        assert shown()[4:7] == ['● shell ls', '  ⎿ exit 0 · 1 line', '    app.py']
+        terminal.resize(width=30, height=24)
+        live.console.size = (30, 24)
+        live.output.resize_notice()
+        assert shown()[:4] == expanded
+        live.feed('ctrl-o')
+        assert live.notice == 'Hiding command output.'
+        # The hint is left out where it does not fit.
+        assert shown()[:3] == ['● shell make test', '  ⎿ exit 0 · 2 lines', '● shell ls']
+
+
+async def test_ctrl_o_shows_output_already_printed_to_scrollback_on_the_alternate_screen() -> None:
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal, inline=True) as (live, _, _):
+        renderer = StreamRenderer(live.console, stop_loading=lambda: None)
+        await run_command(renderer, call_id='l', command='ls src', output='src/app.py\nsrc/util.py\n')
+        # A menu or command between turns prints the inline rows into the terminal's scrollback.
+        live.output.release()
+        live.paint()
+        assert not live.output.full_screen
+        live.feed('ctrl-o')
+        assert live.output.full_screen
+        assert '    src/util.py' in terminal.lines()

@@ -60,6 +60,7 @@ KEY_VARIABLES = {
     'cohere': ('CO_API_KEY',),
     'google': ('GOOGLE_API_KEY', 'GEMINI_API_KEY'),
     'google-decisions': ('GOOGLE_API_KEY', 'GEMINI_API_KEY'),
+    'google-interactions': ('GOOGLE_API_KEY', 'GEMINI_API_KEY'),
     'google-cloud': (),  # Application Default Credentials win over its key variables.
     'litellm': (),  # LiteLLM reads the key of the provider it routes to.
     'heroku': ('HEROKU_INFERENCE_KEY',),
@@ -70,7 +71,7 @@ KEY_VARIABLES = {
 """Providers whose API key variables are not just `PROVIDER_API_KEY`."""
 
 KEYED_ELSEWHERE = ('openrouter', 'vllm', 'github-copilot', 'openai-codex')
-"""Providers CLAI builds with the key `/model add` or `/login` saved, or a Codex sign-in, never a model's `api_key`."""
+"""Providers Pax builds with the key `/model add` or `/login` saved, or a Codex sign-in, never a model's `api_key`."""
 
 
 class KeyedProvider(Protocol):

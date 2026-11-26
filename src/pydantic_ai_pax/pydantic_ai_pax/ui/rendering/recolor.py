@@ -10,8 +10,12 @@ from pydantic_ai_pax.ui.rendering import theme
 
 
 @cache
-def _translation(source: str, target: str) -> dict[str, Color]:
-    """Each hex colour `source` paints a role with, to the colour `target` paints that role with."""
+def _translation(source: str, target: str, light_background: str | None, truecolor: bool) -> dict[str, Color]:
+    """Each hex colour `source` paints a role with, to the colour `target` paints that role with.
+
+    `light_background` and `truecolor` key the cache: the default theme's colours depend on the first, and
+    the prompt background on the second.
+    """
     painted = dict(theme.roles(target))
     table: dict[str, Color] = {}
     for role, colour in theme.roles(source):
@@ -23,7 +27,7 @@ def _translation(source: str, target: str) -> dict[str, Color]:
 
 def recolor(text: Text, *, source: str, target: str) -> Text:
     """`text`, painted in theme `source`, as theme `target` paints it; colours no role uses stay."""
-    table = _translation(source, target)
+    table = _translation(source, target, theme.light_background(), theme.truecolor())
 
     def swap(colour: Color | None) -> Color | None:
         if colour is None or colour.triplet is None:

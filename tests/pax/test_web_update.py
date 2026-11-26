@@ -53,7 +53,7 @@ def test_the_page_follows_an_update(code: int, make_web: MakeWeb, monkeypatch: p
     updates, _ = _updates(['stable'], codes=[code], lines=UV_LINES)
     _use(monkeypatch, updates)
     web_ = make_web(Agent(TestModel()))
-    # The test client serves the page without `/web`, which is what tells CLAI a page watches.
+    # The test client serves the page without `/web`, which is what tells Pax a page watches.
     updates.capture = lambda: True
     with web_.client.websocket_connect(
         f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
@@ -84,8 +84,8 @@ def test_the_page_follows_an_update(code: int, make_web: MakeWeb, monkeypatch: p
             web_.post('/api/input', {'text': '/exit'})
         else:
             assert changed.update == UpdateInfo(target='0.53.0', restarting=True)
-            assert result.text == 'Updated CLAI to 0.53.0 (stable). Restarting...'
-            # A page that connects, or reloads, before CLAI exits still shows the restart.
+            assert result.text == 'Updated Pax to 0.53.0 (stable). Restarting...'
+            # A page that connects, or reloads, before Pax exits still shows the restart.
             assert web_.get('/api/state').json()['update'] == {'target': '0.53.0', 'line': '', 'restarting': True}
         assert running.result(timeout=10) == 'exit'
 

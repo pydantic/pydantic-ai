@@ -168,7 +168,7 @@ def authentication_menu() -> Menu:
         )
         .preview(
             lambda item: (
-                'Authorize CLAI on openrouter.ai, or enter an existing API key. Credentials stay out of history.'
+                'Authorize Pax on openrouter.ai, or enter an existing API key. Credentials stay out of history.'
             )
         )
         .footer_hint('Enter selects - Esc closes')

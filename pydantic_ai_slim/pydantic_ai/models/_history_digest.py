@@ -17,6 +17,7 @@ from typing import Protocol, TypeVar
 from pydantic import TypeAdapter
 
 from ..messages import (
+    BaseToolCallPart,
     BaseToolReturnPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -45,15 +46,25 @@ class Hasher(Protocol):
 
 
 _RESPONSE_PART_ADAPTER: TypeAdapter[ModelResponsePart] = TypeAdapter(ModelResponsePart)
+_LEADING_INSTRUCTIONS_ADAPTER: TypeAdapter[list[str]] = TypeAdapter(list[str])
 
 
-def history_hasher(history: Sequence[ModelMessage], key: bytes | None, *, with_instructions: bool = False) -> Hasher:
+def history_hasher(
+    history: Sequence[ModelMessage],
+    key: bytes | None,
+    *,
+    with_instructions: bool = False,
+    leading_instructions: Sequence[str] = (),
+) -> Hasher:
     """A SHA-256, or an HMAC with `key`, fed the history a response is created from.
 
     A request's `instructions` are left out unless `with_instructions`: the server doesn't keep the top-level field
     with a response, so each request sends its own, and how an earlier request's instructions are rendered can differ
     between requests. Digests recorded before they were left out include them, as do those of requests that sent them
     as an input message.
+
+    `leading_instructions` are the instructions a conversation's stored input starts with, ahead of the history, so a
+    request only continues from it while it would send the same ones.
     """
     # `exclude_none` keeps the digest stable when a release adds a field, which loads as `None` from older histories.
     # `exclude_defaults` would go further, but it drops the part kinds too, so a role change would go unnoticed.
@@ -62,6 +73,9 @@ def history_hasher(history: Sequence[ModelMessage], key: bytes | None, *, with_i
         exclude_none=True,
     )
     hasher: Hasher = hashlib.sha256() if key is None else hmac.new(key, digestmod=hashlib.sha256)
+    if leading_instructions:
+        # An array of strings, where the serialized history is an array of objects, so the two can't be confused.
+        hasher.update(_LEADING_INSTRUCTIONS_ADAPTER.dump_json(list(leading_instructions)) + b'\n')
     hasher.update(serialized)
     return hasher
 
@@ -117,8 +131,12 @@ _PartT = TypeVar('_PartT', ModelRequestPart, ModelResponsePart)
 
 
 def part_without_application_metadata(part: _PartT) -> _PartT:
+    # `ui_visibility` only says what a UI client is sent, and a UI adapter run stamps native tool parts after the
+    # response's digest is taken, so a stamp mustn't change it either.
     if isinstance(part, BaseToolReturnPart):
-        return replace(part, metadata=None)
+        return replace(part, metadata=None, ui_visibility=None)
+    if isinstance(part, BaseToolCallPart):
+        return replace(part, ui_visibility=None)
     if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
         content = [replace(item, metadata=None) if isinstance(item, TextContent) else item for item in part.content]
         return replace(part, content=content)

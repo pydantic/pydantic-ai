@@ -13,24 +13,33 @@ import time
 from collections.abc import Generator
 from pathlib import Path
 from types import FrameType
+from typing import TYPE_CHECKING
 
 from rich.console import Console
 from rich.text import Text
 
-from pydantic_ai_pax.cli.shell_terminal import COMMAND_ENVIRONMENT, PtyRun, attached_terminal
+from pydantic_ai.workspaces import CommandResult, Workspace
+from pydantic_ai_pax.cli.shell_terminal import COMMAND_ENVIRONMENT, PtyRun, attached_terminal, ctrl_c_as_key
+from pydantic_ai_pax.errors import error_message
 from pydantic_ai_pax.runtime.processes import kill_process_tree, signal_process_group
 from pydantic_ai_pax.ui.menus.menu_worker import full_terminal
 from pydantic_ai_pax.ui.prompt.interrupts import Interrupts
 from pydantic_ai_pax.ui.rendering import theme
+from pydantic_ai_pax.ui.rendering.tool_output import terminal_text
 from pydantic_ai_pax.ui.stderr_relay import terminal_stderr
+
+if TYPE_CHECKING:
+    from pydantic_ai_pax.runtime.session import ShellLineWorkspace
 
 HELP = (
     '!COMMAND: Run COMMAND with the system shell (/bin/sh, or cmd.exe on Windows); save command and output for the next prompt.'
-    ' A full-screen program such as `!vim` gets the terminal, and only its exit status is saved\n'
-    '!!COMMAND: Give COMMAND the terminal from the start, for prompts and REPLs; save only its exit status'
+    ' In a /sandbox conversation it runs in the sandbox.'
+    ' On this machine, a full-screen program such as `!vim` gets the terminal, and only its exit status is saved\n'
+    '!!COMMAND: Give COMMAND the terminal from the start, for prompts and REPLs; save only its exit status.'
+    ' Only on this machine, not in a sandbox'
 )
 
-# Matches `subprocess.run`: a Ctrl-C'd child gets this long to exit on its own SIGINT before it is killed.
+# Matches `subprocess.run`: a Ctrl+C'd child gets this long to exit on its own SIGINT before it is killed.
 _INTERRUPT_GRACE = 0.25
 _OUTPUT_DRAIN_GRACE = 0.1
 _MAX_OUTPUT_CHARS = 100_000
@@ -55,7 +64,7 @@ class _ShellOutput(asyncio.SubprocessProtocol):
         if remaining >= 0:
             captured.write(text[:remaining])
             if len(text) > remaining:
-                captured.write(f'\n[Output truncated after {_MAX_OUTPUT_CHARS} characters]\n')
+                captured.write(_truncated())
         if text:
             self.console.print(text, end='', markup=False, highlight=False, soft_wrap=True)
             self.needs_newline = not text.endswith('\n')
@@ -83,8 +92,8 @@ class _ShellOutput(asyncio.SubprocessProtocol):
 
 
 def _interrupt(process: asyncio.SubprocessTransport) -> None:
-    """Forward Ctrl-C, which the terminal delivers to CLAI but not to a command in its own session."""
-    # The Windows console delivers Ctrl-C to every attached process.
+    """Forward Ctrl+C, which the terminal delivers to Pax but not to a command in its own session."""
+    # The Windows console delivers Ctrl+C to every attached process.
     if sys.platform != 'win32':  # pragma: no branch
         signal_process_group(process.get_pid(), signal.SIGINT)
 
@@ -105,10 +114,10 @@ def shell_command(text: str) -> str | None:
 async def run_shell_command(command: str, *, console: Console, interrupts: Interrupts, cwd: Path) -> str:
     """Run locally in `cwd`, the session's directory, and return context for the next model request.
 
-    Output streams to the transcript and is saved. On CLAI's terminal the command runs on a
+    Output streams to the transcript and is saved. On Pax's terminal the command runs on a
     pseudo-terminal (`PtyRun`), and a full-screen program gets the terminal itself, saving only its
     exit status. A leading `!` (typed as `!!command`) gives the command the terminal from the start
-    (`run_in_terminal`). Ctrl-C cancels only this command, not CLAI; cancellation terminates the
+    (`run_in_terminal`). Ctrl+C cancels only this command, not Pax; cancellation terminates the
     shell's process tree.
     """
     if command.startswith('!'):
@@ -152,12 +161,76 @@ async def run_shell_command(command: str, *, console: Console, interrupts: Inter
     )
 
 
+async def run_workspace_command(
+    command: str, *, place: 'ShellLineWorkspace', console: Console, interrupts: Interrupts
+) -> str | None:
+    """Run in `place`, such as the conversation's sandbox, and return context for the next model request.
+
+    The workspace returns the output once the command exits, so it shows then, not as it arrives.
+    Ctrl+C cancels the command, read as a key (`ctrl_c_as_key`) as for a local one. A `!!command` needs
+    this terminal, so it is refused and `None` returned.
+    """
+    if command.startswith('!'):
+        console.print(
+            f'!! needs this terminal, which {place.name} does not have. Nothing ran.',
+            style=theme.color(theme.WARNING),
+            markup=False,
+        )
+        return None
+    console.print(Text.assemble(('$ ', theme.color(theme.ACCENT)), command))
+    console.print(f'Runs in {place.name}; command and output saved for the next prompt', style=theme.color(theme.MUTED))
+    started = time.monotonic()
+    error: str | None = None
+    result: CommandResult | None = None
+
+    async def execute() -> None:
+        nonlocal result
+        result = await Workspace(place.workspace).run(command, shell=True)
+
+    completed = True
+    terminal = attached_terminal()
+    try:
+        with contextlib.nullcontext() if terminal is None else ctrl_c_as_key(terminal, interrupts.cancel):
+            completed = await interrupts.run(execute())
+    except Exception as exc:  # noqa: BLE001 -- a failed sandbox command must not end the shell.
+        error = error_message(exc)
+    stdout = stderr = ''
+    exit_code: int | None = None
+    if result is not None:
+        stdout, stderr, exit_code = _capped(result.stdout), _capped(result.stderr), result.exit_code
+        for text in (stdout, stderr):
+            if text:
+                # The sandbox's output, which a file it prints may control, gets no terminal escapes; the model sees it as is.
+                console.print(
+                    terminal_text(text),
+                    end='' if text.endswith('\n') else '\n',
+                    markup=False,
+                    highlight=False,
+                    soft_wrap=True,
+                )
+    status = _report(console, error=error, completed=completed, exit_code=exit_code, started=started)
+    return (
+        f'The user ran a shell command in {place.name} (not an agent tool call):\n'
+        f'$ {command}\n{status}\n\nstdout:\n{stdout}\n\nstderr:\n{stderr}'
+    )
+
+
+def _truncated() -> str:
+    """Marks a stream cut to `_MAX_OUTPUT_CHARS` in the context a `!` line saves, locally or in a sandbox."""
+    return f'\n[Output truncated after {_MAX_OUTPUT_CHARS} characters]\n'
+
+
+def _capped(text: str) -> str:
+    """`text` cut to the characters a `!` command saves for the model, marked when cut."""
+    return text if len(text) <= _MAX_OUTPUT_CHARS else text[:_MAX_OUTPUT_CHARS] + _truncated()
+
+
 async def _execute(command: str, *, output: _ShellOutput, cwd: Path) -> None:
     """Run `command` in `cwd` through `output`, on its pseudo-terminal if it has one, and record its exit status."""
     pty = output.pty
     loop = asyncio.get_running_loop()
     # A new POSIX session gives the command a process group to kill; `start_new_session` is
-    # ignored on Windows, where `taskkill /T` follows parent PIDs and the console's Ctrl-C
+    # ignored on Windows, where `taskkill /T` follows parent PIDs and the console's Ctrl+C
     # still reaches the command.
     # A child can signal us before asyncio returns its process handle. Keep spawning shielded so we can reap it.
     spawn_task = asyncio.create_task(
@@ -211,9 +284,9 @@ async def _execute(command: str, *, output: _ShellOutput, cwd: Path) -> None:
 async def run_in_terminal(command: str, *, console: Console, cwd: Path) -> str:
     """Hand the terminal to a command in `cwd` from the start; return context naming it and its exit status.
 
-    The live panel leaves the screen, the command inherits CLAI's standard streams, and the panel
-    repaints once it exits. The command stays in CLAI's process group, in the terminal's foreground,
-    so it gets Ctrl-C and window size changes itself. Its output is never captured.
+    The live panel leaves the screen, the command inherits Pax's standard streams, and the panel
+    repaints once it exits. The command stays in Pax's process group, in the terminal's foreground,
+    so it gets Ctrl+C and window size changes itself. Its output is never captured.
     """
     console.print(Text.assemble(('$ ', theme.color(theme.ACCENT)), command))
     console.print(
@@ -258,16 +331,16 @@ def _interactive_context(command: str, status: str) -> str:
 
 
 async def _wait_in_terminal(command: str, *, cwd: Path) -> int:
-    """Run `command` with CLAI's standard streams and return its exit status; cancellation kills it."""
+    """Run `command` with Pax's standard streams and return its exit status; cancellation kills it."""
     # Spawning is shielded, so a cancellation that arrives meanwhile still finds the process to kill.
     spawn = asyncio.create_task(asyncio.create_subprocess_shell(command, stderr=terminal_stderr(), cwd=cwd))
     try:
         process = await asyncio.shield(spawn)
         return await process.wait()
     except asyncio.CancelledError:
-        # Only the shell is killed, not a process tree: the command shares CLAI's process group, which
-        # keeps it in the terminal's foreground for Ctrl-C, Ctrl-Z, and resizes, so `killpg` would kill
-        # CLAI too. Ctrl-C is the command's, so this runs only when CLAI's own task is cancelled; a
+        # Only the shell is killed, not a process tree: the command shares Pax's process group, which
+        # keeps it in the terminal's foreground for Ctrl+C, Ctrl+Z, and resizes, so `killpg` would kill
+        # Pax too. Ctrl+C is the command's, so this runs only when Pax's own task is cancelled; a
         # terminal hangup still signals the whole group. Nothing is left to kill when spawning failed
         # or the process was already reaped.
         with contextlib.suppress(OSError, ValueError):
@@ -293,12 +366,12 @@ def terminal_modes_kept(fd: int = 0) -> Generator[None]:
 
 
 def _ignore(signum: int, frame: FrameType | None) -> None:
-    """Ctrl-C belongs to the command that has the terminal."""
+    """Ctrl+C belongs to the command that has the terminal."""
 
 
 @contextlib.contextmanager
 def _ctrl_c_ignored() -> Generator[None]:
-    """Leave Ctrl-C to the command, which the terminal signals along with CLAI.
+    """Leave Ctrl+C to the command, which the terminal signals along with Pax.
 
     A handler that does nothing, not `SIG_IGN`, which the command would inherit.
     """

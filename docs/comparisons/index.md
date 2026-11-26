@@ -22,4 +22,6 @@ These pages put Pydantic AI side by side with the frameworks people ask us about
 - [vs Agno](vs-agno.md)
 - [vs CrewAI](vs-crewai.md)
 
+Looking for a coding agent rather than a framework? [Pax](../harness/pax.md) is ours: a coding terminal built on the Harness that runs [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) by default, and runs your own Pydantic AI agent with `pax --agent my_module:agent`.
+
 Coming from one of these? [Migrate to Pydantic AI](../framework-migration.md) covers the migration skills your coding agent can use to port an existing application, and [Built with Pydantic AI](../built-with.md) lists projects and organizations running on Pydantic AI, several of which moved from LangChain.

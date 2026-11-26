@@ -14,17 +14,18 @@
 
 Everything here is one primitive: a [capability](https://ai.pydantic.dev/capabilities/), a self-contained unit of agent behavior you add to `capabilities=[...]` on any agent. There are [100+ of them](#capabilities), and complete agents like [Coder](pydantic_ai_harness/coder/) and [Researcher](pydantic_ai_harness/researcher/) are themselves combinations of capabilities. Use a single capability, compose your own set, or start from the whole coding agent and swap parts out.
 
-## Pydantic AI, the Harness, and CLAI
+## Pydantic AI, the harness SDK, `Coder`, and Pax
 
-Three packages, each built on the one before it. Start with the one that matches what you are doing:
+An agent on its own is a loop calling a model and tools. A **harness** is everything around that loop that makes it hold up on real work: the workspace it acts in, the tools, context management, recovery, guardrails, and the interface you steer it through. Four layers carry that idea; start with the one that matches what you are doing:
 
-| Package | What it is | Start here when |
+| Layer | What it is | Start here when |
 |---|---|---|
 | [Pydantic AI](https://pydantic.dev/docs/ai/) (`pydantic-ai`) | The agent framework: the agent loop, models from every major provider, tools, structured output, and the capability system | You are building an agent, or an LLM feature in your own application |
-| [Pydantic AI Harness](#capabilities) (`pydantic-ai-harness`) | Capabilities for a Pydantic AI agent: workspaces, file and shell tools, memory, sub-agents, context management, and complete agents like `Coder` | Your agent needs to edit files, run commands, remember, delegate, or keep working through long runs |
-| [CLAI](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_pax) (`pydantic-ai-pax`) | A coding agent for your terminal, run as `pax`, built on the Harness's `Coder` and extended with plugins | You want to use a coding agent rather than build one, or chat with your own agent in a terminal |
+| [Pydantic AI Harness](#capabilities) (`pydantic-ai-harness`) | The SDK you build a harness of your own from: workspaces, file and shell tools, memory, sub-agents, context management, and ready-made agents like `Coder` | Your agent needs to edit files, run commands, remember, delegate, or keep working through long runs |
+| [`Coder`](pydantic_ai_harness/coder/) | A ready-made coding agent in one capability: file and shell tools, task delegation, repo instructions and context management. You supply the workspace it runs in, and any guardrails | You want a coding agent in your own code, to run, extend or swap parts of |
+| [Pax](https://pydantic.dev/docs/ai/pax/) (`pydantic-ai-pax`) | The TUI in front of `Coder`, and a terminal interface for any Pydantic AI agent; everything in it is a plugin, the coding agent included | You want to use a coding agent rather than build one, or run your own agent in a terminal |
 
-Each package installs the one it is built on: `pydantic-ai-harness` installs `pydantic-ai-slim`, and `pydantic-ai-pax` installs `pydantic-ai-harness`. CLAI is not the [`clai` chat CLI](https://pydantic.dev/docs/ai/integrations/cli/) that ships with Pydantic AI.
+Each package installs the one it is built on: `pydantic-ai-harness` installs `pydantic-ai-slim`, and `pydantic-ai-pax` installs `pydantic-ai-harness`. `Coder` supplies the tools, context management and recovery; you choose the workspace it runs in and any guardrails, and Pax is the interface in front of it. That is why either works without the other: build on `Coder` and never open Pax, or point Pax at an agent that is entirely your own. Neither is [`clai`](https://pydantic.dev/docs/ai/integrations/cli/), the legacy CLI that ships with Pydantic AI.
 
 ## Quick start
 
@@ -68,10 +69,11 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()
 Coder provides six tools: `read_file`, `write_file`, `edit_file`, `list_files`, `grep`, and `shell`, plus `delegate_task` to hand a sub-task to a fresh run of the same agent, repository context, and context controls. Shell commands are unrestricted and can persist beyond individual runs. Default instructions guide autonomous investigation, editing, and verification; pass `instructions=` to add your own guidance.
 
 ```bash
-uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-opus-5-5
+uv tool install pydantic-ai-pax
+pax
 ```
 
-The bundled `coder_agent` is the example above without a model.
+Point it at your own agent with `pax --agent mymodule:agent`, or at the bundled export with `pax --agent pydantic_ai_harness.coder:coder_agent -m anthropic:claude-opus-5-5`, which is the example above without a model.
 
 Every model works: swap the string for [any provider's](https://ai.pydantic.dev/models/). Need more? Add capabilities to the list; here's the same coder on `gpt-6.1-sol`, with web search and cross-session memory:
 
@@ -165,28 +167,37 @@ Complete agent stacks as regular combined capabilities: one import gives you a w
 | [Coder](pydantic_ai_harness/coder/) | Harness | Six coding tools, persistent shell commands, delegation to itself, autonomous guidance, and context controls |
 | [Researcher](pydantic_ai_harness/researcher/) | Harness | A complete web-research stack: search, page fetching, a delegated sub-researcher, and bounded tool output |
 
-### Execution environments
+### Workspaces
 
-The workspace the agent acts in: the files it edits and the commands it runs, local or isolated.
+Where the agent runs commands and keeps files: this machine, a container, or a sandbox. [Compare them](https://pydantic.dev/docs/ai/core-concepts/workspace/#supported-workspaces).
+
+| Capability | Package | What it does |
+|---|---|---|
+| [Local Workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/) | Core | Commands and files in a directory on this machine; no isolation. Adds no tools: pair it with the [Files & shell](#files--shell) tools or your own |
+| [Docker Container](pydantic_ai_harness/docker_container/) | Harness | Commands and files in a local [Docker](https://www.docker.com/) or Podman container |
+| [Smol Sandbox](pydantic_ai_harness/smol_sandbox/) | Harness | Commands and files in a [smolvm](https://github.com/smol-machines/smolvm) microVM on your own machine; no cloud account |
+| [BoxLite Sandbox](pydantic_ai_harness/boxlite_sandbox/) | Harness | Commands and files in a [BoxLite](https://github.com/boxlite-ai/boxlite) micro-VM on your own machine, with an optional egress allow-list; no cloud account |
+| [OpenSandbox](pydantic_ai_harness/opensandbox_sandbox/) | Harness | Commands and files in a sandbox on your own [OpenSandbox](https://open-sandbox.ai) server, on Docker or Kubernetes |
+| [Kubernetes Sandbox](pydantic_ai_harness/kubernetes_sandbox/) | Harness | Commands and files in a sandbox pod from a Kubernetes [agent-sandbox](https://agent-sandbox.sigs.k8s.io) warm pool |
+| [Modal Sandbox](pydantic_ai_harness/modal_sandbox/) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |
+| [E2B Sandbox](pydantic_ai_harness/e2b_sandbox/) | Harness | Commands and files in an isolated [E2B](https://e2b.dev) cloud sandbox |
+| [Daytona Sandbox](pydantic_ai_harness/daytona_sandbox/) | Harness | Commands and files in an isolated [Daytona](https://www.daytona.io) cloud sandbox |
+| [Render Sandbox](pydantic_ai_harness/render_sandbox/) | Harness | Commands and files in an isolated [Render](https://render.com/docs/sandboxes) sandbox |
+| [Sprites Sandbox](pydantic_ai_harness/sprites_sandbox/) | Harness | Commands and files in a persistent [Fly.io Sprite](https://sprites.dev) |
+| [boxd Sandbox](pydantic_ai_harness/boxd_sandbox/) | Harness | Commands and files in an isolated [boxd](https://boxd.sh) cloud machine |
+| [SSH Workspace](pydantic_ai_harness/ssh_workspace/) | Harness | Commands and files on a remote host over your `ssh` client, as your SSH user; not sandboxed there |
+| [Bubblewrapped Workspace](pydantic_ai_harness/bubblewrap_sandbox/) | Harness | Wraps another workspace capability so its commands run in a Linux [bubblewrap](https://github.com/containers/bubblewrap) wrapper on that workspace's host (best-effort convenience, not a security boundary) |
+
+### Files & shell
+
+The tools the model uses in the run's workspace, whichever one it is.
 
 | Capability | Package | What it does |
 |---|---|---|
 | [FileSystem](pydantic_ai_harness/file_system/) | Harness | Read, write, edit, list, and search files under a root in the run's workspace, with opt-in ripgrep tools; path-traversal checked, secrets read-only |
 | [Smart Search](pydantic_ai_harness/smart_search/) | Harness | Code search by behavior in the run's workspace: plain-English queries, ranked excerpts, judged by any model (a decision model over System One, or TypeSafe's Jev, recommended) |
 | [Shell](pydantic_ai_harness/shell/) | Harness | Command execution in the run's workspace with allowlists, denylists, timeouts, credential-stripping, and opt-in commands that outlive the run |
-| [Modal Sandbox](pydantic_ai_harness/modal_sandbox/) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |
-| [E2B Sandbox](pydantic_ai_harness/e2b_sandbox/) | Harness | Commands and files in an isolated [E2B](https://e2b.dev) cloud sandbox |
-| [Kubernetes Sandbox](pydantic_ai_harness/kubernetes_sandbox/) | Harness | Commands and files in a sandbox pod from a Kubernetes [agent-sandbox](https://agent-sandbox.sigs.k8s.io) warm pool |
-| [Render Sandbox](pydantic_ai_harness/render_sandbox/) | Harness | Commands and files in an isolated [Render](https://render.com/docs/sandboxes) sandbox |
-| [Sprites Sandbox](pydantic_ai_harness/sprites_sandbox/) | Harness | Commands and files in a persistent [Fly.io Sprite](https://sprites.dev) |
-| [Daytona Sandbox](pydantic_ai_harness/daytona_sandbox/) | Harness | Commands and files in an isolated [Daytona](https://www.daytona.io) cloud sandbox |
-| [boxd Sandbox](pydantic_ai_harness/boxd_sandbox/) | Harness | Commands and files in an isolated [boxd](https://boxd.sh) cloud machine |
-| [Smol Sandbox](pydantic_ai_harness/smol_sandbox/) | Harness | Commands and files in a [smolvm](https://github.com/smol-machines/smolvm) microVM on your own machine; no cloud account |
-| [BoxLite Sandbox](pydantic_ai_harness/boxlite_sandbox/) | Harness | Commands and files in a [BoxLite](https://github.com/boxlite-ai/boxlite) micro-VM on your own machine, with an optional egress allow-list; no cloud account |
-| [OpenSandbox](pydantic_ai_harness/opensandbox_sandbox/) | Harness | Commands and files in a sandbox on your own [OpenSandbox](https://open-sandbox.ai) server, on Docker or Kubernetes |
-| [Docker Container](pydantic_ai_harness/docker_container/) | Harness | Commands and files in a local [Docker](https://www.docker.com/) or Podman container |
-| [SSH Workspace](pydantic_ai_harness/ssh_workspace/) | Harness | Commands and files on a remote host over your `ssh` client; no isolation |
-| [Bubblewrapped Workspace](pydantic_ai_harness/bubblewrap_sandbox/) | Harness | Wraps another workspace capability so its commands run in a Linux [bubblewrap](https://github.com/containers/bubblewrap) wrapper on that workspace's host (best-effort convenience, not a security boundary) |
+| [Announce Working Directory](pydantic_ai_harness/announce_working_directory/) | Harness | Names the workspace's working directory in the instructions, once, for your own tools as well as `FileSystem` and `Shell` |
 
 ### Tools & native abilities
 
@@ -233,7 +244,9 @@ Finding and reading things on the open web.
 | [You.com Research](pydantic_ai_harness/youdotcom/) | Harness | Cited answers and multi-step research via the You.com Answer, Research, and Finance Research APIs |
 | [Keenable Search](pydantic_ai_harness/keenable/) | Harness | Web research via [Keenable](https://keenable.ai): excerpted search and full-page reads, keyless and with no extra to install |
 | [Browser Use](pydantic_ai_harness/browser_use/) | Harness | Hand web tasks to an autonomous [browser-use](https://github.com/browser-use/browser-use) agent driving a real browser |
+| [CDP Browser](pydantic_ai_harness/cdp_browser/) | Harness | Drive a throwaway Chrome tab with raw DevTools Protocol commands, best from Code Mode |
 | [Playwright Browser](pydantic_ai_harness/playwright/) | Harness | Drive a real Chromium page yourself: navigate, click, type, read, and inspect what the page did |
+| [Computer Use](pydantic_ai_harness/computer_use/) | Harness | See and control the desktop of the run's workspace with screenshots, mouse, and keyboard |
 
 ### Reasoning, planning & delegation
 
@@ -298,7 +311,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [Tool Call Judge](pydantic_ai_harness/tool_call_judge/) | Harness | A second model answers one risk question per tool call and blocks the call before the tool function runs |
 | [Approval Reviewer](pydantic_ai_harness/approval_reviewer/) | Harness | A second model answers one risk question per call waiting for approval, approves the low-risk ones, and leaves the rest to a person |
 | [Permissions](pydantic_ai_harness/permissions/) | Harness | Ask a person before file writes and commands, by permission mode: full access, auto (asks before risky commands), or read-only; allow, ask about, or deny tool calls and shell commands by rule |
-| [Handle Deferred Tool Calls](https://ai.pydantic.dev/capabilities/handle-deferred-tool-calls/) | Core | Resolve approvals, answers and external results on deferred tool calls inside the run, in place or by waiting for them, durably on AWS Lambda |
+| [Handle Deferred Tool Calls](https://ai.pydantic.dev/capabilities/handle-deferred-tool-calls/) | Core | Resolve approvals, answers and external results on deferred tool calls inside the run, in place or by waiting for them, durably on Temporal and AWS Lambda |
 | [System Reminders](pydantic_ai_harness/system_reminders/) | Harness | Cache-safe re-injection of guidance mid-run to counter instruction fade |
 | [Detect Loops](pydantic_ai_harness/detect_loops/) | Harness | Notice repeated tool calls, results, alternations, or responses, or a response repeating itself as it streams, and nudge the model, stop the run, or call your handler |
 | [Report Tool Errors](pydantic_ai_harness/report_tool_errors/) | Harness | Send an exception a tool raises to the model as a failed tool result, so the run continues |

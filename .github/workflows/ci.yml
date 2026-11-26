@@ -7,7 +7,7 @@ on:
       - main
     tags:
       - "**"
-      # Moved by `clai2-bleeding.yml` for every CLAI change on `main`; not a release to build or publish.
+      # Moved by `clai2-bleeding.yml` for every Pax change on `main`; not a release to build or publish.
       - "!clai2-bleeding"
   pull_request: {}
   # The merge queue: a pull request reaches `main` only through a merge group that passed this
@@ -164,7 +164,7 @@ jobs:
           # Outside its own suite, only `pydantic-ai-pax` and the gh-aw shim (tested in `quality`, which
           # still runs) import `pydantic-ai-harness`; core and its tests merely probe whether it is
           # installed. So a change confined to the two packages and content runs the harness and
-          # CLAI 2 suites -- on every install shape, resolution, and Temporal leg -- and skips the jobs
+          # Pax suites -- on every install shape, resolution, and Temporal leg -- and skips the jobs
           # that exercise only the rest of the workspace. That includes a `pydantic-ai-pax` change that
           # also touches content. The harness `pyproject.toml` stays on the full path: its dependency
           # bounds feed the environment every package is tested in.
@@ -303,6 +303,7 @@ jobs:
           .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
           .github/scripts/test_pr_guard.py
+          .github/scripts/test_pr_guard_sweep.py
           .github/scripts/test_lint_exemptions.py
           .github/scripts/test_pr_gates.py
           .github/scripts/test_douwebot_config_approval.py
@@ -723,6 +724,7 @@ jobs:
           tests/test_docs_parity.py
           tests/test_docs_navigation.py
           tests/harness/test_docs_parity.py
+          tests/pax/test_docs_parity.py
           tests/harness/test_doc_snippets.py
           tests/harness/test_workspace_quickstarts.py
           -n logical --dist=loadgroup
@@ -771,7 +773,7 @@ jobs:
             command: "--package pydantic-ai-slim"
           - name: pydantic-evals
             command: "--package pydantic-evals"
-          # Install CLAI 2 alongside the harness to exercise the gh-aw launcher, which runs it by its
+          # Install Pax alongside the harness to exercise the gh-aw launcher, which runs it by its
           # published name, the `pydantic-clai2` shim over `pydantic-ai-pax`.
           - name: pydantic-ai-harness
             command: "--no-sync"
@@ -882,7 +884,7 @@ jobs:
       - run: uv sync --only-dev
 
       # A sync that selects two packages ignores root dependency groups, so `gh-aw-tracing` gets its own.
-      - name: install harness and CLAI 2 test dependencies
+      - name: install harness and Pax test dependencies
         if: matrix.install.name == 'pydantic-ai-harness'
         run: |
           uv sync ${{ matrix.install.sync_command }}
@@ -1299,8 +1301,10 @@ jobs:
   # `tests/`, where the `test` job turns it on for the 3.13 cells (`test-all-extras` leaves it off).
   # The `lowest` resolution leg is the only place the declared minimum bounds
   # (`temporalio`, `dbos`, `prefect`) are proven: `test-lowest-versions` skips this directory.
+  # Each Python and resolution runs as two legs, one per `suite`, so neither suite's time counts
+  # against the other's `timeout-minutes` (#14423).
   test-durable-exec:
-    name: test durable-exec on ${{ matrix.python-version }} (${{ matrix.resolution }})
+    name: test ${{ matrix.suite }} on ${{ matrix.python-version }} (${{ matrix.resolution }})
     needs: classify
     if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
@@ -1310,11 +1314,17 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
         resolution: [locked, lowest]
-        # A pull request runs only the legs that collect coverage (see `COLLECT_COVERAGE`), which
-        # include one `lowest` leg (see the `test` job's matrix), the 3.13 `locked` leg that runs the
-        # Render local runtime tests (see `RENDER_LOCAL_RUNTIME`), and the 3.15 `locked` leg below,
-        # the newest Python, which runs the manifest freshness test of a `pydantic-ai-harness`-only
-        # change (see `DURABLE_EXEC_MANIFEST_FRESHNESS`).
+        # `durable-exec` runs `tests/durable_exec`; `harness-temporal` runs the harness `temporal` tests.
+        suite: [durable-exec, harness-temporal]
+        # A `pydantic-ai-harness`-only change runs no `durable-exec` leg but the 3.15 one below.
+        harness_only: ["${{ needs.classify.outputs.harness_only }}"]
+        # A pull request runs only the Python and resolution pairs whose legs carry a check: the pairs
+        # that collect coverage (see `COLLECT_COVERAGE`), which include one `lowest` pair (see the
+        # `test` job's matrix), the 3.13 `locked` pair, whose `durable-exec` leg runs the Render local
+        # runtime tests (see `RENDER_LOCAL_RUNTIME`), and the 3.15 `locked` pair below, the newest
+        # Python, whose `durable-exec` leg runs the manifest freshness test of a
+        # `pydantic-ai-harness`-only change (see `DURABLE_EXEC_MANIFEST_FRESHNESS`). Each pair it keeps
+        # runs both suites.
         pull_request: ["${{ github.event_name == 'pull_request' && 'true' || 'false' }}"]
         exclude:
           - pull_request: "true"
@@ -1326,12 +1336,18 @@ jobs:
           - pull_request: "true"
             python-version: "3.14"
             resolution: lowest
-        # 3.15 runs the `locked` leg only: `lowest` installs our declared minimums, and 13 of them
+          - harness_only: "true"
+            suite: durable-exec
+        # 3.15 runs the `locked` legs only: `lowest` installs our declared minimums, and 13 of them
         # have no 3.15 wheel (pydantic-core 2.41, numpy 2.3, tiktoken 0.12, ...), so the leg would
         # compile them from source past this job's timeout.
         include:
           - python-version: "3.15"
             resolution: locked
+            suite: durable-exec
+          - python-version: "3.15"
+            resolution: locked
+            suite: harness-temporal
     env:
       CI: true
       # Python 3.11 and 3.14 cover version endpoints; both 3.12 resolutions cover Temporal dependency branches.
@@ -1343,11 +1359,13 @@ jobs:
       # Blocking detection already runs in the Python 3.13 slim, evals, and standard jobs.
       BLOCKBUSTER_ENABLED: false
       # The one leg that runs the Render local runtime tests (see that step).
-      RENDER_LOCAL_RUNTIME: ${{ matrix.python-version == '3.13' && matrix.resolution == 'locked' }}
+      RENDER_LOCAL_RUNTIME: >-
+        ${{ matrix.suite == 'durable-exec' && matrix.python-version == '3.13' && matrix.resolution == 'locked' }}
       # The one leg that runs the contract manifest freshness test of a `pydantic-ai-harness`-only
-      # change (see the run tests step). On the full path, every leg runs it within
+      # change (see the run tests step). On the full path, every `durable-exec` leg runs it within
       # `tests/durable_exec`.
-      DURABLE_EXEC_MANIFEST_FRESHNESS: ${{ matrix.python-version == '3.15' && matrix.resolution == 'locked' }}
+      DURABLE_EXEC_MANIFEST_FRESHNESS: >-
+        ${{ matrix.suite == 'durable-exec' && matrix.python-version == '3.15' && matrix.resolution == 'locked' }}
       # Puts every Temporal worker in debug mode, which disables the workflow deadlock detector
       # (temporalio sets the per-activation budget to `None` instead of 2s). That budget is
       # wall-clock, so it measures runner contention as readily as a blocking call, and a
@@ -1408,26 +1426,27 @@ jobs:
             unset COVERAGE_PROCESS_START
             runner=(pytest)
           fi
-          # A `pydantic-ai-harness`-only change runs the harness `temporal` tests and, of
-          # `tests/durable_exec`, only the contract manifest freshness test, on the leg that sets
-          # `DURABLE_EXEC_MANIFEST_FRESHNESS`: the manifest also walks the Harness engines, so a
-          # harness change can leave it stale.
-          if [[ "$HARNESS_ONLY" != "true" ]]; then
+          if [[ "$SUITE" == "harness-temporal" ]]; then
+            # Only modules that mention Temporal can hold `temporal` tests (`tests/harness/conftest.py` enforces it), so the
+            # workers don't spend over a minute collecting the rest of `tests/harness` just to deselect it.
+            mapfile -t temporal_modules < <(git grep -liE 'temporal' -- 'tests/harness/**/test_*.py' 'tests/harness/test_*.py')
+            (( ${#temporal_modules[@]} )) || { echo '::error::No harness module mentions Temporal.'; exit 1; }
+            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra sentence-transformers' }} \
+              "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal "${temporal_modules[@]}"
+          # A `pydantic-ai-harness`-only change runs, of `tests/durable_exec`, only the contract
+          # manifest freshness test, on the leg that sets `DURABLE_EXEC_MANIFEST_FRESHNESS`: the
+          # manifest also walks the Harness engines, so a harness change can leave it stale.
+          elif [[ "$HARNESS_ONLY" != "true" ]]; then
             uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra sentence-transformers' }} \
               "${runner[@]}" --durations=20 -n logical --dist=loadgroup tests/durable_exec
           elif [[ "$DURABLE_EXEC_MANIFEST_FRESHNESS" == "true" ]]; then
             uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra sentence-transformers' }} \
               "${runner[@]}" tests/durable_exec/test_durable_exec_contract_manifest.py
           fi
-          # Only modules that mention Temporal can hold `temporal` tests (`tests/harness/conftest.py` enforces it), so the
-          # workers don't spend over a minute collecting the rest of `tests/harness` just to deselect it.
-          mapfile -t temporal_modules < <(git grep -liE 'temporal' -- 'tests/harness/**/test_*.py' 'tests/harness/test_*.py')
-          (( ${#temporal_modules[@]} )) || { echo '::error::No harness module mentions Temporal.'; exit 1; }
-          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra sentence-transformers' }} \
-            "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal "${temporal_modules[@]}"
         env:
+          SUITE: ${{ matrix.suite }}
           HARNESS_ONLY: ${{ needs.classify.outputs.harness_only }}
-          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-${{ matrix.suite }}-${{ matrix.resolution }}
 
       # The Render Workflows integration runs nested agents in separate worker processes on the
       # keyless local runtime from the Render CLI. It adds about a minute, so one leg runs it; the
@@ -1457,13 +1476,13 @@ jobs:
           uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra sentence-transformers' }}
           coverage combine
         env:
-          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-${{ matrix.suite }}-${{ matrix.resolution }}
 
       - name: store coverage files
         if: env.COLLECT_COVERAGE == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: coverage-${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
+          name: coverage-${{ matrix.python-version }}-${{ matrix.suite }}-${{ matrix.resolution }}
           path: .coverage
           include-hidden-files: true
 
@@ -1735,7 +1754,7 @@ jobs:
           path: .coverage
           include-hidden-files: true
 
-  # CLAI2 pastes images through Pillow's native macOS and Windows clipboard readers and through
+  # Pax pastes images through Pillow's native macOS and Windows clipboard readers and through
   # `xclip` on Linux. Every other job runs on Linux and skips the opt-in native clipboard test, which
   # replaces the system clipboard: safe here, where each runner's clipboard belongs to this job alone.
   # Skipped on tags: a clipboard regression is caught on its PR and on `main`, and must not hold a release.
@@ -2151,7 +2170,9 @@ jobs:
     services:
       redis:
         # Public Docker Hub pulls from GitHub-hosted runners are exempt from its pull rate limit.
-        image: redis:8
+        # Pinned by digest here and in the cluster step below: the cluster container exits on start
+        # on 8.12.0 (#14283).
+        image: redis:8.10.3@sha256:1f88291b4c57bdf249f02eb085a8669889b2d2954e91d4de5118a5da6b78dd53
         ports:
           - 6379:6379
         options: >-
@@ -2181,7 +2202,7 @@ jobs:
       - name: Start a single-node Redis Cluster
         timeout-minutes: 2
         run: |
-          docker run -d --name redis-cluster -p 6380:6380 redis:8 \
+          docker run -d --name redis-cluster -p 6380:6380 redis:8.10.3@sha256:1f88291b4c57bdf249f02eb085a8669889b2d2954e91d4de5118a5da6b78dd53 \
             redis-server --port 6380 --cluster-enabled yes --cluster-announce-ip 127.0.0.1
           until docker exec redis-cluster redis-cli -p 6380 ping; do sleep 1; done
           docker exec redis-cluster redis-cli -p 6380 cluster addslotsrange 0 16383
@@ -2346,7 +2367,7 @@ jobs:
       - run: uv sync --group dev --group coverage
       - run: uv run --no-sync coverage combine
       # Only the `pydantic-ai-pax` cells ran for a change confined to it, so they can only vouch
-      # for its own tests; a `pydantic-ai-harness`-only change ran the harness and CLAI 2 suites,
+      # for its own tests; a `pydantic-ai-harness`-only change ran the harness and Pax suites,
       # which vouch for those and the harness source. The rest of the workspace is covered on the
       # full path. (`pydantic-ai-pax`'s source is not measured: see `[tool.coverage.run]`.)
       - name: coverage report

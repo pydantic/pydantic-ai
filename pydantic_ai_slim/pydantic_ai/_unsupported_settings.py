@@ -1,4 +1,7 @@
-"""When a model warns that it ignores a setting: see `Model.unsupported_settings` and `UnsupportedSettingWarning`."""
+"""When a model warns that it ignores a setting: see `Model.unsupported_settings` and `UnsupportedSettingWarning`.
+
+`suppress_warnings` also covers the other warning `Model.prepare_request` emits, `DeprecatedModelWarning`.
+"""
 
 from __future__ import annotations as _annotations
 
@@ -41,24 +44,32 @@ over it; for the others, that the model ignores them.
 """
 
 
+DEPRECATED_MODEL_WARNING_SUPPRESSED: ContextVar[bool] = ContextVar('deprecated_model_warning_suppressed', default=False)
+"""Whether `Model.prepare_request` doesn't emit `DeprecatedModelWarning`, set by `suppress_warnings()` without arguments."""
+
+
 @contextmanager
-def suppress_warnings(
-    settings: Iterable[ModelSettingName] = (*GUARANTEE_SETTINGS, 'thinking'),
-) -> Generator[None]:
+def suppress_warnings(settings: Iterable[ModelSettingName] | None = None) -> Generator[None]:
     """Don't warn about `settings` in `Model.prepare_request` calls inside this block.
 
-    By default, these are all the `GUARANTEE_SETTINGS` a model may ignore, plus `thinking`, which a provider-specific
-    setting from the model's `settings` may take precedence over.
+    Without `settings`, don't emit any warning `prepare_request` emits: about each of the `GUARANTEE_SETTINGS` a model
+    may ignore, about `thinking`, which a provider-specific setting from the model's `settings` may take precedence over,
+    and about a model its provider deprecated.
 
     For framework code that prepares a request without sending it (to resolve the output mode, count its tokens, or
     describe it on a span, possibly in a Temporal workflow), so a request warns once, when the model that sends it
-    prepares it; and for settings the user didn't choose, like the `stop_sequences` an MCP server's sampling request
-    sends.
+    prepares it; and, with `settings`, for settings the user didn't choose, like the `stop_sequences` an MCP server's
+    sampling request sends.
     """
-    token = SUPPRESSED_WARNINGS.set(SUPPRESSED_WARNINGS.get() | frozenset(settings))
+    names = (*GUARANTEE_SETTINGS, 'thinking') if settings is None else settings
+    token = SUPPRESSED_WARNINGS.set(SUPPRESSED_WARNINGS.get() | frozenset(names))
+    deprecation_token = DEPRECATED_MODEL_WARNING_SUPPRESSED.set(
+        settings is None or DEPRECATED_MODEL_WARNING_SUPPRESSED.get()
+    )
     try:
         yield
     finally:
+        DEPRECATED_MODEL_WARNING_SUPPRESSED.reset(deprecation_token)
         SUPPRESSED_WARNINGS.reset(token)
 
 

@@ -39,10 +39,12 @@ class E2BProvider:
     title: str = 'E2B'
     working_dir: str = '/home/user/workspace'
     token_in_sandbox: bool = False
+    desktop_at_create: bool = True
 
-    def missing(self) -> str | None:
+    def missing(self, *, desktop: bool = False) -> str | None:
+        del desktop
         if find_spec('e2b') is None:
-            return "E2B support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[e2b]'."
+            return "E2B support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[e2b]'."
         if saved_key(KEY_NAME) is None:
             return f'Add your E2B API key in /keys as {KEY_NAME}. Get one at https://e2b.dev/dashboard?tab=keys.'
         return None
@@ -52,7 +54,9 @@ class E2BProvider:
 
         return e2b.E2B(api_key=saved_key(KEY_NAME))
 
-    async def create(self, *, github: GitHubCredential | None) -> tuple[WorkspaceRef, SandboxBackend]:
+    async def create(
+        self, *, github: GitHubCredential | None, desktop: bool = False
+    ) -> tuple[WorkspaceRef, SandboxBackend]:
         from pydantic_ai_harness.e2b_sandbox import E2BSandboxBackend
 
         env: Mapping[str, str] = SANDBOX_ENV
@@ -64,7 +68,9 @@ class E2BProvider:
             }
             env = {**env, 'GH_TOKEN': 'placeholder'}  # `gh` sends a header only with a token set; the proxy replaces it
         # E2B keeps `env` on the sandbox, so commands after a reopen get it too.
-        backend = E2BSandboxBackend(client=self._client(), working_dir=self.working_dir, env=env, network=network)
+        backend = E2BSandboxBackend(
+            client=self._client(), working_dir=self.working_dir, env=env, network=network, desktop=desktop
+        )
         try:
             sandbox = await backend.get_sandbox()
         except BaseException:
@@ -76,10 +82,10 @@ class E2BProvider:
             raise
         return WorkspaceRef(provider=self.name, id=sandbox.sandbox_id), backend
 
-    def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
+    def reopen(self, ref: WorkspaceRef, *, desktop: bool = False) -> SandboxBackend:
         from pydantic_ai_harness.e2b_sandbox import E2BSandboxBackend
 
-        return E2BSandboxBackend(client=self._client(), ref=ref, working_dir=self.working_dir)
+        return E2BSandboxBackend(client=self._client(), ref=ref, working_dir=self.working_dir, desktop=desktop)
 
     async def close(self, backend: SandboxBackend) -> None:
         del backend  # `e2b.E2B` holds no open connection between requests.

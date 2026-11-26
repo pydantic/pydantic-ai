@@ -13,7 +13,7 @@ from termflow.live.buffer import REVERSE
 from termflow.themes import reset_palette
 
 from pydantic_ai_pax.ui.prompt import prompt_surface
-from pydantic_ai_pax.ui.prompt.prompt_selection import MouseReport, Selection, mouse_report
+from pydantic_ai_pax.ui.prompt.prompt_selection import MouseReport, Selection, hyperlink, mouse_report
 from pydantic_ai_pax.ui.prompt.prompt_surface import (
     ENTER,
     FRAME_INTERVAL,
@@ -358,15 +358,18 @@ async def test_palette_reset_reaches_the_terminal_unsplit_on_a_slow_runner() -> 
 
 def test_scrolling_holds_the_view_while_output_arrives_and_returns_to_follow() -> None:
     screen = Screen(height=10)
-    screen.surface.paint(ROWS)
+    rule = '─' * 80
+    screen.surface.paint((rule, 'DRAFT', rule, 'FOOTER'))
     for index in range(20):
         screen.write(f'line {index}\n')
     assert screen.lines()[:6] == [f'line {index}' for index in range(15, 20)] + ['']
     assert screen.surface.page == 5
     screen.surface.scroll(screen.surface.page)
     view = screen.lines()[:6]
-    assert view[:5] == [f'line {index}' for index in range(10, 15)]
-    assert view[5].endswith(SCROLLED_HINT.rstrip())
+    assert view == [f'line {index}' for index in range(10, 16)], 'the hint covers no transcript row'
+    assert screen.lines()[6:9] == [rule, 'DRAFT', rule[len(SCROLLED_HINT) :] + SCROLLED_HINT.rstrip()], (
+        'it sits in the rule below the draft'
+    )
     screen.write('line 20\n')
     assert screen.lines()[:5] == view[:5]
     screen.surface.scroll(100)
@@ -374,6 +377,15 @@ def test_scrolling_holds_the_view_while_output_arrives_and_returns_to_follow() -
     screen.surface.scroll(-100)
     assert screen.surface.view.anchor is None
     assert screen.lines()[:6] == [f'line {index}' for index in range(16, 21)] + ['']
+
+
+def test_scrolled_hint_without_an_editor_rule_marks_the_last_transcript_row() -> None:
+    screen = Screen(height=10)
+    screen.surface.paint(('Sign-in code:', 'ANSWER'))
+    for index in range(20):
+        screen.write(f'line {index}\n')
+    screen.surface.scroll(screen.surface.page)
+    assert screen.lines()[7].endswith(SCROLLED_HINT.rstrip())
 
 
 def test_short_transcripts_do_not_scroll() -> None:
@@ -415,11 +427,12 @@ def test_markdown_renders_again_for_a_new_width_or_theme() -> None:
 
     screen = Screen(width=40)
     screen.surface.paint(ROWS)
-    block = screen.surface.markdown(render=render, width=40)
+    block = screen.surface.markdown(render=render, width=40, streaming=True)
     block.extend('**bold**')
     block.write('streamed bold\n')
     screen.surface.refresh()
     assert screen.lines()[0] == 'streamed bold'
+    block.end()
     assert calls == []
     screen.terminal.resize(width=60, height=24)
     screen.surface.paint(ROWS)
@@ -432,6 +445,33 @@ def test_markdown_renders_again_for_a_new_width_or_theme() -> None:
     block.freeze()
     screen.surface.paint(ROWS)
     assert screen.lines()[0] == 'streamed bold', 'an aborted part keeps what it showed'
+
+
+def test_a_part_streaming_across_a_resize_renders_again_only_when_it_ends() -> None:
+    """Rendering the whole part again on every frame made each frame cost the whole part."""
+    calls: list[int] = []
+
+    def render(*, source: str, width: int) -> str:
+        calls.append(width)
+        return f'rendered at {width}: {source}\n'
+
+    screen = Screen(width=40)
+    screen.surface.paint(ROWS)
+    block = screen.surface.markdown(render=render, width=40, streaming=True)
+    block.extend('one')
+    block.write('one ')
+    screen.terminal.resize(width=10, height=24)
+    for word in ('two', 'three', 'four'):
+        block.extend(f' {word}')
+        block.write(f'{word} ')
+        screen.surface.paint(ROWS)
+    assert screen.lines()[:2] == ['one two th', 'ree four'], 'the streamed rows wrap to the new width'
+    assert calls == []
+    block.end()
+    screen.surface.paint(ROWS)
+    assert screen.lines()[:3] == ['rendered a', 't 10: one', 'two three']
+    screen.surface.paint(ROWS)
+    assert calls == [10]
 
 
 def test_a_theme_change_repaints_earlier_tool_output_in_the_new_palette() -> None:
@@ -675,6 +715,32 @@ def test_clicking_a_url_opens_it() -> None:
     assert len(screen.opened) == 3, 'a drag over a URL selects it instead'
 
 
+def test_clicking_a_pinned_hyperlink_opens_its_target_and_a_transcript_one_does_not() -> None:
+    """Painted cells drop OSC 8 hyperlinks, so the frame keeps which cells the shell's own rows link.
+
+    A transcript label, as a model's `[label](url)`, hides where it goes, so it does not open on a click.
+    """
+    screen = Screen(width=60, height=10)
+    # `沙箱` takes four cells, so the link starts at column 13, not 11.
+    footer = f'fake 沙箱 | {hyperlink("watch live ↗", url="https://desktop.example/vnc.html")} | ' + hyperlink(
+        'notes', url='mailto:ada@example.com'
+    )
+    screen.surface.paint(('TOP', 'DRAFT', 'BOTTOM', footer))
+    row = Text('read ')
+    row.append('continue', style='link https://example.com/?q=secret')
+    Console(file=screen.surface, force_terminal=True, color_system='truecolor', width=60).print(row)
+    screen.now += FRAME_INTERVAL
+    screen.surface.refresh()
+    assert screen.lines()[0] == 'read continue'
+    assert screen.lines()[-1] == 'fake 沙箱 | watch live ↗ | notes'
+    assert click(screen, 6, 1) == [], 'a transcript label'
+    assert click(screen, 12, 10) == []
+    assert click(screen, 13, 10) == ['https://desktop.example/vnc.html'], 'the first cell'
+    assert click(screen, 24, 10) == ['https://desktop.example/vnc.html'], 'the arrow'
+    assert click(screen, 25, 10) == []
+    assert click(screen, 28, 10) == [], 'other schemes open only through the terminal'
+
+
 def test_clicking_a_url_wrapped_across_rows_opens_all_of_it() -> None:
     url = 'https://github.com/pydantic/pydantic-ai/pull/9936/files'
     screen = Screen(width=20, height=12)
@@ -714,7 +780,7 @@ def test_a_url_cut_off_by_the_viewport_is_not_opened() -> None:
     screen.surface.paint(ROWS)
     screen.write(''.join(f'line {index}\n' for index in range(4)) + f'{url}\n')
     screen.surface.scroll(2)
-    assert screen.lines()[2:4] == [url[:20], SCROLLED_HINT.rstrip()], 'the hint covers the rest of the URL'
+    assert screen.lines()[2:4] == [url[:20], SCROLLED_HINT.rstrip()], 'with no editor rule, the hint covers the URL'
     assert click(screen, 3, 3) == []
 
 
@@ -726,11 +792,32 @@ def test_a_url_wrapped_inside_markdown_opens_whole() -> None:
 
     screen = Screen(width=20, height=12)
     screen.surface.paint(ROWS)
-    screen.surface.markdown(render=render, width=40).extend(url)
+    block = screen.surface.markdown(render=render, width=40)
+    block.extend(url)
     screen.surface.paint(ROWS)
     assert screen.lines()[:4] == [url[:20], url[20:40], url[40:], 'after']
     assert click(screen, 3, 2) == [url]
     assert click(screen, 2, 4) == []
+
+
+def test_a_click_before_the_next_paint_reads_rows_that_have_since_shrunk() -> None:
+    """A part that ends between a paint and a click may have fewer rows than the frame shows."""
+
+    def render(*, source: str, width: int) -> str:
+        return 'https://x.dev\n'
+
+    screen = Screen(width=20, height=12)
+    screen.surface.paint(ROWS)
+    block = screen.surface.markdown(render=render, width=40, streaming=True)
+    block.extend('one')
+    block.write('a\nb\nc\nhttps://x.dev\n')
+    screen.terminal.resize(width=30, height=12)
+    screen.surface.paint(ROWS)
+    assert screen.surface.transcript_key('mouse', press(3, 4)) is None
+    # It ends inside the frame interval, so it paints after the release.
+    block.end()
+    assert screen.surface.transcript_key('mouse', release(3, 4)) is None
+    assert screen.opened == ['https://x.dev'], 'the click opens the URL the frame still shows'
 
 
 def test_opening_a_url_does_not_wait_for_the_browser(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -743,7 +830,7 @@ def test_opening_a_url_does_not_wait_for_the_browser(monkeypatch: pytest.MonkeyP
 
 class _Inline:
     def __init__(self, *, target: Callable[[str], object], args: tuple[str], daemon: bool) -> None:
-        assert daemon, 'a browser that never returns must not keep CLAI alive'
+        assert daemon, 'a browser that never returns must not keep Pax alive'
         self.target, self.args = target, args
 
     def start(self) -> None:

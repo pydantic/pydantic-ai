@@ -211,6 +211,10 @@ logfire-sdk = false
 # TODO(adtyavrdhn): Remove after 2026-11-19 19:37 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.
 k8s-agent-sandbox = "2026-11-12T19:37:00Z"
+# boxd 0.3.3 is the `boxd` extra's floor: it added `replace_in` on `secrets.set`.
+# TODO(adtyavrdhn): Remove after 2026-11-30 10:00 UTC, then run `uv lock` and
+# `uv lock --script .github/scripts/pydantic-ai-runner`.
+boxd = "2026-11-23T10:00:00Z"
 
 [dependency-groups]
 dev = [
@@ -275,7 +279,8 @@ dev = [
     # Serves the gRPC stream `pydantic_monty.AsyncMontyRemote` dials in `tests/harness/code_mode/grpc_relay.py`.
     # Pure Python, so unlike `grpcio` it installs on every supported Python without a source build.
     "grpclib>=0.4.7",
-    # `tests/spec_conformance.py` validates the instances it builds against the agent spec and dataset schemas.
+    # Validates walked schemas, `TestModel` arguments, and the agent spec and dataset instances
+    # `tests/spec_conformance.py` builds against their schemas.
     "jsonschema>=4.25.1",
 ]
 # `strict-no-cover` is only invoked by the final coverage audit, which runs on a GitHub-hosted
@@ -663,12 +668,6 @@ filterwarnings = [
     # TODO: Drop once starlette moves to `anyio.from_thread.BlockingPortal`.
     # https://github.com/Kludex/starlette/issues/3497
     "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning:starlette.testclient",
-    # `anthropic` 1.11.0 warns on every request for `claude-sonnet-4-5`, which reaches end of life on
-    # 2026-11-30. Recordings across the suite were made against it and replay offline, so the warning
-    # carries no signal here; users still get it from the SDK.
-    # TODO: Move these tests to a current model; the API stops serving this one on 2026-11-30, so any
-    # re-recording after that date needs the move first.
-    "ignore:The model 'claude-sonnet-4-5(-20250929)?' is deprecated and will reach end-of-life:DeprecationWarning",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run

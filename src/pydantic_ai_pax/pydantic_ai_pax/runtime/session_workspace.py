@@ -3,7 +3,7 @@
 The terminal shell stays in the directory it started in. Under `pax --web`, a session that moves
 records its new directory as its workspace, then loads its plugins again there: the coding tools,
 `repo_context`, skills, and MCP project files read it through `PluginHost.workspace`. The process's
-working directory stays where CLAI started, as other live sessions work in other directories.
+working directory stays where Pax started, as other live sessions work in other directories.
 """
 
 from collections.abc import Callable
@@ -35,7 +35,7 @@ def workspace_directory(path: str) -> Path:
 
 @dataclass(kw_only=True)
 class SessionWorkspace:
-    """Moves `pax --web`'s live session into another directory, as if CLAI had started there.
+    """Moves `pax --web`'s live session into another directory, as if Pax had started there.
 
     Never while a turn, a background fork, or a delegated task runs: their tools still use the plugins loaded now.
     """
@@ -45,7 +45,7 @@ class SessionWorkspace:
     loader: SessionPlugins[None]
     status: Status
     settings: Callable[[ProjectSettings], Settings]
-    """The settings CLAI starts with beside a project file: saved ones, then the project's, then launch flags."""
+    """The settings Pax starts with beside a project file: saved ones, then the project's, then launch flags."""
     busy: Callable[[], bool] = lambda: False
     """Whether a background fork or a delegated task runs."""
 
@@ -73,8 +73,12 @@ class SessionWorkspace:
         if self.session.running or self.busy():
             raise RuntimeError('Something is running. Switch directories once it ends.')
         project = await to_thread.run_sync(lambda: load_project_settings(directory, store=self.context.store))
+        assert self.session.resolve_trust is not None, 'create_shell attaches process trust resolution to every session'
+        trust = await self.session.resolve_trust(directory)
         settings = self.settings(project)
         self.session.workspace = self.status.workspace = str(directory)
+        # The new directory gets its own decision, as if Pax had started there; it is never asked here.
+        self.session.trust = trust
         self.context.use_project(project, settings)
         await self.loader.restart(project=project.plugins)
 
@@ -84,4 +88,7 @@ class SessionWorkspace:
             return f'This session works in {self.session.workspace}.'
         await self.move(args[0])
         await self.session.clear()
-        return f'New session in {self.session.workspace}.'
+        untrusted = self.session.trust is not None and not self.session.trust.trusted
+        return f'New session in {self.session.workspace}.' + (
+            ' This folder is untrusted: /trust shows why.' if untrusted else ''
+        )

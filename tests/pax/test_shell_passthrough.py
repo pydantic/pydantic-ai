@@ -8,7 +8,7 @@ import shlex
 import signal
 import sys
 import time
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Literal
@@ -21,6 +21,7 @@ from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.workspaces import CommandResult, LocalWorkspaceBackend, WorkspaceCommand
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_ai_pax import chat
 from pydantic_ai_pax.cli.shell_passthrough import (
@@ -28,16 +29,20 @@ from pydantic_ai_pax.cli.shell_passthrough import (
     _ShellOutput,  # pyright: ignore[reportPrivateUsage]
     run_in_terminal,
     run_shell_command,
+    run_workspace_command,
     shell_command,
     terminal_modes_kept,
 )
+from pydantic_ai_pax.cli.shell_terminal import Terminal
 from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.config.project_settings import ProjectSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.runtime.processes import taskkill_path
+from pydantic_ai_pax.runtime.session import ShellLineWorkspace
 from pydantic_ai_pax.runtime.session_runtime import create_shell
 from pydantic_ai_pax.ui.menus.menu_worker import holding_output
 from pydantic_ai_pax.ui.prompt.interrupts import Interrupts
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.conftest import no_leaked_tasks
 from tests.pax.test_app_edges import inputs
 
@@ -177,7 +182,7 @@ class TestShellPassthrough:
         assert 'Interrupted (' in output.getvalue()
 
     async def test_ctrl_c_interrupts_command_not_clai(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        # The shell signals CLAI as the terminal would on Ctrl-C, and CLAI forwards it to the command.
+        # The shell signals Pax as the terminal would on Ctrl+C, and Pax forwards it to the command.
         started = time.monotonic()
         text = await shell_session(
             tmp_path, monkeypatch, ['!kill -INT $PPID; exec sleep 30', '!printf after > marker.txt', '/exit']
@@ -188,7 +193,7 @@ class TestShellPassthrough:
 
     @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell process-group signalling')
     async def test_ctrl_c_is_forwarded_before_kill(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A command in its own session still gets Ctrl-C, so it can clean up before the grace kill."""
+        """A command in its own session still gets Ctrl+C, so it can clean up before the grace kill."""
         loop = asyncio.get_running_loop()
         spawn = loop.subprocess_shell
 
@@ -202,7 +207,7 @@ class TestShellPassthrough:
             stderr: int,
             cwd: str,
         ) -> tuple[asyncio.SubprocessTransport, asyncio.SubprocessProtocol]:
-            # Press Ctrl-C only once the spawn has returned and the shell has installed its trap.
+            # Press Ctrl+C only once the spawn has returned and the shell has installed its trap.
             process = await spawn(
                 factory,
                 command,
@@ -227,7 +232,7 @@ class TestShellPassthrough:
         assert 'Interrupted (' in text
         assert (tmp_path / 'cleanup.txt').read_text() == 'cleaned'
 
-    @pytest.mark.subprocess(reason="needs a real process tree to check Ctrl-C reaches the shell's descendants")
+    @pytest.mark.subprocess(reason="needs a real process tree to check Ctrl+C reaches the shell's descendants")
     @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell process-group signalling')
     async def test_ctrl_c_kills_shell_descendants(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Cancelling a shell command must also terminate a background child."""
@@ -571,7 +576,7 @@ async def test_terminal_command_runs_with_the_screen_released(
     with holding_output(hold):
         context = await run_in_terminal(command, console=Console(file=output), cwd=tmp_path)
     assert events == ['hold leave_screen=True ran=False', 'release ran=True']
-    # The command wrote to CLAI's own standard streams, not to pipes CLAI reads.
+    # The command wrote to Pax's own standard streams, not to pipes Pax reads.
     assert capfd.readouterr() == ('secret', 'oops')
     assert 'secret' not in output.getvalue()
     assert 'oops' not in output.getvalue()
@@ -583,7 +588,7 @@ async def test_terminal_command_runs_with_the_screen_released(
 async def test_forced_terminal_command_saves_only_its_status(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
 ) -> None:
-    """`!!` hands over the terminal; Ctrl-C reaches the command, not CLAI, and output stays unsaved."""
+    """`!!` hands over the terminal; Ctrl+C reaches the command, not Pax, and output stays unsaved."""
     requests: list[ModelRequestContext] = []
     handler = signal.getsignal(signal.SIGINT)
     command = "kill -INT $PPID; printf 'hid''den'; : > marker"
@@ -661,9 +666,50 @@ async def test_ctrl_c_is_left_alone_off_the_main_thread() -> None:
     assert await asyncio.to_thread(handler_inside) == signal.getsignal(signal.SIGINT)
 
 
+@pytest.mark.skipif(sys.platform == 'win32', reason='needs a POSIX pseudo-terminal')
+async def test_ctrl_c_stops_a_sandbox_command_without_sigint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ctrl+C reaches Pax as a key, not SIGINT, which the Daytona SDK's socket client takes to cancel every task."""
+    import termios
+
+    leader, follower = os.openpty()
+    os.set_blocking(leader, False)  # The test's key press never waits on the event loop.
+    monkeypatch.setattr(
+        'pydantic_ai_pax.cli.shell_passthrough.attached_terminal', lambda: Terminal(input=follower, output=follower)
+    )
+
+    class Sandbox(LocalWorkspaceBackend):
+        async def run(
+            self,
+            command: WorkspaceCommand,
+            *,
+            shell: bool = False,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> CommandResult:
+            # While the command runs, the terminal cannot turn Ctrl+C into SIGINT. Press it, as a user would.
+            assert not termios.tcgetattr(follower)[3] & termios.ISIG
+            os.write(leader, b'\x03')
+            await anyio.sleep_forever()
+            raise AssertionError('unreachable')  # pragma: no cover
+
+    output = io.StringIO()
+    place = ShellLineWorkspace(workspace=Sandbox(tmp_path), name='the Fake sandbox')
+    try:
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            context = await run_workspace_command(
+                'sleep 30', place=place, console=Console(file=output), interrupts=Interrupts()
+            )
+        assert termios.tcgetattr(follower)[3] & termios.ISIG  # Restored once the command ends.
+    finally:
+        os.close(leader)
+        os.close(follower)
+    assert 'Interrupted (' in output.getvalue()
+    assert context is not None and '$ sleep 30\nInterrupted\n' in context
+
+
 @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell syntax')
 async def test_commands_run_in_the_sessions_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """`!pwd` prints the session's directory, not the one CLAI was started in."""
+    """`!pwd` prints the session's directory, not the one Pax was started in."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / 'repo').mkdir()
     output = io.StringIO()

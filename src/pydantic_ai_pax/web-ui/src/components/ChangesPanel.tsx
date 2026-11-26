@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { SessionApi } from '../api'
 import { MOD } from '../platform'
 import type { ChangeScope, Changes, FileChange } from '../protocol'
@@ -54,18 +54,18 @@ export function useChanges(
   const turnEdits = active ? 0 : edits
   const mine = found?.owner === owner && found.scope === scope ? found : undefined
   const ask = active || mine === undefined || mine.version !== version || mine.edits !== turnEdits
+  // Only a later ask drops an answer. A turn can start before the answer asked as the last one ended arrives, and it
+  // asks nothing, so dropping that answer would keep the one from before the last turn until the new one ends.
+  const request = useRef(0)
   useEffect(() => {
     if (!ask) return
-    let current = true
+    const asked = ++request.current
     const settle = (changes: Changes | null, error: string | null) =>
-      current && setFound({ owner, scope, version, edits: turnEdits, changes, error })
+      asked === request.current && setFound({ owner, scope, version, edits: turnEdits, changes, error })
     session.changes(scope, diffs).then(
       (changes) => settle(changes, null),
       (error: unknown) => settle(null, error instanceof Error ? error.message : String(error)),
     )
-    return () => {
-      current = false
-    }
   }, [session, scope, owner, active, ask, diffs, version, turnEdits, saved])
   const refresh = useCallback(() => setVersion((value) => value + 1), [])
   return { changes: mine?.changes ?? null, error: mine?.error ?? null, refresh }
@@ -115,7 +115,7 @@ export function ChangesPanel({
   /** Whether to ask again: off while a turn runs, so the panel asks again as it ends. A scope with no answer yet is asked
    * for regardless. */
   active: boolean
-  /** Whether the page reaches CLAI, so Refresh can ask. */
+  /** Whether the page reaches Pax, so Refresh can ask. */
   connected: boolean
   /** Changes whenever the session list does, including once the session has saved a turn; the panel then asks again. */
   saved: number

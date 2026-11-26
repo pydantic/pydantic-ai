@@ -24,7 +24,7 @@ from pydantic_ai_harness.ask_user import AskUserAnsweredEvent, AskUserRequestedE
 from pydantic_ai_harness.compaction import ContextUsageMeasuredEvent
 from pydantic_ai_pax.builtin_plugins.herdr_client import SOURCE, HerdrClient
 from pydantic_ai_pax.cli.install import command_name
-from pydantic_ai_pax.config.settings_store import config_dir
+from pydantic_ai_pax.paths import config_dir
 from pydantic_ai_pax.plugins import (
     ConversationChanged,
     NoSettings,

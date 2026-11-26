@@ -40,10 +40,15 @@ DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS = (
 """What `RequireVerification` tells the agent each time it sends the run back, unless `instructions` is set."""
 
 DEFAULT_VERIFICATION_COMMANDS: tuple[str, ...] = (
-    r'(?<!\S)(?:(?:uv|poetry|pipenv|hatch|pdm)\s+run(?:\s+-\S+)*\s+)?(?:(?<!\S)(?:\S*/)?python3?\s+-m\s+)?'
-    r'(?<!\S)(?:\S*/)?'
-    r'(?:pytest|py\.test|unittest|tox|nox|mypy|pyright|basedpyright|ty\s+check|ruff\s+check'
-    r'|(?:ruff\s+format|black|isort)(?=[^;&|\n]*\s--(?:check|diff)))\b',
+    # `ruff format`, `black` and `isort` count only with `--check` or `--diff` later in the step. `_verifies` matches
+    # only steps without `;`, `&`, `|` or a newline, so the first place one of them appears decides, and the atomic
+    # group commits to it.
+    r'\A(?<!\S)(?:'
+    r'(?:(?:uv|poetry|pipenv|hatch|pdm)\s+run(?:\s+-\S+)*\s+)?(?:(?<!\S)(?:\S*/)?python3?\s+-m\s+)?(?<!\S)(?:\S*/)?'
+    r'(?:pytest|py\.test|unittest|tox|nox|mypy|pyright|basedpyright|ty\s+check|ruff\s+check)\b'
+    r'|(?>(?:(?:uv|poetry|pipenv|hatch|pdm)\s+run(?:\s+-\S+)*?\s+)??(?:(?<!\S)(?:\S*?/)??python3?\s+-m\s+)??'
+    r'(?<!\S)(?:\S*?/)??(?:ruff\s+format|black|isort)\b)'
+    r'(?=[^;&|\n]*\s--(?:check|diff)))',
     r'(?:npm|pnpm|yarn|bun)'
     r'(?:\s+(?>workspace\s+\S+|-\S+(?:\s+(?!(?:run|test|lint|typecheck|check|build|workspace)\b)[^-\s]\S*)?))*'
     r'\s+(?:run\s+)?(?:test|lint|typecheck|check|build)\b',
