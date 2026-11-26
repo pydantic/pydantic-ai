@@ -386,10 +386,10 @@ does not count against this budget, and neither does an additional local review 
 after the loop completes.
 
 After the third review, the budget holds one remediation review. Dispatch it for the first
-remediation after the third review that changes runtime behavior. The remediation may fix a review
-finding or a CI failure. A remediation changes runtime behavior when its delta changes a line that
-is not a comment, a docstring, or part of a test or Markdown file. A remediation that changes only
-those gets no review, and neither does a delta the exempt-delta table below exempts. Scope the remediation
+remediation after the third review whose delta is neither
+[prose-only documentation](#prose-only-documentation) nor exempt under the exempt-delta table below.
+Apply the prose-only definition to the remediation delta, not to the whole PR. The remediation may
+fix a review finding or a CI failure. Scope the remediation
 review to the remediation delta: the diff from the last reviewed SHA to the remediation commit,
 plus the affected callers and invariants that [Review scope](#review-scope) names for follow-ups.
 Include `remediation review after call 3 of 3` in the reviewer prompt, and title its record
