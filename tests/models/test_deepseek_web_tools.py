@@ -7,11 +7,11 @@ from pathlib import Path
 
 import httpx2
 import pytest
-from pydantic import BaseModel, JsonValue, TypeAdapter
+from pydantic import JsonValue, TypeAdapter
 
-from pydantic_ai import Agent, ModelResponse, NativeOutput, PromptedOutput
+from pydantic_ai import Agent, ModelResponse
 from pydantic_ai.capabilities import WebFetch, WebSearch
-from pydantic_ai.exceptions import ModelAPIError, ModelServerError, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.messages import (
     ContentCitationAnchor,
     ModelMessagesTypeAdapter,
@@ -27,21 +27,17 @@ from pydantic_ai.native_tools import WebFetchTool, WebSearchTool
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.deepseek import DeepSeekProvider
-    from pydantic_ai.providers.deepseek_messages import DeepSeekMessagesProvider
 
 
-pytestmark = pytest.mark.skipif(not imports_successful(), reason='OpenAI and Anthropic SDKs required')
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='OpenAI SDK required')
 
 _FIXTURES = Path(__file__).parent / 'fixtures' / 'deepseek-web'
 _BODY = TypeAdapter(dict[str, JsonValue])
 
 
 def deepseek_model(api: str, client: httpx2.AsyncClient) -> Model:
-    if api == 'messages':
-        return AnthropicModel('deepseek-flash', provider=DeepSeekMessagesProvider(api_key='test', http_client=client))
     model_type = OpenAIChatModel if api == 'chat' else OpenAIResponsesModel
     return model_type('deepseek-flash', provider=DeepSeekProvider(api_key='test', http_client=client))
 
@@ -58,7 +54,7 @@ def recordings(api: str) -> tuple[bytes, bytes]:
     return response, (_FIXTURES / f'{api}.sse').read_bytes() + b'\n'
 
 
-@pytest.mark.parametrize('api', ['chat', 'responses', 'messages'])
+@pytest.mark.parametrize('api', ['chat', 'responses'])
 @pytest.mark.parametrize('stream', [False, True])
 async def test_deepseek_web_fetch_history(
     api: str, stream: bool, recordings: tuple[bytes, bytes], allow_model_requests: None
@@ -150,8 +146,6 @@ async def test_deepseek_web_fetch_history(
             assert 'server_tool_calls' not in summary_history
 
     tool = {'type': 'deepseek_read_url'}
-    if api == 'messages':
-        tool['name'] = 'deepseek_read_url'
     assert requests[0]['tools'] == [tool]
     assert 'web_search_options' not in requests[0]
     assert not requests[1].get('tools')
@@ -172,6 +166,10 @@ def stream_without_call_start(api: str) -> bytes:
             chunk = json.loads(frame.removeprefix('data: '))
             choice = chunk['choices'][0]
             event = choice.get('server_tool_event', {})
+            if event.get('type') == 'step_reasoning_done':
+                reasoning = {**chunk, 'choices': [{**choice, 'delta': {'reasoning_content': 'Before reading.'}}]}
+                reasoning['choices'][0].pop('server_tool_event')
+                frames.append(f'data: {json.dumps(reasoning)}')
             if event.get('type') == 'call_started':
                 continue
             if event.get('type') == 'call_completed':
@@ -203,9 +201,11 @@ async def test_deepseek_final_result_restores_missing_call(
     assert call.tool_call_id == returned.tool_call_id
     assert call.tool_name == returned.tool_name == 'web_fetch'
     if api == 'chat':
-        (thinking,) = [p for p in parts if isinstance(p, ThinkingPart)]
-        assert thinking.content == 'Read the page.'
-        assert (result.response.provider_details or {})['deepseek_final_reasoning_step'] == 1
+        before, after = [p for p in parts if isinstance(p, ThinkingPart)]
+        assert before.content == 'Before reading.'
+        assert (before.provider_details or {})['deepseek_reasoning_step'] == 0
+        assert after.content == 'Read the page.'
+        assert after.provider_details is None
 
 
 @pytest.fixture
@@ -215,7 +215,7 @@ def search_recording(api: str) -> bytes:
 
 @pytest.mark.parametrize(
     ('api', 'queries', 'calls', 'citations'),
-    [('chat', 2, 1, 7), ('responses', 3, 1, 5), ('messages', 1, 3, 0)],
+    [('chat', 2, 1, 7), ('responses', 3, 1, 5)],
 )
 async def test_deepseek_web_search_usage(
     api: str, queries: int, calls: int, citations: int, search_recording: bytes, allow_model_requests: None
@@ -223,14 +223,20 @@ async def test_deepseek_web_search_usage(
     async def handle(request: httpx2.Request) -> httpx2.Response:
         body = _BODY.validate_json(await request.aread())
         tool = {'type': 'deepseek_web_search'}
-        if api == 'messages':
-            tool['name'] = 'deepseek_web_search'
-        assert body['tools'] == [tool]
+        if body.get('tools'):
+            assert body['tools'] == [tool]
+        else:
+            original = json.loads(search_recording)['output']
+            expected = next(item for item in original if item['type'] == 'web_search_call')
+            assert expected in json.loads(request.content)['input']
         return httpx2.Response(200, content=search_recording, headers={'content-type': 'application/json'})
 
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         agent = Agent(deepseek_model(api, client), capabilities=[WebSearch()])
-        response = (await agent.run('Search the web and cite your sources.')).response
+        result = await agent.run('Search the web and cite your sources.')
+        response = result.response
+        if api == 'responses':
+            await Agent(agent.model).run('What did you find?', message_history=result.all_messages())
     tool_calls = {part.tool_call_id: part.tool_name for part in response.parts if isinstance(part, NativeToolCallPart)}
     tool_returns = {
         part.tool_call_id: part.tool_name for part in response.parts if isinstance(part, NativeToolReturnPart)
@@ -238,7 +244,8 @@ async def test_deepseek_web_search_usage(
     assert tool_calls == tool_returns
     assert len(tool_calls) == calls
     assert set(tool_calls.values()) == {'web_search'}
-    assert response.usage.details['tool_search'] == queries
+    assert response.usage.details['web_search_requests'] == queries
+    assert 'tool_fetch' not in response.usage.details
     assert sum(len(part.citations or ()) for part in response.parts if isinstance(part, TextPart)) == citations
 
 
@@ -246,47 +253,32 @@ _RFC_TITLE = 'The title of RFC 9110 on rfc-editor.org is "HTTP Semantics"'
 _RFC_URL = 'https://www.rfc-editor.org/rfc/rfc9110.html'
 _RFC_INFO = 'https://www.rfc-editor.org/info/rfc9110/'
 _RFC_ERRATA = 'https://www.rfc-editor.org/errata/eid7419'
-_RFC_ERRATA_SEARCH = 'https://www.rfc-editor.org/errata_search.php?rfc=9110&rec_status=15&presentation=records'
 
 
 @pytest.mark.parametrize(
-    ('api', 'stream', 'cited_text', 'urls'),
+    ('api', 'cited_text', 'urls'),
     [
-        ('chat', True, _RFC_TITLE, [_RFC_URL, _RFC_INFO, _RFC_ERRATA]),
+        ('chat', _RFC_TITLE, [_RFC_URL, _RFC_INFO, _RFC_ERRATA]),
         (
             'responses',
-            True,
             _RFC_TITLE,
             [_RFC_INFO, 'https://www.rfc-editor.org/authors/rfc10049.pdf#4#4#4', _RFC_ERRATA],
-        ),
-        ('messages', True, _RFC_TITLE + ' ', [_RFC_URL, _RFC_INFO, _RFC_ERRATA_SEARCH]),
-        (
-            'messages',
-            False,
-            'The title of RFC 9110 is "HTTP Semantics"',
-            [_RFC_URL, _RFC_ERRATA_SEARCH, 'https://www.rfc-editor.org/errata/eid7870'],
         ),
     ],
 )
 async def test_deepseek_search_citation_sources_and_anchors(
-    api: str, stream: bool, cited_text: str, urls: list[str], allow_model_requests: None
+    api: str, cited_text: str, urls: list[str], allow_model_requests: None
 ) -> None:
-    # These recorded answers cite the sentence before its final punctuation. Messages puts the period in a separate block.
-    suffix = 'sse' if stream else 'json'
-    content = (_FIXTURES / f'{api}-citations.{suffix}').read_bytes()
-    media_type = 'text/event-stream' if stream else 'application/json'
+    content = (_FIXTURES / f'{api}-citations.sse').read_bytes()
     transport = httpx2.MockTransport(
-        lambda _: httpx2.Response(200, content=content + b'\n', headers={'content-type': media_type})
+        lambda _: httpx2.Response(200, content=content + b'\n', headers={'content-type': 'text/event-stream'})
     )
     async with httpx2.AsyncClient(transport=transport) as client:
         agent = Agent(deepseek_model(api, client), capabilities=[WebSearch()], model_settings={'thinking': False})
         prompt = 'Search for the title of RFC 9110 on rfc-editor.org. Answer in one short sentence with a citation.'
-        if stream:
-            async with agent.run_stream(prompt) as result:
-                await result.get_output()
-                response = result.response
-        else:
-            response = (await agent.run(prompt)).response
+        async with agent.run_stream(prompt) as result:
+            await result.get_output()
+            response = result.response
 
     source_urls: list[str] = []
     for part in response.parts:
@@ -298,60 +290,6 @@ async def test_deepseek_search_citation_sources_and_anchors(
                     assert isinstance(source, WebCitationSource)
                     source_urls.append(source.url)
     assert source_urls == urls
-
-
-async def test_deepseek_messages_uses_only_deepseek_credentials(
-    monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
-) -> None:
-    monkeypatch.setenv('ANTHROPIC_CUSTOM_HEADERS', 'x-proxy-id: unrelated\nx-api-key: unrelated')
-    monkeypatch.setenv('DEEPSEEK_API_KEY', 'deepseek-key')
-
-    def handle(request: httpx2.Request) -> httpx2.Response:
-        assert request.headers['x-api-key'] == 'deepseek-key'
-        assert 'x-proxy-id' not in request.headers
-        return httpx2.Response(
-            200,
-            json={
-                'type': 'message',
-                'model': 'deepseek-flash',
-                'content': [{'type': 'text', 'text': 'Hello'}],
-                'usage': {'input_tokens': 1, 'output_tokens': 1},
-                'stop_reason': 'end_turn',
-            },
-        )
-
-    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
-        model = AnthropicModel('deepseek-flash', provider=DeepSeekMessagesProvider(http_client=client))
-        # Setting max_retries exercises the SDK's per-request client copy.
-        await Agent(model).run('Hello', model_settings={'max_retries': 0})
-
-
-async def test_deepseek_messages_http_200_generation_error(allow_model_requests: None) -> None:
-    transport = httpx2.MockTransport(
-        lambda _: httpx2.Response(
-            200, json={'type': 'error', 'error': {'type': 'api_error', 'message': 'Generation interrupted'}}
-        )
-    )
-    async with httpx2.AsyncClient(transport=transport) as client:
-        model = deepseek_model('messages', client)
-        with pytest.raises(ModelServerError, match='Generation interrupted') as exc_info:
-            await Agent(model, capabilities=[WebSearch()]).run('Search the web.')
-    assert exc_info.value.provider_error_type == 'api_error'
-    assert not exc_info.value.in_stream
-
-
-def test_deepseek_messages_requires_its_own_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv('DEEPSEEK_API_KEY', raising=False)
-    monkeypatch.setenv('ANTHROPIC_API_KEY', 'unrelated')
-    with pytest.raises(UserError, match='DEEPSEEK_API_KEY'):
-        DeepSeekMessagesProvider()
-
-
-async def test_deepseek_messages_default_client_lifecycle() -> None:
-    provider = DeepSeekMessagesProvider(api_key='test')
-    async with provider:
-        assert not provider.client.is_closed()
-    assert provider.client.is_closed()
 
 
 @pytest.mark.parametrize('error_type', [None, 'api_error'])
@@ -367,50 +305,27 @@ async def test_deepseek_chat_http_200_generation_error(error_type: str | None, a
     assert not exc.value.in_stream
 
 
-@pytest.mark.parametrize('api', ['messages', 'responses'])
-async def test_deepseek_replays_standard_search_history(api: str, allow_model_requests: None) -> None:
-    """A standard search call from the same provider still uses the protocol's ordinary replay format."""
-    source = {
-        'type': 'web_search_result',
-        'url': 'https://example.org',
-        'title': 'Example',
-        'encrypted_content': 'opaque',
+async def test_deepseek_replays_standard_search_history(allow_model_requests: None) -> None:
+    """An unsigned search item follows the ordinary stateless Responses replay path."""
+    reply: dict[str, object] = {
+        'id': 'resp_1',
+        'model': 'deepseek-flash',
+        'status': 'completed',
+        'created_at': 1,
+        'output': [
+            {
+                'type': 'web_search_call',
+                'id': 'search_1',
+                'status': 'completed',
+                'action': {'type': 'search', 'query': 'example'},
+            },
+            {
+                'type': 'message',
+                'role': 'assistant',
+                'content': [{'type': 'output_text', 'text': 'Found it.', 'annotations': []}],
+            },
+        ],
     }
-    reply: dict[str, object]
-    if api == 'messages':
-        reply = {
-            'id': 'msg_1',
-            'model': 'deepseek-flash',
-            'type': 'message',
-            'role': 'assistant',
-            'content': [
-                {'type': 'server_tool_use', 'name': 'web_search', 'id': 'search_1', 'input': {'query': 'example'}},
-                {'type': 'web_search_tool_result', 'tool_use_id': 'search_1', 'content': [source]},
-                {'type': 'text', 'text': 'Found it.'},
-            ],
-            'stop_reason': 'end_turn',
-            'usage': {'input_tokens': 1, 'output_tokens': 1},
-        }
-    else:
-        reply = {
-            'id': 'resp_1',
-            'model': 'deepseek-flash',
-            'status': 'completed',
-            'created_at': 1,
-            'output': [
-                {
-                    'type': 'web_search_call',
-                    'id': 'search_1',
-                    'status': 'completed',
-                    'action': {'type': 'search', 'query': 'example'},
-                },
-                {
-                    'type': 'message',
-                    'role': 'assistant',
-                    'content': [{'type': 'output_text', 'text': 'Found it.', 'annotations': []}],
-                },
-            ],
-        }
     requests: list[bytes] = []
 
     def handle(request: httpx2.Request) -> httpx2.Response:
@@ -418,22 +333,19 @@ async def test_deepseek_replays_standard_search_history(api: str, allow_model_re
         return httpx2.Response(200, json=reply)
 
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
-        agent = Agent(deepseek_model(api, client), capabilities=[WebSearch()])
+        agent = Agent(deepseek_model('responses', client), capabilities=[WebSearch()])
         result = await agent.run('Search for an example.')
         assert any(isinstance(p, NativeToolReturnPart) and p.tool_call_id == 'search_1' for p in result.response.parts)
         await agent.run('What did you find?', message_history=result.all_messages())
     assert b'Found it.' in requests[1]
-    if api == 'messages':
-        assert b'search_1' in requests[1]
-    else:
-        # DeepSeek Responses is stateless; an unsigned search ID cannot restore server-side state.
-        assert b'search_1' not in requests[1]
+    assert b'search_1' not in requests[1]
 
 
-def test_deepseek_web_tool_profile_scope() -> None:
+@pytest.mark.parametrize('flash_name', ['deepseek-flash', 'deepseek-v4-flash'])
+def test_deepseek_web_tool_profile_scope(flash_name: str) -> None:
     provider = DeepSeekProvider(api_key='test')
     pro = OpenAIResponsesModel('deepseek-v4-pro', provider=provider)
-    flash = OpenAIResponsesModel('deepseek-flash', provider=provider)
+    flash = OpenAIResponsesModel(flash_name, provider=provider)
     native_tool = WebSearchTool(allowed_domains=['example.com'])
     assert WebFetchTool not in pro.profile.get('supported_native_tools', frozenset())
     assert WebFetchTool in flash.profile.get('supported_native_tools', frozenset())
@@ -441,42 +353,25 @@ def test_deepseek_web_tool_profile_scope() -> None:
     assert flash.unsupported_native_tool_settings(native_tool) == frozenset({'allowed_domains'})
 
 
-class SearchAnswer(BaseModel):
-    summary: str
-
-
-@pytest.mark.parametrize(('api', 'native'), [('chat', False), ('responses', False), ('responses', True)])
-async def test_deepseek_web_tools_reject_non_text_format(api: str, native: bool, allow_model_requests: None) -> None:
-    def handle(_: httpx2.Request) -> httpx2.Response:
-        assert False, 'Structured format must be rejected before making a provider request.'
-
-    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
-        agent = Agent(
-            deepseek_model(api, client),
-            capabilities=[WebSearch()],
-            output_type=NativeOutput(SearchAnswer) if native else PromptedOutput(SearchAnswer),
-        )
-        with pytest.raises(UserError, match='DeepSeek web tools require text output'):
-            await agent.run('Search the web.')
-
-
 @pytest.mark.parametrize(
-    ('api', 'settings', 'setting'),
+    ('api', 'settings', 'wire_field', 'value'),
     [
-        ('chat', {'openai_logprobs': True}, 'openai_logprobs'),
-        ('chat', {'openai_top_logprobs': 0}, 'openai_top_logprobs'),
-        ('responses', {'openai_top_logprobs': 0}, 'openai_top_logprobs'),
-        ('responses', {'openai_previous_response_id': 'resp_123'}, 'openai_previous_response_id'),
-        ('responses', {'openai_conversation_id': 'conv_123'}, 'openai_conversation_id'),
+        ('chat', {'openai_logprobs': True}, 'logprobs', True),
+        ('chat', {'openai_top_logprobs': 0}, 'top_logprobs', 0),
+        ('responses', {'openai_top_logprobs': 0}, 'top_logprobs', 0),
+        ('responses', {'openai_previous_response_id': 'resp_123'}, 'previous_response_id', 'resp_123'),
+        ('responses', {'openai_conversation_id': 'conv_123'}, 'conversation', 'conv_123'),
     ],
 )
-async def test_deepseek_web_tools_reject_incompatible_settings(
-    api: str, settings: OpenAIResponsesModelSettings, setting: str, allow_model_requests: None
+async def test_web_tool_provider_settings_reach_deepseek(
+    api: str, settings: OpenAIResponsesModelSettings, wire_field: str, value: JsonValue, allow_model_requests: None
 ) -> None:
-    def handle(_: httpx2.Request) -> httpx2.Response:
-        assert False, f'{setting} should be rejected before sending the request.'
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        assert _BODY.validate_json(request.content)[wire_field] == value
+        return httpx2.Response(400, json={'error': {'message': 'Unsupported web tool setting'}})
 
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         agent = Agent(deepseek_model(api, client), capabilities=[WebFetch()])
-        with pytest.raises(UserError, match=setting):
+        with pytest.raises(ModelHTTPError, match='Unsupported web tool setting') as exc:
             await agent.run('Read the page.', model_settings=settings)
+    assert exc.value.status_code == 400

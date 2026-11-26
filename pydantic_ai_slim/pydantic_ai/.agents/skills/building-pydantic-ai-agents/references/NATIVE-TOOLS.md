@@ -4,8 +4,6 @@ Read this file when the user wants provider-native tools such as web search, web
 
 Prefer provider-adaptive capabilities like `WebSearch()`, `WebFetch()`, `MCP()`, or `ImageGeneration()` when the user wants a provider-agnostic solution. Use native tools directly when they explicitly want provider-native behavior or provider-specific configuration.
 
-DeepSeek Flash supports `WebSearch()` and `WebFetch()` on Chat Completions, Responses, and Messages. For Messages, pair `AnthropicModel` with `DeepSeekMessagesProvider` from `pydantic_ai.providers.deepseek_messages`. Reuse the complete message history with the same API so signed pages remain available on later turns.
-
 ## Give My Agent Web Search or Code Execution
 
 Native tools are wrapped in [`NativeTool`][pydantic_ai.capabilities.NativeTool] and passed via `capabilities=[...]`.
@@ -24,9 +22,11 @@ For OpenAI web search, use the Responses API model prefix (`openai-responses:`),
 Set `external_web_access=False` on `WebSearch` or `WebSearchTool` to restrict OpenAI Responses web search to cached
 or indexed content.
 
+DeepSeek Flash supports native web search and fetch on Chat Completions and Responses. Pass the complete history to the same API to reuse signed page context.
+
 Restricting settings (`allowed_domains`, `blocked_domains`, `max_uses`, and `external_web_access=False` on web search;
 the first three on web fetch) are not dropped silently. On a model whose native tool can't apply one that is set
-(Gemini applies none), the tool counts as unsupported: a local fallback runs in its place if one is configured, an
+(Gemini and DeepSeek Flash apply none), the tool counts as unsupported: a local fallback runs in its place if one is configured, an
 `optional=True` tool is left out, and `UserError` is raised otherwise.
 
 ## Native Tool Defaults

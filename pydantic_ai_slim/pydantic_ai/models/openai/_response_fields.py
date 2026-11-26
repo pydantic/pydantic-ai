@@ -15,7 +15,6 @@ from ... import usage
 from ..._instrumentation import add_input_transformations_event
 from ..._utils import is_str_dict as _is_str_dict
 from ...messages import STANDING_PROMPT_PLANTED_KEY, CompactionPart, FinishReason, ModelResponseState
-from .._deepseek_web_tools import DeepSeekWebUsage
 
 RESPONSES_FINISH_REASON_MAP: dict[
     Literal['max_output_tokens', 'max_messages', 'content_filter', 'steered'] | ResponseStatus, FinishReason
@@ -143,25 +142,14 @@ def billed_web_searches(
             )
 
 
-def _apply_cache_write_tokens(request_usage: usage.RequestUsage, input_tokens_details: object) -> None:
-    # genai-prices maps OpenAI's nested `cache_write_tokens` on the `openai` extractors as of
-    # https://github.com/pydantic/genai-prices/pull/463 (in 0.1.4), but not every OpenAI-compatible
-    # provider's extractor does — Azure's still omits it — so lift it manually here.
-    # TODO: Remove this block once those remaining extractors map it. Check `prices/providers/azure.yml`.
-    if _is_str_dict(input_tokens_details):
-        cache_write_tokens = input_tokens_details.get('cache_write_tokens')
-        if isinstance(cache_write_tokens, int):
-            request_usage.cache_write_tokens = cache_write_tokens
-
-
-def _unmeasured_usage(web_search_requests: int) -> usage.RequestUsage:
-    if web_search_requests:
-        return usage.RequestUsage(
-            unmeasured_requests=1,
-            web_searches=web_search_requests,
-            details={'web_search_requests': web_search_requests},
-        )
-    return usage.RequestUsage(unmeasured_requests=1)
+def _web_tool_usage(
+    response: chat.ChatCompletion | ChatCompletionChunk | responses.Response | responses.CompactedResponse,
+    reported: dict[str, int] | None,
+) -> dict[str, int]:
+    if reported is not None:
+        return reported
+    count = billed_web_searches(response)
+    return {'web_search_requests': count} if count else {}
 
 
 def map_usage(
@@ -170,12 +158,19 @@ def map_usage(
     provider_url: str,
     model: str,
     *,
-    deepseek_web_tools: bool = False,
+    web_tool_usage: dict[str, int] | None = None,
 ) -> usage.RequestUsage:
     response_usage = response.usage
-    web_search_requests = 0 if deepseek_web_tools else billed_web_searches(response)
+    web_tool_usage = _web_tool_usage(response, web_tool_usage)
+    web_search_requests = web_tool_usage.get('web_search_requests', 0)
     if response_usage is None:
-        return _unmeasured_usage(web_search_requests)
+        if web_search_requests:
+            return usage.RequestUsage(
+                unmeasured_requests=1,
+                web_searches=web_search_requests,
+                details={'web_search_requests': web_search_requests},
+            )
+        return usage.RequestUsage(unmeasured_requests=1)
 
     usage_data = response_usage.model_dump(exclude_none=True)
     details = {
@@ -184,6 +179,7 @@ def map_usage(
         if k not in {'prompt_tokens', 'completion_tokens', 'input_tokens', 'output_tokens', 'total_tokens'}
         if isinstance(v, int) and not isinstance(v, bool)
     }
+    details.update(web_tool_usage)
     response_data = dict(model=model, usage=usage_data)
     if isinstance(response_usage, responses.ResponseUsage):
         api_flavor = 'responses'
@@ -209,9 +205,14 @@ def map_usage(
     # It isn't a declared field, so it's set the way `RequestUsage.__init__` sets extra units.
     if web_search_requests:
         setattr(request_usage, 'web_searches', web_search_requests)
-    _apply_cache_write_tokens(request_usage, input_tokens_details)
-    if deepseek_web_tools and (tool_usage := usage_data.get('server_tool_use')) is not None:
-        DeepSeekWebUsage.model_validate(tool_usage).apply(request_usage)
+    # genai-prices maps OpenAI's nested `cache_write_tokens` on the `openai` extractors as of
+    # https://github.com/pydantic/genai-prices/pull/463 (in 0.1.4), but not every OpenAI-compatible
+    # provider's extractor does — Azure's still omits it — so lift it manually here.
+    # TODO: Remove this block once those remaining extractors map it. Check `prices/providers/azure.yml`.
+    if _is_str_dict(input_tokens_details):
+        cache_write_tokens = input_tokens_details.get('cache_write_tokens')
+        if isinstance(cache_write_tokens, int):
+            request_usage.cache_write_tokens = cache_write_tokens
     return request_usage
 
 

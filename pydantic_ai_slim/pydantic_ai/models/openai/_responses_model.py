@@ -186,7 +186,7 @@ from ._computer import (
     map_computer_result,
     stored_computer_call,
 )
-from ._deepseek_web_tools import check_web_output, check_web_settings, web_tool_param, web_tool_parts, web_tool_replay
+from ._deepseek_web_tools import RESPONSES_WEB_TOOL_KEY, web_tool_param, web_tool_parts, web_tool_replay, web_tool_usage
 from ._errors import (
     check_azure_content_filter,
     is_azure,
@@ -548,8 +548,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         model_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
-        if self.profile.get('openai_deepseek_web_tools', False):
-            check_web_output(model_request_parameters)
         model_settings = translate_openai_cache(self.profile, model_settings, model_request_parameters)
         if (
             model_settings is not None
@@ -1282,7 +1280,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 self._provider.name,
                 self._provider.base_url,
                 self.model_name,
-                deepseek_web_tools=self.profile.get('openai_deepseek_web_tools', False),
+                web_tool_usage=web_tool_usage(response.usage)
+                if self.profile.get('openai_deepseek_web_tools', False)
+                else None,
             ),
             model_name=response.model,
             provider_response_id=response.id,
@@ -1378,7 +1378,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             if not isinstance(content, responses.ResponseOutputText) or not content.text:
                 continue
             citations = map_responses_citations(
-                content.annotations, content.text, content_offsets=self.profile.get('openai_deepseek_web_tools', False)
+                content.annotations,
+                content.text,
+                content_offsets=self.profile.get('openai_url_citation_content_offsets', False),
             )
             part_provider_details: dict[str, Any] = {}
             if citations:
@@ -1517,6 +1519,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             _is_websocket=is_websocket,
             _tool_call_ids_are_response_scoped=tool_call_ids_are_response_scoped,
             _process_provider_details=self._process_provider_details,
+            _citation_content_offsets=self.profile.get('openai_url_citation_content_offsets', False),
             _deepseek_web_tools=self.profile.get('openai_deepseek_web_tools', False),
         )
         streamed_response.canonical_system = self._canonical_system_stamp
@@ -2185,13 +2188,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
         keep_implicit_cache_without_breakpoints(model_settings, request_params.input)
         drop_unsupported_params(profile, model_settings)
-        if profile.get('openai_deepseek_web_tools', False):
-            check_web_settings(
-                request_params.tools,
-                openai_top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
-                openai_previous_response_id=request_params.previous_response_id,
-                openai_conversation_id=request_params.conversation,
-            )
         store = self._resolve_store(model_settings)
 
         # The SDK's Responses `PromptCacheOptions` has keys ours doesn't expose, so the TypedDicts aren't assignable.
@@ -3102,11 +3098,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if self.profile.get('openai_deepseek_web_tools', False):
             # Streaming returns can complete in a different order from the calls.
             response_context.deepseek_web_items = {
-                (part.tool_name, part.tool_call_id): wire
+                (part.tool_name, part.tool_call_id): part
                 for part in message.parts
                 if isinstance(part, NativeToolReturnPart)
                 and self.accepts_stateless_artifacts(message, part)
-                and (wire := web_tool_replay(part)) is not None
+                and RESPONSES_WEB_TOOL_KEY in (part.provider_details or {})
+                and isinstance(part.content, dict)
             }
         response_parts: Sequence[ModelResponsePart] = message.parts
         if not self.profile.get('openai_responses_supports_interleaved_function_calls', True):
@@ -3348,8 +3345,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         from_same_provider: bool,
         should_send_item_id: bool,
     ) -> None:
-        if (wire := response_context.deepseek_web_items.get((item.tool_name, item.tool_call_id))) is not None:
-            context.openai_messages.append(wire)
+        if (
+            result := response_context.deepseek_web_items.get((item.tool_name, item.tool_call_id))
+        ) is not None and self.accepts_stateless_artifacts(response_context.message, item):
+            context.openai_messages.append(web_tool_replay(item, result))
             response_context.message_item = None
             return
         # Hosted tool-search items carry their state inline, so they replay to any provider
@@ -3777,8 +3776,8 @@ class _ResponsesMapModelResponseContext:
     message: ModelResponse
     same_endpoint: bool
     response_start: int
-    deepseek_web_items: dict[tuple[str, str], responses.ResponseInputItemParam] = field(
-        default_factory=dict[tuple[str, str], responses.ResponseInputItemParam]
+    deepseek_web_items: dict[tuple[str, str], NativeToolReturnPart] = field(
+        default_factory=dict[tuple[str, str], NativeToolReturnPart]
     )
     message_item: responses.ResponseOutputMessageParam | None = None
     reasoning_item: responses.ResponseReasoningItemParam | None = None

@@ -130,7 +130,6 @@ from ._chat_completions import (
 from ._chat_streaming import OpenAIStreamedResponse
 from ._citations import map_chat_content
 from ._deepseek_web_tools import (
-    CHAT_FINAL_STEP_KEY,
     CHAT_STEP_KEY,
     CHAT_STEPS_KEY,
     ChatWebStep,
@@ -138,8 +137,7 @@ from ._deepseek_web_tools import (
     chat_web_steps,
     chat_web_tool_param,
     check_chat_web_error,
-    check_web_output,
-    check_web_settings,
+    web_tool_usage,
 )
 from ._errors import check_azure_content_filter, is_azure, map_api_errors
 from ._model_names import OpenAIModelName
@@ -436,8 +434,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 f'Please use `OpenAIResponsesModel` instead.'
             )
         model_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
-        if self.profile.get('openai_deepseek_web_tools', False):
-            check_web_output(model_request_parameters)
         return translate_openai_cache(self.profile, model_settings, model_request_parameters), model_request_parameters
 
     def _unsupported_settings(self) -> frozenset[str]:
@@ -612,12 +608,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         keep_implicit_cache_without_breakpoints(model_settings, openai_messages)
 
         drop_unsupported_params(profile, model_settings)
-        if profile.get('openai_deepseek_web_tools', False):
-            check_web_settings(
-                tools,
-                openai_logprobs=model_settings.get('openai_logprobs') or OMIT,
-                openai_top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
-            )
 
         with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
@@ -847,14 +837,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if raw_steps := message_extras.get('server_tool_calls'):
             steps = chat_web_steps.validate_python(raw_steps)
             provider_details[CHAT_STEPS_KEY] = chat_web_step_metadata(steps)
-            if isinstance(message_extras.get('reasoning_content'), str):
-                provider_details[CHAT_FINAL_STEP_KEY] = max((step.index for step in steps), default=-1) + 1
             for step in steps:
                 items.extend(self._deepseek_step_parts(step))
         if thinking_parts := self._process_thinking(message):
-            if isinstance(final_step := provider_details.get(CHAT_FINAL_STEP_KEY), int):
-                for part in thinking_parts:
-                    part.provider_details = {CHAT_STEP_KEY: final_step}
             items.extend(thinking_parts)
         return items
 
@@ -997,7 +982,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             self._provider.name,
             self._provider.base_url,
             self.model_name,
-            deepseek_web_tools=self.profile.get('openai_deepseek_web_tools', False),
+            web_tool_usage=web_tool_usage(response.usage)
+            if self.profile.get('openai_deepseek_web_tools', False)
+            else None,
         )
         if self.profile.get('openai_chat_completion_tokens_omit_reasoning', False):
             add_reasoning_tokens_omitted_from_completion_tokens(request_usage, response.usage)
@@ -1318,7 +1305,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if self.profile.get('openai_deepseek_web_tools', False) and self.accepts_stateless_artifacts(message):
             details = message.provider_details or {}
             if wire_steps := details.get(CHAT_STEPS_KEY):
-                param = self._replay_deepseek_web_steps(message, param, wire_steps, details.get(CHAT_FINAL_STEP_KEY))
+                param = self._replay_deepseek_web_steps(message, param, wire_steps)
         return param
 
     def _replay_deepseek_web_steps(
@@ -1326,7 +1313,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         message: ModelResponse,
         param: chat.ChatCompletionAssistantMessageParam | None,
         wire_steps: object,
-        final_step: object,
     ) -> chat.ChatCompletionAssistantMessageParam | None:
         retained, thinking_by_step = self._retained_deepseek_parts(message)
         steps: list[ChatWebStep] = []
@@ -1345,26 +1331,25 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             if steps:
                 wire['server_tool_calls'] = chat_web_steps.dump_python(steps, mode='json', exclude_unset=True)
             wire.pop('reasoning_content', None)
-            if isinstance(final_step, int):
-                wire['reasoning_content'] = ''.join(thinking_by_step.get(final_step, ()))
+            if final_thinking := thinking_by_step.get(None):
+                wire['reasoning_content'] = ''.join(final_thinking)
         return param
 
-    def _retained_deepseek_parts(self, message: ModelResponse) -> tuple[set[tuple[str, str]], dict[int, list[str]]]:
+    def _retained_deepseek_parts(
+        self, message: ModelResponse
+    ) -> tuple[set[tuple[str, str]], dict[int | None, list[str]]]:
         calls: set[tuple[str, str]] = set()
         returns: set[tuple[str, str]] = set()
-        thinking_by_step: dict[int, list[str]] = {}
+        thinking_by_step: dict[int | None, list[str]] = {}
         for part in message.parts:
             if not self.accepts_stateless_artifacts(message, part):
                 continue
             if isinstance(part, NativeToolCallPart | NativeToolReturnPart):
                 keys = calls if isinstance(part, NativeToolCallPart) else returns
                 keys.add((part.tool_call_id, part.tool_name))
-            elif (
-                message.finish_reason != 'content_filter'
-                and isinstance(part, ThinkingPart)
-                and isinstance(index := (part.provider_details or {}).get(CHAT_STEP_KEY), int)
-            ):
+            elif message.finish_reason != 'content_filter' and isinstance(part, ThinkingPart):
                 # DeepSeek clears step reasoning from the terminal content-filter response.
+                index = (part.provider_details or {}).get(CHAT_STEP_KEY)
                 thinking_by_step.setdefault(index, []).append(part.content)
         return calls & returns, thinking_by_step
 

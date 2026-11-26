@@ -531,6 +531,9 @@ class OpenAIModelProfile(ModelProfile, total=False):
     `tool_call_ids_are_response_scoped` in the same profile wins.
     """
 
+    openai_url_citation_content_offsets: bool
+    """Whether URL citation offsets identify cited text instead of an inline citation marker."""
+
     openai_deepseek_web_tools: bool
     """Whether the endpoint uses DeepSeek Flash's signed web tool protocol."""
 

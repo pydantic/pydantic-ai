@@ -2,24 +2,42 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 from typing import Literal, cast
 
-from openai import Omit
 from openai.types import chat, responses
 from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter
 
-from ...exceptions import UserError
+from ..._utils import is_str_dict
 from ...messages import NativeToolCallPart, NativeToolReturnPart
 from ...native_tools import WebFetchTool, WebSearchTool
-from .. import ModelRequestParameters
-from .._deepseek_web_tools import DeepSeekWebToolKind, DeepSeekWebToolName, native_web_tool_name, web_tool_name
 from ._errors import response_error
 
-_DETAILS_KEY = 'deepseek_responses_web_tool'
+RESPONSES_WEB_TOOL_KEY = 'deepseek_responses_web_tool'
 CHAT_STEPS_KEY = 'deepseek_server_tool_calls'
-CHAT_FINAL_STEP_KEY = 'deepseek_final_reasoning_step'
 CHAT_STEP_KEY = 'deepseek_reasoning_step'
+
+
+DeepSeekWebToolName = Literal['deepseek_web_search', 'deepseek_read_url']
+DeepSeekWebToolKind = Literal['search', 'deep_search', 'image_search', 'deep_image_search', 'read_link']
+
+
+def web_tool_name(tool: WebSearchTool | WebFetchTool) -> DeepSeekWebToolName:
+    return 'deepseek_read_url' if isinstance(tool, WebFetchTool) else 'deepseek_web_search'
+
+
+def native_web_tool_name(kind: DeepSeekWebToolKind) -> str:
+    return WebFetchTool.kind if kind == 'read_link' else WebSearchTool.kind
+
+
+def web_tool_usage(usage: BaseModel | None) -> dict[str, int]:
+    counters = (usage.model_extra or {}).get('server_tool_use') if usage else None
+    if not is_str_dict(counters):
+        return {}
+    return {
+        'web_search_requests' if key == 'tool_search' else key: count
+        for key, count in counters.items()
+        if isinstance(count, int) and count > 0
+    }
 
 
 class _WebToolItem(BaseModel):
@@ -65,17 +83,25 @@ def web_tool_parts(
             tool_call_id=parsed.id,
             outcome='failed' if parsed.status == 'failed' else 'success',
             provider_name=provider_name,
-            provider_details={_DETAILS_KEY: parsed.model_dump(mode='json', exclude_unset=True)},
+            provider_details={
+                RESPONSES_WEB_TOOL_KEY: parsed.model_dump(include={'kind', 'signature'}, exclude_unset=True)
+            },
         ),
     )
 
 
-def web_tool_replay(part: NativeToolReturnPart) -> responses.ResponseInputItemParam | None:
-    if (wire := (part.provider_details or {}).get(_DETAILS_KEY)) is None:
-        return None
-    parsed = _WebToolItem.model_validate(wire)
-    # The OpenAI SDK's item union lacks DeepSeek's signed fields.
-    return cast(responses.ResponseInputItemParam, parsed.model_dump(mode='json', exclude_unset=True))
+def web_tool_replay(call: NativeToolCallPart, result: NativeToolReturnPart) -> responses.ResponseInputItemParam:
+    metadata = (result.provider_details or {})[RESPONSES_WEB_TOOL_KEY]
+    assert is_str_dict(result.content)
+    content = result.content.copy()
+    action = call.args_as_dict()
+    if 'sources' in content:
+        action = {**action, 'sources': content.pop('sources')}
+    # DeepSeek extends the SDK's web_search_call with the signed page and tool kind.
+    return cast(
+        responses.ResponseInputItemParam,
+        {'type': 'web_search_call', 'id': call.tool_call_id, 'action': action, **content, **metadata},
+    )
 
 
 class ChatWebCall(BaseModel):
@@ -135,23 +161,6 @@ def chat_web_step_metadata(steps: list[ChatWebStep]) -> list[object]:
         for step in steps
     ]
     return cast(list[object], chat_web_steps.dump_python(stripped, mode='json', exclude_unset=True))
-
-
-def check_web_output(params: ModelRequestParameters) -> None:
-    if params.output_mode in ('native', 'prompted') and any(
-        isinstance(tool, WebSearchTool | WebFetchTool) for tool in params.native_tools
-    ):
-        raise UserError('DeepSeek web tools require text output. Use text or tool output, or disable the web tools.')
-
-
-def check_web_settings(tools: Sequence[Mapping[str, object]] | Omit, **settings: object) -> None:
-    if isinstance(tools, Omit) or not any(
-        tool.get('type') in ('deepseek_web_search', 'deepseek_read_url') for tool in tools
-    ):
-        return
-    for name, value in settings.items():
-        if not isinstance(value, Omit):
-            raise UserError(f'DeepSeek web tools do not support `{name}`. Remove the setting or disable the web tools.')
 
 
 def chat_web_tool_param(tool: WebSearchTool | WebFetchTool) -> chat.ChatCompletionToolParam:

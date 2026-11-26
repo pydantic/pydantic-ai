@@ -43,7 +43,6 @@ from ._citations import (
     map_chat_citations,
 )
 from ._deepseek_web_tools import (
-    CHAT_FINAL_STEP_KEY,
     CHAT_STEP_KEY,
     CHAT_STEPS_KEY,
     ChatWebCall,
@@ -51,6 +50,7 @@ from ._deepseek_web_tools import (
     chat_web_step_metadata,
     chat_web_steps,
     check_chat_web_error,
+    web_tool_usage,
 )
 from ._errors import map_api_errors
 from ._model_names import OpenAIModelName
@@ -85,8 +85,6 @@ class OpenAIStreamedResponse(StreamedResponse):
     _pending_raw_annotations: list[object] = field(default_factory=list[object], init=False)
     _unmapped_chunks: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]], init=False)
 
-    _deepseek_reasoning_step: int = 0
-    _deepseek_has_reasoning: bool = False
     _deepseek_started_calls: dict[str, ChatWebCall] = field(default_factory=dict[str, ChatWebCall], init=False)
 
     async def close_stream(self) -> None:
@@ -160,8 +158,6 @@ class OpenAIStreamedResponse(StreamedResponse):
         if raw_event := (choice.model_extra or {}).get('server_tool_event'):
             yield from self._map_deepseek_web_progress(ChatWebEvent.model_validate(raw_event))
         delta = choice.delta.model_extra or {}
-        if isinstance(delta.get('reasoning_content'), str):
-            self._deepseek_has_reasoning = True
         if not (raw_steps := delta.get('server_tool_calls')):
             return
         steps = chat_web_steps.validate_python(raw_steps)
@@ -169,8 +165,6 @@ class OpenAIStreamedResponse(StreamedResponse):
             **(self.provider_details or {}),
             CHAT_STEPS_KEY: chat_web_step_metadata(steps),
         }
-        if self._deepseek_has_reasoning:
-            self.provider_details[CHAT_FINAL_STEP_KEY] = self._deepseek_reasoning_step
         for step in steps:
             for call in step.calls:
                 call_id = ('deepseek_call', call.id)
@@ -182,8 +176,11 @@ class OpenAIStreamedResponse(StreamedResponse):
 
     def _map_deepseek_web_progress(self, event: ChatWebEvent) -> Iterator[ModelResponseStreamEvent]:
         if event.type == 'step_reasoning_done':
-            self._deepseek_has_reasoning = False
-            self._deepseek_reasoning_step = event.step + 1
+            key = ('reasoning', 'reasoning_content', self._reasoning_generation)
+            if self._parts_manager.get_part_by_vendor_id(key) is not None:
+                yield from self._parts_manager.handle_thinking_delta(
+                    vendor_part_id=key, provider_details={CHAT_STEP_KEY: event.step}
+                )
             self._advance_part_boundary('tool')
         elif event.type == 'call_started':
             call = ChatWebCall.model_validate(event.call)
@@ -275,7 +272,9 @@ class OpenAIStreamedResponse(StreamedResponse):
         # still equals it: not split by reasoning, and not changed by removing thinking tags or whitespace.
         citations = (
             map_chat_citations(
-                annotations, part.content, content_offsets=self._model_profile.get('openai_deepseek_web_tools', False)
+                annotations,
+                part.content,
+                content_offsets=self._model_profile.get('openai_url_citation_content_offsets', False),
             )
             if len(text_part_ids) == 1 and part.content == self._raw_text_content
             else None
@@ -360,9 +359,6 @@ class OpenAIStreamedResponse(StreamedResponse):
                 id=field_name,
                 content=reasoning,
                 provider_name=self.provider_name,
-                provider_details={CHAT_STEP_KEY: self._deepseek_reasoning_step}
-                if field_name == 'reasoning_content' and profile.get('openai_deepseek_web_tools', False)
-                else None,
             ):
                 if isinstance(event, PartStartEvent):
                     self._advance_part_boundary('reasoning')
@@ -493,7 +489,9 @@ class OpenAIStreamedResponse(StreamedResponse):
             self._provider_name,
             self._provider_url,
             self.model_name,
-            deepseek_web_tools=self._model_profile.get('openai_deepseek_web_tools', False),
+            web_tool_usage=web_tool_usage(response.usage)
+            if self._model_profile.get('openai_deepseek_web_tools', False)
+            else None,
         )
         if self._model_profile.get('openai_chat_completion_tokens_omit_reasoning', False):
             add_reasoning_tokens_omitted_from_completion_tokens(request_usage, response.usage)

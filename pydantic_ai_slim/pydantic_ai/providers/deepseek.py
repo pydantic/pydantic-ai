@@ -58,8 +58,10 @@ class DeepSeekProvider(_OpenAISDKProvider):
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
             # Scope this API alias's thinking support to DeepSeek's endpoint.
-            OpenAIModelProfile(supports_thinking=True, openai_deepseek_web_tools=True)
-            if model_name == 'deepseek-flash'
+            OpenAIModelProfile(
+                supports_thinking=True, openai_deepseek_web_tools=True, openai_url_citation_content_offsets=True
+            )
+            if model_name in ('deepseek-flash', 'deepseek-v4-flash')
             else None,
             OpenAIModelProfile(
                 supports_json_object_output=True,

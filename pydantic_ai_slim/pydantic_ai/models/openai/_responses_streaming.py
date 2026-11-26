@@ -32,7 +32,7 @@ from ._citations import (
     responses_output_text_annotation_ta,
 )
 from ._computer import block_computer_calls, map_computer_call
-from ._deepseek_web_tools import web_tool_parts
+from ._deepseek_web_tools import web_tool_parts, web_tool_usage
 from ._errors import map_api_errors, response_error, response_error_type
 from ._history_digest import with_history_digest
 from ._model_names import OpenAIModelName
@@ -106,6 +106,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     """The history this response was created from, digested with its parts as `ModelResponse.history_digest`."""
     # Custom HTTP clients can return streams outside the SDK's AsyncStream class.
     _is_websocket: bool = False
+    _citation_content_offsets: bool = field(default=False, kw_only=True)
     _deepseek_web_tools: bool = field(default=False, kw_only=True)
 
     def get(self) -> ModelResponse:
@@ -799,7 +800,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         existing_part = self._parts_manager.get_part_by_vendor_id(content_key)
         # Annotation positions count into the final text, so they can't go on streamed text that differs.
         citations = (
-            map_responses_citations(annotations, chunk.text, content_offsets=self._deepseek_web_tools)
+            map_responses_citations(annotations, chunk.text, content_offsets=self._citation_content_offsets)
             if isinstance(existing_part, TextPart) and existing_part.content == chunk.text
             else None
         )
@@ -856,7 +857,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             self._provider_name,
             self._provider_url,
             self.model_name,
-            deepseek_web_tools=self._deepseek_web_tools,
+            web_tool_usage=web_tool_usage(response.usage) if self._deepseek_web_tools else None,
         )
 
     def _record_usage(self, response: responses.Response) -> None:

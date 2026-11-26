@@ -249,7 +249,6 @@ try:
         without_unanswered_tool_calls,
     )
     from ._containers import is_tool_result_only
-    from ._deepseek_web_tools import check_web_generation_error, web_tool_param, web_tool_part, web_tool_replay
     from ._deferred_loading import (
         append_revealed_tool_params,
         revealed_deferred_tool_order,
@@ -1211,8 +1210,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
         """Return `native_tool`'s restricting settings that Anthropic's web tools don't take: `external_web_access=False`."""
         if isinstance(native_tool, WebSearchTool | WebFetchTool):
-            if self.profile.get('anthropic_deepseek_web_tools', False):
-                return native_tool.restricting_settings
             return native_tool.restricting_settings - {'allowed_domains', 'blocked_domains', 'max_uses'}
         return frozenset()
 
@@ -1254,8 +1251,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         response = check_json_response(self.model_name, response)
         code_execution_in_open_turn = open_turn_has_code_execution(messages, self.system)
         if isinstance(response, BetaMessage):
-            if self.profile.get('anthropic_deepseek_web_tools', False):
-                check_web_generation_error(response, self.model_name)
             model_response = self._process_response(
                 response,
                 model_request_parameters,
@@ -2572,11 +2567,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         sent_native_computer = self._sent_native_computer(model_settings, model_request_parameters)
         for item in response.content:
             match item:
-                case _ if (
-                    self.profile.get('anthropic_deepseek_web_tools', False)
-                    and (part := web_tool_part(item, self.system)) is not None
-                ):
-                    items.append(part)
                 # The SDK builds a block type it doesn't know as a `BetaTextBlock` carrying that type.
                 case BetaTextBlock() if item.type != 'text':
                     warnings.warn(
@@ -2647,13 +2637,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         finish_reason = FINISH_REASON_MAP.get(raw_finish_reason) if raw_finish_reason else None
         model_response = ModelResponse(
             parts=items,
-            usage=map_usage(
-                response,
-                self._provider.name,
-                self._provider.base_url,
-                self._model_name,
-                deepseek_web_tools=self.profile.get('anthropic_deepseek_web_tools', False),
-            ),
+            usage=map_usage(response, self._provider.name, self._provider.base_url, self._model_name),
             model_name=response.model,
             provider_response_id=response.id,
             provider_name=self._provider.name,
@@ -2740,7 +2724,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             ),
             _history_fetched_pages=history_fetched_pages,
             _native_computer=self._sent_native_computer(model_settings, model_request_parameters),
-            _deepseek_web_tools=self.profile.get('anthropic_deepseek_web_tools', False),
             _report_inference_geo=self._sends_inference_geo(model_settings, self.profile),
             _thread_record=thread_record,
         )
@@ -2884,8 +2867,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         for tool in model_request_parameters.native_tools:
             match tool:
-                case WebSearchTool() | WebFetchTool() if self.profile.get('anthropic_deepseek_web_tools', False):
-                    tools.append(web_tool_param(tool))
                 case WebSearchTool():
                     tools.append(self._map_web_search_tool(tool, supports_dynamic_filtering, code_execution_may_call))
                 case CodeExecutionTool():
@@ -3503,14 +3484,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         assistant_content_params: list[_AssistantContentBlockParam] = []
         carried_thinking_params: list[BetaTextBlockParam] = []
         for response_part in message.parts:
-            if (
-                self.profile.get('anthropic_deepseek_web_tools', False)
-                and isinstance(response_part, NativeToolCallPart | NativeToolReturnPart)
-                and self.accepts_stateless_artifacts(message, response_part)
-                and (block := web_tool_replay(response_part)) is not None
-            ):
-                assistant_content_params.append(block)
-                continue
             match response_part:
                 case TextPart():
                     self._map_text_part(message, response_part, assistant_content_params)
