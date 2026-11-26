@@ -223,6 +223,40 @@ def scrub_json_body(body: bytes, fields: tuple[str, ...] = SCRUBBED_JSON_FIELDS)
     return json.dumps(parsed).encode('utf-8')
 
 
+def clear_access_programs(body: bytes | None, headers: dict[str, list[str]]) -> bytes | None:
+    """Clear the recording account's `access_programs` from an OpenAI Responses body.
+
+    The field sits at the top of a JSON response, and inside `response` in a streamed event. It becomes null, not a
+    string, because the SDK expects an object there. A body that doesn't parse is kept as it came.
+    """
+    if not body or b'"access_programs"' not in body:
+        return body
+    if _content_type(headers).startswith('text/event-stream') or body.startswith((b'event:', b'data:')):
+        return b'\n'.join(_clear_event_line(line) for line in body.split(b'\n'))
+    if _content_type(headers).startswith('application/json'):
+        return _clear_access_programs(body, None)
+    return body
+
+
+def _clear_event_line(line: bytes) -> bytes:
+    if not line.startswith(b'data:'):
+        return line
+    cleared = _clear_access_programs(line[5:], 'response')
+    return line if cleared == line[5:] else b'data: ' + cleared
+
+
+def _clear_access_programs(text: bytes, inside: str | None) -> bytes:
+    try:
+        parsed: Any = json.loads(text)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return text
+    target = parsed.get(inside) if inside and is_str_dict(parsed) else parsed
+    if not is_str_dict(target) or target.get('access_programs') is None:
+        return text
+    target['access_programs'] = None
+    return json.dumps(parsed).encode('utf-8')
+
+
 def scrub_form_credentials(body: bytes) -> bytes:
     """Redact credentials from an `application/x-www-form-urlencoded` body."""
     query_params = urllib.parse.parse_qs(body.decode('utf-8'))
@@ -277,5 +311,8 @@ def before_record_request(request: RawRequest) -> RawRequest:
 
 def before_record_response(response: RawResponse) -> RawResponse:
     response.headers = filter_headers(response.headers)
-    response.body = scrub_body(response.body, response.headers, SCRUBBED_JSON_FIELDS + SCRUBBED_RESPONSE_JSON_FIELDS)
+    response.body = clear_access_programs(
+        scrub_body(response.body, response.headers, SCRUBBED_JSON_FIELDS + SCRUBBED_RESPONSE_JSON_FIELDS),
+        response.headers,
+    )
     return response

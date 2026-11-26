@@ -62,8 +62,7 @@ def test_coder_explains_sandbox_creation_timing() -> None:
         'docs/harness/index.md',
     ):
         text = (_ROOT / path).read_text(encoding='utf-8')
-        assert 'Coder(repo_context=False)' in text
-        assert 'sandbox' in text.lower()
+        assert "creates the sandbox before the model's first request" in text
 
 
 def test_durable_guidance_lives_in_the_workspace_guide() -> None:

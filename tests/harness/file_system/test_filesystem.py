@@ -82,17 +82,6 @@ class ReadOnlyMount(LocalWorkspaceBackend):
         raise WorkspaceReadOnlyError('read-only mount')
 
 
-class UntouchableWorkspace(WorkspaceBackend):
-    """A sandbox-like workspace whose first operation would create a billed environment, so any operation fails."""
-
-    @property
-    def ref(self) -> None:
-        return None
-
-    async def working_dir(self) -> str:
-        raise AssertionError('the workspace was touched')  # pragma: no cover
-
-
 class CountingWorkspace(LocalWorkspaceBackend):
     """A local workspace that counts `working_dir` and `realpath` calls."""
 
@@ -538,7 +527,8 @@ class TestRootDir:
         workspace = CountingWorkspace(tmp_path)
         read: tuple[str, dict[str, object]] = ('read_file', {'path': 'a.txt'})
         await call_tools([FileSystem[None]()], [read, read], workspace=workspace)
-        assert workspace.working_dir_calls == 1
+        # One ask for the boundary and one for the instructions naming the directory, however many requests follow.
+        assert workspace.working_dir_calls == 2
 
     async def test_each_run_resolves_the_boundary_in_its_own_workspace(self, tmp_path: Path) -> None:
         # One toolset serves every run, so durable execution sees the toolset it registered.
@@ -555,9 +545,6 @@ class TestRootDir:
         ]
         assert first.endswith('1\tfirst\n')
         assert second.endswith('1\tsecond\n')
-
-    async def test_a_run_without_file_operations_does_no_workspace_io(self) -> None:
-        assert await call_tools([FileSystem[None](root_dir='/srv')], [], workspace=UntouchableWorkspace()) == []
 
     async def test_no_workspace_fails_the_run(self) -> None:
         with pytest.raises(UserError, match='`FileSystem` needs a workspace') as error:
