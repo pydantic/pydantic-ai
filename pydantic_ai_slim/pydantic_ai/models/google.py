@@ -223,7 +223,13 @@ _FINISH_REASON_MAP: dict[str, FinishReason | None] = {
     GoogleFinishReason.NO_IMAGE.value: 'error',
     GoogleFinishReason.IMAGE_RECITATION.value: 'content_filter',
     GoogleFinishReason.IMAGE_OTHER.value: None,
+    # Keyed by string: google-genai lists `MALFORMED_RESPONSE` from 3.0 and the rest from 3.3. Per the SDK, only Google
+    # Cloud sends `MODEL_ARMOR`, and only the Gemini API the last three.
     'MODEL_ARMOR': 'content_filter',
+    'MALFORMED_RESPONSE': 'error',
+    'MISSING_THOUGHT_SIGNATURE': 'error',
+    'ESCALATION': 'content_filter',
+    'PUP_LIMITED_DISABLED': 'content_filter',
 }
 
 _GOOGLE_IMAGE_SIZE = Literal['512', '1K', '2K', '4K']
