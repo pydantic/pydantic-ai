@@ -172,7 +172,7 @@ MAPS: dict[str, Case | Exempt] = {
         unlisted={
             value: exempt
             for value, exempt in _GOOGLE_STRING_KEYED_FINISH_REASONS.items()
-            if google_available() and value not in GoogleFinishReason.__members__
+            if google_available() and value not in {member.value for member in GoogleFinishReason}
         },
         marks=requires(google_available, 'google-genai'),
     ),
