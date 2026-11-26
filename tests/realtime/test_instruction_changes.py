@@ -11,7 +11,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai._framing import SYSTEM_TAG, wrap
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, Capability
 from pydantic_ai.messages import (
     AgentInstructionSource,
     CapabilityInstructionSource,
@@ -571,3 +571,48 @@ async def test_change_the_provider_refused_is_sent_again() -> None:
         'str',
     ]
     assert len(changes) == 1
+
+
+async def test_lowered_capability_instructions_are_left_out_with_a_warning() -> None:
+    """A session has no channel for instructions below operator authority, so it leaves them out and says so once."""
+    agent: Agent[None, str] = Agent(
+        instructions='Base',
+        deps_type=type(None),
+        capabilities=[Capability[None](id='plugin', instructions='Plugin note.').with_authority('none')],
+    )
+    model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    with pytest.warns(UserWarning, match="capabilities below operator authority \\('plugin'\\) are not sent") as caught:
+        async with agent.realtime(model).session() as session:
+            _ = [event async for event in session]
+    assert len([w for w in caught if 'below operator authority' in str(w.message)]) == 1
+    assert model.last_instructions == 'Base'
+
+
+async def test_a_loaded_capability_below_operator_authority_is_left_out_of_a_session_with_a_warning() -> None:
+    """A load in seeded history doesn't bring a lowered capability's instructions into the session's instructions."""
+    responses = [ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'plugin'}, tool_call_id='load')])]
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return responses.pop(0) if responses else ModelResponse(parts=[TextPart('Done.')])
+
+    class Plugin(AbstractCapability[None]):
+        id = 'plugin'
+        defer_loading = True
+
+        def get_description(self) -> str:
+            return 'A plugin.'
+
+        def get_instructions(self) -> str:
+            return 'Plugin note.'
+
+    agent: Agent[None, str] = Agent(
+        instructions='Base', deps_type=type(None), capabilities=[Plugin().with_authority('none')]
+    )
+    history = (await agent.run('Hi', model=FunctionModel(respond))).all_messages()
+
+    model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    with pytest.warns(UserWarning, match="capabilities below operator authority \\('plugin'\\) are not sent"):
+        async with agent.realtime(model, message_history=history).session() as session:
+            _ = [event async for event in session]
+    assert model.last_instructions is not None
+    assert 'Plugin note.' not in model.last_instructions

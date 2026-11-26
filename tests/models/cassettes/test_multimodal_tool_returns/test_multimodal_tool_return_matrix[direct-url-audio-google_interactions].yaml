@@ -1,0 +1,193 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "385"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: >-
+              Use the get_file tool now to retrieve a audio file, then describe what you
+              received.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=2322
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: requires_action
+        usage:
+          total_tokens: 184
+          total_input_tokens: 36
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 36
+          total_cached_tokens: 0
+          total_output_tokens: 10
+          total_tool_use_tokens: 0
+          total_thought_tokens: 138
+          initial_input_tokens: 29
+        created: 2026-11-06T02:49:56Z
+        updated: 2026-11-06T02:49:56Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            EssECsgEAWkUfRMLAr3dn9/WGtBeqvMhFGTo13q28UYVZYgwt1uuDaKQhryJZeDtdW2mrpgMfdHr/S90JHR+t9nfwESKZlQqFO8+cLLgobjBsJI5P1kNcJhflOKzht5KEZJdHI9pPsWCHZGSmxW5Jd/LSHs9dH7OYMzu69tU2+Dd0qmiyo6SFqQ8fmP5Ody0AocVONE9KEJi17ce9lfQPv25+4YjzfwTjxqqOAEs8VFOVaLuyhjXK1wZ4fg16Nry1832x9OWaoU++fHDNFsyiSJKaTp+SGA/iS6cNJhslw840w3UNwAQYDka9R0EvfIew1ngWUH0llFxdUQuh7EaL0OBDE+IW3JrTC8aXpGdSuA3iUgQAndC9f4KpD0354jSkkRBuF1GIB29Nl4NW9qINKypniCP6SR9SLO0wfHRRLdFdpETI8zzerisOQls+VaLhrXHsEqcH4gTeUIQ2ERbbc03J3C/7Bwsua8PVM2MONk1/eSOFqcyT7MOqkV1VNYIwUZvbalsBK1JIhsEjE8ZNbdnszR5c0To2f4UpGYBsICGMEIoJMHvlOKKRjj6LLvpPHudu0SsvNRQcPNZWf0ULaTps2tQLMP8AHS13aOTx4JrdSuRjLufyM6l0N88RrqYakGz6vwL8vvJOxuVO2sDV2gUiv8vOpqU6fiVqAeAI/8iroqCW9Fb2BzIzID5ju+Dn3fGtgar7/cKdE4xPXy/uSS51PQM+1ajJUhLWPj+uUIF36J0AeOWV9ULOZZM4mVmVLjl5Y6JVAY2f3F7o2E=
+          type: thought
+        - id: call_2073895746276670418
+          type: function_call
+          name: get_file
+          arguments: {}
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:49:56.937787+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1506"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: >-
+              Use the get_file tool now to retrieve a audio file, then describe what you
+              received.
+        - signature: >-
+            EssECsgEAWkUfRMLAr3dn9/WGtBeqvMhFGTo13q28UYVZYgwt1uuDaKQhryJZeDtdW2mrpgMfdHr/S90JHR+t9nfwESKZlQqFO8+cLLgobjBsJI5P1kNcJhflOKzht5KEZJdHI9pPsWCHZGSmxW5Jd/LSHs9dH7OYMzu69tU2+Dd0qmiyo6SFqQ8fmP5Ody0AocVONE9KEJi17ce9lfQPv25+4YjzfwTjxqqOAEs8VFOVaLuyhjXK1wZ4fg16Nry1832x9OWaoU++fHDNFsyiSJKaTp+SGA/iS6cNJhslw840w3UNwAQYDka9R0EvfIew1ngWUH0llFxdUQuh7EaL0OBDE+IW3JrTC8aXpGdSuA3iUgQAndC9f4KpD0354jSkkRBuF1GIB29Nl4NW9qINKypniCP6SR9SLO0wfHRRLdFdpETI8zzerisOQls+VaLhrXHsEqcH4gTeUIQ2ERbbc03J3C/7Bwsua8PVM2MONk1/eSOFqcyT7MOqkV1VNYIwUZvbalsBK1JIhsEjE8ZNbdnszR5c0To2f4UpGYBsICGMEIoJMHvlOKKRjj6LLvpPHudu0SsvNRQcPNZWf0ULaTps2tQLMP8AHS13aOTx4JrdSuRjLufyM6l0N88RrqYakGz6vwL8vvJOxuVO2sDV2gUiv8vOpqU6fiVqAeAI/8iroqCW9Fb2BzIzID5ju+Dn3fGtgar7/cKdE4xPXy/uSS51PQM+1ajJUhLWPj+uUIF36J0AeOWV9ULOZZM4mVmVLjl5Y6JVAY2f3F7o2E=
+          type: thought
+        - id: call_2073895746276670418
+          name: get_file
+          type: function_call
+          arguments: {}
+        - type: function_result
+          name: get_file
+          call_id: call_2073895746276670418
+          is_error: false
+          result:
+          - mime_type: audio/mpeg
+            type: audio
+            uri: https://download.samplelib.com/mp3/sample-3s.mp3
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=4685
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 588
+          total_input_tokens: 272
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 192
+          - modality: audio
+            tokens: 80
+          total_cached_tokens: 0
+          total_output_tokens: 116
+          total_tool_use_tokens: 0
+          total_thought_tokens: 200
+          initial_input_tokens: 264
+        created: 2026-11-06T02:50:01Z
+        updated: 2026-11-06T02:50:01Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            ErwGCrkGAWkUfRM2IF8yP6Eq6o2aBAVB00KduvbRW+9OKf2OHl3BAPRvMWaz5Ecwx7x1goWKqgx0d7NLsj532BkTKBPkcKNl8McrEPlOtl2BozwLA6GaDgEFwZ2zqylqpeg9IdeWSRLEW+J8SL1knVHHy+e0u0jKwNZu0ioeByv1liK1WhFrqrnet1FxuZId2UZUeWQq1oJvvTAlt63Dd/bciRhy77im9Tkj8aLtHUjZn6TG3A3QAiOfrDGKmwwDvD3SC//NJTr5aylbtUxkX/TmQh/MatxWPNO51Sa3LDyXG8xFx0lULEuFbTy/5hhfFeedNrhGZqd7RsYpeXZCZOtoTkwkzjfwkmFOPzHj+Ga4ykR44U3Cp8bnfXxpY3p5V2ekhUsY2wZTv/u4NDqY1mVHhwII/u4NGkiGQa5cMV3SoDmMN/m2t9ezzoSG36k+Bsb0IM9cGFNx5EnEq3t9UMv0wVNJfqYHIE9c+YPEdyIE1lEe17+PokFeE0ech9359SOifRAAZppgZkk/3e5vsKU644h9xmmw1ehFzjstGBDesZB2MNVR00Xb2vFuRFi+UzSS3+Jo/Lwxj+FJsmeNbTOzWV4TZT8PR2+GoNCBU1Wktnet66SR46IUwiuVKB9QvsgkW9CcoVWzUDVBH4jPojxX3prrcUW0ym1z/eiQMR6xwY3uS8jUuLDOw0FojZy/xuSIdotaFiH1UIRsA4JvY5l6F6huXESwx9nOqKm352AleNvDck41M2MsnLiYJDDBS9KbzYDXaXapjf6bWJBz+0jcwoyI79fyhrg+nUVTNlPn5Z4TwF/5Srvhdlmr9TI982F6GCCinG0J8cPqKELV0bpNZ8mSWBikSWBJh+/ehlBF605POjnxL66tjiJKDiDOXjnaemm3h/Ji9rq2ifgG2YyFpnNnX9BMIcPePvJtxlDDCEyHwamsNBU+gww5M6L0agjmClzH0SoR9H01MpUgSIu0VH6OwhuhW/OvoLArfHKV40saC6S9SQt8eMFMPse0bC1ROqcTYWHWpBvlbSJiKX5hUNEgZOae+sjaJWZjK+2cwiMu/+XilHRS4XdkyDFUym0RRCmnwRbt43LjlT0l
+          type: thought
+        - content:
+          - text: |-
+              I received a short, upbeat instrumental electronic dance/synth music clip (approximately 6 seconds long).
+
+              ### Key Characteristics:
+              * **Genre/Style:** Electronic / Synthwave / EDM
+              * **Instrumentation:**
+                * Driving kick drum and crisp percussion (hi-hats/claps)
+                * Pulsing synth bassline
+                * Bright, rhythmic electronic synth chords and arpeggiated melodic lines
+              * **Tempo & Mood:** Fast-paced, high-energy, and modern
+              * **Vocals:** None (entirely instrumental)
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:50:01.653660+00:00

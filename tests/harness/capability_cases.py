@@ -41,6 +41,7 @@ from pydantic_ai.tools import ToolDefinition, ToolSelector
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness import (
     Advisor,
+    AnnounceWorkingDirectory,
     ApprovalReviewer,
     AskUser,
     BackgroundTools,
@@ -226,12 +227,10 @@ def _skills(tmp_path: Path) -> list[AbstractCapability[None]]:
     return [Skills(tmp_path / 'skills'), LocalWorkspace(tmp_path)]
 
 
-def _skills_with_files(tmp_path: Path) -> list[AbstractCapability[None]]:
-    """`Skills` with `read_skill_file`, over a skill that bundles a reference file."""
-    _skills(tmp_path)
-    (tmp_path / 'skills' / 'weather' / 'references').mkdir()
-    (tmp_path / 'skills' / 'weather' / 'references' / 'guide.md').write_text('Sunny means no clouds.\n')
-    return [Skills(tmp_path / 'skills', read_files=True), LocalWorkspace(tmp_path)]
+def _lowered_skills(tmp_path: Path) -> list[AbstractCapability[None]]:
+    # Below `'operator'`, so the skill is held back from the instructions and `list_skills` and `load_skill` offer it.
+    capabilities = _skills(tmp_path)
+    return [capabilities[0], LocalWorkspace(tmp_path, authority='none')]
 
 
 def _permissions(tmp_path: Path) -> list[AbstractCapability[None]]:
@@ -417,6 +416,10 @@ def _check_benchmark_instructions(merged: BenchmarkInstructions[None]) -> None:
     assert merged.id == 'benchmark_instructions'
 
 
+def _check_working_directory(merged: AnnounceWorkingDirectory[None]) -> None:
+    assert merged.id == 'announce_working_directory'
+
+
 def _check_current_time(merged: CurrentTime[None]) -> None:
     assert (merged.timezone, merged.precision) == ('Asia/Tokyo', 'hour')
 
@@ -462,15 +465,11 @@ CASES: dict[str, CapabilityCase] = {
         ),
         build=_skills,
         calls=Calls(
-            (
-                ('load_capability', {'id': 'weather'}),
-                ('read_skill_file', {'skill': 'weather', 'path': 'references/guide.md'}),
-            ),
-            _skills_with_files,
-            # Not a measure of #14492 (capability instruction ids under Temporal): the calls only read files.
+            (('list_skills', {}), ('load_skill', {'name': 'weather'})),
+            _lowered_skills,
             durable_steps=DurableSteps(
-                dbos=_workspace_steps(16),
-                temporal=(*('capability__workspace__call',) * 6, 'toolset__skills__call_tool'),
+                dbos=_workspace_steps(22),
+                temporal=(*('capability__workspace__call',) * 8, *('toolset__skills_lowered__call_tool',) * 2),
             ),
         ),
     ),
@@ -763,6 +762,13 @@ CASES: dict[str, CapabilityCase] = {
             'one fixed text; two would state it twice',
             lambda: (BenchmarkInstructions[None](), BenchmarkInstructions[None]()),
             _check_benchmark_instructions,
+        )
+    ),
+    'AnnounceWorkingDirectory': CapabilityCase(
+        Combines(
+            'one fixed line; `Shell` and `FileSystem` each bring a copy, which must state it once',
+            lambda: (AnnounceWorkingDirectory[None](), AnnounceWorkingDirectory[None]()),
+            _check_working_directory,
         )
     ),
     'CurrentTime': CapabilityCase(
