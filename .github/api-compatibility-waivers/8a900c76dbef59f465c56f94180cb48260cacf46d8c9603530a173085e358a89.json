@@ -1,5 +1,5 @@
 {
-  "against": "v2.74.0",
+  "against": "v2.75.0",
   "reason": "pax 0.x: `Selection.feed` takes the press time as a required `now`, to count double- and triple-clicks. Only `PromptSurface` calls it; `pydantic_ai_pax.ui.prompt.prompt_selection` is pax-internal, outside the documented plugin-author paths (`pydantic_ai_pax.plugins`, `pydantic_ai_pax.commands`).",
   "pull_request": "https://github.com/pydantic/pydantic-ai/pull/14558"
 }
