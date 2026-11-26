@@ -2058,6 +2058,32 @@ class TestGoogle:
             )
         )
 
+    @pytest.mark.skipif(
+        not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
+    )
+    @pytest.mark.vcr()
+    async def test_vertex_documents(
+        self, allow_model_requests: None, vertex_provider: GoogleProvider
+    ):  # pragma: lax no cover
+        """Several documents on Google Cloud report their input tokens.
+
+        google-genai 3 sends them to `:batchEmbedContents`, where 2.x sends `:predict`. The cassette holds one
+        recording from each, so the lowest-versions leg replays the `:predict` one.
+        """
+        model = GoogleEmbeddingModel('gemini-embedding-001', provider=vertex_provider)
+        result = await Embedder(model).embed_documents(['Hello, world!', 'Goodbye, world!'])
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=3072), length=2),
+                inputs=['Hello, world!', 'Goodbye, world!'],
+                input_type='document',
+                usage=RequestUsage(),
+                model_name='gemini-embedding-001',
+                timestamp=IsDatetime(),
+                provider_name='google-cloud',
+            )
+        )
+
     @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
     async def test_instrumentation(self, gemini_api_key: str, capfire: CaptureLogfire):
         model = GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
