@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from .. import _utils
 from .._run_context import AgentDepsT, RunContext, without_tool_name_path
 from ..exceptions import UserError
-from ..tools import ToolsPrepareFunc
+from ..tools import ToolDefinition, ToolsPrepareFunc
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
 
@@ -36,6 +36,17 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
             )
 
         return {
-            name: replace(original_tools[name], tool_def=tool_def)
+            name: replace(original_tools[name], tool_def=_with_original_owner(tool_def, original_tools[name].tool_def))
             for name, tool_def in prepared_tool_defs_by_name.items()
         }
+
+
+def _with_original_owner(tool_def: ToolDefinition, original: ToolDefinition) -> ToolDefinition:
+    """`tool_def`, still owned by the capability that contributed the tool.
+
+    The owning capability is fixed for the run, and the tool's content is held to its authority. A prepare function
+    that builds a new `ToolDefinition` instead of `replace()`-ing the one it was given would otherwise drop it.
+    """
+    if tool_def.capability_id == original.capability_id:
+        return tool_def
+    return replace(tool_def, capability_id=original.capability_id)

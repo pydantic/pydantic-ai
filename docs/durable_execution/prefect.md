@@ -154,6 +154,8 @@ Each agent instance must have a unique `name` so Prefect can correctly identify 
 
 Toolsets that implement their own tool listing and calling (i.e. [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], [`MCPToolset`][pydantic_ai.mcp.MCPToolset], and [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset]) must have a unique [`id`][pydantic_ai.toolsets.AbstractToolset.id] set, which is used to identify their tasks within the flow. The hostname a URL `MCPToolset` without one takes as its `id` doesn't count.
 
+A [custom toolset](../toolsets.md#building-a-custom-toolset) subclassing [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] isn't one of those types, so its own `get_tools()` and `call_tool()` run in flow code rather than in a task. That's fine if they perform no I/O and are deterministic. If they do perform I/O, move that I/O into function tools on a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], whose tool calls Prefect runs in tasks, or return the toolset from a dynamic toolset or a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability], whose tool listing and tool calls both run inside tasks. For a `FunctionToolset` subclass, only the tool calls are wrapped, so an overridden `call_tool()` is covered here, but I/O in an overridden `get_tools()` still runs in flow code. See [Custom toolsets and durable execution](../toolsets.md#custom-toolsets-and-durable-execution).
+
 ### Capabilities at Runtime
 
 Unlike Temporal and DBOS, Prefect creates a task per call rather than registering its durable units up front, so [capabilities](../capabilities/overview.md) passed to `agent.run(capabilities=[...])` inside a flow are accepted. A capability that contributes an executing toolset is still rejected, by the same guard that rejects `run(toolsets=...)`: the toolset arrives after the agent's toolsets were wrapped. Attach those at agent construction time.
@@ -279,6 +281,8 @@ agent = Agent(
 This opt-out applies to function and dynamic tools only. MCP tools perform I/O and always run in
 their Prefect task, so `metadata={'prefect': False}` on an MCP tool raises a `UserError`.
 
+A tool that [submits the run's output](../output.md#submit-output) with `ctx.submit_output()` needs this opt-out, as it can't submit from its own task.
+
 To keep an async function tool out of its task on any engine, set the engine-neutral
 [`durable=False`](overview.md#running-a-tool-outside-the-durable-unit) instead. A `'prefect'`
 key on the same tool wins. The deprecated `PrefectAgent` doesn't read `durable` on the tools it wraps, so use
@@ -389,6 +393,8 @@ Pydantic AI and provider API clients have their own retry logic. When using Pref
 * Rely on Prefect's task-level retry configuration for consistency
 
 This prevents requests from being retried multiple times at different layers. The layers *multiply*: see [Retry multiplication](../retries.md#retry-multiplication) for the arithmetic.
+
+Whatever `retries` says, a task isn't retried when it fails with an error a retry can't fix: a [`UserError`][pydantic_ai.exceptions.UserError], `PydanticUserError`, [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded], `WorkspaceTimeoutError`, `WorkspaceOutputLimitError`, `WorkspaceReadOnlyError` or `WorkspaceUnavailableError`, or a subclass of one of them.
 
 Prefect doesn't wait the delay a model error asks for in its [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] (read from a provider's `Retry-After` header, for example), unlike [Temporal](temporal.md#activity-retries) and [DBOS](dbos.md#step-retries). A task's retry delay comes from its `retry_delay_seconds`, and Prefect has no way to set it for one failure, nor a durable timer to wait it with: a task waiting to retry sleeps in the flow's process. So a model request task is retried after `retry_delay_seconds` whatever the provider asked for. Size `retry_delay_seconds` for your provider's rate limits, or give the model request task no retries and let a [fallback model](../capabilities/model-fallback.md) take over.
 
