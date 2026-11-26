@@ -655,6 +655,27 @@ async def test_a_streamed_run_ending_on_its_streamed_response_keeps_what_a_capab
     assert conversation_view(stream.result.conversation.messages) == conversation_view(expected)
 
 
+@pytest.mark.parametrize('output_type', [str, int])
+async def test_a_streamed_run_on_a_loaded_conversation_saves_after_it(output_type: type[Any]) -> None:
+    """The settled result of a streamed run keeps what saving the conversation it was given needs, like its revision."""
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel(), output_type=output_type)
+    await store.save(await agent.run('one', conversation=Conversation(conversation_id='c')))
+    loaded = await store.load('c')
+    assert loaded is not None
+
+    async with agent.run_stream('two', conversation=loaded) as stream:
+        await stream.get_output()
+    await store.save(stream.result)
+
+    stored = await store.load('c')
+    assert stored is not None
+    assert conversation_view(stored.messages) == conversation_view(stream.all_messages())
+    record = await store.read_record('c')
+    assert record is not None
+    assert record.branches == []
+
+
 class _AppendsToTheFirstRequest(AbstractCapability[None]):
     """Adds a message to history the deprecated way: appending to `request_context.messages` in `before_model_request`."""
 
@@ -1099,6 +1120,58 @@ async def test_a_summary_in_place_of_loaded_messages_is_saved_after_the_ones_the
     record = await store.read_record('c')
     assert record is not None
     assert record.branches == []
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_summary_before_a_kept_loaded_message_is_saved_before_the_runs_own_messages() -> None:
+    """A summary of loaded messages goes right after them, even when the history also drops the run's own prompt."""
+    summary = ModelRequest(parts=[UserPromptPart('summary of one')])
+
+    def summarize_one_and_drop_two(messages: list[ModelMessage]) -> list[ModelMessage]:
+        prompts = {id(m): _prompt_text(m) for m in messages}
+        called = any(isinstance(m, ModelResponse) and m.tool_calls for m in messages)
+        return [summary if prompts[id(m)] == 'one' else m for m in messages if not (called and prompts[id(m)] == 'two')]
+
+    store = InMemoryConversationStore()
+    await store.save(
+        Conversation(
+            conversation_id='c',
+            messages=[ModelRequest(parts=[UserPromptPart('one')]), ModelResponse(parts=[TextPart('ok')])],
+        )
+    )
+    loaded = await store.load('c')
+    assert loaded is not None
+    agent = Agent(FunctionModel(_LookUp(calls=1)), capabilities=[ProcessHistory(summarize_one_and_drop_two)])
+
+    @agent.tool_plain
+    def lookup(n: int) -> str:
+        return f'fact {n}'
+
+    result = await agent.run('two', conversation=loaded)
+
+    expected = snapshot(
+        [
+            'user-prompt: one',
+            'text: ok',
+            'user-prompt: summary of one',
+            'user-prompt: two',
+            'call call-1',
+            'return call-1: fact 1',
+            'text: done',
+        ]
+    )
+    assert conversation_view(result.conversation.messages) == expected
+    await store.save(result)
+    stored = await store.load('c')
+    assert stored is not None
+    assert conversation_view(stored.messages) == expected
+
+
+def _prompt_text(message: ModelMessage) -> str | None:
+    return next(
+        (part.content for part in message.parts if isinstance(part, UserPromptPart) and isinstance(part.content, str)),
+        None,
+    )
 
 
 @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)

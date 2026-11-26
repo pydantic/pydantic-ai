@@ -44,6 +44,7 @@ from .usage import RunUsage, UsageLimits
 from .workspaces import Workspace, WorkspaceRef
 
 if TYPE_CHECKING:
+    from ._agent_graph import GraphAgentState
     from ._appended_messages import AppendedMessages
     from .capabilities.abstract import AbstractCapability
     from .run import AgentRunResult
@@ -638,11 +639,11 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
     _run_result: AgentRunResult[OutputDataT] | None = None
 
-    _full_history_from: tuple[AppendedMessages, int] | None = None
-    """The run's record of its messages, and where the messages this result adds to its copy of the history start.
+    _settled_from: tuple[GraphAgentState, int] | None = None
+    """The run's state, and where the messages this result adds to its copy of the history start.
 
-    Set when the stream's own response ends the run, so the settled result's conversation can keep the full history
-    when a capability dropped or rewrote messages, as the run's would.
+    Set when the stream's own response ends the run, so the settled result keeps what the run's would: what saving the
+    conversation it was given needs, and the full history when a capability dropped or rewrote messages.
     """
 
     is_complete: bool = field(default=False, init=False)
@@ -734,7 +735,8 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             result = AgentRunResult(
                 output=output,
                 _output_tool_name=output_tool_name,
-                _state=GraphAgentState(
+                _state=replace(
+                    self._settled_from[0] if self._settled_from is not None else GraphAgentState(),
                     message_history=self._all_messages,
                     usage=self.usage,
                     run_id=self.run_id,
@@ -755,7 +757,10 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         """The full history for the settled result of a run whose history a capability rewrote, or an empty record."""
         from ._appended_messages import AppendedMessages
 
-        record, start = self._full_history_from or (AppendedMessages(), 0)
+        if self._settled_from is None:
+            return AppendedMessages()
+        state, start = self._settled_from
+        record = state.appended_messages
         if not record.full or record.messages is None:
             return AppendedMessages()
         # The run kept its full history when it ended, with the streamed response, which the run commits itself, but
