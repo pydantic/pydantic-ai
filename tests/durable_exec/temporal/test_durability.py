@@ -1995,6 +1995,112 @@ async def test_durability_fallback_continuation_keeps_its_deadline_across_activi
     assert output == snapshot(['fallback answer', 'pauses: ModelRequestTimeout', 'pauses: ModelAPIError'])
 
 
+_fallback_group_attempts = 0
+
+
+def _unavailable_on_first_attempt_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    global _fallback_group_attempts
+    _fallback_group_attempts += 1
+    if _fallback_group_attempts == 1:
+        raise ModelHTTPError.for_category(ModelUnavailableError, status_code=503, model_name='primary')
+    return ModelResponse(parts=[TextPart('answer')])
+
+
+def _always_unavailable_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    raise ModelHTTPError.for_category(ModelUnavailableError, status_code=503, model_name='backup')
+
+
+def _unauthenticated_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    global _fallback_group_attempts
+    _fallback_group_attempts += 1
+    raise ModelHTTPError.for_category(ModelAuthenticationError, status_code=401, model_name='primary')
+
+
+def _unauthenticated_backup_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    raise ModelHTTPError.for_category(ModelAuthenticationError, status_code=401, model_name='backup')
+
+
+_RETRYING_ACTIVITY_CONFIG = ActivityConfig(
+    start_to_close_timeout=timedelta(seconds=60),
+    retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+)
+
+retryable_fallback_group_agent = Agent(
+    FallbackModel(
+        FunctionModel(_unavailable_on_first_attempt_fn, model_name='primary'),
+        FunctionModel(_always_unavailable_fn, model_name='backup'),
+    ),
+    name='durability_retryable_fallback_group',
+    capabilities=[TemporalDurability(activity_config=_RETRYING_ACTIVITY_CONFIG)],
+)
+
+non_retryable_fallback_group_agent = Agent(
+    FallbackModel(
+        FunctionModel(_unauthenticated_fn, model_name='primary'),
+        FunctionModel(_unauthenticated_backup_fn, model_name='backup'),
+    ),
+    name='durability_non_retryable_fallback_group',
+    capabilities=[TemporalDurability(activity_config=_RETRYING_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class RetryableFallbackGroupWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await retryable_fallback_group_agent.run('hello')).output
+
+
+@workflow.defn
+class NonRetryableFallbackGroupWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await non_retryable_fallback_group_agent.run('hello')).output
+
+
+async def test_durability_retries_a_fallback_model_whose_models_were_unavailable(client: Client):
+    """When every model of a `FallbackModel` fails with an error a retry can fix, the model activity is retried.
+
+    A single unavailable model is retried by the activity's retry policy, so a chain of them is too.
+    """
+    global _fallback_group_attempts
+    _fallback_group_attempts = 0
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RetryableFallbackGroupWorkflow],
+        plugins=[AgentPlugin(retryable_fallback_group_agent)],
+    ):
+        output = await client.execute_workflow(
+            RetryableFallbackGroupWorkflow.run,
+            id=RetryableFallbackGroupWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+    assert output == 'answer'
+    assert _fallback_group_attempts == 2
+
+
+async def test_durability_does_not_retry_a_fallback_model_whose_models_all_failed_for_good(client: Client):
+    """When every model of a `FallbackModel` fails with an error a retry can't fix, the activity isn't retried."""
+    global _fallback_group_attempts
+    _fallback_group_attempts = 0
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[NonRetryableFallbackGroupWorkflow],
+        plugins=[AgentPlugin(non_retryable_fallback_group_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                NonRetryableFallbackGroupWorkflow.run,
+                id=NonRetryableFallbackGroupWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+    cause = _workflow_failure_cause(exc_info.value)
+    assert (cause.type, cause.non_retryable) == ('FallbackExceptionGroup', True)
+    assert _fallback_group_attempts == 1
+
+
 # --- `ModelSettings['first_event_timeout']` runs in the model activity, which sees the stream's events ---
 
 
@@ -2926,7 +3032,6 @@ def test_durability_activity_config_not_mutated():
         'UserError',
         'PydanticUserError',
         'UnexpectedModelBehavior',
-        'FallbackExceptionGroup',
         'UsageLimitExceeded',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
@@ -2974,7 +3079,6 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'UserError',
         'PydanticUserError',
         'UnexpectedModelBehavior',
-        'FallbackExceptionGroup',
         'UsageLimitExceeded',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
@@ -2994,7 +3098,6 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'UserError',
         'PydanticUserError',
         'UnexpectedModelBehavior',
-        'FallbackExceptionGroup',
         'UsageLimitExceeded',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
@@ -3022,7 +3125,6 @@ def test_durability_event_stream_handler_activity_config_keeps_non_retryable_err
         'UserError',
         'PydanticUserError',
         'UnexpectedModelBehavior',
-        'FallbackExceptionGroup',
         'UsageLimitExceeded',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
