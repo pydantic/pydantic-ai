@@ -142,7 +142,7 @@ def function_transport(
     def dump(params: ToolsetCallToolParams) -> _Call:
         tool = params.tool
         assert tool is not None
-        tool_args = dump_json_function_args(toolset, tool, params.tool_args, by_alias=True)
+        tool_args = dump_json_function_args(toolset, tool, params.tool_args, by_alias=True, round_trip=True)
         return _Call(
             name=params.name,
             tool_args=_FUNCTION_TOOL_ARGS.dump_python(tool_args, mode='json', by_alias=True, round_trip=True),

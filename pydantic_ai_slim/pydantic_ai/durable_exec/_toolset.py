@@ -589,17 +589,23 @@ def dump_json_function_args(
     tool_args: dict[str, Any],
     *,
     by_alias: bool | None,
+    round_trip: bool = False,
 ) -> dict[str, Any]:
     """Prepare a function tool's validated arguments to cross a durable boundary as JSON.
 
     A validated `Json` value is the parsed value, which the tool's schema rejects when
     `revalidate_function_args` validates it again. So each argument whose parameter takes a `Json`
-    value is dumped by that parameter's schema with `round_trip=True`, which dumps those values as
-    JSON strings again; pass the `by_alias` the engine dumps the arguments with. Every other argument
-    is returned as it is, so what the engine journals for it doesn't change.
+    value is dumped by that parameter's schema in JSON mode, with those values as JSON strings again.
+    Pass the `by_alias` and `round_trip` the engine dumps the arguments with, so the rest of the
+    argument dumps as it did. Every other argument is returned as it is, so what the engine journals
+    for it doesn't change.
     """
     function_schema = _validating_function_schema(toolset, tool)
-    return tool_args if function_schema is None else function_schema.dump_json_parameters(tool_args, by_alias=by_alias)
+    return (
+        tool_args
+        if function_schema is None
+        else function_schema.dump_json_parameters(tool_args, by_alias=by_alias, round_trip=round_trip)
+    )
 
 
 def _validating_function_schema(toolset: FunctionToolset[Any], tool: ToolsetTool[Any]) -> FunctionSchema | None:

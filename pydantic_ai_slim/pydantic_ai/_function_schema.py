@@ -85,6 +85,8 @@ class FunctionSchema:
     """`validator` reading the top-level arguments by Python name only, set when one of them has an alias."""
     json_parameter_serializers: dict[str, SchemaSerializer] = field(default_factory=dict[str, SchemaSerializer])
     """A serializer for each parameter whose schema takes a `Json` value, for `dump_json_parameters`."""
+    json_kwargs_serializer: SchemaSerializer | None = None
+    """A serializer for the arguments `**kwargs` takes, when its schema takes a `Json` value, for `dump_json_parameters`."""
 
     @cached_property
     def parameter_names(self) -> dict[str, str]:
@@ -130,22 +132,34 @@ class FunctionSchema:
                 raise
             return self.revalidator.validate_python(args_dict, context=context)
 
-    def dump_json_parameters(self, args_dict: dict[str, Any], *, by_alias: bool | None) -> dict[str, Any]:
-        """Dump each validated argument whose parameter takes a `Json` value, with `round_trip=True`, in JSON mode.
+    def dump_json_parameters(
+        self, args_dict: dict[str, Any], *, by_alias: bool | None, round_trip: bool
+    ) -> dict[str, Any]:
+        """Dump each validated argument whose parameter takes a `Json` value in JSON mode, with those values as JSON strings.
 
         A validated `Json` value is the parsed value, which `validator` rejects, as it reads a JSON string. Arguments
-        that cross a boundary as JSON go through this first, so `revalidate` reads them back: `round_trip=True` dumps
-        each `Json` value as a JSON string again, nested in models too, and leaves computed fields out. Every other
-        argument is returned as it is.
+        that cross a boundary as JSON go through this first, so `revalidate` reads them back. Only `round_trip=True`
+        dumps a `Json` value as a JSON string again, but it also leaves computed fields out, which carry fields like
+        `ImageUrl.media_type`. So unless `round_trip` is set, as the boundary's own dump does, the computed fields are
+        added back from the plain dump. Every other argument is returned as it is.
         """
-        if not self.json_parameter_serializers:
+        if not self.json_parameter_serializers and self.json_kwargs_serializer is None:
             return args_dict
-        return {
-            name: value
-            if (serializer := self.json_parameter_serializers.get(name)) is None
-            else serializer.to_python(value, mode='json', by_alias=by_alias, round_trip=True, warnings=False)
-            for name, value in args_dict.items()
-        }
+        dumped: dict[str, Any] = {}
+        for name, value in args_dict.items():
+            serializer = (
+                self.json_parameter_serializers.get(name)
+                if name in self.parameter_fields or name == self.single_arg_name
+                else self.json_kwargs_serializer
+            )
+            if serializer is None:
+                dumped[name] = value
+                continue
+            dumped[name] = serializer.to_python(value, mode='json', by_alias=by_alias, round_trip=True, warnings=False)
+            if not round_trip:
+                plain = serializer.to_python(value, mode='json', by_alias=by_alias, warnings=False)
+                dumped[name] = _with_left_out_fields(dumped[name], plain)
+        return dumped
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
@@ -254,7 +268,9 @@ def function_schema(
     schema_validator = _schema_validator(schema, function, core_config, config_wrapper.plugin_settings)
     json_schema = schema_generator().generate(schema)
     revalidator = _by_name_revalidator(schema, function, core_config, config_wrapper.plugin_settings)
-    json_parameter_serializers = _json_parameter_serializers(schema, single_arg_name, core_config)
+    json_parameter_serializers, json_kwargs_serializer = _json_argument_serializers(
+        schema, single_arg_name, core_config
+    )
 
     if single_arg_keys is not None:
         # For a single model-like arg the tool's JSON schema *is* the model's, so its property names
@@ -309,6 +325,7 @@ def function_schema(
         return_schema=return_schema,
         revalidator=revalidator,
         json_parameter_serializers=json_parameter_serializers,
+        json_kwargs_serializer=json_kwargs_serializer,
     )
 
 
@@ -378,33 +395,61 @@ def _read_arguments_by_name(schema: core_schema.CoreSchema) -> core_schema.CoreS
     return by_name_arguments
 
 
+def _with_left_out_fields(round_tripped: Any, plain: Any) -> Any:
+    """`round_tripped`, with the fields `round_trip=True` left out of the `plain` dump of the same value added back.
+
+    Those are computed fields: the two dumps differ otherwise only where `round_tripped` holds a `Json` value's JSON
+    string, or a serializer that reads `round_trip` wrote something else, and there `round_tripped` is kept.
+    """
+    if is_str_dict(round_tripped) and is_str_dict(plain):
+        merged = {
+            key: _with_left_out_fields(round_tripped[key], value) if key in round_tripped else value
+            for key, value in plain.items()
+        }
+        return merged | {key: value for key, value in round_tripped.items() if key not in plain}
+    if is_list(round_tripped) and is_list(plain) and len(round_tripped) == len(plain):
+        return [_with_left_out_fields(item, plain_item) for item, plain_item in zip(round_tripped, plain)]
+    return round_tripped
+
+
 _NON_SCHEMA_KEYS = frozenset({'metadata', 'serialization', 'default'})
 """Core schema keys whose values aren't validation schemas, so a `{'type': 'json'}` dict there isn't a `Json` value."""
 
 
-def _json_parameter_serializers(
+def _json_argument_serializers(
     schema: core_schema.CoreSchema, single_arg_name: str | None, core_config: core_schema.CoreConfig
-) -> dict[str, SchemaSerializer]:
-    """Build `FunctionSchema.json_parameter_serializers` from the cleaned arguments `schema`."""
+) -> tuple[dict[str, SchemaSerializer], SchemaSerializer | None]:
+    """Build `FunctionSchema.json_parameter_serializers` and `json_kwargs_serializer` from the cleaned arguments `schema`."""
     definitions: list[core_schema.CoreSchema] = []
     if schema['type'] == 'definitions':
         definitions = schema['definitions']
         schema = schema['schema']
+    kwargs_schema: core_schema.CoreSchema | None = None
     if single_arg_name is not None:
         assert schema['type'] == 'function-wrap'
         parameter_schemas = {single_arg_name: schema['schema']}
     else:
         assert schema['type'] == 'typed-dict'
         parameter_schemas = {name: td_field['schema'] for name, td_field in schema['fields'].items()}
+        kwargs_schema = schema.get('extras_schema')
     definitions_by_ref = {definition['ref']: definition for definition in definitions if 'ref' in definition}
-    return {
-        name: SchemaSerializer(
-            core_schema.definitions_schema(parameter_schema, definitions) if definitions else parameter_schema,
-            core_config,
-        )
+    parameter_serializers = {
+        name: _serializer(parameter_schema, definitions, core_config)
         for name, parameter_schema in parameter_schemas.items()
         if _takes_json(parameter_schema, definitions_by_ref, set())
     }
+    kwargs_serializer = (
+        _serializer(kwargs_schema, definitions, core_config)
+        if kwargs_schema is not None and _takes_json(kwargs_schema, definitions_by_ref, set())
+        else None
+    )
+    return parameter_serializers, kwargs_serializer
+
+
+def _serializer(
+    schema: core_schema.CoreSchema, definitions: list[core_schema.CoreSchema], core_config: core_schema.CoreConfig
+) -> SchemaSerializer:
+    return SchemaSerializer(core_schema.definitions_schema(schema, definitions) if definitions else schema, core_config)
 
 
 def _takes_json(schema: Any, definitions: dict[str, Any], seen: set[str]) -> bool:

@@ -13,7 +13,7 @@ from typing import Annotated, Any, cast
 from unittest.mock import patch
 
 import pytest
-from pydantic import BaseModel, Field, Json
+from pydantic import BaseModel, Field, Json, computed_field
 from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import (
@@ -24,6 +24,7 @@ from pydantic_ai import (
     DocumentUrl,
     ExternalToolset,
     FunctionToolset,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -1419,8 +1420,18 @@ class Batch(BaseModel):
     nums: Json[list[int]]
 
 
-_received_json_args: list[tuple[str, list[int]]] = []
-"""The arguments `sum_nums` and `sum_batch` ran with, recorded in the activity."""
+class Line(BaseModel):
+    image: ImageUrl
+    nums: Json[list[int]] | None = None
+
+    @computed_field
+    @property
+    def count(self) -> int:
+        return len(self.nums or [])
+
+
+_received_json_args: list[tuple[str, object]] = []
+"""The arguments `sum_nums`, `sum_batch` and `tally` ran with, recorded in the activity."""
 
 
 def sum_nums(nums: Json[list[int]]) -> int:
@@ -1435,12 +1446,29 @@ def sum_batch(batch: Batch) -> int:
     return sum(batch.nums)
 
 
+def tally(lines: list[Line], label: str) -> int:
+    """Tally lines."""
+    _received_json_args.append(('tally', ([(line.image.media_type, line.nums) for line in lines], label)))
+    return len(lines)
+
+
 def _json_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     if len(messages) == 1:
         return ModelResponse(
             parts=[
                 ToolCallPart('sum_nums', {'nums': '[1, 2]'}, tool_call_id='c1'),
                 ToolCallPart('sum_batch', {'nums': '[3, 4]'}, tool_call_id='c2'),
+                ToolCallPart(
+                    'tally',
+                    {
+                        'lines': [
+                            {'image': {'url': 'https://example.com/a', 'media_type': 'image/png'}, 'nums': '[7]'},
+                            {'image': {'url': 'https://example.com/b', 'media_type': 'image/gif'}},
+                        ],
+                        'label': 'images',
+                    },
+                    tool_call_id='c3',
+                ),
             ]
         )
     return ModelResponse(parts=[TextPart('Done.')])
@@ -1449,11 +1477,11 @@ def _json_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResp
 _json_args_durable_agent = Agent(
     FunctionModel(_json_args_model),
     name='json_args_durable',
-    tools=[sum_nums, sum_batch],
+    tools=[sum_nums, sum_batch, tally],
     capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
 )
 _json_args_wrapped_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
-    Agent(FunctionModel(_json_args_model), name='json_args_wrapped', tools=[sum_nums, sum_batch]),
+    Agent(FunctionModel(_json_args_model), name='json_args_wrapped', tools=[sum_nums, sum_batch, tally]),
     activity_config=BASE_ACTIVITY_CONFIG,
 )
 
@@ -1473,7 +1501,8 @@ async def test_json_args_reach_the_activity(client: Client, path: str):
 
     A validated `Json` value is the parsed list, which the tool's schema rejects with `json_type` when the
     activity validates it again, so the workflow ships it as a JSON string again, at the top level and nested in
-    a model.
+    a model. The rest of the argument ships as before, so the `ImageUrl` media types, computed fields that
+    `round_trip=True` would leave out, still reach the tool.
     """
     _received_json_args.clear()
     async with Worker(
@@ -1493,6 +1522,7 @@ async def test_json_args_reach_the_activity(client: Client, path: str):
     assert sorted(_received_json_args, key=lambda call: call[0]) == [
         ('sum_batch', [3, 4]),
         ('sum_nums', [1, 2]),
+        ('tally', ([('image/png', [7]), ('image/gif', None)], 'images')),
     ]
 
 

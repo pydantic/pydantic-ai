@@ -7,7 +7,7 @@ from datetime import date
 from typing import Annotated
 
 import pytest
-from pydantic import BaseModel, ConfigDict, Field, Json, with_config
+from pydantic import BaseModel, ConfigDict, Field, Json, computed_field, with_config
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from render.workflows import TaskContext, Workflows
 from typing_extensions import TypedDict
@@ -15,7 +15,15 @@ from typing_extensions import TypedDict
 from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolKind, ToolReturnPart
+from pydantic_ai.messages import (
+    ImageUrl,
+    ModelMessage,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolKind,
+    ToolReturnPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
@@ -251,6 +259,16 @@ class Batch(BaseModel):
     nums: Json[list[int]]
 
 
+class Line(BaseModel):
+    image: ImageUrl
+    nums: Json[list[int]] | None = None
+
+    @computed_field
+    @property
+    def count(self) -> int:
+        return len(self.nums or [])
+
+
 def json_argument_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     del info
     returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
@@ -260,6 +278,18 @@ def json_argument_model(messages: list[ModelMessage], info: AgentInfo) -> ModelR
         parts=[
             ToolCallPart('sum_nums', {'nums': '[1, 2]'}, tool_call_id='nums'),
             ToolCallPart('sum_batch', {'nums': '[3, 4]'}, tool_call_id='batch'),
+            ToolCallPart('sum_named', {'a': '[5]', 'b': '[6]'}, tool_call_id='named'),
+            ToolCallPart(
+                'tally',
+                {
+                    'lines': [
+                        {'image': {'url': 'https://example.com/a', 'media_type': 'image/png'}, 'nums': '[7]'},
+                        {'image': {'url': 'https://example.com/b', 'media_type': 'image/gif'}},
+                    ],
+                    'label': 'images',
+                },
+                tool_call_id='tally',
+            ),
         ]
     )
 
@@ -267,12 +297,14 @@ def json_argument_model(messages: list[ModelMessage], info: AgentInfo) -> ModelR
 async def test_json_function_arguments_cross_the_json_boundary_as_json_strings() -> None:
     """A validated `Json` value is the parsed list, which the tool's schema rejects with `json_type` after the boundary.
 
-    So it crosses as a JSON string again, at the top level and nested in a model.
+    So it crosses as a JSON string again: at the top level, nested in a model and taken by `**kwargs`. The rest of
+    the argument crosses as before, so the `ImageUrl` media types, computed fields that `round_trip=True` would
+    leave out, still reach the tool.
 
     Not a VCR test: the claim is about the arguments crossing into the chained task run, and no provider request
     is involved.
     """
-    seen: dict[str, list[int]] = {}
+    seen: dict[str, object] = {}
     runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
     agent = Agent[None, str](
         FunctionModel(json_argument_model),
@@ -291,6 +323,16 @@ async def test_json_function_arguments_cross_the_json_boundary_as_json_strings()
         seen['sum_batch'] = batch.nums
         return sum(batch.nums)
 
+    @agent.tool_plain
+    async def sum_named(**named: Json[list[int]]) -> int:
+        seen['sum_named'] = named
+        return sum(map(sum, named.values()))
+
+    @agent.tool_plain
+    async def tally(lines: list[Line], label: str) -> int:
+        seen['tally'] = [(line.image.media_type, line.nums) for line in lines], label
+        return len(lines)
+
     async def run_agent_impl(ctx: TaskContext) -> str:
         del ctx
         return (await agent.run('sum the numbers')).output
@@ -299,8 +341,13 @@ async def test_json_function_arguments_cross_the_json_boundary_as_json_strings()
     pending = run_agent.func(RecordingTaskContext())
     assert inspect.isawaitable(pending)
 
-    assert await pending == 'sum_nums: success, sum_batch: success'
-    assert seen == {'sum_nums': [1, 2], 'sum_batch': [3, 4]}
+    assert await pending == 'sum_nums: success, sum_batch: success, sum_named: success, tally: success'
+    assert seen == {
+        'sum_nums': [1, 2],
+        'sum_batch': [3, 4],
+        'sum_named': {'a': [5], 'b': [6]},
+        'tally': ([('image/png', [7]), ('image/gif', None)], 'images'),
+    }
 
 
 class Venue(TypedDict):
