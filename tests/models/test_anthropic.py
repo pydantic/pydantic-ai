@@ -7283,6 +7283,95 @@ async def test_anthropic_opus_47_keeps_non_sampling_extra_body(allow_model_reque
     assert kwargs['extra_body'] == {'metadata': {'keep': True}}
 
 
+@pytest.mark.parametrize('header_name', ['anthropic-version', 'Anthropic-Version'])
+@pytest.mark.parametrize('model_name', ['claude-sonnet-4-6', 'claude-haiku-4-5'])
+async def test_anthropic_api_version_2026_10_21_drops_sampling_settings(
+    allow_model_requests: None, model_name: str, header_name: str
+):
+    """`anthropic>=2` sends `2026-10-21`, which rejects sampling settings on every model, not just Opus 4.7+.
+
+    Kept as a unit test because the header under test can't be set through a recording: the locked SDK sends
+    `2023-06-01`, and the cassette hooks strip `anthropic-*` headers.
+    """
+    responses = [
+        completion_message([BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1))
+    ]
+    mock_client = cast(AsyncAnthropic, MockAnthropic(messages_=responses, default_headers={header_name: '2026-10-21'}))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings=AnthropicModelSettings(temperature=0, extra_body={'metadata': {'keep': True}}))
+
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        await agent.run('What is 2+2?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['extra_body'] == {'metadata': {'keep': True}}
+
+
+@pytest.mark.parametrize(
+    'default_headers,extra_headers',
+    [
+        pytest.param({'anthropic-version': '2023-06-01'}, None, id='client'),
+        pytest.param({'anthropic-version': '2026-10-21'}, {'Anthropic-Version': '2023-06-01'}, id='request'),
+    ],
+)
+async def test_anthropic_api_version_2023_06_01_keeps_sampling_settings(
+    allow_model_requests: None, default_headers: dict[str, str], extra_headers: dict[str, str] | None
+):
+    """`2023-06-01` accepts sampling settings, whether the client sets it or the request's `extra_headers` does.
+
+    Kept as a unit test because the header under test can't be set through a recording: the locked SDK sends
+    `2023-06-01`, and the cassette hooks strip `anthropic-*` headers.
+    """
+    responses = [
+        completion_message([BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1))
+    ]
+    mock_client = cast(AsyncAnthropic, MockAnthropic(messages_=responses, default_headers=default_headers))
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    settings = AnthropicModelSettings(temperature=0)
+    if extra_headers is not None:
+        settings['extra_headers'] = extra_headers
+    agent = Agent(m, model_settings=settings)
+
+    await agent.run('What is 2+2?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['extra_body'] == {'temperature': 0}
+
+
+async def test_anthropic_api_version_header_does_not_drop_sampling_settings_on_legacy_bedrock(
+    allow_model_requests: None,
+):
+    """The legacy Bedrock client sends its API version in the body, so its `anthropic-version` header doesn't count.
+
+    Kept as a unit test because it pins the outbound body under a client header that a recording can't set: the
+    cassette hooks strip `anthropic-*` headers.
+    """
+    bodies: list[dict[str, JsonValue]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(TypeAdapter(dict[str, JsonValue]).validate_json(request.content))
+        return httpx2.Response(400, json={'message': 'captured'})
+
+    from anthropic import AsyncAnthropicBedrock
+
+    # A bearer token skips SigV4 signing, which would need `botocore` from the `bedrock` extra.
+    async with AsyncAnthropicBedrock(
+        api_key='x',
+        aws_region='us-east-1',
+        base_url='http://localhost',
+        max_retries=0,
+        default_headers={'anthropic-version': '2026-10-21'},
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        agent = Agent(AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client)))
+        with pytest.raises(ModelHTTPError):
+            await agent.run('What is 2+2?', model_settings=AnthropicModelSettings(temperature=0))
+
+    [body] = bodies
+    assert body['temperature'] == 0
+    assert body['anthropic_version'] == 'bedrock-2023-05-31'
+
+
 async def test_anthropic_explicit_extra_body_overrides_the_sampling_setting(allow_model_requests: None):
     """A user's own `extra_body` entry wins over the `ModelSettings` field of the same name.
 

@@ -162,6 +162,13 @@ async def check_orders_exist(ctx: RunContext[RefundDeps], output: list[Refund]) 
 - The validator may return a modified output; what it returns is `result.output`.
 - When the valid ids are known as the run starts and the model must pick one, `Choices` (above) puts them in the
   schema itself; a validator also covers ids nested in larger outputs and checks that need I/O.
+- To ground facts extracted from text you hold, give each fact a verbatim `quote` field and check in the validator
+  that every quote, with whitespace collapsed, is a substring of the source. See
+  [Checking quoted evidence against the source](https://pydantic.dev/docs/ai/core-concepts/output/#grounding-validators).
+- Don't gate side effects on a confidence or risk score the model reports: it isn't calibrated. Gate on outputs and
+  arguments your code can verify and on policy (`requires_approval=True`, `ApprovalRequired`), and measure any score
+  you keep with evals. See
+  [Don't gate actions on model-reported confidence](https://pydantic.dev/docs/ai/core-concepts/output/#model-reported-confidence).
 
 ## Dependency Injection
 
@@ -197,9 +204,10 @@ Compaction or loss of the baseline starts a new prefix from current instructions
 Use a durable operation for instruction callbacks that read external state during durable execution.
 Deferred capabilities and realtime sessions do not support this update policy.
 Leave the default `on_change='rewrite'` when prefix preservation is unnecessary.
+For a line only some models need, read the model handling the request in the instruction function, e.g. `isinstance(ctx.model, Model) and ctx.model.profile.get('delegates_unprompted', False)`, and return its own named `InstructionPart`, empty when the model doesn't need it, with `on_change='rewrite'` (the default): a conversation that moves to another model (a `ModelFallback` attempt, or a later run on another model) is sent the instructions it would have had on that model from the start. Don't use `on_change='append'` for such a line: the new model would keep the old model's line in its prefix and get a withdrawal appended, which models repeat to the user and which doesn't restore their own behavior. The new model is cache-cold anyway, so the rewrite costs little. Keep withdrawals for instructions that really go away (a capability removed), and gate only on behavioral traits; route facts (tool support, modalities, limits) belong to the framework and the profile. `FallbackModel.profile` raises `NotImplementedError`; use the `ModelFallback` capability, which resolves instructions again for each model it tries.
 A `@agent.system_prompt(dynamic=True)` function is re-run for each later run of a conversation and, by default, rewrites its part in history in place, which busts the prompt cache. Prefer instructions; when a system prompt is needed (other agents continue the history), use `@agent.system_prompt(on_change='append')` (which implies `dynamic=True`): a changed value is appended as a new `SystemPromptPart` sent as `<pyai:context id="system_prompt:<name>">`, where `<name>` (the function's `__name__`, or `name=`) is visible to the model. History ties the prompt to the function's `__qualname__`, so renaming or moving the function disconnects it from existing conversations, even with `name=`.
 The deferred capability catalog and Harness `SubAgents` and `RepoContext` instructions already append their changes.
-So do MCP server instructions from `MCPToolset(..., include_instructions=True)`, keyed `toolset:<id>` (a URL toolset's `id` defaults to its hostname; durable execution needs an explicit one); stdio and in-process servers need an `id=` to append. Only enable `include_instructions` for servers you trust. The `MCP` capability includes them by default; pass `MCP(..., include_instructions=False)` for a server you don't trust, such as one your end users supply.
+So do MCP server instructions from `MCPToolset(..., include_instructions=True)`, keyed `toolset:<id>` (a URL toolset's `id` defaults to its hostname; durable execution needs an explicit one); stdio and in-process servers need an `id=` to append. Only enable `include_instructions` for servers you trust. The `MCP` capability includes them by default; for a server you don't trust, such as one your end users supply, use `MCP(..., id='...').with_authority('none')` to send its instructions as data instead, or `MCP(..., include_instructions=False)` to leave them out; see [Lowering an untrusted server](https://pydantic.dev/docs/ai/capabilities/mcp/#lowering-an-untrusted-server).
 
 ## Define Agents Declaratively with Specs
 
@@ -250,7 +258,7 @@ Through the [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/
 
 Use a model instance instead of a string when the user needs provider-specific constructor arguments.
 
-A request to a model its provider has deprecated or retired emits a `DeprecatedModelWarning` naming the retirement date and the provider's recommended replacement. Move to that replacement rather than silencing the warning.
+A request to a model its provider has deprecated or retired emits a `DeprecatedModelWarning` naming the retirement date, the model the provider routes its requests to from then, if any, and the provider's recommended replacement. Move to that replacement rather than silencing the warning.
 
 ## Keep Anthropic Inference in the US
 
@@ -284,6 +292,8 @@ Pick a run method based on the interaction pattern:
 - `iter()` when the caller needs step-by-step control over the agent loop
 
 Use `event_stream_handler=` with `run()` or `run_stream()` when the user wants progress updates without manually consuming the event stream. The stream includes model deltas, tool call/result events, and framework events such as `EnqueuedMessagesEvent` when queued messages enter run history. Each streamed model response is opened by a `ModelResponseStartEvent` and closed by a `ModelResponseEndEvent` carrying the response as streamed and a `status` (`'complete'`, `'failed'`, `'interrupted'`, or `'superseded'` for a durable re-execution); use the end event to render or store a whole response instead of assembling it from part events.
+
+One request step can stream more than one response: `ModelFallback` or `RetryOnModelErrors` attempting the model again, a `wrap_model_request` hook that replaces the stream it stopped, or a durable engine retrying a model request. Model-stream events carry the `ModelResponseOrigin` they came from as `origin`, so a consumer that renders the stream keeps the latest origin per `(run_id, run_step)` and drops the events of any origin a later one `supersedes()`. Equality and `repr()` ignore `origin`, so read it from the event. See [Replaced responses](https://pydantic.dev/docs/ai/core-concepts/agent/#replaced-responses).
 
 Realtime sessions do not use `event_stream_handler`; iterate the session to consume realtime-only `RealtimeEvent` members.
 

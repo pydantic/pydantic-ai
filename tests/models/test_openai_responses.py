@@ -1110,6 +1110,24 @@ async def test_openai_responses_gpt_5_6_minimal_thinking_uses_low_effort(
 
 
 @pytest.mark.vcr(additional_matchers=['body'])
+async def test_openai_responses_gpt_5_4_minimal_thinking_uses_low_effort(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette
+):
+    """VCR test: unified minimal thinking falls back to `low` on GPT-5.4, which rejects `minimal`.
+
+    OpenAI's API answers `reasoning.effort='minimal'` on gpt-5.4 with a 400 listing `none`, `low`, `medium`,
+    `high` and `xhigh`. A successful request and the body assertion prove Pydantic AI sends `'low'` instead.
+    """
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(thinking='minimal'))
+
+    result = await agent.run('What is the capital of France? Answer in one word.')
+
+    assert result.output == snapshot('Paris')
+    assert single_request_body(vcr)['reasoning'] == snapshot({'effort': 'low', 'context': 'all_turns'})
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
 @pytest.mark.parametrize(
     'model_name,thinking,expected_effort',
     [

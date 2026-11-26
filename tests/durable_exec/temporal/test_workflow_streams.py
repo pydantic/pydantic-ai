@@ -80,7 +80,7 @@ with workflow.unsafe.imports_passed_through():
     from ..._inline_snapshot import snapshot
     from ._shared import BASE_ACTIVITY_CONFIG, TASK_QUEUE
 
-pytestmark = [pytest.mark.xdist_group(name='temporal-durability')]
+pytestmark = [pytest.mark.xdist_group(name='temporal-workflow-streams')]
 
 TOPIC = 'agent_events'
 

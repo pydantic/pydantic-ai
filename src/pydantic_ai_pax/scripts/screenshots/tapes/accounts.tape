@@ -2,7 +2,7 @@
 Source tapes/common.tape
 Output shots/accounts.txt
 Hide
-Type 'clai-demo' Enter
+Type 'pax-demo' Enter
 Wait+Screen /\| ready/
 Type '/accounts' Enter
 Wait+Screen /personal/

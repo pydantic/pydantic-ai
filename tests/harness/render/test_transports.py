@@ -568,7 +568,11 @@ async def test_worker_context_names_tools_by_kind_on_copies() -> None:
 
 
 def test_model_request_transport_carries_the_attempt() -> None:
-    """The child task gets the attempt at the request step, which its stream events record as their origin's."""
+    """The child task gets the attempt at the request step, which its stream events record as their origin's.
+
+    Not a VCR test: the claim is about the attempt crossing the Render payload boundary, which involves no provider
+    request.
+    """
     from pydantic_ai.durable_exec import ModelRequestParams
     from pydantic_ai.messages import ModelRequest
     from pydantic_ai.models import ModelRequestParameters

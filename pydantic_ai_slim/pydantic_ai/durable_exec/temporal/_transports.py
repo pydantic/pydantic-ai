@@ -12,7 +12,7 @@ from pydantic_ai._instrumentation import (
     model_request_telemetry_url_ids,
 )
 from pydantic_ai.capabilities._dynamic import DynamicCapability
-from pydantic_ai.capabilities.abstract import leaf_capabilities
+from pydantic_ai.capabilities.abstract import AbstractCapability, leaf_capabilities
 from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.durable_exec._capability_operation import (
     CapabilityMethodDeclaration,
@@ -290,45 +290,7 @@ def restore_telemetry_mcp_url_ids(
     """Restore URL provenance omitted from the provider request payload."""
     legacy_dynamic_local_ids: set[str] = set()
     if url_ids is None:
-        url_ids = model_request_telemetry_url_ids(parameters)
-        explicit_ids: set[tuple[str | None, str | None]] = set()
-        if agent is not None:
-            configured_capabilities = list(leaf_capabilities(agent.root_capability))
-            url_ids.update(mcp_telemetry_url_ids(configured_capabilities))
-            if any(isinstance(capability, DynamicCapability) for capability in configured_capabilities):
-                # Legacy payloads cannot resolve a dynamic capability's local MCP toolset.
-                # Match the metadata MCPToolset writes before treating equal IDs as MCP-owned.
-                legacy_dynamic_local_ids = {
-                    tool.capability_id
-                    for tool in parameters.function_tools
-                    if tool.capability_id is not None
-                    and tool.capability_id == tool.toolset_id
-                    and tool.metadata is not None
-                    and {'meta', 'annotations', 'task'} <= tool.metadata.keys()
-                    and isinstance(tool.metadata['task'], bool)
-                }
-                url_ids.update(legacy_dynamic_local_ids)
-            for toolset in agent.toolsets:
-                url_ids.update(mcp_telemetry_url_ids([], toolset))
-            # Legacy payloads omit per-run provenance. Static explicit IDs can be recovered
-            # from the agent; dynamic and per-run overrides leave only the resolved native tool.
-            for capability in configured_capabilities:
-                if isinstance(capability, MCP) and capability._telemetry_url_derived_id is None:  # pyright: ignore[reportPrivateUsage]
-                    if isinstance(capability.native, MCPServerTool):
-                        explicit_ids.add((capability.native.id, capability.native.url))
-                    elif capability.native is not False:
-                        # A configured native factory can own an explicit ID before it resolves.
-                        explicit_ids.add((capability.id, capability.url))
-        # An unconfigured native tool could come from a dynamic or per-run capability, or a
-        # direct request. Legacy wire data cannot distinguish an equal caller-chosen ID, so
-        # withhold that spelling from telemetry when no configured explicit ID claims it.
-        for tool in parameters.native_tools:
-            if (
-                isinstance(tool, MCPServerTool)
-                and (tool.id, tool.url) not in explicit_ids
-                and MCP(tool.url, native=True, local=False).id == tool.id
-            ):
-                url_ids.add(tool.id)
+        url_ids, legacy_dynamic_local_ids = _legacy_url_ids(parameters, agent)
     parameters._telemetry_mcp_url_ids = url_ids  # pyright: ignore[reportPrivateUsage]
     if toolset_ids is None:
         toolset_ids = legacy_dynamic_local_ids
@@ -339,6 +301,61 @@ def restore_telemetry_mcp_url_ids(
                 toolset_ids.update(mcp_telemetry_url_toolset_ids(toolset))
     parameters._telemetry_mcp_url_toolset_ids = toolset_ids  # pyright: ignore[reportPrivateUsage]
     parameters._telemetry_mcp_url_tool_names = tool_names  # pyright: ignore[reportPrivateUsage]
+
+
+def _legacy_url_ids(
+    parameters: ModelRequestParameters, agent: AbstractAgent[AgentDepsT, OutputDataT] | None
+) -> tuple[set[str], set[str]]:
+    """The URL IDs a legacy payload omitted, and the local IDs of dynamic capabilities' MCP toolsets among them."""
+    url_ids = model_request_telemetry_url_ids(parameters)
+    legacy_dynamic_local_ids: set[str] = set()
+    configured_capabilities: list[AbstractCapability[Any]] = []
+    if agent is not None:
+        configured_capabilities = list(leaf_capabilities(agent.root_capability))
+        url_ids.update(mcp_telemetry_url_ids(configured_capabilities))
+        if any(isinstance(capability, DynamicCapability) for capability in configured_capabilities):
+            # Legacy payloads cannot resolve a dynamic capability's local MCP toolset.
+            # Match the metadata MCPToolset writes before treating equal IDs as MCP-owned.
+            legacy_dynamic_local_ids = {
+                tool.capability_id
+                for tool in parameters.function_tools
+                if tool.capability_id is not None
+                and tool.capability_id == tool.toolset_id
+                and tool.metadata is not None
+                and {'meta', 'annotations', 'task'} <= tool.metadata.keys()
+                and isinstance(tool.metadata['task'], bool)
+            }
+            url_ids.update(legacy_dynamic_local_ids)
+        for toolset in agent.toolsets:
+            url_ids.update(mcp_telemetry_url_ids([], toolset))
+    url_ids.update(_unclaimed_native_url_ids(parameters, configured_capabilities))
+    return url_ids, legacy_dynamic_local_ids
+
+
+def _unclaimed_native_url_ids(
+    parameters: ModelRequestParameters, configured_capabilities: list[AbstractCapability[Any]]
+) -> list[str]:
+    """The IDs of native MCP server tools that equal their URL's ID and that no configured explicit ID claims."""
+    # Legacy payloads omit per-run provenance. Static explicit IDs can be recovered
+    # from the agent; dynamic and per-run overrides leave only the resolved native tool.
+    explicit_ids: set[tuple[str | None, str | None]] = set()
+    for capability in configured_capabilities:
+        if isinstance(capability, MCP) and capability._telemetry_url_derived_id is None:  # pyright: ignore[reportPrivateUsage]
+            if isinstance(capability.native, MCPServerTool):
+                explicit_ids.add((capability.native.id, capability.native.url))
+            elif capability.native is not False:
+                # A configured native factory can own an explicit ID before it resolves.
+                explicit_ids.add((capability.id, capability.url))
+    # An unconfigured native tool could come from a dynamic or per-run capability, or a
+    # direct request. Legacy wire data cannot distinguish an equal caller-chosen ID, so
+    # withhold that spelling from telemetry when no configured explicit ID claims it.
+    return [
+        tool.id
+        for tool in parameters.native_tools
+        if isinstance(tool, MCPServerTool)
+        and (tool.id, tool.url) not in explicit_ids
+        and MCP(tool.url, native=True, local=False).id == tool.id
+    ]
 
 
 class _ModelRequestTransport(TemporalParameterTransport[ModelRequestParams, tuple[_RequestParams, Any]]):
