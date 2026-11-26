@@ -711,8 +711,9 @@ def snapshot_messages(messages: Sequence[ModelMessage]) -> MessagesSnapshot:
         snapshot.said[id(message)] = _request_shape(message)
         snapshot.instructions.add(message.instructions)
         for part in message.parts:
-            # A tool's return reaches the model as tool output whoever edits it, and can hold any object.
-            _snapshot_item(snapshot, part, part if isinstance(part, ToolReturnPart) else copy_said(part))
+            # A plain tool return is tool output whoever edits it, and can hold any object. A typed one is copied: the
+            # framework acts on it, so `within_ceiling` refuses an edited one.
+            _snapshot_item(snapshot, part, part if type(part) is ToolReturnPart else copy_said(part))
     return snapshot
 
 
