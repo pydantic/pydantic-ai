@@ -3493,7 +3493,7 @@ pax -x github -p "Summarize my open pull requests"
 only, even when it is disabled. It works in the terminal, with `-p`, and with
 `--web`, where every session the browser opens loads it too. `NAME` is a plugin
 `/plugins` lists as built in, added, or a drop-in file; an unknown one fails
-before Pax starts, listing the ones there are. A plugin the project's
+before the first prompt, listing the ones there are. A plugin the project's
 `.clai/settings.json` declares isn't loaded this way: approve it with
 `/plugins enable NAME`, as usual.
 

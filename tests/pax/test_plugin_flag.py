@@ -18,7 +18,7 @@ from pydantic_ai_pax.cli import cli, headless, web
 from pydantic_ai_pax.config import PluginSettings, Settings
 from pydantic_ai_pax.config.project_settings import ProjectSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
-from pydantic_ai_pax.plugins import AgentCapability, Plugin, SessionEnd, SessionStart
+from pydantic_ai_pax.plugins import AgentCapability, Plugin, SessionEnd, SessionStart, loader
 from pydantic_ai_pax.runtime.process import ClaiProcess
 from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
 from tests.pax.cli_runner import CliRunner
@@ -146,6 +146,43 @@ async def test_reload_keeps_the_launch(
     # Each load counts a start; the rebuilt session loads it again only while the launch still names it.
     [saved] = store.plugins()
     assert (saved.enabled, saved.settings) == (False, {'started': starts})
+
+
+class Includer(Plugin):
+    """Binds a capability that, per the patched `INCLUDED`, already provides `Probe`."""
+
+    def get_capabilities(self) -> Sequence[AgentCapability[None]]:
+        return [Toolset(FunctionToolset([]))]
+
+
+INCLUDER = PluginSettings(id='includer', factory='tests.pax.test_plugin_flag:Includer')
+
+
+async def test_a_launched_plugin_loads_once_its_includer_lets_it_go(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Disabling the plugin that includes a launched one loads it, and it stays saved as disabled."""
+    monkeypatch.setattr(loader, 'INCLUDED', {INCLUDER.factory: {PROBE.factory: Toolset}})
+    store = SettingsStore(tmp_path / 'config.db')
+    shell = create_shell(
+        Agent(TestModel(call_tools=[])),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=None,
+        store=store,
+        builtin_plugins=[INCLUDER, PROBE],
+        project=ProjectSettings(),
+        headless=True,
+        launch_plugins=['probe'],
+    )
+    await shell.loader.load_all()
+    assert _loaded(shell) == ['includer']
+    await shell.loader.disable('includer')
+    assert _loaded(shell) == ['probe']
+    assert [plugin.enabled for plugin in store.plugins() if plugin.id == 'probe'] == [False]
+    await shell.close('exit')
 
 
 async def test_reloading_a_launched_plugin_keeps_it_in_the_other_sessions(tmp_path: Path) -> None:
