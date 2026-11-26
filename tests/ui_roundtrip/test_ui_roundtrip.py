@@ -1663,7 +1663,7 @@ async def test_vercel_skipped_tool_call_never_reaches_on_tool_call(js_driver: JS
         raise NotImplementedError  # never called: the run skips it
 
     client = VercelClient(js_driver, 'skipped-tool-call', {})
-    adapter = client.adapter(cast(Agent[None, str], agent), client.submit('Hello', None))
+    adapter = client.adapter(agent, client.submit('Hello', None))
     result = client.receive([chunk async for chunk in adapter.encode_stream(adapter.run_stream())])
 
     # The output tool call reaches `onToolCall` like any other output tool call; the skipped call must not.
