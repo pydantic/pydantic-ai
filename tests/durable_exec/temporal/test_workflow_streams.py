@@ -1036,7 +1036,7 @@ async def test_continue_as_new_replays_a_history_recorded_without_publishing_buf
     await _replay_continue_as_new_enqueue_workflow(history)
 
 
-# Without a topic, nothing has to go out before `continue_as_new` runs: listeners get the events once the run continues.
+# Without a topic, there is nothing to publish ahead of `continue_as_new`, but the listeners still run ahead of it.
 
 _topicless_listened: list[list[Any]] = []
 _topicless_hooks = Hooks[object]()
