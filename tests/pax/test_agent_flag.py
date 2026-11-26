@@ -1,4 +1,4 @@
-"""`pax --agent MODULE:ATTR`: resolution, CLI wiring, and the session-only plugin switch-off."""
+"""`pax --agent MODULE:ATTR`: resolution, deps, CLI wiring, and the session-only plugin switch-off."""
 
 import importlib
 import io
@@ -29,12 +29,38 @@ _MODULE = 'clai_agent_flag_fixture'
 def fixture_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """An importable module in the launch directory, removed from `sys.modules` afterwards."""
     (tmp_path / f'{_MODULE}.py').write_text(
-        'from pydantic_ai import Agent\n'
+        'from dataclasses import dataclass\n'
+        'from pydantic import BaseModel\n'
+        'from pydantic_ai import Agent, RunContext\n'
         'from pydantic_ai.models.test import TestModel\n'
         'agent = Agent(TestModel())\n'
         'modelless = Agent(None)\n'
         'number = 42\n'
         'nothing = None\n'
+        '@dataclass\n'
+        'class Deps:\n'
+        '    api_key: str\n'
+        'deps_agent = Agent(TestModel(), deps_type=Deps)\n'
+        '@deps_agent.tool\n'
+        'def read_key(ctx: RunContext[Deps]) -> str:\n'
+        "    return f'key is {ctx.deps.api_key}'\n"
+        'def with_deps():\n'
+        "    return deps_agent, Deps(api_key='secret')\n"
+        'def deps_agent_alone():\n'
+        '    return deps_agent\n'
+        'def make_agent():\n'
+        "    return Agent(TestModel(custom_output_text='built by factory'))\n"
+        'def make_number():\n'
+        '    return 42\n'
+        'def make_triple():\n'
+        '    return agent, None, None\n'
+        'tool_agent = Agent(TestModel())\n'
+        '@tool_agent.tool_plain\n'
+        'def shout(word: str) -> str:\n'
+        "    return f'tool says {word.upper()}'\n"
+        'class Answer(BaseModel):\n'
+        '    city: str\n'
+        "structured_agent = Agent(TestModel(custom_output_args={'city': 'Utrecht'}), output_type=Answer)\n"
     )
     (tmp_path / 'clai_agent_flag_broken.py').write_text('import clai_agent_flag_missing_dependency\n')
     monkeypatch.chdir(tmp_path)
@@ -45,11 +71,12 @@ def fixture_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def test_import_agent_resolves_instance_from_launch_directory(fixture_module: Path) -> None:
-    agent = import_agent(f'{_MODULE}:agent')
-    assert isinstance(agent, Agent)
+    imported = import_agent(f'{_MODULE}:agent')
+    assert isinstance(imported.agent, Agent)
+    assert imported.deps is None
     assert sys.path[-1] == str(fixture_module)
     # A second resolution does not add the launch directory again.
-    assert import_agent(f'{_MODULE}:agent') is agent
+    assert import_agent(f'{_MODULE}:agent').agent is imported.agent
     assert sys.path.count(str(fixture_module)) == 1
 
 
@@ -64,7 +91,7 @@ def test_import_agent_leaves_sys_path_alone_for_an_importable_module(
     monkeypatch.setattr(sys, 'path', [str(installed), *sys.path])
     monkeypatch.delitem(sys.modules, 'clai_agent_flag_installed', raising=False)
 
-    assert isinstance(import_agent('clai_agent_flag_installed:agent'), Agent)
+    assert isinstance(import_agent('clai_agent_flag_installed:agent').agent, Agent)
     assert str(fixture_module) not in sys.path
 
 
@@ -120,6 +147,14 @@ def test_import_agent_reports_a_launch_directory_target_named_like_an_installed_
         (f'{_MODULE}:Agent', TypeError, "'Agent' is a class"),
         (f'{_MODULE}:number', TypeError, 'got int'),
         (f'{_MODULE}:nothing', TypeError, 'got NoneType'),
+        (
+            f'{_MODULE}:make_number',
+            TypeError,
+            r"expected 'make_number' to return an Agent or an \(agent, deps\) tuple, got int",
+        ),
+        (f'{_MODULE}:make_triple', TypeError, 'got tuple'),
+        (f'{_MODULE}:deps_agent', TypeError, 'the agent needs deps of type Deps'),
+        (f'{_MODULE}:deps_agent_alone', TypeError, 'the agent needs deps of type Deps'),
         ('clai_agent_flag_broken:agent', ModuleNotFoundError, 'clai_agent_flag_missing_dependency'),
     ],
 )
@@ -269,3 +304,41 @@ async def test_headless_agent_loads_no_plugins(tmp_path: Path, capsys: pytest.Ca
         == 0
     )
     assert capsys.readouterr().out == 'custom answer\n'
+
+
+@pytest.mark.parametrize('prompt_args', [[], ['-p', 'hi']], ids=['terminal', 'prompt'])
+def test_cli_refuses_deps_agent_without_deps_before_any_request(
+    fixture_module: Path, run_cli: CliRunner, prompt_args: list[str]
+) -> None:
+    """A required `deps_type` fails at launch, not as an `AttributeError` on `None` at the first tool call."""
+    result = run_cli('--database', str(fixture_module / 'config.db'), '--agent', f'{_MODULE}:deps_agent', *prompt_args)
+    assert result.returncode == 2
+    assert (
+        f'--agent {_MODULE}:deps_agent: the agent needs deps of type Deps; point --agent at a zero-argument '
+        'function that returns (agent, deps) instead'
+    ) in result.stderr
+    assert 'key is' not in result.stdout
+
+
+@pytest.mark.parametrize(
+    ('attr', 'answer'),
+    [
+        ('with_deps', '{"read_key":"key is secret"}'),
+        ('make_agent', 'built by factory'),
+        ('tool_agent', '{"shout":"tool says A"}'),
+        ('structured_agent', "city='Utrecht'"),
+    ],
+)
+def test_cli_prompt_runs_agent(fixture_module: Path, run_cli: CliRunner, attr: str, answer: str) -> None:
+    """A factory's deps reach the agent's tools; plain factories, own tools and structured output all run."""
+    result = run_cli('--database', str(fixture_module / 'config.db'), '--agent', f'{_MODULE}:{attr}', '-p', 'hi')
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == f'{answer}\n'
+
+
+def test_cli_terminal_runs_factory_agent_with_deps(fixture_module: Path, run_cli: CliRunner) -> None:
+    result = run_cli(
+        '--database', str(fixture_module / 'config.db'), '--agent', f'{_MODULE}:with_deps', input='hi\n/exit\n'
+    )
+    assert result.returncode == 0, result.stderr
+    assert 'key is secret' in result.stdout

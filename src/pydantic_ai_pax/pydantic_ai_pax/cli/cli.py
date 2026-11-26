@@ -8,6 +8,7 @@ import re
 import sys
 from contextlib import contextmanager
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -95,7 +96,8 @@ def run(*, splash: Splash | None = None) -> None:
         '--agent',
         metavar='MODULE:ATTR',
         help=(
-            'Chat with an existing Pydantic AI Agent instance, e.g. pydantic_ai.main:my_cool_agent; '
+            'Chat with an existing Pydantic AI Agent instance, e.g. pydantic_ai.main:my_cool_agent, or with the '
+            'agent and deps a zero-argument function returns as (agent, deps); '
             "loads no plugins for this session and keeps the agent's model unless -m is given"
         ),
     )
@@ -176,7 +178,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
                 load_project_settings(Path.cwd(), store=store)
             )
             raise SystemExit(asyncio.run(_update(settings.update_channel)))
-        agent = import_agent(args.agent) if args.agent is not None else None
+        imported = import_agent(args.agent) if args.agent is not None else None
         if args.worktree is not None:
             worktree = _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web, store=store)
         project = load_project_settings(Path.cwd(), store=store)
@@ -186,9 +188,9 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
             store,
             model=model,
             request_limit=args.request_limit,
-            agent=agent is not None,
+            agent=imported is not None,
             # Keep the agent's own model over saved, project, and default ones; only -m or CLAI_MODEL replaces it.
-            agent_model=agent is not None and agent.model is not None and not model,
+            agent_model=imported is not None and imported.agent.model is not None and not model,
         )
         settings = settings_for(project)
         if args.prompt is not None:
@@ -203,7 +205,8 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
                         project=project,
                         resume=args.resume,
                         resume_from=args.resume_from,
-                        agent=agent,
+                        agent=imported and imported.agent,
+                        deps=imported and imported.deps,
                         session_id=args.session_id,
                         fork_session=args.fork_session,
                     )
@@ -234,24 +237,25 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
         with relay_stderr():
             # Before the session, so commits made during it count as changes on exit.
             launched = worktree or _launched_worktree(relaunched=relaunched)
+            launch = partial(
+                chat,
+                usage_limits=UsageLimits(request_limit=settings.request_limit),
+                settings=settings,
+                store=store,
+                builtin_plugins=DEFAULT_PLUGINS if args.agent else STOCK_PLUGINS,
+                project=project,
+                resume=args.resume,
+                resume_from=args.resume_from,
+                load_plugins=imported is None,
+                session_id=args.session_id,
+                fork_session=args.fork_session,
+                worktree=worktree,
+                web=served,
+                settings_for=settings_for,
+            )
+            # Two calls, so each agent is typed with the deps it gets: the stock agent takes none.
             asyncio.run(
-                chat(
-                    create_agent() if agent is None else agent,
-                    deps=None,
-                    usage_limits=UsageLimits(request_limit=settings.request_limit),
-                    settings=settings,
-                    store=store,
-                    builtin_plugins=DEFAULT_PLUGINS if args.agent else STOCK_PLUGINS,
-                    project=project,
-                    resume=args.resume,
-                    resume_from=args.resume_from,
-                    load_plugins=agent is None,
-                    session_id=args.session_id,
-                    fork_session=args.fork_session,
-                    worktree=worktree,
-                    web=served,
-                    settings_for=settings_for,
-                )
+                launch(create_agent(), deps=None) if imported is None else launch(imported.agent, deps=imported.deps)
             )
             offer_worktree_cleanup(worktree=launched, read_remove_commands=store.worktree_remove_commands, store=store)
     except Relaunch as relaunch:
