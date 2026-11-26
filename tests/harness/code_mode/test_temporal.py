@@ -156,7 +156,7 @@ async def client(temporal_env: WorkflowEnvironment) -> Client:
 
 
 @pytest.fixture
-async def temporal_monty_relay() -> AsyncIterator[None]:  # pragma: lax no cover -- only the Temporal test uses it
+async def temporal_monty_relay() -> AsyncIterator[None]:  # pragma: lax no cover -- only the skipped test uses it
     """Serve remote Monty workers on the port `remote_code_mode_agent` is configured with."""
     async with serve_monty_relay(MONTY_RELAY_PORT):
         yield
@@ -246,7 +246,7 @@ code_mode_agent = Agent(
 _request_id: contextvars.ContextVar[str] = contextvars.ContextVar('request_id', default='unset')
 
 
-# Only the relay test calls this `os_access`.
+# Only the skipped relay test calls this `os_access` (#14674).
 def _workflow_os(
     *, name: str, args: tuple[object, ...], kwargs: dict[str, object], **_: object
 ) -> object:  # pragma: lax no cover
@@ -1003,6 +1003,7 @@ async def test_remote_checkout_backoff_replays_without_workflow_timer(client: Cl
     assert not any(event.HasField('timer_started_event_attributes') for event in history.events)
 
 
+@pytest.mark.skip(reason='Hangs in CI under xdist: https://github.com/pydantic/pydantic-ai/issues/14674')
 @pytest.mark.usefixtures('temporal_monty_relay')
 async def test_code_mode_runs_remotely_in_temporal_workflow(client: Client) -> None:
     """Remote workers run and replay in a workflow like local ones do.

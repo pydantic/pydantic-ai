@@ -597,12 +597,7 @@ class TestCodeModeErrorRouting:
 
     @pytest.mark.parametrize(
         'remote',
-        [
-            False,
-            pytest.param(
-                True,
-            ),
-        ],
+        [False, True],
         ids=['local', 'remote-bridge'],
     )
     async def test_native_worker_out_of_memory_resets(self, monty_relay: MontyRelay, remote: bool) -> None:

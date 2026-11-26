@@ -27,6 +27,8 @@ from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 SESSION_METHOD = '/monty.v1.MontySession/Session'
 _LENGTH_PREFIX = struct.Struct('<I')
+_OOM_EXIT_CODE = 65
+"""A worker's exit code after it exceeded its memory limit: Monty's `OOM_EXIT_CODE`, in `crates/monty-types/src/resource.rs`."""
 
 
 class _RawCodec(CodecBase):
@@ -104,34 +106,23 @@ class MontyRelay:
                 while True:
                     (length,) = _LENGTH_PREFIX.unpack(await stdout.readexactly(_LENGTH_PREFIX.size))
                     await stream.send_message(await stdout.readexactly(length))
+            # The worker closed its stdout, so it exited or is exiting: reap it rather than kill it,
+            # since a kill that lands mid-exit replaces its exit code.
+            async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+                await child.wait()
         finally:
-            # A child that exits while a turn is in flight died mid-turn (e.g. the allocator
-            # refuses an oversized allocation under an active memory limit). Ending the stream
-            # bare reads as an ordinary disconnect on the client, so surface the death as
-            # resource exhaustion, which failure classification maps to the worker
-            # out-of-memory error. Reap the child before classifying: the pipe's EOF can reach
-            # the reader before the exit status is collected, and an unreaped child still
-            # reports `returncode` `None`. The capped wait only elapses for a child that is
-            # still alive, which is one the disconnect and teardown paths kill below, so they
-            # keep ending the stream bare.
             to_child_task.cancel()
             await asyncio.gather(to_child_task, return_exceptions=True)
-            try:
-                with suppress(asyncio.TimeoutError):
-                    await asyncio.wait_for(asyncio.shield(child.wait()), 0.5)
-            except asyncio.CancelledError:
-                # The handler is being cancelled (client disconnect or server stop); still reap
-                # the child so the relay never tears down with a worker still running.
-                with suppress(ProcessLookupError):
-                    child.kill()
-                await child.wait()
-                raise
-            died_mid_turn = child.returncode not in (None, 0)
             with suppress(ProcessLookupError):
                 child.kill()
             await child.wait()
-            if died_mid_turn:
-                raise GRPCError(Status.RESOURCE_EXHAUSTED, 'monty worker died mid-turn')
+        if child.returncode == _OOM_EXIT_CODE:
+            # Monty's server reports a worker out of memory this way, which the client raises as `MemoryError`.
+            await stream.send_trailing_metadata(
+                status=Status.RESOURCE_EXHAUSTED,
+                status_message='worker exceeded its memory limit',
+                metadata={'monty-cause': 'out_of_memory'},
+            )
 
 
 class _RelayServer(Server):
