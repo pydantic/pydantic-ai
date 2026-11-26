@@ -185,7 +185,8 @@ def clone_script(snapshot: Snapshot) -> str:
         lines.append(f'git config --global user.email {q(snapshot.author_email)}')
     if snapshot.clone_url is not None:
         lines += [
-            f'git clone --quiet --no-checkout {q(snapshot.clone_url)} .',
+            # Blobless: the sandbox gets commits and trees now and file contents as checkout needs them.
+            f'git clone --quiet --no-checkout --filter=blob:none {q(snapshot.clone_url)} .',
             "git for-each-ref --format='%(objectname)' refs/remotes/origin",
         ]
     else:

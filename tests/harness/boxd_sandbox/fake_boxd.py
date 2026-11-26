@@ -29,7 +29,7 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 import anyio
 import grpc
@@ -49,8 +49,13 @@ from boxd import (
 from boxd._generated import api_pb2
 from boxd.errors import REASON_TRAILER, from_grpc_error
 from boxd.models import OrgRef
+from boxd.resources.computer import AsyncComputer
 from boxd.resources.fs import AsyncFs
 from boxd.resources.machines import AsyncMachines
+
+from pydantic_ai_harness.boxd_sandbox._desktop import START_PANEL
+
+from ..computer_use.display_fakes import FAKE_SCREENSHOT
 
 # Output a command writes after it exits is read for this long, then dropped.
 _DRAIN_GRACE = 0.05
@@ -358,11 +363,142 @@ class _FakeFsTransport:
             raise _fs_failure(error, path) from None
 
 
+@dataclass
+class FakeDesktop:
+    """A fake of a machine's desktop as boxd's computer API shows it. It records each action as one line."""
+
+    size: tuple[int, int] = (1280, 800)
+    cursor: tuple[int, int] = (7, 8)
+    png: bytes = FAKE_SCREENSHOT
+    calls: list[str] = field(default_factory=list[str])
+    # A call that would record this line waits until it is cancelled, like a call boxd has not answered yet.
+    hang_on: str | None = None
+    # Errors the next action calls raise, in order. `None` lets that call succeed.
+    errors: list[BaseException | None] = field(default_factory=list[BaseException | None])
+
+
+class _Point(Protocol):
+    x: int
+    y: int
+
+
+class _Region(_Point, Protocol):
+    width: int
+    height: int
+
+
+class _Message(Protocol):
+    def HasField(self, field_name: str) -> bool: ...
+
+
+class _Action(_Message, Protocol):
+    """The fields of boxd's computer action messages that the fake reads. Each message sets only its own fields."""
+
+    at: _Point
+    to: _Point
+    path: Sequence[_Point]
+    width: int
+    height: int
+    button: str
+    count: int
+    modifiers: Sequence[str]
+    delta_x: int
+    delta_y: int
+    text: str
+    keys: Sequence[str]
+    repeat: int
+    hold_ms: int
+
+
+class _ScreenshotOptions(_Message, Protocol):
+    region: _Region
+
+
+class _ActionRequest(Protocol):
+    """boxd's `ComputerActionRequest`, as the fake reads it."""
+
+    vm_id: str
+    return_screenshot: bool
+    screenshot_options: _ScreenshotOptions
+
+    def WhichOneof(self, oneof_group: str) -> str | None: ...
+
+
+def _point(point: _Point) -> str:
+    return f'{point.x} {point.y}'
+
+
+def _at(action: _Action) -> str:
+    return _point(action.at) if action.HasField('at') else 'pointer'
+
+
+class _FakeComputerTransport:
+    """A fake of boxd's `ComputerAction` gRPC call, which the SDK's real `AsyncComputer` calls."""
+
+    def __init__(self, owner: FakeBoxd) -> None:
+        self._owner = owner
+
+    async def call(
+        self, method: str, request: _ActionRequest, *, region: str | None = None, **options: object
+    ) -> object:
+        assert method == 'ComputerAction'
+        owner = self._owner
+        owner.check_call()
+        owner.check_runnable(owner.find(request.vm_id))
+        desktop = owner.desktop
+        which = request.WhichOneof('action')
+        assert which is not None
+        action = getattr(request, which)
+        if which not in ('screenshot', 'cursor_position'):
+            desktop.calls.append(f'{which} {self._apply_and_describe(which, action)}'.rstrip())
+            if desktop.calls[-1] == desktop.hang_on:
+                await anyio.sleep_forever()
+            if desktop.errors and (error := desktop.errors.pop(0)) is not None:
+                raise error
+        shot = None
+        if request.return_screenshot:
+            if which == 'screenshot' and request.screenshot_options.HasField('region'):
+                area = request.screenshot_options.region
+                desktop.calls.append(f'zoom {area.x} {area.y} {area.width} {area.height}')
+            shot = _pb.ComputerImage(data=desktop.png, mime_type='image/png', width=1, height=1)
+        width, height = desktop.size
+        x, y = desktop.cursor
+        return _pb.ComputerActionResponse(
+            screen_width=width,
+            screen_height=height,
+            screen_held=True,
+            cursor=_pb.ComputerPoint(x=x, y=y),
+            screenshot=shot,
+        )
+
+    def _apply_and_describe(self, which: str, action: _Action) -> str:
+        desktop = self._owner.desktop
+        if which == 'set_screen_size':
+            desktop.size = (action.width, action.height)
+            return f'{action.width}x{action.height}'
+        if which == 'mouse_move':
+            desktop.cursor = (action.to.x, action.to.y)
+            return _point(action.to)
+        if which == 'click':
+            return f'{_at(action)} {action.button} count={action.count} modifiers={action.modifiers!r}'
+        if which in ('mouse_down', 'mouse_up'):
+            return f'{_at(action)} {action.button}'
+        if which == 'drag':
+            return f'{" ".join(_point(point) for point in action.path)} modifiers={action.modifiers!r}'
+        if which == 'scroll':
+            return f'{_at(action)} dx={action.delta_x} dy={action.delta_y} modifiers={action.modifiers!r}'
+        if which == 'type':
+            return f'{len(action.text)} {action.text[:20]!r}'
+        assert which == 'key'
+        return f'{action.keys!r} repeat={action.repeat} hold_ms={action.hold_ms}'
+
+
 class FakeMachines:
     def __init__(self, owner: FakeBoxd) -> None:
         self._owner = owner
         self._transport = _FakeTransport(owner)
         self.fs = AsyncFs(_FakeFsTransport(owner))
+        self.computer = AsyncComputer(_FakeComputerTransport(owner))
 
     async def create(
         self,
@@ -483,6 +619,11 @@ class FakeMachines:
         owner.exec_commands.append(command)
         if command == 'true' and owner.probe_errors:
             raise owner.probe_errors.pop(0)
+        if command == START_PANEL:
+            # Not run on the host: it installs packages and writes the panel's settings under `$HOME`.
+            if owner.panel_error is not None:
+                raise owner.panel_error
+            return ExecResult(stdout='', stderr='', exit_code=owner.panel_exit_code)
         process = await asyncio.create_subprocess_exec(
             '/bin/sh',
             '-c',
@@ -536,6 +677,9 @@ class FakeBoxd:
         self.create_names: list[str | None] = []
         self.lines: list[str] = []
         self.exec_commands: list[str] = []
+        self.desktop = FakeDesktop()
+        self.panel_exit_code = 0
+        self.panel_error: BoxdError | None = None
         # The `Fs*` calls made, in order; with `agent_outdated`, each is refused as a machine's old agent refuses it.
         self.fs_calls: list[str] = []
         self.agent_outdated = False

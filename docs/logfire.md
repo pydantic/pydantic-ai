@@ -332,6 +332,8 @@ This avoids double-counting in observability backends that aggregate usage attri
 
 An agent run span reports what that run spent. A run that [delegates to another agent](multi-agent-applications.md#agent-delegation) does not include the delegate's tokens, whether or not the delegate is instrumented: if it is, its own run span reports them. So the agent run spans in a trace can be added up as they are — the total matches the sum of the `gen_ai.usage.*` attributes on the model request spans underneath them.
 
+To add up cost per conversation instead of per trace, sub-agents included, use the `pydantic_ai.root_conversation_id` attribute described in [Correlating runs with `run_id` and `conversation_id`](message-history.md#correlating-runs-with-run_id-and-conversation_id).
+
 !!! note "Custom namespace"
     The `gen_ai.aggregated_usage.*` namespace is a custom extension not part of the [OpenTelemetry Semantic Conventions for GenAI](https://opentelemetry.io/docs/specs/semconv/gen-ai/). It was introduced to work around double-counting in observability backends. If OpenTelemetry introduces an official convention for aggregated usage in the future, this namespace may be updated or deprecated.
 
@@ -354,6 +356,8 @@ Versions 2, 3, and 4 are deprecated compatibility formats. Passing one of these 
 
 Version 6 is opt-in: it changes the role of messages you already receive, so pass it explicitly once your telemetry consumer is ready for the new role.
 
+Agent run spans carry the agent name under both `agent_name` and `gen_ai.agent.name` at every version, so a dashboard keyed on either name keeps working when you change versions.
+
 #### Version 2 (deprecated)
 
 Uses the newer OpenTelemetry GenAI spec and stores messages in the following attributes:
@@ -371,6 +375,7 @@ Builds on version 2 with the following improvements:
 - **Spec-compliant span names:**
     - `agent run` becomes `invoke_agent {gen_ai.agent.name}` (with the agent name filled in)
     - `running tool` becomes `execute_tool {gen_ai.tool.name}` (with the tool name filled in)
+    - `running output function` becomes `execute_tool {gen_ai.tool.name}`, so output tools and output functions share the span name used for other tools
 - **Spec-compliant attribute names:**
     - `tool_arguments` becomes `gen_ai.tool.call.arguments`
     - `tool_response` becomes `gen_ai.tool.call.result`

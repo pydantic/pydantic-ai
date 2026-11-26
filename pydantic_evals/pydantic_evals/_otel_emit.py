@@ -96,9 +96,9 @@ def emit_otel_events(
         scoring_run_id: Identifier shared by every result produced by one scoring
             pass over one target call. Written to `logfire.scorer.run_id`.
         include_baggage: When True (the default), each emitted event also carries
-            every key from the current OTel baggage as an attribute. Standard
-            `gen_ai.*` and `error.type` attributes always win on conflict, and
-            baggage keys in the reserved `logfire.scorer.*` namespace are dropped.
+            every key from the current OTel baggage as an attribute, except keys in
+            the reserved `gen_ai.evaluation.*` and `logfire.scorer.*` namespaces and
+            the `error.type` key.
     """
     if not results and not failures:
         return
@@ -118,8 +118,14 @@ def emit_otel_events(
 
 
 def _baggage_attrs() -> dict[str, Any]:
-    """Snapshot the current OTel baggage as a flat attribute mapping, minus the reserved `logfire.scorer.*` keys."""
-    return {str(k): v for k, v in baggage.get_all().items() if not str(k).startswith(_LOGFIRE_SCORER_PREFIX)}
+    """Snapshot the current OTel baggage as a flat attribute mapping, minus the reserved keys."""
+    # Every attribute an event writes is `error.type` or falls under one of these prefixes.
+    reserved_prefixes = ('gen_ai.evaluation.', _LOGFIRE_SCORER_PREFIX)
+    return {
+        str(k): v
+        for k, v in baggage.get_all().items()
+        if not str(k).startswith(reserved_prefixes) and str(k) != _ATTR_ERROR_TYPE
+    }
 
 
 def build_parent_context(span_reference: SpanReference | None) -> Context | None:
