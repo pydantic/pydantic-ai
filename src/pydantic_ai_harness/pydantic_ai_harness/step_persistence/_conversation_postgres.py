@@ -8,16 +8,19 @@ import anyio
 
 from pydantic_ai.conversation_store import (
     ConversationConflict,
+    ConversationDetails,
     ConversationEntry,
     ConversationRecord,
     ConversationStore,
 )
 from pydantic_ai_harness.media import MediaStore, PostgresConnection, PostgresMediaStore, PostgresPool
 from pydantic_ai_harness.step_persistence._conversation_codec import (
-    RECORD_ADAPTER,
-    entry_positions,
+    detail_columns,
+    dump_metadata,
+    dump_record,
     keyed_entry_messages,
     load_message,
+    load_record,
     missing_entries_error,
 )
 from pydantic_ai_harness.step_persistence._postgres import (
@@ -39,9 +42,10 @@ class PostgresConversationStore(ConversationStore):
     `PostgresStepStore`. `table` is a prefix for the store's tables, created on first use, and
     defaults to the step store's, so the two can share one prefix:
 
-    - `{table}_conv_records(conversation_id PK, revision, head_id, scope, updated_at, record)`
-    - `{table}_conv_entries(id PK, parent_id, kind, sha256, root_id, depth)`: `root_id` is the first entry of the
-      entry's history, whose writes take turns on an advisory lock, and `depth` its distance from it.
+    - `{table}_conv_records(conversation_id PK, revision, head_id, scope, updated_at, record, title, metadata)`:
+      `title` and `metadata` are kept apart from the `record` JSON, so a save leaves them as they are.
+    - `{table}_conv_entries(id PK, parent_id, kind, sha256, root_id)`: `root_id` is the first entry of the
+      entry's history, whose writes take turns on an advisory lock.
     - `{table}_conv_messages(sha256 PK, message)`: each message's JSON once, however many entries hold it.
     - `{table}_conv_branches(conversation_id, entry_id)`: the last entry of each branch a record lists.
 
@@ -97,8 +101,7 @@ class PostgresConversationStore(ConversationStore):
                     f'parent_id TEXT REFERENCES {self._entries} (id), '
                     'kind TEXT NOT NULL, '
                     f'sha256 TEXT NOT NULL REFERENCES {self._messages} (sha256), '
-                    'root_id TEXT NOT NULL, '
-                    'depth INTEGER NOT NULL)'
+                    'root_id TEXT NOT NULL)'
                 )
                 await connection.execute(
                     f'CREATE INDEX IF NOT EXISTS {self._entries}_parent ON {self._entries} (parent_id)'
@@ -113,7 +116,9 @@ class PostgresConversationStore(ConversationStore):
                     f'head_id TEXT REFERENCES {self._entries} (id), '
                     'scope TEXT, '
                     'updated_at TIMESTAMPTZ NOT NULL, '
-                    'record TEXT NOT NULL)'
+                    'record TEXT NOT NULL, '
+                    'title TEXT, '
+                    'metadata TEXT)'
                 )
                 await connection.execute(
                     f'CREATE INDEX IF NOT EXISTS {self._records}_head ON {self._records} (head_id)'
@@ -138,15 +143,15 @@ class PostgresConversationStore(ConversationStore):
     async def read_record(self, conversation_id: str) -> ConversationRecord | None:
         await self._ensure_schema()
         async with self._pool.acquire() as connection:
-            text = await connection.fetchval(
-                f'SELECT record FROM {self._records} WHERE conversation_id = $1', conversation_id
+            row = await connection.fetchrow(
+                f'SELECT record, title, metadata FROM {self._records} WHERE conversation_id = $1', conversation_id
             )
-        return RECORD_ADAPTER.validate_json(str(text)) if text is not None else None
+        return load_record(*row) if row is not None else None
 
     async def read_records(self, *, scope: str | None = None, limit: int | None = None) -> Sequence[ConversationRecord]:
         await self._ensure_schema()
         async with self._pool.acquire() as connection:
-            query = f'SELECT record FROM {self._records}'
+            query = f'SELECT record, title, metadata FROM {self._records}'
             args: list[object] = []
             if scope is not None:
                 args.append(scope)
@@ -156,7 +161,7 @@ class PostgresConversationStore(ConversationStore):
                 args.append(limit)
                 query += f' LIMIT ${len(args)}'
             rows = await connection.fetch(query, *args)
-        return [RECORD_ADAPTER.validate_json(str(row[0])) for row in rows]
+        return [load_record(*row) for row in rows]
 
     async def write_record(
         self,
@@ -193,36 +198,38 @@ class PostgresConversationStore(ConversationStore):
             for entry_id in (*(entry.parent_id for entry in new_entries), record.head_id, *record.branches)
             if entry_id is not None and entry_id not in new_ids
         }
-        stored = await self._positions(connection, referenced)
-        if referenced - stored.keys():
+        roots = await self._roots(connection, referenced)
+        if referenced - roots.keys():
             # A concurrent delete released one of them.
             raise ConversationConflict(record.conversation_id)
-        await self._lock_histories(connection, {root_id for root_id, _ in stored.values()})
+        await self._lock_histories(connection, set(roots.values()))
         await self._insert_messages(connection, dict(messages))
-        entries = [
-            (entry.id, entry.parent_id, entry.kind, sha256, root_id, depth)
-            for entry, (sha256, _), (root_id, depth) in zip(
-                new_entries, messages, entry_positions(new_entries, stored), strict=True
-            )
-        ]
+        entries: list[tuple[str, str | None, str, str, str]] = []
+        for entry, (sha256, _) in zip(new_entries, messages, strict=True):
+            roots[entry.id] = entry.id if entry.parent_id is None else roots[entry.parent_id]
+            entries.append((entry.id, entry.parent_id, entry.kind, sha256, roots[entry.id]))
         for start in range(0, len(entries), _MESSAGES_PER_INSERT):
             batch = entries[start : start + _MESSAGES_PER_INSERT]
-            values = ', '.join('(' + ', '.join(f'${6 * i + j}' for j in range(1, 7)) + ')' for i in range(len(batch)))
+            values = ', '.join('(' + ', '.join(f'${5 * i + j}' for j in range(1, 6)) + ')' for i in range(len(batch)))
             await connection.execute(
-                f'INSERT INTO {self._entries} (id, parent_id, kind, sha256, root_id, depth) VALUES {values}',
+                f'INSERT INTO {self._entries} (id, parent_id, kind, sha256, root_id) VALUES {values}',
                 *(value for row in batch for value in row),
             )
-        text = RECORD_ADAPTER.dump_json(record).decode()
+        text = dump_record(record)
         if expected_revision is None:
             written = await connection.fetchval(
-                f'INSERT INTO {self._records} (conversation_id, revision, head_id, scope, updated_at, record) '
-                'VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (conversation_id) DO NOTHING RETURNING conversation_id',
+                f'INSERT INTO {self._records} '
+                '(conversation_id, revision, head_id, scope, updated_at, record, title, metadata) '
+                'VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (conversation_id) DO NOTHING '
+                'RETURNING conversation_id',
                 record.conversation_id,
                 record.revision,
                 record.head_id,
                 record.scope,
                 record.updated_at,
                 text,
+                record.title,
+                dump_metadata(record.metadata),
             )
         else:
             written = await connection.fetchval(
@@ -258,6 +265,34 @@ class PostgresConversationStore(ConversationStore):
                 *(value for row in batch for value in row),
             )
 
+    async def write_details(
+        self,
+        conversation_id: str,
+        details: ConversationDetails,
+        *,
+        expected_revision: str,
+        expected: ConversationDetails | None = None,
+    ) -> ConversationRecord:
+        columns = detail_columns(details)
+        checks = detail_columns(expected or {})
+        sets = ', '.join(f'{column} = ${i}' for i, column in enumerate(columns, start=3))
+        conditions = ''.join(
+            f' AND {column} IS NOT DISTINCT FROM ${i}' for i, column in enumerate(checks, start=len(columns) + 3)
+        )
+        await self._ensure_schema()
+        async with self._pool.acquire() as connection:
+            row = await connection.fetchrow(
+                f'UPDATE {self._records} SET {sets} WHERE conversation_id = $1 AND revision = $2{conditions} '
+                'RETURNING record, title, metadata',
+                conversation_id,
+                expected_revision,
+                *columns.values(),
+                *checks.values(),
+            )
+        if row is None:
+            raise ConversationConflict(conversation_id)
+        return load_record(*row)
+
     async def delete_record(self, conversation_id: str, *, expected_revision: str) -> None:
         await self._ensure_schema()
         async with self._pool.acquire() as connection, connection.transaction():
@@ -268,10 +303,9 @@ class PostgresConversationStore(ConversationStore):
             )
             if text is None:
                 raise ConversationConflict(conversation_id)
-            record = RECORD_ADAPTER.validate_json(str(text))
+            record = load_record(text, None, None)
             tips = [entry_id for entry_id in (record.head_id, *record.branches) if entry_id is not None]
-            stored = await self._positions(connection, set(tips))
-            await self._lock_histories(connection, {root_id for root_id, _ in stored.values()})
+            await self._lock_histories(connection, set((await self._roots(connection, set(tips))).values()))
             deleted = await connection.fetchval(
                 f'DELETE FROM {self._records} WHERE conversation_id = $1 AND revision = $2 RETURNING conversation_id',
                 conversation_id,
@@ -286,18 +320,14 @@ class PostgresConversationStore(ConversationStore):
                 released.update(await self._release(connection, entry_id))
             await self._release_messages(connection, sorted(released))
 
-    async def _positions(self, connection: PostgresConnection, entry_ids: set[str]) -> dict[str, tuple[str, int]]:
-        """The `root_id` and `depth` of each of these entries that's stored."""
+    async def _roots(self, connection: PostgresConnection, entry_ids: set[str]) -> dict[str, str]:
+        """The `root_id` of each of these entries that's stored."""
         if not entry_ids:
             return {}
         rows = await connection.fetch(
-            f'SELECT id, root_id, depth FROM {self._entries} WHERE id = ANY($1::text[])', sorted(entry_ids)
+            f'SELECT id, root_id FROM {self._entries} WHERE id = ANY($1::text[])', sorted(entry_ids)
         )
-        positions: dict[str, tuple[str, int]] = {}
-        for entry_id, root_id, depth in rows:
-            assert isinstance(depth, int)
-            positions[str(entry_id)] = (str(root_id), depth)
-        return positions
+        return {str(entry_id): str(root_id) for entry_id, root_id in rows}
 
     async def _lock_histories(self, connection: PostgresConnection, root_ids: set[str]) -> None:
         """Wait for, then hold until the transaction ends, every other write to the histories starting at these entries.

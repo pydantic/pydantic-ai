@@ -653,6 +653,10 @@ store:
   deletes only its record: without one, it can't tell an entry no conversation uses from one a concurrent save or
   fork is about to point at. Its entries and messages stay.
 
+All three support [`update`][pydantic_ai.conversation_store.ConversationStore.update]. A conversation's title and
+metadata are stored beside its record, so a save leaves what `update` set even when the save read the conversation
+first.
+
 Externalized media is never deleted, as for step snapshots.
 
 ## Conversation heads and background names

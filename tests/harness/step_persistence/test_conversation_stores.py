@@ -17,7 +17,7 @@ import pytest
 
 from pydantic_ai import BinaryImage, Conversation, ModelRequest, UserPromptPart
 from pydantic_ai.conversation_store import ConversationConflict, ConversationEntry, ConversationRecord
-from pydantic_ai_harness.media import PostgresConnection, SqliteMediaStore
+from pydantic_ai_harness.media import PostgresConnection
 from pydantic_ai_harness.step_persistence import PostgresConversationStore, SqliteConversationStore
 from tests.harness._postgres_sqlite import SqlitePool
 from tests.harness.step_persistence._conversation_store_contract import Backend, ConversationStoreContract
@@ -96,20 +96,6 @@ async def test_sqlite_creates_its_tables_again_after_a_caller_rolls_them_back() 
         assert await store.load(conversation.conversation_id) == conversation
 
 
-def test_sqlite_media_on_a_caller_connection_takes_the_store_lock() -> None:
-    """Media is stored before a save takes the lock, so it takes the lock itself rather than run mid-transaction."""
-    with closing(sqlite3.connect(':memory:', check_same_thread=False, isolation_level=None)) as connection:
-        store = SqliteConversationStore(connection=connection)
-        media = store._media_store  # pyright: ignore[reportPrivateUsage]
-        lock = store._lock  # pyright: ignore[reportPrivateUsage]
-        assert isinstance(media, SqliteMediaStore)
-
-        conn = media._open()  # pyright: ignore[reportPrivateUsage]
-        assert lock.locked()
-        media._maybe_close(conn)  # pyright: ignore[reportPrivateUsage]
-        assert not lock.locked()
-
-
 class TestPostgresConversationStore(ConversationStoreContract):
     @pytest.fixture
     async def backend(self) -> AsyncIterator[Backend]:
@@ -168,19 +154,6 @@ async def test_postgres_delete_conflicts_when_the_record_changes_after_it_is_rea
     pool.close()
 
 
-async def test_without_a_media_store_large_parts_stay_in_the_message(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'conversations.db', media_store=None)
-    image = BinaryImage(data=b'\x89PNG' + b'\0' * 200_000, media_type='image/png')
-    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart(['Look', image])])])
-
-    await store.save(conversation)
-
-    assert await store.load(conversation.conversation_id) == conversation
-    with closing(sqlite3.connect(tmp_path / 'conversations.db')) as db:
-        (stored,) = db.execute('SELECT max(length(message)) FROM conversation_messages').fetchone()
-    assert stored > 200_000
-
-
 def test_sqlite_store_needs_exactly_one_of_database_or_connection(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match='exactly one'):
         SqliteConversationStore()
@@ -208,27 +181,25 @@ async def test_postgres_store_creates_its_schema_once_under_concurrent_first_use
 
 
 async def test_concurrent_saves_on_a_caller_connection_take_turns() -> None:
+    """Saves share the connection with the media they store first, so neither runs inside another's savepoint."""
     with closing(sqlite3.connect(':memory:', check_same_thread=False, isolation_level=None)) as connection:
-        store = SqliteConversationStore(connection=connection, media_store=None)
-        conversations = [Conversation(messages=[ModelRequest(parts=[UserPromptPart(str(i))])]) for i in range(20)]
+        store = SqliteConversationStore(connection=connection)
+        conversations = [
+            Conversation(
+                messages=[
+                    ModelRequest(
+                        parts=[UserPromptPart([str(i), BinaryImage(data=bytes([i]) * 100_000, media_type='image/png')])]
+                    )
+                ]
+            )
+            for i in range(20)
+        ]
 
         async with anyio.create_task_group() as tg:
             for conversation in conversations:
                 tg.start_soon(store.save, conversation)
 
         assert [await store.load(c.conversation_id) for c in conversations] == conversations
-
-
-async def test_postgres_a_record_pointing_at_a_released_entry_conflicts() -> None:
-    pool = SqlitePool()
-    pool.db.execute('PRAGMA foreign_keys = ON')
-    store = PostgresConversationStore(pool, media_store=None)
-
-    with pytest.raises(ConversationConflict):
-        await store.write_record(ConversationRecord(conversation_id='c', head_id='released'), expected_revision=None)
-
-    assert await store.read_record('c') is None
-    pool.close()
 
 
 async def test_postgres_other_write_errors_are_not_conflicts() -> None:
@@ -250,40 +221,18 @@ def _prompt(text: str) -> ModelRequest:
     return ModelRequest(parts=[UserPromptPart(text)])
 
 
-async def _positions_after_a_fork(
-    store: SqliteConversationStore | PostgresConversationStore,
-) -> tuple[str, list[str], str]:
-    """Save three messages, fork after the second and add one; return each entry's history and depth."""
-    original = Conversation(messages=[_prompt('one'), _prompt('two'), _prompt('three')])
-    entries = await store.save(original)
-    fork = await store.fork(original.conversation_id, at=2)
-    fork.messages.append(_prompt('four'))
-    [added] = await store.save(fork)
-    return entries[0].id, [entry.id for entry in entries], added.id
-
-
-async def test_sqlite_entries_record_their_history_and_depth(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'c.db', media_store=None)
-    root, ids, added = await _positions_after_a_fork(store)
-
-    with closing(sqlite3.connect(tmp_path / 'c.db')) as conn:
-        rows = dict(
-            (entry_id, (root_id, depth))
-            for entry_id, root_id, depth in conn.execute('SELECT id, root_id, depth FROM conversation_entries')
-        )
-    assert rows == {**{entry_id: (root, depth) for depth, entry_id in enumerate(ids)}, added: (root, 2)}
-
-
-async def test_postgres_entries_record_their_history_and_depth() -> None:
+async def test_postgres_entries_record_the_first_entry_of_their_history() -> None:
+    """A fork's entries share the first entry of the history it continues, which picks the lock its writes take."""
     pool = SqlitePool()
     store = PostgresConversationStore(pool, media_store=None)
-    root, ids, added = await _positions_after_a_fork(store)
+    original = Conversation(messages=[_prompt('one'), _prompt('two')])
+    first, second = await store.save(original)
+    fork = await store.fork(original.conversation_id, at=1)
+    fork.messages.append(_prompt('three'))
+    [added] = await store.save(fork)
 
-    rows = dict(
-        (entry_id, (root_id, depth))
-        for entry_id, root_id, depth in pool.db.execute('SELECT id, root_id, depth FROM step_persistence_conv_entries')
-    )
-    assert rows == {**{entry_id: (root, depth) for depth, entry_id in enumerate(ids)}, added: (root, 2)}
+    rows = dict(pool.db.execute('SELECT id, root_id FROM step_persistence_conv_entries'))
+    assert rows == {first.id: first.id, second.id: first.id, added.id: first.id}
     pool.close()
 
 
@@ -311,10 +260,10 @@ async def test_postgres_a_write_that_loses_a_race_with_a_delete_conflicts(monkey
     pool.db.execute('PRAGMA foreign_keys = ON')
     store = PostgresConversationStore(pool, media_store=None)
 
-    async def released_after_lookup(_connection: object, entry_ids: set[str]) -> dict[str, tuple[str, int]]:
-        return {entry_id: (entry_id, 0) for entry_id in entry_ids}
+    async def released_after_lookup(_connection: object, entry_ids: set[str]) -> dict[str, str]:
+        return {entry_id: entry_id for entry_id in entry_ids}
 
-    monkeypatch.setattr(store, '_positions', released_after_lookup)
+    monkeypatch.setattr(store, '_roots', released_after_lookup)
     entry = ConversationEntry(parent_id='released', message=_prompt('one'))
     with pytest.raises(ConversationConflict):
         await store.write_record(

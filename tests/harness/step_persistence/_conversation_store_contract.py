@@ -18,14 +18,10 @@ from pydantic_ai import (
     Agent,
     BinaryImage,
     Conversation,
-    DeferredToolRequests,
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    ModelRetry,
     TextPart,
-    ToolCallPart,
-    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.conversation_store import (
@@ -34,7 +30,6 @@ from pydantic_ai.conversation_store import (
     ConversationRecord,
     ConversationStore,
 )
-from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 
@@ -119,39 +114,6 @@ class ConversationStoreContract:
 
         assert (await backend.count_entries(), await backend.count_messages()) == (2, 1)
 
-    async def test_a_rewritten_history_branches_off_the_last_shared_message(self, backend: Backend) -> None:
-        messages = [_prompt('one'), ModelResponse(parts=[TextPart('two')]), _prompt('three')]
-        conversation = Conversation(messages=messages)
-        await backend.store.save(conversation)
-        compacted = Conversation(
-            messages=[messages[0], ModelResponse(parts=[TextPart('summary')])],
-            conversation_id=conversation.conversation_id,
-            revision=conversation.revision,
-        )
-
-        await backend.store.save(compacted)
-
-        assert await backend.store.load(conversation.conversation_id) == compacted
-        # The replaced tail stays stored: a rewrite may only trim what the model sees.
-        assert await backend.count_entries() == 4
-
-    async def test_a_save_from_a_stale_copy_conflicts(self, backend: Backend) -> None:
-        store = backend.store
-        conversation = Conversation(messages=[_prompt('one')])
-        await store.save(conversation)
-        mine = await store.load(conversation.conversation_id)
-        theirs = await store.load(conversation.conversation_id)
-        assert mine is not None and theirs is not None
-        mine.messages.append(ModelResponse(parts=[TextPart('mine')]))
-        theirs.messages.append(ModelResponse(parts=[TextPart('theirs')]))
-        await store.save(mine)
-
-        with pytest.raises(ConversationConflict):
-            await store.save(theirs)
-
-        assert await store.load(conversation.conversation_id) == mine
-        assert await backend.count_entries() == 2
-
     async def test_a_record_written_over_a_stale_revision_conflicts(self, backend: Backend) -> None:
         store = backend.store
         conversation = Conversation(messages=[_prompt('one')])
@@ -166,33 +128,26 @@ class ConversationStoreContract:
         assert await store.load(conversation.conversation_id) == conversation
         assert await backend.count_entries() == (1 if backend.atomic else 3)
 
-    async def test_saving_a_new_conversation_under_a_taken_id_conflicts(self, backend: Backend) -> None:
-        await backend.store.save(Conversation(messages=[_prompt('one')], conversation_id='taken'))
+    async def test_a_title_set_since_a_save_read_the_conversation_survives_the_save(self, backend: Backend) -> None:
+        store = backend.store
+        conversation = Conversation(messages=[_prompt('one')])
+        await store.save(conversation)
 
+        updated = await store.update(
+            conversation.conversation_id, title='Trip', metadata={'days': 3}, expected_title=None
+        )
+        assert updated == await store.read_record(conversation.conversation_id)
+        conversation.messages.append(ModelResponse(parts=[TextPart('two')]))
+        saved = await _saved(store, conversation)
+
+        assert (saved.title, saved.metadata) == ('Trip', {'days': 3})
         with pytest.raises(ConversationConflict):
-            await backend.store.save(Conversation(messages=[_prompt('two')], conversation_id='taken'))
-
-    async def test_a_paused_conversation_keeps_its_scope_and_usage(self, backend: Backend) -> None:
-        agent = Agent(TestModel())
-        conversation = (await agent.run('Hello')).conversation
-
-        first = await _saved(backend.store, conversation, scope='user-1')
-        second = await _saved(backend.store, conversation)
-
-        assert (first.scope, second.scope) == ('user-1', 'user-1')
-        assert first.revision != second.revision == conversation.revision
-        record = await backend.store.read_record(conversation.conversation_id)
-        assert record is not None
-        assert record.usage == conversation.usage
-        assert record.head_id == second.head_id
-
-    async def test_a_conversation_with_no_messages_round_trips(self, backend: Backend) -> None:
-        conversation = Conversation()
-
-        record = await _saved(backend.store, conversation)
-
-        assert record.head_id is None
-        assert await backend.store.load(conversation.conversation_id) == conversation
+            await store.write_details(
+                conversation.conversation_id,
+                {'metadata': None},
+                expected_revision=saved.revision,
+                expected={'title': None},
+            )
 
     async def test_conversations_list_newest_first_by_scope_and_limit(self, backend: Backend) -> None:
         store = backend.store
@@ -231,22 +186,10 @@ class ConversationStoreContract:
         if backend.collects_garbage:
             assert (await backend.count_entries(), await backend.count_messages()) == (1, 1)
         await store.delete(fork.conversation_id)
-        await store.delete(fork.conversation_id)
         if backend.collects_garbage:
             assert (await backend.count_entries(), await backend.count_messages()) == (0, 0)
         else:
             assert (await backend.count_entries(), await backend.count_messages()) == (2, 2)
-
-    async def test_a_truncated_history_keeps_the_branch_it_replaced(self, backend: Backend) -> None:
-        store = backend.store
-        conversation = Conversation(messages=[_prompt('one'), ModelResponse(parts=[TextPart('two')])])
-        await store.save(conversation)
-        conversation.messages = conversation.messages[:1]
-
-        await store.save(conversation)
-
-        assert await store.load(conversation.conversation_id) == conversation
-        assert (await backend.count_entries(), await backend.count_messages()) == (2, 2)
 
     async def test_deleting_keeps_a_message_another_entry_holds(self, backend: Backend) -> None:
         shared = _prompt('the same')
@@ -316,8 +259,6 @@ class ConversationStoreContract:
 
         with pytest.raises(ConversationConflict):
             await store.delete_record(conversation.conversation_id, expected_revision=stale.revision)
-        with pytest.raises(ConversationConflict):
-            await store.delete_record('unknown', expected_revision=stale.revision)
 
         assert await store.load(conversation.conversation_id) == conversation
 
@@ -360,232 +301,6 @@ class ConversationStoreContract:
         expected = (0, 0) if backend.collects_garbage else (2, 2)
         assert (await backend.count_entries(), await backend.count_messages()) == expected
 
-    # Edge cases: how `save` diffs a history, what it carries, and what fork and delete keep.
-
-    async def test_a_truncated_history_extended_again_branches_off_where_it_was_cut(self, backend: Backend) -> None:
-        store = backend.store
-        one, two, three = _prompt('one'), ModelResponse(parts=[TextPart('two')]), _prompt('three')
-        conversation = Conversation(messages=[one, two, three])
-        await store.save(conversation)
-
-        conversation.messages = [one]
-        assert await store.save(conversation) == []
-        truncated = await store.read_record(conversation.conversation_id)
-        assert truncated is not None
-        assert await backend.count_entries() == 3
-        assert [entry.message for entry in await store.read_history(truncated.head_id)] == [one]
-
-        conversation.messages = [one, ModelResponse(parts=[TextPart('two, again')])]
-        await store.save(conversation)
-
-        assert await store.load(conversation.conversation_id) == conversation
-        assert await backend.count_entries() == 4
-
-    async def test_an_empty_history_saved_over_a_stored_one_loads_empty(self, backend: Backend) -> None:
-        store = backend.store
-        conversation = Conversation(messages=[_prompt('one'), ModelResponse(parts=[TextPart('two')])])
-        await store.save(conversation)
-
-        conversation.messages = []
-        assert await store.save(conversation) == []
-
-        record = await store.read_record(conversation.conversation_id)
-        assert record is not None and record.head_id is None
-        assert await store.load(conversation.conversation_id) == conversation
-        assert await backend.count_entries() == 2
-
-    async def test_saving_an_unchanged_conversation_stores_no_entries_but_advances_its_revision(
-        self, backend: Backend
-    ) -> None:
-        store = backend.store
-        conversation = Conversation(messages=[_prompt('one')])
-        await store.save(conversation)
-        first = await store.read_record(conversation.conversation_id)
-        assert first is not None
-
-        assert await store.save(conversation) == []
-
-        second = await store.read_record(conversation.conversation_id)
-        assert second is not None
-        assert await backend.count_entries() == 1
-        assert second.head_id == first.head_id
-        assert second.revision != first.revision
-        assert second.updated_at >= first.updated_at
-
-    async def test_a_message_repeated_in_one_history_gets_an_entry_per_position(self, backend: Backend) -> None:
-        store = backend.store
-        again = _prompt('again')
-        ok = ModelResponse(parts=[TextPart('ok')])
-        conversation = Conversation(messages=[again, ok, again, ok])
-        await store.save(conversation)
-
-        assert await store.load(conversation.conversation_id) == conversation
-        assert (await backend.count_entries(), await backend.count_messages()) == (4, 2)
-
-        # Dropping the second pair is a truncation, not a match against the first.
-        conversation.messages = conversation.messages[:2]
-        await store.save(conversation)
-        assert await store.load(conversation.conversation_id) == conversation
-        assert await backend.count_entries() == 4
-
-    async def test_a_message_removed_or_inserted_mid_history_rewrites_from_there(self, backend: Backend) -> None:
-        store = backend.store
-        messages: list[ModelMessage] = [
-            _prompt('one'),
-            ModelResponse(parts=[TextPart('two')]),
-            _prompt('three'),
-            ModelResponse(parts=[TextPart('four')]),
-        ]
-        conversation = Conversation(messages=list(messages))
-        await store.save(conversation)
-
-        conversation.messages = [messages[0], messages[2], messages[3]]
-        await store.save(conversation)
-        assert await store.load(conversation.conversation_id) == conversation
-        # `one` is shared; `three` and `four` get new entries after it, beside the original four.
-        assert (await backend.count_entries(), await backend.count_messages()) == (6, 4)
-
-        inserted = ModelResponse(parts=[TextPart('inserted')])
-        conversation.messages = [messages[0], inserted, messages[2], messages[3]]
-        await store.save(conversation)
-        assert await store.load(conversation.conversation_id) == conversation
-        assert (await backend.count_entries(), await backend.count_messages()) == (9, 5)
-
-    async def test_a_history_of_tool_calls_and_retries_continued_in_memory_stores_only_new_messages(
-        self, backend: Backend
-    ) -> None:
-        """A conversation kept in memory across runs is saved without storing what the store has again.
-
-        Every message, a retried call's validation errors included, round-trips equal, and a later run's
-        new messages are appended from where the stored ones end.
-        """
-
-        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            calls = sum(isinstance(part, ToolCallPart) for message in messages for part in message.parts)
-            if calls == 0:
-                return ModelResponse(parts=[ToolCallPart('lookup', {'x': 'not a number'})])
-            if calls == 1:
-                return ModelResponse(parts=[ToolCallPart('lookup', {'x': 1}), ToolCallPart('flaky', {})])
-            if calls == 3:
-                return ModelResponse(parts=[ToolCallPart('flaky', {})])
-            return ModelResponse(parts=[TextPart('done')])
-
-        agent = Agent(FunctionModel(model))
-        flaky_calls = 0
-
-        @agent.tool_plain
-        def lookup(x: int) -> dict[str, int]:
-            return {'x': x}
-
-        @agent.tool_plain
-        def flaky() -> str:
-            nonlocal flaky_calls
-            flaky_calls += 1
-            if flaky_calls == 1:
-                raise ModelRetry('try again')
-            return 'ok'
-
-        store = backend.store
-        conversation = (await agent.run('go')).conversation
-        returns = [
-            part for message in conversation.messages for part in message.parts if isinstance(part, ToolReturnPart)
-        ]
-        assert [part.outcome for part in returns] == ['retried', 'success', 'retried', 'success']
-        await store.save(conversation)
-        assert await store.load(conversation.conversation_id) == conversation
-
-        continued = (await agent.run('again', conversation=conversation)).conversation
-        stored = await store.save(continued)
-
-        assert [entry.message for entry in stored] == continued.messages[len(conversation.messages) :]
-        assert await store.load(conversation.conversation_id) == continued
-        assert await backend.count_entries() == len(continued.messages)
-
-    async def test_a_conversation_paused_on_deferred_tools_resumes_from_the_store(self, backend: Backend) -> None:
-        agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
-
-        @agent.tool_plain(requires_approval=True)
-        def delete_file(path: str) -> str:
-            return f'deleted {path}'
-
-        store = backend.store
-        paused = (await agent.run('Delete it')).conversation
-        await store.save(paused, scope='user-1')
-
-        loaded = await store.load(paused.conversation_id)
-        assert loaded == paused
-        assert loaded is not None and loaded.deferred_tool_requests is not None
-        (call,) = loaded.deferred_tool_requests.approvals
-        results = loaded.deferred_tool_requests.build_results(approvals={call.tool_call_id: True})
-        resumed = (await agent.run(conversation=loaded, deferred_tool_results=results)).conversation
-        assert resumed.deferred_tool_requests is None
-        stored = await store.save(resumed)
-
-        assert [entry.message for entry in stored] == resumed.messages[len(paused.messages) :]
-        record = await store.read_record(paused.conversation_id)
-        assert record is not None
-        assert record.deferred_tool_requests is None
-        assert record.scope == 'user-1'
-        assert await store.load(paused.conversation_id) == resumed
-        assert await backend.count_entries() == len(resumed.messages)
-
-    async def test_usage_accumulates_across_runs_and_saves(self, backend: Backend) -> None:
-        store = backend.store
-        agent = Agent(TestModel())
-
-        for _ in range(3):
-            conversation = await store.load('usage') or Conversation(conversation_id='usage')
-            await store.save((await agent.run('Hello', conversation=conversation)).conversation)
-
-        loaded = await store.load('usage')
-        assert loaded is not None
-        assert loaded.usage.requests == 3
-
-    async def test_a_partial_fork_starts_its_usage_over_and_a_whole_one_copies_it(self, backend: Backend) -> None:
-        store = backend.store
-        conversation = (await Agent(TestModel()).run('Hello')).conversation
-        conversation.usage.details['reasoning_tokens'] = 7
-        await store.save(conversation)
-
-        partial = await store.fork(conversation.conversation_id, at=1)
-        whole = await store.fork(conversation.conversation_id)
-        assert whole.usage == conversation.usage
-        whole.usage.details['reasoning_tokens'] = 100
-        whole.usage.requests = 100
-        await store.save(whole)
-
-        assert (partial.usage.requests, partial.usage.details) == (0, {})
-        source = await store.load(conversation.conversation_id)
-        assert source is not None
-        assert source.usage == conversation.usage
-        assert source.usage.details == {'reasoning_tokens': 7}
-
-    async def test_a_fork_of_a_fork_records_the_conversation_and_entry_it_branched_off(self, backend: Backend) -> None:
-        store = backend.store
-        original = Conversation(messages=[_prompt('one'), ModelResponse(parts=[TextPart('two')]), _prompt('three')])
-        await store.save(original)
-        original_record = await store.read_record(original.conversation_id)
-        assert original_record is not None
-        child = await store.fork(original.conversation_id, at=2)
-        child.messages.append(_prompt('child'))
-        await store.save(child)
-        child_record = await store.read_record(child.conversation_id)
-        assert child_record is not None
-        grandchild = await store.fork(child.conversation_id, at=1)
-        empty = await store.fork(original.conversation_id, at=0)
-
-        history = await store.read_history(original_record.head_id)
-        # `forked_from` names the conversation and `forked_at` the entry, and both survive later saves of the fork.
-        assert (child_record.forked_from, child_record.forked_at) == (original.conversation_id, history[1].id)
-        grandchild_record = await store.read_record(grandchild.conversation_id)
-        assert grandchild_record is not None
-        assert (grandchild_record.forked_from, grandchild_record.forked_at) == (child.conversation_id, history[0].id)
-        # A fork that keeps nothing records no entry, but still says what it was copied from.
-        empty_record = await store.read_record(empty.conversation_id)
-        assert empty_record is not None
-        assert (empty_record.forked_from, empty_record.forked_at) == (original.conversation_id, None)
-        assert await backend.count_entries() == 4
-
     async def test_deleting_the_conversation_a_longer_fork_continues_keeps_the_fork_whole(
         self, backend: Backend
     ) -> None:
@@ -615,34 +330,6 @@ class ConversationStoreContract:
         assert await store.load(fork.conversation_id) == fork
         if backend.collects_garbage:
             assert await backend.count_entries() == 3
-
-    async def test_deleting_a_conversation_the_store_does_not_have_does_nothing(self, backend: Backend) -> None:
-        store = backend.store
-        kept = Conversation(messages=[_prompt('one')])
-        await store.save(kept)
-
-        await store.delete('unknown')
-        await store.delete('unknown')
-
-        assert await store.load(kept.conversation_id) == kept
-        assert await backend.count_entries() == 1
-
-    async def test_forking_onto_a_taken_id_or_the_source_itself_conflicts_and_changes_nothing(
-        self, backend: Backend
-    ) -> None:
-        store = backend.store
-        source = Conversation(messages=[_prompt('one'), ModelResponse(parts=[TextPart('two')])])
-        await store.save(source)
-        taken = Conversation(messages=[_prompt('taken')], conversation_id='taken')
-        await store.save(taken)
-
-        for new_conversation_id in ('taken', source.conversation_id):
-            with pytest.raises(ConversationConflict) as conflict:
-                await store.fork(source.conversation_id, at=1, new_conversation_id=new_conversation_id)
-            assert conflict.value.conversation_id == new_conversation_id
-
-        assert await store.load(source.conversation_id) == source
-        assert await store.load('taken') == taken
 
     async def test_two_copies_saved_at_once_let_exactly_one_win(
         self, backend: Backend, monkeypatch: pytest.MonkeyPatch

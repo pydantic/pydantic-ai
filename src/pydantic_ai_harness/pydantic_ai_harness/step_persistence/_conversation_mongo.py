@@ -6,13 +6,14 @@ from collections.abc import Sequence
 from typing import NotRequired
 
 from pydantic import TypeAdapter
-from pymongo import ASCENDING, DESCENDING, AsyncMongoClient
+from pymongo import ASCENDING, DESCENDING, AsyncMongoClient, ReturnDocument
 from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.errors import DuplicateKeyError
 from typing_extensions import TypedDict
 
 from pydantic_ai.conversation_store import (
     ConversationConflict,
+    ConversationDetails,
     ConversationEntry,
     ConversationRecord,
     ConversationStore,
@@ -20,9 +21,12 @@ from pydantic_ai.conversation_store import (
 from pydantic_ai_harness.media import MediaStore
 from pydantic_ai_harness.media._mongo import MongoMediaStore
 from pydantic_ai_harness.step_persistence._conversation_codec import (
-    RECORD_ADAPTER,
+    detail_columns,
+    dump_metadata,
+    dump_record,
     keyed_entry_messages,
     load_message,
+    load_record,
     missing_entries_error,
 )
 from pydantic_ai_harness.step_persistence._mongo import find_message_docs, insert_missing_messages
@@ -53,7 +57,8 @@ class MongoConversationStore(ConversationStore):
     client; call `aclose()` to release it), plus `database=`, as for
     `MongoStepStore`. Collections:
 
-    - `conversation_records`: `_id` is the conversation id.
+    - `conversation_records`: `_id` is the conversation id. `title` and `metadata` are kept apart from the
+      `record` JSON, so a save leaves them as they are.
     - `conversation_entries`: `_id` is the entry id.
     - `conversation_messages`: `_id` is the SHA-256 of the message's JSON, each stored once.
 
@@ -102,7 +107,7 @@ class MongoConversationStore(ConversationStore):
 
     async def read_record(self, conversation_id: str) -> ConversationRecord | None:
         doc = await self._db['conversation_records'].find_one({'_id': conversation_id})
-        return RECORD_ADAPTER.validate_json(str(doc['record'])) if doc is not None else None
+        return _load_record(doc) if doc is not None else None
 
     async def read_records(self, *, scope: str | None = None, limit: int | None = None) -> Sequence[ConversationRecord]:
         if limit == 0:
@@ -110,7 +115,7 @@ class MongoConversationStore(ConversationStore):
             return []
         query: _MongoDocument = {} if scope is None else {'scope': scope}
         cursor = self._db['conversation_records'].find(query).sort('updated_at', DESCENDING).limit(limit or 0)
-        return [RECORD_ADAPTER.validate_json(str(doc['record'])) async for doc in cursor]
+        return [_load_record(doc) async for doc in cursor]
 
     async def write_record(
         self,
@@ -131,29 +136,55 @@ class MongoConversationStore(ConversationStore):
                     for entry, (sha256, _) in zip(new_entries, messages, strict=True)
                 ]
             )
-        doc: _MongoDocument = {
-            '_id': record.conversation_id,
+        fields: _MongoDocument = {
             'revision': record.revision,
             'head_id': record.head_id,
             'scope': record.scope,
             'updated_at': record.updated_at,
-            'record': RECORD_ADAPTER.dump_json(record).decode(),
+            'record': dump_record(record),
         }
         records = self._db['conversation_records']
         if expected_revision is None:
             try:
-                await records.insert_one(doc)
+                await records.insert_one(
+                    {
+                        '_id': record.conversation_id,
+                        **fields,
+                        'title': record.title,
+                        'metadata': dump_metadata(record.metadata),
+                    }
+                )
             except DuplicateKeyError:
                 written = False
             else:
                 written = True
         else:
-            written = (
-                await records.find_one_and_replace({'_id': record.conversation_id, 'revision': expected_revision}, doc)
-                is not None
+            updated = await records.update_one(
+                {'_id': record.conversation_id, 'revision': expected_revision}, {'$set': fields}
             )
+            written = updated.matched_count == 1
         if not written:
             raise ConversationConflict(record.conversation_id)
+
+    async def write_details(
+        self,
+        conversation_id: str,
+        details: ConversationDetails,
+        *,
+        expected_revision: str,
+        expected: ConversationDetails | None = None,
+    ) -> ConversationRecord:
+        query: _MongoDocument = {
+            '_id': conversation_id,
+            'revision': expected_revision,
+            **detail_columns(expected or {}),
+        }
+        doc = await self._db['conversation_records'].find_one_and_update(
+            query, {'$set': detail_columns(details)}, return_document=ReturnDocument.AFTER
+        )
+        if doc is None:
+            raise ConversationConflict(conversation_id)
+        return _load_record(doc)
 
     async def delete_record(self, conversation_id: str, *, expected_revision: str) -> None:
         deleted = await self._db['conversation_records'].delete_one(
@@ -221,3 +252,7 @@ class MongoConversationStore(ConversationStore):
                 )
             )
         return entries
+
+
+def _load_record(doc: _MongoDocument) -> ConversationRecord:
+    return load_record(doc['record'], doc.get('title'), doc.get('metadata'))

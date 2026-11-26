@@ -2,19 +2,54 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from pydantic import TypeAdapter
 
-from pydantic_ai.conversation_store import ConversationEntry, ConversationRecord
+from pydantic_ai.conversation_store import ConversationDetails, ConversationEntry, ConversationRecord
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from pydantic_ai_harness.media import MediaStore, externalize_media, restore_media
 from pydantic_ai_harness.step_persistence._messages import keyed_messages
 from pydantic_ai_harness.step_persistence._store import _OBJECT_LIST_ADAPTER  # pyright: ignore[reportPrivateUsage]
 
-RECORD_ADAPTER: TypeAdapter[ConversationRecord] = TypeAdapter(ConversationRecord)
+_RECORD_ADAPTER: TypeAdapter[ConversationRecord] = TypeAdapter(ConversationRecord)
+_METADATA_ADAPTER: TypeAdapter[dict[str, Any] | None] = TypeAdapter(dict[str, Any] | None)
 _MESSAGE_ADAPTER: TypeAdapter[ModelMessage] = TypeAdapter(ModelMessage)
+
+
+def dump_record(record: ConversationRecord) -> str:
+    """The record's JSON, without the `title` and `metadata` the stores keep beside it.
+
+    Keeping them apart lets a save replace the record without writing them, so it keeps what
+    `update` set since the save read the record.
+    """
+    return _RECORD_ADAPTER.dump_json(record, exclude={'title', 'metadata'}).decode()
+
+
+def dump_metadata(metadata: dict[str, Any] | None) -> str | None:
+    return None if metadata is None else _METADATA_ADAPTER.dump_json(metadata).decode()
+
+
+def load_record(record: object, title: object, metadata: object) -> ConversationRecord:
+    """The record `dump_record` stored as `record`, with the `title` and `metadata` stored beside it."""
+    return dataclasses.replace(
+        _RECORD_ADAPTER.validate_json(str(record)),
+        title=None if title is None else str(title),
+        metadata=None if metadata is None else _METADATA_ADAPTER.validate_json(str(metadata)),
+    )
+
+
+def detail_columns(details: ConversationDetails) -> dict[str, str | None]:
+    """The column, or field, each key of `details` sets or `write_details` compares, with its stored value."""
+    columns: dict[str, str | None] = {}
+    if 'title' in details:
+        columns['title'] = details['title']
+    if 'metadata' in details:
+        columns['metadata'] = dump_metadata(details['metadata'])
+    return columns
 
 
 async def keyed_entry_messages(
@@ -33,26 +68,6 @@ async def load_message(text: str, *, media_store: MediaStore | None) -> ModelMes
     if media_store is not None:
         payload = await restore_media(payload, media_store=media_store)
     return _MESSAGE_ADAPTER.validate_python(payload)
-
-
-def entry_positions(
-    entries: Sequence[ConversationEntry], stored: Mapping[str, tuple[str, int]]
-) -> list[tuple[str, int]]:
-    """Each new entry's `root_id`, the first entry of its history, and `depth`, its distance from that entry.
-
-    `stored` maps each stored entry the new ones continue from to its own `root_id` and `depth`.
-    """
-    known = dict(stored)
-    positions: list[tuple[str, int]] = []
-    for entry in entries:
-        if entry.parent_id is None:
-            position = (entry.id, 0)
-        else:
-            root_id, depth = known[entry.parent_id]
-            position = (root_id, depth + 1)
-        known[entry.id] = position
-        positions.append(position)
-    return positions
 
 
 def missing_entries_error(head_id: str) -> LookupError:

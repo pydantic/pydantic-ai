@@ -12,16 +12,19 @@ import anyio
 
 from pydantic_ai.conversation_store import (
     ConversationConflict,
+    ConversationDetails,
     ConversationEntry,
     ConversationRecord,
     ConversationStore,
 )
 from pydantic_ai_harness.media import MediaStore, SqliteMediaStore
 from pydantic_ai_harness.step_persistence._conversation_codec import (
-    RECORD_ADAPTER,
-    entry_positions,
+    detail_columns,
+    dump_metadata,
+    dump_record,
     keyed_entry_messages,
     load_message,
+    load_record,
     missing_entries_error,
 )
 from pydantic_ai_harness.step_persistence._store import (
@@ -40,9 +43,7 @@ CREATE TABLE IF NOT EXISTS conversation_entries (
     id TEXT PRIMARY KEY,
     parent_id TEXT REFERENCES conversation_entries (id),
     kind TEXT NOT NULL,
-    sha256 TEXT NOT NULL REFERENCES conversation_messages (sha256),
-    root_id TEXT NOT NULL,
-    depth INTEGER NOT NULL
+    sha256 TEXT NOT NULL REFERENCES conversation_messages (sha256)
 );
 CREATE INDEX IF NOT EXISTS conversation_entries_parent ON conversation_entries (parent_id);
 CREATE INDEX IF NOT EXISTS conversation_entries_sha256 ON conversation_entries (sha256);
@@ -52,7 +53,9 @@ CREATE TABLE IF NOT EXISTS conversation_records (
     head_id TEXT REFERENCES conversation_entries (id),
     scope TEXT,
     updated_at REAL NOT NULL,
-    record TEXT NOT NULL
+    record TEXT NOT NULL,
+    title TEXT,
+    metadata TEXT
 );
 CREATE INDEX IF NOT EXISTS conversation_records_head ON conversation_records (head_id);
 CREATE INDEX IF NOT EXISTS conversation_records_scope ON conversation_records (scope, updated_at);
@@ -99,9 +102,9 @@ class SqliteConversationStore(ConversationStore):
 
     Tables:
 
-    - `conversation_records(conversation_id PK, revision, head_id, scope, updated_at, record)`
-    - `conversation_entries(id PK, parent_id, kind, sha256, root_id, depth)`: `root_id` is the first entry of
-      the entry's history and `depth` its distance from it.
+    - `conversation_records(conversation_id PK, revision, head_id, scope, updated_at, record, title, metadata)`:
+      `title` and `metadata` are kept apart from the `record` JSON, so a save leaves them as they are.
+    - `conversation_entries(id PK, parent_id, kind, sha256)`
     - `conversation_messages(sha256 PK, message)`
     - `conversation_branches(conversation_id, entry_id)`: the last entry of each branch a record lists.
     """
@@ -176,9 +179,9 @@ class SqliteConversationStore(ConversationStore):
     def _sync_read_record(self, conversation_id: str) -> ConversationRecord | None:
         with self._connected() as conn:
             row = conn.execute(
-                'SELECT record FROM conversation_records WHERE conversation_id = ?', (conversation_id,)
+                'SELECT record, title, metadata FROM conversation_records WHERE conversation_id = ?', (conversation_id,)
             ).fetchone()
-        return RECORD_ADAPTER.validate_json(row[0]) if row is not None else None
+        return load_record(*row) if row is not None else None
 
     async def read_records(self, *, scope: str | None = None, limit: int | None = None) -> Sequence[ConversationRecord]:
         return await anyio.to_thread.run_sync(self._sync_read_records, scope, limit)
@@ -189,14 +192,16 @@ class SqliteConversationStore(ConversationStore):
         with self._connected() as conn:
             if scope is None:
                 rows = conn.execute(
-                    'SELECT record FROM conversation_records ORDER BY updated_at DESC LIMIT ?', (limit,)
+                    'SELECT record, title, metadata FROM conversation_records ORDER BY updated_at DESC LIMIT ?',
+                    (limit,),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    'SELECT record FROM conversation_records WHERE scope = ? ORDER BY updated_at DESC LIMIT ?',
+                    'SELECT record, title, metadata FROM conversation_records WHERE scope = ? '
+                    'ORDER BY updated_at DESC LIMIT ?',
                     (scope, limit),
                 ).fetchall()
-        return [RECORD_ADAPTER.validate_json(row[0]) for row in rows]
+        return [load_record(*row) for row in rows]
 
     async def write_record(
         self,
@@ -230,25 +235,17 @@ class SqliteConversationStore(ConversationStore):
                 )
                 new_ids = {entry.id for entry in entries}
                 parents = sorted({entry.parent_id for entry in entries if entry.parent_id not in (None, *new_ids)})
-                stored = {
-                    entry_id: (root_id, depth)
-                    for entry_id, root_id, depth in conn.execute(
-                        'SELECT id, root_id, depth FROM conversation_entries WHERE id IN '
-                        f'({", ".join("?" * len(parents))})',
-                        parents,
-                    )
-                }
-                if len(stored) < len(parents):
+                (stored,) = conn.execute(
+                    f'SELECT count(*) FROM conversation_entries WHERE id IN ({", ".join("?" * len(parents))})', parents
+                ).fetchone()
+                if stored < len(parents):
                     # A delete released an entry the new ones continue from.
                     raise ConversationConflict(record.conversation_id)
                 conn.executemany(
-                    'INSERT INTO conversation_entries (id, parent_id, kind, sha256, root_id, depth) '
-                    'VALUES (?, ?, ?, ?, ?, ?)',
+                    'INSERT INTO conversation_entries (id, parent_id, kind, sha256) VALUES (?, ?, ?, ?)',
                     [
-                        (entry.id, entry.parent_id, entry.kind, sha256, root_id, depth)
-                        for entry, (sha256, _), (root_id, depth) in zip(
-                            entries, messages, entry_positions(entries, stored), strict=True
-                        )
+                        (entry.id, entry.parent_id, entry.kind, sha256)
+                        for entry, (sha256, _) in zip(entries, messages, strict=True)
                     ],
                 )
                 # A fork points into another conversation's history, which a concurrent delete or
@@ -260,8 +257,9 @@ class SqliteConversationStore(ConversationStore):
                 ):
                     raise ConversationConflict(record.conversation_id)
                 conn.execute(
-                    'INSERT INTO conversation_records (conversation_id, revision, head_id, scope, updated_at, record) '
-                    'VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (conversation_id) DO UPDATE SET '
+                    'INSERT INTO conversation_records '
+                    '(conversation_id, revision, head_id, scope, updated_at, record, title, metadata) '
+                    'VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (conversation_id) DO UPDATE SET '
                     'revision = excluded.revision, head_id = excluded.head_id, scope = excluded.scope, '
                     'updated_at = excluded.updated_at, record = excluded.record',
                     (
@@ -270,7 +268,9 @@ class SqliteConversationStore(ConversationStore):
                         record.head_id,
                         record.scope,
                         record.updated_at.timestamp(),
-                        RECORD_ADAPTER.dump_json(record).decode(),
+                        dump_record(record),
+                        record.title,
+                        dump_metadata(record.metadata),
                     ),
                 )
                 conn.execute('DELETE FROM conversation_branches WHERE conversation_id = ?', (record.conversation_id,))
@@ -278,6 +278,32 @@ class SqliteConversationStore(ConversationStore):
                     'INSERT INTO conversation_branches (conversation_id, entry_id) VALUES (?, ?)',
                     [(record.conversation_id, entry_id) for entry_id in record.branches],
                 )
+
+    async def write_details(
+        self,
+        conversation_id: str,
+        details: ConversationDetails,
+        *,
+        expected_revision: str,
+        expected: ConversationDetails | None = None,
+    ) -> ConversationRecord:
+        columns = detail_columns(details)
+        checks = detail_columns(expected or {})
+        query = (
+            f'UPDATE conversation_records SET {", ".join(f"{column} = ?" for column in columns)} '
+            f'WHERE conversation_id = ? AND revision = ?{"".join(f" AND {column} IS ?" for column in checks)} '
+            'RETURNING record, title, metadata'
+        )
+        row = await anyio.to_thread.run_sync(
+            self._sync_fetch_one, query, (*columns.values(), conversation_id, expected_revision, *checks.values())
+        )
+        if row is None:
+            raise ConversationConflict(conversation_id)
+        return load_record(*row)
+
+    def _sync_fetch_one(self, query: str, args: Sequence[object]) -> tuple[object, ...] | None:
+        with self._connected() as conn:
+            return conn.execute(query, args).fetchone()
 
     async def delete_record(self, conversation_id: str, *, expected_revision: str) -> None:
         await anyio.to_thread.run_sync(self._sync_delete_record, conversation_id, expected_revision)
