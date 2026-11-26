@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Callable, Sequence
 from typing import Literal
 
 from pydantic_ai.messages import InstructionPart
@@ -218,18 +218,3 @@ def coder_instructions(
         _compose(_AUTONOMY[autonomy], context=context, checks=parent_checks, suffix=suffix),
         _compose(_DELEGATED, context=context, checks=delegate_checks, suffix=suffix),
     )
-
-
-def project_instructions(*, unrestricted: bool) -> Callable[[RunContext[AgentDepsT]], Awaitable[str]]:
-    """Name the working directory, so the model neither hunts for the project nor works outside it.
-
-    The workspace keeps its working directory for its lifetime, so the text is the same on every
-    request and does not break prompt caching. `Coder` fails a run without a workspace at its
-    start, so a workspace is always there to ask.
-    """
-    files = 'relative file paths resolve from it' if unrestricted else 'the file tools only accept paths inside it'
-
-    async def instructions(ctx: RunContext[AgentDepsT]) -> str:
-        return f'Your project is `{await ctx.workspace.working_dir()}`. Shell commands start there, and {files}.'
-
-    return instructions

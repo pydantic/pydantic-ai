@@ -2,7 +2,7 @@
 Source tapes/common.tape
 Output shots/model.txt
 Hide
-Type 'clai-demo' Enter
+Type 'pax-demo' Enter
 Wait+Screen /\| ready/
 Type '/model' Enter
 Wait+Screen /Add a model/
