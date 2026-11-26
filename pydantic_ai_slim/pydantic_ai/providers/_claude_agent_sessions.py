@@ -59,6 +59,7 @@ try:
         HookMatcher,
         Message,
         RateLimitEvent,
+        ResultError,
         ResultMessage,
         SdkMcpTool,
         StreamEvent,
@@ -581,8 +582,7 @@ class ClaudeCodeSessions:
     def _fork_point(self, messages: Sequence[_Message]) -> tuple[_ForkPoint, int] | None:
         """The latest answer of the history one of this provider's sessions ended, and the history's length to it."""
         for length, digest in reversed(_answer_digests(messages)):
-            # A fork always gets a new message to answer.
-            if length < len(messages) and (point := self.fork_points.get(digest)) is not None:
+            if (point := self.fork_points.get(digest)) is not None:
                 return point, length
         return None
 
@@ -688,9 +688,12 @@ class ClaudeCodeSessions:
             point, length = found
             try:
                 return await self._start_session(request, request.messages[length:], fork=point)
-            except ClaudeSDKError:
+            except ResultError:
                 # Claude Code no longer has the transcript, as when it was deleted: the history is replayed instead.
                 self.fork_points = {key: other for key, other in self.fork_points.items() if other != point}
+            except (ClaudeCodeExited, ClaudeSDKError):
+                # The forked process failed for another reason; a new one is sent the whole history.
+                pass
         return await self._start_session(request, request.messages)
 
     async def _start_session(
@@ -847,8 +850,10 @@ class _TurnStream(httpx2.AsyncByteStream):
         elif isinstance(message, AssistantMessage):
             # Claude Code reports each message, with its transcript entry, before the response's `message_stop`, which
             # ends this stream: the last one before it is where the turn's answer ends.
-            if message.parent_tool_use_id is None and message.session_id and message.uuid:
-                self._turn.fork_point = _ForkPoint(message.session_id, message.uuid)
+            # A message without its entry, or a subagent's (none come with Claude Code's tools off), leaves none.
+            top_level = message.parent_tool_use_id is None
+            entry = top_level and message.session_id and message.uuid and _ForkPoint(message.session_id, message.uuid)
+            self._turn.fork_point = entry or None
         elif results := self._session.external_result(message):
             for block in results:
                 yield from self._result(block)
