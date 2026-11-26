@@ -664,6 +664,14 @@ assert forked.conversation_id != result1.conversation_id
 
 The [UI adapters](ui/overview.md) auto-populate `conversation_id` from the protocol's own thread/chat ID, so frontends using these protocols get conversation correlation for free. Protocol-level run IDs (for example AG-UI's `runId`) are **not** mapped into the agent's `run_id` — pass `run_id=` explicitly on [`AGUIAdapter.run_stream`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream] / [`dispatch_request`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request] (or a plain `Agent.run`) if you need them to match.
 
+When one agent run starts another, for example a sub-agent called from a tool, the inner run usually gets its own `conversation_id`. Its spans then have a different `gen_ai.conversation.id` from the top-level run (the run that isn't inside any other run), so adding up cost by `gen_ai.conversation.id` leaves the inner run's cost out of the conversation.
+
+So the inner run's spans also get a `pydantic_ai.root_conversation_id` attribute, set to the top-level run's `conversation_id`. The top-level run's own spans don't get it, and neither does an inner run that uses the same `conversation_id` as the top-level run. To get the full cost of a conversation, sub-agents included, add up cost by `pydantic_ai.root_conversation_id`, and use `gen_ai.conversation.id` for spans that don't have it.
+
+Pydantic AI passes the top-level `conversation_id` to inner runs in a Python context variable, which only code running inside the top-level run can see. So the attribute is missing on a sub-agent that runs in another process, such as on a remote worker, and on model requests and tools that [Temporal](durable_execution/temporal.md) runs as activities.
+
+The attribute only ever holds a `conversation_id` your application passed to a run. For as long as a run lasts, Pydantic AI removes `pydantic_ai.root_conversation_id` from the incoming OpenTelemetry baggage, so a client can't set it on the run's spans by sending a `baggage` header. Spans outside an agent run don't get this protection. Logfire copies every baggage key onto each span by default, so if clients you don't trust call your app and you add up cost by span attributes, stop reading incoming trace context with `logfire.configure(distributed_tracing=False)`, or drop the `baggage` header before it reaches your app.
+
 ### Which model answered
 
 Each `ModelResponse` the agent gets from a model request records the model it sent the request to as [`model_id`][pydantic_ai.messages.ModelResponse.model_id]: the string the model was selected by, like `'{{ openai:medium }}'` or an alias a capability resolved, or otherwise the model's own [`model_id`][pydantic_ai.models.Model.model_id]. That's the model as you configured it, while [`model_name`][pydantic_ai.messages.ModelResponse.model_name] is what the provider reported, often a dated version, and the same for two configurations of one model. When a capability moves a request to another model, such as a [`ModelFallback`](capabilities/model-fallback.md) candidate, the response records that model, so a later run continuing the history can tell which of your models answered and send a request back to it.
@@ -1369,7 +1377,9 @@ the messages whose [`run_id`][pydantic_ai.messages.ModelRequest.run_id] equals
 
 !!! warning "History processors replace the message history"
     History processors replace the message history in the state with the processed messages, including the new user prompt part.
-    This means that if you want to keep the original message history, you need to make a copy of it.
+    [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages] then returns the processed history, while the result's
+    [`conversation`][pydantic_ai.agent.AgentRunResult.conversation] keeps the original history and every message the run added,
+    so you don't need to copy it yourself to store or continue the whole conversation.
     Later requests in the same run start from the processed messages, so a processor sees its own earlier output, not the original history.
 
     When using deferred tools, preserve their
@@ -1383,6 +1393,8 @@ the messages whose [`run_id`][pydantic_ai.messages.ModelRequest.run_id] equals
     produced during the current run. Messages provided via `message_history` are excluded —
     including the trailing `ModelRequest` when resuming without a user prompt, even though
     the framework may stamp it with the current run's `run_id` for observability.
+    Once a processor drops messages, [`result.conversation`][pydantic_ai.agent.AgentRunResult.conversation] also
+    differs from `all_messages()`: it keeps the messages the processor dropped.
 
     To keep this working when your processor mutates or adds messages:
 

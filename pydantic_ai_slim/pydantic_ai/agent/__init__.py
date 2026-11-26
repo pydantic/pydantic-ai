@@ -3142,6 +3142,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_kind: _messages.ToolKind[KindArgsT, KindContentT],
         timeout: float | None = None,
         durable: bool | None = None,
+        ui_visibility: _messages.ToolUIVisibility | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> KindedToolDecorator[AgentDepsT, KindArgsT, KindContentT]: ...
@@ -3166,6 +3167,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_kind: _messages.ToolPartKind | None = None,
         timeout: float | None = None,
         durable: bool | None = None,
+        ui_visibility: _messages.ToolUIVisibility | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
@@ -3190,6 +3192,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_kind: _messages.ToolKindLike | None = None,
         timeout: float | None = None,
         durable: bool | None = None,
+        ui_visibility: _messages.ToolUIVisibility | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Any:
@@ -3257,6 +3260,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             durable: Where a [durable execution](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) engine runs this tool: `False` runs it
                 outside its durable unit, in workflow code, and `True` keeps the engine's default placement.
                 Defaults to `None`, the engine's default placement.
+            ui_visibility: What a [UI adapter](../ui/overview.md#tool-visibility) sends a client for this tool's calls
+                and returns: `'public'`, `'redacted'` or `'private'`.
+                Defaults to `None`, the adapter's `default_ui_visibility`.
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
                 or another tool's `ToolReturn.tools`. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
@@ -3286,6 +3292,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 tool_kind=tool_kind,
                 timeout=timeout,
                 durable=durable,
+                ui_visibility=ui_visibility,
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
             )
@@ -3316,6 +3323,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_kind: _messages.ToolKind[KindArgsT, KindContentT],
         timeout: float | None = None,
         durable: bool | None = None,
+        ui_visibility: _messages.ToolUIVisibility | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> KindedToolPlainDecorator[KindArgsT, KindContentT]: ...
@@ -3340,6 +3348,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_kind: _messages.ToolPartKind | None = None,
         timeout: float | None = None,
         durable: bool | None = None,
+        ui_visibility: _messages.ToolUIVisibility | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
@@ -3364,6 +3373,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_kind: _messages.ToolKindLike | None = None,
         timeout: float | None = None,
         durable: bool | None = None,
+        ui_visibility: _messages.ToolUIVisibility | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Any:
@@ -3432,6 +3442,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             durable: Where a [durable execution](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) engine runs this tool: `False` runs it
                 outside its durable unit, in workflow code, and `True` keeps the engine's default placement.
                 Defaults to `None`, the engine's default placement.
+            ui_visibility: What a [UI adapter](../ui/overview.md#tool-visibility) sends a client for this tool's calls
+                and returns: `'public'`, `'redacted'` or `'private'`.
+                Defaults to `None`, the adapter's `default_ui_visibility`.
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
                 or another tool's `ToolReturn.tools`. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
@@ -3459,6 +3472,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 tool_kind=tool_kind,
                 timeout=timeout,
                 durable=durable,
+                ui_visibility=ui_visibility,
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
             )
