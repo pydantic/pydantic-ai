@@ -468,6 +468,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return str(self.client.base_url)
 
     @property
+    def _rewrite_instructions_outside_prefix(self) -> bool:
+        # With this flag, dynamic rewrite-mode instructions stay in the top-level field, which the model reads after
+        # `input`.
+        return self.profile.get('openai_responses_stable_instructions_as_input', False)
+
+    @property
     def batch_max_requests(self) -> int | None:
         # A batch runs each request without streaming, which an endpoint that only streams can't serve.
         if not self.profile.get('openai_supports_batch_api', False) or self.profile.get(

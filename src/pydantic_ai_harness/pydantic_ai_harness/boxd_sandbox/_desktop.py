@@ -81,11 +81,13 @@ _PANEL_HEIGHT = 40
 
 # Opens xterm below the panel and as large as the rest of the screen, and gives it the keyboard. Nothing else on the
 # desktop places, sizes or focuses a new window. The font is named because xterm ignores `~/.Xdefaults` here; 14 is
-# the size the other sandboxes' desktops use, since models misread a smaller g as 9. The window can be focused only
-# once it is viewable, at the next computer call, so focusing is retried. Both waits end if xterm exits.
+# the size the other sandboxes' desktops use, since models misread a smaller g as 9. The desktop shows the window at
+# the next computer call and puts it back at the top left then, so the move waits for that. The window can be focused
+# only once it is shown, so focusing is retried. Each wait ends if xterm exits.
 _OPEN_TERMINAL_SCRIPT = f"""#!/bin/sh
 xterm -fa Monospace -fs 14 & pid=$!
 until w=$(xdotool search --pid $pid 2>/dev/null | head -1); [ -n "$w" ]; do kill -0 $pid 2>/dev/null || exit; sleep 0.1; done
+until xwininfo -id "$w" 2>/dev/null | grep -q IsViewable; do kill -0 $pid 2>/dev/null || exit; sleep 0.1; done
 eval "$(xdotool getdisplaygeometry --shell)"
 xdotool windowmove "$w" 0 {_PANEL_HEIGHT} windowsize "$w" "$WIDTH" $((HEIGHT - {_PANEL_HEIGHT}))
 until xdotool windowfocus "$w" 2>/dev/null; do kill -0 $pid 2>/dev/null || exit; sleep 0.1; done

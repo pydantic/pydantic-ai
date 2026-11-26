@@ -153,14 +153,21 @@ def merge_field_values(values: Sequence[Any], *, field_name: str) -> Any:
     first, *rest = stated
     if all(_same_value(first, other) for other in rest):
         return first
+    merged = _collection_union(stated)
+    if merged is None:
+        return stated[-1]
+    return _as_declared(first, merged, field_name)
+
+
+def _collection_union(stated: list[Any]) -> dict[Any, Any] | set[Any] | list[Any] | None:
+    """The union of `stated` when every value is the same kind of collection, or `None` when they aren't."""
     if all(isinstance(value, Mapping) for value in stated):
         merged_mapping: dict[Any, Any] = {}
         for value in cast('list[Mapping[Any, Any]]', stated):
             merged_mapping.update(value)
-        return _as_declared(first, merged_mapping, field_name)
+        return merged_mapping
     if all(isinstance(value, AbstractSet) for value in stated):
-        merged_set = set[Any]().union(*cast('list[AbstractSet[Any]]', stated))
-        return _as_declared(first, merged_set, field_name)
+        return set[Any]().union(*cast('list[AbstractSet[Any]]', stated))
     if all(isinstance(value, Sequence) and not _is_record(value) for value in stated):
         # Ordered union: a shared entry keeps the position its first mention gave it.
         merged_sequence: list[Any] = []
@@ -168,8 +175,8 @@ def merge_field_values(values: Sequence[Any], *, field_name: str) -> Any:
             merged_sequence.extend(
                 entry for entry in value if not any(_same_value(entry, kept) for kept in merged_sequence)
             )
-        return _as_declared(first, merged_sequence, field_name)
-    return stated[-1]
+        return merged_sequence
+    return None
 
 
 def _is_record(value: Any) -> bool:

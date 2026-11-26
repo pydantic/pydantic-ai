@@ -66,6 +66,24 @@ class _CancelParams:
 TemporalProviderFactory = Callable[[RunContext[AgentDepsT], str], Provider[Any]]
 
 
+def _model_registry(model: Model | None, models: Mapping[str, Model] | None) -> dict[str, Model]:
+    """The model registry: the wrapped model as `'default'`, then `models` by their IDs."""
+    models_by_id: dict[str, Model] = {}
+    if model is not None:
+        models_by_id['default'] = model
+    if models:
+        for model_id, model_instance in models.items():
+            if model_id == 'default':
+                raise UserError("Model ID 'default' is reserved for the agent's primary model.")
+            models_by_id[model_id] = model_instance
+
+    if not models_by_id:
+        raise UserError(
+            "The wrapped agent's `model` or the TemporalAgent's `models` parameter must provide at least one Model instance to be used with Temporal. Models cannot be set at agent run time."
+        )
+    return models_by_id
+
+
 class TemporalModel(WrapperModel):
     def __init__(
         self,
@@ -80,20 +98,7 @@ class TemporalModel(WrapperModel):
         provider_factory: TemporalProviderFactory[AgentDepsT] | None = None,
         agent: AbstractAgent[Any, Any] | None = None,
     ):
-        # Build models_by_id registry from wrapped model and models parameter
-        self._models_by_id: dict[str, Model] = {}
-        if model is not None:
-            self._models_by_id['default'] = model
-        if models:
-            for model_id, model_instance in models.items():
-                if model_id == 'default':
-                    raise UserError("Model ID 'default' is reserved for the agent's primary model.")
-                self._models_by_id[model_id] = model_instance
-
-        if not self._models_by_id:
-            raise UserError(
-                "The wrapped agent's `model` or the TemporalAgent's `models` parameter must provide at least one Model instance to be used with Temporal. Models cannot be set at agent run time."
-            )
+        self._models_by_id = _model_registry(model, models)
 
         # Use provided model if available, otherwise first registered model
         primary_model = model or next(iter(self._models_by_id.values()))
@@ -488,6 +493,15 @@ class TemporalModel(WrapperModel):
             # and this profile is only used for capability checks, not request preparation.
             return infer_model_profile(current)
         return current.profile
+
+    @property
+    def _rewrite_instructions_outside_prefix(self) -> bool:
+        """The currently active model's, like `profile`.
+
+        A raw model ID's model is only built in the activity, so it keeps the shared window rule, as `Model` does.
+        """
+        current = self._current_model()
+        return not isinstance(current, str) and current._rewrite_instructions_outside_prefix
 
     @property
     def context_window(self) -> int | None:

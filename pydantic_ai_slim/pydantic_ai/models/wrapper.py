@@ -273,6 +273,10 @@ class WrapperModel(Model):
     def accepts_server_state(self, response: ModelResponse) -> bool:
         return self.wrapped.accepts_server_state(response)
 
+    @property
+    def _rewrite_instructions_outside_prefix(self) -> bool:
+        return self.wrapped._rewrite_instructions_outside_prefix
+
     def _model_for_response(self, response: ModelResponse) -> Model:
         return self.wrapped._model_for_response(response)
 
