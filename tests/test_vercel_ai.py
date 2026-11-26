@@ -4108,6 +4108,72 @@ async def test_run_stream_call_skipped_after_final_result_v5():
     )
 
 
+def _agent_skipping_a_second_output_call() -> Agent[None, str]:
+    async def stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {0: DeltaToolCall(name='final_result', json_args='{"response": "done"}', tool_call_id='output_call')}
+        yield {1: DeltaToolCall(name='final_result', json_args='{"response": "again"}', tool_call_id='skipped_output')}
+
+    return Agent(FunctionModel(stream_function=stream_function), output_type=ToolOutput(str), end_strategy='early')
+
+
+async def test_run_stream_closes_output_call_skipped_after_final_result_with_input_error():
+    """A second output tool call skipped after the final result is closed with `tool-input-error` on v6."""
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(_agent_skipping_a_second_output_call(), request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert [e for e in events if not isinstance(e, str) and e.get('toolCallId') == 'skipped_output'] == snapshot(
+        [
+            {'type': 'tool-input-start', 'toolCallId': 'skipped_output', 'toolName': 'final_result'},
+            {'type': 'tool-input-delta', 'toolCallId': 'skipped_output', 'inputTextDelta': '{"response": "again"}'},
+            {
+                'type': 'tool-input-error',
+                'toolCallId': 'skipped_output',
+                'toolName': 'final_result',
+                'input': {'response': 'again'},
+                'errorText': 'Output tool not used - a final result was already processed.',
+            },
+        ]
+    )
+
+
+async def test_run_stream_output_call_skipped_after_final_result_v5():
+    """On AI SDK v5 a second output tool call skipped after the final result keeps `tool-input-available` and the stub output."""
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(_agent_skipping_a_second_output_call(), request, sdk_version=5)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert [e for e in events if not isinstance(e, str) and e.get('toolCallId') == 'skipped_output'] == snapshot(
+        [
+            {'type': 'tool-input-start', 'toolCallId': 'skipped_output', 'toolName': 'final_result'},
+            {'type': 'tool-input-delta', 'toolCallId': 'skipped_output', 'inputTextDelta': '{"response": "again"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'skipped_output',
+                'toolName': 'final_result',
+                'input': {'response': 'again'},
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': 'skipped_output',
+                'output': 'Output tool not used - a final result was already processed.',
+            },
+        ]
+    )
+
+
 async def test_run_stream_on_complete_error():
     agent = Agent(model=TestModel())
 
