@@ -25,6 +25,7 @@ from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
     import anthropic
+    from claude_agent_sdk import ProcessError
 
     from pydantic_ai.models.claude_code import ClaudeCodeModel
     from pydantic_ai.providers import _claude_code_sessions
@@ -94,6 +95,9 @@ async def test_safe_options_and_our_prompt():
         'client_app': options.client_app,
         'nonessential_traffic': options.env.get('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC'),
         'max_output_tokens': options.env.get('CLAUDE_CODE_MAX_OUTPUT_TOKENS'),
+        'credentials_from_env': {
+            name: options.env.get(name) for name in ('ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL')
+        },
     } == snapshot(
         {
             'model': 'claude-sonnet-5-5',
@@ -108,6 +112,7 @@ async def test_safe_options_and_our_prompt():
             'client_app': IsStr(regex=r'pydantic-ai/.+'),
             'nonessential_traffic': '1',
             'max_output_tokens': '128000',
+            'credentials_from_env': {'ANTHROPIC_API_KEY': '', 'ANTHROPIC_AUTH_TOKEN': '', 'ANTHROPIC_BASE_URL': ''},
         }
     )
     assert frame_shape(session) == snapshot([('user', ['text'], True)])
@@ -418,6 +423,18 @@ async def test_the_least_recently_used_idle_session_makes_room(monkeypatch: pyte
     assert fake.sessions[1].closed
 
 
+async def test_a_new_conversation_is_not_kept_while_every_session_is_busy(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(_claude_code_sessions, '_MAX_SESSIONS', 1)
+    model, fake = claude_code(FakeResponse([text('One.')]), FakeResponse([text('Two.')]))
+    agent = Agent(model)
+
+    async with agent:
+        await asyncio.gather(agent.run('First conversation.'), agent.run('Second conversation.'))
+        assert [session.closed for session in fake.sessions] == [False, True]
+
+    assert all(session.closed for session in fake.sessions)
+
+
 async def test_a_session_whose_process_exited_is_replaced():
     model, fake = claude_code(FakeResponse([text('One.')]), FakeResponse(exit=True), FakeResponse([text('Two.')]))
     agent = Agent(model)
@@ -468,12 +485,62 @@ async def test_a_response_cut_short():
 
 
 async def test_a_crash_while_waiting_for_the_response():
-    model, fake = claude_code(FakeResponse(crash=True))
+    model, fake = claude_code(FakeResponse(crash=RuntimeError('Claude Code crashed')))
 
     with pytest.raises(ModelAPIError):
         await Agent(model).run('Count.')
 
     assert fake.sessions[0].closed
+
+
+async def test_a_claude_code_failure_while_waiting_for_the_response():
+    model, fake = claude_code(FakeResponse(crash=ProcessError('Command failed', exit_code=1)))
+
+    with pytest.raises(ModelHTTPError, match='Claude Code failed: Command failed') as exc_info:
+        await Agent(model).run('Count.')
+
+    assert exc_info.value.status_code == 500
+    assert fake.sessions[0].closed
+
+
+async def test_claude_code_that_fails_to_start():
+    model, fake = claude_code()
+    fake.missing = True
+
+    with pytest.raises(ModelHTTPError, match='Claude Code failed to start: Claude Code not found') as exc_info:
+        await Agent(model).run('Count.')
+
+    assert exc_info.value.status_code == 500
+    assert len(fake.sessions) == 1
+
+
+async def test_an_error_claude_code_has_no_status_for():
+    model, _ = claude_code(FakeResponse(error='a_new_kind', error_text='Something new went wrong'))
+
+    with pytest.raises(ModelHTTPError, match='Something new went wrong') as exc_info:
+        await Agent(model).run('Hello')
+
+    assert exc_info.value.status_code == 500
+
+
+async def test_a_session_that_fails_to_continue_is_closed(monkeypatch: pytest.MonkeyPatch):
+    model, fake = claude_code(FakeResponse([text('One.')]), FakeResponse([text('Two.')]))
+    agent = Agent(model)
+
+    async def fail(self: object, message: object) -> bool:
+        raise RuntimeError('unexpected')
+
+    async with agent:
+        first = await agent.run('Count.')
+        with monkeypatch.context() as patch:
+            patch.setattr(_claude_code_sessions._Session, 'send', fail)  # pyright: ignore[reportPrivateUsage]
+            with pytest.raises(ModelAPIError):
+                await agent.run('Again.', message_history=first.all_messages())
+        assert fake.sessions[0].closed
+        second = await agent.run('Again.', message_history=first.all_messages())
+
+    assert second.output == 'Two.'
+    assert len(fake.sessions) == 2
 
 
 async def test_a_process_that_exits_mid_response():

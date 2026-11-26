@@ -17,7 +17,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from claude_agent_sdk import ClaudeAgentOptions, CLIConnectionError, Transport
+from claude_agent_sdk import ClaudeAgentOptions, CLIConnectionError, CLINotFoundError, Transport
 
 
 @dataclass
@@ -35,8 +35,8 @@ class FakeResponse:
     """After the response has started, the turn fails (as when the API request breaks off) or the process exits."""
     exit: bool = False
     """The process exits instead of responding."""
-    crash: bool = False
-    """Reading from the process fails instead of responding."""
+    crash: BaseException | None = None
+    """Reading from the process fails with this error instead of responding."""
 
 
 def text(content: str) -> dict[str, Any]:
@@ -59,6 +59,8 @@ class FakeClaudeCode:
     sessions: list[FakeSession] = field(default_factory=list['FakeSession'])
     exit_on_history: bool = False
     """Each process exits when it's sent history to replay."""
+    missing: bool = False
+    """There's no Claude Code executable to start."""
 
     def __call__(self, options: ClaudeAgentOptions) -> FakeSession:
         session = FakeSession(self, options)
@@ -81,7 +83,8 @@ class FakeSession(Transport):
         self._tasks: set[asyncio.Task[None]] = set()
 
     async def connect(self) -> None:
-        pass
+        if self.script.missing:
+            raise CLINotFoundError('Claude Code not found')
 
     def is_ready(self) -> bool:  # pragma: no cover
         return not self.closed
@@ -183,8 +186,8 @@ class FakeSession(Transport):
         self._send(self._init())
         while True:
             response = self.script.responses.pop(0)
-            if response.exit or response.crash:
-                self._outbox.put_nowait(RuntimeError('Claude Code crashed') if response.crash else None)
+            if response.exit or response.crash is not None:
+                self._outbox.put_nowait(response.crash)
                 return
             if response.error is not None:
                 self._report_error(response)

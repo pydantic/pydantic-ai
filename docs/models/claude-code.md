@@ -6,7 +6,8 @@ description: "Use your Claude subscription with Pydantic AI through Claude Code,
 
 Use your [Claude subscription](https://claude.com/pricing) with Pydantic AI instead of a pay-per-token API key. The `claude-code` provider runs [Claude Code](https://code.claude.com/docs/en/overview), unmodified, through the [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview), and Claude Code signs each request with the login you set up for it. Pydantic AI never reads, stores or forwards your Claude credentials. For API keys, use the [`anthropic` provider](anthropic.md) instead.
 
-Your use of Claude Code is governed by your agreement with Anthropic. Anthropic's [legal and compliance page](https://code.claude.com/docs/en/legal-and-compliance) lets you sign in to the unmodified Claude Code with your own subscription, and asks developers building products for other people to use API keys. Usage on your plan's login draws from the plan's limits.
+!!! warning "For your own use only"
+    Your use of Claude Code is governed by your agreement with Anthropic. Anthropic's [legal and compliance page](https://code.claude.com/docs/en/legal-and-compliance) lets you sign in to the unmodified Claude Code with your own subscription, but doesn't let developers offer Claude subscription login in their products, including agents built on the Agent SDK, or route requests through a subscription on behalf of their users. Use the `claude-code` provider for your own work, and the [`anthropic` provider](anthropic.md) with an API key for anything you offer to others. Usage draws from your plan's limits.
 
 ## Install
 
@@ -20,7 +21,7 @@ This installs the [`claude-agent-sdk`](https://pypi.org/project/claude-agent-sdk
 
 ## Usage
 
-Sign in to Claude Code once with `claude auth login`, from any Claude Code installation: every `claude` on the machine shares the login stored in its configuration directory. Then use the `claude-code:` prefix:
+Sign in to Claude Code once with `claude auth login`, from any Claude Code installation: every `claude` on the machine shares the login stored in its configuration directory. Claude Code always uses that login: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_BASE_URL`, which the `anthropic` provider reads, don't reach it. Then use the `claude-code:` prefix:
 
 ```python {title="claude_code.py" test="skip - requires a Claude Code sign-in"}
 from pydantic_ai import Agent
@@ -62,7 +63,7 @@ async def main():
         print(result.output)
 ```
 
-A request whose history the process hasn't seen, such as one with different instructions or tools, edited history, or a conversation picked up from storage, starts a new process and sends it the history first. That's always correct, but it doesn't read from the earlier process's prompt cache. At most eight conversations keep a process at a time; the one used least recently makes room. When the agent, model, or run that holds them exits, the processes are stopped.
+A request whose history the process hasn't seen, such as one with different instructions or tools, edited history, or a conversation picked up from storage, starts a new process and sends it the history first. That's always correct, but it doesn't read from the earlier process's prompt cache. At most eight conversations keep a process at a time: the one used least recently makes room, and when all eight are busy, a new conversation's process stops after its request. When the agent, model, or run that holds them exits, the processes are stopped.
 
 ## What Claude Code adds to the request
 
@@ -80,4 +81,4 @@ With your instructions as its system prompt, Claude Code still adds:
 - Anthropic's server-side tools, such as web search and code execution, aren't available, and neither are uploaded files, batches, on-demand compaction, fast mode or [token counting](../agent.md#usage-limits) ahead of a request.
 - Documents aren't sent to the model, which gets a note in their place. Images are.
 - Claude Code runs a conversation's tool calls one at a time, after the model's response ends.
-- Errors from Claude Code come as the [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] the Anthropic API would have raised: a [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError] when Claude Code isn't signed in, and a status of 429 with a `Retry-After` header when you've reached your plan's limit.
+- Errors Claude Code reports come as the [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] the Anthropic API would have raised: a [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError] when Claude Code isn't signed in, and a status of 429 with a `Retry-After` header when you've reached your plan's limit. When Claude Code fails to start or stops, the error has a status of 500.

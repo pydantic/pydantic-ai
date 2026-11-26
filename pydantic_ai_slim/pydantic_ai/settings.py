@@ -636,6 +636,7 @@ class ModelSettings(TypedDict, total=False):
 
     * OpenAI
     * Anthropic
+    * Claude Code
     * Google
     * Groq
     * Mistral

@@ -33,10 +33,23 @@ from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter
 from .. import __version__
 
 try:
+    from anthropic.types.beta import (
+        BetaInputJSONDelta,
+        BetaRawContentBlockDelta,
+        BetaRawContentBlockDeltaEvent,
+        BetaRawContentBlockStartEvent,
+        BetaRawContentBlockStopEvent,
+        BetaRawMessageDeltaEvent,
+        BetaRawMessageStreamEvent,
+        BetaSignatureDelta,
+        BetaTextDelta,
+        BetaThinkingDelta,
+    )
     from claude_agent_sdk import (
         AssistantMessage,
         ClaudeAgentOptions,
         ClaudeSDKClient,
+        ClaudeSDKError,
         CLIConnectionError,
         HookContext,
         HookInput,
@@ -69,6 +82,11 @@ _MAX_SESSIONS = 8
 """Live sessions kept per provider; the least recently used idle one is closed to make room for another."""
 
 _ENV = {
+    # Claude Code prefers an API key or proxy from the environment over the user's login. Those are usually set for
+    # the `anthropic` provider, and would bill the API, or send the login's token to the proxy, instead.
+    'ANTHROPIC_API_KEY': '',
+    'ANTHROPIC_AUTH_TOKEN': '',
+    'ANTHROPIC_BASE_URL': '',
     # No session titles or other side requests that draw on the user's plan.
     'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1',
     # No `@file` expansion, turn-start attachments, CLAUDE.md files, memory, or compaction of the history we sent.
@@ -146,6 +164,7 @@ class _MessagesRequest(BaseModel):
 
 
 _thinking_ta: TypeAdapter[ThinkingConfig] = TypeAdapter(ThinkingConfig)
+_stream_event_ta: TypeAdapter[BetaRawMessageStreamEvent] = TypeAdapter(BetaRawMessageStreamEvent)
 _tool_result_content_ta: TypeAdapter[str | list[dict[str, JsonValue]]] = TypeAdapter(str | list[dict[str, JsonValue]])
 
 
@@ -246,43 +265,30 @@ class _Turn:
 
     blocks: list[dict[str, JsonValue]] = field(default_factory=list[dict[str, JsonValue]])
     partial_json: dict[int, str] = field(default_factory=dict[int, str])
-    stop_reason: JsonValue = None
+    stop_reason: str | None = None
 
-    def record(self, event: dict[str, JsonValue]) -> None:
-        index = event.get('index')
-        match event.get('type'):
-            case 'content_block_start':
-                block = event.get('content_block')
-                assert isinstance(block, dict) and isinstance(index, int)
-                self.blocks.append(dict(block))
-            case 'content_block_delta':
-                delta = event.get('delta')
-                assert isinstance(delta, dict) and isinstance(index, int)
-                self._apply_delta(index, delta)
-            case 'content_block_stop':
-                assert isinstance(index, int)
-                if (raw := self.partial_json.pop(index, None)) is not None:
-                    self.blocks[index]['input'] = json.loads(raw) if raw else {}
-            case 'message_delta':
-                delta = event.get('delta')
-                assert isinstance(delta, dict)
-                self.stop_reason = delta.get('stop_reason')
-            case _:
-                pass
+    def record(self, raw_event: dict[str, JsonValue]) -> None:
+        event = _stream_event_ta.validate_python(raw_event)
+        if isinstance(event, BetaRawContentBlockStartEvent):
+            self.blocks.append(event.content_block.model_dump(mode='json', exclude_none=True))
+        elif isinstance(event, BetaRawContentBlockDeltaEvent):
+            self._apply_delta(self.blocks[event.index], event.index, event.delta)
+        elif isinstance(event, BetaRawContentBlockStopEvent):
+            if (raw := self.partial_json.pop(event.index, None)) is not None:
+                self.blocks[event.index]['input'] = json.loads(raw) if raw else {}
+        elif isinstance(event, BetaRawMessageDeltaEvent):
+            self.stop_reason = event.delta.stop_reason
 
-    def _apply_delta(self, index: int, delta: dict[str, JsonValue]) -> None:
-        block = self.blocks[index]
-        match delta.get('type'):
-            case 'text_delta':
-                block['text'] = f'{block.get("text") or ""}{delta.get("text")}'
-            case 'thinking_delta':
-                block['thinking'] = f'{block.get("thinking") or ""}{delta.get("thinking")}'
-            case 'signature_delta':
-                block['signature'] = delta.get('signature')
-            case 'input_json_delta':
-                self.partial_json[index] = f'{self.partial_json.get(index, "")}{delta.get("partial_json")}'
-            case _:
-                pass
+    def _apply_delta(self, block: dict[str, JsonValue], index: int, delta: BetaRawContentBlockDelta) -> None:
+        if isinstance(delta, BetaTextDelta):
+            block['text'] = f'{block.get("text", "")}{delta.text}'
+        elif isinstance(delta, BetaThinkingDelta):
+            block['thinking'] = f'{block.get("thinking", "")}{delta.thinking}'
+        elif isinstance(delta, BetaSignatureDelta):
+            block['signature'] = delta.signature
+        elif isinstance(delta, BetaInputJSONDelta):  # pragma: no branch
+            # Citation deltas don't reach the blocks the next request continues from: Claude Code's tools are off.
+            self.partial_json[index] = f'{self.partial_json.get(index, "")}{delta.partial_json}'
 
     @property
     def tool_use_ids(self) -> list[str]:
@@ -469,9 +475,9 @@ class ClaudeCodeSessions:
         options = self._client_options(session, request)
         transport = self.transport_factory(options) if self.transport_factory is not None else None
         session.client = ClaudeSDKClient(options=options, transport=transport)
-        await session.client.connect()
-        session.messages = aiter(session.client.receive_messages())
         try:
+            await session.client.connect()
+            session.messages = aiter(session.client.receive_messages())
             await session.replay(request.messages)
         except BaseException:
             await session.close()
@@ -486,36 +492,50 @@ class ClaudeCodeSessions:
             return None
         # Claimed before the first `await`, so a concurrent request of the conversation can't take it too.
         session.busy = True
-        if session.config == _SessionConfig.of(request) and session.loop is asyncio.get_running_loop():
-            try:
-                if (message := session.continuation(request.messages)) is not None and await session.send(message):
-                    return session
-            except (ClaudeCodeExited, CLIConnectionError):
-                # The process ended between requests; a new one takes over the conversation.
-                pass
-        del self.sessions[conversation_id]
-        await session.close()
-        return None
+        reused = False
+        try:
+            reused = (
+                session.config == _SessionConfig.of(request)
+                and session.loop is asyncio.get_running_loop()
+                and (message := session.continuation(request.messages)) is not None
+                and await session.send(message)
+            )
+        except (ClaudeCodeExited, CLIConnectionError):
+            # The process ended between requests; a new one takes over the conversation.
+            pass
+        finally:
+            if not reused:
+                del self.sessions[conversation_id]
+                await session.close()
+        return session if reused else None
 
     async def open(self, conversation_id: str | None, request: _MessagesRequest) -> tuple[_Session, bool]:
         """A session that has just been sent the request. Returns it, and whether it's kept after the response."""
         session = await self._reusable(conversation_id, request)
         if session is None:
             session = await self._start(request)
-            if conversation_id is not None and self.leases and conversation_id not in self.sessions:
-                await self._make_room()
+            if (
+                conversation_id is not None
+                and self.leases
+                and conversation_id not in self.sessions
+                and await self._make_room()
+            ):
                 self.sessions[conversation_id] = session
         session.busy = True
         session.seen = list(request.messages)
         return session, session in self.sessions.values()
 
-    async def _make_room(self) -> None:
+    async def _make_room(self) -> bool:
+        """Whether there's room to keep one more session, after closing the least recently used idle one if needed."""
+        if len(self.sessions) < _MAX_SESSIONS:
+            return True
         idle = [session for session in self.sessions.values() if not session.busy]
-        if len(self.sessions) < _MAX_SESSIONS or not idle:
-            return
+        if not idle:
+            return False
         oldest = min(idle, key=lambda session: session.last_used)
         self.sessions = {key: session for key, session in self.sessions.items() if session is not oldest}
         await oldest.close()
+        return True
 
     async def release(self, session: _Session, *, kept: bool) -> None:
         session.busy = False
@@ -598,8 +618,13 @@ class ClaudeCodeTransport(httpx2.AsyncBaseTransport):
             session, kept = await self.sessions.open(request.headers.get(CONVERSATION_HEADER), body)
         except ClaudeCodeExited:
             return _error_response(500, 'api_error', 'Claude Code exited while it was sent the history.')
+        except ClaudeSDKError as e:
+            return _error_response(500, 'api_error', f'Claude Code failed to start: {e}')
         try:
-            first, error = await _first_events(session)
+            try:
+                first, error = await _first_events(session)
+            except ClaudeSDKError as e:
+                first, error = [], _error_response(500, 'api_error', f'Claude Code failed: {e}')
             if error is not None:
                 session.broken = True
                 await self.sessions.release(session, kept=kept)
@@ -631,7 +656,7 @@ async def _first_events(session: _Session) -> tuple[list[dict[str, JsonValue]], 
 def _result_error(result: ResultMessage, error_kind: str | None, rate_limit: RateLimitEvent | None) -> httpx2.Response:
     if rate_limit is not None:
         error_kind = 'rate_limit'
-    status, error_type = _ERROR_STATUS[error_kind or 'unknown']
+    status, error_type = _ERROR_STATUS.get(error_kind or 'unknown', _ERROR_STATUS['unknown'])
     status = result.api_error_status or status
     retry_after = None
     if rate_limit is not None and (resets_at := rate_limit.rate_limit_info.resets_at) is not None:
