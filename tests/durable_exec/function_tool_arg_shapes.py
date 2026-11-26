@@ -37,7 +37,7 @@ from pydantic import (
 from typing_extensions import TypedDict
 
 from pydantic_ai import RunContext
-from pydantic_ai._utils import is_builtin_collection, is_str_dict
+from pydantic_ai._utils import is_list_tuple_or_set, is_str_dict
 from pydantic_ai.capabilities import Hooks, ValidatedToolArgs
 from pydantic_ai.messages import BinaryContent, ImageUrl, ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -60,7 +60,7 @@ def describe(value: Any) -> str:
         return f'{type(value).__name__}({describe(vars(value))})'
     if is_str_dict(value):
         return '{' + ', '.join(f'{key!r}: {describe(item)}' for key, item in value.items()) + '}'
-    if is_builtin_collection(value):
+    if is_list_tuple_or_set(value):
         return f'{type(value).__name__}[' + ', '.join(describe(item) for item in value) + ']'
     return f'{type(value).__name__}:{value!r}'
 

@@ -28,7 +28,7 @@ from ._utils import (
     await_maybe,
     check_object_json_schema,
     is_async_callable,
-    is_builtin_collection,
+    is_list_tuple_or_set,
     is_model_like,
     is_str_dict,
     run_in_executor,
@@ -361,7 +361,7 @@ def _is_copied_safely(default: object) -> bool:
 def _is_builtin_data(value: object) -> bool:
     if is_str_dict(value) and type(value) is dict:
         return all(_is_builtin_data(k) and _is_builtin_data(v) for k, v in value.items())
-    if is_builtin_collection(value):
+    if type(value) in (list, tuple, set, frozenset) and is_list_tuple_or_set(value):
         return all(_is_builtin_data(item) for item in value)
     return type(value) in (str, bytes, int, float, bool, type(None))
 
@@ -370,7 +370,7 @@ def _runs_user_code(node: object, seen: set[int]) -> bool:
     if id(node) in seen:
         return False
     seen.add(id(node))
-    if is_builtin_collection(node):
+    if is_list_tuple_or_set(node):
         return any(_runs_user_code(item, seen) for item in node)
     if not is_str_dict(node):
         return callable(node) and not _is_trusted_callable(node)

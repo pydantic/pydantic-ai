@@ -37,7 +37,7 @@ from pydantic_ai._agent_graph import build_validation_context
 from pydantic_ai._cancel import RunCancellation
 from pydantic_ai._enqueue import EnqueueGuard
 from pydantic_ai._run_context import ToolNamePath, with_tool_name_path, without_tool_name_path
-from pydantic_ai._utils import is_builtin_collection, is_list, is_str_dict
+from pydantic_ai._utils import is_list, is_list_tuple_or_set, is_str_dict
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -702,7 +702,7 @@ def _parts(value: object) -> list[object] | None:
     """What a container holds, in order; `None` for a type `_same_value` doesn't know."""
     if is_str_dict(value) and type(value) is dict:
         return [part for item in value.items() for part in item]
-    if is_builtin_collection(value):
+    if type(value) in (list, tuple, set, frozenset) and is_list_tuple_or_set(value):
         return sorted(value, key=repr) if isinstance(value, set | frozenset) else list(value)
     if isinstance(value, BaseModel):
         # Not `model_fields_set`: a dump writes every field, so comparing it would send the model's arguments for

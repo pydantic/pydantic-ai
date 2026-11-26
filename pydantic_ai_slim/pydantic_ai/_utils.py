@@ -1296,11 +1296,11 @@ def is_list(obj: Any) -> TypeGuard[list[Any]]:
     return isinstance(obj, list)
 
 
-def is_builtin_collection(
+def is_list_tuple_or_set(
     value: object,
 ) -> TypeGuard[list[object] | tuple[object, ...] | set[object] | frozenset[object]]:
-    """Whether a value is exactly a `list`, `tuple`, `set` or `frozenset`, not a subclass of one."""
-    return type(value) in (list, tuple, set, frozenset)
+    """Whether a value is a `list`, `tuple`, `set` or `frozenset`, or an instance of a subclass of one."""
+    return isinstance(value, list | tuple | set | frozenset)
 
 
 def is_google_files_api_url(url: str) -> bool:
