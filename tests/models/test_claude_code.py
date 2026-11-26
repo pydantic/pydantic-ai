@@ -51,7 +51,8 @@ def claude_code(*responses: FakeResponse) -> tuple[ClaudeCodeModel, FakeClaudeCo
     fake = FakeClaudeCode(list(responses))
     provider = ClaudeCodeProvider()
     provider._sessions.transport_factory = fake  # pyright: ignore[reportPrivateUsage]
-    return ClaudeCodeModel('claude-sonnet-5-5', provider=provider), fake
+    # Each test scripts every request it expects; `test_a_failed_request_is_retried` covers the default retries.
+    return ClaudeCodeModel('claude-sonnet-5-5', provider=provider, settings={'max_retries': 0}), fake
 
 
 def frame_shape(session: FakeSession) -> list[tuple[str, list[str], bool]]:
@@ -443,12 +444,17 @@ async def test_the_least_recently_used_idle_session_makes_room(monkeypatch: pyte
 
 async def test_a_new_conversation_is_not_kept_while_every_session_is_busy(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(_claude_code_sessions, '_MAX_SESSIONS', 1)
-    model, fake = claude_code(FakeResponse([text('One.')]), FakeResponse([text('Two.')]))
+    release = asyncio.Event()
+    model, fake = claude_code(FakeResponse([text('One.')], hold=release), FakeResponse([text('Two.')]))
     agent = Agent(model)
 
     async with agent:
-        await asyncio.gather(agent.run('First conversation.'), agent.run('Second conversation.'))
+        first = asyncio.create_task(agent.run('First conversation.'))
+        await fake.holding.wait()
+        await agent.run('Second conversation.')
         assert [session.closed for session in fake.sessions] == [False, True]
+        release.set()
+        await first
 
     assert all(session.closed for session in fake.sessions)
 
@@ -625,6 +631,29 @@ async def test_anthropic_settings_claude_code_doesnt_send_are_reported():
 
     with pytest.warns(UnsupportedSettingWarning, match='`anthropic_metadata` setting is not supported'):
         await Agent(model, model_settings=settings).run('Hello')
+
+
+async def test_a_failed_request_is_retried():
+    """Claude Code is set not to retry, so Pydantic AI retries a request that failed, in a new session."""
+    model, fake = claude_code(FakeResponse(error='server_error', error_text='Overloaded'), FakeResponse([text('Hi.')]))
+
+    result = await Agent(model).run('Hello', model_settings={'max_retries': 1})
+
+    assert result.output == 'Hi.'
+    assert len(fake.sessions) == 2
+
+
+async def test_a_plan_limit_is_not_retried():
+    """A plan's usage limit resets hours later, so it fails at once, whatever `max_retries` allows."""
+    model, fake = claude_code(
+        FakeResponse(error='rate_limit', error_text="You've hit your limit", rate_limit_resets_at=4_000_000_000)
+    )
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await Agent(model).run('Hello', model_settings={'max_retries': 2})
+
+    assert exc_info.value.status_code == 429
+    assert len(fake.sessions) == 1
 
 
 async def test_an_error_claude_code_has_no_status_for():

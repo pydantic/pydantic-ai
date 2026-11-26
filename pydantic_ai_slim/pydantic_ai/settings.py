@@ -394,6 +394,7 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
+    * Claude Code (Claude Code itself is set not to retry)
     * Google (keeps the delays and status codes of the provider's `retry_options`)
     * Groq
     * Mistral (`0` only, which turns off a `retry_config` set on the client; other values are ignored without a

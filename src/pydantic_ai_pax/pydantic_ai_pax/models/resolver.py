@@ -182,12 +182,7 @@ class ModelResolver:
                 resolve = partial(provider.resolve_profile, ref.name, ref.profile)
             else:
                 raise UserError(f'{ref.provider} does not support profiles. Use {ref.provider}:{ref.name}.')
-            model = await to_thread.run_sync(resolve, abandon_on_cancel=True)
-            if ref.provider == 'claude-code':
-                from pydantic_ai_pax.models.retry_after import limit_retry_after
-
-                limit_retry_after(model=model)
-            return model
+            return await to_thread.run_sync(resolve, abandon_on_cancel=True)
         if ref.profile is not None or built:
             from pydantic_ai_pax.models import key_profiles
 

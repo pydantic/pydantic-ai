@@ -117,6 +117,8 @@ async def test_claude_code_runs_with_exactly_these_options():
                 'CLAUDE_CODE_DISABLE_AUTO_MEMORY': '1',
                 'DISABLE_AUTO_COMPACT': '1',
                 'DISABLE_COMPACT': '1',
+                'CLAUDE_CODE_MAX_RETRIES': '0',
+                'CLAUDE_CODE_PROMPT_CACHE_TTL': '5m',
                 'CLAUDE_CODE_DISABLE_REFUSAL_FALLBACK': '1',
                 'CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK': '1',
                 'MCP_TOOL_TIMEOUT': '86400000',

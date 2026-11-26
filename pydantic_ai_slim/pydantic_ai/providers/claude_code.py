@@ -52,8 +52,6 @@ class ClaudeCodeProvider(AnthropicProvider):
         client = AsyncAnthropic(
             api_key='claude-code',
             base_url='https://claude-code.invalid',
-            # Claude Code retries failed API requests itself.
-            max_retries=0,
             http_client=httpx2.AsyncClient(transport=transport, trust_env=False),
         )
         super().__init__(anthropic_client=client)

@@ -1110,7 +1110,7 @@ when a request fails with a model API error, such as a rate or usage limit. Sign
 in to another account adds it to the rotation, with nothing else to change. If
 every account fails, Pax lists why each one did.
 
-A model that names no account, such as `claude-code:claude-opus-5-5`, works the
+A model that names no account, such as `openai-codex:gpt-6-astra`, works the
 same way: once its provider has two or more signed-in accounts, it runs on all of
 them in `/accounts` order, as `@*` does. With one, it runs on that one. To run the
 default account alone, write `PROVIDER@default:MODEL`; picking an account in
@@ -1137,7 +1137,7 @@ OpenRouter, and vLLM that is the existing login. Providers such as
 a profile uses the key saved at `/login`. Anything else a provider needs, such as an
 Azure endpoint or an Ollama URL, still comes from the environment, and `/login`
 refuses to save the key until it is set. Plugins can support profiles too, such
-as `/login claude@work` for a plugin's `claude-code` models. A profile name is 1
+as `/login acme@work` for a plugin's `acme` models. A profile name is 1
 to 32 lowercase letters, digits, hyphens, or underscores; `default` names the
 account without a profile, and `/login NAME@default` signs in to it. Each profile's
 credentials are stored separately, the same way as the default login.
@@ -1169,14 +1169,11 @@ instead of falling back, so a missing login is not hidden. Older Pax builds keep
 the rest of your settings, but cannot run a profile, `@*`, `@default`, or chain
 model, and run a model without an account on the default account only.
 
-### Long subscription retry waits
+### Subscription limits
 
-With a `claude-code:` model, when Claude asks Pax to wait more than a minute before
-retrying (usually because your subscription limit was reached), Pax shows the error
-at once instead of waiting silently. The error says about how long Claude asked you
-to wait. Try again later, or pick another model or a chain with `/model`.
-
-For response-header details, see the [plugin contract](../PLUGINS.md#run-models-under-your-own-prefix-get_model_providers).
+With a `claude-code:` model, when your Claude subscription limit is reached, Pax shows
+the error at once instead of waiting for the limit to reset. The error says when it
+resets. Try again later, or pick another model or a chain with `/model`.
 
 ### vllm connection
 

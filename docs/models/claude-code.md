@@ -65,6 +65,8 @@ async def main():
 
 A request whose history the process hasn't seen, such as one with different instructions or tools, edited history, or a conversation picked up from storage, starts a new process and sends it the history first. That's always correct, but it doesn't read from the earlier process's prompt cache. At most eight conversations keep a process at a time: the one used least recently makes room, and when all eight are busy, a new conversation's process stops after its request. When the agent, model, or run that holds them exits, the processes are stopped.
 
+Like any Claude Code session, each one leaves its transcript in Claude Code's configuration directory, under `~/.claude/projects/` by default, so it also shows up in `claude --resume` in the directory it ran in. Claude Code writes its prompt cache entries for 5 minutes, as the [`anthropic` provider](anthropic.md) asks for, rather than the hour it uses by default on a plan.
+
 ## What Claude Code adds to the request
 
 With your instructions as its system prompt, Claude Code still adds:
@@ -75,7 +77,7 @@ With your instructions as its system prompt, Claude Code still adds:
 
 ## Limitations
 
-- Claude Code sets up the request itself, so [`ClaudeCodeModel`][pydantic_ai.models.claude_code.ClaudeCodeModel] ignores the sampling settings (`temperature`, `top_p`, `top_k`, `seed`, `presence_penalty`, `frequency_penalty` and `logit_bias`), as well as `stop_sequences`, `parallel_tool_calls=False`, `extra_headers`, `extra_body`, `service_tier`, `timeout` and `max_retries`. Claude Code retries failed requests itself. `max_tokens`, [`thinking`][pydantic_ai.settings.ModelSettings.thinking], `tool_choice` (except values that force a tool call, which raise a `UserError`), `anthropic_thinking` and `anthropic_effort` apply. Other `anthropic_*` settings are ignored with an `UnsupportedSettingWarning`.
+- Claude Code sets up the request itself, so [`ClaudeCodeModel`][pydantic_ai.models.claude_code.ClaudeCodeModel] ignores the sampling settings (`temperature`, `top_p`, `top_k`, `seed`, `presence_penalty`, `frequency_penalty` and `logit_bias`), as well as `stop_sequences`, `parallel_tool_calls=False`, `extra_headers`, `extra_body`, `service_tier` and `timeout`. `max_tokens`, `max_retries` (Pydantic AI retries a failed request, as Claude Code is set not to, but never waits for a plan's usage limit to reset), [`thinking`][pydantic_ai.settings.ModelSettings.thinking], `tool_choice` (except values that force a tool call, which raise a `UserError`), `anthropic_thinking` and `anthropic_effort` apply. Other `anthropic_*` settings are ignored with an `UnsupportedSettingWarning`.
 - Claude Code places its own cache breakpoints, so the unified [`cache`][pydantic_ai.settings.ModelSettings.cache] setting and [`CachePoint`][pydantic_ai.messages.CachePoint]s have no effect.
 - The model can't be forced to call a tool, so structured output uses [tool output](../output.md#tool-output), with a retry when the model answers in text. Native (JSON schema) output isn't available.
 - Anthropic's server-side tools, such as web search and code execution, aren't available, and neither are uploaded files, batches, on-demand compaction, fast mode or [token counting](../agent.md#usage-limits) ahead of a request.

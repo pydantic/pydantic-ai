@@ -106,6 +106,11 @@ _ENV = {
     'CLAUDE_CODE_DISABLE_AUTO_MEMORY': '1',
     'DISABLE_AUTO_COMPACT': '1',
     'DISABLE_COMPACT': '1',
+    # Pydantic AI retries a failed request itself, as `max_retries` says (verified: with this, a 529 is sent once).
+    'CLAUDE_CODE_MAX_RETRIES': '0',
+    # Claude Code writes 1-hour cache entries on a plan by default, which cost more than they save when an agent's
+    # requests come minutes apart; 5 minutes matches what the `anthropic` provider asks for.
+    'CLAUDE_CODE_PROMPT_CACHE_TTL': '5m',
     # Never switch to another model or a non-streaming request behind the model's back.
     'CLAUDE_CODE_DISABLE_REFUSAL_FALLBACK': '1',
     'CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK': '1',
@@ -276,8 +281,12 @@ def _stream_error(message: str) -> bytes:
     return _sse({'type': 'error', 'error': {'type': 'api_error', 'message': message}})
 
 
-def _error_response(status: int, error_type: str, message: str, retry_after: float | None = None) -> httpx2.Response:
+def _error_response(
+    status: int, error_type: str, message: str, retry_after: float | None = None, *, retry: bool = True
+) -> httpx2.Response:
     headers = {'retry-after': str(math.ceil(retry_after))} if retry_after is not None else {}
+    if not retry:
+        headers['x-should-retry'] = 'false'
     body = {'type': 'error', 'error': {'type': error_type, 'message': message}}
     return httpx2.Response(status, json=body, headers=headers)
 
@@ -706,4 +715,5 @@ def _result_error(result: ResultMessage, error_kind: str | None, rate_limit: Rat
     if rate_limit is not None and (resets_at := rate_limit.rate_limit_info.resets_at) is not None:
         retry_after = max(resets_at - time.time(), 0)
     message = result.result or ', '.join(result.errors or ()) or f'Claude Code ended with `{result.subtype}`.'
-    return _error_response(status, error_type, message, retry_after)
+    # A plan's usage limit resets hours later, so the Anthropic client shouldn't wait for it.
+    return _error_response(status, error_type, message, retry_after, retry=rate_limit is None)

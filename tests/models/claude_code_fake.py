@@ -36,6 +36,8 @@ class FakeResponse:
     reading from it fails."""
     exit: bool = False
     """The process exits instead of responding."""
+    hold: asyncio.Event | None = None
+    """The response waits for this event before it starts, keeping its session busy."""
     crash: BaseException | None = None
     """Reading from the process fails with this error instead of responding."""
 
@@ -60,6 +62,8 @@ class FakeClaudeCode:
     sessions: list[FakeSession] = field(default_factory=list['FakeSession'])
     exit_on_history: bool = False
     """Each process exits when it's sent history to replay."""
+    holding: asyncio.Event = field(default_factory=asyncio.Event)
+    """Set once a response waits on its `hold`."""
     missing: bool = False
     """There's no Claude Code executable to start."""
 
@@ -194,7 +198,13 @@ class FakeSession(Transport):
         self.tool_names = [tool['name'] for tool in listed['result']['tools']]
         self._send(self._init())
         while True:
+            if not self.script.responses:  # pragma: no cover (a test that sends more requests than it scripted)
+                self._outbox.put_nowait(AssertionError('no scripted response left'))
+                return
             response = self.script.responses.pop(0)
+            if response.hold is not None:
+                self.script.holding.set()
+                await response.hold.wait()
             if response.exit or response.crash is not None:
                 self._outbox.put_nowait(response.crash)
                 return

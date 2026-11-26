@@ -75,7 +75,6 @@ class ClaudeCodeModel(AnthropicModel):
             'extra_body',
             'service_tier',
             'timeout',
-            'max_retries',
         }
     )
 
