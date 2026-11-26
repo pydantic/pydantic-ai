@@ -214,8 +214,8 @@ async def test_included_content_images_tools_and_usage_are_traced(recorder: Reco
             'service_name': 'pydantic-clai2',
             'console': False,
             'inspect_arguments': False,
-            'config_dir': tmp_path / 'config/pydantic-clai2/logfire',
-            'data_dir': tmp_path / 'config/pydantic-clai2/logfire',
+            'config_dir': tmp_path / 'config/pydantic-ai-pax/logfire',
+            'data_dir': tmp_path / 'config/pydantic-ai-pax/logfire',
             'base_url': None,
         }
     ]
@@ -708,7 +708,7 @@ async def test_relative_config_home_does_not_read_the_checkout(
     host = make_host()
     plugin = load_logfire(host)
     await close(plugin)
-    assert recorder.options[0]['config_dir'] == tmp_path / 'home/.config/pydantic-clai2/logfire'
+    assert recorder.options[0]['config_dir'] == tmp_path / 'home/.config/pydantic-ai-pax/logfire'
     assert recorder.options[0]['data_dir'] == recorder.options[0]['config_dir']
 
 
@@ -729,7 +729,7 @@ async def test_repository_cannot_select_telemetry_destination(
     host = make_host()
     plugin = load_logfire(host)
     await close(plugin)
-    assert recorder.options[0]['config_dir'] == tmp_path / 'config/pydantic-clai2/logfire'
+    assert recorder.options[0]['config_dir'] == tmp_path / 'config/pydantic-ai-pax/logfire'
     assert recorder.options[0]['data_dir'] == recorder.options[0]['config_dir']
     assert recorder.instances[0].config.token is None
 
