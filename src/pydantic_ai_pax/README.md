@@ -78,12 +78,13 @@ the `pydantic-clai2` package installed, or its imports changed to `pydantic_ai_p
 `/update now` uses it too. To try Pax without installing, run `uvx pydantic-ai-pax`; set
 `UV_COMPILE_BYTECODE=1` to compile the bytecode up front there too.
 
-Pax comes with the OpenAI and Anthropic SDKs. Other providers may need their SDK
-installed too; `/model` tells you which one when you pick the model. TypeSafe's Jev
-models need an extra:
+Pax comes with the OpenAI, Anthropic, and Google SDKs. Every other model provider has a Pax
+extra of the same name as its `pydantic-ai-slim` extra, such as `bedrock`, `groq`, or `typesafe`
+(TypeSafe's Jev), and `/model` tells you which one when you pick the model. `all` installs every
+provider and every `/sandbox` provider but `local`:
 
 ```bash
-uv tool install --compile-bytecode 'pydantic-ai-pax[typesafe]'
+uv tool install --compile-bytecode 'pydantic-ai-pax[groq]'
 ```
 
 ## First run
