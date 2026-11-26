@@ -730,8 +730,7 @@ async def test_redacted_copy_of_a_deferred_call_leaves_a_call_sharing_its_id_alo
     """
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
-            return ModelResponse(parts=[ToolCallPart('final_result', {'text': 'Done.'}, tool_call_id='out_1')])
+        # The deferred call ends the run, so the model is asked once.
         return ModelResponse(
             parts=[
                 ToolCallPart('escalate', {'order_id': 'o_1'}, tool_call_id='x'),
@@ -1096,7 +1095,7 @@ async def breaking_off(
 ) -> AsyncIterator[AgentStreamEvent | AgentRunResultEvent[Any]]:
     """The agent run's events up to its first `after` event, then `error`, as a stream that breaks off sends them."""
     async with agent.run_stream_events('Where is my order?') as events:
-        async for event in events:
+        async for event in events:  # pragma: no branch
             yield event
             if isinstance(event, after):
                 raise error
