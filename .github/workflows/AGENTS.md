@@ -304,13 +304,13 @@ observers may need contributor approval.
 
 The `Gate: …` commit statuses carry the review verdict. The publisher job succeeds after publishing
 those statuses, including a failing verdict for an unmet requirement. The job fails on publisher errors.
-Publication is serialized per PR and marks the douwebot status pending before setup. API errors or
+Publication is serialized per PR and marks both `Gate:` statuses pending before setup. API errors or
 incomplete data fail closed. After the requirements are met, a new evaluation replaces the previous
 failure through GitHub's latest-per-context commit statuses. Rerun an existing current-head,
 default-branch `PR Review Gates` run to recover from an API failure or delayed observer; do not add
 branch-selectable dispatch to this privileged workflow. Workflows and scripts remain owned in `.github/CODEOWNERS`.
 
-# `PR Review Checks` reviews every pull request head
+# `PR Review Checks` reviews every same-repository pull request head
 
 `pr-review-checks.yml` runs default-branch code on `pull_request` and publishes one
 `PR Review Checks` commit status on the PR head. A fork PR gets no review and no status. The
