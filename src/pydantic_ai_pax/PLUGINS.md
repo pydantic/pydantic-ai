@@ -127,7 +127,7 @@ are rejected; configure the final endpoint URL.
 ### Where servers are stored
 
 `/mcp install` and `/mcp edit` write `mcp.json` in the Pax config folder
-(`~/.config/pydantic-clai2/`, or under `$XDG_CONFIG_HOME`). The file is created
+(`~/.config/pydantic-ai-pax/`, or under `$XDG_CONFIG_HOME`). The file is created
 readable only by you. Do not put secrets in it: write `$VAR` or `${VAR}` in an
 `env` or `headers` value and Pax fills it from its own environment when it
 connects, so the file holds only the reference; a server whose variable is
@@ -431,8 +431,8 @@ Other approval prompts are not tracked. The file is removed when
 Pax exits; AoE removes the directory when it stops the session.
 
 **Conversation.** The current conversation ID goes to `session_id` beside the status
-file, and to `$XDG_STATE_HOME/pydantic-clai2/aoe/<id>` (default
-`~/.local/state/pydantic-clai2/aoe/<id>`, mode 0600). When AoE restarts the session,
+file, and to `$XDG_STATE_HOME/pydantic-ai-pax/aoe/<id>` (default
+`~/.local/state/pydantic-ai-pax/aoe/<id>`, mode 0600). When AoE restarts the session,
 Pax starts empty, so the plugin resumes the conversation recorded there and shows its
 history, as `/resume ID` does; `--resume`,
 `--continue` when it finds a session, `--session-id`, and `--fork-session` take precedence
@@ -621,8 +621,8 @@ or a pasted secret, so with `include_content: false`, the default, these records
 failures, keep only the exception's type in their `exception` event, as agent spans do.
 
 Credentials are read from `LOGFIRE_TOKEN` or the SDK's `logfire_credentials.json`
-in `$XDG_CONFIG_HOME/pydantic-clai2/logfire/`, defaulting to
-`~/.config/pydantic-clai2/logfire/`. SDK configuration is read only from that user
+in `$XDG_CONFIG_HOME/pydantic-ai-pax/logfire/`, defaulting to
+`~/.config/pydantic-ai-pax/logfire/`. SDK configuration is read only from that user
 directory too. Repository-local configuration/credentials and the SDK's
 `LOGFIRE_CONFIG_DIR`/`LOGFIRE_CREDENTIALS_DIR` overrides are ignored. Relative
 `XDG_CONFIG_HOME` values fall back to `~/.config`. A checkout cannot select the
@@ -958,7 +958,7 @@ type. Enter uses the address; Esc goes back to the list, and Esc there cancels
 without changing anything.
 
 Whichever Logfire you last chose in either plugin is remembered, in
-`~/.config/pydantic-clai2/logfire/destination.json` (or under `$XDG_CONFIG_HOME`),
+`~/.config/pydantic-ai-pax/logfire/destination.json` (or under `$XDG_CONFIG_HOME`),
 so the other starts from it: the picker highlights it. Opening this plugin's menu
 in the terminal before any of its settings were saved also switches it to that
 Logfire, and says so, when it is Logfire US or EU; any other Logfire is only
@@ -1078,7 +1078,7 @@ startup files. Use a separate OS identity or sandbox for untrusted agent work.
 Three ways to install one:
 
 1. Drop a `.py` file (or a package folder) into
-   `$XDG_CONFIG_HOME/pydantic-clai2/plugins/` (default `~/.config/pydantic-clai2/plugins/`).
+   `$XDG_CONFIG_HOME/pydantic-ai-pax/plugins/` (default `~/.config/pydantic-ai-pax/plugins/`).
    Its name is the file name without `.py`. Pax creates the folder at startup, so it
    is there to copy into after the first run.
 2. Point Pax at anything importable, from inside Pax:
@@ -1184,7 +1184,7 @@ settings using the former import paths are redirected to the new modules.
 | `compaction` | `pydantic_ai_pax.builtin_plugins.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
 | `refinement` | `pydantic_ai_pax.builtin_plugins.refinement` | `{}` | `/refine`: the model reviews and revises its last answer |
 | `hooks` | `pydantic_ai_pax.builtin_plugins.hooks` | `{}` | runs your commands before and after tool calls and turns; see [lifecycle hooks](#lifecycle-hooks-commands-from-settings) |
-| `sandbox` | `pydantic_ai_pax.builtin_plugins.sandbox` | `{}` | `/sandbox`: runs a new conversation in a sandbox, a VM on this machine (`local smol` or `local boxlite`) or a cloud one, signed in to GitHub as your `gh` login; see [Sandboxes](docs/reference.md#sandboxes-sandbox) |
+| `sandbox` | `pydantic_ai_pax.builtin_plugins.sandbox` | `{}` | `/sandbox`: runs a new conversation in a sandbox, a VM on this machine (`local smol` or `local boxlite`) or a cloud one, signed in to GitHub as your `gh` login; `/computer-use` lets the model use its desktop; see [Sandboxes](docs/reference.md#sandboxes-sandbox) and [Computer use](docs/reference.md#computer-use-computer-use) |
 | `slack` (off until enabled) | `pydantic_ai_pax.builtin_plugins.slack` | `{}` | Slack's hosted tools as you, read-only by default; see [below](#slack-your-slack-workspace-as-you) |
 
 [`day_ai`](#day_ai-day-ai-crm-tools) and [`grain`](#grain-meetings-with-a-saved-sign-in)
@@ -1325,9 +1325,11 @@ folders once when it loads, in `prepare`, for the `/skill-name` commands and the
 startup notices, and harness reads them again at the start of every turn for the
 model's catalog. With a plugin's capability function in the run, the run's
 workspace is chosen after `Skills` reads its catalog, so `coder` reads the
-catalog from the project directory. A `/skill-name` command reads them again
-when it runs, so it sends the current `SKILL.md`, and fails with a message when
-the skill is gone.
+catalog from the project directory. In an untrusted folder, those skills are
+then offered through `list_skills` and `load_skill`, which read the project
+directory too, even when the function supplies a sandbox. A `/skill-name`
+command reads them again when it runs, so it sends the current `SKILL.md`, and
+fails with a message when the skill is gone.
 Only skills with `user_invocable` (no `user-invocable: false`) get a command;
 harness leaves skills with `disable-model-invocation: true` out of the model's
 catalog. Frontmatter fields harness ignores, such as `allowed-tools`, belong to
@@ -1455,19 +1457,20 @@ The plugin's `render` replaces the tool's argument dump with a header that lists
 the question headers. The picker uses `host.full_screen()` only to flush streaming output and suspend
 the editor's input reader. It keeps the live panel on screen. The draft
 is restored on exit, and the question and your picks are printed to the transcript afterwards.
-Drag over the question, its header, or an option to select text; releasing copies it
-to the clipboard without choosing an answer. Transcript text remains selectable too.
+Drag over the question, its header, or an option, or double- or triple-click one, to
+select text; releasing copies it to the clipboard without choosing an answer. Transcript
+text remains selectable too.
 `/plugins disable ask_user` takes the tool away, and a session without a terminal, such as
 `pax --web` or piped output, never gets it. While the [`web` plugin](#web-this-session-in-your-browser)
 is loaded, it asks the questions instead, in the browser and this picker at once.
 
 The same picker asks about the calls [`/permissions`](docs/reference.md#permissions) holds: the plugin also binds
-`runtime/permissions.py`'s `approval_handler`, which puts each held call to the answerer as a question with
-`Approve`, `Approve for this session`, and `Deny`; a typed answer denies the call with it as the reason. The held
-command is printed in full above the picker first, since the picker cuts its question to the rows it has
-(`TerminalAnswerer.ask_approval`); a replacement approver should show it in full too. A
-replacement for this plugin that should answer approvals binds `approval_handler` with its own approver; without
-one, held calls are denied.
+`runtime/permissions.py`'s `approval_handler`, an `ApprovalHandler` (a core `HandleDeferredToolCalls`) whose handler
+is harness `approval_ask`, which puts each held call to the answerer as a question with `Approve`, `Approve for this
+session`, and `Deny`; a typed answer denies the call with it as the reason. The held command is printed in full above the
+picker first, since the picker cuts its question to the rows it has (`TerminalAnswerer.ask_approval`); a
+replacement approver should show it in full too. A replacement for this plugin that should answer approvals binds
+`approval_handler` with its own approver; without one, held calls are denied.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for
@@ -1826,11 +1829,11 @@ A session in a workspace runs on the model any new session starts with. Settings
 Pax with a `model` option still load; the option is ignored.
 
 A local path is checked out from that repository. A URL is cloned once into
-`$XDG_STATE_HOME/pydantic-clai2/workspaces/clones/` and fetched again for each new workspace, with
+`$XDG_STATE_HOME/pydantic-ai-pax/workspaces/clones/` and fetched again for each new workspace, with
 your own Git credentials; a REF names `origin`'s branch first. The new branch tracks nothing, so the
 first push names its remote branch.
 
-**The registry.** Each workspace has a folder in `$XDG_STATE_HOME/pydantic-clai2/workspaces/registry/`
+**The registry.** Each workspace has a folder in `$XDG_STATE_HOME/pydantic-ai-pax/workspaces/registry/`
 (`~/.local/state/...` by default), readable by you alone, holding `workspace.json`: kind,
 repository, ref, branch, folder, creation time, teardown, and `conversation`, the saved session the
 orchestrator runs there, if any. Every Pax reads the same folders, so a workspace made in one
@@ -1910,7 +1913,7 @@ shows to the orchestrator.
 Problems (an unknown workspace, a session that cannot be followed) come back as `Error: ...` lines
 rather than failing the run.
 
-**Its conversation** is one file, `$XDG_STATE_HOME/pydantic-clai2/orchestrator.json`, readable by you
+**Its conversation** is one file, `$XDG_STATE_HOME/pydantic-ai-pax/orchestrator.json`, readable by you
 alone, in Pydantic AI's message-history JSON. It survives a reload and a restart and never shows
 among the saved sessions or in `/resume`. Every Pax with the web UI has the same chat: each turn
 starts from the file as it is then, which an open page catches up to, and saves it when it ends,
@@ -2636,7 +2639,7 @@ JSON can express works here; an option that takes a Python object, like
 `client`, needs the file form below. Ask the agent something that needs the web on the next prompt and it has
 the tools. `/plugins disable exa` takes them away again.
 
-The same thing as a plugin file, `~/.config/pydantic-clai2/plugins/search.py`,
+The same thing as a plugin file, `~/.config/pydantic-ai-pax/plugins/search.py`,
 which is the shape to start from when you want more than one capability, or a
 `/command`, or a hook alongside it:
 
@@ -2694,7 +2697,7 @@ contributes nothing:
 | `get_capabilities()` | capabilities (or per-run capability functions) added to every agent run |
 | `get_commands()` | `/commands` |
 | `render(event)` | a drawing for a stream event, or `None` for the default |
-| `get_status_segments()` | text in the main footer's configurable `plugins` group |
+| `get_status_segments()` | text or links in the main footer's configurable `plugins` group |
 | `get_spinners()` | working animations offered by `/spinner` |
 | `get_model_providers()` | `PREFIX:NAME` models Pax can run |
 | `get_side_panels()` | pages the web UI shows beside the conversation |
@@ -3220,7 +3223,8 @@ background task, and is hidden while a full-screen interface owns the terminal.
 The editor and transcript share a Termflow live cell buffer on the alternate
 screen. Only changed cells paint. PageUp/PageDown and mouse-wheel input scroll
 output without changing the draft. New output does not move a scrolled view.
-A mouse drag selects painted cells, and releasing it copies them to the clipboard.
+A mouse drag selects painted cells, a double-click a word, and a triple-click a line, and
+releasing the button copies them to the clipboard, with no line break where the panel wrapped a line.
 On exit, the retained transcript prints into native terminal scrollback.
 Resize, theme changes, and returning from a menu repaint from the transcript.
 Assistant Markdown renders again at the new width and theme once its part
@@ -3671,7 +3675,8 @@ changes, or other tool side effects. It never replays tools or fires turn hooks.
 
 ### Add to the status row: `get_status_segments()`
 
-Each segment is a function that takes no arguments and returns a short string.
+Each segment is a function that takes no arguments and returns a short string,
+or a `StatusLink` to show a link.
 All plugin fragments form the `plugins` group in `display.footer_fields`, in
 registration order. The default layout places it after `activity`. Users can
 hide or move the group without unloading plugins; individual fragments do not
@@ -3703,6 +3708,24 @@ cost, working directory, and other optional fields, and before the model; see th
 text only; the colours in the row belong to Pax. A fragment that raises shows
 its error name in the row instead, so one broken plugin cannot take the footer
 down.
+
+Return `StatusLink(text=..., url=...)` from `pydantic_ai_pax.ui.rendering.status`
+to show a link. The row shows the text followed by `↗`, and a click on it opens
+the `http` or `https` URL in your browser. Other places that show the row, such
+as the line prompt, show only the text. The built-in `sandbox` plugin uses one
+for `watch live ↗` while computer use is on.
+
+```python
+from collections.abc import Sequence
+
+from pydantic_ai_pax.plugins import Plugin
+from pydantic_ai_pax.ui.rendering.status import StatusLink, StatusSegment
+
+
+class Docs(Plugin):
+    def get_status_segments(self) -> Sequence[StatusSegment]:
+        return (lambda: StatusLink(text='docs', url='https://pydantic.dev/docs/ai/'),)
+```
 
 ### Show a page beside the conversation: `get_side_panels()`
 
@@ -4145,9 +4168,9 @@ A `LiveSession` is one live session:
 | `wait_for_user(reason)` | mark a user wait, such as an approval dialog, until you call the idempotent function it returns; pair the call with `finally` so cancellation cannot leave a stale wait |
 | `setting(key)` | a Pax setting's value in it, as its `host.setting` reads it, with its own `model` and `run.*` |
 | `queued` | how many inputs wait for its running turn or command to end |
-| `queue` | those inputs, oldest first, each a `QueuedInput` with an `id` (stable while it waits, also when the terminal starts or stops showing the session) and its `text`; the same queue the terminal lists above its prompt |
-| `edit_queued(input_id, text)` | rewrite a waiting input in place, as Enter on a recalled one at the prompt does; raises `LookupError` once it has run or was removed, and `ValueError` for blank text |
-| `remove_queued(input_id)` | drop a waiting input; raises `LookupError` once it has run or was removed |
+| `queue` | those inputs, oldest first, each a `QueuedInput` with an `id` (stable while it waits, also when the terminal starts or stops showing the session) and its `text`; the same queue the terminal lists above its prompt. An input the terminal is editing (recalled with Up) keeps its place in the list but does not run until the edit ends, so the run takes the inputs around it; if nothing else is queued when the session goes idle, it leaves the queue and becomes the terminal's unsent draft |
+| `edit_queued(input_id, text)` | rewrite a waiting input in place, as Enter on a recalled one at the prompt does; raises `LookupError` once it has run, was removed, or became the terminal's draft, and `ValueError` for blank text |
+| `remove_queued(input_id)` | drop a waiting input; raises `LookupError` once it has run or was removed. Removing one the terminal is editing ends the edit and leaves the edited text in the terminal's input, unsent |
 | `steer(text)` | send `text` to its running turn now, as steering at the prompt does; its model reads it at its next request. `False` when nothing takes it: no turn runs, or it is a `/command` or `!` shell line |
 | `watchers` | how many `watch()` calls have not stopped yet |
 | `watch()` | count a watcher, such as a browser showing it, until you call the function it returns; a watched session is never closed for being idle |

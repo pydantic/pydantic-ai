@@ -688,6 +688,10 @@ _SEPARATE_TOOLSET_ID = (
     'its toolset id is kept apart from the capability id, so durable operation names do not change (#10904): '
     f'{_ISSUES}13968'
 )
+_SKILLS_ID = (
+    'its `__init__` takes no `id`, since two `Skills` combine into one; its `list_skills` and `load_skill` toolset '
+    "has an id of its own, so a durable engine names their activities apart from `read_skill_file`'s"
+)
 _NO_DEFAULT_ID = f'it declares no default id, but its toolset has a fixed one: {_ISSUES}9233'
 _TOOLSET_WITHOUT_ID = f'its toolset has no id, so a durable engine refuses it: {_ISSUES}9233'
 _USERS_TOOLSET = 'its toolset is one the user built, which keeps the id the user gave it'
@@ -728,6 +732,7 @@ UNSET_ID = Contract(
         'Shell': Exempt(_NO_DEFAULT_ID),
         'PydanticAIDocs': Exempt(_TOOLSET_WITHOUT_ID),
         'Peers': Exempt(_NO_DURABLE_TOOLSET_ID),
+        'Skills': Exempt(_SKILLS_ID),
     },
 )
 """Built with its defaults, and with `id=None`, a capability's id is the id of every toolset it builds.
@@ -749,6 +754,7 @@ CUSTOM_ID = Contract(
         'MCP': Exempt(_USERS_TOOLSET),
         'Toolset': Exempt(_USERS_TOOLSET),
         'PrefixTools': Exempt(_WRAPPED_TOOLSET),
+        'Skills': Exempt(_SKILLS_ID),
     },
 )
 """A capability built with a custom `id` gives it to every toolset it builds, so two with distinct ids never
