@@ -204,6 +204,12 @@ class PostgresConversationStore(ConversationStore):
             raise ConversationConflict(record.conversation_id)
         await self._lock_histories(connection, set(roots.values()))
         await self._insert_messages(connection, dict(messages))
+        # A delete in another history locks the messages it may release in this order, so taking them in the
+        # same order, rather than entry by entry through the foreign key, keeps the two from deadlocking.
+        await connection.fetch(
+            f'SELECT 1 FROM {self._messages} WHERE sha256 = ANY($1::text[]) ORDER BY sha256 FOR KEY SHARE',
+            sorted({sha256 for sha256, _ in messages}),
+        )
         entries: list[tuple[str, str | None, str, str, str]] = []
         for entry, (sha256, _) in zip(new_entries, messages, strict=True):
             roots[entry.id] = entry.id if entry.parent_id is None else roots[entry.parent_id]
