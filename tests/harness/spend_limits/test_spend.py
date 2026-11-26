@@ -3791,6 +3791,9 @@ class TestSpec:
         with pytest.raises(UserError, match="budget 'tokens' is not a number"):
             SpendLimits[None].from_spec(budgets=_spec_budgets({'tokens': 'lots'}))
 
+        with pytest.raises(UserError, match=r"budget 'usd' is not a number: '\$5'"):
+            SpendLimits[None].from_spec(budgets=_spec_budgets({'usd': '$5'}))
+
     def test_a_budget_scope_is_refused(self):
         with pytest.raises(UserError, match='cannot be expressed in a spec'):
             SpendLimits[None].from_spec(budgets=_spec_budgets({'scope': 'tenant'}))
