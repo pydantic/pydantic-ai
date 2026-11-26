@@ -454,10 +454,13 @@ A run moves to the next provider when OpenCode exited non-zero, the next account
 `PR Review Checks` hands a review on in two more cases, which no other caller does:
 
 - An OpenCode Go link failed the run with `provider.transport`, `provider.internal` or `provider.invalid-output`, before
-  or after the run took steps. OpenCode 2.2.5 retries a transport or internal error within the run, so one in the stream
-  outlasted those retries, and it does not retry most invalid provider output; see `isRetryable` in
-  [`provider-error.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/provider-error.ts). The job
-  log says that model failed the run with that type, and names the link that restarts it.
+  or after the run took steps. OpenCode 2.2.5 retries a failed step up to 10 times when `isRetryable` in
+  [`provider-error.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/provider-error.ts) accepts
+  its error, which it does for a transport or internal error and not for most invalid provider output; see
+  [`step.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/runner/step.ts) and
+  [`model-retry.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/model-retry.ts). So a
+  transport or internal error in the stream outlasted those retries. The job log says that model failed the run with
+  that type, and names the link that restarts it.
 - A link other than the last served an answer the review rejects. The job log names the reason and the link that
   restarts the review. The last link's rejected answer fails the review.
 
@@ -474,8 +477,8 @@ request-rate limits and `1305` overload; see `classify` in
 limit that outlasts those retries hands the run to the other account too, before or after the run took steps.
 
 Every other failure fails the job, including a rejected key, a provider outage, a time-budget stop, a timeout, and an
-invalid answer outside `PR Review Checks`. A run the other account also refuses or rate-limits fails the job. A fallback run, a restart
-included, gets only the rest of the time budget. OpenCode 2.2.5 reads the Coding Plan key from `ZHIPU_API_KEY` only,
+invalid answer outside `PR Review Checks`. A run the other account also refuses or rate-limits fails the job. A
+fallback run, a restart included, gets only the rest of the time budget. OpenCode 2.2.5 reads the Coding Plan key from `ZHIPU_API_KEY` only,
 so each Z.AI run sets that variable to its account's key. Each run's config allows only its provider and pins the `title`,
 `compaction` and `summary` agents to its model. Its environment holds no provider key but that account's. The job log names the
 model and the plan that served the run. When a run's process fails, the job log names that run's model, its plan, and the
@@ -500,7 +503,8 @@ run's resource attributes name the repository, `github.run_id`, `github.run_atte
 caller's attributes. They end with the run's plan as `opencode_fallback.plan`, and its place in the chain, counting
 from 1, as `opencode_fallback.attempt`. OpenCode's own spans carry no model or plan attribute, and both Coding Plan
 accounts call the same endpoint, so only `opencode_fallback.plan` tells their runs apart. A restart is its own
-attempt. The `PR Review Checks` review span adds `pr_review_checks.restarted` when the review's chain restarted a run.
+attempt. The `PR Review Checks` review span adds `pr_review_checks.restarted` when the review's chain moved past a run
+that took a step or served a rejected answer.
 
 As each run ends, `run_with_fallback` also exports an `OpenCode run` span for it, under the service
 `opencode-fallback`, so a later run's failure cannot drop it. Each span carries its run's resource attributes above,
