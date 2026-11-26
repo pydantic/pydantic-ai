@@ -24,6 +24,7 @@ from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import (
     saved_key,
 )
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
+from pydantic_ai_pax.cli.install import install_hint
 
 if TYPE_CHECKING:
     import daytona
@@ -61,7 +62,7 @@ class DaytonaProvider:
     def missing(self, *, desktop: bool = False) -> str | None:
         del desktop
         if find_spec('daytona') is None:
-            return "Daytona support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[daytona]'."
+            return f'Daytona support is not installed. Install Pax with it: {install_hint("daytona")}.'
         if saved_key(KEY_NAME) is None:
             return (
                 f'Add your Daytona API key in /keys as {KEY_NAME}. Make one at https://app.daytona.io/dashboard/keys.'

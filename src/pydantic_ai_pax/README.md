@@ -184,8 +184,8 @@ There are two channels. Pick one with `/set updates.channel`:
 
 `/update now` works when Pax was installed with `uv tool install`. On Windows, Pax closes
 first and installs in a new PowerShell window; start `pax` again when it is done.
-`/update now` reinstalls `pydantic-ai-pax` without extras or `--with` packages, so add those
-again afterwards. See
+`/update now` reinstalls `pydantic-ai-pax` with the extras you installed it with, but without
+`--with` packages, so add those again afterwards. See
 [Updating](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#updating)
 in the reference for the details.
 

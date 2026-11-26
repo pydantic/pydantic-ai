@@ -32,13 +32,14 @@ from anyio import CancelScope, open_process, run_process, to_thread
 from pydantic import StringConstraints, TypeAdapter
 from typing_extensions import TypedDict
 
-from pydantic_ai_pax.cli.install import DISTRIBUTION, command_name, tool_distribution
+from pydantic_ai_pax.cli.install import DISTRIBUTION, RECEIPT, command_name, tool_distribution, tool_extras, with_extras
 from pydantic_ai_pax.config import UpdateChannel
 from pydantic_ai_pax.plugins import InstallProgress, UpdateStage
 from pydantic_ai_pax.ui.stderr_relay import terminal_stderr
 
 if TYPE_CHECKING:
     import httpx
+    from packaging.requirements import Requirement
 
 PACKAGES = (
     'pydantic-ai-pax',
@@ -94,11 +95,13 @@ def bleeding_url(*, environ: Mapping[str, str] = os.environ) -> str:
 
 @dataclass(frozen=True, kw_only=True)
 class Installed:
-    """The running Pax: its version, the commit it was built from, and whether `uv tool` owns it."""
+    """The running Pax: its version, the commit it was built from, whether `uv tool` owns it, and its extras."""
 
     version: str
     commit: str | None = None
     tool: bool = False
+    extras: tuple[str, ...] = ()
+    """The extras `uv tool install` installed Pax with, such as `groq`, which an update installs again."""
 
     @property
     def label(self) -> str:
@@ -119,7 +122,8 @@ def installed() -> Installed:
     return Installed(
         version=distribution.version,
         commit=archive[1] if archive else None if vcs is None else vcs['commit_id'],
-        tool=Path(sys.prefix, 'uv-receipt.toml').is_file(),
+        tool=Path(sys.prefix, RECEIPT).is_file(),
+        extras=tool_extras(),
     )
 
 
@@ -141,6 +145,8 @@ class Update:
 
     channel: UpdateChannel
     target: str
+    extras: tuple[str, ...] = ()
+    """The extras of the running install, kept by the reinstall."""
 
     @property
     def label(self) -> str:
@@ -153,8 +159,15 @@ class Update:
         return f'{name} @ {bleeding_url()}/{stem}-{self.target}.tar.gz'
 
     def overrides(self) -> str:
-        """Install Pax and its pinned packages from one commit, preserving extras that uv overrides replace."""
-        return ''.join(f'{self.requirement(name)}\n' for name in PACKAGES)
+        """Install Pax and its pinned packages from one commit, preserving extras that uv overrides replace.
+
+        Each package keeps the extras the install's own extras require of it, as `pydantic-ai-pax[groq]` does
+        `pydantic-ai-slim[groq]`, read from the running build's metadata.
+        """
+        extras = required_extras({tool_distribution(): set(self.extras)})
+        return ''.join(
+            f'{self.requirement(with_extras(name, tuple(sorted(found))))}\n' for name, found in extras.items()
+        )
 
     def command(self, *, uv: str, overrides: Path | None) -> list[str]:
         """The `uv tool install` that replaces the current install; `main` reads `overrides`.
@@ -163,18 +176,58 @@ class Update:
         does not compile every module it imports.
         """
         install = [uv, 'tool', 'install', '--force', '--compile-bytecode']
-        distribution = tool_distribution()
+        distribution = with_extras(tool_distribution(), self.extras)
         if self.channel == 'stable':
             return [*install, f'{distribution}=={self.target}']
         assert overrides is not None, 'a main install needs the overrides file'
         return [*install, '--overrides', str(overrides), distribution]
 
 
+def _requires(name: str, extras: set[str]) -> 'list[Requirement]':
+    """What the installed `name` requires with `extras`, or nothing when it is not installed.
+
+    The `pydantic-clai2` shim is installed only in its own environment.
+    """
+    from packaging.requirements import Requirement
+
+    try:
+        requires = metadata.requires(name) or []
+    except metadata.PackageNotFoundError:
+        return []
+    active = {'', *extras}
+    return [
+        requirement
+        for requirement in map(Requirement, requires)
+        if requirement.marker is None or any(requirement.marker.evaluate({'extra': extra}) for extra in active)
+    ]
+
+
+def required_extras(requested: Mapping[str, set[str]]) -> dict[str, set[str]]:
+    """The extras of each of `PACKAGES` that their own extras and `requested` require, per the running build.
+
+    An override replaces its package's requirements, extras included, so the overrides name them all.
+    """
+    from packaging.requirements import Requirement
+
+    extras = {(requirement := Requirement(name)).name: set(requirement.extras) for name in PACKAGES}
+    for name, found in requested.items():
+        extras[name] |= found
+    pending = list(extras)
+    while pending:
+        name = pending.pop()
+        for requirement in _requires(name, extras[name]):
+            if requirement.name in extras and not requirement.extras <= extras[requirement.name]:
+                extras[requirement.name] |= requirement.extras
+                pending.append(requirement.name)
+    return extras
+
+
 def find_update(channel: UpdateChannel, current: Installed, target: str) -> Update | None:
     """Offer `target` unless it is what runs; a Git install on `stable` is offered the release."""
+    update = Update(channel=channel, target=target, extras=current.extras)
     if channel == 'main':
-        return None if current.commit == target else Update(channel=channel, target=target)
-    return None if current.commit is None and current.version == target else Update(channel=channel, target=target)
+        return None if current.commit == target else update
+    return None if current.commit is None and current.version == target else update
 
 
 def find_uv(*, environ: Mapping[str, str] = os.environ, windows: bool = os.name == 'nt') -> str | None:
@@ -310,7 +363,7 @@ def hold_environment(prefix: Path = Path(sys.prefix)) -> IO[bytes] | None:
     `None` outside a `uv tool` environment, on Windows (whose install waits for Pax to exit), or where the lock
     cannot be taken. The kernel releases the lock however the process ends; `running_elsewhere` then removes the file.
     """
-    if sys.platform == 'win32' or not (prefix / 'uv-receipt.toml').is_file():
+    if sys.platform == 'win32' or not (prefix / RECEIPT).is_file():
         return None
     import fcntl
 
@@ -528,7 +581,10 @@ class Updates:
         uv = await to_thread.run_sync(self.find_uv)
         if (refusal := await self._in_use(uv, update)) is not None:
             return refusal
-        overrides = await to_thread.run_sync(_write_overrides, update.overrides()) if channel == 'main' else None
+        # `overrides` reads the installed packages' metadata, off the event loop too.
+        overrides = (
+            await to_thread.run_sync(lambda: _write_overrides(update.overrides())) if channel == 'main' else None
+        )
         command = update.command(uv=uv or 'uv', overrides=overrides)
         if uv is None:
             self.failed = True

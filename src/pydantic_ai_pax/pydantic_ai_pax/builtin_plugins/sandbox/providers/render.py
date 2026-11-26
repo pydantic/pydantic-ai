@@ -22,6 +22,7 @@ from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import (
     saved_key,
 )
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
+from pydantic_ai_pax.cli.install import install_hint
 
 if TYPE_CHECKING:
     from render import RenderAsync
@@ -50,7 +51,7 @@ class RenderProvider:
     def missing(self, *, desktop: bool = False) -> str | None:
         del desktop
         if find_spec('render') is None:
-            return "Render support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[render]'."
+            return f'Render support is not installed. Install Pax with it: {install_hint("render")}.'
         if saved_key(KEY_NAME) is None or saved_key(WORKSPACE_KEY_NAME) is None:
             return (
                 f'Add your Render API key in /keys as {KEY_NAME}, and the tea-... ID of a workspace with sandboxes '

@@ -23,6 +23,7 @@ from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import (
     saved_key,
 )
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
+from pydantic_ai_pax.cli.install import install_hint
 
 if TYPE_CHECKING:
     import boxd
@@ -55,7 +56,7 @@ class BoxdProvider:
     def missing(self, *, desktop: bool = False) -> str | None:
         del desktop
         if find_spec('boxd') is None:
-            return "boxd support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[boxd]'."
+            return f'boxd support is not installed. Install Pax with it: {install_hint("boxd")}.'
         if saved_key(KEY_NAME) is None:
             return f'Add your boxd API key in /keys as {KEY_NAME}. Make one with boxd api-keys create.'
         return None

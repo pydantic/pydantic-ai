@@ -14,6 +14,7 @@ from genai_prices.data_snapshot import get_snapshot
 
 from pydantic_ai.models import known_model_names
 from pydantic_ai.providers import infer_provider_class
+from pydantic_ai_pax.cli.install import install_hint
 from pydantic_ai_pax.models import github_copilot
 from pydantic_ai_pax.models.profiles import provider_of
 
@@ -75,7 +76,7 @@ def check_installed(name: str) -> None:
         extra = named[1]
         raise ValueError(
             f'Cannot use {name}: the `{extra}` extra is not installed in {where}. '
-            f"Install Pax with it: `uv tool install 'pydantic-ai-pax[{extra}]'`, "
+            f'Install Pax with it: `{install_hint(extra)}`, '
             f'or install it there with `pip install "pydantic-ai-slim[{extra}]"`, '
             f'or from a pydantic-ai checkout run `uv run --package pydantic-ai-pax --extra {extra} pax`.'
         ) from exc
