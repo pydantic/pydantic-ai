@@ -2326,8 +2326,8 @@ def _run_priority_sla(
     client: GitHubClient, repo: str, mode: Literal['priority-sla', 'priority-sla-post'], *, now: dt.datetime
 ) -> tuple[list[str], list[str]]:
     if mode == 'priority-sla-post':
-        items: TypeAdapter[list[int]] = TypeAdapter(list[Annotated[int, Field(strict=True, gt=0)]])
-        numbers = items.validate_json(os.environ.get('PRIORITY_SLA_ITEMS') or '')
+        issue_numbers: TypeAdapter[list[int]] = TypeAdapter(list[Annotated[int, Field(strict=True, gt=0)]])
+        numbers = issue_numbers.validate_json(os.environ.get('PRIORITY_SLA_ITEMS') or '')
         return post_priority_sla(client, repo, numbers, now=now)
     # Anything but an explicit `true` is a dry run, which only lists the comments.
     post = os.environ.get('PRIORITY_SLA_POST') == 'true'
