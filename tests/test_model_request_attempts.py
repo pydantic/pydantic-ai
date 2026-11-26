@@ -1144,7 +1144,8 @@ async def test_a_failed_stream_whose_get_raises_still_falls_back_on_its_own_erro
 async def test_attempts_on_an_error_the_consumer_raises_through_the_stream_are_not_counted():
     """Only attempts that came out of the model's stream count, not those on an error the consumer raised through it.
 
-    Like another agent's `FallbackExceptionGroup`, whose rejected responses that run counted itself.
+    Like another agent's `FallbackExceptionGroup`, whose rejected responses that run counted itself. Not a VCR test: the
+    attempts come from an error the consumer raises through the stream, not from a provider exchange to record.
     """
     group = FallbackExceptionGroup('All models from FallbackModel failed', [ModelAPIError(model_name='m', message='x')])
     group.attempts = [
@@ -1168,3 +1169,31 @@ async def test_attempts_on_an_error_the_consumer_raises_through_the_stream_are_n
             await Agent(_answer()).run('x', usage=usage, event_stream_handler=raise_from_consumer)
         usages.append(usage)
     assert usages[0] == usages[1]
+
+
+async def test_a_billed_failure_continuing_a_suspended_response_keeps_what_the_consumer_saw():
+    """A continuation that fails before its first event adds only its usage to the response it continues.
+
+    Here the continuation polls the same job, whose usage is cumulative, so the response recorded for the stopped
+    request keeps the suspended response's parts, and the run counts only the job's usage beyond what it already had.
+    Not a VCR test: see `_BILLED`.
+    """
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('x')]),
+        ModelResponse(
+            parts=[TextPart('partial')],
+            state='suspended',
+            provider_response_id='job-1',
+            usage=RequestUsage(input_tokens=40, output_tokens=2),
+        ),
+    ]
+    model = FallbackModel(BilledThenFailsModel(_answer(), job_id='job-1'), _answer(), fallback_on=lambda error: False)
+    usage = RunUsage()
+    with capture_run_messages() as messages:
+        with pytest.raises(ModelOverloadedError):
+            await Agent(model).run(message_history=history, usage=usage, event_stream_handler=_consume)
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.parts == [TextPart('partial')]
+    # The step counts, as for any resumed stream that fails: the response it records holds the resumed parts.
+    assert usage == RunUsage(input_tokens=60, output_tokens=3, requests=1)

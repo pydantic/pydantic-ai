@@ -298,6 +298,7 @@ class _BilledThenFailingStream(StreamedResponse):
     """Reports usage, as Anthropic does on `message_start`, then fails before any output, as on `overloaded_error`."""
 
     _get_raises: bool = False
+    _job_id: str | None = None
 
     def get(self) -> ModelResponse:
         if self._get_raises:
@@ -306,6 +307,7 @@ class _BilledThenFailingStream(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         self._usage = RequestUsage(input_tokens=100, output_tokens=5)
+        self.provider_response_id = self._job_id
         raise ModelOverloadedError(model_name='billed', message='overloaded')
         yield  # pragma: no cover
 
@@ -329,14 +331,18 @@ class _BilledThenFailingStream(StreamedResponse):
 class BilledThenFailsModel(Model):
     """A model whose first `fail_times` streams are billed 100 input and 5 output tokens and fail before their first event.
 
-    Later streams are `answer`'s. With `get_raises`, the failing stream's `get()` raises too.
+    Later streams are `answer`'s. With `get_raises`, the failing stream's `get()` raises too. `job_id` is the failing
+    stream's `provider_response_id`, like a background job's on a poll.
     """
 
-    def __init__(self, answer: Model, *, fail_times: int = 1, get_raises: bool = False) -> None:
+    def __init__(
+        self, answer: Model, *, fail_times: int = 1, get_raises: bool = False, job_id: str | None = None
+    ) -> None:
         super().__init__()
         self.answer = answer
         self.fail_times = fail_times
         self.get_raises = get_raises
+        self.job_id = job_id
 
     async def request(
         self,
@@ -357,7 +363,7 @@ class BilledThenFailsModel(Model):
         if self.fail_times:
             self.fail_times -= 1
             yield _BilledThenFailingStream(
-                model_request_parameters=model_request_parameters, _get_raises=self.get_raises
+                model_request_parameters=model_request_parameters, _get_raises=self.get_raises, _job_id=self.job_id
             )
         else:
             async with self.answer.request_stream(

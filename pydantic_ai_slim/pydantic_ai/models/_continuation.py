@@ -632,10 +632,13 @@ class _ContinuationStreamedResponse(StreamedResponse):
 
         A model that waits for a stream's first event before handing it over, like a `FallbackModel`, discards a
         stream that fails before then, and its partial response rides on the error instead (see
-        `carry_partial_response`). `get()` keeps it, as it would a segment that failed once iteration had started.
+        `carry_partial_response`). `get()` keeps its usage, counted the way the segment's would be had it opened, but
+        nothing else of it: it produced nothing, so the response the consumer saw stays as it was.
         """
         if (partial := carried_partial_response(error)) is not None:
-            self._merged_response = partial if response is None else merge_responses(response, partial)
+            self._merged_response = (
+                partial if response is None else replace(response, usage=merge_responses(response, partial).usage)
+            )
 
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
         """Cancel-teardown errors to suppress, extended with the in-flight sub-stream's own.
