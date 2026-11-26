@@ -1855,14 +1855,27 @@ def _expired_response_handler(request: httpx2.Request) -> httpx2.Response:
     return httpx2.Response(404, json={'error': {'message': 'No response found.', 'type': 'invalid_request_error'}})
 
 
-expired_response_agent = Agent(
-    OpenAIResponsesModel(
-        'gpt-5.6-sol',
-        provider=OpenAIProvider(
-            api_key='mock-api-key',
-            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(_expired_response_handler)),
-        ),
+_expired_response_model = OpenAIResponsesModel(
+    'gpt-5.6-sol',
+    provider=OpenAIProvider(
+        api_key='mock-api-key',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(_expired_response_handler)),
     ),
+)
+
+_expired_response_history: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart(content='go')]),
+    ModelResponse(
+        parts=[TextPart('The answer ')],
+        model_name='gpt-5.6-sol',
+        provider_name='openai',
+        provider_response_id='resp_expired',
+        state='suspended',
+    ),
+]
+
+expired_response_agent = Agent(
+    _expired_response_model,
     name='durability_expired_suspended_response',
     capabilities=[
         TemporalDurability(
@@ -1885,18 +1898,11 @@ class ExpiredSuspendedResponseWorkflow:
 async def test_durability_expired_suspended_response_is_not_retried(allow_model_requests: None, client: Client):
     """Resuming a suspended OpenAI background response after the provider deleted it fails the model activity on its
     first attempt: every retry would retrieve the same deleted response.
+
+    The 404 comes from a `MockTransport` rather than a recording, since recording one needs a background response
+    that has outlived the provider's retention window; what's under test is the activity's retry policy.
     """
     _expired_response_requests.clear()
-    history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='go')]),
-        ModelResponse(
-            parts=[TextPart('The answer ')],
-            model_name='gpt-5.6-sol',
-            provider_name='openai',
-            provider_response_id='resp_expired',
-            state='suspended',
-        ),
-    ]
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -1906,7 +1912,7 @@ async def test_durability_expired_suspended_response_is_not_retried(allow_model_
         with pytest.raises(WorkflowFailureError) as exc_info:
             await client.execute_workflow(
                 ExpiredSuspendedResponseWorkflow.run,
-                args=[history],
+                args=[_expired_response_history],
                 id=ExpiredSuspendedResponseWorkflow.__name__,
                 task_queue=TASK_QUEUE,
             )
@@ -1922,6 +1928,67 @@ async def test_durability_expired_suspended_response_is_not_retried(allow_model_
             'available (it may have expired).',
         )
     )
+    assert _expired_response_requests == ['GET /v1/responses/resp_expired']
+
+
+_expired_response_delegate = Agent(_expired_response_model, name='durability_expired_suspended_response_delegate')
+
+
+async def check_background_job() -> str:
+    return (await _expired_response_delegate.run(message_history=_expired_response_history)).output
+
+
+def _check_background_job_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('check_background_job', {})])
+
+
+expired_response_tool_agent = Agent(
+    FunctionModel(_check_background_job_model_fn),
+    name='durability_expired_suspended_response_tool',
+    toolsets=[FunctionToolset(tools=[check_background_job], id='background_job_toolset')],
+    capabilities=[
+        TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+            ),
+        )
+    ],
+)
+
+
+@workflow.defn
+class ExpiredSuspendedResponseToolWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await expired_response_tool_agent.run('check')).output
+
+
+async def test_durability_tool_resuming_expired_suspended_response_is_not_retried(
+    allow_model_requests: None, client: Client
+):
+    """A tool that resumes a sub-agent on history whose suspended response the provider deleted fails its activity on
+    the first attempt, as the model activity does.
+    """
+    _expired_response_requests.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ExpiredSuspendedResponseToolWorkflow],
+        plugins=[AgentPlugin(expired_response_tool_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                ExpiredSuspendedResponseToolWorkflow.run,
+                id=ExpiredSuspendedResponseToolWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+    activity_error = exc_info.value.cause
+    assert isinstance(activity_error, ActivityError)
+    assert activity_error.retry_state == RetryState.NON_RETRYABLE_FAILURE
+    application_error = activity_error.cause
+    assert isinstance(application_error, ApplicationError)
+    assert application_error.type == 'SuspendedResponseExpired'
     assert _expired_response_requests == ['GET /v1/responses/resp_expired']
 
 
@@ -1959,6 +2026,9 @@ class ExpiredBatchWorkflow:
 async def test_durability_expired_batch_is_not_retried(client: Client):
     """Resuming a run whose pending batch the provider no longer has fails the model activity on its first attempt:
     every retry would check the same batch.
+
+    The batch API is the in-memory `SlowBatchTestModel` rather than a recording, since recording an expired batch
+    needs one that has outlived the provider's retention period.
     """
     _expired_batch_status_checks.clear()
     request = ModelRequest(parts=[UserPromptPart(content='go')])
