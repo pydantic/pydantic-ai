@@ -1801,16 +1801,20 @@ The user wants you to delete X.\
 
         assert (result.output, model_calls) == (2, 3)
 
-    async def test_failed_background_tool_cancels_its_sibling(self) -> None:
+    async def test_failed_background_tool_cancels_its_sibling(self, instrumented: Instrumented) -> None:
         slow_started = asyncio.Event()
         slow_cancelled = asyncio.Event()
+        instrumentation, exporter = instrumented(False)
 
         def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
             return ModelResponse(
-                parts=[ToolCallPart(tool_name='broken', args='{}'), ToolCallPart(tool_name='slow', args='{}')]
+                parts=[
+                    ToolCallPart(tool_name='broken', args='{}', tool_call_id='call_1'),
+                    ToolCallPart(tool_name='slow', args='{}', tool_call_id='call_2'),
+                ]
             )
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools()])
+        agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools(), instrumentation])
 
         @agent.tool_plain(metadata={'background': True})
         async def broken() -> str:
@@ -1830,6 +1834,21 @@ The user wants you to delete X.\
         with pytest.raises(RuntimeError, match='private detail'):
             await asyncio.wait_for(agent.run('go'), timeout=READINESS_WAIT_TIMEOUT)
         assert slow_cancelled.is_set()
+
+        broken_span = _summary(_span(exporter, 'background_tools execute broken'))
+        assert (broken_span['attributes']['background_tools.outcome'], broken_span['status']) == ('error', 'ERROR')
+        # Cancellation is the run ending, not the tool failing.
+        assert _summary(_span(exporter, 'background_tools execute slow')) == snapshot(
+            {
+                'attributes': {
+                    'gen_ai.tool.name': 'slow',
+                    'gen_ai.tool.call.id': 'call_2',
+                    'background_tools.outcome': 'interrupted',
+                },
+                'status': 'UNSET',
+                'events': [],
+            }
+        )
 
     async def test_background_tool_ending_in_cancelled_error_cancels_the_run(self, instrumented: Instrumented) -> None:
         release = asyncio.Event()
@@ -1868,19 +1887,20 @@ The user wants you to delete X.\
         span = _span(exporter, 'background_tools execute cancelled')
         assert (span.attributes or {})['background_tools.outcome'] == 'interrupted'
 
-    async def test_background_base_exception_stops_the_run(self) -> None:
+    async def test_background_base_exception_stops_the_run(self, instrumented: Instrumented) -> None:
         class FatalBackgroundError(BaseException):
             pass
 
         slow_started = asyncio.Event()
         slow_cancelled = asyncio.Event()
+        instrumentation, exporter = instrumented(False)
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='fatal', args='{}'), ToolCallPart(tool_name='slow', args='{}')]
             )
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools()])
+        agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools(), instrumentation])
 
         @agent.tool_plain(metadata={'background': True})
         async def fatal() -> str:
@@ -1900,6 +1920,11 @@ The user wants you to delete X.\
         with pytest.raises(FatalBackgroundError):
             await asyncio.wait_for(agent.run('go'), timeout=5)
         await asyncio.wait_for(slow_cancelled.wait(), timeout=5)
+
+        # Not an `Exception`, so only the outcome says the call failed.
+        assert (_span(exporter, 'background_tools execute fatal').attributes or {})[
+            'background_tools.outcome'
+        ] == 'error'
 
     async def test_pre_start_cancellation_releases_reserved_tool_usage(self) -> None:
         ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), pending_messages=[])
@@ -2450,7 +2475,7 @@ def _summary(span: ReadableSpan) -> _SpanSummary:
 
 
 class TestTelemetry:
-    """The placeholder's `execute_tool` span is marked, and the real execution gets a span of its own."""
+    """A background call's real execution gets a span of its own."""
 
     async def test_background_execution_has_its_own_span(self, instrumented: Instrumented) -> None:
         release = asyncio.Event()
@@ -2469,7 +2494,6 @@ class TestTelemetry:
 
         placeholder = _span(exporter, 'execute_tool slow')
         background = _span(exporter, 'background_tools execute slow')
-        assert (placeholder.attributes or {})['background_tools.backgrounded'] is True
         assert _summary(background) == snapshot(
             {
                 'attributes': {
@@ -2488,7 +2512,7 @@ class TestTelemetry:
         assert background.end_time is not None and placeholder.end_time is not None
         assert background.end_time > placeholder.end_time
 
-        # A tool without background metadata runs inline: no mark and no span of its own.
+        # A tool without background metadata runs inline: no span of its own.
         inline_agent = Agent(TestModel(call_tools=['quick']), capabilities=[BackgroundTools(), instrumentation])
 
         @inline_agent.tool_plain
@@ -2497,7 +2521,6 @@ class TestTelemetry:
 
         await inline_agent.run('go')
 
-        assert 'background_tools.backgrounded' not in (_span(exporter, 'execute_tool quick').attributes or {})
         assert [span.name for span in exporter.get_finished_spans() if span.name.startswith('background_tools ')] == [
             'background_tools execute slow'
         ]
@@ -2514,7 +2537,6 @@ class TestTelemetry:
                             'gen_ai.tool.name': 'broken',
                             'gen_ai.tool.call.id': 'call_1',
                             'background_tools.outcome': 'retried',
-                            'background_tools.retry_cause': 'model_retry',
                         },
                         'status': 'ERROR',
                         'events': [
@@ -2578,7 +2600,6 @@ class TestTelemetry:
                             'gen_ai.tool.name': 'broken',
                             'gen_ai.tool.call.id': 'call_1',
                             'background_tools.outcome': 'retried',
-                            'background_tools.retry_cause': 'model_retry',
                         },
                         'status': 'ERROR',
                         'events': [
@@ -2600,7 +2621,6 @@ class TestTelemetry:
                             'gen_ai.tool.name': 'broken',
                             'gen_ai.tool.call.id': 'call_1',
                             'background_tools.outcome': 'retried',
-                            'background_tools.retry_cause': 'validation_error',
                         },
                         'status': 'ERROR',
                         'events': [
@@ -2640,74 +2660,3 @@ class TestTelemetry:
         await agent.run('go')
 
         assert _summary(_span(exporter, 'background_tools execute broken')) == expected
-
-    async def test_run_ending_error_and_cancelled_sibling(self, instrumented: Instrumented) -> None:
-        slow_started = asyncio.Event()
-        instrumentation, exporter = instrumented(False)
-
-        def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name='broken', args='{}', tool_call_id='call_1'),
-                    ToolCallPart(tool_name='slow', args='{}', tool_call_id='call_2'),
-                ]
-            )
-
-        agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools(), instrumentation])
-
-        @agent.tool_plain(metadata={'background': True})
-        async def broken() -> str:
-            await slow_started.wait()
-            raise RuntimeError('private detail')
-
-        @agent.tool_plain(metadata={'background': True})
-        async def slow() -> str:
-            slow_started.set()
-            await asyncio.Event().wait()
-            return 'unreachable'  # pragma: no cover
-
-        with pytest.raises(RuntimeError, match='private detail'):
-            await asyncio.wait_for(agent.run('go'), timeout=READINESS_WAIT_TIMEOUT)
-
-        broken_span = _summary(_span(exporter, 'background_tools execute broken'))
-        assert (broken_span['attributes']['background_tools.outcome'], broken_span['status']) == ('error', 'ERROR')
-        slow_span = _summary(_span(exporter, 'background_tools execute slow'))
-        # Cancellation is the run ending, not the tool failing.
-        assert slow_span == snapshot(
-            {
-                'attributes': {
-                    'gen_ai.tool.name': 'slow',
-                    'gen_ai.tool.call.id': 'call_2',
-                    'background_tools.outcome': 'interrupted',
-                },
-                'status': 'UNSET',
-                'events': [
-                    {
-                        'name': 'exception',
-                        'exception.type': 'asyncio.exceptions.CancelledError',
-                        'exception.escaped': 'False',
-                    }
-                ],
-            }
-        )
-
-    async def test_base_exception_marks_the_span_as_failed(self, instrumented: Instrumented) -> None:
-        class FatalBackgroundError(BaseException):
-            pass
-
-        instrumentation, exporter = instrumented(False)
-        agent = Agent(_model_calling('fatal'), capabilities=[BackgroundTools(), instrumentation])
-
-        @agent.tool_plain(metadata={'background': True})
-        async def fatal() -> str:
-            raise FatalBackgroundError
-
-        with pytest.raises(FatalBackgroundError):
-            await asyncio.wait_for(agent.run('go'), timeout=READINESS_WAIT_TIMEOUT)
-
-        span = _span(exporter, 'background_tools execute fatal')
-        assert (span.attributes or {})['background_tools.outcome'] == 'error'
-        assert span.status.status_code.name == 'ERROR'
-        assert [(event.attributes or {}).get('exception.type') for event in span.events] == [
-            f'{__name__}.{FatalBackgroundError.__qualname__}'
-        ]

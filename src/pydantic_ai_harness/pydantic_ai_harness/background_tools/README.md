@@ -203,25 +203,26 @@ are dropped. Async tools must allow cancellation; ignoring it can prevent the ru
 ## Tracing
 
 Pydantic AI's `execute_tool {tool_name}` span for a background call ends when the started message is
-returned. `BackgroundTools` sets `background_tools.backgrounded` to `true` on that span and records the
-tool's actual work as a `background_tools execute {tool_name}` span. The task starts inside the
-`execute_tool` span, so the new span is its child. Spans the tool opens are children of the new span.
+returned. `BackgroundTools` records the tool's actual work as a `background_tools execute {tool_name}`
+span. The task starts in whatever span is active when the call is handed off, usually the
+`execute_tool` span, so the new span is its child; `gen_ai.tool.call.id` matches the two either way.
+Spans the tool opens are children of the new span.
 
 | Attribute | Value |
 | --- | --- |
 | `gen_ai.tool.name` | The tool's name. |
 | `gen_ai.tool.call.id` | The call's ID, the same as on the `execute_tool` span and the result's `tool_call_id`. |
 | `background_tools.outcome` | How the call ended: `success`, `retried`, `failed`, `interrupted` or `error`. |
-| `background_tools.retry_cause` | Only when `retried`: why the call is made again, such as `model_retry` or `validation_error`, as Pydantic AI records it in `pydantic_ai.tool.retry.cause` on a foreground call's `execute_tool` span (see `ToolRetryCause`). |
 
-`retried` is a `ModelRetry` or a validation error, which reaches the model as a failed result and counts
-toward the tool's `max_retries`. `failed` is a `ToolFailed`, or an `ApprovalRequired` or `CallDeferred`,
+`retried` is a `ModelRetry` or a validation error: the call asked for a retry, which reaches the model as
+a failed result and counts toward the tool's `max_retries`, unless that budget is spent and the run ends. `failed` is a `ToolFailed`, or an `ApprovalRequired` or `CallDeferred`,
 which cannot defer a call that is already running. `interrupted` means the task was cancelled before the
 tool finished, usually because the run stopped it. A tool that raises `CancelledError` itself is also
 recorded as `interrupted`, though it ends the run. `error` is any other exception, which ends the run.
 
 `retried`, `failed` and `error` set the span's status to error; `interrupted` leaves it unset, since the
-run stopped the tool rather than the tool failing. An `Exception`'s message is recorded only when the run
+run stopped the tool rather than the tool failing. A `BaseException` that is not an `Exception` also leaves
+it unset, and only `background_tools.outcome` says the call failed. An `Exception`'s message is recorded only when the run
 includes content in traces, since it can quote the tool's arguments or results. The span has no retry
 attempt attributes, which a foreground call's span carries: a background retry is charged when its
 result is delivered, after this span ends, so the attempt number isn't known yet. A call cancelled

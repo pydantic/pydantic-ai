@@ -16,7 +16,6 @@ import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from pydantic import ValidationError
 
-from pydantic_ai._telemetry import current_span, open_span
 from pydantic_ai.capabilities import (
     AbstractCapability,
     AgentNode,
@@ -35,16 +34,9 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
     UserError,
 )
-from pydantic_ai.messages import (
-    ModelResponse,
-    RetryFeedbackCause,
-    ToolCallPart,
-    ToolRetryCause,
-    ToolReturn,
-    ToolReturnPart,
-    UserContent,
-)
+from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
 from pydantic_ai.output import PendingModelResponse
+from pydantic_ai.telemetry import open_span
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolRequests,
@@ -196,31 +188,15 @@ async def _execute_traced(
     cannot defer the call, so they fail it.
     """
     attributes = {'gen_ai.tool.name': call.tool_name, 'gen_ai.tool.call.id': call.tool_call_id}
-    # A cancellation is `interrupted`: the run ended around the call, which did not fail.
-    not_errors = (anyio.get_cancelled_exc_class(),)
-    with open_span(
-        ctx, f'background_tools execute {call.tool_name}', attributes=attributes, not_errors=not_errors
-    ) as span:
+    with open_span(ctx, f'background_tools execute {call.tool_name}', attributes=attributes) as span:
         try:
             result = await handler(args)
         except BaseException as error:
             outcome = _outcome_of_error(error)
             span.set_attribute('background_tools.outcome', outcome)
-            if outcome == 'retried' and (cause := _retry_cause(error)) is not None:
-                # Core's `RetryInfo.cause` values, which a foreground call records as `pydantic_ai.tool.retry.cause`.
-                span.set_attribute('background_tools.retry_cause', cause)
             raise
         span.set_attribute('background_tools.outcome', 'success')
         return result
-
-
-def _retry_cause(error: BaseException) -> ToolRetryCause | RetryFeedbackCause | None:
-    """Why a `retried` error has the call made again, in the words of core's `RetryInfo.cause`."""
-    if isinstance(error, ToolRetryError):
-        retry = error.tool_retry.retry
-        # `None` only on a legacy part whose cause its content can't tell.
-        return retry.cause if retry is not None else None
-    return 'validation_error' if isinstance(error, ValidationError) else 'model_retry'
 
 
 def _format_background_failure(tool_name: str, task_id: str, error: _SignalledError) -> BackgroundToolResultPart:
@@ -501,7 +477,6 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                 # Core counts a successful call when the tool body returns, replacing this reservation.
                 ctx.usage.tool_calls -= 1
 
-        current_span(ctx).set_attribute('background_tools.backgrounded', True)
         ctx.usage.tool_calls += 1
         self._live += 1
         self._receipts.add(tool_name)
