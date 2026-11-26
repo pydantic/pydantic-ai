@@ -209,8 +209,10 @@ def _match(text: str, table: dict[str, T]) -> T | None:
 def _step(messages: Sequence[ModelMessage], info: AgentInfo) -> Step:
     prompt, responses = _prompt(messages)
     if info.output_tools:
-        # The background session namer asks for a title card.
-        title, subtitle, tags = _match(prompt, NAMES) or ('Untitled session', '', [])
+        # The background session namer asks for a title card. Its prompt lists the other sessions' titles
+        # before the conversation, so only the conversation picks the card.
+        conversation = prompt.rpartition('Current conversation tail:')[2]
+        title, subtitle, tags = _match(conversation, NAMES) or ('Untitled session', '', [])
         return Step(tool=info.output_tools[0].name, args={'title': title, 'subtitle': subtitle, 'tags': tags})
     if prompt.startswith(SUMMARY_PROMPT):
         return Step(text='The user is adding features to a small weather CLI; tests use unittest.\n')
