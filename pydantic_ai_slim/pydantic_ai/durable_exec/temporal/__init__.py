@@ -37,6 +37,7 @@ from ._event_stream import (
     stream_agent_events,
     workflow_stream_event_handler,
 )
+from ._external_events import fail_external_event, resolve_external_event
 from ._logfire import LogfirePlugin
 from ._operation_names import TemporalOperationNamer
 from ._payload_converter import PydanticAIPayloadConverter
@@ -61,6 +62,8 @@ __all__ = [
     'DurableAgentRunEvents',
     'workflow_stream_event_handler',
     'stream_agent_events',
+    'resolve_external_event',
+    'fail_external_event',
 ]
 
 # We need eagerly import the anyio backends or it will happens inside workflow code and temporal has issues

@@ -103,35 +103,40 @@ _CLOCK_SLACK = timedelta(seconds=2)
 def ensure_inactive(summary: ConversationSummary) -> None:
     """Local SQLite sessions cannot be resumed while their recorded process is running.
 
-    On Linux, a process that started after the conversation was last saved reuses the recorded PID, so the
-    conversation is not busy; elsewhere PID reuse is conservatively treated as busy. Linux times a start from
-    the current wall clock, so a forward clock jump larger than the owner's age at its last save makes a running
-    conversation read as not busy. This is not a distributed lease; do not share this database between hosts.
+    The check is `process_running`'s, with the conversation's last save as the time its process ran it.
     """
     if summary.outcome != 'running' or summary.owner_pid is None:
         return
+    if process_running(summary.owner_pid, since=summary.updated_at):
+        raise ConversationConflict(f'Session is busy in process {summary.owner_pid}.')
+
+
+def process_running(pid: int, *, since: datetime) -> bool:
+    """Whether process `pid` may still be the process that was running something at `since`.
+
+    On Linux, a process that started after `since` reuses the PID, so the one that ran it has gone; elsewhere PID
+    reuse is conservatively treated as running. Linux times a start from the current wall clock, so a forward clock
+    jump larger than the owner's age at `since` makes a running process read as gone. This is not a distributed
+    lease; do not share the state it guards between hosts. A naive `since` is taken as UTC, as the store's own
+    times are.
+    """
     if sys.platform == 'win32':
         system_root = PureWindowsPath(os.environ['SystemRoot'])
         if not system_root.is_absolute():
             raise ValueError('SystemRoot must be an absolute Windows path')
         result = subprocess.run(
-            [str(system_root / 'System32' / 'tasklist.exe'), '/FI', f'PID eq {summary.owner_pid}', '/FO', 'CSV', '/NH'],
+            [str(system_root / 'System32' / 'tasklist.exe'), '/FI', f'PID eq {pid}', '/FO', 'CSV', '/NH'],
             capture_output=True,
             text=True,
             check=True,
             timeout=10,
         )
-        if not any(len(row) > 1 and row[1] == str(summary.owner_pid) for row in csv.reader(result.stdout.splitlines())):
-            return
-    else:
-        started = _process_started(summary.owner_pid)
-        # A naive time, as an application may save, is taken as UTC, as the store's own times are.
-        saved = summary.updated_at if summary.updated_at.tzinfo else summary.updated_at.replace(tzinfo=UTC)
-        if started is not None and started > saved + _CLOCK_SLACK:
-            return
-        ensure_posix_inactive(pid=summary.owner_pid)
-        return
-    raise ConversationConflict(f'Session is busy in process {summary.owner_pid}.')
+        return any(len(row) > 1 and row[1] == str(pid) for row in csv.reader(result.stdout.splitlines()))
+    started = _process_started(pid)
+    saved = since if since.tzinfo else since.replace(tzinfo=UTC)
+    if started is not None and started > saved + _CLOCK_SLACK:
+        return False
+    return _posix_process_exists(pid)
 
 
 _CREATED = "coalesce(json_extract(metadata, '$.created_at'), json_extract(metadata, '$.updated_at'))"
@@ -165,13 +170,19 @@ def _process_started(pid: int) -> datetime | None:
 
 def ensure_posix_inactive(*, pid: int) -> None:
     """Signal zero probes existence without delivering a signal on POSIX."""
+    if _posix_process_exists(pid):
+        raise ConversationConflict(f'Session is busy in process {pid}.')
+
+
+def _posix_process_exists(pid: int) -> bool:
+    """Whether a process `pid` exists, probed with signal zero, which delivers no signal; one we may not signal exists."""
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
-        return
+        return False
     except PermissionError:
         pass
-    raise ConversationConflict(f'Session is busy in process {pid}.')
+    return True
 
 
 @dataclass(kw_only=True)
