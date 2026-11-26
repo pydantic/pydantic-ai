@@ -1347,7 +1347,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             if isinstance(part, NativeToolCallPart | NativeToolReturnPart):
                 keys = calls if isinstance(part, NativeToolCallPart) else returns
                 keys.add((part.tool_call_id, part.tool_name))
-            elif message.finish_reason != 'content_filter' and isinstance(part, ThinkingPart):
+            elif (
+                isinstance(part, ThinkingPart)
+                and message.finish_reason != 'content_filter'
+                and self.profile.get('openai_chat_send_back_thinking_parts', 'auto') in ('auto', 'field')
+            ):
                 # DeepSeek clears step reasoning from the terminal content-filter response.
                 index = (part.provider_details or {}).get(CHAT_STEP_KEY)
                 thinking_by_step.setdefault(index, []).append(part.content)

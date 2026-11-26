@@ -28,6 +28,7 @@ from ..conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.deepseek import DeepSeekProvider
 
 
@@ -111,6 +112,16 @@ async def test_deepseek_web_fetch_history(
                 full_history = json.dumps(requests[1]['messages'])
                 assert 'Thinking before reading' in full_history
                 assert 'Thinking after reading' in full_history
+                no_thinking_replay = OpenAIChatModel(
+                    'deepseek-flash',
+                    provider=DeepSeekProvider(api_key='test', http_client=client),
+                    profile=OpenAIModelProfile(openai_chat_send_back_thinking_parts=False),
+                )
+                await Agent(no_thinking_replay).run('What was the UUID?', message_history=history)
+                redacted = json.dumps(requests[-1]['messages'])
+                assert 'Thinking before reading' not in redacted
+                assert 'Thinking after reading' not in redacted
+                assert 'recorded-page-signature' in redacted
                 response.finish_reason = 'content_filter'
                 await Agent(model, model_settings={'thinking': False}).run(
                     'What was the UUID?', message_history=history
