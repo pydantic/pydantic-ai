@@ -158,11 +158,16 @@ class SessionBrowser:
 
     @property
     def visible(self) -> list[ConversationSummary]:
-        """The sessions the source filter lets through."""
+        """The sessions the source filter lets through.
+
+        Pax lists its own sessions and the ones imported into it, since an import makes a Pax session; an agent's
+        filter lists its sessions, imported or not.
+        """
         if self.source is None:
             return self.entries
-        wanted = None if self.source == 'clai' else self.source
-        return [entry for entry in self.entries if source_of(entry) == wanted]
+        if self.source == 'clai':
+            return [entry for entry in self.entries if source_of(entry) is None or not self.importing(entry)]
+        return [entry for entry in self.entries if source_of(entry) == self.source]
 
     def source_name(self) -> str:
         """What the source filter lists, for the header and notices."""

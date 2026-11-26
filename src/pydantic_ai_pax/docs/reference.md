@@ -2798,9 +2798,9 @@ The browser follows Code Puppy's project/session design:
   token counts. Recent sorting groups cards under headings that widen with age:
   **TODAY**, **YESTERDAY**, **LAST 7 DAYS**, **LAST 30 DAYS**, then one per month,
   each older card showing its date.
-- `f` cycles which sessions are listed: all of them, Pax's own, or those from
-  Claude Code or Codex. The header names the current choice, such as
-  **Source: all**.
+- `f` cycles which sessions are listed: all of them, Pax's (its own and the ones
+  you imported), or those from Claude Code or Codex. The header names the current
+  choice, such as **Source: all**.
 - Enter opens a project or resumes a session. Right opens a scrollable transcript,
   with newer messages first. Left returns to projects.
 - `/` searches across projects, including saved user/assistant text. `s` cycles

@@ -659,6 +659,12 @@ def test_sources_filter_and_idle_worktrees_fold(tmp_path: Path) -> None:
             updated_at=now - timedelta(days=35),
         ),
     ]
+
+    # The agents' sessions are not imported yet, so the Pax filter leaves them out.
+    def not_imported(entry: ConversationSummary) -> bool:
+        return bool(entry.tags)
+
+    widget.importing = not_imported
     widget.reload()
     key = widget.project
     assert widget.rows == [

@@ -1350,6 +1350,9 @@ async def test_resume_browser_lists_imports_beside_saved_sessions(
         assert not browser.importing(next(entry for entry in browser.visible if entry.id == imported_id))
         browser.mode = 'sessions'
         assert 'Claude Code · imported ·' in '\n'.join(browser.frame(width=140, height=20))
+        # An import makes a Pax session, so the Pax filter lists the copy too, but not what is still to import.
+        browser.source = 'clai'
+        assert {entry.id for entry in browser.visible} == {native_id, imported_id}
         return imported_id
 
     monkeypatch.setattr(SessionBrowser, 'run', copy_replaces_original)
