@@ -200,7 +200,7 @@ async def test_no_content_reaches_telemetry_from_workspace_calls(tmp_path: Path,
     )
 
     @agent.tool
-    async def use_workspace(ctx: RunContext[Any]) -> str:
+    async def use_workspace(ctx: RunContext[None]) -> str:
         path = f'{SECRETS["workspace_path"]}.txt'
         await ctx.workspace.write_text(path, 'hello')
         await ctx.workspace.read_text(path)
