@@ -843,11 +843,7 @@ class GoogleModel(Model[Client]):
 
     def _reject_mcp_server_tools(self, params: ModelRequestParameters) -> None:
         """Point a remote MCP server at the Interactions API, which serves it, before base validation rejects it."""
-        fallback_ids = {t.unless_native for t in params.function_tools if t.unless_native}
-        if any(
-            isinstance(t, MCPServerTool) and not t.optional and t.unique_id not in fallback_ids
-            for t in params.native_tools
-        ):
+        if _google_common.rejects_native_tool(self, params, MCPServerTool):
             # The `google-interactions:` prefix uses the Gemini API, so a Google Cloud model isn't pointed at it.
             prefix = '' if self._is_google_cloud else ', with the `google-interactions:` prefix,'
             raise UserError(

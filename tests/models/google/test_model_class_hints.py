@@ -11,9 +11,10 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, ToolDefinition
 from pydantic_ai.capabilities import BatchModelRequests, NativeTool
+from pydantic_ai.computer_use import COMPUTER_KIND
 from pydantic_ai.exceptions import ModelHTTPError, ModelRequestRejectedError, UserError
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.native_tools import ComputerTool, MCPServerTool
+from pydantic_ai.native_tools import AbstractNativeTool, ComputerTool, MCPServerTool
 from pydantic_ai.usage import UsageLimits
 
 from ...conftest import try_import
@@ -186,3 +187,22 @@ def test_interactions_computer_tool_without_error(params: ModelRequestParameters
     model = GoogleInteractionsModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='mock-api-key'))
     _, prepared = model.prepare_request(None, params)
     assert prepared.native_tools == []
+
+
+def test_interactions_computer_tool_kept_on_a_model_that_supports_it():
+    """A `GoogleInteractionsModel` that supports `ComputerTool` sends it rather than pointing at `GoogleModel`.
+
+    The hint replaces only the error for an unsupported tool. Not a VCR test: the tool is resolved in
+    `prepare_request`, before any request is built.
+    """
+
+    class ComputerUseInteractionsModel(GoogleInteractionsModel):
+        @classmethod
+        def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+            return super().supported_native_tools() | {ComputerTool}
+
+    model = ComputerUseInteractionsModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='mock-api-key'))
+    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+    tool = ComputerTool(display_size=DISPLAY_SIZE)
+    _, params = model.prepare_request(None, ModelRequestParameters(native_tools=[tool], function_tools=[computer]))
+    assert params.native_tools == [tool]

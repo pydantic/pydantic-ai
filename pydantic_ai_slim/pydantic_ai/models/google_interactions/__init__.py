@@ -287,14 +287,10 @@ class GoogleInteractionsModel(Model[Client]):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         # Check before base validation so a computer use model points at `GoogleModel`, which sends the tool on the
         # Gemini API, not the generic error.
-        fallback_ids = {t.unless_native for t in model_request_parameters.function_tools if t.unless_native}
         if (
             self.profile.get('google_supports_computer_use', False)
             and not self.client.vertexai
-            and any(
-                isinstance(t, ComputerTool) and not t.optional and t.unique_id not in fallback_ids
-                for t in model_request_parameters.native_tools
-            )
+            and _google_common.rejects_native_tool(self, model_request_parameters, ComputerTool)
         ):
             raise UserError(
                 '`ComputerTool` is not supported by `GoogleInteractionsModel`. Use `GoogleModel`, with the `google:` '
