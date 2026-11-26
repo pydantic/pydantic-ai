@@ -336,7 +336,9 @@ def evaluate_expression(expression: str, values: dict[str, str | bool | int]) ->
     expression = expression.strip().removeprefix('${{').removesuffix('}}')
     for name in sorted(values, key=len, reverse=True):
         expression = expression.replace(name, repr(values[name]))
-    return eval(expression.replace('&&', ' and ').replace('||', ' or ').strip(), {'__builtins__': {}})
+    return eval(
+        expression.replace('&&', ' and ').replace('||', ' or ').strip(), {'__builtins__': {}, 'format': str.format}
+    )
 
 
 @pytest.mark.parametrize(
@@ -386,8 +388,9 @@ def test_review_gate_wake_ups_collapse_per_head(
     values: dict[str, str | bool | int] = {
         'github.event_name': event,
         'github.event.workflow_run.conclusion': conclusion,
-        "format('{0}-{1}', github.event.workflow_run.head_branch, github.event.workflow_run.head_sha)": f'feature-{HEAD}',
-        "format('run-{0}', github.run_id)": 'run-456',
+        'github.event.workflow_run.head_branch': 'feature',
+        'github.event.workflow_run.head_sha': HEAD,
+        'github.run_id': 456,
     }
     prefix, expression = concurrency['group'].split('${{', 1)
     assert prefix == 'pr-review-gates-'
