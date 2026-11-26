@@ -237,8 +237,7 @@ def _google_interactions_model() -> GoogleInteractionsModel:
     return GoogleInteractionsModel('gemini-3.8-flash', provider=GoogleProvider(api_key='test-key'))
 
 
-async def _google_interactions_body(history: list[ModelMessage]) -> Body:
-    model = _google_interactions_model()
+async def _google_interactions_body(model: GoogleInteractionsModel, history: list[ModelMessage]) -> Body:
     parameters, messages = _prepare(model, history)
     system, steps = await model._map_messages(messages, parameters)  # pyright: ignore[reportPrivateUsage]
     return _body(system, steps)
@@ -404,6 +403,7 @@ MAPPER_CASES = [
     ),
     MapperCase(
         'google-interactions',
+        _google_interactions_model,
         _google_interactions_body,
         google_interactions_wire,
         [
@@ -953,8 +953,9 @@ def _is_user_side(item: JsonValue) -> bool:
     role = item.get('role')
     if role is not None:
         return role not in ('assistant', 'model')
-    # OpenAI Responses items without a role: everything but a tool result is the model's.
-    return item.get('type') == 'function_call_output'
+    # Items without a role, from OpenAI Responses and Google Interactions: only user input and tool results are the
+    # request's side.
+    return item.get('type') in ('function_call_output', 'user_input', 'function_result')
 
 
 def _settled_body(body: list[JsonValue]) -> list[JsonValue]:
