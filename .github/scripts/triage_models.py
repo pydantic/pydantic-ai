@@ -119,6 +119,17 @@ class LabelStub(_GitHubObject):
     name: str = ''
 
 
+class _LinkedIssue(_GitHubObject):
+    state: str = ''
+    updated_at: str = ''
+    # Present only when the linked item is a pull request.
+    pull_request: dict[str, object] | None = None
+
+
+class _CrossReference(_GitHubObject):
+    issue: _LinkedIssue = Field(default_factory=_LinkedIssue)
+
+
 class IssueEvent(_GitHubObject):
     """One REST issue or timeline event; GitHub omits fields per event kind."""
 
@@ -132,3 +143,5 @@ class IssueEvent(_GitHubObject):
     assignee: Account = Field(default_factory=Account)
     assigner: Account = Field(default_factory=Account)
     label: LabelStub = Field(default_factory=LabelStub)
+    # The item that mentioned this one, on `cross-referenced` timeline events.
+    source: _CrossReference = Field(default_factory=_CrossReference)

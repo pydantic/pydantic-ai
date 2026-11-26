@@ -71,6 +71,7 @@ class FakeClient(monitor.GitHubClient):
         self.review_comments: dict[int, list[dict[str, Any]]] = {}
         self.reviews: dict[int, list[dict[str, Any]]] = {}
         self.truncated: set[int] = set()
+        self.truncated_issue_list = False
         self.timelines: dict[int, list[dict[str, Any]]] = {}
         self.label_descriptions: dict[str, str] = {}
 
@@ -193,6 +194,8 @@ class FakeClient(monitor.GitHubClient):
 
     def first_pages(self, path: str, *, count: int) -> tuple[list[dict[str, Any]], bool]:
         self.calls.append(('FIRST', path, None))
+        if '/issues?' in path:
+            return self.get(path), not self.truncated_issue_list
         if '/pulls/' in path:
             number = int(path.split('/pulls/')[1].split('/')[0])
             source = self.reviews if path.endswith('/reviews') else self.review_comments
@@ -3026,3 +3029,317 @@ def test_github_client_disables_redirects(monkeypatch: pytest.MonkeyPatch):
     assert len(seen) == 1
     assert seen[0] is monitor.NoRedirect
     assert monitor.NoRedirect().redirect_request(None, None, 302, '', None, 'https://evil.example') is None
+
+
+SLA_NOW = dt.datetime(2026, 11, 26, 15, tzinfo=dt.UTC)
+SLA_BOT = {'login': 'github-actions[bot]', 'type': 'Bot'}
+
+
+def ago(delta: dt.timedelta) -> str:
+    return (SLA_NOW - delta).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+def days_ago(days: float) -> str:
+    return ago(dt.timedelta(days=days))
+
+
+def sla_event(event: str, login: str, created_at: str, **fields: object) -> dict[str, Any]:
+    return {'event': event, 'actor': {'login': login, 'type': 'User'}, 'created_at': created_at, **fields}
+
+
+def linked_pull(state: str, updated_at: str) -> dict[str, Any]:
+    issue = {'number': 99, 'state': state, 'updated_at': updated_at, 'pull_request': {'url': 'u'}}
+    return sla_event('cross-referenced', 'contributor', days_ago(20), source={'type': 'issue', 'issue': issue})
+
+
+def sla_client(
+    timelines: dict[int, list[dict[str, Any]]],
+    *,
+    labels: dict[int, list[str]] | None = None,
+    assignees: dict[int, list[str]] | None = None,
+) -> FakeClient:
+    client = FakeClient(
+        {
+            number: item(
+                number, labels=(labels or {}).get(number, ['p:2-high']), assignees=(assignees or {}).get(number)
+            )
+            for number in timelines
+        }
+    )
+    client.permissions = {'DouweM': 'write', 'dsfaccini': 'admin'}
+    client.timelines = timelines
+    return client
+
+
+def posted(client: FakeClient) -> list[tuple[str, object]]:
+    return [
+        (path, payload) for method, path, payload in client.calls if method == 'POST' and path.endswith('/comments')
+    ]
+
+
+def decide(client: FakeClient, number: int = 1, label: str = 'p:2-high') -> tuple[str, str]:
+    return monitor._priority_sla_decision(client, 'r', client.items[number], label, now=SLA_NOW)
+
+
+@pytest.mark.parametrize(
+    ('extra', 'outcome'),
+    [
+        pytest.param([], 'due', id='label-only'),
+        pytest.param([sla_event('commented', 'DouweM', days_ago(6))], 'active', id='maintainer-comment'),
+        pytest.param(
+            [sla_event('labeled', 'dsfaccini', days_ago(6), label={'name': 'bug'})], 'active', id='other-label'
+        ),
+        pytest.param([sla_event('commented', 'contributor', days_ago(1))], 'due', id='community-comment'),
+        pytest.param([sla_event('renamed', 'dsfaccini', days_ago(1))], 'due', id='title-edit'),
+        pytest.param([sla_event('mentioned', 'DouweM', days_ago(1))], 'due', id='passive-event'),
+        pytest.param(
+            [{'event': 'labeled', 'actor': SLA_BOT, 'created_at': days_ago(1), 'label': {'name': 'bug'}}],
+            'due',
+            id='bot-event',
+        ),
+        pytest.param([linked_pull('open', days_ago(6))], 'active', id='fresh-open-pull'),
+        pytest.param([linked_pull('open', ago(dt.timedelta(days=7, hours=1)))], 'due', id='stale-open-pull'),
+        pytest.param([linked_pull('closed', days_ago(1))], 'due', id='closed-pull'),
+    ],
+)
+def test_priority_sla_sat_since_counts_the_label_maintainers_and_fresh_open_pulls(
+    extra: list[dict[str, Any]], outcome: str
+):
+    client = sla_client({1: [label_event('p:2-high', created_at=days_ago(8)), *extra]}, assignees={1: ['DouweM']})
+
+    assert decide(client)[0] == outcome
+
+
+def test_priority_sla_window_boundaries_follow_the_label():
+    def outcome(label: str, delta: dt.timedelta) -> str:
+        client = sla_client({1: [label_event(label, created_at=ago(delta))]}, labels={1: [label]})
+        return decide(client, label=label)[0]
+
+    assert outcome('p:2-high', dt.timedelta(days=7)) == 'active'
+    assert outcome('p:2-high', dt.timedelta(days=7, seconds=1)) == 'due'
+    assert outcome('p:1-highest', dt.timedelta(days=3)) == 'active'
+    assert outcome('p:1-highest', dt.timedelta(days=3, seconds=1)) == 'due'
+
+
+def test_priority_sla_comment_text_mentions_the_owner_and_names_its_window():
+    client = sla_client({1: [label_event('p:2-high', created_at='2026-11-18T23:11:20Z')]}, assignees={1: ['DouweM']})
+
+    assert decide(client) == (
+        'due',
+        '@DouweM this `p:2-high` issue has had no maintainer or linked-PR activity for 7 days; the window for '
+        'its priority is 7. Could you post a next step, or change its priority?\n\n'
+        '<!-- pydantic-ai-priority-sla:v1 label=p:2-high since=2026-11-18T23:11:20Z -->',
+    )
+
+
+@pytest.mark.parametrize(
+    ('assignees', 'mentions'),
+    [
+        pytest.param(['dsfaccini'], None, id='a-silent-owner-only'),
+        pytest.param([], '@adtyavrdhn', id='b-unassigned-goes-to-the-fallback-owner'),
+        pytest.param(['DouweM', 'dsfaccini', 'adtyavrdhn'], '@adtyavrdhn @DouweM', id='c-every-maintainer-but-silent'),
+        pytest.param(['contributor'], '@adtyavrdhn', id='d-contributor-falls-back-to-b'),
+        pytest.param(['contributor', 'dsfaccini'], None, id='d-contributor-falls-back-to-a'),
+    ],
+)
+def test_priority_sla_mentions_maintainer_owners_never_contributors_or_silent_owners(
+    assignees: list[str], mentions: str | None
+):
+    client = sla_client({1: [label_event('p:2-high', created_at=days_ago(8))]}, assignees={1: assignees})
+
+    outcome, body = decide(client)
+
+    assert monitor._FALLBACK_OWNER == 'adtyavrdhn'
+    if mentions is None:
+        assert (outcome, body) == ('owner_skipped', '')
+    else:
+        assert outcome == 'due'
+        assert body.startswith(f'{mentions} this ')
+        assert '@dsfaccini' not in body and '@contributor' not in body
+
+
+def test_priority_sla_comments_once_per_window_and_again_after_maintainer_activity():
+    client = sla_client({1: [label_event('p:2-high', created_at=days_ago(8))]}, assignees={1: ['DouweM']})
+
+    due, _, _ = monitor.priority_sla(client, 'r', now=SLA_NOW, post=True)
+    monitor.post_priority_sla(client, 'r', due, now=SLA_NOW)
+    [(path, payload)] = posted(client)
+    assert path == '/repos/r/issues/1/comments'
+    assert isinstance(payload, dict)
+    # GitHub records the comment on the timeline, and the mention as a passive event.
+    client.timelines[1] += [
+        {'event': 'commented', 'actor': SLA_BOT, 'created_at': ago(dt.timedelta()), 'body': payload['body']},
+        sla_event('mentioned', 'DouweM', ago(dt.timedelta())),
+    ]
+
+    assert monitor.priority_sla(client, 'r', now=SLA_NOW, post=True)[0] == []
+    assert decide(client)[0] == 'commented'
+
+    # A pasted marker is not the bot's, so it never covers a window.
+    client.timelines[1][-2]['actor'] = {'login': 'contributor', 'type': 'User'}
+    assert decide(client)[0] == 'due'
+    client.timelines[1][-2]['actor'] = SLA_BOT
+
+    # A maintainer reply opens a new window, which comments again once it runs out.
+    client.timelines[1].append(sla_event('commented', 'DouweM', ago(dt.timedelta(seconds=-1))))
+    later = SLA_NOW + dt.timedelta(days=7, seconds=2)
+    assert monitor._priority_sla_decision(client, 'r', client.items[1], 'p:2-high', now=later)[0] == 'due'
+
+
+def test_priority_sla_comment_still_covers_a_window_that_moved_back():
+    """A counted pull request that closes moves sat-since back; the earlier comment still covers it."""
+    client = sla_client(
+        {1: [label_event('p:1-highest', created_at=days_ago(10)), linked_pull('open', days_ago(4))]},
+        labels={1: ['p:1-highest']},
+        assignees={1: ['DouweM']},
+    )
+    outcome, body = decide(client, label='p:1-highest')
+    assert outcome == 'due'
+    assert f'since={days_ago(4)}' in body
+
+    client.timelines[1] += [{'event': 'commented', 'actor': SLA_BOT, 'created_at': days_ago(0), 'body': body}]
+    client.timelines[1][1]['source']['issue']['state'] = 'closed'
+
+    assert decide(client, label='p:1-highest')[0] == 'commented'
+
+
+def test_priority_sla_cannot_tell_without_a_moment_or_with_exhausted_maintainer_lookups(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    empty = sla_client({1: [sla_event('commented', 'contributor', days_ago(9))]})
+    assert decide(empty)[0] == 'unknown'
+
+    monkeypatch.setattr(monitor, '_ITEM_PROBE_LIMIT', 1)
+    crowded = sla_client(
+        {
+            1: [
+                label_event('p:2-high', created_at=days_ago(9)),
+                sla_event('commented', 'first', days_ago(8)),
+                sla_event('commented', 'second', days_ago(8)),
+            ]
+        }
+    )
+    assert decide(crowded)[0] == 'unknown'
+
+
+def test_priority_sla_dry_run_lists_without_posting_and_records_the_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    events: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(monitor, '_emit_event', lambda name, **attributes: events.append((name, attributes)))
+    stale = [label_event('p:2-high', created_at=days_ago(8))]
+    client = sla_client(
+        {
+            1: list(stale),
+            2: list(stale),
+            3: [label_event('p:2-high', created_at=days_ago(1))],
+            4: [label_event('p:1-highest', created_at=days_ago(4))],
+        },
+        labels={4: ['p:1-highest', 'p:2-high']},
+        assignees={1: ['DouweM'], 2: ['dsfaccini'], 3: ['DouweM'], 4: ['DouweM']},
+    )
+    output = tmp_path / 'output'
+    monkeypatch.setenv('GITHUB_OUTPUT', str(output))
+    monkeypatch.delenv('PRIORITY_SLA_POST', raising=False)
+
+    lines, failures = monitor._run_priority_sla(client, 'r', 'priority-sla', now=SLA_NOW)
+
+    assert failures == []
+    assert posted(client) == []
+    assert output.read_text() == 'items=[4, 1]\npost=false\n'
+    assert lines[0].startswith('#4: dry run, would comment: @DouweM this `p:1-highest` issue ')
+    assert lines[-1] == 'due: 2, active: 1, commented: 0, owner_skipped: 1, unknown: 0'
+    assert events == [
+        (
+            'priority_sla.run',
+            {
+                'repo': 'r',
+                'post': False,
+                'truncated': False,
+                'failures': 0,
+                'due': 2,
+                'active': 1,
+                'commented': 0,
+                'owner_skipped': 1,
+                'unknown': 0,
+            },
+        )
+    ]
+
+    monkeypatch.setenv('PRIORITY_SLA_POST', 'true')
+    client.truncated_issue_list = True
+    lines, failures = monitor._run_priority_sla(client, 'r', 'priority-sla', now=SLA_NOW)
+    assert lines[0].startswith('#4: will comment: ')
+    assert failures == ['priority SLA: more than 500 issues for one label']
+    assert output.read_text().endswith('items=[4, 1]\npost=true\n')
+
+
+def test_priority_sla_post_decides_each_issue_again_on_live_state(monkeypatch: pytest.MonkeyPatch):
+    stale = [label_event('p:2-high', created_at=days_ago(8))]
+    client = sla_client({1: list(stale), 2: list(stale), 3: list(stale), 4: list(stale)}, assignees={1: ['DouweM']})
+    client.items[2]['state'] = 'closed'
+    client.items[3]['assignees'] = [{'login': 'dsfaccini'}]
+    client.fail_get.add(4)
+    monkeypatch.setenv('PRIORITY_SLA_ITEMS', '[1, 2, 3, 4]')
+
+    lines, failures = monitor._run_priority_sla(client, 'r', 'priority-sla-post', now=SLA_NOW)
+
+    assert [path for path, _ in posted(client)] == ['/repos/r/issues/1/comments']
+    assert lines == [
+        '#1: commented',
+        '#2: no longer an open priority issue',
+        '#3: no longer due a comment (owner_skipped)',
+    ]
+    assert len(failures) == 1 and failures[0].startswith('#4 priority SLA comment: HTTPError')
+
+
+def test_priority_sla_records_a_failed_issue_and_keeps_going(monkeypatch: pytest.MonkeyPatch):
+    client = sla_client({1: [label_event('p:2-high', created_at=days_ago(8))], 2: []}, assignees={1: ['DouweM']})
+    real = client.last_pages
+
+    def last_pages(path: str, *, count: int = 1) -> list[dict[str, Any]]:
+        if '/issues/2/' in path:
+            raise urllib.error.HTTPError(path, 502, 'bad gateway', {}, None)
+        return real(path, count=count)
+
+    monkeypatch.setattr(client, 'last_pages', last_pages)
+
+    due, _, failures = monitor.priority_sla(client, 'r', now=SLA_NOW, post=False)
+
+    assert due == [1]
+    assert len(failures) == 1 and failures[0].startswith('#2 priority SLA: HTTPError')
+
+
+@pytest.mark.parametrize('value', ['', '[true]', '[0]', '["1"]', '{"items": [1]}'])
+def test_priority_sla_post_input_must_be_positive_issue_numbers(value: str):
+    with pytest.raises(ValueError):
+        monitor._PRIORITY_SLA_ITEMS.validate_json(value)
+
+
+def test_priority_sla_workflow_plans_read_only_and_posts_only_when_enabled():
+    workflow = Path(__file__).parent.parent / 'workflows' / 'priority-sla.yml'
+    text = workflow.read_text()
+    loaded = yaml.safe_load(text)
+    jobs = loaded['jobs']
+
+    assert "- cron: '43 14 * * 1-5'" in text
+    assert loaded[True]['workflow_dispatch']['inputs']['dry_run'] == {
+        'description': 'List the comments without posting them',
+        'type': 'boolean',
+        'default': True,
+    }
+    assert loaded['permissions'] == {}
+    assert jobs['plan']['permissions'] == {'contents': 'read', 'issues': 'read'}
+    assert jobs['post']['permissions'] == {'contents': 'read', 'issues': 'write'}
+    plan_step = jobs['plan']['steps'][-1]
+    assert plan_step['run'] == 'python3 .github/scripts/issue_pr_attention_monitor.py priority-sla'
+    assert plan_step['env']['PRIORITY_SLA_POST'] == (
+        "${{ (github.event_name == 'workflow_dispatch' && !inputs.dry_run) || "
+        "(github.event_name == 'schedule' && vars.PRIORITY_SLA_POST == 'true') }}"
+    )
+    assert "needs.plan.outputs.post == 'true'" in jobs['post']['if']
+    assert jobs['post']['steps'][-1]['run'] == 'python3 .github/scripts/issue_pr_attention_monitor.py priority-sla-post'
+    # Only the read-only job installs logfire, which resolves its own dependencies, or holds its token.
+    post_text = json.dumps(jobs['post'])
+    assert 'logfire' not in post_text and 'LOGFIRE' not in post_text
+    assert 'logfire==' in json.dumps(jobs['plan'])
