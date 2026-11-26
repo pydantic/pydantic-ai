@@ -13,7 +13,7 @@ from typing_extensions import TypeAliasType
 from pydantic_ai import Agent
 from pydantic_ai._spec import NamedSpec, build_registry, build_schema_types, load_from_registry
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.capabilities import AbstractCapability, SetToolMetadata
+from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, SetToolMetadata
 from pydantic_ai.tools import AgentDepsT
 
 from .conftest import try_import
@@ -840,6 +840,52 @@ class TestBuildSchemaTypes:
         )
         name_only = {'model': 'test', 'capabilities': ['PricedHook']}
         assert list(validator_for(schema)(schema).iter_errors(name_only)) == []
+
+    def test_inherited_field_hints_resolve_in_declaring_module(self):
+        """A field inherited from a class in another module resolves in that module, as `typing.get_type_hints` does.
+
+        Not a VCR test: schema generation runs before any model request.
+        """
+
+        @dataclass
+        class LabeledWorkspace(LocalWorkspace[None]):
+            label: str = 'x'
+
+        schema = AgentSpec.model_json_schema_with_capabilities([LabeledWorkspace])
+        assert schema['$defs']['spec_params_LabeledWorkspace'] == snapshot(
+            {
+                'additionalProperties': False,
+                'properties': {
+                    'working_dir': {
+                        'anyOf': [{'type': 'string'}, {'format': 'path', 'type': 'string'}],
+                        'title': 'Working Dir',
+                    },
+                    'label': {'title': 'Label', 'type': 'string'},
+                    'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                    'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                    'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                    'read_only': {'title': 'Read Only', 'type': 'boolean'},
+                    'authority': {'enum': ['operator', 'user', 'none'], 'title': 'Authority', 'type': 'string'},
+                    'path_authority': {
+                        'anyOf': [
+                            {
+                                'additionalProperties': {'enum': ['operator', 'user', 'none'], 'type': 'string'},
+                                'type': 'object',
+                            },
+                            {'type': 'null'},
+                        ],
+                        'title': 'Path Authority',
+                    },
+                    'env': {
+                        'anyOf': [{'additionalProperties': {'type': 'string'}, 'type': 'object'}, {'type': 'null'}],
+                        'title': 'Env',
+                    },
+                },
+                'required': ['working_dir'],
+                'title': 'spec_params_LabeledWorkspace',
+                'type': 'object',
+            }
+        )
 
     def test_type_checking_only_hint_inherited_from_spec_schema(self):
         """A class whose `__init__` hints don't all resolve keeps the schema of the `from_spec` override it inherits."""

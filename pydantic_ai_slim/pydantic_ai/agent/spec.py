@@ -346,7 +346,7 @@ def _build_capability_schema_types(registry: Mapping[str, type[Any]]) -> list[An
         get_schema_target=_capability_schema_target,
         on_unresolved_hints=lambda hints: warnings.warn(
             f'Capability {hints.name!r}: {hints.describe("agent spec schema")}. Override `from_spec` with the '
-            f'parameters a spec can set, or import those types at runtime in `{hints.module}`.',
+            f'parameters a spec can set, or import those types at runtime in {hints.module_list}.',
             UserWarning,
         ),
     )

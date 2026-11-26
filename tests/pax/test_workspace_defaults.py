@@ -6,7 +6,7 @@ from typing import Literal, TypeGuard
 
 import pytest
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, AgentSpec, RunContext
 from pydantic_ai.capabilities import (
     AbstractCapability,
     AgentCapability,
@@ -25,7 +25,7 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.skills import Skills
 from pydantic_ai_pax import Session
 from pydantic_ai_pax.app import create_stock_agent
-from pydantic_ai_pax.runtime.session import WorkspacelessCapability
+from pydantic_ai_pax.runtime.session import WorkspacelessCapability, _LocalFallback, _WindowsFallback
 
 
 def is_workspaceless(capability: object) -> TypeGuard[WorkspacelessCapability[None]]:
@@ -169,3 +169,10 @@ async def test_wrapped_dynamic_plugin_gets_the_local_default(tmp_path: Path) -> 
     )
     result = await Session(agent, deps=None, workspace=tmp_path).prompt('go')
     assert result.response.workspace_ref == WorkspaceRef(provider='local', id=str(tmp_path.resolve()))
+
+
+@pytest.mark.parametrize('capability', [_LocalFallback, _WindowsFallback])
+def test_fallback_workspace_spec_schema_resolves_inherited_fields(capability: type[LocalWorkspace[None]]) -> None:
+    """The fields a fallback workspace inherits from core resolve in core's module, so its spec schema keeps them."""
+    schema = AgentSpec.model_json_schema_with_capabilities([capability])
+    assert {'path_authority', 'env'} <= schema['$defs'][f'spec_params_{capability.__name__}']['properties'].keys()

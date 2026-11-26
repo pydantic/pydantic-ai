@@ -7,6 +7,7 @@ and registry/loading utilities that can be reused by both the evaluator system a
 from __future__ import annotations
 
 import inspect
+import sys
 import types
 import typing
 from collections.abc import Callable, Mapping, Sequence
@@ -282,19 +283,21 @@ class UnresolvedHints:
     name: str
     """The name the target is registered under."""
 
-    module: str
-    """The module whose namespace the type hints were resolved in."""
-
-    errors: dict[str, str]
-    """Each parameter's resolution error, as `ExceptionType: message`, in parameter order."""
+    errors: dict[str, tuple[str, str]]
+    """Each parameter's module the hint was resolved in, and its error as `ExceptionType: message`, in parameter order."""
 
     required: frozenset[str]
     """The required parameters among them, which the schema accepts any value for instead of leaving out."""
 
     @property
+    def module_list(self) -> str:
+        """The modules the hints could not be resolved in, as code."""
+        return ' and '.join(f'`{module}`' for module in dict.fromkeys(module for module, _ in self.errors.values()))
+
+    @property
     def cause(self) -> str:
         """Say which type hints could not be resolved, and why."""
-        reasons = '; '.join(dict.fromkeys(self.errors.values()))
+        reasons = '; '.join(dict.fromkeys(error for _, error in self.errors.values()))
         return f'the type hints of {", ".join(f"`{name}`" for name in self.errors)} could not be resolved ({reasons})'
 
     def describe(self, schema: str) -> str:
@@ -330,21 +333,24 @@ def build_schema_types(
     schema_types: list[Any] = []
     for name, cls in registry.items():
         target = get_schema_target(cls) if get_schema_target is not None else cls
-        schema_types.extend(_target_schema_types(name, target, on_unresolved_hints))
+        schema_types.extend(_target_schema_types(name, cls, target, on_unresolved_hints))
 
     return schema_types
 
 
 def _target_schema_types(
-    name: str, target: Callable[..., object], on_unresolved_hints: Callable[[UnresolvedHints], None] | None
+    name: str,
+    cls: type[Any],
+    target: Callable[..., object],
+    on_unresolved_hints: Callable[[UnresolvedHints], None] | None,
 ) -> list[Any]:
-    """The schema types of the spec forms that can load `target` under `name`."""
-    hints, unresolved = _spec_annotation_hints(target)
+    """The schema types of the spec forms that can load `target`, the schema target of `cls`, under `name`."""
+    hints, unresolved = _spec_annotation_hints(target, cls)
     spec_type_hints = _spec_param_type_hints(target, hints)
     if unresolved and on_unresolved_hints is not None:
         # Without a spec form, no parameter accepts any value.
         required = frozenset[str](unresolved.keys() & spec_type_hints[1].keys() if spec_type_hints else ())
-        on_unresolved_hints(UnresolvedHints(name, target.__module__, unresolved, required))
+        on_unresolved_hints(UnresolvedHints(name, unresolved, required))
     if spec_type_hints is None:
         return []
     type_hints, required_type_hints = spec_type_hints
@@ -409,7 +415,9 @@ def _spec_param_type_hints(
     return type_hints, required_type_hints
 
 
-def _spec_annotation_hints(target: Callable[..., object]) -> tuple[dict[str, Any], dict[str, str]]:
+def _spec_annotation_hints(
+    target: Callable[..., object], cls: type[Any]
+) -> tuple[dict[str, Any], dict[str, tuple[str, str]]]:
     """The resolved type hints of `target`'s annotations that can be spec parameters, and the errors of the others.
 
     A class target's annotations also name attributes its `__init__` doesn't take, like a `ClassVar` or an
@@ -417,39 +425,52 @@ def _spec_annotation_hints(target: Callable[..., object]) -> tuple[dict[str, Any
     A hint that doesn't resolve, like a `TYPE_CHECKING` import, leaves only its own parameter unannotated.
     """
     parameters = inspect.signature(target).parameters
-    if not any(p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD) for p in parameters.values()):
-        return _resolve_hints(target, list(parameters))
-    not_spec_params = {'return', *(p.name for p in parameters.values() if p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD))}
-    hints, errors = _resolve_hints(target, None)
+    var_params = {p.name for p in parameters.values() if p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD)}
+    if not var_params:
+        return _resolve_hints(target, list(parameters), cls)
+    if isinstance(target, type):
+        names = [name for name, annotation in own_annotations(target).items() if not is_classvar_annotation(annotation)]
+    else:
+        names = [*parameters, 'return']
+    hints, errors = _resolve_hints(target, names, cls)
     return (
         {name: hint for name, hint in hints.items() if not is_classvar_annotation(hint)},
-        {name: error for name, error in errors.items() if name not in not_spec_params},
+        {name: error for name, error in errors.items() if name not in var_params | {'return'}},
     )
 
 
-def _resolve_hints(target: Callable[..., object], names: list[str] | None) -> tuple[dict[str, Any], dict[str, str]]:
-    """The resolved type hints of `target`'s `names` (all its annotations when `None`), and the errors of the others.
+def _resolve_hints(
+    target: Callable[..., object], names: list[str], cls: type[Any]
+) -> tuple[dict[str, Any], dict[str, tuple[str, str]]]:
+    """The resolved type hints of `target`'s `names`, and the module and error of each that doesn't resolve.
 
     They're resolved together, and one at a time only if that fails.
     """
     try:
-        return get_function_type_hints(target, include_keys=None if names is None else set(names)), {}
+        return get_function_type_hints(target, include_keys=set(names)), {}
     except (NameError, TypeError, AttributeError):
         pass
-    if names is None:
-        names = (
-            [name for name, annotation in own_annotations(target).items() if not is_classvar_annotation(annotation)]
-            if isinstance(target, type)
-            else [*inspect.signature(target).parameters, 'return']
-        )
     hints: dict[str, Any] = {}
-    errors: dict[str, str] = {}
+    errors: dict[str, tuple[str, str]] = {}
     for name in names:
+        module = _hint_module(target, name, cls)
+        globalns = None if module == target.__module__ else vars(sys.modules[module])
         try:
-            hints |= get_function_type_hints(target, include_keys={name})
+            hints |= get_function_type_hints(target, include_keys={name}, globalns=globalns)
         except (NameError, TypeError, AttributeError) as e:
-            errors[name] = f'{type(e).__name__}: {e}'
+            errors[name] = (module, f'{type(e).__name__}: {e}')
     return hints, errors
+
+
+def _hint_module(target: Callable[..., object], name: str, cls: type[Any]) -> str:
+    """The module to resolve `target`'s hint for `name` in.
+
+    For `cls.__init__`, that's the module of the class declaring the field `name`, as `typing.get_type_hints` resolves
+    a class's annotations.
+    """
+    if target is not cls.__init__:
+        return target.__module__
+    return next((base.__module__ for base in cls.__mro__ if name in own_annotations(base)), target.__module__)
 
 
 def _without_not_required(type_hint: object) -> object:

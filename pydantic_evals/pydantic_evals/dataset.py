@@ -1528,7 +1528,7 @@ def _build_evaluator_schema_types(registry: Mapping[str, type[Any]], label: str)
         registry,
         on_unresolved_hints=lambda hints: warnings.warn(
             f'{label.capitalize()} {hints.name!r}: {hints.describe("`Dataset` schema")}. '
-            f'Import those types at runtime in `{hints.module}`.',
+            f'Import those types at runtime in {hints.module_list}.',
             UserWarning,
         ),
     )
