@@ -76,7 +76,6 @@ from ..profiles.google import (
     _with_google_cloud_media_types,  # pyright: ignore[reportPrivateUsage]
 )
 from ..providers import Provider, infer_provider
-from ..providers._model_deprecations import GEMINI_API_MODEL_DEPRECATIONS, GOOGLE_CLOUD_MODEL_DEPRECATIONS
 from ..settings import ModelSettings, ServiceTier, ThinkingEffort, ToolChoiceScalar
 from ..tools import ToolDefinition
 from . import (
@@ -716,11 +715,7 @@ class GoogleModel(Model[Client]):
         `deprecation` comes from the Gemini API's or Google Cloud's deprecation schedule, which date the same model
         differently.
         """
-        deprecations = GOOGLE_CLOUD_MODEL_DEPRECATIONS if self._is_google_cloud else GEMINI_API_MODEL_DEPRECATIONS
-        # `google-genai` sends a resource name such as `models/<id>` or `publishers/google/models/<id>` as is, where it
-        # would otherwise add that prefix to a bare id, so both spellings reach the same model.
-        if (deprecation := deprecations.get(self._model_name.rsplit('/', 1)[-1])) is not None:
-            profile = merge_profile(profile, ModelProfile(deprecation=deprecation))
+        profile = _google_common.with_deprecation(self._model_name, profile, google_cloud=self._is_google_cloud)
         if self._is_google_cloud:
             profile = merge_profile(
                 profile, GoogleModelProfile(google_supports_batch_api=False, google_supports_computer_use=False)

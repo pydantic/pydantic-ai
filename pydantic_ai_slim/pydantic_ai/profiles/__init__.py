@@ -548,8 +548,9 @@ class ModelProfile(TypedDict, total=False):
     [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] from the providers' deprecation pages, except
     where the model is served by another platform with a schedule of its own: the Amazon Bedrock and Google Cloud
     Vertex AI clients of `AnthropicModel`, the Azure client of the OpenAI models, and the Codex backend. Set by
-    [`GoogleModel`][pydantic_ai.models.google.GoogleModel] from the Gemini API's or Google Cloud's deprecation page,
-    whichever its client reaches. Set it to `None` to stop the warning for one model, or to a `ModelDeprecation` of
+    [`GoogleModel`][pydantic_ai.models.google.GoogleModel] and
+    [`GoogleInteractionsModel`][pydantic_ai.models.google_interactions.GoogleInteractionsModel] from the Gemini API's or
+    Google Cloud's deprecation page, whichever its client reaches. Set it to `None` to stop the warning for one model, or to a `ModelDeprecation` of
     your own for a model you serve elsewhere.
     See [Deprecated models](../models/overview.md#deprecated-models).
     """

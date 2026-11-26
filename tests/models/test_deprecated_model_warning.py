@@ -39,6 +39,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers import Provider
     from pydantic_ai.providers._model_deprecations import (
@@ -259,6 +260,16 @@ def test_google_resource_names_take_the_same_dates():
         f'publishers/google/models/{GEMINI}', provider=GoogleCloudProvider(api_key='mock-api-key')
     )
     assert google_cloud.profile.get('deprecation') == GOOGLE_CLOUD_DEPRECATION
+
+
+def test_google_interactions_takes_the_same_dates():
+    """`GoogleInteractionsModel` reaches the same two APIs as `GoogleModel`, so it takes the same schedules."""
+    gemini_api = GoogleInteractionsModel(GEMINI, provider=GoogleProvider(api_key='mock-api-key'))
+    assert gemini_api.profile.get('deprecation') == GEMINI_API_DEPRECATION
+    google_cloud = GoogleInteractionsModel(GEMINI, provider=GoogleCloudProvider(api_key='mock-api-key'))
+    assert google_cloud.profile.get('deprecation') == GOOGLE_CLOUD_DEPRECATION
+    with pytest.warns(DeprecatedModelWarning, match="routes requests to 'gemini-routed'"):
+        gemini_api.prepare_request(None, ModelRequestParameters())
 
 
 def test_google_profile_override():
