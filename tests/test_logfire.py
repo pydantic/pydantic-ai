@@ -10,6 +10,7 @@ import pytest
 from dirty_equals import IsJson, IsList
 
 # `StatusCode` lives in `opentelemetry-api`, a core dependency, so it needs no guard.
+from opentelemetry import baggage as otel_baggage, context as otel_context
 from opentelemetry.trace import StatusCode
 from pydantic import BaseModel, TypeAdapter, ValidationError, model_serializer
 from typing_extensions import TypedDict
@@ -475,6 +476,7 @@ def test_logfire(
                                 'metadata': None,
                                 'timeout': None,
                                 'durable': None,
+                                'ui_visibility': None,
                                 'defer_loading': False,
                                 'toolset_id': None,
                                 'unless_native': None,
@@ -1321,6 +1323,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'metadata': None,
                                 'timeout': None,
                                 'durable': None,
+                                'ui_visibility': None,
                                 'defer_loading': False,
                                 'toolset_id': '<output>',
                                 'unless_native': None,
@@ -5276,6 +5279,108 @@ async def test_nested_delegation_spans_sum_to_the_runs_total(capfire: CaptureLog
     assert reported == snapshot({'leaf': [1, 1, 1, 1], 'middle': [20, 20], 'top': [200]})
     assert sum(tokens for tokens_per_run in reported.values() for tokens in tokens_per_run) == snapshot(244)
     assert result.usage.input_tokens == snapshot(244)
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+async def test_sub_agent_cost_rolls_up_to_the_root_conversation(capfire: CaptureLogfire) -> None:
+    """Adding up chat-span tokens by top-level conversation counts every sub-agent's tokens in the chat.
+
+    The middle run gets its own `conversation_id`, as `SubAgents` gives each child, so adding up by
+    `gen_ai.conversation.id` alone leaves its tokens out of the chat. Its spans also carry
+    `pydantic_ai.root_conversation_id`. The leaf, started from the middle run, reuses the chat's
+    `conversation_id`, so like the top-level run its spans don't carry the attribute, and the sum
+    uses `gen_ai.conversation.id` for them, as the docs say to.
+
+    This is not a VCR test: it checks which attributes the spans carry, which a recorded provider
+    response wouldn't change, and fixed token counts keep the sums easy to check.
+    """
+
+    def leaf_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('leaf')], usage=RequestUsage(input_tokens=1))
+
+    leaf = Agent(FunctionModel(leaf_fn), name='leaf', capabilities=[Instrumentation()])
+
+    def delegating_fn(tool_name: str, tokens: int):
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            usage = RequestUsage(input_tokens=tokens)
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart(tool_name, {})], usage=usage)
+            return ModelResponse(parts=[TextPart('done')], usage=usage)
+
+        return fn
+
+    middle = Agent(FunctionModel(delegating_fn('ask_leaf', 10)), name='middle', capabilities=[Instrumentation()])
+
+    @middle.tool_plain
+    async def ask_leaf() -> str:
+        return (await leaf.run('x', conversation_id='chat')).output
+
+    top = Agent(FunctionModel(delegating_fn('ask_middle', 100)), name='top', capabilities=[Instrumentation()])
+
+    @top.tool_plain
+    async def ask_middle() -> str:
+        return (await middle.run('x', conversation_id='middle-conversation')).output
+
+    await top.run('go', conversation_id='chat')
+
+    cost_by_chat: dict[str, int] = {}
+    for span in capfire.exporter.exported_spans_as_dict():
+        attributes = span['attributes']
+        if attributes.get('gen_ai.operation.name') == 'chat':
+            chat = attributes.get('pydantic_ai.root_conversation_id', attributes['gen_ai.conversation.id'])
+            cost_by_chat[chat] = cost_by_chat.get(chat, 0) + attributes['gen_ai.usage.input_tokens']
+    assert cost_by_chat == snapshot({'chat': 221})
+
+    root_by_run = {
+        span['attributes']['gen_ai.agent.name']: span['attributes'].get('pydantic_ai.root_conversation_id')
+        for span in capfire.exporter.exported_spans_as_dict()
+        if span['attributes'].get('gen_ai.operation.name') == 'invoke_agent'
+    }
+    assert root_by_run == snapshot({'leaf': None, 'middle': 'chat', 'top': None})
+    leaf_chat_roots = {
+        span['attributes'].get('pydantic_ai.root_conversation_id')
+        for span in capfire.exporter.exported_spans_as_dict()
+        if span['attributes'].get('gen_ai.operation.name') == 'chat'
+        and span['attributes']['gen_ai.agent.name'] == 'leaf'
+    }
+    assert leaf_chat_roots == snapshot({None})
+    root_by_tool = {
+        span['attributes']['gen_ai.tool.name']: span['attributes'].get('pydantic_ai.root_conversation_id')
+        for span in capfire.exporter.exported_spans_as_dict()
+        if span['attributes'].get('gen_ai.operation.name') == 'execute_tool'
+    }
+    assert root_by_tool == snapshot({'ask_middle': None, 'ask_leaf': 'chat'})
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+async def test_root_conversation_id_ignores_incoming_baggage(capfire: CaptureLogfire) -> None:
+    """A top-level conversation ID sent in a request's baggage header doesn't reach the run's spans.
+
+    A web app's OTel setup fills baggage from the `baggage` header of each request, and Logfire
+    copies every baggage key onto each span it starts. Without the agent run removing the key, a
+    client could make a top-level run's cost count under a conversation it picked. The baggage is
+    attached by hand here, as an OTel HTTP integration would.
+
+    This is not a VCR test: it checks which attributes the spans carry, which a recorded provider
+    response wouldn't change.
+    """
+    agent = Agent(TestModel(), name='top', capabilities=[Instrumentation()])
+
+    token = otel_context.attach(otel_baggage.set_baggage('pydantic_ai.root_conversation_id', 'someone-elses-chat'))
+    try:
+        await agent.run('hi', conversation_id='chat')
+    finally:
+        otel_context.detach(token)
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    assert [
+        (
+            span['name'],
+            span['attributes'].get('gen_ai.conversation.id'),
+            span['attributes'].get('pydantic_ai.root_conversation_id'),
+        )
+        for span in spans
+    ] == snapshot([('chat test', 'chat', None), ('invoke_agent top', 'chat', None)])
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')

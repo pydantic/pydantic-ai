@@ -1,0 +1,187 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "388"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: >-
+              Use the get_file tool now to retrieve a document file, then describe what you
+              received.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=2376
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: requires_action
+        usage:
+          total_tokens: 139
+          total_input_tokens: 36
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 36
+          total_cached_tokens: 0
+          total_output_tokens: 10
+          total_tool_use_tokens: 0
+          total_thought_tokens: 93
+          initial_input_tokens: 29
+        created: 2026-11-06T02:56:28Z
+        updated: 2026-11-06T02:56:28Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            Et0DCtoDAWkUfRPr2UgsYIJMWuv7HsKQDUyiAJFivRj4SWbtICj+UW5G8qtteG0xGUI85ncVCQ9aT1sIMtiav4aCBZWa/aHDCVH/H1dKYK/RUfjYs22OXZvWHUrWrJFl80lmQ6phFzpogf5dcoemmKYci10XMqWhkOeTtLiZ9WelSfyF+v7W/ZEB+v6SqT4pFGo5qlSVxbkZkUA81A44Whnj7uywjnc+0HlNyWxILbNalJYDWgQVB/EscmcAwm+rdrzITxsEjTRz3UeunP3pNBj6IhvB3Cj4dy5n504dEKJmJueuLzd9YPjr196Q9Q6QMke6FrQXTW5z+R4DDGI308y2D/QNCQ5ynNTFCh3szCqipKw/IcGHJg3Uut8p1Fz954Op1drerdarxdVv0536e+8c3oDZwF/KhFgN1qRHkcYpVrw9sPrdoWNC4MITqoY8Y2xfDZS/lh2TBtp/6Uenqoc79SqZWhX1s9Th69iZ7sCaJlh2do7wOeyHPpxb7dXjpVYf+y90L/aZP6iK5RnLhK8WDfFeCQ4qnFmflGm1uTzYOUpGWpIOkBDUY0wDbmZkwX8bmV7ST6nd8xDtJ6LST+OZcPJS9N6UU6e9BbTAvKJN5/9wPhOLjbwIqWqPNAX/
+          type: thought
+        - id: call_6257085895100391812
+          type: function_call
+          name: get_file
+          arguments: {}
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:56:28.403109+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1388"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: >-
+              Use the get_file tool now to retrieve a document file, then describe what you
+              received.
+        - signature: >-
+            Et0DCtoDAWkUfRPr2UgsYIJMWuv7HsKQDUyiAJFivRj4SWbtICj+UW5G8qtteG0xGUI85ncVCQ9aT1sIMtiav4aCBZWa/aHDCVH/H1dKYK/RUfjYs22OXZvWHUrWrJFl80lmQ6phFzpogf5dcoemmKYci10XMqWhkOeTtLiZ9WelSfyF+v7W/ZEB+v6SqT4pFGo5qlSVxbkZkUA81A44Whnj7uywjnc+0HlNyWxILbNalJYDWgQVB/EscmcAwm+rdrzITxsEjTRz3UeunP3pNBj6IhvB3Cj4dy5n504dEKJmJueuLzd9YPjr196Q9Q6QMke6FrQXTW5z+R4DDGI308y2D/QNCQ5ynNTFCh3szCqipKw/IcGHJg3Uut8p1Fz954Op1drerdarxdVv0536e+8c3oDZwF/KhFgN1qRHkcYpVrw9sPrdoWNC4MITqoY8Y2xfDZS/lh2TBtp/6Uenqoc79SqZWhX1s9Th69iZ7sCaJlh2do7wOeyHPpxb7dXjpVYf+y90L/aZP6iK5RnLhK8WDfFeCQ4qnFmflGm1uTzYOUpGWpIOkBDUY0wDbmZkwX8bmV7ST6nd8xDtJ6LST+OZcPJS9N6UU6e9BbTAvKJN5/9wPhOLjbwIqWqPNAX/
+          type: thought
+        - id: call_6257085895100391812
+          name: get_file
+          type: function_call
+          arguments: {}
+        - type: function_result
+          name: get_file
+          call_id: call_6257085895100391812
+          is_error: false
+          result:
+          - mime_type: application/pdf
+            type: document
+            uri: https://generativelanguage.googleapis.com/v1beta/files/0jnmr6snrtce
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=2863
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 784
+          total_input_tokens: 679
+          input_tokens_by_modality:
+          - modality: image
+            tokens: 532
+          - modality: text
+            tokens: 147
+          total_cached_tokens: 0
+          total_output_tokens: 58
+          total_tool_use_tokens: 0
+          total_thought_tokens: 47
+          initial_input_tokens: 718
+        created: 2026-11-06T02:56:31Z
+        updated: 2026-11-06T02:56:31Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            Eq0CCqoCAWkUfRNm1h2mIjDh+Y07M2ehQteoIBWMsZrWm53n5I9ygouUdJV9yiT16Ym/s6Tro0ml4NJLbGg5zKNo+tTRdpidn/AC3QKjfwnCgtwAFWbrk2aRkDGAag6eFOLuqmEyjigFQZGXrONX+NZZsfVYdBS8RNwtvdmiK5f2HAQh+79DgR1efK7eRcwI1SkHrajs1rpt5iZJcGBuKe6ZNd16tnKQzI0rjatPInXFOvQcg+gpjogaIxF2Sb0z1LNCCwuzwmt4/RsXBNQbbGd5QDtIF/EAgdOf0/0aENAKUXsUbEwHUjkI/HLJCIflDnOUQ3Ie9hBDaaIl/Dzm8XCzEkyQ1MiZ+zFk3KEEgYMWIzD6QxWlqu0L3k4BrOt7mb+8MGTnMhnTi5WiCY2WcQ==
+          type: thought
+        - content:
+          - text: |-
+              I received a single-page PDF document containing minimal placeholder content:
+
+              * **Content:** The text **"Dummy PDF file"** located in the upper-left corner.
+              * **Layout:** A standard white, portrait-oriented page with no additional text, images, or formatting.
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:56:31.289978+00:00

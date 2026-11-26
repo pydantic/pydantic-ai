@@ -1392,6 +1392,30 @@ async def test_no_content_reaches_telemetry_from_a_realtime_session(
     )
 
 
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_from_a_lowered_capabilitys_instructions(include_content: bool) -> None:
+    """A lowered capability's instructions reach the model as framed data, and with capture off no span carries them."""
+    settings, exporter = redacted_setup(include_content=include_content)
+    received: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.append(str(messages))
+        return ModelResponse(parts=[TextPart(SECRETS['model_text'])])
+
+    lowered = Capability[None](id='sentinel_lowered_block', instructions=SECRETS['capability_instruction'])
+    agent = Agent(
+        FunctionModel(respond),
+        deps_type=type(None),
+        capabilities=[lowered.with_authority('none'), Instrumentation(settings=settings)],
+    )
+    await agent.run(SECRETS['user_prompt'])
+
+    assert SECRETS['capability_instruction'] in received[-1]
+    check(exporter, include_content, {'user_prompt', 'capability_instruction', 'model_text'})
+    exported = '\n'.join(_span_text(span) for span in exporter.get_finished_spans())
+    assert ('capability:sentinel_lowered_block' in exported) is include_content
+
+
 @dataclass(frozen=True)
 class Swept:
     """A parameter a scenario in this module drives a sentinel through, so the sweep covers it."""

@@ -75,6 +75,7 @@ from pydantic_ai.exceptions import (
     IncompleteToolCall,
     ModelAPIError,
     ModelContextWindowExceededError,
+    ModelEmptyResponseError,
     ModelHTTPError,
     ModelRateLimitError,
     ModelRequestRejectedError,
@@ -1097,6 +1098,24 @@ async def test_openai_responses_gpt_5_6_minimal_thinking_uses_low_effort(
     prove Pydantic AI maps its provider-agnostic `thinking='minimal'` level to `'low'` before sending it.
     """
     model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(thinking='minimal'))
+
+    result = await agent.run('What is the capital of France? Answer in one word.')
+
+    assert result.output == snapshot('Paris')
+    assert single_request_body(vcr)['reasoning'] == snapshot({'effort': 'low', 'context': 'all_turns'})
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_openai_responses_gpt_5_4_minimal_thinking_uses_low_effort(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette
+):
+    """VCR test: unified minimal thinking falls back to `low` on GPT-5.4, which rejects `minimal`.
+
+    OpenAI's API answers `reasoning.effort='minimal'` on gpt-5.4 with a 400 listing `none`, `low`, `medium`,
+    `high` and `xhigh`. A successful request and the body assertion prove Pydantic AI sends `'low'` instead.
+    """
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(thinking='minimal'))
 
     result = await agent.run('What is the capital of France? Answer in one word.')
@@ -21218,7 +21237,7 @@ async def test_forced_stream_without_events_raises(allow_model_requests: None):
     # The nested-list form is how the shared mock represents a single, empty stream.
     mock_client = MockOpenAIResponses.create_mock_stream([[]])
     model = OpenAICodexModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=mock_client))
-    with pytest.raises(UnexpectedModelBehavior, match='without content'):
+    with pytest.raises(ModelEmptyResponseError, match='without content'):
         await model.request([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
 
 

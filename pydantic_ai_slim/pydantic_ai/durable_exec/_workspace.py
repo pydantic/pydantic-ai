@@ -42,8 +42,8 @@ from pydantic_ai.workspaces import (
     WrapperWorkspace,
 )
 
+from .._run_context import in_durable_unit
 from ._operation import CacheIdentity, CapabilityOperationId
-from ._operation_backend import in_durable_unit
 
 if TYPE_CHECKING:
     from ._base import BaseDurabilityCapability

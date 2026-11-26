@@ -21,6 +21,7 @@ from pydantic_ai import (
     FallbackExceptionGroup,
     FinalResultEvent,
     ModelAPIError,
+    ModelEmptyResponseError,
     ModelHTTPError,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -5213,3 +5214,13 @@ async def test_fallback_pin_joins_framework_metadata_the_response_already_has() 
     model = FallbackModel(FunctionModel(primary, model_name='primary'), FunctionModel(primary, model_name='backup'))
     response = await model.request([ModelRequest.user_text_prompt('x')], None, ModelRequestParameters())
     assert response.metadata == {'__pydantic_ai__': {'other': 'kept', 'fallback_model_id': 'function:primary'}}
+
+
+async def test_empty_response_falls_back_by_default():
+    """`FallbackModel` falls back on a `ModelEmptyResponseError`, like an adapter raises for a completion without choices."""
+
+    def empty(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ModelEmptyResponseError('primary', 'Empty response: no choices')
+
+    result = await Agent(FallbackModel(FunctionModel(empty), FunctionModel(success_response))).run('hello')
+    assert result.output == 'success'
