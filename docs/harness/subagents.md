@@ -315,6 +315,8 @@ For the child run's model streaming, pass an `event_stream_handler`. See [capabi
 
 Plain delegation adds no OpenTelemetry spans: the child run's own spans nest under the parent's tool-call span.
 
+A child run has its own `conversation_id`, so adding up cost by `gen_ai.conversation.id` leaves it out of the conversation it was started for. Its spans also carry `pydantic_ai.root_conversation_id`, the `conversation_id` of the top-level run (the run that isn't inside any other run), even for a child started by another child; see [correlating runs](../message-history.md#correlating-runs-with-run_id-and-conversation_id) for how to use it and where it's missing.
+
 Task control records its own decisions, which core's spans don't show, as zero-duration spans on the delegating run's tracer. Their attributes have the `sub_agents.` prefix and include `sub_agents.agent_name` (for a created agent, whose name the model chose, only as content) and, for a task, `sub_agents.task_id`:
 
 | Span | When | Attributes |
@@ -498,6 +500,7 @@ async def converse():
 
 - `opened()` cancels and drains workers on exit. If a child hasn't released its resources within ten seconds, `opened()` raises `RuntimeError`, or only logs it when an error is already closing the owner, so that error isn't masked. Keep workspace and plugin resources alive outside that scope.
 - A task still running when its process exited loads as cancelled when the owner next opens; if it was waiting for an answer, its output names the question, so the parent can resume it with the answer.
+- A running task records the process running it. An owner opening the same `directory` in another process while that process still runs leaves the task out of `records` and never saves over it; once that process is gone, the next owner to open loads it as cancelled. As with saved sessions, this is a check on the local machine, not a lock: don't share `directory` between hosts.
 - Detached execution is refused for run-owned non-local workspaces; foreground delegation still works.
 - The owner's `max_depth=4` counts the main run and allows three child layers. An explicitly set non-default `SubAgents.max_depth` takes precedence; plain `SubAgents` keeps its own default.
 - `restore(task)` adds a finished `DelegationTask` made elsewhere, such as one imported from another agent's session, so the parent can resume it by ID. It works before `opened()` too; the owner loads the task when it opens. A task with the same ID that has run since, under a different `run_id`, is kept rather than replaced, and `restore` returns `False`.

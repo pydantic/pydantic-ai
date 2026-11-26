@@ -28,7 +28,7 @@ The contracts are numbered C0, C1, … in the order they land. C1–C5 work towa
 **Requirements**
 
 - Every request a capability sends repeats the earlier one as a prefix: it appends to history and never rewrites what an earlier request sent, its instructions are addressable, and the same history projects to the same bytes. The rules are in [Message History & Prompt Caching](message-history-and-caching.md).
-- Two of a capability on one agent mean what its `combine` policy says, and stating one configuration twice reaches the model the same as stating it once.
+- Two of a capability on one agent mean what its `combine` policy says, and stating one configuration twice reaches the model the same as stating it once. The capability decides that policy explicitly: a default `id` when two are one configuration (fixed tool names, or one run-wide policy), so they merge, and none when they compose; see [Deciding What Two Of It Mean](../src/pydantic_ai_harness/agent_docs/capability-authoring.md#deciding-what-two-of-it-mean).
 
 **How it's tested**
 

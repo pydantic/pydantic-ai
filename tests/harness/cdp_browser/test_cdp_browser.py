@@ -971,7 +971,9 @@ class TestWebSocketGuard:
             writer.close()
             delivered.set()
 
-        server = await asyncio.start_server(read_after_close, sock=stalling_listener())
+        # A `StreamReader` keeps reading its socket until it holds twice its `limit`, whether or not its owner reads.
+        # At the default it could take in the whole payload, leaving the proxy nothing unsent when it closes.
+        server = await asyncio.start_server(read_after_close, sock=stalling_listener(), limit=1)
         async with CDPBrowserToolset[None](policy=EgressPolicy(block_private_addresses=False)):
             destination = ipv4('127.0.0.1', server.sockets[0].getsockname()[1])
             _, writer, reply = await socks_connect(proxy_port(chrome), destination)

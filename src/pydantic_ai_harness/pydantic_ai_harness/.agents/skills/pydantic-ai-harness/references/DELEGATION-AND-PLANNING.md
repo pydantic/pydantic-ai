@@ -197,6 +197,7 @@ Gotchas:
   ([#14194](https://github.com/pydantic/pydantic-ai/issues/14194)). A `SubAgent.usage_limits` that
   sets the flag itself is kept and fails like a top-level run, and a remote worker applies the
   announced limits as received.
+- Each child run has its own `conversation_id`, so its spans' `gen_ai.conversation.id` differs from the parent's. When the child is instrumented and runs in the parent's process, its spans also carry `pydantic_ai.root_conversation_id`, the top-level run's `conversation_id`. To add up a chat's cost including its children, group spans by `pydantic_ai.root_conversation_id`, and use `gen_ai.conversation.id` for spans without it. A child on a remote `SubAgentWorker` doesn't get the attribute, and neither do model requests that Temporal runs as activities, so those costs still count under the child's own conversation.
 - `include_self=True` passed in `agent.run(capabilities=...)` raises `UserError`; bind it on the `Agent`.
 - Not agent-spec serializable (holds live agents). Events: `DelegationStartedEvent` (not
   `DelegationStartEvent`) and `DelegationFinishedEvent` (not `DelegationEndEvent`), whose `outcome`

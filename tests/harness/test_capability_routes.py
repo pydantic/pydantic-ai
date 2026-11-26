@@ -28,7 +28,6 @@ from _pytest.mark import ParameterSet
 
 from pydantic_ai import Agent, AgentRunResult, RunContext, ToolReturn
 from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools, ValidatedToolArgs
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CapabilityPart,
     CapabilitySource,
@@ -126,11 +125,6 @@ PROBES: dict[str, Calls] = {
 """Capabilities built only here, whose calls put more than their return value in the history, so every route has a
 part to compare while few cases' calls do: one returns `ToolReturn.content`, the other calls `ctx.enqueue`."""
 
-_PULL = 'https://github.com/pydantic/pydantic-ai/pull/'
-_ATTRIBUTE_FROM_TOOLSET = (
-    f"{_PULL}14374: the call's capability is looked up from `ToolDefinition.capability_id`, which a prepare hook "
-    'that rebuilds the definition leaves out'
-)
 _ISSUE = 'https://github.com/pydantic/pydantic-ai/issues/'
 _PLAN_IN_CARRIER = (
     f"{_ISSUE}14441: `Planning` finds the plan a plan tool returned only in that tool's own `ToolReturnPart`, so after a plan tool "
@@ -138,12 +132,6 @@ _PLAN_IN_CARRIER = (
 )
 
 KNOWN: dict[tuple[str, Route], tuple[str, type[Exception]]] = {
-    ('probe:tool_return_content', 'prepare_hook'): (_ATTRIBUTE_FROM_TOOLSET, AssertionError),
-    ('probe:enqueued', 'prepare_hook'): (_ATTRIBUTE_FROM_TOOLSET, AssertionError),
-    # A tool that emits capability events is refused once its definition no longer names its capability.
-    ('FileSystem', 'prepare_hook'): (_ATTRIBUTE_FROM_TOOLSET, UserError),
-    ('DeduplicateFileReads', 'prepare_hook'): (_ATTRIBUTE_FROM_TOOLSET, UserError),
-    ('Planning', 'prepare_hook'): (_ATTRIBUTE_FROM_TOOLSET, UserError),
     ('Planning', 'code_mode'): (_PLAN_IN_CARRIER, AssertionError),
     ('Planning', 'ipython_code_mode'): (_PLAN_IN_CARRIER, AssertionError),
     ('Planning', 'background_tools'): (_PLAN_IN_CARRIER, AssertionError),

@@ -7,6 +7,7 @@ suite until the exemption is removed.
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
 from collections.abc import AsyncIterator, Callable, Sequence
@@ -274,9 +275,22 @@ def test_a_toolset_function_has_no_toolset_id() -> None:
     assert _toolset_ids(Toolset[None](lambda ctx: FunctionToolset[None]([]))) == [None]
 
 
+def _with_id(capability: AbstractCapability[DepsT], id: str | None) -> AbstractCapability[DepsT] | None:
+    """`capability` built again with `id`, or `None` when its `__init__` takes no `id` to build it with."""
+    parameters = inspect.signature(type(capability).__init__).parameters.values()
+    if not any(p.name == 'id' or p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters):
+        return None
+    return replace(capability, id=id)
+
+
 def _unset_id_breaks(capability: AbstractCapability[DepsT]) -> list[str]:
     breaks: list[str] = []
-    for label, built in (('its defaults', capability), ('`id=None`', replace(capability, id=None))):
+    unset = _with_id(capability, None)
+    if unset is None:
+        breaks.append('its `__init__` takes no `id`, so `id=None` cannot be set')
+    for label, built in (('its defaults', capability), ('`id=None`', unset)):
+        if built is None:
+            continue
         ids = _toolset_ids(built)
         if ids is not None and any(toolset_id != built.id for toolset_id in ids):
             breaks.append(f'with {label}, the capability id is {built.id!r} and its toolset ids are {ids}')
@@ -303,7 +317,11 @@ def test_a_custom_id_reaches_every_toolset(name: str, tmp_path: Path, monkeypatc
     if _toolset_ids(capability) is None:
         _assert_not_exempt(CUSTOM_ID, name, 'builds no toolset of its own')
         return
-    ids = _toolset_ids(replace(capability, id='custom'))
+    custom = _with_id(capability, 'custom')
+    if custom is None:
+        _assert_holds(CUSTOM_ID, name, ["its `__init__` takes no `id`, so `id='custom'` cannot be set"])
+        return
+    ids = _toolset_ids(custom)
     reached = ids is None or all(toolset_id == 'custom' for toolset_id in ids)
     _assert_holds(CUSTOM_ID, name, [] if reached else [f"with `id='custom'`, its toolset ids are {ids}"])
 
