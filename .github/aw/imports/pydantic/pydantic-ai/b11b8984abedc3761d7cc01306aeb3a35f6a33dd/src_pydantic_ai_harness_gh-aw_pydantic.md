@@ -10,7 +10,7 @@ pre-agent-steps:
       # sys.path, so a repo-local pip.py or pydantic_ai_harness/ cannot be
       # imported in place of the installed packages.
       #
-      # CLAI 2.0's published `-p` command is the headless interface used by this
+      # Pax's published `-p` command is the headless interface used by this
       # engine. The agent hooks and MCP composition require Pydantic AI 2.54, and
       # GITHUB_COPILOT_INTEGRATION_ID below requires 2.59.
       python3 -P -m pip install --quiet --user --disable-pip-version-check "pydantic-ai-harness[coder]==${GH_AW_ENGINE_VERSION}" "pydantic-clai2==${GH_AW_ENGINE_VERSION}" "pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0" "cryptography>=48.0.1"
@@ -25,7 +25,7 @@ engine:
   id: pydantic-ai
   version: "0.70.0"
   display-name: Pydantic AI
-  description: CLAI 2 headless runner for Pydantic AI agents with MCP tool support
+  description: Pax headless runner for Pydantic AI agents with MCP tool support
   mcp: true
   # gh-aw's threat-detection job runs only on its built-in engines, so a custom engine
   # names the one it runs on. Without this key gh-aw falls back to `copilot` anyway
@@ -434,7 +434,7 @@ engine:
       const DEFAULT_AGENT = "gh_aw_agent:agent";
 
       // Preload the installed runner before the wrapper resolves PAI_AGENT, which
-      // can append the checkout to sys.path. The wrapper is cached before CLAI 2
+      // can append the checkout to sys.path. The wrapper is cached before Pax
       // resolves -a, so agent code imports once and import failures retain their
       // traceback.
       const LAUNCHER = `import importlib
@@ -997,7 +997,7 @@ engine:
 <!--
 # Pydantic AI
 
-Shared engine definition for CLAI 2 headless execution. Import this file and set
+Shared engine definition for Pax headless execution. Import this file and set
 `engine: id: pydantic-ai`; gh-aw v1.0.1 or newer with the protected session capture
 contract described in `README.md` is required.
 

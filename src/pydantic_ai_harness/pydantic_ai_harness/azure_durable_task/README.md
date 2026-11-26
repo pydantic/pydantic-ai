@@ -173,6 +173,41 @@ def support(
 Inside activities, live run fields such as `ctx.messages` and `ctx.prompt` are unavailable and raise
 `UserError`, and tools cannot emit run events.
 
+## Tool arguments
+
+Function tool arguments cross into the activity as JSON, and the activity validates them again with the tool's schema,
+which reads each field's alias. Pydantic models and Pydantic dataclasses, and the values nested in them, cross
+by alias. A `TypedDict` or standard-library dataclass outside one crosses by Python name, so the second
+validation reads none of its aliased fields: a required one fails, and an optional one is left out or takes its
+default. Let such a type validate by name as well; the same decorator works on a standard-library dataclass:
+
+```python
+from typing import Annotated
+
+from pydantic import ConfigDict, Field, with_config
+from typing_extensions import TypedDict
+
+
+@with_config(ConfigDict(validate_by_name=True))
+class Venue(TypedDict):
+    room: Annotated[str, Field(alias='roomName')]
+```
+
+A field whose serialization alias is not a name it validates by crosses under a name the second validation
+doesn't read, with the same result. That covers a `serialization_alias` alone, a `validation_alias` that differs
+from it, an `alias_generator` that sets only serialization aliases, and any alias under `validate_by_alias=False`.
+Keep `validate_by_alias` on, and add the serialization alias to the names the field validates by, next to the
+ones it already has:
+
+```python
+from pydantic import AliasChoices, BaseModel, Field
+
+
+class Room(BaseModel):
+    room: str = Field(serialization_alias='roomOut', validation_alias=AliasChoices('room', 'roomOut'))
+    floor: int = Field(validation_alias=AliasChoices('floorIn', 'floorOut'), serialization_alias='floorOut')
+```
+
 ## Approvals and deferred calls
 
 Approvals belong to your orchestrator. Include `DeferredToolRequests`

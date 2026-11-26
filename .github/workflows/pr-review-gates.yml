@@ -49,9 +49,9 @@ jobs:
               });
               // REST name includes custom run-name titles; identify the workflow by path.
               const events = {
-                '.github/workflows/bots.yml': ['pull_request_target'],
+                '.github/workflows/bots.yml': ['pull_request'],
                 // Its review and findings are written with `GITHUB_TOKEN`, which wakes no observer.
-                '.github/workflows/pr-review-checks.yml': ['pull_request_target'],
+                '.github/workflows/pr-review-checks.yml': ['pull_request'],
                 '.github/workflows/pr-review-gates-events.yml': ['pull_request', 'pull_request_review', 'pull_request_review_comment']
               };
               if (!events[run.path]?.includes(run.event) ||
@@ -143,10 +143,11 @@ jobs:
               }
               head = pull.head.sha;
             }
-            for (const gate of ['Gate: clean douwebot approval', 'Gate: review findings dispositioned']) {
+            for (const gate of ['Gate: clean douwebot approval', 'Gate: .github changes by a maintainer',
+                                'Gate: review findings dispositioned']) {
               await github.rest.repos.createCommitStatus({
                 ...context.repo, sha: head, context: gate,
-                state: 'pending', description: 'Reading current size and reviews.',
+                state: 'pending', description: 'Reading current files, size and reviews.',
                 target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
               });
             }

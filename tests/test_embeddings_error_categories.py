@@ -223,6 +223,25 @@ CASES = [
         attrs={'status_code': 400, 'provider_error_type': 'invalid_request_error'},
     ),
     Case(
+        # An OpenAI-compatible proxy can forward the upstream error in `metadata.raw`; like `openai`, only the error's
+        # `message` is classified.
+        id='openai-metadata-raw-context-window',
+        model=_openai,
+        handler=_json(
+            401,
+            {
+                'error': {
+                    'message': 'Incorrect API key provided',
+                    'type': 'invalid_request_error',
+                    'code': 'invalid_api_key',
+                    'metadata': {'raw': "This model's maximum context length is 8192 tokens."},
+                }
+            },
+        ),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 401, 'provider_error_code': 'invalid_api_key'},
+    ),
+    Case(
         id='openai-transport-gave-up',
         model=_openai,
         handler=_gave_up(503),
