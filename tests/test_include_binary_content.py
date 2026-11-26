@@ -35,6 +35,7 @@ from pydantic_ai import (
     UploadedFile,
     UserPromptPart,
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.messages import ModelMessagesTypeAdapter
@@ -763,6 +764,42 @@ async def test_tool_result_media_recorded_as_message_parts(
             ],
             'file': {'type': 'file', 'modality': 'document', 'mime_type': 'application/pdf', 'file_id': 'file_1'},
             'caption': 'a kiwi',
+        }
+    )
+    assert chat_response['result'] == tool_result
+    assert run_response['result'] == tool_result
+
+
+async def test_tool_result_media_recorded_as_pre_spec_parts_on_deprecated_versions(capfire: CaptureLogfire) -> None:
+    """On a deprecated instrumentation version, media in a tool result is the pre-spec part a user prompt records."""
+    url = ImageUrl('https://example.com/kiwi.png')
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('gen_images', {})])
+        return ModelResponse(parts=[TextPart('a kiwi')])
+
+    with pytest.warns(PydanticAIDeprecationWarning, match='Instrumentation format versions 2, 3, and 4 are deprecated'):
+        settings = InstrumentationSettings(version=3)
+    agent = Agent(FunctionModel(respond), capabilities=[Instrumentation(settings=settings)], name='agent')
+
+    @agent.tool_plain
+    def gen_images() -> dict[str, Any]:
+        return {'image': IMAGE, 'url': url}
+
+    await agent.run('make images')
+
+    spans = {
+        span['name']: span['attributes'] for span in capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    }
+    tool_result = spans['execute_tool gen_images']['gen_ai.tool.call.result']
+    [chat_response] = spans['chat function:respond:']['gen_ai.input.messages'][-1]['parts']
+    [run_response] = spans['invoke_agent agent']['pydantic_ai.all_messages'][2]['parts']
+
+    assert tool_result == snapshot(
+        {
+            'image': {'type': 'binary', 'media_type': 'image/png', 'content': IMAGE.base64},
+            'url': {'type': 'image-url', 'url': 'https://example.com/kiwi.png'},
         }
     )
     assert chat_response['result'] == tool_result
