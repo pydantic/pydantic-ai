@@ -220,6 +220,8 @@ class _HistoryMerge:
     """Whether the history dropped or rewrote any of `recorded`."""
     _added: list[_messages.ModelMessage] = dataclasses.field(default_factory=list[_messages.ModelMessage])
     """Messages of the history not in `recorded`, waiting for the recorded message they come before."""
+    _after_given: list[_messages.ModelMessage] = dataclasses.field(default_factory=list[_messages.ModelMessage])
+    """Messages of the history that came before one the run was given, waiting for the last of those."""
     _start: int = 0
     _positions: dict[int, int] = dataclasses.field(default_factory=dict[int, int])
     _held: set[int] = dataclasses.field(default_factory=set[int])
@@ -255,13 +257,20 @@ class _HistoryMerge:
     def take(self, index: int) -> None:
         """Merge the recorded messages the history dropped before `index`, the added ones waiting, then the one at `index`.
 
-        Added messages wait until the messages the run was given are merged: those are stored already, and a store
-        only adds after them, so a summary of some of them goes after all of them.
+        Added messages that come before a message the run was given wait until the last of those is merged: those
+        are stored already, and a store only adds after them, so a summary of some of them goes after all of them.
         """
-        self._merge_recorded(range(self._start, index))
-        if index >= self.given:
+        if index < self.given:
+            self._merge_recorded(range(self._start, index))
+            self._after_given += self._added
+        else:
+            given = max(self._start, self.given)
+            self._merge_recorded(range(self._start, given))
+            self.merged += self._after_given
+            self._after_given = []
+            self._merge_recorded(range(given, index))
             self.merged += self._added
-            self._added = []
+        self._added = []
         self._merge_recorded(range(index, min(index + 1, len(self.recorded))))
         self._start = index + 1
 
