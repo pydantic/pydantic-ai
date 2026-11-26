@@ -34,7 +34,22 @@ dependencies = ["pydantic-ai-pax==0.{{ minor }}.{{ patch }}{% if distance %}.dev
 
 # The extras `pydantic-ai-pax` offers, so `pydantic-clai2[e2b]` keeps installing them.
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
+openai = ["pydantic-ai-pax[openai]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+cohere = ["pydantic-ai-pax[cohere]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+google = ["pydantic-ai-pax[google]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+anthropic = ["pydantic-ai-pax[anthropic]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+xai = ["pydantic-ai-pax[xai]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+groq = ["pydantic-ai-pax[groq]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+openrouter = ["pydantic-ai-pax[openrouter]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+mistral = ["pydantic-ai-pax[mistral]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+bedrock = ["pydantic-ai-pax[bedrock]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+bedrock-mantle = ["pydantic-ai-pax[bedrock-mantle]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+zai = ["pydantic-ai-pax[zai]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+snowflake = ["pydantic-ai-pax[snowflake]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+crusoe = ["pydantic-ai-pax[crusoe]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+cerebras = ["pydantic-ai-pax[cerebras]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 typesafe = ["pydantic-ai-pax[typesafe]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+huggingface = ["pydantic-ai-pax[huggingface]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 boxd = ["pydantic-ai-pax[boxd]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 daytona = ["pydantic-ai-pax[daytona]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 e2b = ["pydantic-ai-pax[e2b]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
@@ -44,6 +59,7 @@ modal = ["pydantic-ai-pax[modal]==0.{{ minor }}.{{ patch }}{% if distance %}.dev
 opensandbox = ["pydantic-ai-pax[opensandbox]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 render = ["pydantic-ai-pax[render]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 sprites = ["pydantic-ai-pax[sprites]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+all = ["pydantic-ai-pax[all]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 
 [project.urls]
 Homepage = "https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_pax"
