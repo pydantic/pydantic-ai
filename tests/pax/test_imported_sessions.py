@@ -1331,10 +1331,20 @@ async def test_resume_browser_lists_imports_beside_saved_sessions(
     imported_id = service.session.summary.id
     assert len(await store.listing()) == 2
 
+    # A Claude Code session not imported yet, which only the scan of every agent finds.
+    os.utime(claude_session(tmp_path, session_id=str(uuid4())), (500, 500))
+
     def only_codex(browser: SessionBrowser) -> str:
         # Naming an agent lists only its sessions at first; `f` still reaches the others.
         assert (browser.source, [entry.tags for entry in browser.visible]) == ('codex', [('codex',)])
         assert 'Source: Codex' in browser.frame(width=120, height=20)[0]
+        # The Codex session is in another project than this one, which has only Pax and Claude Code sessions.
+        assert [entry.tags for entry in browser.sessions] == [('codex',)]
+        browser.handle_key('f')
+        assert browser.notice == 'Listing all sessions.'
+        assert sorted(entry.tags for entry in browser.visible) == [(), ('claude',), ('claude',), ('codex',)]
+        assert [browser.importing(entry) for entry in browser.visible if entry.tags == ('claude',)] == [False, True]
+        browser.handle_key('f')
         browser.query = 'other'
         browser.reload()
         assert len(browser.visible) == 1
@@ -1358,6 +1368,29 @@ async def test_resume_browser_lists_imports_beside_saved_sessions(
     monkeypatch.setattr(SessionBrowser, 'run', copy_replaces_original)
     assert (await service.command(['claude'])).startswith('Resumed Fix the parser')
     assert (await service.command([])).startswith('Resumed Fix the parser')
+
+
+async def test_resume_with_a_source_lists_that_agents_sessions_past_newer_ones(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, _ = sessions_service(tmp_path)
+    os.utime(codex_session(tmp_path), (1_000, 1_000))
+    # More Claude Code sessions than the browser lists, all newer than the Codex one.
+    for index in range(201):
+        os.utime(claude_session(tmp_path, session_id=str(uuid4())), (2_000 + index, 2_000 + index))
+    seen: list[tuple[int, int]] = []
+
+    def check(browser: SessionBrowser) -> str:
+        seen.append((len(browser.visible), len(browser.entries)))
+        browser.reload()
+        seen.append((len(browser.visible), len(browser.entries)))
+        return ''
+
+    monkeypatch.setattr(SessionBrowser, 'run', check)
+    assert await service.command(['codex']) == ''
+    assert await service.command([]) == ''
+    # Naming Codex keeps its session, opening and reloading; listing all of them keeps only the newest.
+    assert seen == [(1, 201), (1, 201), (200, 200), (200, 200)]
 
 
 async def test_resume_browser_marks_a_copy_whose_original_moved_on(

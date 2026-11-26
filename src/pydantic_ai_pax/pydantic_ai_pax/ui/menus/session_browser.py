@@ -169,6 +169,12 @@ class SessionBrowser:
             return [entry for entry in self.entries if source_of(entry) is None or not self.importing(entry)]
         return [entry for entry in self.entries if source_of(entry) == self.source]
 
+    def select_source(self, source: SourceFilter) -> None:
+        """List only `source`'s sessions, or all with `None`, moving off a project that has none of them."""
+        self.source = source
+        self._fold()
+        self._keep_row()
+
     def source_name(self) -> str:
         """What the source filter lists, for the header and notices."""
         if self.source is None:
@@ -461,10 +467,8 @@ class SessionBrowser:
                 self.notice = 'Archived sessions are listed.' if self.archived else 'Archived sessions are hidden.'
                 self.reload()
             case 'f':
-                self.source = _FILTERS[(_FILTERS.index(self.source) + 1) % len(_FILTERS)]
+                self.select_source(_FILTERS[(_FILTERS.index(self.source) + 1) % len(_FILTERS)])
                 self.notice = f'Listing {self.source_name()} sessions.'
-                self._fold()
-                self._keep_row()
             case _ if self.mode == 'projects':
                 if key in (Key.ENTER, Key.RIGHT, Key.TAB):
                     self.mode = 'sessions'

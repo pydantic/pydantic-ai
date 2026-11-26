@@ -37,6 +37,7 @@ from pydantic_ai_pax.runtime.imported_sessions import (
     import_source,
     merge,
     save_import,
+    source_of,
 )
 from pydantic_ai_pax.runtime.launch import launch_session_id
 from pydantic_ai_pax.runtime.session import Session, fork_summary, interrupted_history
@@ -340,9 +341,20 @@ class Sessions(Generic[DepsT, OutputT]):
         def apply(action: Coroutine[object, object, ResultT]) -> ResultT:
             return asyncio.run_coroutine_threadsafe(action, loop).result()
 
+        def on_disk(query: str, limit: int) -> list[ConversationSummary]:
+            found = imports.listing(query, limit)
+            if source is None:
+                return found
+            # The named agent's own newest are listed too, however many newer ones other sources have.
+            ids = {summary.id for summary in found}
+            return [
+                *found,
+                *(summary for summary in imports.listing(query, limit, sources=(source,)) if summary.id not in ids),
+            ]
+
         def listing(query: str, limit: int, archived: bool) -> list[ConversationSummary]:
             saved = apply(self.store.listing(query=query, limit=limit))
-            return self._browser_entries(saved, imports.listing(query, limit), limit=limit, archived=archived)
+            return self._browser_entries(saved, on_disk(query, limit), limit=limit, archived=archived, source=source)
 
         retitled: dict[str, str] = {}
 
@@ -356,7 +368,7 @@ class Sessions(Generic[DepsT, OutputT]):
         def browse() -> str:
             # Resolve Git identities on the menu worker, not the application loop.
             browser = SessionBrowser(
-                entries=self._browser_entries(entries, imports.listing(), limit=200, archived=False),
+                entries=self._browser_entries(entries, on_disk('', 200), limit=200, archived=False, source=source),
                 workspace=self.session.workspace,
                 active_id=self.session.summary.id,
                 refresh=listing,
@@ -369,7 +381,7 @@ class Sessions(Generic[DepsT, OutputT]):
                 changed_since_import=imports.changed_since_import,
             )
             # Naming an agent lists its sessions first; `f` reaches the others.
-            browser.source = source
+            browser.select_source(source)
             return browser.run()
 
         selected = await run_worker(browse)
@@ -390,11 +402,25 @@ class Sessions(Generic[DepsT, OutputT]):
 
     @staticmethod
     def _browser_entries(
-        saved: list[ConversationSummary], imported: list[ConversationSummary], *, limit: int, archived: bool
+        saved: list[ConversationSummary],
+        imported: list[ConversationSummary],
+        *,
+        limit: int,
+        archived: bool,
+        source: ImportSource | None = None,
     ) -> list[ConversationSummary]:
-        """The browser's sessions: `saved` merged with `imported`, keeping archived ones only when `archived`."""
+        """The newest `limit` of `saved` merged with `imported`, keeping archived ones only when `archived`.
+
+        With `source`, that agent's own newest `limit` are kept too, so newer sessions elsewhere cannot crowd them out.
+        """
         # An archived copy still replaces its Claude Code or Codex original, so neither is listed.
-        entries = merge(saved, imported, limit=limit)
+        entries: list[ConversationSummary] = []
+        own = 0
+        for index, entry in enumerate(merge(saved, imported, limit=len(saved) + len(imported))):
+            mine = source is not None and source_of(entry) == source
+            own += mine
+            if index < limit or (mine and own <= limit):
+                entries.append(entry)
         return entries if archived else [entry for entry in entries if entry.archived_at is None]
 
     async def _delete(self, source: ConversationSummary) -> None:

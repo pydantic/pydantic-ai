@@ -182,13 +182,17 @@ class ImportCatalog:
         self._read: dict[Path, ImportedSession | None] = {}
         self._by_id: dict[str, ImportedSession] = {}
 
-    def listing(self, query: str = '', limit: int = 200) -> list[ConversationSummary]:
-        """Up to `limit` sessions whose title or directory contains `query`, newest first."""
+    def listing(
+        self, query: str = '', limit: int = 200, *, sources: Sequence[ImportSource] | None = None
+    ) -> list[ConversationSummary]:
+        """Up to `limit` sessions whose title or directory contains `query`, newest first, from `sources` or all."""
         needle = query.casefold()
         found: list[ConversationSummary] = []
         for modified, source, path in self._files:
             if len(found) >= limit:
                 break
+            if sources is not None and source not in sources:
+                continue
             if path not in self._read:
                 imported = _imported(source, path, modified=modified, titles=self._titles[source])
                 self._read[path] = imported
