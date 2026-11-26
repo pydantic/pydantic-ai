@@ -141,7 +141,7 @@ def mock_model(mock_google: MockGoogle) -> GoogleInteractionsModel:
         pytest.param({'user-agent': 'support-bot'}, 'support-bot', id='user-agent'),
         pytest.param({'USER-AGENT': 'support-bot'}, 'support-bot', id='USER-AGENT'),
         pytest.param({'User-Agent': 'a', 'user-agent': 'b'}, 'a b', id='two spellings'),
-        pytest.param({'User-Agent': ''}, 'google-genai client', id='empty'),
+        pytest.param({'User-Agent': ''}, 'google-genai-sdk pydantic-ai', id='empty'),
     ],
 )
 async def test_one_user_agent(
@@ -153,21 +153,20 @@ async def test_one_user_agent(
 ):
     """A request carries one user-agent line: the caller's in any spelling, or the SDK's label with ours.
 
-    An empty one leaves the SDK's label alone, which google-genai replaces with the client's own `user-agent`. Not
-    recorded: the claim is about the header lines the SDK sends, which no response bears on.
+    An empty one leaves the SDK's label alone, which google-genai replaces with the client's own `user-agent`: its
+    `x-goog-api-client` label with ours. Not recorded: the claim is about the header lines the SDK sends, which no
+    response bears on.
     """
     await model_request(
         mock_model, [ModelRequest.user_text_prompt('hello')], model_settings={'extra_headers': extra_headers}
     )
 
-    [user_agent] = mock_google.headers[-1].get_list('user-agent')
-    client_headers = mock_model.client._api_client._http_options.headers  # pyright: ignore[reportPrivateUsage]
-    assert client_headers is not None
-    client_user_agent = client_headers['user-agent']
+    headers = mock_google.headers[-1]
+    [user_agent] = headers.get_list('user-agent')
     assert (
-        user_agent.replace(client_user_agent, 'google-genai client')
-        .replace(get_user_agent(), 'pydantic-ai')
+        user_agent.replace(get_user_agent(), 'pydantic-ai')
         .replace(mock_model.client.aio.interactions.sdk_configuration.user_agent, 'google-genai')
+        .replace(headers['x-goog-api-client'], 'google-genai-sdk')
         == expected
     )
 
@@ -1460,18 +1459,25 @@ async def test_sdk_error_mapping(
         await model_request(mock_model, [ModelRequest.user_text_prompt('hello')])
 
 
-@pytest.mark.parametrize(
-    ('failure', 'expected'),
-    [
-        pytest.param('status', ModelOverloadedError, id='status'),
-        pytest.param('connection', ModelConnectionError, id='connection'),
-        pytest.param('deadline', ModelTimeoutError, id='deadline'),
-    ],
-)
+_CONTINUATION_FAILURES: dict[str, type[ModelAPIError]] = {
+    'status': ModelHTTPError,
+    'connection': ModelConnectionError,
+    'deadline': ModelTimeoutError,
+}
+# The deadline runs out before a second request is sent. A stream sends a request that fails to connect 3 more times.
+_CONTINUATION_FAILURE_REQUESTS: dict[tuple[bool, str], int] = {
+    (False, 'status'): 2,
+    (False, 'connection'): 2,
+    (False, 'deadline'): 1,
+    (True, 'status'): 2,
+    (True, 'connection'): 5,
+    (True, 'deadline'): 1,
+}
+
+
+@pytest.mark.parametrize('failure', list(_CONTINUATION_FAILURES))
 @pytest.mark.parametrize('stream', [False, True])
-async def test_failed_continuation_request(
-    stream: bool, failure: str, expected: type[ModelAPIError], allow_model_requests: None
-):
+async def test_failed_continuation_request(stream: bool, failure: str, allow_model_requests: None):
     """A request google-genai sends to continue a long decode fails the model request with that request's own error.
 
     google-genai raises `ContinuationInterruptedError` with the request's error as its cause. A numeric `timeout`
@@ -1502,19 +1508,18 @@ async def test_failed_continuation_request(
                 return httpx2.Response(200, content=content, headers={'content-type': 'text/event-stream'})
             return httpx2.Response(200, json=completed)
         elif failure == 'status':
-            return httpx2.Response(503, json={'error': {'code': 'unavailable', 'message': 'overloaded'}})
+            # google-genai retries a 5xx with a real backoff, and doesn't retry a 400.
+            return httpx2.Response(400, json={'error': {'code': 'invalid_request', 'message': 'bad continuation'}})
         raise httpx2.ConnectError('Connection refused', request=request)
 
-    model = GoogleInteractionsModel(
-        'gemini-test',
-        provider=GoogleProvider(
-            api_key='test-key', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
-        ),
+    provider = GoogleProvider(
+        api_key='test-key', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
     )
+    model = GoogleInteractionsModel('gemini-test', provider=provider)
     settings: GoogleInteractionsModelSettings = {'timeout': 0} if failure == 'deadline' else {}
     messages = [ModelRequest.user_text_prompt('Count.')]
 
-    with pytest.raises(expected) as exc_info:
+    with pytest.raises(_CONTINUATION_FAILURES[failure]) as exc_info:
         if stream:
             async with model_request_stream(model, messages, model_settings=settings) as response:
                 async for _ in response:
@@ -1523,11 +1528,24 @@ async def test_failed_continuation_request(
             await model_request(model, messages, model_settings=settings)
 
     if failure == 'status':
-        assert isinstance(exc_info.value, ModelHTTPError) and exc_info.value.status_code == 503
-    # The deadline runs out before a second request is sent.
-    assert (len(requests) > 1) == (failure != 'deadline')
+        assert isinstance(exc_info.value, ModelHTTPError) and exc_info.value.status_code == 400
+    assert len(requests) == _CONTINUATION_FAILURE_REQUESTS[stream, failure]
     raised = ContinuationTimeoutError if stream and failure == 'deadline' else ContinuationInterruptedError
     assert type(exc_info.value.__cause__) is raised
+
+
+async def test_continuation_error_without_an_sdk_cause(
+    mock_model: GoogleInteractionsModel, monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
+):
+    """A continuation error whose cause isn't an SDK error propagates as is, like any other error google-genai raises.
+
+    Not recorded: google-genai wraps every transport and status failure of a continued request in an SDK error.
+    """
+    error = ContinuationInterruptedError('Automatic continuation was interrupted.')
+    error.__cause__ = ValueError('unexpected')
+    monkeypatch.setattr(mock_model.client.aio.interactions, 'create', AsyncMock(side_effect=error))
+    with pytest.raises(ContinuationInterruptedError):
+        await model_request(mock_model, [ModelRequest.user_text_prompt('hello')])
 
 
 async def test_unprepared_history_guards(mock_model: GoogleInteractionsModel, allow_model_requests: None):

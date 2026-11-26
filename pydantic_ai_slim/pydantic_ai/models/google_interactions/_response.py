@@ -174,7 +174,8 @@ def process_response(
     )
     # google-genai merges the requests of a long decode it continued into one interaction, whose `total_input_tokens`
     # sums every request's input and so re-counts the earlier requests' output; its `initial_input_tokens` is the
-    # first request's. Interactions sent with `store=False` carry no `id`, so `continuation_ids` stays empty, but each
+    # first request's. A stream sees each request start (`_streaming.py`); a merged interaction only shows it in its
+    # timestamps. Interactions sent with `store=False` carry no `id`, so `continuation_ids` stays empty, but each
     # one's `created` equals its `updated`, and the merged one takes `created` from the first request only. On a
     # single request `initial_input_tokens` can differ from `total_input_tokens`, which then measures the context.
     if response.created != response.updated and response.usage and response.usage.initial_input_tokens is not None:

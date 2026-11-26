@@ -280,9 +280,9 @@ this stateless adapter's scope. URI-only output raises an error.
 ### Unsupported Interactions features
 
 Interactions has no token-counting endpoint, batch support, or explicit prompt caching. Implicit caching is
-provider-managed. As on `GoogleModel`, the SDK continues a [long decode](#long-decode) in further requests, the
-response holds every request's steps and their summed usage, context-window checks read the first request's input, and
-a later request that fails fails the model request with that request's own error. Unlike there, a numeric
+provider-managed. The SDK continues a [long decode](#long-decode) in further requests: the response holds every
+request's steps and their summed usage, context-window checks read the first request's input, and a later request that
+fails raises the error its own failure maps to. Unlike on `GoogleModel`, a numeric
 [`timeout`][pydantic_ai.settings.ModelSettings.timeout] bounds the whole call rather than each request: the SDK sends
 each further request with the time left, and a streamed response checks it before each event. Running out raises
 [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError].
