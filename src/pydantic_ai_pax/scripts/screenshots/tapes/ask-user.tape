@@ -2,7 +2,7 @@
 Source tapes/common.tape
 Output shots/ask-user.txt
 Hide
-Type 'clai-demo' Enter
+Type 'pax-demo' Enter
 Wait+Screen /\| ready/
 Show
 Type 'Set up CI for this repo' Enter

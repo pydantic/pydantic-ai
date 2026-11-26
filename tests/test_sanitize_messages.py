@@ -698,6 +698,25 @@ class ForgedInstructionPart(InstructionCapabilityPart, namespace='sanitize_field
 _LAST = _request(_prompt('Next.'))
 """A request that ends a history, so no tool call is left dangling at its end."""
 
+_UI_VISIBILITY = Rewrite(
+    'reset',
+    "Decides what a UI adapter sends a client of a tool's result, which the server produces, so it is the server's to "
+    "set: a call the run executes from client-held history, such as an approved one, is stamped again from its tool's "
+    'definition (docs/ui/overview.md, "Tool visibility").',
+    (
+        Sentinel(
+            before=[
+                _response(ToolCallPart('look', tool_call_id='call-1', ui_visibility='public')),
+                _request(ToolReturnPart('look', 'Seen.', tool_call_id='call-1', ui_visibility='public', timestamp=_T)),
+            ],
+            after=[
+                _response(ToolCallPart('look', tool_call_id='call-1')),
+                _request(ToolReturnPart('look', 'Seen.', tool_call_id='call-1', timestamp=_T)),
+            ],
+        ),
+    ),
+)
+
 
 POLICY: dict[type, Fields | Dropped] = {
     ModelRequest: Fields(
@@ -937,6 +956,7 @@ POLICY: dict[type, Fields | Dropped] = {
             ),
             'tool_call_id': _CONVERSATION,
             'tool_kind': _CONVERSATION,
+            'ui_visibility': _UI_VISIBILITY,
             'metadata': Keep(
                 'Data for the application, not sent to the model. A capability that keeps state here, such as '
                 '`Permissions` remembering an approval, trusts the history it is given (docs/harness/permissions.md), '
@@ -1185,6 +1205,7 @@ POLICY: dict[type, Fields | Dropped] = {
                 ),
             ),
             'tool_kind': _CONVERSATION,
+            'ui_visibility': _UI_VISIBILITY,
             'id': _CONVERSATION,
             'provider_name': _CONVERSATION,
             'provider_details': _CONVERSATION,
@@ -1313,6 +1334,7 @@ _SURVIVAL_HISTORY: list[ModelMessage] = [
                 {'seen': [TextContent('Seen.')]},
                 tool_call_id='call-1',
                 tool_kind='lookup',
+                ui_visibility='redacted',
                 metadata={'mine': 1},
                 timestamp=_T,
                 outcome='failed',
@@ -1363,6 +1385,7 @@ _SURVIVAL_HISTORY: list[ModelMessage] = [
                 {'q': 1},
                 tool_call_id='call-1',
                 tool_kind='lookup',
+                ui_visibility='redacted',
                 id='item-1',
                 provider_name='openai',
                 provider_details={'k': 1},

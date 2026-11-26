@@ -431,6 +431,15 @@ class OpenAIModelProfile(ModelProfile, total=False):
     See https://developers.openai.com/api/docs/guides/latest-model.
     Explicit `openai_reasoning_effort='minimal'` settings are still passed through unchanged.
 
+    `OpenAIProvider` also disables it for the GPT-5.1 through GPT-5.5 families, which OpenAI's API answers with a 400
+    for `minimal` (verified live on gpt-5.1, gpt-5.2, gpt-5.3-codex, gpt-5.4, gpt-5.4-mini, gpt-5.4-nano, gpt-5.5
+    and their dated snapshots). gpt-5.5-cyber-preview and gpt-5.3-codex-spark are covered by the prefix only. The
+    `-pro` and `-chat` variants set `openai_reasoning_efforts`, which decides instead; the other ids under these
+    prefixes return 404 (shut down or nonexistent). `openai_model_profile` leaves it on,
+    because OpenRouter accepts `minimal` for these models. `OpenAIProvider(base_url=...)` keeps the flag off, as a
+    proxy to OpenAI should; for another server that serves these model names and accepts `minimal`, pass
+    `profile=OpenAIModelProfile(openai_supports_minimal_reasoning_effort=True)`.
+
     Ignored when `openai_reasoning_efforts` is set."""
 
     openai_reasoning_efforts: frozenset[OpenAIReasoningEffort]
@@ -446,7 +455,13 @@ class OpenAIModelProfile(ModelProfile, total=False):
     `openai_supports_reasoning_effort_none` and `openai_supports_minimal_reasoning_effort`. When unset, unified
     levels map one-to-one (see `openai_supports_minimal_reasoning_effort`), and `thinking=False` sends nothing on a
     model that always reasons.
-    Explicit `openai_reasoning_effort` settings are passed through unchanged."""
+    Explicit `openai_reasoning_effort` settings are passed through unchanged.
+
+    `OpenAIProvider` sets an empty set for `gpt-5-search-api`, which OpenAI's API answers with a 400 for any
+    `reasoning_effort` (verified live, 2026-11). `openai_model_profile` keeps the `'gpt-5'` efforts, as the
+    restriction is unverified on the OpenAI-compatible endpoints that share it. `OpenAIProvider(base_url=...)` keeps
+    the empty set, as a proxy to OpenAI should; for another server that serves this model name and accepts an effort,
+    pass `profile=OpenAIModelProfile(openai_reasoning_efforts=...)` with the efforts it accepts."""
 
     openai_chat_supports_max_reasoning_effort: bool
     """Whether the Chat Completions API accepts `reasoning_effort='max'` for this model. Default: `False`.
@@ -782,8 +797,11 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         # https://huggingface.co/openai/gpt-oss-120b/raw/main/chat_template.jinja
         profile['honors_only_first_system_message'] = True
     elif model_name.startswith('gpt-'):
-        # OpenAI's own GPT models, not other models served through an OpenAI-compatible API (see the field's docstring).
+        # OpenAI's own GPT models, not other models served through an OpenAI-compatible API (see the fields' docstrings).
         profile['delegates_unprompted'] = True
+        profile['reinterprets_malformed_inputs'] = True
+        profile['omits_handoff_evidence'] = True
+        profile['ignores_stated_runtime_constraints'] = True
     return profile
 
 
@@ -843,6 +861,9 @@ def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
         # Speech and delegated work run independently: the Live model can keep the conversation going
         # while the backend works, so a tool call doesn't hold up speech, and there's no mode that waits.
         'async_tool_call_mode': 'always',
+        # The tools are the backend's, and a `session.update` of `delegation.responses.tools` replaces them
+        # mid-session: the backend calls a tool it adds from its next response on (checked live).
+        'supports_tool_updates': True,
         # The backend runs web search; Live refuses every other native Responses tool (checked live).
         'supported_native_tools': frozenset({WebSearchTool}),
         # The delegated backend does the reasoning, so `thinking` sets its effort. Whether a given backend
@@ -883,6 +904,9 @@ def openai_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # wire flag to set, unlike Gemini. The session already runs tools in the background and
         # defers `response.create` while a response is active, so this is true end to end.
         'async_tool_call_mode': 'always',
+        # A `session.update` with a new `tools` array mid-session takes effect: a tool it adds is called from the next
+        # response on, and the conversation so far is kept (checked live on `gpt-realtime`, and on Azure).
+        'supports_tool_updates': True,
         'emits_input_speech_events': True,
         'audio_input_sample_rate': 24000,
         'audio_output_sample_rate': 24000,

@@ -29,7 +29,7 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
-pytestmark = [pytest.mark.xdist_group(name='temporal-durability')]
+pytestmark = [pytest.mark.xdist_group(name='temporal-durable-hook-retry')]
 
 
 def _rerouted_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

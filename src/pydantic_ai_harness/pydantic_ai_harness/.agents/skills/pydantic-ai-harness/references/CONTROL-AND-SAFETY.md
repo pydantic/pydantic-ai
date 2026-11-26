@@ -26,7 +26,7 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Keep injected instructions, exfiltration commands, hidden text out of memory and skills | `Memory(scanner=ArtifactScanner())`, `Skills(..., scanner=ArtifactScanner())` |
 | Ask a second model whether each selected tool call should run | `ToolCallJudge(model, question=..., tools=...)` |
 | Let a second model approve low-risk calls that need approval, and ask a person about the rest | `ApprovalReviewer(model, question=..., tools=...)` |
-| Ask a person before file writes and commands, by permission mode (full, auto, read-only) | `Permissions(mode)` with `ask_permissions` in a `HandleDeferredToolCalls` handler |
+| Ask a person before file writes and commands, by permission mode (full, auto, read-only) | `Permissions(mode)` with core `HandleDeferredToolCalls(approval_ask(approver))` |
 | Allow, ask about, or deny tool calls and shell commands by rule | `Permissions(rules=[PermissionRule(...)])` |
 | Cap USD or tokens per day/month/run, per tenant, across workers | `SpendLimits(budgets=[Budget(...)])` |
 | Cap tokens/cost for one run only | core `UsageLimits` (no harness capability needed) |
@@ -439,7 +439,7 @@ from pydantic_ai_harness.permissions import (
     PermissionDecision,
     PermissionRequest,
     Permissions,
-    ask_permissions,
+    approval_ask,
 )
 
 
@@ -453,7 +453,7 @@ agent = Agent(
         LocalWorkspace('.'),
         Coder(),
         Permissions('auto'),
-        HandleDeferredToolCalls(handler=lambda ctx, requests: ask_permissions(requests, approve)),
+        HandleDeferredToolCalls(approval_ask(approve)),
     ],
 )
 ```
@@ -461,6 +461,11 @@ agent = Agent(
 Gotchas:
 
 - Without a handler a held call ends the run as `DeferredToolRequests` output, like `requires_approval=True`.
+- `approval_ask` takes a resume token, which durable runs on engines other than AWS Lambda (`AWSLambdaDurability`)
+  refuse; there, pass the two-parameter handler `lambda ctx, requests: ask_permissions(requests, approve)`. On
+  Lambda, `approval_ask` answers in place in a recorded step: keep the approver quick and set `timeout=...`.
+- A plain two-parameter handler runs before a token handler such as `approval_ask`, whatever the list order: a
+  second handler for other approvals must skip the calls `permission_requests(requests)` returns.
 - `mode` may be a function of the run context, read on every call. `PermissionDecision(remember=True)`
   skips asking about the same tool and command or path for the rest of the conversation, via the caller-ownable
   `remembered` set; inside durable execution it is kept in the message history instead.
@@ -646,8 +651,8 @@ print(agent.run_sync('Set up storage').output)
   `DeferredToolResults(calls={call.tool_call_id: ask_user_result(request, response)})`.
 - Observe with `AskUserRequestedEvent` / `AskUserAnsweredEvent`. An answerer that raises still
   emits the answered event, with `failed=True`, before its error propagates. Two `AskUser` on one agent
-  collide on the tool name. It has a spec name, but a spec cannot supply the `answerer` callable,
-  so pass it with `capabilities=` on `Agent.from_spec`/`Agent.from_file`.
+  collide on the tool name. A spec can set `answerer` only to `null`, which defers every call as above;
+  pass an `AskUser` with an answerer callable with `capabilities=` on `Agent.from_spec`/`Agent.from_file`.
 
 ## Deny Unanswered
 

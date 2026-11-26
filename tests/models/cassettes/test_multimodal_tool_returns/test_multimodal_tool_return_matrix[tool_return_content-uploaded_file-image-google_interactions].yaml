@@ -1,0 +1,194 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "385"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: >-
+              Use the get_file tool now to retrieve a image file, then describe what you
+              received.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=2079
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: requires_action
+        usage:
+          total_tokens: 139
+          total_input_tokens: 36
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 36
+          total_cached_tokens: 0
+          total_output_tokens: 10
+          total_tool_use_tokens: 0
+          total_thought_tokens: 93
+          initial_input_tokens: 29
+        created: 2026-11-06T02:56:45Z
+        updated: 2026-11-06T02:56:45Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            Es8DCswDAWkUfRPGvp721zVX3MLkzh+4pvaytuynnjGPUVEp3ZeO55YSs6V4jOew6+eztOgNCGvZdeBtxmtayRPa7Ew/6rzXmEAntOUA+MXUeFgo8JTzoNBsTagFAX5MuFf757wcPpPUkXRLrh9Rm0ofBgIMBX2a0LyZS5hGvaXrpGzO+5QcJzcH/yMCQa9vwfb61yIksk/FV0GDxryIh/7mJ7LAVRaewfMwSelXCbiSnTIW4ct7mXFROgLOsUYvIWYHI1ss6oMVqxRywHoetfn9uC36x11xXZfC/2XWXgQjXbeomyFbtVR533ZkjETTqFqKt9a6898kHOr63G7YUrHk1gKG6wARf7WQcMWa+N0BwSVDLTJYiNnN1p9pOQoKS4RWCAb8aUKQXoNYDNvotF4PZdH0ojj6552Up4iVKnjeaNCqS0f1XzrpVG3nkbC8I40lBVog0NqR04HXcMYXIBhP+kexZwNcevYis/M8hwgY72UlSJ7r04fbwuf+ZORc1CIfkf1zfSgjWpuInsJUn42YosjNixDxcHgSsHJnMQiIY2aUNiQfAXCOwTU5HNs6jE1bFTF7sE3flQjHk/Ysh1G2ryVzgh+OSef1PkTWgfCZ6A==
+          type: thought
+        - id: call_16512484353308374200
+          type: function_call
+          name: get_file
+          arguments: {}
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:56:45.137945+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1436"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: >-
+              Use the get_file tool now to retrieve a image file, then describe what you
+              received.
+        - signature: >-
+            Es8DCswDAWkUfRPGvp721zVX3MLkzh+4pvaytuynnjGPUVEp3ZeO55YSs6V4jOew6+eztOgNCGvZdeBtxmtayRPa7Ew/6rzXmEAntOUA+MXUeFgo8JTzoNBsTagFAX5MuFf757wcPpPUkXRLrh9Rm0ofBgIMBX2a0LyZS5hGvaXrpGzO+5QcJzcH/yMCQa9vwfb61yIksk/FV0GDxryIh/7mJ7LAVRaewfMwSelXCbiSnTIW4ct7mXFROgLOsUYvIWYHI1ss6oMVqxRywHoetfn9uC36x11xXZfC/2XWXgQjXbeomyFbtVR533ZkjETTqFqKt9a6898kHOr63G7YUrHk1gKG6wARf7WQcMWa+N0BwSVDLTJYiNnN1p9pOQoKS4RWCAb8aUKQXoNYDNvotF4PZdH0ojj6552Up4iVKnjeaNCqS0f1XzrpVG3nkbC8I40lBVog0NqR04HXcMYXIBhP+kexZwNcevYis/M8hwgY72UlSJ7r04fbwuf+ZORc1CIfkf1zfSgjWpuInsJUn42YosjNixDxcHgSsHJnMQiIY2aUNiQfAXCOwTU5HNs6jE1bFTF7sE3flQjHk/Ysh1G2ryVzgh+OSef1PkTWgfCZ6A==
+          type: thought
+        - id: call_16512484353308374200
+          name: get_file
+          type: function_call
+          arguments: {}
+        - type: function_result
+          name: get_file
+          call_id: call_16512484353308374200
+          is_error: false
+          result:
+          - type: text
+            text: File attached
+        - type: user_input
+          content:
+          - mime_type: image/jpeg
+            type: image
+            uri: https://generativelanguage.googleapis.com/v1beta/files/ctx26tf13vah
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=4692
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 1511
+          total_input_tokens: 1236
+          input_tokens_by_modality:
+          - modality: image
+            tokens: 1088
+          - modality: text
+            tokens: 148
+          total_cached_tokens: 0
+          total_output_tokens: 120
+          total_tool_use_tokens: 0
+          total_thought_tokens: 155
+          initial_input_tokens: 1229
+        created: 2026-11-06T02:56:49Z
+        updated: 2026-11-06T02:56:49Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            EvEFCu4FAWkUfRMij0pNrQXhUBvqECOrSrBnL7wqTLVLNKMCVi5jwQKH2ZCbu6DIpKXdceFMGPQhOYjLgxD4w15K3Gy8lKHc+E8PiIvV9ZZogcL1NP+p5D10CGVztXz6PK8S1sB9wxa8W98UwI2f2QzeWiL8zbk7F9mkSNBGCtvP0QIFC3K0KPs6ROrSx4u9t93ubMn575TJ3C2qVo5ibiKOZhuPu0J4iQ2vNeIFLZgkaU5camTF5VsQJYRUT/is+BgbTufZxIoW91MRC6/Y4/Sdq0WMGNzd03N9B77pixEwzvmgj2oz9ZnLZYLcNhyojhDd1coibQXWDyWg2Cp8BjY+XVEgwHi8K1BxPV+0zHarT4G1Ux5ltEvqHx7unYOr6VyblesN/AtWsrtllLLrxkPEZJrZEXz2GKxYqSo2vrtPRKC+5RzQpTcLkyzeD3urscOnIRdaxh8a0W9yd5ghGTgSxjiWCOyP4z/uIJ38oZAGsvDlt+3b7FiZKECkH+Wu3snfapeCGlBvIeZOanupapMvhhDvbUUPxSBbTvHJawEpreR1B+rPkzPQTXlLEbZsHhKip8eZFqvVhvSVihDsuTpUtD7w8jb1vDJl69c/e2KuyoNOU7dGd0VqgwQTewE0ACLV1qO+f9RCbOnrEXb/8umwudEdumvdHJAMJlNhnKgar+WTwoHTOino0sG7vpuntjDm5jS8dsoe0oxT0Amtvjeoqf45Qi557AYXHku/TgLHJF6+ha5mj1b+92lcc+/E30puB762p4nXhOvn1qhoqvcX669GOC7/+GMkG+NaJGmwFEN4alZgPE3c+W4pNKM4rvFbfD1MFSTgBSNrYj7IL8cM6QBBD78PXqBxFCvk0go+t2cPmWAIaKhM9pOUS61WFjbb5iBzQQJBUSn8Z884QPn9yYXFzZyg4hFxSsfyv5PcgedLikqYhUHJBLq7xh6UNatm4Zu9U0tcqsE+BMEWNB7xTvZ97jxCIHyU+lz93A78tOrH
+          type: thought
+        - content:
+          - text: |-
+              The image shows a crisp, detailed cross-section of a fresh, ripe kiwifruit against a clean white background.
+
+              Key details of the image include:
+              - **Outer Skin:** A thin, brownish rind covered in fine, fuzzy hairs framing the circumference.
+              - **Flesh:** Vibrant, translucent bright-green pulp showing delicate radial striations extending outward.
+              - **Seeds:** A circular ring of tiny, glossy black seeds neatly arranged around the center.
+              - **Core:** A pale, creamy yellowish-white core in the center from which the seeds and striations radiate.
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:56:49.856517+00:00
