@@ -1,0 +1,590 @@
+"""Per-tool UI visibility: what the UI adapters send a client for each tool, live and from `dump_messages`.
+
+These run the real adapters on a `FunctionModel`: what is under test is the adapters' projection of tool calls and
+returns, which no provider response changes, so there is nothing for a cassette to record.
+"""
+
+from __future__ import annotations
+
+import json
+import warnings
+from collections.abc import AsyncIterator, Sequence
+from dataclasses import dataclass, replace
+from typing import Any, Literal
+
+import pytest
+
+from pydantic_ai import Agent, ToolOutput
+from pydantic_ai.capabilities import Capability, PrepareTools
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturn,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo, BuiltinToolCallsReturns, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.tools import DeferredToolRequests, RunContext, Tool, ToolDefinition, ToolUIVisibility
+from pydantic_ai.toolsets import ExternalToolset, FunctionToolset
+
+from ._inline_snapshot import snapshot
+from .conftest import try_import
+
+with try_import() as imports_successful:
+    from ag_ui.core import CustomEvent, RunAgentInput, UserMessage
+
+    from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
+    from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+    from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage, TextUIPart, UIMessage
+    from pydantic_ai.ui.vercel_ai.response_types import DataChunk
+
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='ag-ui-protocol or starlette not installed')
+
+ProtocolName = Literal['ag_ui', 'vercel_ai']
+PROTOCOLS: list[ProtocolName] = ['ag_ui', 'vercel_ai']
+
+SECRET = 'internal-margin-42'
+"""What the server-side tools return: it must never reach the client unless the tool is public."""
+
+
+def calling(*calls: tuple[str, str]) -> FunctionModel:
+    """A model whose first response makes `calls`, as `(tool name, JSON args)`, and whose next one answers `'Done.'`."""
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        last = messages[-1]
+        if isinstance(last, ModelRequest) and not any(isinstance(part, ToolReturnPart) for part in last.parts):
+            yield {
+                index: DeltaToolCall(name=name, json_args=args, tool_call_id=f'call_{index}')
+                for index, (name, args) in enumerate(calls)
+            }
+        else:
+            yield 'Done.'
+
+    return FunctionModel(stream_function=stream)
+
+
+@dataclass
+class Run:
+    """What a client got from one adapter run, and the history the run produced."""
+
+    protocol: ProtocolName
+    events: list[dict[str, Any]]
+    messages: list[ModelMessage]
+
+    @property
+    def wire(self) -> str:
+        return json.dumps(self.events)
+
+    def tool_events(self) -> list[dict[str, Any]]:
+        """The run's tool events, with the fields this file asserts on."""
+        if self.protocol == 'ag_ui':
+            keep = ('type', 'toolCallId', 'toolCallName', 'delta', 'content', 'activityType', 'name', 'value')
+            return [
+                {key: event[key] for key in keep if key in event}
+                for event in self.events
+                if event['type'].startswith('TOOL_CALL') or event['type'] in ('ACTIVITY_SNAPSHOT', 'CUSTOM')
+            ]
+        keep = ('type', 'toolCallId', 'toolName', 'inputTextDelta', 'input', 'output', 'errorText', 'data')
+        return [
+            {key: event[key] for key in keep if key in event}
+            for event in self.events
+            if event['type'].startswith('tool-') or event['type'].startswith('data-')
+        ]
+
+
+async def run_adapter(
+    protocol: ProtocolName,
+    agent: Agent[None, Any],
+    *,
+    manage_message_history: Literal['client', 'server'] = 'server',
+    **adapter_kwargs: Any,
+) -> Run:
+    """Run `agent` through the protocol's adapter for one user message, decoding the SSE wire it writes.
+
+    The history is held on the server, as non-public tools need it to be.
+    """
+    adapter_kwargs['manage_message_history'] = manage_message_history
+    messages: list[ModelMessage] = []
+
+    async def keep_history(result: Any) -> None:
+        messages.extend(result.all_messages())
+
+    if protocol == 'ag_ui':
+        run_input = RunAgentInput(
+            thread_id='thread_1',
+            run_id='run_1',
+            messages=[UserMessage(id='msg_1', content='Where is my order?')],
+            state={},
+            tools=[],
+            context=[],
+            forwarded_props={},
+        )
+        ag_ui_adapter = AGUIAdapter(agent, run_input=run_input, **adapter_kwargs)
+        wire = [
+            chunk async for chunk in ag_ui_adapter.encode_stream(ag_ui_adapter.run_stream(on_complete=keep_history))
+        ]
+    else:
+        request = SubmitMessage(
+            trigger='submit-message',
+            id='chat_1',
+            messages=[UIMessage(id='msg_1', role='user', parts=[TextUIPart(text='Where is my order?')])],
+        )
+        vercel_adapter = VercelAIAdapter(agent, run_input=request, sdk_version=6, **adapter_kwargs)
+        wire = [
+            chunk async for chunk in vercel_adapter.encode_stream(vercel_adapter.run_stream(on_complete=keep_history))
+        ]
+
+    events = [
+        json.loads(data)
+        for chunk in wire
+        for line in chunk.splitlines()
+        if line.startswith('data: ') and (data := line.removeprefix('data: ')) != '[DONE]'
+    ]
+    return Run(protocol, events, messages)
+
+
+def dump(
+    protocol: ProtocolName, messages: Sequence[ModelMessage], default_ui_visibility: ToolUIVisibility = 'public'
+) -> str:
+    """What a "load chat" endpoint would send for `messages`, as JSON."""
+    if protocol == 'ag_ui':
+        dumped = AGUIAdapter.dump_messages(messages, default_ui_visibility=default_ui_visibility)
+    else:
+        dumped = VercelAIAdapter.dump_messages(messages, default_ui_visibility=default_ui_visibility)
+    return json.dumps([message.model_dump(mode='json', by_alias=True, exclude_none=True) for message in dumped])
+
+
+def stamps(messages: Sequence[ModelMessage]) -> list[tuple[str, str, ToolUIVisibility | None]]:
+    """Each tool part in `messages`, as `(part kind, tool name, ui_visibility stamp)`."""
+    return [
+        (part.part_kind, part.tool_name, part.ui_visibility)
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolCallPart | ToolReturnPart | NativeToolCallPart | NativeToolReturnPart)
+    ]
+
+
+def secret_agent(ui_visibility: ToolUIVisibility | None, **agent_kwargs: Any) -> Agent[None, Any]:
+    agent = Agent(calling(('lookup_order', '{"order_id": "o_1"}')), **agent_kwargs)
+
+    @agent.tool_plain(ui_visibility=ui_visibility)
+    def lookup_order(order_id: str) -> dict[str, str]:
+        return {'order_id': order_id, 'margin': SECRET}
+
+    return agent
+
+
+EXPECTED_REDACTED_EVENTS: dict[ProtocolName, Any] = {
+    'ag_ui': snapshot(
+        [
+            {'type': 'TOOL_CALL_START', 'toolCallId': 'call_0', 'toolCallName': 'lookup_order'},
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'call_0', 'delta': '{"order_id": "o_1"}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': 'call_0'},
+            {'type': 'TOOL_CALL_RESULT', 'toolCallId': 'call_0', 'content': '[REDACTED]'},
+        ]
+    ),
+    'vercel_ai': snapshot(
+        [
+            {'type': 'tool-input-start', 'toolCallId': 'call_0', 'toolName': 'lookup_order'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call_0', 'inputTextDelta': '{"order_id": "o_1"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'call_0',
+                'toolName': 'lookup_order',
+                'input': {'order_id': 'o_1'},
+            },
+            {'type': 'tool-output-available', 'toolCallId': 'call_0', 'output': '[REDACTED]'},
+        ]
+    ),
+}
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_redacted_tool_keeps_the_call_and_replaces_the_result(protocol: ProtocolName):
+    run = await run_adapter(protocol, secret_agent('redacted'))
+
+    assert SECRET not in run.wire
+    assert run.tool_events() == EXPECTED_REDACTED_EVENTS[protocol]
+    assert SECRET not in dump(protocol, run.messages)
+    assert '[REDACTED]' in dump(protocol, run.messages)
+
+    # The stored history keeps the real return; only what goes to the client is projected.
+    tool_return = next(part for part in run.messages[2].parts if isinstance(part, ToolReturnPart))
+    assert tool_return.content == {'order_id': 'o_1', 'margin': SECRET}
+    assert stamps(run.messages) == [
+        ('tool-call', 'lookup_order', 'redacted'),
+        ('tool-return', 'lookup_order', 'redacted'),
+    ]
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_private_tool_sends_neither_call_nor_result(protocol: ProtocolName):
+    run = await run_adapter(protocol, secret_agent('private'))
+
+    assert 'lookup_order' not in run.wire
+    assert 'call_0' not in run.wire
+    assert run.tool_events() == []
+    dumped = dump(protocol, run.messages)
+    assert 'lookup_order' not in dumped
+    assert 'Done.' in dumped
+    assert stamps(run.messages) == [
+        ('tool-call', 'lookup_order', 'private'),
+        ('tool-return', 'lookup_order', 'private'),
+    ]
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_public_tool_is_unchanged(protocol: ProtocolName):
+    """A tool with no setting under the default adapter is sent in full, and its parts stay unstamped."""
+    run = await run_adapter(protocol, secret_agent(None))
+
+    assert SECRET in run.wire
+    assert SECRET in dump(protocol, run.messages)
+    assert stamps(run.messages) == [('tool-call', 'lookup_order', None), ('tool-return', 'lookup_order', None)]
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_adapter_default_applies_to_tools_without_a_setting(protocol: ProtocolName):
+    agent = Agent(calling(('lookup_order', '{"order_id": "o_1"}'), ('order_status', '{"order_id": "o_1"}')))
+
+    @agent.tool_plain
+    def lookup_order(order_id: str) -> dict[str, str]:
+        return {'order_id': order_id, 'margin': SECRET}
+
+    @agent.tool_plain(ui_visibility='public')
+    def order_status(order_id: str) -> str:
+        return 'shipped'
+
+    run = await run_adapter(protocol, agent, default_ui_visibility='redacted')
+
+    assert SECRET not in run.wire
+    assert 'shipped' in run.wire
+    # The default is written into the stamp, so a reload without it projects the same way.
+    assert stamps(run.messages) == [
+        ('tool-call', 'lookup_order', 'redacted'),
+        ('tool-call', 'order_status', 'public'),
+        ('tool-return', 'lookup_order', 'redacted'),
+        ('tool-return', 'order_status', 'public'),
+    ]
+    dumped = dump(protocol, run.messages)
+    assert SECRET not in dumped
+    assert 'shipped' in dumped
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_dump_reads_the_stamp_not_the_tool_definitions(protocol: ProtocolName):
+    """A reload projects from the stamps alone: the tool can be renamed or removed, and a dump default doesn't override a stamp."""
+    run = await run_adapter(protocol, secret_agent('redacted'))
+
+    assert SECRET not in dump(protocol, run.messages)
+    assert 'lookup_order' in dump(protocol, run.messages, default_ui_visibility='private')
+
+    # History with no stamps, such as one from an earlier version, takes the dump's default.
+    unstamped = (await run_adapter(protocol, secret_agent(None))).messages
+    assert SECRET in dump(protocol, unstamped)
+    assert SECRET not in dump(protocol, unstamped, default_ui_visibility='redacted')
+    assert 'lookup_order' not in dump(protocol, unstamped, default_ui_visibility='private')
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_external_and_output_tools_stay_public(protocol: ProtocolName):
+    """Results of external (frontend) tools come from the client, and output tool args are the run's answer."""
+    frontend = ExternalToolset(
+        [ToolDefinition(name='show_map', parameters_json_schema={'type': 'object', 'properties': {}})]
+    )
+    agent = Agent(
+        calling(('show_map', '{}')),
+        toolsets=[frontend],
+        output_type=[ToolOutput(str, name='final_result'), DeferredToolRequests],
+    )
+
+    run = await run_adapter(protocol, agent, default_ui_visibility='private')
+
+    assert 'show_map' in run.wire
+    assert stamps(run.messages) == [('tool-call', 'show_map', 'public')]
+
+    answer = Agent(calling(('final_result', '{"response": "It shipped."}')), output_type=ToolOutput(str))
+    answered = await run_adapter(protocol, answer, default_ui_visibility='private')
+
+    assert 'It shipped.' in answered.wire
+    assert stamps(answered.messages) == [
+        ('tool-call', 'final_result', 'public'),
+        ('tool-return', 'final_result', 'public'),
+    ]
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_approval_required_private_tool_is_shown_redacted(protocol: ProtocolName):
+    """The user can't approve a call they can't see, so a `'private'` tool that needs approval is `'redacted'`."""
+    agent = Agent(calling(('refund', '{"order_id": "o_1"}')), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True, ui_visibility='private')
+    def refund(order_id: str) -> str:
+        return SECRET  # pragma: no cover
+
+    run = await run_adapter(protocol, agent)
+
+    assert 'refund' in run.wire
+    assert stamps(run.messages) == [('tool-call', 'refund', 'redacted')]
+    assert 'refund' in dump(protocol, run.messages)
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+@pytest.mark.parametrize('deferral', [CallDeferred, ApprovalRequired])
+async def test_private_tool_that_defers_at_runtime_is_shown_redacted(
+    protocol: ProtocolName, deferral: type[CallDeferred | ApprovalRequired]
+):
+    """The call was hidden when it streamed; once it defers, the client has to see what it is answering."""
+    agent = Agent(calling(('escalate', '{"order_id": "o_1"}')), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(ui_visibility='private')
+    def escalate(order_id: str) -> str:
+        raise deferral
+
+    run = await run_adapter(protocol, agent)
+
+    assert run.tool_events() == EXPECTED_DEFERRED_EVENTS[(protocol, deferral.__name__)]
+    # The response in history holds a `'redacted'` copy of the call; the part that was streamed is left as it was.
+    assert stamps(run.messages) == [('tool-call', 'escalate', 'redacted')]
+    assert 'escalate' in dump(protocol, run.messages)
+
+
+EXPECTED_DEFERRED_EVENTS: dict[tuple[ProtocolName, str], Any] = {
+    ('ag_ui', 'CallDeferred'): snapshot(
+        [
+            {'type': 'TOOL_CALL_START', 'toolCallId': 'call_0', 'toolCallName': 'escalate'},
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'call_0', 'delta': '{"order_id": "o_1"}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': 'call_0'},
+        ]
+    ),
+    ('ag_ui', 'ApprovalRequired'): snapshot(
+        [
+            {'type': 'TOOL_CALL_START', 'toolCallId': 'call_0', 'toolCallName': 'escalate'},
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'call_0', 'delta': '{"order_id": "o_1"}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': 'call_0'},
+        ]
+    ),
+    ('vercel_ai', 'CallDeferred'): snapshot(
+        [
+            {'type': 'tool-input-start', 'toolCallId': 'call_0', 'toolName': 'escalate'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call_0', 'inputTextDelta': '{"order_id": "o_1"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'call_0',
+                'toolName': 'escalate',
+                'input': {'order_id': 'o_1'},
+            },
+        ]
+    ),
+    ('vercel_ai', 'ApprovalRequired'): snapshot(
+        [
+            {'type': 'tool-input-start', 'toolCallId': 'call_0', 'toolName': 'escalate'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call_0', 'inputTextDelta': '{"order_id": "o_1"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'call_0',
+                'toolName': 'escalate',
+                'input': {'order_id': 'o_1'},
+            },
+            {'type': 'tool-approval-request', 'toolCallId': 'call_0'},
+        ]
+    ),
+}
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_redacted_tool_drops_the_mcp_app_and_keeps_metadata_events(protocol: ProtocolName):
+    """The MCP Apps record holds the full result, so it goes; events the tool put in its metadata are its own channel."""
+    agent = Agent(calling(('forecast', '{"city": "Paris"}'), ('notify', '{}')))
+    app = {
+        'resource_uri': 'ui://weather/forecast',
+        'tool_input': {'city': 'Paris'},
+        'result': {'content': [{'type': 'text', 'text': SECRET}]},
+        'toolset_id': 'weather',
+    }
+
+    @agent.tool_plain(ui_visibility='redacted')
+    def forecast(city: str) -> ToolReturn:
+        return ToolReturn(return_value=SECRET, metadata={'mcp_app': app})
+
+    event: CustomEvent | DataChunk = (
+        CustomEvent(name='progress', value='notified')
+        if protocol == 'ag_ui'
+        else DataChunk(type='data-progress', data='notified')
+    )
+
+    @agent.tool_plain(ui_visibility='redacted')
+    def notify() -> ToolReturn:
+        return ToolReturn(return_value=SECRET, metadata=event)
+
+    run = await run_adapter(protocol, agent)
+
+    assert SECRET not in run.wire
+    assert 'ui://weather/forecast' not in run.wire
+    assert 'notified' in run.wire
+    assert SECRET not in dump(protocol, run.messages)
+    assert 'ui://weather/forecast' not in dump(protocol, run.messages)
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_tool_parts_without_a_definition_follow_the_adapter_default(protocol: ProtocolName):
+    """A call to an unknown tool, and a native tool's parts, have no definition to take a setting from."""
+
+    async def stream(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[BuiltinToolCallsReturns | DeltaToolCalls | str]:
+        last = messages[-1]
+        if isinstance(last, ModelRequest) and not any(isinstance(part, ToolReturnPart) for part in last.parts):
+            yield {
+                0: NativeToolCallPart(
+                    tool_name='web_search', args={'query': 'o_1'}, tool_call_id='native_1', provider_name='function'
+                )
+            }
+            yield {
+                1: NativeToolReturnPart(
+                    tool_name='web_search', content=SECRET, tool_call_id='native_1', provider_name='function'
+                )
+            }
+            yield {2: DeltaToolCall(name='made_up', json_args='{}', tool_call_id='call_0')}
+        else:
+            yield 'Done.'
+
+    agent = Agent(FunctionModel(stream_function=stream))
+
+    @agent.tool_plain(ui_visibility='private')
+    def internal_lookup() -> str:
+        return SECRET  # pragma: no cover
+
+    run = await run_adapter(protocol, agent, default_ui_visibility='redacted')
+
+    assert SECRET not in run.wire
+    # The retry for the unknown tool lists the available tools, a private one among them.
+    assert 'internal_lookup' not in run.wire
+    assert stamps(run.messages) == [
+        ('builtin-tool-call', 'web_search', 'redacted'),
+        ('builtin-tool-return', 'web_search', 'redacted'),
+        ('tool-call', 'made_up', 'redacted'),
+        ('tool-return', 'made_up', 'redacted'),
+    ]
+    assert 'internal_lookup' not in dump(protocol, run.messages)
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_client_held_history_warns_about_non_public_tools(protocol: ProtocolName):
+    """A client that only saw the placeholder would send it back as the result."""
+    with pytest.warns(UserWarning, match="`manage_message_history='server'`") as record:
+        await run_adapter(
+            protocol, secret_agent(None), manage_message_history='client', default_ui_visibility='redacted'
+        )
+    assert len([warning for warning in record if 'ui_visibility' in str(warning.message)]) == 1
+
+    with pytest.warns(UserWarning, match="`manage_message_history='server'`") as record:
+        await run_adapter(protocol, secret_agent('private'), manage_message_history='client')
+    assert len([warning for warning in record if 'ui_visibility' in str(warning.message)]) == 1
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        await run_adapter(protocol, secret_agent('private'))
+        await run_adapter(protocol, secret_agent(None), manage_message_history='client')
+
+
+async def test_standalone_event_stream_default_applies_only_to_unstamped_parts():
+    """Without an adapter, nothing writes the default into the stamps, so only unstamped parts take it.
+
+    That includes calls to external and output tools: a stream used on its own with a non-public default hides
+    them too, which is why the adapter, not the stream, applies the default to tool definitions.
+    """
+    agent = Agent(calling(('lookup_order', '{"order_id": "o_1"}'), ('order_status', '{"order_id": "o_1"}')))
+
+    @agent.tool_plain
+    def lookup_order(order_id: str) -> str:
+        return SECRET
+
+    @agent.tool_plain(ui_visibility='public')
+    def order_status(order_id: str) -> str:
+        return 'shipped'
+
+    stream = AGUIEventStream[None, Any](default_ui_visibility='private')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        async with agent.run_stream_events('Where is my order?') as events:
+            wire = [stream.encode_event(event) async for event in stream.transform_stream(events)]
+
+    assert 'lookup_order' not in ''.join(wire)
+    assert SECRET not in ''.join(wire)
+    assert 'shipped' in ''.join(wire)
+
+
+def test_ui_visibility_flows_from_each_tool_setter_into_the_tool_definition() -> None:
+    """A unit test: `ToolDefinition.ui_visibility` never reaches the provider, so a recorded request can't observe it."""
+
+    def plain() -> str:
+        return 'never called'  # pragma: no cover
+
+    def with_ctx(ctx: RunContext[None]) -> str:
+        return 'never called'  # pragma: no cover
+
+    toolset = FunctionToolset[None](ui_visibility='private')
+    toolset.tool_plain(plain)
+    toolset.tool(ui_visibility='public')(with_ctx)
+    toolset.add_tool(Tool(plain, name='as_tool'))
+    toolset.add_tool(Tool(plain, name='kept', ui_visibility='redacted'))
+    toolset.add_function(plain, name='as_function', ui_visibility='redacted')
+    toolset.add_function(plain, name='function_default')
+    assert {name: tool.tool_def.ui_visibility for name, tool in toolset.tools.items()} == {
+        'plain': 'private',
+        'with_ctx': 'public',
+        'as_tool': 'private',
+        'kept': 'redacted',
+        'as_function': 'redacted',
+        'function_default': 'private',
+    }
+    assert FunctionToolset[None]([plain]).tools['plain'].tool_def.ui_visibility is None
+
+    agent = Agent(deps_type=type(None))
+    agent.tool_plain(ui_visibility='private')(plain)
+    agent.tool(ui_visibility='redacted')(with_ctx)
+    capability = Capability[None]()
+    capability.tool_plain(ui_visibility='private')(plain)
+    capability.tool(ui_visibility='redacted')(with_ctx)
+    for tools in (agent._function_toolset.tools, capability._function_toolset.tools):  # pyright: ignore[reportPrivateUsage]
+        assert {name: tool.tool_def.ui_visibility for name, tool in tools.items()} == {
+            'plain': 'private',
+            'with_ctx': 'redacted',
+        }
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_prepare_tools_sets_visibility_in_bulk(protocol: ProtocolName):
+    """`PrepareTools` reaches every tool, including toolset and MCP tools the decorators don't."""
+
+    def redact_lookups(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        return [replace(td, ui_visibility='redacted') if td.name.startswith('lookup_') else td for td in tool_defs]
+
+    agent = secret_agent(None, capabilities=[PrepareTools(redact_lookups)])
+
+    run = await run_adapter(protocol, agent)
+
+    assert SECRET not in run.wire
+    assert stamps(run.messages) == [
+        ('tool-call', 'lookup_order', 'redacted'),
+        ('tool-return', 'lookup_order', 'redacted'),
+    ]
+
+
+def test_dump_drops_a_response_left_empty_by_private_parts():
+    """A response that only held a private call leaves no assistant message behind."""
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Where is my order?'),
+        ModelResponse(parts=[ToolCallPart('lookup_order', {'order_id': 'o_1'}, 'call_0', ui_visibility='private')]),
+        ModelRequest(parts=[ToolReturnPart('lookup_order', SECRET, 'call_0', ui_visibility='private')]),
+        ModelResponse(parts=[TextPart('Done.')]),
+    ]
+    for protocol in PROTOCOLS:
+        dumped = json.loads(dump(protocol, messages))
+        assert 'lookup_order' not in json.dumps(dumped)

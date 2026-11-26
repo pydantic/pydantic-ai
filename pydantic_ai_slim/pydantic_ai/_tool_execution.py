@@ -132,6 +132,7 @@ def cancelled_sub_agent_return(
         content=f'The sub-agent run was cancelled: {error}',
         tool_call_id=call.tool_call_id,
         tool_kind=call.tool_kind,
+        ui_visibility=call.ui_visibility,
         outcome='failed',
     )
 
@@ -154,6 +155,7 @@ def build_tool_return_part(
                 content=tool_result.message,
                 tool_call_id=call.tool_call_id,
                 tool_kind=tool_kind,
+                ui_visibility=call.ui_visibility,
                 outcome='denied',
             ),
             None,
@@ -187,6 +189,7 @@ def build_tool_return_part(
         content=tool_return.return_value,
         metadata=tool_return.metadata,
         tool_kind=tool_kind,
+        ui_visibility=call.ui_visibility,
     )
     return _messages.ToolReturnPart.narrow_type(return_part), tool_return.content or None, tools
 
@@ -626,6 +629,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             tool_name=call.tool_name,
             content=content,
             tool_call_id=call.tool_call_id,
+            ui_visibility=call.ui_visibility,
         )
 
     def _record_output_part(
@@ -781,6 +785,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             tool_name=call.tool_name,
             content=TOOL_SKIPPED_FINAL_ALREADY_PROCESSED,
             tool_call_id=call.tool_call_id,
+            ui_visibility=call.ui_visibility,
         )
         self.output_parts.append(part)
         yield _messages.FunctionToolCallEvent(call)
@@ -900,6 +905,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     content=tool_call_result.message,
                     tool_call_id=call.tool_call_id,
                     tool_kind=call.tool_kind,
+                    ui_visibility=call.ui_visibility,
                     outcome='failed',
                 )
                 raise ToolFailedError(m)
@@ -910,6 +916,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                         tool_name=call.tool_name,
                         tool_call_id=call.tool_call_id,
                         tool_kind=call.tool_kind,
+                        ui_visibility=call.ui_visibility,
                     )
                 )
             # TODO(v3): remove `RetryPromptPart`
@@ -920,6 +927,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                         tool_name=call.tool_name,
                         tool_call_id=call.tool_call_id,
                         tool_kind=call.tool_kind,
+                        ui_visibility=call.ui_visibility,
                     )
                 )
             else:
@@ -1298,8 +1306,39 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             if isinstance(results.get(tool_call_id), _messages.ToolReturn)
         }
 
+    def _show_private_deferred_calls_redacted(self) -> None:
+        """Show each `'private'` deferred call as `'redacted'`: a UI client has to see the call it's asked to answer.
+
+        The calls are replaced with copies, in the deferred buckets, the questions and the response in history, so the
+        `DeferredToolRequests`, the event streams and the returns that later answer the calls all carry the new stamp.
+        A part already in history is never changed in place.
+        """
+        redacted: dict[str, _messages.ToolCallPart] = {}
+        for bucket in _DEFERRED_BUCKETS:
+            calls = self.deferred_calls[bucket]
+            for index, call in enumerate(calls):
+                if call.ui_visibility == 'private':
+                    calls[index] = redacted[call.tool_call_id] = dataclasses.replace(call, ui_visibility='redacted')
+        if not redacted:
+            return
+        for tool_call_id, validated in self.question_calls.items():
+            if (call := redacted.get(tool_call_id)) is not None:
+                self.question_calls[tool_call_id] = dataclasses.replace(validated, call=call)
+        history = self.ctx.state.message_history
+        index = next(i for i in range(len(history) - 1, -1, -1) if isinstance(history[i], _messages.ModelResponse))
+        response = history[index]
+        assert isinstance(response, _messages.ModelResponse)
+        history[index] = dataclasses.replace(
+            response,
+            parts=[
+                redacted.get(part.tool_call_id, part) if isinstance(part, _messages.ToolCallPart) else part
+                for part in response.parts
+            ],
+        )
+
     async def _resolve_deferred_calls(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         """Resolve collected deferred calls via capability handlers, else set the `DeferredToolRequests` result."""
+        self._show_private_deferred_calls_redacted()
         # Deferred calls are returned to the caller and later matched back to results by `tool_call_id`.
         # Duplicate ids would make that matching ambiguous, so reject them before handing the requests out.
         if duplicate_ids := _duplicate_tool_call_ids(

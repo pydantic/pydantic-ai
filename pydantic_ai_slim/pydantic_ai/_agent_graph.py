@@ -54,6 +54,7 @@ from pydantic_ai._instrumentation import (
     open_request_policy,
 )
 from pydantic_ai._model_request_attempts import AttemptStart, carried_attempts
+from pydantic_ai._parts_manager import resolved_call_part, ui_visibility_stamps
 from pydantic_ai._tool_execution import process_tool_calls
 from pydantic_ai._utils import (
     ScopedTask,
@@ -5991,11 +5992,11 @@ def _build_agent_graph(
 def _narrow_tool_call_parts(
     response: _messages.ModelResponse, model_request_parameters: models.ModelRequestParameters
 ) -> _messages.ModelResponse:
-    """Promote each base `ToolCallPart` in the response to its typed subclass via `ToolDefinition.tool_kind`.
+    """Stamp each `ToolCallPart` with its tool's `ui_visibility`, and promote a base one to its typed subclass.
 
     Lives here rather than in each model adapter so adapter authors emit base
     `ToolCallPart`s freely and the framework owns the typed-identity translation. Streaming
-    parts are typed up-front by `ModelResponsePartsManager` via the same lookup; this
+    parts are typed and stamped up-front by `ModelResponsePartsManager` via the same lookups; this
     function handles the non-streaming `Model.request()` return path. Either path produces
     the same typed end state — `isinstance(part, ToolSearchCallPart)` is true from the
     moment the call is emitted by the model.
@@ -6003,23 +6004,19 @@ def _narrow_tool_call_parts(
     tool_kind_by_name: dict[str, _messages.ToolPartKind] = {
         td.name: td.tool_kind for td in model_request_parameters.function_tools if td.tool_kind
     }
-    if not tool_kind_by_name:
+    ui_visibility_by_name = ui_visibility_stamps(model_request_parameters)
+    if not tool_kind_by_name and not ui_visibility_by_name:
         return response
 
-    changed = False
-    new_parts: list[_messages.ModelResponsePart] = []
-    for part in response.parts:
-        if (
-            isinstance(part, _messages.ToolCallPart)
-            and part.tool_kind is None
-            and (tool_kind := tool_kind_by_name.get(part.tool_name)) is not None
-        ):
-            promoted = _messages.ToolCallPart.narrow_type(part, tool_kind=tool_kind)
-            new_parts.append(promoted)
-            changed = True
-        else:
-            new_parts.append(part)
-    return replace(response, parts=new_parts) if changed else response
+    new_parts: list[_messages.ModelResponsePart] = [
+        resolved_call_part(part, tool_kind_by_name, ui_visibility_by_name)
+        if isinstance(part, _messages.ToolCallPart)
+        else part
+        for part in response.parts
+    ]
+    if all(new is old for new, old in zip(new_parts, response.parts)):
+        return response
+    return replace(response, parts=new_parts)
 
 
 def _first_run_id_index(messages: Sequence[_messages.ModelMessage], run_id: str) -> int:

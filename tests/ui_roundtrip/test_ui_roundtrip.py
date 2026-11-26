@@ -1563,6 +1563,52 @@ async def test_conversation_store_regenerate_after_reload(protocol: Protocol, js
     assert [len(messages) for messages in seen] == [1, 1]
 
 
+def _client_tool_result(protocol: Protocol, messages: list[dict[str, Any]], tool_call_id: str) -> dict[str, Any]:
+    """What a client holds for the result of `tool_call_id`: the AI SDK's tool part, or AG-UI's tool message."""
+    if protocol == 'vercel':
+        return next(part for message in messages for part in message['parts'] if part.get('toolCallId') == tool_call_id)
+    return next(message for message in messages if message.get('toolCallId') == tool_call_id)
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_redacted_tool_result_completes_the_client_tool_call(protocol: Protocol, js_driver: JSDriver) -> None:
+    """A `'redacted'` tool's placeholder result completes the call in the real client, streamed and after a reload.
+
+    A frontend renders a tool call as running until the client holds its result, so the placeholder has to land
+    where a result would. The history is held on the server, so the model still gets the real result.
+    """
+    seen: list[list[ModelMessage]] = []
+
+    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(list(messages))
+        return _tool_call_script(messages, info)
+
+    agent, _ = Scenario(id='redacted_tool', script=script, setup=_get_weather).agent()
+    session = f'redacted-tool-{protocol}'
+    client = CLIENTS[protocol](
+        js_driver, session, {'manage_message_history': 'server', 'default_ui_visibility': 'redacted'}
+    )
+
+    adapter = client.adapter(agent, client.submit('Question 1', None))
+    results: list[AgentRunResult[Any]] = []
+    encoded = [chunk async for chunk in adapter.encode_stream(adapter.run_stream(on_complete=results.append))]
+    [result] = results
+    streamed = client.receive(encoded)['messages']
+    # The page reloads: the app hydrates the client from the server's history.
+    reloaded = json.loads(client.submit('Question 2', result.all_messages()))['messages']
+
+    for messages in (streamed, reloaded):
+        tool_result = _client_tool_result(protocol, messages, 'call-1')
+        if protocol == 'vercel':
+            assert (tool_result['state'], tool_result['output']) == ('output-available', '[REDACTED]')
+        else:
+            assert (tool_result['role'], tool_result['content']) == ('tool', '[REDACTED]')
+        assert 'Sunny in Paris' not in json.dumps(messages)
+
+    # The model got the real result.
+    assert any('Sunny in Paris' in str(part) for message in seen[-1] for part in message.parts)
+
+
 def test_server_held_history_has_none_of_the_client_round_trip_gaps() -> None:
     """Keeping the history on the server leaves out every loss a client round trip has, but one.
 

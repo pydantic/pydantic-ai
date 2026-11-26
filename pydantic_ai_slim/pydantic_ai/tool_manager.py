@@ -607,7 +607,12 @@ class ToolManager(Generic[AgentDepsT]):
         return _record_attempt(
             ToolRetryError(
                 build_retried_tool_return(
-                    error, tool_name=name, tool_call_id=call.tool_call_id, tool_kind=call.tool_kind, cause=cause
+                    error,
+                    tool_name=name,
+                    tool_call_id=call.tool_call_id,
+                    tool_kind=call.tool_kind,
+                    ui_visibility=call.ui_visibility,
+                    cause=cause,
                 )
             ),
             attempt=attempt,
@@ -622,6 +627,7 @@ class ToolManager(Generic[AgentDepsT]):
             content=error.message,
             tool_call_id=call.tool_call_id,
             tool_kind=call.tool_kind,
+            ui_visibility=call.ui_visibility,
             outcome='failed',
         )
         return ToolFailedError(m)
@@ -1702,14 +1708,22 @@ class ToolManager(Generic[AgentDepsT]):
         if isinstance(tool_call_result, ModelRetry):
             raise ToolRetryError(
                 build_retried_tool_return(
-                    tool_call_result, tool_name=call.tool_name, tool_call_id=call.tool_call_id, tool_kind=call.tool_kind
+                    tool_call_result,
+                    tool_name=call.tool_name,
+                    tool_call_id=call.tool_call_id,
+                    tool_kind=call.tool_kind,
+                    ui_visibility=call.ui_visibility,
                 )
             )
         # TODO(v3): remove `RetryPromptPart`
         if isinstance(tool_call_result, _messages.RetryPromptPart):  # pyright: ignore[reportDeprecated]
             raise ToolRetryError(
                 retried_return_from_legacy(
-                    tool_call_result, tool_name=call.tool_name, tool_call_id=call.tool_call_id, tool_kind=call.tool_kind
+                    tool_call_result,
+                    tool_name=call.tool_name,
+                    tool_call_id=call.tool_call_id,
+                    tool_kind=call.tool_kind,
+                    ui_visibility=call.ui_visibility,
                 )
             )
         # Must be a ToolReturn (the only remaining DeferredToolResult variant). Return

@@ -2020,6 +2020,18 @@ and the tool decorators. See [Typed tool parts](../tools-advanced.md#typed-tool-
 """
 
 
+ToolUIVisibility: TypeAlias = Literal['public', 'redacted', 'private']
+"""What a [UI adapter](../ui/overview.md#tool-visibility) sends a client for a tool's calls and returns.
+
+- `'public'`: the call and the result, in full.
+- `'redacted'`: the call, with its arguments, and a placeholder instead of the result.
+- `'private'`: neither the call nor the result.
+
+Set on [`ToolDefinition.ui_visibility`][pydantic_ai.tools.ToolDefinition.ui_visibility] and stamped on the
+tool's call and return parts.
+"""
+
+
 def _tool_kind_id(value: ToolKindLike | None) -> ToolPartKind | None:  # pyright: ignore[reportUnusedFunction]
     """The id of the kind a tool declares, given as a [`ToolKind`][pydantic_ai.messages.ToolKind] or its id."""
     return value.id if isinstance(value, ToolKind) else value
@@ -2457,6 +2469,14 @@ class BaseToolReturnPart(_RecordsContentFiles, Generic[ContentT_co, MetadataT_co
     it stays a base part that keeps the kind, as does a return whose `outcome` isn't `'success'`. Only
     core's own kinds, which deserialization routes straight to their subclass, are stripped from a base
     part whose data doesn't fit them. See [Typed tool parts](../tools-advanced.md#typed-tool-parts).
+    """
+
+    ui_visibility: ToolUIVisibility | None = None
+    """What a UI adapter sends a client for this return, copied from its call's
+    [`ui_visibility`][pydantic_ai.messages.BaseToolCallPart.ui_visibility].
+
+    `None` if the tool had no setting, in which case a UI adapter applies its own default. Never sent to the
+    model. See [Tool visibility](../ui/overview.md#tool-visibility).
     """
 
     metadata: Any = None
@@ -4397,6 +4417,16 @@ class BaseToolCallPart(Generic[ArgsT_co]):
 
     See [`BaseToolReturnPart.tool_kind`][pydantic_ai.messages.BaseToolReturnPart.tool_kind] for
     the full semantics.
+    """
+
+    ui_visibility: ToolUIVisibility | None = None
+    """What a UI adapter sends a client for this call and its return, stamped when the call is made.
+
+    Taken from the tool's [`ToolDefinition.ui_visibility`][pydantic_ai.tools.ToolDefinition.ui_visibility], or
+    from the adapter's `default_ui_visibility` for a tool without a setting. `None` if neither set one, in which
+    case a UI adapter applies its own default when it sends the part. UI adapters read this stamp, never the
+    current tool definitions, so a conversation reloaded from history is sent the way it was streamed. Never
+    sent to the model. See [Tool visibility](../ui/overview.md#tool-visibility).
     """
 
     id: str | None = None
@@ -6588,6 +6618,7 @@ def _synthesized_tool_returns(response: ModelResponse, calls: list[ToolCallPart]
             content=INTERRUPTED_TOOL_RETURN_CONTENT,
             tool_call_id=call.tool_call_id,
             tool_kind=call.tool_kind,
+            ui_visibility=call.ui_visibility,
             metadata={SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True},
             timestamp=response.timestamp,
             outcome='interrupted',

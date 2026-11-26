@@ -13,7 +13,7 @@ event-emitting logic.
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Hashable, Iterator
+from collections.abc import Hashable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -33,6 +33,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolPartKind,
+    ToolUIVisibility,
 )
 
 from ._special_tokens import StreamRestorer
@@ -45,6 +46,44 @@ VendorId = Hashable
 """
 Type alias for a vendor identifier, which can be any hashable type (e.g., a string, UUID, etc.)
 """
+
+
+def ui_visibility_stamps(model_request_parameters: ModelRequestParameters) -> dict[str, ToolUIVisibility]:
+    """The `ui_visibility` a call to each function or output tool is stamped with, for the tools that set one.
+
+    A tool's own [`ui_visibility`][pydantic_ai.tools.ToolDefinition.ui_visibility], except that an external tool's
+    result comes from the client and an output tool's arguments are the run's answer, so both are `'public'`, and a
+    `'private'` tool that needs approval is `'redacted'`, since the user can't approve a call they can't see.
+    A tool without a setting is left out, so its calls stay unstamped and a UI adapter applies its own default.
+    """
+    stamps: dict[str, ToolUIVisibility] = {}
+    for tool_def in model_request_parameters.tool_defs.values():
+        if (visibility := tool_def.ui_visibility) is None:
+            continue
+        if tool_def.kind in ('external', 'output'):
+            visibility = 'public'
+        elif tool_def.kind == 'unapproved' and visibility == 'private':
+            visibility = 'redacted'
+        stamps[tool_def.name] = visibility
+    return stamps
+
+
+def resolved_call_part(
+    part: ToolCallPart,
+    tool_kind_by_name: Mapping[str, ToolPartKind],
+    ui_visibility_by_name: Mapping[str, ToolUIVisibility],
+) -> ToolCallPart:
+    """Stamp a call with its tool's `ui_visibility`, and promote a base part to its typed subclass via `tool_kind`.
+
+    Safe no-op for unknown tool names (model hallucinations) and for tool defs
+    without a `ui_visibility` or `tool_kind`.
+    """
+    if part.ui_visibility is None and (visibility := ui_visibility_by_name.get(part.tool_name)) is not None:
+        part = replace(part, ui_visibility=visibility)
+    if part.tool_kind is None and (tool_kind := tool_kind_by_name.get(part.tool_name)) is not None:
+        part = ToolCallPart.narrow_type(part, tool_kind=tool_kind)
+    return part
+
 
 ManagedPart = ModelResponsePart | ToolCallPartDelta
 """
@@ -67,7 +106,8 @@ class ModelResponsePartsManager:
     """Active request context. The manager promotes streamed tool call parts to their typed
     subclasses based on `ToolDefinition.tool_kind` from `function_tools` — so
     `isinstance(part, ToolSearchCallPart)` is true from the first `PartStartEvent` rather
-    than only after a post-stream pass.
+    than only after a post-stream pass — and stamps them with their tool's `ui_visibility`, so a
+    UI adapter can hide a call from its first event.
     """
 
     special_token_restorer: StreamRestorer | None = field(default=None, init=False, repr=False, compare=False)
@@ -83,11 +123,16 @@ class ModelResponsePartsManager:
     """Unmaterialized string deltas, keyed by part index."""
     _tool_kind_by_name: dict[str, ToolPartKind] = field(default_factory=dict[str, ToolPartKind], init=False, repr=False)
     """Cached `{tool_name: tool_kind}` built from `function_tools` at construction time."""
+    _ui_visibility_by_name: dict[str, ToolUIVisibility] = field(
+        default_factory=dict[str, ToolUIVisibility], init=False, repr=False
+    )
+    """Cached `ui_visibility_stamps(model_request_parameters)`, built at construction time."""
 
     def __post_init__(self) -> None:
         self._tool_kind_by_name = {
             td.name: td.tool_kind for td in self.model_request_parameters.function_tools if td.tool_kind is not None
         }
+        self._ui_visibility_by_name = ui_visibility_stamps(self.model_request_parameters)
 
     def __repr__(self) -> str:
         return (
@@ -113,21 +158,9 @@ class ModelResponsePartsManager:
             )
         return NotImplemented
 
-    def _tool_kind_for(self, tool_name: str) -> ToolPartKind | None:
-        return self._tool_kind_by_name.get(tool_name)
-
     def _typed_call_part(self, part: ToolCallPart) -> ToolCallPart:
-        """Promote a base `ToolCallPart` to a typed subclass via `ToolDefinition.tool_kind`.
-
-        Safe no-op for unknown tool names (model hallucinations) and for tool defs
-        without a `tool_kind`.
-        """
-        if part.tool_kind is not None:
-            return part
-        kind = self._tool_kind_for(part.tool_name)
-        if kind is None:
-            return part
-        return ToolCallPart.narrow_type(part, tool_kind=kind)
+        """Stamp a call with its tool's `ui_visibility`, and promote a base part to its typed subclass via `tool_kind`."""
+        return resolved_call_part(part, self._tool_kind_by_name, self._ui_visibility_by_name)
 
     def get_parts(self) -> list[ModelResponsePart]:
         """Return only model response parts that are complete (i.e., not ToolCallPartDelta's).

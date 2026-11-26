@@ -157,6 +157,7 @@ def build_retried_tool_return(
     tool_name: str,
     tool_call_id: str | None = None,
     tool_kind: _messages.ToolPartKind | None = None,
+    ui_visibility: _messages.ToolUIVisibility | None = None,
     cause: _messages.ToolRetryCause | None = None,
 ) -> _messages.ToolReturnPart:
     """Build the result a tool call that has to be retried is answered with.
@@ -188,6 +189,7 @@ def build_retried_tool_return(
         tool_name=tool_name,
         content=content,
         tool_kind=tool_kind,
+        ui_visibility=ui_visibility,
         outcome='retried',
         retry=_messages.RetryInfo(cause=cause),
     )
@@ -203,6 +205,7 @@ def retried_return_from_legacy(
     tool_name: str,
     tool_call_id: str,
     tool_kind: _messages.ToolPartKind | None = None,
+    ui_visibility: _messages.ToolUIVisibility | None = None,
 ) -> _messages.ToolReturnPart:
     """The result a deferred call is answered with when its handler hands back the deprecated part.
 
@@ -216,6 +219,7 @@ def retried_return_from_legacy(
         content=content if isinstance(content, str) else _messages._dump_error_details(content),  # pyright: ignore[reportPrivateUsage]
         tool_call_id=tool_call_id,
         tool_kind=tool_kind,
+        ui_visibility=ui_visibility,
         outcome='retried',
         retry=_messages.RetryInfo(cause='model_retry' if isinstance(content, str) else 'validation_error'),
     )
