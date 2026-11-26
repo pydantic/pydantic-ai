@@ -291,6 +291,22 @@ Before you rely on it:
 - To swap the token, call `credential_vault.patch(credentials={'replace': [...]})` on `await backend.get_sandbox()`.
 - `allow_internet_access=False` already sets a policy that blocks everything, so pass it or `network_policy`, not both. For both, `OpenSandbox` raises `UserError` and `OpenSandboxBackend` raises `ValueError`.
 
+## Mount volumes into the sandbox
+
+A deleted sandbox takes its files with it. To keep a workspace's files after you delete its sandbox, pass `volumes` to `OpenSandboxBackend`: the SDK's own `Volume` objects, for a host directory, a named volume (a Kubernetes PVC or a Docker named volume) or an OSSFS bucket, passed to `Sandbox.create` unchanged. Mount the volume at the working directory and a later sandbox created with the same volume starts with the files the last one left:
+
+```python {test="skip"}
+from opensandbox.models.sandboxes import PVC, Volume
+
+backend = OpenSandboxBackend(
+    image='python:3.13-slim',
+    working_dir='/workspace',
+    volumes=[Volume(name='workspace', pvc=PVC(claimName='project-42'), mountPath='/workspace')],
+)
+```
+
+Your application picks the volume for each workspace and deletes it when it's done. `volumes` only shapes a new sandbox: attaching to a ref leaves its mounts as they are.
+
 ## Endpoint authentication
 
 `secure_access=True` asks the server to turn on [Secure Access](https://github.com/opensandbox-group/OpenSandbox/blob/main/docs/guides/secure-access.md) for a new sandbox. The gateway and the server proxy then reject requests to the sandbox's endpoints that lack its token. The SDK fetches the token with the server API key and sends it with every command and file request.

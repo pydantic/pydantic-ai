@@ -25,7 +25,7 @@ An agent on its own is a loop calling a model and tools. A **harness** is everyt
 | [`Coder`](pydantic_ai_harness/coder/) | A ready-made coding agent in one capability: file and shell tools, task delegation, repo instructions and context management. You supply the workspace it runs in, and any guardrails | You want a coding agent in your own code, to run, extend or swap parts of |
 | [Pax](https://pydantic.dev/docs/ai/pax/) (`pydantic-ai-pax`) | The TUI in front of `Coder`, and a terminal interface for any Pydantic AI agent; everything in it is a plugin, the coding agent included | You want to use a coding agent rather than build one, or run your own agent in a terminal |
 
-Each package installs the one it is built on: `pydantic-ai-harness` installs `pydantic-ai-slim`, and `pydantic-ai-pax` installs `pydantic-ai-harness`. `Coder` supplies the tools, context management and recovery; you choose the workspace it runs in and any guardrails, and Pax is the interface in front of it. That is why either works without the other: build on `Coder` and never open Pax, or point Pax at an agent that is entirely your own. Neither is the [`clai` chat CLI](https://pydantic.dev/docs/ai/integrations/cli/) that ships with Pydantic AI.
+Each package installs the one it is built on: `pydantic-ai-harness` installs `pydantic-ai-slim`, and `pydantic-ai-pax` installs `pydantic-ai-harness`. `Coder` supplies the tools, context management and recovery; you choose the workspace it runs in and any guardrails, and Pax is the interface in front of it. That is why either works without the other: build on `Coder` and never open Pax, or point Pax at an agent that is entirely your own. Neither is [`clai`](https://pydantic.dev/docs/ai/integrations/cli/), the legacy CLI that ships with Pydantic AI.
 
 ## Quick start
 
@@ -197,6 +197,7 @@ The tools the model uses in the run's workspace, whichever one it is.
 | [FileSystem](pydantic_ai_harness/file_system/) | Harness | Read, write, edit, list, and search files under a root in the run's workspace, with opt-in ripgrep tools; path-traversal checked, secrets read-only |
 | [Smart Search](pydantic_ai_harness/smart_search/) | Harness | Code search by behavior in the run's workspace: plain-English queries, ranked excerpts, judged by any model (a decision model over System One, or TypeSafe's Jev, recommended) |
 | [Shell](pydantic_ai_harness/shell/) | Harness | Command execution in the run's workspace with allowlists, denylists, timeouts, credential-stripping, and opt-in commands that outlive the run |
+| [Announce Working Directory](pydantic_ai_harness/announce_working_directory/) | Harness | Names the workspace's working directory in the instructions, once, for your own tools as well as `FileSystem` and `Shell` |
 
 ### Tools & native abilities
 

@@ -24,6 +24,7 @@ from typing import Any
 
 import anyio
 import pytest
+from pydantic import BaseModel
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -50,6 +51,11 @@ from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import CodeMode
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.harness.code_mode.stored_sessions import stored_session_pool
+
+
+class Total(BaseModel):
+    total: int
+
 
 pytestmark = pytest.mark.xdist_group(name='harness-dbos')
 
@@ -257,6 +263,26 @@ async def run_approval_agent(prompt: str) -> str:
     return (await approval_agent.run(prompt)).output
 
 
+def _submit_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
+    code = 'total = await add(a=40, b=2)\nfinal_result(total=total)'
+    return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code}, tool_call_id='submit')])
+
+
+submit_agent = Agent(
+    FunctionModel(_submit_model),
+    name='code_mode_dbos_submit_agent',
+    output_type=Total,
+    toolsets=[FunctionToolset(tools=[add], id='math')],
+    capabilities=[CodeMode(allow_final_output=True), DBOSDurability()],
+)
+
+
+@DBOS.workflow()
+def run_submit_agent(prompt: str) -> dict[str, int]:
+    result = submit_agent.run_sync(prompt)
+    return {'total': result.output.total, 'requests': result.usage.requests}
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -425,3 +451,10 @@ async def test_a_nested_call_waits_for_approval_in_dbos_workflow(dbos_instance: 
     fork = await DBOS.fork_workflow_async(workflow_id, steps[-1]['function_id'])
     assert await fork.get_result(polling_interval_sec=0.01) == 'done: deleted a.txt'
     assert _approval_tokens == [token], 'the replay does not ask again'
+
+
+def test_code_mode_submits_final_output_in_dbos_workflow(dbos_instance: DBOS) -> None:
+    """`run_code` runs in the workflow under DBOS, so the code can submit the run's output."""
+    with SetWorkflowID(str(uuid.uuid4())):
+        result = run_submit_agent('Add 40 and 2')
+    assert result == {'total': 42, 'requests': 1}
