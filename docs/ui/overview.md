@@ -365,6 +365,10 @@ The event streams decide what to send for a tool call from its first event, whic
 
 `ui_visibility` covers a tool's call and its return value. Content a tool sends with [`ToolReturn.content`](../tools-advanced.md#advanced-tool-returns) goes to the model as a separate user message. The event streams don't send it, but `dump_messages` sends it to the client as a user message, whatever the tool's `ui_visibility`. Put data the client must not see in the return value. A failure a tool reports with [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] or [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] is its result, so its message follows `ui_visibility`. Any other exception it raises ends the run, and like every error that ends a run, its text goes to the client as the protocol's error event (Vercel AI's `error` chunk, AG-UI's `RUN_ERROR`), whatever the tool's `ui_visibility`. To send the client something else, override [`on_error()`][pydantic_ai.ui.UIEventStream.on_error] in a subclass of the adapter's event stream. Nor does it cover what the model writes: a model that repeats a `'redacted'` result in its answer sends it to the client there.
 
+A tool that runs other tools and returns their results as its own, such as Tool Bridge's `tool_call` or Code Mode's `run_code`, is sent by its own visibility, not theirs, so under a `'public'` default a `'private'` tool's result reaches the client through it. Keep such a tool out of the capability with its `tools` selector, or set a non-public `default_ui_visibility`, which these tools take.
+
+Nor does `ui_visibility` hide a tool's name, which other parts carry: a call to a tool the run doesn't know is retried with a message listing the tools the model can call, a [tool search](../capabilities/tool-search.md) result lists the tools it found, and a tool that becomes available during the run is named in the [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] the adapters send, which keeps it available in a client-held history. Under a non-public `default_ui_visibility`, the retry and the search result take the default, so only that record still names the tool.
+
 ### Setting it in bulk
 
 For tools you don't define yourself, such as those of an MCP server or another toolset, set the field in a [`prepare_tools`](../tools-advanced.md#prepare-tools) function or with [`PrepareTools`][pydantic_ai.capabilities.PrepareTools]:
@@ -386,6 +390,8 @@ def redact_crm_tools(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[T
 
 agent = Agent('{{ openai:medium }}', capabilities=[PrepareTools(redact_crm_tools)])
 ```
+
+These functions get the tools of the agent and its toolsets, not the ones a capability adds around them, such as tool search's `search_tools` or the tools of Pydantic AI Harness's [Tool Bridge](../harness/tool-bridge.md) and [Code Mode](../harness/code-mode.md): those take the adapter's `default_ui_visibility`.
 
 ### Using the event stream on its own
 
