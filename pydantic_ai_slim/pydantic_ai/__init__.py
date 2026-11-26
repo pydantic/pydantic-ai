@@ -16,7 +16,7 @@ from .agent import (
     capture_run_conversation,
     capture_run_messages,
 )
-from .agent.spec import AgentSpec
+from .agent.spec import AgentSpec, CapabilityNamespace
 from .capabilities import AgentCapability, AgentInstructions, Capability, CapabilityFunc, SourcedInstruction
 from .concurrency import (
     AbstractConcurrencyLimiter,
@@ -280,6 +280,7 @@ __all__: tuple[str, ...] = (
     'AgentModelSettings',
     'AgentRetries',
     'AgentSpec',
+    'CapabilityNamespace',
     'EndStrategy',
     'CallToolsNode',
     'ModelRequestNode',

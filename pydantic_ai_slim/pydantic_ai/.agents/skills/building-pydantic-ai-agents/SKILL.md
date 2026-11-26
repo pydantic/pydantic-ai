@@ -234,6 +234,11 @@ from pydantic_ai import Agent
 agent = Agent.from_file('agent.yaml')
 ```
 
+A spec names a capability by bare class name; only the built-ins resolve by default. For others, pass
+`custom_capability_types=[MyCapability]`, or `capability_namespace=CapabilityNamespace(...)` with
+`names={'Planning': 'pydantic_ai_harness.planning:Planning'}` (imported only when a spec uses it), an
+`entry_points` group, or `modules`. Tiers resolve `types` > `names` > `entry_points` > `modules` > built-ins.
+
 ### Realtime (speech-to-speech) sessions
 
 For voice models that stream audio over a persistent connection (OpenAI Realtime, Azure OpenAI,

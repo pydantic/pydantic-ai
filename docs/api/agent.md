@@ -19,6 +19,7 @@
             - InstrumentationSettings
             - EventStreamHandler
             - AgentSpec
+            - CapabilityNamespace
             - AgentModelSettings
             - AgentInstructions
             - UserPromptNode

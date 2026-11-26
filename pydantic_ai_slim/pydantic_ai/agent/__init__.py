@@ -177,7 +177,7 @@ from .abstract import (
     _RealtimeSessionLifecycle,  # pyright: ignore[reportPrivateUsage]
     _RealtimeSessionResolution,  # pyright: ignore[reportPrivateUsage]
 )
-from .spec import AgentSpec, get_capability_registry
+from .spec import AgentSpec, CapabilityNamespace, get_capability_registry
 from .wrapper import WrapperAgent
 
 if TYPE_CHECKING:
@@ -963,6 +963,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         spec: dict[str, Any] | AgentSpec,
         *,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        capability_namespace: CapabilityNamespace | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
@@ -989,6 +990,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         deps_type: type[T],
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        capability_namespace: CapabilityNamespace | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
@@ -1014,6 +1016,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         spec: dict[str, Any] | AgentSpec,
         *,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        capability_namespace: CapabilityNamespace | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[RunOutputDataT],
         instructions: AgentInstructions[Any] = None,
@@ -1041,6 +1044,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         deps_type: type[T],
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        capability_namespace: CapabilityNamespace | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[RunOutputDataT],
         instructions: AgentInstructions[Any] = None,
@@ -1067,6 +1071,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         deps_type: type[Any] = type(None),
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        capability_namespace: CapabilityNamespace | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[Any] = str,
         instructions: AgentInstructions[Any] = None,
@@ -1099,6 +1104,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 compiled and validated against this type.
             custom_capability_types: Additional capability classes to make available
                 beyond the built-in defaults.
+            capability_namespace: Where the spec's capability names resolve to classes, beyond the
+                built-ins: classes, `module:attribute` targets, an entry point group or whole modules.
+                See [`CapabilityNamespace`][pydantic_ai.agent.CapabilityNamespace].
             model: Override the model from the spec.
             output_type: The type of the output data, defaults to `str`.
             instructions: Instructions for the agent.
@@ -1138,7 +1146,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         merged_instructions.extend(_instructions.normalize_instructions(instructions))
 
         all_capabilities: list[AgentCapability[Any]] = list(
-            _capabilities_from_spec(validated_spec, custom_capability_types, template_context)
+            _capabilities_from_spec(validated_spec, custom_capability_types, template_context, capability_namespace)
         )
         if capabilities:
             all_capabilities.extend(capabilities)
@@ -1178,6 +1186,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         fmt: Literal['yaml', 'json'] | None = None,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        capability_namespace: CapabilityNamespace | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
@@ -1205,6 +1214,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         fmt: Literal['yaml', 'json'] | None = None,
         deps_type: type[T],
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        capability_namespace: CapabilityNamespace | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
@@ -1231,6 +1241,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         fmt: Literal['yaml', 'json'] | None = None,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        capability_namespace: CapabilityNamespace | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[RunOutputDataT],
         instructions: AgentInstructions[Any] = None,
@@ -1259,6 +1270,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         fmt: Literal['yaml', 'json'] | None = None,
         deps_type: type[T],
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        capability_namespace: CapabilityNamespace | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[RunOutputDataT],
         instructions: AgentInstructions[Any] = None,
@@ -1286,6 +1298,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         fmt: Literal['yaml', 'json'] | None = None,
         deps_type: type[Any] = type(None),
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        capability_namespace: CapabilityNamespace | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[Any] = str,
         instructions: AgentInstructions[Any] = None,
@@ -1319,6 +1332,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             spec,
             deps_type=deps_type,
             custom_capability_types=custom_capability_types,
+            capability_namespace=capability_namespace,
             model=model,
             output_type=output_type,
             instructions=instructions,
@@ -2446,7 +2460,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         validated_spec, template_context = _validate_spec(spec, self._deps_type)
 
-        capabilities = list(_capabilities_from_spec(validated_spec, custom_capability_types, template_context))
+        capabilities = list(_capabilities_from_spec(validated_spec, custom_capability_types, template_context, None))
         combined = CombinedCapability(capabilities) if capabilities else None
 
         retry_overrides = _retry_overrides_from_spec(validated_spec)
@@ -5857,6 +5871,7 @@ def _capabilities_from_spec(
     spec: AgentSpec,
     custom_capability_types: Sequence[type[AbstractCapability[Any]]],
     template_context: dict[str, Any],
+    capability_namespace: CapabilityNamespace | None,
 ) -> list[AbstractCapability[Any]]:
     """Instantiate capabilities from an AgentSpec using the capability registry.
 
@@ -5864,7 +5879,7 @@ def _capabilities_from_spec(
     """
     from pydantic_ai.agent import spec as _agent_spec
 
-    registry = get_capability_registry(custom_capability_types)
+    registry = get_capability_registry(custom_capability_types, capability_namespace)
 
     def _instantiate_cap(
         cap_cls: type[AbstractCapability[Any]],

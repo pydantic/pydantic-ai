@@ -1732,7 +1732,7 @@ agent = Agent.from_spec(
 )
 ```
 
-Users register custom capability types via the `custom_capability_types` parameter on [`Agent.from_spec`][pydantic_ai.agent.Agent.from_spec] or [`Agent.from_file`][pydantic_ai.agent.Agent.from_file].
+Users register custom capability types via the `custom_capability_types` parameter on [`Agent.from_spec`][pydantic_ai.agent.Agent.from_spec] or [`Agent.from_file`][pydantic_ai.agent.Agent.from_file], or point a [`CapabilityNamespace`](../agent-spec.md#custom-capabilities-in-specs) at their `module:attribute` target, their module, or an entry point group that lists them.
 
 Override [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] when the constructor takes types that can't be represented in YAML/JSON. The spec fields should mirror the dataclass fields, but with serializable types:
 
