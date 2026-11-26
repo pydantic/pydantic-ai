@@ -37,6 +37,7 @@ from pydantic_ai.capabilities import (
     Instrumentation,
     LocalWorkspace,
     ModelFallback,
+    ModelInstructions,
     NativeTool,
     PrefixTools,
     RaiseContentFilterError,
@@ -118,6 +119,7 @@ def test_capability_types() -> None:
             'LocalWorkspace': LocalWorkspace,
             'MCP': MCP,
             'ModelFallback': ModelFallback,
+            'ModelInstructions': ModelInstructions,
             'PrefixTools': PrefixTools,
             'ReinjectSystemPrompt': ReinjectSystemPrompt,
             'RetryOnModelErrors': RetryOnModelErrors,
@@ -1868,6 +1870,21 @@ def test_model_json_schema_with_capabilities():
                     'title': 'short_spec_ModelFallback',
                     'type': 'object',
                 },
+                'short_spec_ModelInstructions': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'ModelInstructions': {
+                            'allOf': [
+                                {'additionalProperties': {'type': 'string'}, 'type': 'object'},
+                                {'not': {'propertyNames': {'type': 'string'}, 'type': 'object'}},
+                            ],
+                            'title': 'Modelinstructions',
+                        }
+                    },
+                    'required': ['ModelInstructions'],
+                    'title': 'short_spec_ModelInstructions',
+                    'type': 'object',
+                },
                 'short_spec_MCP': {
                     'additionalProperties': False,
                     'properties': {'MCP': {'title': 'Mcp', 'type': 'string'}},
@@ -1973,6 +1990,13 @@ def test_model_json_schema_with_capabilities():
                     'properties': {'ModelFallback': {'$ref': '#/$defs/spec_params_ModelFallback'}},
                     'required': ['ModelFallback'],
                     'title': 'spec_ModelFallback',
+                    'type': 'object',
+                },
+                'spec_ModelInstructions': {
+                    'additionalProperties': False,
+                    'properties': {'ModelInstructions': {'$ref': '#/$defs/spec_params_ModelInstructions'}},
+                    'required': ['ModelInstructions'],
+                    'title': 'spec_ModelInstructions',
                     'type': 'object',
                 },
                 'spec_ImageGeneration': {
@@ -2276,6 +2300,22 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_params_ModelFallback',
                     'type': 'object',
                 },
+                'spec_params_ModelInstructions': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                        'instructions': {
+                            'additionalProperties': {'type': 'string'},
+                            'title': 'Instructions',
+                            'type': 'object',
+                        },
+                    },
+                    'required': ['instructions'],
+                    'title': 'spec_params_ModelInstructions',
+                    'type': 'object',
+                },
                 'spec_params_ImageGeneration': {
                     'additionalProperties': False,
                     'properties': {
@@ -2548,6 +2588,8 @@ def test_model_json_schema_with_capabilities():
                                 {'$ref': '#/$defs/spec_MCP'},
                                 {'$ref': '#/$defs/short_spec_ModelFallback'},
                                 {'$ref': '#/$defs/spec_ModelFallback'},
+                                {'$ref': '#/$defs/short_spec_ModelInstructions'},
+                                {'$ref': '#/$defs/spec_ModelInstructions'},
                                 {'$ref': '#/$defs/spec_PrefixTools'},
                                 {'const': 'ReinjectSystemPrompt', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_ReinjectSystemPrompt'},
@@ -2829,6 +2871,8 @@ def test_model_json_schema_with_capabilities():
                             {'$ref': '#/$defs/spec_MCP'},
                             {'$ref': '#/$defs/short_spec_ModelFallback'},
                             {'$ref': '#/$defs/spec_ModelFallback'},
+                            {'$ref': '#/$defs/short_spec_ModelInstructions'},
+                            {'$ref': '#/$defs/spec_ModelInstructions'},
                             {'$ref': '#/$defs/spec_PrefixTools'},
                             {'const': 'ReinjectSystemPrompt', 'type': 'string'},
                             {'$ref': '#/$defs/spec_ReinjectSystemPrompt'},

@@ -283,6 +283,26 @@ Bootstrap strings use the post-`for_agent`, pre-`for_run` resolver chain. If `fo
 
 Both hooks are eager: deferred capabilities do not select or resolve models. Run-spec capabilities can bootstrap a model-less agent, but `CapabilityFunc` and `for_run()` need an existing model to construct their `RunContext`; they can replace it starting on step one. Do not use adaptive selection with durable execution yet, and pass an explicit model when resuming a selector-backed suspended request in another run.
 
+## Send Instructions Per Model
+
+Use `ModelInstructions` when some text should depend on the model serving the request, such as one rule for GPT models and another for Claude:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import ModelFallback, ModelInstructions
+
+agent = Agent(
+    'openai:gpt-5.2',
+    instructions='You are a support agent.',
+    capabilities=[
+        ModelInstructions({'gpt-5*': "Don't spawn sub-agents unless the user asks.", 'claude-*': 'Keep tool calls to one per turn.'}),
+        ModelFallback('anthropic:claude-opus-4-6'),
+    ],
+)
+```
+
+A key without `:` matches the model name on any route (and the part after the last `/`, as in OpenRouter's `openai/gpt-5.2`); a key with `:` matches `provider:model`; `'*'` matches the rest; the first match wins. Unmatched models get nothing. It adds one block, `capability:model_instructions:text`, after the agent's instructions; give several instances distinct `id=`s. Pass a sync or async `func(ctx) -> str | None` instead of a mapping to decide from `ctx.model.profile` or deps. A switch to another model appends the change. On a `FallbackModel` it warns and sends nothing: use `ModelFallback`, which resolves the text again for each model it tries.
+
 ## Defer Capability Loading
 
 For capabilities on demand, load [Capabilities on Demand](./ON-DEMAND-CAPABILITIES.md). Use it when the user mentions deferred capabilities, capability progressive disclosure, `defer_loading=True` on a capability, or `load_capability`; also use it proactively when an agent design includes optional instructions, specialist workflows, long-tail tools, or context the model does not need on most turns.

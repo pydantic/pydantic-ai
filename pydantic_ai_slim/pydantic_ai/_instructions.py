@@ -208,7 +208,9 @@ def _computed_part(sourced: SourcedInstruction[AgentDepsT], result: InstructionP
         content=result.content,
         name=name,
         id=instruction_id,
-        dynamic=True,
+        # Every function an author registers is dynamic; the framework registers one as static only when its text
+        # can't change without the model changing, as `ModelInstructions` does for a mapping.
+        dynamic=sourced.dynamic,
         on_change=sourced.on_change if sourced.on_change == 'append' else result.on_change,
     )
 
