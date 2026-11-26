@@ -1,0 +1,5 @@
+{
+  "against": "v2.75.0",
+  "reason": "`/update` reinstalls `pydantic-ai-slim` with the `google` extra, matching Pax's default install, which now includes the Google SDK; the other packages are unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/14614"
+}
