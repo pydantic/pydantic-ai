@@ -83,6 +83,7 @@ from pydantic_ai.workspaces import Workspace
 from pydantic_ai.workspaces.workspace import workspace_layers
 
 from .. import _usage_attribution
+from .._run_context import durable_unit_scope, in_durable_unit
 from ..models.wrapper import serving_wrapper_scope
 from ._capability_operation import (
     CapabilityBoundOperation,
@@ -106,6 +107,7 @@ from ._operation import (
     DynamicToolsetCallToolParams,
     EventStreamHandlerId,
     EventStreamHandlerParams,
+    IdentityParameterTransport,
     ModelCancelSuspendedResponseId,
     ModelCancelSuspendedResponseParams,
     ModelCompactMessagesId,
@@ -126,8 +128,6 @@ from ._operation_backend import (
     BoundDurableOperation,
     DurableOperationBackend,
     RegisteredOperationBackend,
-    durable_unit_scope,
-    in_durable_unit,
 )
 from ._runtime_toolsets import (
     cancellation_token_unsupported_error,
@@ -1003,6 +1003,15 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         """Whether execution is currently inside this engine's durable container (workflow or flow)."""
 
+    @property
+    def in_durable_unit(self) -> bool:
+        """Whether execution is currently inside a unit whose result this engine records, like a step or task.
+
+        Engines whose units the user can also create around a tool, like a DBOS step or Prefect task,
+        check for those too.
+        """
+        return in_durable_unit()
+
     def _register_toolsets(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         """Wrap the agent's leaf toolsets in engine wrappers and index them by toolset `id`."""
         for toolset in agent.toolsets:
@@ -1549,6 +1558,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             resolve_tool_config=resolve_tool_config,
             resolve_validation_config=resolve_validation_config,
             lifecycle=self.engine_spec.toolset_lifecycles['dynamic'],
+            # Identity transports hand every unit the run's own `RunContext`, so the units reach a
+            # toolset the run holds. Transports that carry the context in another form mean the
+            # units run elsewhere and resolve their own.
+            units_share_run_context=all(
+                isinstance(operation.parameter_transport, IdentityParameterTransport)
+                for operation in (get_tools.operation, call_operation)
+            ),
             durable_registrations=self._bound_operation_registrations(get_tools, call_tool, validate_args),
             durable_config=base_config,
         )

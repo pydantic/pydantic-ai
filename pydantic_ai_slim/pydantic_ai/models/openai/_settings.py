@@ -191,11 +191,16 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
 
     On the Responses API the top-level `instructions` field cannot carry a breakpoint, so the
     instructions are sent as leading input messages instead. That only happens on requests that
-    don't continue server-side state: when `openai_previous_response_id` or `openai_conversation_id`
-    is set, or the history has been compacted, this setting leaves the instructions where they would
-    otherwise go (normally the top-level field) and adds no breakpoint. That includes
+    don't use server-side state: when `openai_previous_response_id` (as `openai_transport='websocket'`
+    does by default) or `openai_conversation_id` is set, or the history has been compacted, this
+    setting leaves the instructions where they would otherwise go (normally the top-level field) and
+    adds no breakpoint. That includes
     `openai_previous_response_id='auto'` on the first request of a chain: a stored response keeps
     its input, so relocated instructions would be replayed alongside every later request's own.
+    On `gpt-6.2-sol` and `gpt-6.2-astra`, which put the top-level field after the input, the dynamic
+    instructions that rewrite the prefix stay there, and an `openai_previous_response_id='auto'` chain sends the
+    others as leading input, with this breakpoint after the static ones, when it starts or resends the history (see
+    [`openai_responses_stable_instructions_as_input`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_stable_instructions_as_input]).
 
     No breakpoint is added when a dynamic system prompt precedes the instructions either, since its
     per-request content would sit inside the cached prefix and miss the cache on every run, nor when
@@ -245,6 +250,9 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """The provided OpenAI built-in tools to use.
 
     See [OpenAI's built-in tools](https://platform.openai.com/docs/guides/tools?api-mode=responses) for more details.
+
+    For the computer tool, use Pydantic AI Harness's `ComputerUse`, which sends it for you. Don't also pass a
+    `ComputerToolParam` here, or the request declares the tool twice.
     """
 
     openai_reasoning_mode: Literal['standard', 'pro']
