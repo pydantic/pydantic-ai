@@ -2,18 +2,28 @@
 
 import warnings
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, Caching, LocalWorkspace, ModelFallback, ValidatedToolArgs
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Caching,
+    Capability,
+    LocalWorkspace,
+    ModelFallback,
+    ValidatedToolArgs,
+)
 from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.messages import (
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     SystemPromptPart,
     TextPart,
@@ -183,6 +193,8 @@ class TestCoder:
         assert result.output == 'done'
         assert [(name, getattr(args[0], 'method', None)) for name, args in durability.calls] == [
             ('coder__capability__workspace.call', 'ensure'),
+            # `RepoContext` checks where the working directory leads before trusting nested instruction files.
+            ('coder__capability__workspace.call', 'realpath'),
             ('coder__capability__workspace.call', 'exists'),
             *[('coder__capability__workspace.call', 'stat')] * 4,
             ('coder__model.request_stream', None),
@@ -521,44 +533,85 @@ class TestCoder:
         if extra_instructions:
             assert guidance.endswith('\n' + extra_instructions)
 
-    async def test_delegation_rule_is_withdrawn_after_a_fallback_to_a_model_that_does_not_delegate_unprompted(
-        self, tmp_path: Path
+    @pytest.mark.parametrize('opened_on_gpt', [True, False], ids=['gpt-to-claude', 'claude-to-gpt'])
+    async def test_a_fallback_sends_the_new_model_the_instructions_it_would_have_started_with(
+        self, tmp_path: Path, opened_on_gpt: bool
     ) -> None:
-        """A conversation that opened on GPT and falls back to Claude keeps the instructions it opened with, and
-        Claude is told after the new prompt that the delegation rule was withdrawn."""
+        """The delegation rule rewrites the prefix on a switch: after a fallback across `delegates_unprompted`, the
+        new model is sent the instructions a conversation started on it gets, with no withdrawal or change appended.
+        """
+        first_name, second_name = ('gpt', 'claude') if opened_on_gpt else ('claude', 'gpt')
         sent: list[_Sent] = []
         workspace = LocalWorkspaceBackend(tmp_path)
-        first = await Agent(_scripted('gpt', sent, delegates=True), capabilities=[Coder(repo_context=False)]).run(
-            'go', workspace=workspace
-        )
+        first = await Agent(
+            _scripted(first_name, sent, delegates=opened_on_gpt), capabilities=[Coder(repo_context=False)]
+        ).run('go', workspace=workspace)
         agent = Agent(
-            _scripted('gpt', sent, delegates=True, fails=True),
-            capabilities=[Coder(repo_context=False), ModelFallback(_scripted('claude', sent, delegates=False))],
+            _scripted(first_name, sent, delegates=opened_on_gpt, fails=True),
+            capabilities=[
+                Coder(repo_context=False),
+                ModelFallback(_scripted(second_name, sent, delegates=not opened_on_gpt)),
+            ],
         )
         result = await agent.run('continue', message_history=first.all_messages(), workspace=workspace)
-        assert result.output == 'claude'
-        opened_with = sent[0].instructions
-        assert opened_with is not None and _DELEGATION_RULE in opened_with
-        assert [(s.model, s.instructions == opened_with) for s in sent] == [
-            ('gpt', True),
-            ('gpt', True),
-            ('claude', True),
+        assert result.output == second_name
+        fresh: list[_Sent] = []
+        await Agent(
+            _scripted(second_name, fresh, delegates=not opened_on_gpt), capabilities=[Coder(repo_context=False)]
+        ).run('go', workspace=workspace)
+        opened_with, switched_to = sent[0].instructions, fresh[0].instructions
+        assert opened_with is not None and switched_to is not None
+        assert (_DELEGATION_RULE in opened_with) is opened_on_gpt
+        assert (_DELEGATION_RULE in switched_to) is not opened_on_gpt
+        assert [(s.model, s.instructions) for s in sent] == [
+            (first_name, opened_with),
+            (first_name, opened_with),
+            (second_name, switched_to),
         ]
-        assert [s.system for s in sent] == [
-            [],
-            [],
-            [
-                '<pyai:context id="capability:coder_instructions:delegation">\n'
-                'This context has been withdrawn.\n</pyai:context>'
-            ],
-        ]
+        assert [s.system for s in sent] == [[], [], []]
+        assert not any(
+            isinstance(part, InstructionDeltaPart)
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+
+    @pytest.mark.parametrize('delegates', [False, True])
+    async def test_a_conversation_that_stays_on_one_model_keeps_its_prefix(
+        self, tmp_path: Path, delegates: bool
+    ) -> None:
+        """Without a switch, the delegation block doesn't change, so every request is sent the same instructions."""
+        sent: list[_Sent] = []
+        workspace = LocalWorkspaceBackend(tmp_path)
+        model = _scripted('model', sent, delegates=delegates)
+        first = await Agent(model, capabilities=[Coder(repo_context=False)]).run('go', workspace=workspace)
+        await Agent(model, capabilities=[Coder(repo_context=False)]).run(
+            'continue', message_history=first.all_messages(), workspace=workspace
+        )
+        assert len(sent) == 2 and sent[0].instructions is not None
+        assert (_DELEGATION_RULE in sent[0].instructions) is delegates
+        assert sent[1].instructions == sent[0].instructions
+        assert [s.system for s in sent] == [[], []]
+
+    async def test_no_delegation_rule_without_sub_agents(self, tmp_path: Path) -> None:
+        """The rule names `delegate_task`, so it isn't registered without `SubAgents`, even for a flagged model."""
+        model = TestModel(call_tools=[], profile={'delegates_unprompted': True})
+        await Agent(model, capabilities=[Coder(repo_context=False, sub_agents=False)]).run(
+            'go', workspace=LocalWorkspaceBackend(tmp_path)
+        )
+        assert model.last_model_request_parameters is not None
+        parts = model.last_model_request_parameters.instruction_parts or []
+        assert _DELEGATION_RULE not in '\n'.join(part.content for part in parts)
+        assert 'delegation' not in {part.name for part in parts}
+        # No model-specific block is registered; the one dynamic part is `AnnounceWorkingDirectory`'s line.
+        assert [part.content for part in parts if part.dynamic] == [f'The working directory is `{tmp_path.resolve()}`.']
 
     @pytest.mark.parametrize('autonomy', ['high', 'max'])
     @pytest.mark.parametrize('flag', [None, *_MAX_GUIDANCE_FLAGS])
     async def test_max_guidance_follows_the_profile_flags(
         self, tmp_path: Path, autonomy: Autonomy, flag: str | None
     ) -> None:
-        """Each `'max'` sentence is a named block, present from the first request, that only its flag fills."""
+        """Each `'max'` sentence is a named block that only its flag fills."""
         profile: ModelProfile = {flag: True} if flag is not None else {}  # pyright: ignore[reportAssignmentType]
         model = TestModel(call_tools=[], profile=profile)
         coder = Coder(autonomy=autonomy, repo_context=False, sub_agents=False)
@@ -574,14 +627,15 @@ class TestCoder:
             if is_max and flag == 'ignores_stated_runtime_constraints'
             else None,
         }
-        # An empty block isn't sent; a sent one is framed as `<pyai:context id="capability:coder_instructions:...">`.
-        assert set(blocks) == {name for name, text in expected.items() if text is not None}
-        for name, text in expected.items():
-            if text is not None:
-                assert f'id="capability:coder_instructions:{name}">\n{text}\n</pyai:context>' in blocks[name]
+        # An empty block isn't sent; a sent one rewrites the prefix on a switch, so it's plain text.
+        assert blocks == {name: text for name, text in expected.items() if text is not None}
+        assert all(part.on_change == 'rewrite' for part in parts)
         if not is_max:
-            # Below `'max'` the blocks aren't registered, so the instructions stay all static.
-            assert not any(part.dynamic for part in parts)
+            # Below `'max'` the blocks aren't registered, so `Coder`'s instructions stay all static. The one
+            # dynamic part is `AnnounceWorkingDirectory`'s line, which asks the workspace.
+            assert [part.content for part in parts if part.dynamic] == [
+                f'The working directory is `{tmp_path.resolve()}`.'
+            ]
         guidance = next(part.content for part in parts if 'software engineering agent' in part.content)
         assert (_MISREAD_MAX_TEXT in guidance) is is_max
         assert (_MISREAD_TEXT in guidance) is not is_max
@@ -593,8 +647,10 @@ class TestCoder:
         coder = Coder(autonomy='max', repo_context=False)
         await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert model.last_model_request_parameters is not None
-        parts = model.last_model_request_parameters.instruction_parts or []
-        assert [part.content for part in parts] == snapshot(
+        contents = [part.content for part in model.last_model_request_parameters.instruction_parts or []]
+        # `AnnounceWorkingDirectory`'s line names the run's own directory, so it's checked on its own.
+        contents.remove(f'The working directory is `{tmp_path.resolve()}`.')
+        assert contents == snapshot(
             [
                 """\
 You are a software engineering agent. Match the surrounding code's style, structure, and imports.
@@ -652,20 +708,23 @@ Available sub-agents:
         assert _HANDOFF_TEXT in delegate
         assert _RUNTIME_CONSTRAINTS_TEXT in delegate
 
-    async def test_max_guidance_changes_are_appended_after_a_fallback_to_a_model_without_the_flags(
-        self, tmp_path: Path
+    @pytest.mark.parametrize('sub_agents', [True, False])
+    async def test_a_fallback_at_max_sends_the_new_model_its_own_max_instructions(
+        self, tmp_path: Path, sub_agents: bool
     ) -> None:
-        """A `'max'` conversation that opened on GPT and falls back to Claude keeps the instructions it opened with;
-        Claude is told the GPT-only sentences were withdrawn."""
+        """When a `'max'` conversation that opened on GPT falls back to Claude, the GPT-only `'max'` sentences rewrite
+        the prefix like the delegation rule, so they're left out of Claude's instructions, not withdrawn, also
+        without `SubAgents`."""
         sent: list[_Sent] = []
         workspace = LocalWorkspaceBackend(tmp_path)
         first = await Agent(
-            _scripted('gpt', sent, delegates=True), capabilities=[Coder(autonomy='max', repo_context=False)]
+            _scripted('gpt', sent, delegates=True),
+            capabilities=[Coder(autonomy='max', repo_context=False, sub_agents=sub_agents)],
         ).run('go', workspace=workspace)
         agent = Agent(
             _scripted('gpt', sent, delegates=True, fails=True),
             capabilities=[
-                Coder(autonomy='max', repo_context=False),
+                Coder(autonomy='max', repo_context=False, sub_agents=sub_agents),
                 ModelFallback(_scripted('claude', sent, delegates=False)),
             ],
         )
@@ -677,39 +736,17 @@ Available sub-agents:
         assert _HANDOFF_TEXT in opened_with
         assert _RUNTIME_CONSTRAINTS_TEXT in opened_with
         assert _MISREAD_MAX_TEXT in opened_with
-        assert [(s.model, s.instructions == opened_with) for s in sent] == [
-            ('gpt', True),
-            ('gpt', True),
-            ('claude', True),
+        fresh: list[_Sent] = []
+        await Agent(
+            _scripted('claude', fresh, delegates=False),
+            capabilities=[Coder(autonomy='max', repo_context=False, sub_agents=sub_agents)],
+        ).run('go', workspace=workspace)
+        assert [(s.model, s.instructions) for s in sent] == [
+            ('gpt', opened_with),
+            ('gpt', opened_with),
+            ('claude', fresh[0].instructions),
         ]
-        assert [s.system for s in sent] == snapshot(
-            [
-                [],
-                [],
-                [
-                    """\
-<pyai:context id="capability:coder_instructions:delegation">
-This context has been withdrawn.
-</pyai:context>\
-""",
-                    """\
-<pyai:context id="capability:coder_instructions:misread">
-This context has been withdrawn.
-</pyai:context>\
-""",
-                    """\
-<pyai:context id="capability:coder_instructions:handoff">
-This context has been withdrawn.
-</pyai:context>\
-""",
-                    """\
-<pyai:context id="capability:coder_instructions:runtime_constraints">
-This context has been withdrawn.
-</pyai:context>\
-""",
-                ],
-            ]
-        )
+        assert [s.system for s in sent] == [[], [], []]
 
     @pytest.mark.parametrize('instrumented', [False, True])
     @pytest.mark.parametrize(('autonomy', 'sub_agents'), [('high', True), ('max', False)])
@@ -752,36 +789,17 @@ This context has been withdrawn.
             result = await Agent(fallback, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert result.output == 'gpt'
 
-    @pytest.mark.parametrize(
-        ('unrestricted', 'files'),
-        [(False, 'the file tools only accept paths inside it'), (True, 'relative file paths resolve from it')],
-    )
-    async def test_instructions_name_the_project_once(self, tmp_path: Path, unrestricted: bool, files: str) -> None:
+    @pytest.mark.parametrize('repo_context', [False, True])
+    async def test_instructions_name_the_project_once(self, tmp_path: Path, repo_context: bool) -> None:
+        """`Shell` and `FileSystem` each bring `AnnounceWorkingDirectory`, which states the directory once."""
         model = TestModel(call_tools=[])
-        coder = Coder(unrestricted_filesystem=unrestricted)
-        await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
-        assert model.last_model_request_parameters is not None
-        parts = model.last_model_request_parameters.instruction_parts or []
-        notes = [part.content for part in parts if 'Your project is' in part.content]
-        assert notes == [f'Your project is `{tmp_path.resolve()}`. Shell commands start there, and {files}.']
-
-    async def test_lazy_sandbox_instructions_leave_out_the_project(self, tmp_path: Path) -> None:
-        # Without `RepoContext` nothing touches the workspace at run start, so neither do the instructions.
-        model = TestModel(call_tools=[])
-        await Agent(model, capabilities=[Coder(repo_context=False)]).run(
+        await Agent(model, capabilities=[Coder(repo_context=repo_context)]).run(
             'go', workspace=LocalWorkspaceBackend(tmp_path)
         )
         assert model.last_model_request_parameters is not None
         parts = model.last_model_request_parameters.instruction_parts or []
-        assert not any('Your project is' in part.content for part in parts)
-
-    async def test_a_given_repo_context_keeps_the_project_note(self, tmp_path: Path) -> None:
-        model = TestModel(call_tools=[])
-        coder = Coder(repo_context=RepoContext(expose_inventory_tool=False))
-        await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
-        assert model.last_model_request_parameters is not None
-        parts = model.last_model_request_parameters.instruction_parts or []
-        assert sum('Your project is' in part.content for part in parts) == 1
+        notes = [part.content for part in parts if 'working directory is' in part.content]
+        assert notes == [f'The working directory is `{tmp_path.resolve()}`.']
 
     @pytest.mark.parametrize(
         ('config', 'loaded', 'nested'),
@@ -909,3 +927,195 @@ This context has been withdrawn.
         refused = await call(workspace, 'read_file', {'path': '../.env'})
         assert f'`{outside}` is outside the project root `{workspace.resolve()}`' in refused
         assert 'Create or clone it inside the project, or use a shell tool if you have one.' in refused
+
+
+@dataclass
+class _SwitchDeps:
+    state: str
+    count: int = 0
+
+
+@dataclass
+class _SwitchLog:
+    """What each request sent: the model, its instructions, and every `<pyai:context>` statement in its history."""
+
+    requests: list[tuple[str, str | None, list[str]]] = field(default_factory=list[tuple[str, str | None, list[str]]])
+
+
+def _switch_agent() -> Agent[_SwitchDeps, str]:
+    """A `'max'` `Coder` agent with an append-mode block of its own and a deferred capability whose text changes."""
+    counter = Capability[_SwitchDeps](
+        id='counter', defer_loading=True, description='Counting.', instructions='Count carefully.'
+    )
+
+    @counter.instructions
+    def count(ctx: RunContext[_SwitchDeps]) -> str:
+        return f'The count is {ctx.deps.count}.'
+
+    agent = Agent(deps_type=_SwitchDeps, capabilities=[Coder[_SwitchDeps](autonomy='max', repo_context=False), counter])
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[_SwitchDeps]) -> str:
+        return f'The state is {ctx.deps.state}.'
+
+    return agent
+
+
+def _switch_model(name: str, log: _SwitchLog, *, gpt: bool, script: Sequence[ModelResponse] = ()) -> FunctionModel:
+    """GPT sets every flag `Coder` reads; the other model none. `script` answers the first requests in order."""
+    responses = list(script)
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        statements = [
+            part.content
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, SystemPromptPart) and '<pyai:context' in part.content
+        ]
+        log.requests.append((name, info.instructions, statements))
+        return responses.pop(0) if responses else ModelResponse(parts=[TextPart(name)])
+
+    profile: ModelProfile = {
+        'supports_inline_system_prompts': True,
+        'delegates_unprompted': gpt,
+        **{flag: gpt for flag in _MAX_GUIDANCE_FLAGS},  # pyright: ignore[reportAssignmentType]
+    }
+    return FunctionModel(respond, model_name=name, profile=profile)
+
+
+def _instruction_records(messages: Sequence[ModelMessage], kind: type[ModelRequestPart]) -> list[ModelRequestPart]:
+    return [
+        part
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, kind)
+    ]
+
+
+_LOAD_COUNTER = ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'counter'}, tool_call_id='load')])
+
+
+class TestModelSwitches:
+    """`Coder`'s model-specific blocks rewrite the prefix on a switch, while other blocks keep appending."""
+
+    async def _fresh(self, tmp_path: Path, *, gpt: bool, deps: _SwitchDeps) -> str | None:
+        log = _SwitchLog()
+        await _switch_agent().run(
+            'go', model=_switch_model('fresh', log, gpt=gpt), deps=deps, workspace=LocalWorkspaceBackend(tmp_path)
+        )
+        return log.requests[0][1]
+
+    async def test_switching_back_to_gpt_sends_its_original_prefix(self, tmp_path: Path) -> None:
+        """GPT → Claude → GPT: switching back opens another window, at GPT's values. With nothing else changed, GPT is
+        sent the instructions the conversation opened with, byte for byte, so its cached prefix can still be hit, and
+        the same instructions and statements as a GPT run on the same history without instruction records."""
+        log = _SwitchLog()
+        workspace = LocalWorkspaceBackend(tmp_path)
+        agent, deps = _switch_agent(), _SwitchDeps('v1')
+        messages: list[ModelMessage] = []
+        for name, gpt in [('gpt', True), ('claude', False), ('gpt', True)]:
+            result = await agent.run(
+                name,
+                model=_switch_model(name, log, gpt=gpt),
+                deps=deps,
+                workspace=workspace,
+                message_history=messages,
+            )
+            messages = result.all_messages()
+        opened_with = log.requests[0][1]
+        assert opened_with is not None and _DELEGATION_RULE in opened_with
+        assert [(name, instructions) for name, instructions, _ in log.requests] == [
+            ('gpt', opened_with),
+            ('claude', await self._fresh(tmp_path, gpt=False, deps=deps)),
+            ('gpt', opened_with),
+        ]
+        assert [statements for *_, statements in log.requests] == [[], [], []]
+        assert _instruction_records(messages, InstructionDeltaPart) == []
+        assert len(_instruction_records(messages, InstructionBaselinePart)) == 3
+
+        # A GPT run on the same history, stripped of its instruction records, is sent the same thing.
+        stripped = [
+            replace(message, parts=[p for p in message.parts if not isinstance(p, InstructionBaselinePart)])
+            if isinstance(message, ModelRequest)
+            else message
+            for message in messages[:-2]
+        ]
+        replay = _SwitchLog()
+        await agent.run(
+            'gpt',
+            model=_switch_model('gpt', replay, gpt=True),
+            deps=deps,
+            workspace=workspace,
+            message_history=stripped,
+        )
+        assert replay.requests == log.requests[-1:]
+
+    async def test_other_blocks_keep_appending_across_switches(self, tmp_path: Path) -> None:
+        """Between switches, the agent's own block and a loaded capability's block append their changes. A switch opens
+        a window that carries each prefix block at its current value, as a fresh run on the new model would, and the
+        changes recorded before it stay in history without applying to the new window. A loaded capability's block
+        isn't part of any window, so its changes stay in effect and it isn't stated again. After every run, a request
+        with nothing changed records nothing: what history records agrees with what the model was sent."""
+        log = _SwitchLog()
+        workspace = LocalWorkspaceBackend(tmp_path)
+        agent = _switch_agent()
+        steps: list[tuple[str, bool, _SwitchDeps, Sequence[ModelResponse]]] = [
+            ('gpt', True, _SwitchDeps('v1', 0), [_LOAD_COUNTER]),
+            ('gpt', True, _SwitchDeps('v2', 1), []),
+            ('claude', False, _SwitchDeps('v2', 1), []),
+            ('claude', False, _SwitchDeps('v3', 2), []),
+            ('gpt', True, _SwitchDeps('v3', 2), []),
+        ]
+        messages: list[ModelMessage] = []
+        deltas_before: list[ModelRequestPart] = []
+        for index, (name, gpt, deps, script) in enumerate(steps):
+            result = await agent.run(
+                name,
+                model=_switch_model(name, log, gpt=gpt, script=script),
+                deps=deps,
+                workspace=workspace,
+                message_history=messages,
+            )
+            messages = result.all_messages()
+            new_deltas = _instruction_records(result.new_messages(), InstructionDeltaPart)
+            switched = index > 0 and steps[index - 1][1] != gpt
+            sent = log.requests[-1][1]
+            if switched:
+                # The new window is what a fresh run on this model gets, and no change is appended for it.
+                assert sent == await self._fresh(tmp_path, gpt=gpt, deps=deps)
+                assert new_deltas == []
+            elif index > 0:
+                assert sent == log.requests[-2][1]
+            # Earlier changes stay in history.
+            assert _instruction_records(messages, InstructionDeltaPart)[: len(deltas_before)] == deltas_before
+            deltas_before = _instruction_records(messages, InstructionDeltaPart)
+            # What history records agrees with what the model was sent: a request on the same model with nothing
+            # changed is sent the same instructions, and no change is recorded or restated for it.
+            idle_log = _SwitchLog()
+            idle = await agent.run(
+                'idle',
+                model=_switch_model(name, idle_log, gpt=gpt),
+                deps=deps,
+                workspace=workspace,
+                message_history=messages,
+            )
+            assert idle_log.requests[0][1] == sent
+            assert idle_log.requests[0][2] == log.requests[-1][2]
+            assert _instruction_records(idle.new_messages(), InstructionDeltaPart) == []
+            assert _instruction_records(idle.new_messages(), InstructionBaselinePart) == []
+        # What each request was sent after the prefix, by id: the loaded capability's statements are sent in every
+        # window, while the state changes from an earlier window are left out once a switch states the current value.
+        assert [
+            (name, [statement.split('"')[1] for statement in statements]) for name, _, statements in log.requests
+        ] == snapshot(
+            [
+                ('gpt', []),
+                ('gpt', ['capability:counter']),
+                ('gpt', ['capability:counter', 'agent:state', 'capability:counter']),
+                ('claude', ['capability:counter', 'capability:counter']),
+                ('claude', ['capability:counter', 'capability:counter', 'agent:state', 'capability:counter']),
+                ('gpt', ['capability:counter', 'capability:counter', 'capability:counter']),
+            ]
+        )

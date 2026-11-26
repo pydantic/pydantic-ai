@@ -2,7 +2,7 @@
 Source tapes/common.tape
 Output shots/system-prompt.txt
 Hide
-Type 'clai-demo' Enter
+Type 'pax-demo' Enter
 Wait+Screen /\| ready/
 Type '/system_prompt' Enter
 Wait+Screen /instructions/
