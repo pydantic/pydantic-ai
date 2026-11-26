@@ -1781,6 +1781,23 @@ A later <pyai:context> element with the same id replaces the earlier one and sta
         )
         assert toolset._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
 
+    def test_message_handler_does_not_keep_toolset_alive(self, fastmcp_server: FastMCP[None]):
+        """The handler must not keep the toolset alive, or stdio servers never stop."""
+        import gc
+        import weakref
+
+        from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
+
+        toolset = MCPToolset(fastmcp_server)
+        toolset_ref = weakref.ref(toolset)
+        handler = _build_message_handler(toolset, user_handler=None)
+
+        del toolset
+        gc.collect()
+        # Keep the handler reachable while checking the toolset was released.
+        assert handler is not None
+        assert toolset_ref() is None
+
     async def test_prompts_without_capability(self, fastmcp_server: FastMCP[None]):
         """`list_prompts` returns `[]` and `get_prompt` raises `MCPError` when prompts capability is absent."""
         toolset = MCPToolset(fastmcp_server)

@@ -7,6 +7,7 @@ import os
 import re
 import ssl
 import warnings
+import weakref
 from abc import ABC
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -1964,14 +1965,21 @@ def _build_message_handler(toolset: MCPToolset[Any], user_handler: MessageHandle
     The toolset's own cache invalidation runs first, then the user-supplied handler (if any).
     """
 
+    # Hold the toolset weakly: a strong reference from the handler kept alive
+    # by FastMCP's connection task prevented the stdio transport from being
+    # collected, so its __del__ never stopped the server subprocess.
+    toolset_ref = weakref.ref(toolset)
+
     async def handler(message: Any) -> None:
-        notification = getattr(message, 'root', message)
-        if isinstance(notification, mcp_types.ToolListChangedNotification):
-            toolset._invalidate_tools_cache()  # pyright: ignore[reportPrivateUsage]
-        elif isinstance(notification, mcp_types.ResourceListChangedNotification):
-            toolset._invalidate_resources_cache()  # pyright: ignore[reportPrivateUsage]
-        elif isinstance(notification, mcp_types.PromptListChangedNotification):
-            toolset._invalidate_prompts_cache()  # pyright: ignore[reportPrivateUsage]
+        current_toolset = toolset_ref()
+        if current_toolset is not None:
+            notification = getattr(message, 'root', message)
+            if isinstance(notification, mcp_types.ToolListChangedNotification):
+                current_toolset._invalidate_tools_cache()  # pyright: ignore[reportPrivateUsage]
+            elif isinstance(notification, mcp_types.ResourceListChangedNotification):
+                current_toolset._invalidate_resources_cache()  # pyright: ignore[reportPrivateUsage]
+            elif isinstance(notification, mcp_types.PromptListChangedNotification):
+                current_toolset._invalidate_prompts_cache()  # pyright: ignore[reportPrivateUsage]
         if user_handler is not None:
             await user_handler(message)
 
