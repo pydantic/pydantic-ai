@@ -213,19 +213,20 @@ Spans the tool opens are children of the new span.
 | `gen_ai.tool.call.id` | The call's ID, the same as on the `execute_tool` span and the result's `tool_call_id`. |
 | `background_tools.outcome` | How the call ended: `success`, `retried`, `failed`, `interrupted` or `error`. |
 
-`retried` is a `ModelRetry` or a validation error: the call asked for a retry, which reaches the model as
-a failed result and counts toward the tool's `max_retries`, unless that budget is spent and the run ends. `failed` is a `ToolFailed`, or an `ApprovalRequired` or `CallDeferred`,
-which cannot defer a call that is already running. `interrupted` means the task was cancelled before the
-tool finished, usually because the run stopped it. A tool that raises `CancelledError` itself is also
-recorded as `interrupted`, though it ends the run. `error` is any other exception, which ends the run.
+`retried` is a `ModelRetry` or a validation error: the call asked for a retry, which reaches the model
+as a failed result and counts toward the tool's `max_retries`, unless that budget is spent and the run
+ends. `failed` is a `ToolFailed`, or an `ApprovalRequired` or `CallDeferred`, which cannot defer a call
+that is already running. `interrupted` means the task was cancelled before the tool finished, usually
+because the run stopped it. A tool that raises `CancelledError` itself is also recorded as
+`interrupted`, though it ends the run. `error` is any other exception, which ends the run.
 
 `retried`, `failed` and `error` set the span's status to error; `interrupted` leaves it unset, since the
-run stopped the tool rather than the tool failing. A `BaseException` that is not an `Exception` also leaves
-it unset, and only `background_tools.outcome` says the call failed. An `Exception`'s message is recorded only when the run
-includes content in traces, since it can quote the tool's arguments or results. The span has no retry
-attempt attributes, which a foreground call's span carries: a background retry is charged when its
-result is delivered, after this span ends, so the attempt number isn't known yet. A call cancelled
-before it started has no `background_tools execute` span.
+run stopped the tool rather than the tool failing. A `BaseException` that is not an `Exception` also
+leaves it unset, and only `background_tools.outcome` says the call failed. An `Exception`'s message is
+recorded only when the run includes content in traces, since it can quote the tool's arguments or
+results. The span has no retry attempt attributes, which a foreground call's span carries: a background
+retry is charged when its result is delivered, after this span ends, so the attempt number isn't known
+yet. A call cancelled before it started has no `background_tools execute` span.
 
 The tool's result is not on this span. When the run includes content in traces, it appears in the
 input of the `chat` span of the model request that delivers it, which follows all of the run's
