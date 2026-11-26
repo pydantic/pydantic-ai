@@ -1,0 +1,193 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "385"
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: >-
+              Use the get_file tool now to retrieve a video file, then describe what you
+              received.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: requires_action
+        usage:
+          total_tokens: 103
+          total_input_tokens: 29
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 29
+          total_output_tokens: 10
+          output_tokens_by_modality:
+          - modality: text
+            tokens: 10
+          total_tool_use_tokens: 0
+          total_thought_tokens: 64
+          initial_input_tokens: 29
+        role: model
+        created: 2026-11-06T12:28:12Z
+        updated: 2026-11-06T12:28:12Z
+        steps:
+        - signature: >-
+            AY89a1/XyEmBdaBnZgi3WBQwaGVQOFDnp+vqLVjiPZ98t++JEUhdz/WGmn6iRO7/tcy1E0U46j/yNbVXUNcj93hh17x+8bi6wiAm+0sR9LnPOx/f73Jz5n+/UshUEFQJi7c1Ge/FyxJQrTCCja6sHUrT/oAMsCFj+9P6c4kIqFq1lJYwzQzi+1nazm+op2mjW1sePu+9u+w++yveJSU+MB9ok9eyMTsBeVHp0vLhu2KkscPOeWTUyH4sNAYmtA88f1Zj4119Ym+t/fzyvQ/0lnej38K+L7PS1VuBG1rlwhOiUVhDcgklNHiafEls1xZyB03jSgwX4eALvbb/fJdM9V1FVguKWCGGQJEeUj8DUoTx2W+GOwKrilF/XaE4Vf5DOML82qi9MA8L9HJQByDFWZMCWuroICo9HpTW0wFisJqNZ1PTSApGZOSGw6EVqDJzmuKBbfeL9a4MPg==
+          type: thought
+        - id: call_17050715247145749034
+          type: function_call
+          name: get_file
+          arguments: {}
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T12:28:12.266835+00:00
+- request:
+    method: POST
+    uri: >-
+      https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1269"
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: >-
+              Use the get_file tool now to retrieve a video file, then describe what you
+              received.
+        - signature: >-
+            AY89a1/XyEmBdaBnZgi3WBQwaGVQOFDnp+vqLVjiPZ98t++JEUhdz/WGmn6iRO7/tcy1E0U46j/yNbVXUNcj93hh17x+8bi6wiAm+0sR9LnPOx/f73Jz5n+/UshUEFQJi7c1Ge/FyxJQrTCCja6sHUrT/oAMsCFj+9P6c4kIqFq1lJYwzQzi+1nazm+op2mjW1sePu+9u+w++yveJSU+MB9ok9eyMTsBeVHp0vLhu2KkscPOeWTUyH4sNAYmtA88f1Zj4119Ym+t/fzyvQ/0lnej38K+L7PS1VuBG1rlwhOiUVhDcgklNHiafEls1xZyB03jSgwX4eALvbb/fJdM9V1FVguKWCGGQJEeUj8DUoTx2W+GOwKrilF/XaE4Vf5DOML82qi9MA8L9HJQByDFWZMCWuroICo9HpTW0wFisJqNZ1PTSApGZOSGw6EVqDJzmuKBbfeL9a4MPg==
+          type: thought
+        - id: call_17050715247145749034
+          name: get_file
+          type: function_call
+          arguments: {}
+        - type: function_result
+          name: get_file
+          call_id: call_17050715247145749034
+          is_error: false
+          result:
+          - type: text
+            text: File attached
+        - type: user_input
+          content:
+          - mime_type: video/mp4
+            type: video
+            uri: gs://pydantic-ai-test-files-vertex/test-files/small_video.mp4
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 475
+          total_input_tokens: 176
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 110
+          - modality: video
+            tokens: 66
+          total_output_tokens: 117
+          output_tokens_by_modality:
+          - modality: text
+            tokens: 117
+          total_tool_use_tokens: 0
+          total_thought_tokens: 182
+          initial_input_tokens: 176
+        role: model
+        created: 2026-11-06T12:28:19Z
+        updated: 2026-11-06T12:28:19Z
+        steps:
+        - signature: >-
+            AY89a19o5m2UwA3VLm/IWgEulNhOEUHQN2QC2GhqsqL9cuLsKntuYIJaW9PF/k1MX9isZy69bPcw3AhBF3EVrn/o3rXiGkI1toJbFpr1Grwml51LEdO575ckCJTR+tNEwAEOn0lChyDL2VmlSGHEIy+5PqB4La69lXv9dRBtnL4EJ7TwYY6ewfUBdXa5IxUeqDAlOXvTJ0vDDj45QOWfIY7UPbzAdMiedMa3nu7zekrpR4HJvT+ST20obIoLl5dBPoQbgf/zANCF9jztBCBI1rXpMeetQW/EQW0wPSY0ZKylZYF9/CL7OZw0w6l2w94Du30D5+yE7ymbXb66tR9+Yg+rogJ7ElwokM+elOzqfriA18Uv2T0esqUqvcXSc1uNp4QOvQT2mMpar+jHiAvlZFeqRsHlu2Qo3mn77fqiIPdjCNL7FJUB0gZMHgxAarL9ande6w55eZePOXp6m1sCHnMQiEREddjRmuK9wbTIrLlPbbXGULXMfqwRB0Zj/G5QhFd4A9GNG60QS48JnUCaHwOo5n5Uh7OCLHGG2ntCHjIUc2UQFHDYcuYYVmWYIjH1jo/ae8yOB2ve8ZhIxyOAomOJmAOfWD1azNxe6jXWtuuCDepl+XiABKrTW8rtGe7mWz+Kl3eSzOlyr+jlieUYVtVMbHQCwnI6BgW0MQ+EfaHu5Tc9wgPwACnP3LReoyzx/8u9IawjyhXt8JYs2rlYrJp1GABii8B4gz+aP9Q/6ppMpLR/9E/QWX4eiKeLOC6n8uclatLuW7CU54M0WdF1dllR1wNgWJEswY9K1rsw4tl5C1AqeCwKszIm5OnSQiD9huxw4zKrWUAjAQBh14e1YRp2HiLMLJiDxvTxAeDnqBzT051cdaRJS2QcBPtS5mNaCR4ijcClCZ9oc/Tli6JYyQuQldtuCXOrspYx7A2mv+1KRnKnLthToU8SDv6pRy21VmlEEpQUQaXJ42kGNPcgq+oghPmI5gfq3zpNjaA7sYDyv2aGW0twJs+Fc5n8Ke/6GY0JuQXCZHrsiW93Bks01HYKmRTp2pOZZmT8fTMMd6PZGU3zsZ8ot6M0E/WQN1M9erEIGRtgBRC8aN0qTk3392iaMFy1lttV6OtHS0fIU52XNtFq8xfolcTKNTfugwRy8rrO86jWfgK3+wGPF/HACXezvvHdapJgSiYDAvJm09Id/Jg7KgLkSWN6ao24i+23iJ4tT+xYT9AhrPQDqhNHYX0vFp0WkW+LJvEv+diKf5DUnbs9vEf7XXlm5Mz3goQ=
+          type: thought
+        - content:
+          - text: |-
+              I received a video frame featuring a camera setup filming in a scenic desert landscape:
+
+              * **Foreground:** An external video monitor is mounted on a camera rig/tripod on the left side of the frame. The screen displays a live composition of a narrow, rugged canyon, showing dramatic contrast between deep blue shadows and warm sunlight illuminating the rock walls.
+              * **Background:** An out-of-focus, softly blurred view of the actual landscape during golden hour, showing a dirt road or wash bordered by sunlit, orange-and-tan rock formations under warm, glowing light.
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T12:28:19.813538+00:00

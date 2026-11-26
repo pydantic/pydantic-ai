@@ -17,6 +17,7 @@ from typing import Protocol, TypeVar
 from pydantic import TypeAdapter
 
 from ..messages import (
+    BaseToolCallPart,
     BaseToolReturnPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -130,8 +131,12 @@ _PartT = TypeVar('_PartT', ModelRequestPart, ModelResponsePart)
 
 
 def part_without_application_metadata(part: _PartT) -> _PartT:
+    # `ui_visibility` only says what a UI client is sent, and a UI adapter run stamps native tool parts after the
+    # response's digest is taken, so a stamp mustn't change it either.
     if isinstance(part, BaseToolReturnPart):
-        return replace(part, metadata=None)
+        return replace(part, metadata=None, ui_visibility=None)
+    if isinstance(part, BaseToolCallPart):
+        return replace(part, ui_visibility=None)
     if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
         content = [replace(item, metadata=None) if isinstance(item, TextContent) else item for item in part.content]
         return replace(part, content=content)
