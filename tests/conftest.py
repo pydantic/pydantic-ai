@@ -706,6 +706,9 @@ BLOCKBUSTER_LOCAL_FILES: list[tuple[str, str | tuple[str, ...]]] = [
     # pydantic-ai-pax's commands, menus, and sign-ins check and update its own small files in the user's folders.
     ('pydantic_ai_pax/config/api_keys.py', ('save_key', 'load_keys')),
     ('pydantic_ai_pax/config/project_settings.py', ('_present', 'load_project_settings')),
+    # A session's trust in its folder is looked up as the shell is built: where the folder's repository is, and
+    # the decision saved for it.
+    ('pydantic_ai_pax/runtime/workspace_trust.py', ('saved', 'from_scope', 'trust_scope')),
     ('pydantic_ai_pax/ui/menus/key_menu.py', 'storage'),
     ('pydantic_ai_pax/builtin_plugins/coder_folders.py', ('_directory_problem', '_same_directory', 'path')),
     ('pydantic_ai_pax/builtin_plugins/logfire.py', 'credentials'),
@@ -1070,6 +1073,9 @@ DEPRECATED_MODELS_IN_RECORDINGS: tuple[str, ...] = (
     # Anthropic, retires 2026-11-30: https://github.com/pydantic/pydantic-ai/issues/14036
     'claude-sonnet-4-5',
     'claude-sonnet-4-5-20250929',
+    # Anthropic, retires 2027-01-22: https://github.com/pydantic/pydantic-ai/issues/14036
+    'claude-opus-4-5',
+    'claude-opus-4-5-20251101',
     # Anthropic, no retirement date: https://github.com/pydantic/pydantic-ai/issues/14036
     'claude-mythos-preview',
     # OpenAI, retires 2025-07-14: https://github.com/pydantic/pydantic-ai/issues/14037

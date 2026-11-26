@@ -154,6 +154,89 @@ def test_any_edit_to_recalled_history_becomes_the_restored_draft(key: str) -> No
     assert buffer.text == edited
 
 
+@pytest.mark.parametrize(
+    ('keys', 'edited'),
+    [
+        (['x'], 'recalled wordx'),
+        (['backspace'], 'recalled wor'),
+        (['ctrl-w'], 'recalled '),
+        (['ctrl-u'], ''),
+    ],
+)
+def test_editing_recalled_history_preserves_a_nonempty_draft(keys: list[str], edited: str) -> None:
+    buffer = PromptBuffer(history=['older', 'recalled word'])
+    buffer.insert('draft')
+    buffer.edit('up')
+    for key in keys:
+        buffer.edit(key)
+    assert buffer.text == edited
+    buffer.edit('down')
+    assert buffer.text == 'draft'
+    buffer.undo()
+    assert buffer.text == edited and buffer.history_index is None
+    buffer.redo()
+    assert buffer.text == 'draft' and buffer.history_index is None
+
+
+def test_edits_remain_undoable_across_multiple_recalled_entries() -> None:
+    buffer = PromptBuffer(history=['first', 'second', 'third'])
+    buffer.insert('draft')
+    for key in ('up', 'x', 'up', 'y', 'up', 'down', 'down', 'down'):
+        buffer.edit(key)
+    assert buffer.text == 'draft'
+    buffer.undo()
+    assert buffer.text == 'secondy'
+    buffer.undo()
+    assert buffer.text == 'second'
+    buffer.undo()
+    assert buffer.text == 'thirdx'
+    buffer.redo()
+    assert buffer.text == 'second'
+    buffer.redo()
+    assert buffer.text == 'secondy'
+    buffer.redo()
+    assert buffer.text == 'draft'
+    assert buffer.history == ['first', 'second', 'third']
+
+
+def test_editing_the_restored_draft_starts_a_fresh_walk() -> None:
+    buffer = PromptBuffer(history=['history'])
+    buffer.insert('draft')
+    for key in ('up', 'x', 'down', '!'):
+        buffer.edit(key)
+    assert buffer.text == 'draft!'
+    assert buffer.history_index is None
+    for key in ('up', 'backspace', 'down'):
+        buffer.edit(key)
+    assert buffer.text == 'draft!'
+
+
+@pytest.mark.parametrize('draft', ['', 'draft'])
+@pytest.mark.parametrize('keys', [('delete',), ('ctrl-k',), ('home', 'backspace'), ('home', 'ctrl-u')])
+def test_noop_deletions_keep_the_recall_walk(draft: str, keys: tuple[str, ...]) -> None:
+    buffer = PromptBuffer(history=['history'])
+    buffer.insert(draft)
+    buffer.edit('up')
+    for key in keys:
+        buffer.edit(key)
+    assert buffer.recall_offset == -1
+    buffer.edit('down')
+    assert buffer.text == draft
+
+
+def test_undo_ends_an_edited_walk_and_fresh_walks_ignore_saved_drafts() -> None:
+    buffer = PromptBuffer(history=['history'])
+    buffer.insert('draft')
+    for key in ('up', 'x', 'ctrl-z'):
+        buffer.edit(key)
+    assert buffer.text == 'history' and buffer.history_index is None
+    buffer.edit('ctrl-u')
+    for key in ('up', 'x', 'up', 'down'):
+        buffer.edit(key)
+    assert buffer.text == 'historyx'
+    assert buffer.saved_draft == 'historyx'
+
+
 def test_history_control_bytes_are_not_terminal_instructions() -> None:
     buffer = PromptBuffer()
     buffer.replace('bad\x1b[2J')
