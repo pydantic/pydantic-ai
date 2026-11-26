@@ -327,7 +327,7 @@ Task control records its own decisions, which core's spans don't show, as zero-d
 | `sub_agents vetoed` | a listener vetoed a task, message, answer, cancellation, or created agent | `sub_agents.event` (the vetoed event's kind), `sub_agents.veto_reason` |
 | `sub_agents task backgrounded` | a task moved to the background | `sub_agents.reason`: `requested`, `auto`, or `question` |
 | `sub_agents task settled` | a task in the background ended | `sub_agents.outcome` and `sub_agents.model`, as on the delegate span, except that a task run in a durable unit records no `sub_agents.model` |
-| `sub_agents question answered` | a listener answered a task's question, not the model | `sub_agents.question`, `sub_agents.answer` |
+| `sub_agents question answered` | a listener, not the model, answered a task's question | `sub_agents.question`, `sub_agents.answer` |
 | `sub_agents task refused` | `max_running_tasks` refused a delegation | `sub_agents.running_tasks`, `sub_agents.max_running_tasks` |
 | `sub_agents task not accepted` | no worker picked a remote task up within `accept_timeout` | `sub_agents.accept_timeout` |
 | `sub_agents remote task stopped` | a remote task ended without its worker's report, and its worker was told to stop it | |
