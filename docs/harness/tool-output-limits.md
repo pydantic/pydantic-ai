@@ -485,17 +485,16 @@ its own: the tool call is already spanned, and the reduction happens inside it.
 
 A `ToolReturn`'s text `content` is reduced on its own, so its reduction is recorded under
 `tool_output_limits.content.*` with the same names. Nothing is recorded for a return no band applies
-to (below every `over`), one a `Passthrough()` band keeps, or one a `Truncate` keeps because the text
-already fits its `max_chars`. A `then` that produces a result is
-recorded even when it cuts nothing (then both sizes are equal). When the default
-`Spill(then=Truncate())` can't write to its store, a text return gets `action` `truncate` and
-`fallback_from` `spill`, which is how a failing store shows up in a trace; the store's error is in
-the log. A binary return gets only `fallback_from`, with no `action` or sizes, since `Truncate`
-can't take binary. The same holds for any action that can't run and has no `then`, or whose
-fallbacks all fail or end in `Passthrough()`: the return is unchanged and only `fallback_from` is
-recorded. When a `then` also fails and its own `then` produces the result, `fallback_from` still
-names the band's own action, the one the band was configured to run; the later failure is in the
-log.
+to (below every `over`), one a `Passthrough()` band keeps, or one a `Truncate` keeps because the
+text already fits its `max_chars`. A `then` that produces a result is recorded even when it cuts
+nothing (then both sizes are equal). When the default `Spill(then=Truncate())` can't write to its
+store, a text return gets `action` `truncate` and `fallback_from` `spill`, which is how a failing
+store shows up in a trace; the store's error is in the log. A binary return gets only
+`fallback_from`, with no `action` or sizes, since `Truncate` can't take binary. The same holds for
+any action that can't run and has no `then`, or whose fallbacks all fail or end in `Passthrough()`:
+the return is unchanged and only `fallback_from` is recorded. When a `then` also fails and its own
+`then` produces the result, `fallback_from` still names the band's own action, the one the band was
+configured to run; the later failure is in the log.
 
 ## Edge cases
 
