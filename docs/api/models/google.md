@@ -8,3 +8,8 @@ access Google's Gemini models via both the Gemini API and Google Cloud (formerly
 For details on how to set up authentication with this model, see [model configuration for Google](../../models/google.md).
 
 ::: pydantic_ai.models.google
+
+
+## Interactions API
+
+::: pydantic_ai.models.google_interactions

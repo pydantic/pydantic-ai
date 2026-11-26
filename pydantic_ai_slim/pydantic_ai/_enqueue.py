@@ -609,6 +609,25 @@ def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestCon
     if isinstance(target, ModelRequest) and any(message is target for message in request_context.messages):
         answered_calls = {part.tool_call_id for part in target.parts if isinstance(part, ToolReturnPart)}
 
+    spliced, appended = _split_drained(ctx, drained, answered_calls)
+
+    events: list[EnqueuedMessagesEvent] = []
+    if spliced:
+        assert isinstance(target, ModelRequest)
+        events = _splice_into(ctx, request_context, target, spliced)
+    for enqueue_id, messages in appended:
+        request_context.messages = [*request_context.messages, *messages]
+        append_to_history(ctx, *messages)
+        events.append(EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=tuple(messages)))
+    for event in events:
+        ctx._emit_event(event)  # pyright: ignore[reportPrivateUsage]
+    return request_context
+
+
+def _split_drained(
+    ctx: RunContext[object], drained: list[PendingMessage], answered_calls: set[str]
+) -> tuple[dict[str, list[tuple[str, ModelRequest]]], list[tuple[str, list[ModelMessage]]]]:
+    """Split `drained` into the requests spliced after the tool returns they belong to, by call, and the rest."""
     spliced: dict[str, list[tuple[str, ModelRequest]]] = {}
     appended: list[tuple[str, list[ModelMessage]]] = []
     for pending in drained:
@@ -628,42 +647,41 @@ def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestCon
             spliced.setdefault(tool_call[0], []).append((pending.enqueue_id, request))
         else:
             appended.append((pending.enqueue_id, messages))
+    return spliced, appended
 
+
+def _splice_into(
+    ctx: RunContext[object],
+    request_context: ModelRequestContext,
+    target: ModelRequest,
+    spliced: dict[str, list[tuple[str, ModelRequest]]],
+) -> list[EnqueuedMessagesEvent]:
+    """Splice each call's content into `target` after its return, and say what landed, in `target`'s part order."""
     events: list[EnqueuedMessagesEvent] = []
-    if spliced:
-        assert isinstance(target, ModelRequest)
-        queue = run_queue(ctx)
-        previous = queue._spliced_request  # pyright: ignore[reportPrivateUsage]
-        if previous is not None and previous[1] is target:
-            original = previous[0]
-        else:
-            original = target
-            queue._last_delivered_for_call.clear()  # pyright: ignore[reportPrivateUsage]
-        # Each call's content goes after its return, or after what an earlier delivery in this step put there.
-        anchors = {id(_splice_anchor(target, call_id, queue)): call_id for call_id in spliced}
-        parts: list[ModelRequestPart] = []
-        for part in target.parts:
-            parts.append(part)
-            call_id = anchors.get(id(part))
-            if call_id is None:
-                continue
-            for enqueue_id, request in spliced.pop(call_id, ()):
-                parts.extend(request.parts)
-                queue._last_delivered_for_call[call_id] = request.parts[-1]  # pyright: ignore[reportPrivateUsage]
-                events.append(
-                    EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=(request,), parts=tuple(request.parts))
-                )
-        spliced_target = replace(target, parts=parts)
-        queue._spliced_request = (original, spliced_target)  # pyright: ignore[reportPrivateUsage]
-        ctx.messages[-1] = spliced_target
-        ctx._appended_messages.replace(target, spliced_target)  # pyright: ignore[reportPrivateUsage]
-        request_context.messages = [
-            spliced_target if message is target else message for message in request_context.messages
-        ]
-    for enqueue_id, messages in appended:
-        request_context.messages = [*request_context.messages, *messages]
-        append_to_history(ctx, *messages)
-        events.append(EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=tuple(messages)))
-    for event in events:
-        ctx._emit_event(event)  # pyright: ignore[reportPrivateUsage]
-    return request_context
+    queue = run_queue(ctx)
+    previous = queue._spliced_request  # pyright: ignore[reportPrivateUsage]
+    if previous is not None and previous[1] is target:
+        original = previous[0]
+    else:
+        original = target
+        queue._last_delivered_for_call.clear()  # pyright: ignore[reportPrivateUsage]
+    # Each call's content goes after its return, or after what an earlier delivery in this step put there.
+    anchors = {id(_splice_anchor(target, call_id, queue)): call_id for call_id in spliced}
+    parts: list[ModelRequestPart] = []
+    for part in target.parts:
+        parts.append(part)
+        call_id = anchors.get(id(part))
+        if call_id is None:
+            continue
+        for enqueue_id, request in spliced.pop(call_id, ()):
+            parts.extend(request.parts)
+            queue._last_delivered_for_call[call_id] = request.parts[-1]  # pyright: ignore[reportPrivateUsage]
+            events.append(EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=(request,), parts=tuple(request.parts)))
+    spliced_target = replace(target, parts=parts)
+    queue._spliced_request = (original, spliced_target)  # pyright: ignore[reportPrivateUsage]
+    ctx.messages[-1] = spliced_target
+    ctx._appended_messages.replace(target, spliced_target)  # pyright: ignore[reportPrivateUsage]
+    request_context.messages = [
+        spliced_target if message is target else message for message in request_context.messages
+    ]
+    return events
