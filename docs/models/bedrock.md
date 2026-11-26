@@ -95,7 +95,7 @@ from pydantic_ai.models.bedrock import BedrockConverseModel
 from pydantic_ai.providers.bedrock import BedrockProvider
 
 model = BedrockConverseModel(
-    'anthropic.claude-sonnet-4-5-20250929-v1:0',
+    '{{ bedrock:medium.name }}',
     provider=BedrockProvider(region_name='us-east-1', aws_read_timeout=600),
 )
 agent = Agent(model)
