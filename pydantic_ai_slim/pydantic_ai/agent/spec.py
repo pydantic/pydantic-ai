@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import functools
+import inspect
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import suppress
 from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Union, cast
@@ -339,23 +342,40 @@ def load_capability_from_nested_spec(spec: CapabilitySpec | dict[str, Any] | str
 
 def _build_capability_schema_types(registry: Mapping[str, type[Any]]) -> list[Any]:
     """Build a list of schema types for capabilities from a registry."""
+    from pydantic_ai.capabilities.abstract import AbstractCapability
 
     def _get_schema_target(cls: type[Any]) -> Any:
         # When from_spec is not overridden, it delegates to cls(*args, **kwargs).
         # Use __init__ directly so build_schema_types sees the actual parameter types.
-        # Fall back to from_spec if __init__ hints can't be resolved (e.g. TYPE_CHECKING imports).
+        # Fall back to an inherited from_spec override if __init__ hints can't be resolved (e.g. TYPE_CHECKING imports).
         if 'from_spec' not in cls.__dict__:
             try:
                 get_function_type_hints(cls.__init__)
                 return cls.__init__
             except (NameError, TypeError, AttributeError):
-                pass
+                if cls.from_spec.__func__ is AbstractCapability.from_spec.__func__:
+                    return _init_with_resolvable_hints(cls.__init__)
         return cls.from_spec
 
     return build_schema_types(
         registry,
         get_schema_target=_get_schema_target,
     )
+
+
+def _init_with_resolvable_hints(init: Callable[..., None]) -> Callable[..., None]:
+    """A stand-in for `init` with only the annotations whose type hints resolve, each resolved on its own.
+
+    A hint that doesn't resolve, e.g. a `TYPE_CHECKING` import, then leaves only its own parameter unannotated:
+    the schema leaves it out if optional, and takes any value if required.
+    """
+    hints: dict[str, Any] = {}
+    for key in [*inspect.signature(init).parameters, 'return']:
+        with suppress(NameError, TypeError, AttributeError):
+            hints |= get_function_type_hints(init, include_keys={key})
+    target = functools.wraps(init)(lambda *args, **kwargs: None)
+    target.__annotations__ = hints
+    return target
 
 
 def _replace_capability_spec_refs(schema: dict[str, Any], cap_items_schema: dict[str, Any]) -> None:

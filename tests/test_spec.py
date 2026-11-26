@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Annotated, Any, ClassVar, Literal, Protocol, Self
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Protocol, Self
 
 import pytest
 from inline_snapshot import snapshot
@@ -20,6 +20,9 @@ from .conftest import try_import
 
 with try_import() as jsonschema_imports_successful:
     from jsonschema.validators import validator_for
+
+if TYPE_CHECKING:
+    from decimal import Decimal
 
 
 class TestNamedSpec:
@@ -641,6 +644,109 @@ class TestBuildSchemaTypes:
         assert list(validator_for(schema)(schema).iter_errors(short_form_object))
         with pytest.raises(ValueError, match="unexpected keyword argument 'a'"):
             Agent.from_spec(short_form_object, custom_capability_types=[WeightsWithFlag])
+
+    @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+    def test_type_checking_only_optional_hint_capability_schema(self):
+        """An optional parameter whose hint resolves only under `TYPE_CHECKING` is left out; the others stay.
+
+        Not a VCR test: schema generation and `Agent.from_spec` run before any model request.
+        """
+
+        @dataclass
+        class PricedLabel(AbstractCapability[None]):
+            label: str
+            limit: int = 3
+            rate: 'Decimal | None' = None
+
+        schema = AgentSpec.model_json_schema_with_capabilities([PricedLabel])
+        assert schema['$defs']['spec_params_PricedLabel'] == snapshot(
+            {
+                'additionalProperties': False,
+                'properties': {
+                    'label': {'title': 'Label', 'type': 'string'},
+                    'limit': {'title': 'Limit', 'type': 'integer'},
+                    'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                    'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                    'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                },
+                'required': ['label'],
+                'title': 'spec_params_PricedLabel',
+                'type': 'object',
+            }
+        )
+        validator = validator_for(schema)(schema)
+        entries: list[JsonValue] = [{'PricedLabel': 'x'}, {'PricedLabel': {'label': 'x', 'limit': 2}}]
+        for entry in entries:
+            spec: dict[str, JsonValue] = {'model': 'test', 'capabilities': [entry]}
+            assert list(validator.iter_errors(spec)) == []
+            capabilities = Agent.from_spec(spec, custom_capability_types=[PricedLabel]).root_capability.capabilities
+            assert [c.label for c in capabilities if isinstance(c, PricedLabel)] == ['x']
+
+    @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+    def test_type_checking_only_required_hint_capability_schema(self):
+        """A required parameter whose hint resolves only under `TYPE_CHECKING` accepts any value, as if unannotated.
+
+        Not a VCR test: schema generation and `Agent.from_spec` run before any model request.
+        """
+
+        @dataclass
+        class Priced(AbstractCapability[None]):
+            rate: 'Decimal'
+            limit: int = 3
+
+        schema = AgentSpec.model_json_schema_with_capabilities([Priced])
+        assert schema['$defs']['spec_params_Priced'] == snapshot(
+            {
+                'additionalProperties': False,
+                'properties': {
+                    'limit': {'title': 'Limit', 'type': 'integer'},
+                    'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                    'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                    'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                    'rate': {'title': 'Rate'},
+                },
+                'required': ['rate'],
+                'title': 'spec_params_Priced',
+                'type': 'object',
+            }
+        )
+        validator = validator_for(schema)(schema)
+        name_only = {'model': 'test', 'capabilities': ['Priced']}
+        assert list(validator.iter_errors(name_only))
+        entries: list[JsonValue] = [{'Priced': 1.5}, {'Priced': {'rate': 1.5, 'limit': 2}}]
+        for entry in entries:
+            spec: dict[str, JsonValue] = {'model': 'test', 'capabilities': [entry]}
+            assert list(validator.iter_errors(spec)) == []
+            capabilities = Agent.from_spec(spec, custom_capability_types=[Priced]).root_capability.capabilities
+            assert [c.rate for c in capabilities if isinstance(c, Priced)] == [1.5]
+
+    def test_type_checking_only_hint_inherited_from_spec_schema(self):
+        """A class whose `__init__` hints don't all resolve keeps the schema of the `from_spec` override it inherits."""
+
+        @dataclass
+        class Limited(AbstractCapability[None]):
+            limit: int = 3
+
+            @classmethod
+            def from_spec(cls, limit: int = 3) -> Self:
+                return cls(limit=limit)  # pragma: no cover
+
+        @dataclass
+        class PricedLimited(Limited):
+            rate: 'Decimal | None' = None
+
+        schema = AgentSpec.model_json_schema_with_capabilities([PricedLimited])
+        assert {key: schema['$defs'][key] for key in schema['$defs'] if key.endswith('_PricedLimited')} == snapshot(
+            {
+                'short_spec_PricedLimited': {
+                    'additionalProperties': False,
+                    'properties': {'PricedLimited': {'title': 'Pricedlimited', 'type': 'integer'}},
+                    'required': ['PricedLimited'],
+                    'title': 'short_spec_PricedLimited',
+                    'type': 'object',
+                }
+            }
+        )
 
     def test_no_params_class(self):
         class NoParams:
