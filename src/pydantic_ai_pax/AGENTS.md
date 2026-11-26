@@ -535,7 +535,7 @@ A plugin with any visual part counts too. Reviewers judge a UI change by looking
   existing.
 - The PR description must be able to show the image without the PNG being in the PR's diff, unless a docs page
   uses it. GitHub strips inline `data:` images, so commit the PNG to the shared `pr-assets` branch, in a folder
-  named after the PR number (`pr-assets:14725/picker.png`), and link it from the description as
+  named after the PR number (`14730/picker.png` on `pr-assets`), and link it from the description as
   `https://raw.githubusercontent.com/pydantic/pydantic-ai/<that commit's SHA>/<PR number>/<file>`. Pin the
   commit SHA, not the branch, so a later push to `pr-assets` can't change what the PR shows.
 - A PR with no visible change says so in one line instead ("No visible change.").
