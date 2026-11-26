@@ -145,12 +145,14 @@ def test_groq_provider_model_profile(mocker: MockerFixture):
     assert openai_profile is not None
     assert openai_profile.get('supports_json_object_output', False) is True
     assert openai_profile.get('supports_json_schema_output', False) is True
+    assert openai_profile.get('supports_inline_system_prompts', True) is False
 
     openai_profile = provider.model_profile('openai/gpt-oss-120b')
     openai_model_profile_mock.assert_called_with('gpt-oss-120b')
     assert openai_profile is not None
     assert openai_profile.get('supports_json_object_output', False) is True
     assert openai_profile.get('supports_json_schema_output', False) is True
+    assert openai_profile.get('supports_inline_system_prompts', True) is False
 
     unknown_profile = provider.model_profile('unknown-model')
     assert unknown_profile is not None

@@ -105,7 +105,14 @@ class GroqProvider(Provider[AsyncGroq]):
             profile,
             groq_model_profile(model_name),
             # Groq documents JSON mode for every model it serves.
-            ModelProfile(supports_inline_system_prompts=True, supports_json_object_output=True),
+            # Groq merges later system messages into the leading developer message for gpt-oss
+            # (harmony format), which breaks the cached conversation prefix, so gpt-oss models
+            # get the `<system>`-in-a-user-turn rendering instead of native mid-conversation
+            # system messages.
+            ModelProfile(
+                supports_inline_system_prompts=not model_name.startswith('openai/gpt-oss'),
+                supports_json_object_output=True,
+            ),
             ModelProfile(json_schema_transformer=_GroqQwenStrictOutputJsonSchemaTransformer)
             if model_name.startswith('qwen/qwen3.8-')
             else None,
