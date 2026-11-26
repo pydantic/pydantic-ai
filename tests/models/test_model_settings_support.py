@@ -1243,3 +1243,34 @@ async def test_max_retries_keeps_the_bedrock_client_aws_profile(
 
     assert len(authorizations) == 2
     assert all('Credential=AKIAPROBEPROFILE/' in authorization for authorization in authorizations)
+
+
+def test_google_sampling_params_ignored_on_documented_models():
+    from pydantic_ai.profiles.google import google_model_profile
+
+    for model_name in ('gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-4-argon'):
+        profile = google_model_profile(model_name)
+        assert profile is not None
+        assert profile['google_ignores_sampling_params'] is True
+
+
+def test_google_sampling_params_sent_on_uncovered_models():
+    from pydantic_ai.profiles.google import google_model_profile
+
+    for model_name in (
+        'gemini-2.0-flash',
+        'gemini-2.5-flash',
+        'gemini-3.0-flash',
+        'gemini-3.5-flash',
+        'brand-new-model-name',
+    ):
+        profile = google_model_profile(model_name)
+        assert profile is not None
+        assert profile.get('google_ignores_sampling_params', False) is False
+
+
+def test_google_interactions_declares_sampling_params_on_documented_models():
+    from pydantic_ai.profiles.google import google_interactions_model_profile
+
+    assert google_interactions_model_profile('gemini-3.8-flash')['google_ignores_sampling_params'] is True
+    assert google_interactions_model_profile('gemini-2.5-flash').get('google_ignores_sampling_params', False) is False

@@ -735,9 +735,12 @@ class GoogleModel(Model[Client]):
         return profile
 
     def _unsupported_settings(self) -> frozenset[str]:
-        if self.profile.get('google_supports_penalties', True):
-            return self.unsupported_settings
-        return self.unsupported_settings | {'frequency_penalty', 'presence_penalty'}
+        unsupported = self.unsupported_settings
+        if not self.profile.get('google_supports_penalties', True):
+            unsupported = unsupported | {'frequency_penalty', 'presence_penalty'}
+        if not self.profile.get('google_ignores_sampling_params', False):
+            return unsupported
+        return unsupported | {'temperature', 'top_p', 'top_k'}
 
     @cached_property
     def profile(self) -> GoogleModelProfile:
@@ -1274,6 +1277,7 @@ class GoogleModel(Model[Client]):
 
         http_options = _request_http_options(self.client, model_settings, headers)
         supports_penalties = 'presence_penalty' not in self._unsupported_settings()
+        sampling_params_supported = 'temperature' not in self._unsupported_settings()
 
         # See `GoogleModelSettings.google_cached_content` for why these three fields are stripped.
         _warn_on_cached_content_strips(cached_content, system_instruction, tools)
@@ -1281,9 +1285,9 @@ class GoogleModel(Model[Client]):
         config = GenerateContentConfigDict(
             http_options=http_options,
             system_instruction=None if cached_content else system_instruction,
-            temperature=model_settings.get('temperature'),
-            top_p=model_settings.get('top_p'),
-            top_k=model_settings.get('top_k'),
+            temperature=model_settings.get('temperature') if sampling_params_supported else None,
+            top_p=model_settings.get('top_p') if sampling_params_supported else None,
+            top_k=model_settings.get('top_k') if sampling_params_supported else None,
             max_output_tokens=model_settings.get('max_tokens'),
             stop_sequences=model_settings.get('stop_sequences'),
             presence_penalty=model_settings.get('presence_penalty') if supports_penalties else None,
