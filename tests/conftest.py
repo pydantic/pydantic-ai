@@ -487,6 +487,9 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('io.BufferedReader.read', 'pydantic_ai/mcp.py', 'load_mcp_toolsets'),
     # fastmcp's transport inference stats candidate paths when the client is constructed.
     ('os.stat', 'pydantic_ai/mcp.py', '__init__'),
+    # Script-path transport inference resolves the server path (`Path(...).resolve()` in
+    # fastmcp's `StdioTransport`) while the client is constructed.
+    ('os.path.abspath', 'pydantic_ai/mcp.py', '__init__'),
     # boto3/botocore read AWS config files and service models during sync, setup-time client construction.
     ('os.stat', 'pydantic_ai/providers/bedrock.py', '__init__'),
     ('os.listdir', 'pydantic_ai/providers/bedrock.py', '__init__'),

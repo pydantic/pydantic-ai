@@ -146,6 +146,17 @@ toolset = MCPToolset(StdioTransport(command='python', args=['mcp_server.py']))
 agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 ```
 
+### Lifecycle
+
+When the toolset's final exit completes — after
+[`async with agent`][pydantic_ai.agent.Agent.__aenter__], `async with toolset`, or an agent
+run using it — `MCPToolset` stops the stdio server subprocess it started itself: either from a
+script path, or built for it by
+[`load_mcp_toolsets()`][pydantic_ai.mcp.load_mcp_toolsets]. The toolset can be entered again
+afterwards. A stdio server you pass as your own
+[`StdioTransport`](https://gofastmcp.com/clients/transports) is not stopped this way: closing
+it (for example `await transport.close()`) stays your responsibility.
+
 ### In-process FastMCP server
 
 If you already have a [FastMCP server](https://gofastmcp.com/servers/) in the same Python process as your agent, you can hand it directly to `MCPToolset` and save the network round trip:

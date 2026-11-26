@@ -3447,3 +3447,121 @@ class TestMCPToolsetBackgroundTasks:
 
         assert result == 'cached'
         direct_call_tool.assert_not_awaited()
+
+
+_STOP_TEST_SERVER_TEMPLATE = """\
+import os
+from pathlib import Path
+
+from fastmcp import FastMCP
+
+Path({pid_file!r}).write_text(str(os.getpid()), encoding='utf-8')
+
+server = FastMCP('stop_test_server')
+
+
+@server.tool()
+def ping() -> str:
+    return 'pong'
+
+
+server.run(transport='stdio')
+"""
+
+_posix_only_pid_check = pytest.mark.skipif(sys.platform == 'win32', reason='PID-liveness via os.kill is POSIX-only')
+
+
+def _pid_is_running(pid: int) -> bool:
+    """POSIX liveness probe: signal 0 succeeds only for a live process; `ps` counting is not portable."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+async def _wait_for_pid_file(pid_file: Path) -> int:
+    for _ in range(200):
+        if pid_file.exists():
+            return int(pid_file.read_text(encoding='utf-8'))
+        await anyio.sleep(0.05)
+    raise AssertionError(f'server did not write its PID to {pid_file}')  # pragma: no cover
+
+
+async def _wait_for_process_exit(pid: int) -> None:
+    for _ in range(200):
+        if not _pid_is_running(pid):
+            return
+        await anyio.sleep(0.05)
+    raise AssertionError(f'server process {pid} did not exit')  # pragma: no cover
+
+
+def _stop_test_run_context() -> RunContext[None]:
+    return RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+
+@pytest.mark.subprocess(reason='runs a stdio MCP server from a script in a separate interpreter', conditional=True)
+@_posix_only_pid_check
+async def test_stdio_toolset_script_path_server_stops_after_agent_exit(tmp_path: Path) -> None:
+    """A stdio server started by `MCPToolset` from a script path is stopped when the final toolset exit completes."""
+    pid_file = tmp_path / 'server.pid'
+    server_path = tmp_path / 'stop_test_server.py'
+    server_path.write_text(_STOP_TEST_SERVER_TEMPLATE.format(pid_file=str(pid_file)), encoding='utf-8')
+
+    toolset = MCPToolset(server_path)
+    async with toolset:
+        pid = await _wait_for_pid_file(pid_file)
+    await _wait_for_process_exit(pid)
+
+
+@pytest.mark.subprocess(reason='runs a stdio MCP server from a config in a separate interpreter', conditional=True)
+@_posix_only_pid_check
+async def test_load_mcp_toolsets_stdio_server_stops_after_agent_exit(tmp_path: Path) -> None:
+    """A stdio server from `load_mcp_toolsets` stops after the wrapped toolset's final exit."""
+    pid_file = tmp_path / 'server.pid'
+    server_path = tmp_path / 'stop_test_server.py'
+    server_path.write_text(_STOP_TEST_SERVER_TEMPLATE.format(pid_file=str(pid_file)), encoding='utf-8')
+    config = {'mcpServers': {'stopper': {'command': sys.executable, 'args': [str(server_path)]}}}
+    config_path = tmp_path / 'mcp.json'
+    config_path.write_text(json.dumps(config), encoding='utf-8')
+
+    toolsets = load_mcp_toolsets(config_path)
+    assert len(toolsets) == 1
+    assert isinstance(toolsets[0], PrefixedToolset)
+    stdio = toolsets[0].wrapped
+    assert isinstance(stdio, MCPToolset)
+    async with stdio:
+        pid = await _wait_for_pid_file(pid_file)
+    await _wait_for_process_exit(pid)
+
+
+@pytest.mark.subprocess(reason='runs a stdio MCP server from a script in a separate interpreter', conditional=True)
+@_posix_only_pid_check
+async def test_stdio_toolset_exit_does_not_stop_user_supplied_transport(tmp_path: Path) -> None:
+    """A caller-built `StdioTransport` stays under the caller's control across the toolset's final exit."""
+    pid_file = tmp_path / 'server.pid'
+    server_path = tmp_path / 'stop_test_server.py'
+    server_path.write_text(_STOP_TEST_SERVER_TEMPLATE.format(pid_file=str(pid_file)), encoding='utf-8')
+    transport = StdioTransport(command=sys.executable, args=[str(server_path)])
+    toolset = MCPToolset(transport)
+    async with toolset:
+        pid = await _wait_for_pid_file(pid_file)
+    assert _pid_is_running(pid)
+    # The caller remains responsible for the transport it supplied.
+    await transport.close()
+    await _wait_for_process_exit(pid)
+
+
+@pytest.mark.subprocess(reason='runs a stdio MCP server from a script in a separate interpreter')
+async def test_stdio_toolset_reentry_after_full_exit_runs_again(tmp_path: Path) -> None:
+    """After the toolset stops its self-built stdio transport at final exit, the same toolset can enter and run again."""
+    pid_file = tmp_path / 'server.pid'
+    server_path = tmp_path / 'stop_test_server.py'
+    server_path.write_text(_STOP_TEST_SERVER_TEMPLATE.format(pid_file=str(pid_file)), encoding='utf-8')
+
+    toolset = MCPToolset(server_path)
+    async with toolset:
+        await toolset.get_tools(_stop_test_run_context())
+    async with toolset:
+        tools = await toolset.get_tools(_stop_test_run_context())
+        assert 'ping' in tools

@@ -1096,6 +1096,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             self.client = client
             self._user_message_handler = None
             self._client_source = None
+            self._owns_transport = False
             self._client_options = None
             self._auth_func = None
             self._headers_func = None
@@ -1135,6 +1136,11 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             self._static_auth = static_auth
             self._static_headers = static_headers
             self.client = self._build_client(auth=static_auth, headers=static_headers)
+            # Only transports this toolset inferred from a source string or path (a URL,
+            # script path, or command) are owned and stopped at final exit. A
+            # caller-supplied transport (including a `StdioTransport` passed here) stays
+            # under the caller's control; `load_mcp_toolsets` marks its own transports.
+            self._owns_transport = isinstance(self._client_source, str | Path)
             self._user_message_handler = message_handler
 
         self._set_id(id)
@@ -1456,6 +1462,14 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 self._cached_tools = None
                 self._cached_resources = None
                 self._cached_prompts = None
+                if self._owns_transport:
+                    transport = self.client.transport
+                    if isinstance(transport, StdioTransport):
+                        # FastMCP's client exit only disconnects the session; a stdio
+                        # subprocess is only stopped when the transport itself is
+                        # closed. `close` is idempotent and resets the transport, so
+                        # the toolset can be entered again afterwards.
+                        await transport.close()
         return None
 
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> messages.InstructionPart | None:
@@ -2432,6 +2446,7 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
                 cwd=server.get('cwd'),
             )
             toolset = MCPToolset(transport, id=name)
+            toolset._owns_transport = True  # Built here, so the toolset stops it at final exit.
         elif 'url' in server:
             toolset = MCPToolset(server['url'], id=name, headers=server.get('headers'))
         else:
