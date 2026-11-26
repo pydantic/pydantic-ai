@@ -105,7 +105,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import FunctionToolset
 
 from .._inline_snapshot import snapshot
-from ..conftest import try_import
+from ..conftest import sse_data, try_import
 from .conftest import HERE, JSDriver
 
 with try_import() as imports_successful:
@@ -1077,15 +1077,6 @@ SCENARIOS = [
 # --- Clients ------------------------------------------------------------------------------------------------------
 
 
-def _sse_data(encoded: Sequence[str]) -> list[dict[str, Any]]:
-    """The JSON payloads of a server-sent event stream."""
-    return [
-        json.loads(line.removeprefix('data: '))
-        for line in ''.join(encoded).splitlines()
-        if line.startswith('data: ') and line != 'data: [DONE]'
-    ]
-
-
 @dataclass
 class Turn:
     """One request from the client, as the server received it, and what the server did with it."""
@@ -1199,7 +1190,7 @@ class VercelClient(Client):
         return VercelAIAdapter(agent, VercelAIAdapter.build_run_input(body), sdk_version=6, **self.adapter_kwargs)
 
     def stream(self, encoded: list[str]) -> dict[str, Any]:
-        return {'chunks': _sse_data(encoded)}
+        return {'chunks': sse_data(encoded)}
 
 
 class AGUIClient(Client):
@@ -1221,7 +1212,7 @@ class AGUIClient(Client):
         return AGUIAdapter(agent, AGUIAdapter.build_run_input(body), **self.adapter_kwargs)
 
     def stream(self, encoded: list[str]) -> dict[str, Any]:
-        return {'events': _sse_data(encoded)}
+        return {'events': sse_data(encoded)}
 
 
 CLIENTS: dict[Protocol, type[Client]] = {'vercel': VercelClient, 'agui': AGUIClient}
@@ -1561,6 +1552,51 @@ async def test_conversation_store_regenerate_after_reload(protocol: Protocol, js
     assert [type(message).__name__ for message in stored] == ['ModelRequest', 'ModelResponse']
     assert stored[-1].parts == [TextPart('Answer number 2.')]
     assert [len(messages) for messages in seen] == [1, 1]
+
+
+REDACTED_CLIENT_TOOL_RESULTS: dict[Protocol, dict[str, str]] = {
+    'vercel': {'state': 'output-available', 'output': '[REDACTED]'},
+    'agui': {'role': 'tool', 'content': '[REDACTED]'},
+}
+"""What a client holds for a `'redacted'` tool's result: the AI SDK's tool part, or AG-UI's tool message."""
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_redacted_tool_result_completes_the_client_tool_call(protocol: Protocol, js_driver: JSDriver) -> None:
+    """A `'redacted'` tool's placeholder result completes the call in the real client, streamed and after a reload.
+
+    A frontend renders a tool call as running until the client holds its result, so the placeholder has to land
+    where a result would. The history is held on the server, so the model still gets the real result.
+    """
+    seen: list[list[ModelMessage]] = []
+
+    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(list(messages))
+        return _tool_call_script(messages, info)
+
+    agent, _ = Scenario(id='redacted_tool', script=script, setup=_get_weather).agent()
+    session = f'redacted-tool-{protocol}'
+    client = CLIENTS[protocol](
+        js_driver, session, {'manage_message_history': 'server', 'default_ui_visibility': 'redacted'}
+    )
+
+    adapter = client.adapter(agent, client.submit('Question 1', None))
+    results: list[AgentRunResult[Any]] = []
+    encoded = [chunk async for chunk in adapter.encode_stream(adapter.run_stream(on_complete=results.append))]
+    [result] = results
+    streamed = client.receive(encoded)['messages']
+    # The page reloads: the app hydrates the client from the server's history.
+    reloaded = json.loads(client.submit('Question 2', result.all_messages()))['messages']
+
+    expected = REDACTED_CLIENT_TOOL_RESULTS[protocol]
+    for messages in (streamed, reloaded):
+        entries = [part for message in messages for part in message['parts']] if protocol == 'vercel' else messages
+        tool_result = next(entry for entry in entries if entry.get('toolCallId') == 'call-1')
+        assert {key: tool_result[key] for key in expected} == expected
+        assert 'Sunny in Paris' not in json.dumps(messages)
+
+    # The model got the real result.
+    assert any('Sunny in Paris' in str(part) for message in seen[-1] for part in message.parts)
 
 
 def test_server_held_history_has_none_of_the_client_round_trip_gaps() -> None:

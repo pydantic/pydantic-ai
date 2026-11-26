@@ -14,6 +14,7 @@ from collections.abc import (
     Collection,
     Generator,
     Iterable,
+    Mapping,
     Sequence,
 )
 from contextlib import (
@@ -54,7 +55,8 @@ from pydantic_ai._instrumentation import (
     open_request_policy,
 )
 from pydantic_ai._model_request_attempts import AttemptStart, carried_attempts
-from pydantic_ai._tool_execution import process_tool_calls
+from pydantic_ai._parts_manager import stamp_and_type_call_part, ui_visibility_stamps
+from pydantic_ai._tool_execution import last_response_index, process_tool_calls
 from pydantic_ai._utils import (
     ScopedTask,
     aclose_if_supported,
@@ -95,6 +97,7 @@ from . import (
     result,
     usage as _usage,
 )
+from ._appended_messages import AppendedMessages
 from ._cancel import RunCancellation
 from ._capability_parts import has_capability_parts
 from ._context_size import context_input_tokens
@@ -105,7 +108,7 @@ from ._deferred_capabilities import (
     registered_loaded_capability_ids,
 )
 from ._genai_prices import best_effort_price, fill_response_cost
-from ._history_mirroring import HistoryMirroringMessages
+from ._history_mirroring import HistoryMirroringMessages, MirroredHistory
 from ._instructions import (
     LoadedInstructionValues,
     instruction_window,
@@ -165,6 +168,7 @@ from .tools import (
     NativeToolFunc,
     RunContext,
     ToolDefinition,
+    ToolUIVisibility,
 )
 from .toolsets._deferred_capability_loader import (
     capability_load_window,
@@ -982,6 +986,16 @@ class GraphAgentState:
     """
     conversation_saved: bool = False
     """Whether a store saved this run's whole history, through its result, so none of it is unsaved."""
+    conversation_merged_tail: _messages.ModelRequest | None = None
+    """The last stored request of the conversation this run was given, when the run merged the unsaved requests after it into it.
+
+    Cleaning the history merges consecutive requests, like an output tool's result and the user prompt appended after
+    it. The result's `conversation` puts this request and the unsaved ones back in place of the merged request, so its
+    store doesn't get this one's parts again.
+    """
+    appended_messages: AppendedMessages = dataclasses.field(default_factory=AppendedMessages)
+    """Internal: the history this run was given and every message it appended, which the result's `conversation` holds
+    when a capability dropped or replaced some of them in `message_history`."""
     metadata: dict[str, Any] | None = None
     last_max_tokens: int | None = None
     """Last-resolved `max_tokens` from model settings, used only in error messages."""
@@ -1332,8 +1346,11 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 messages = ctx_messages.messages
                 ctx_messages.used = True
 
+        given = ctx.state.message_history
+        cleaned, answered_at_pause = self._history_to_run(given)
+        ctx.state.conversation_merged_tail = _merged_stored_tail(given, cleaned, ctx.state.conversation_unsaved)
         # Replace the `capture_run_messages` list with the message history
-        messages[:], answered_at_pause = self._history_to_run(ctx.state.message_history)
+        messages[:] = cleaned
         # Use the `capture_run_messages` list as the message history so that new messages are added to it
         ctx.state.message_history = messages
         ctx.deps.new_message_index = len(messages)
@@ -1353,7 +1370,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 # The history ends on what a run that paused for deferred tool calls wrote after its response.
                 # Run the response's unanswered calls again, as a history ending on the response would, so
                 # deferred ones pause the run again.
-                index = _last_response_index(messages)
+                index = last_response_index(messages)
                 assert index is not None  # `_answered_at_pause` found it.
                 response, _ = await self._adopt_resumed_response(ctx, messages, index)
                 return CallToolsNode[DepsT, NodeRunEndT](response, _answered_calls=answered_at_pause)
@@ -1614,7 +1631,7 @@ def _answered_at_pause(history: Sequence[_messages.ModelMessage]) -> tuple[_Tool
     that run or by a later one that paused again. Returns `None` for any other history: a new message, or a
     request whose model call failed, continues the run.
     """
-    index = _last_response_index(history)
+    index = last_response_index(history)
     if index is None or index == len(history) - 1:
         return None
     response = history[index]
@@ -1666,10 +1683,6 @@ def final_tool_results_request(
     if isinstance(output, DeferredToolRequests):
         mark_deferred_pause(request)
     return request
-
-
-def _last_response_index(history: Sequence[_messages.ModelMessage]) -> int | None:
-    return next((i for i in range(len(history) - 1, -1, -1) if isinstance(history[i], _messages.ModelResponse)), None)
 
 
 def _resumed_request(request: _messages.ModelRequest) -> _messages.ModelRequest:
@@ -2349,7 +2362,7 @@ async def model_request(  # noqa: C901
                     await cancel_abandoned_job(model, response, error)
                 raise
 
-            new_response = _narrow_tool_call_parts(new_response, request_context.model_request_parameters)
+            new_response = _apply_tool_defs_to_call_parts(new_response, request_context.model_request_parameters)
             report_continuation_segment(request_context, new_response)
             if response is None:
                 response = new_response
@@ -2806,7 +2819,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         try:
             return await self._make_request(ctx)
         except BaseException:
-            _drop_unanswered_request_scoped_prompts(ctx.state.message_history)
+            _drop_unanswered_request_scoped_prompts(ctx.state)
             raise
 
     @asynccontextmanager
@@ -2820,7 +2833,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         except BaseException:
             # A stream interrupted after it opened has already committed its partial response, which
             # answers the request, so this only drops anything when the step never got a response.
-            _drop_unanswered_request_scoped_prompts(ctx.state.message_history)
+            _drop_unanswered_request_scoped_prompts(ctx.state)
             raise
 
     @asynccontextmanager
@@ -3044,6 +3057,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # The consumer didn't iterate the stream far enough to see the failure.
                 raise error
             self._did_stream = True
+            model_response = _stamp_ui_visibility(model_response, wrap_request_context.model_request_parameters)
             replay_sr = CompletedStreamedResponse(
                 model_response,
                 model_request_parameters=wrap_request_context.model_request_parameters,
@@ -3177,7 +3191,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # The agent acted on what was streamed before the interruption, so the step counts;
             # a stream that failed before producing anything doesn't.
             _usage_attribution.record_request(ctx.state.usage)
-        ctx.state.message_history.append(recorded)
+        ctx.state.appended_messages.append(ctx.state.message_history, recorded)
 
     async def _end_step_without_response(
         self,
@@ -3456,7 +3470,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # A request resumed from `message_history` keeps a `run_id` it already has; one without gets this run's,
         # before `before_model_request` sees it.
         fill_run_metadata(self.request, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
-        ctx.state.message_history.append(self.request)
+        # A run resuming without a new prompt sends the request it was given again.
+        ctx.state.appended_messages.append(
+            ctx.state.message_history, self.request, given=self.is_resuming_without_prompt
+        )
         self._capability_load_records = _deliver_capability_loads(ctx, self.request)
 
         ctx.state.run_step += 1
@@ -3637,6 +3654,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # on the (possibly hook-modified) messages; with unmodified messages it's idempotent.
         # The request messages keep the suspended response as the continuation seed.
         _set_resumed_history(ctx, request_context.messages[:-1])
+        # Nothing is appended for the suspended response, which the continuation completes, so the history the
+        # run was given is the one without it.
+        ctx.state.appended_messages.start(ctx.state.message_history)
         # At the start of the step, before `wrap_model_request`, as in `_prepare_request`.
         ctx.deps.usage_limits.check_before_request(ctx.state.usage)
         return request_context, run_context
@@ -3655,7 +3675,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         runs per attempt, in `_prepare_attempt`.
         """
         persistent_messages_before_processing = len(ctx.state.message_history)
-        mirrored_messages = HistoryMirroringMessages(request_context.messages, ctx.state.message_history)
+        mirrored_messages = HistoryMirroringMessages(
+            request_context.messages, MirroredHistory(ctx.state.message_history, ctx.state.appended_messages)
+        )
         request_context.messages = mirrored_messages
         try:
             # A load from code in `before_model_request` is recorded on the request being prepared, below.
@@ -4313,6 +4335,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         record_usage: bool,
         described: Sequence[_messages.ModelRequestAttempt] = (),
     ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
+        assert self.last_request_context is not None
+        # A response a capability supplied, or one a hook replaced, has unstamped calls; the model's own are stamped.
+        response = _stamp_ui_visibility(response, self.last_request_context.model_request_parameters)
         self._emit_capability_load_records(ctx)
         if record_usage:
             self._record_response_usage(ctx, response, described=described)
@@ -4326,7 +4351,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # The run stops before acting on the response: a run continuing without a new prompt still acts on it,
             # and one with a new prompt closes out its tool calls, as for any interrupted response. The committed
             # copy is replaced rather than the response changed, as a hook may have returned one it holds on to.
-            ctx.state.message_history[-1] = replace(response, state='interrupted')
+            interrupted = replace(response, state='interrupted')
+            ctx.state.message_history[-1] = interrupted
+            ctx.state.appended_messages.replace(response, interrupted)
             raise
 
         # Set the `_result` attribute since we can't use `return` in an async iterator
@@ -4354,8 +4381,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         try:
             if not root_capability._handles_model_request_error(run_context, request_context):  # pyright: ignore[reportPrivateUsage]
                 raise error
-            return await root_capability.on_model_request_error(
-                run_context, request_context=request_context, error=error
+            # Before `after_model_request` and the streamed replay, as `Model.request()`'s own response is stamped.
+            return _stamp_ui_visibility(
+                await root_capability.on_model_request_error(run_context, request_context=request_context, error=error),
+                request_context.model_request_parameters,
             )
         except exceptions.RetryModelRequest as retry:
             failed.record(request_context, error, start, retry)
@@ -4405,7 +4434,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if record_usage:
             ModelRequestNode._record_response_usage(ctx, response, described=described)
             ModelRequestNode._enforce_usage_limits(ctx, [response])
-        ctx.state.message_history.append(response)
+        ctx.state.appended_messages.append(ctx.state.message_history, response)
 
     @staticmethod
     def _record_response_usage(
@@ -4460,7 +4489,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         submission = ctx.deps.run_submission
         assert submission is not None and submission.status == 'accepted'
         # No response will answer this step's request-scoped prompts.
-        _drop_unanswered_request_scoped_prompts(ctx.state.message_history)
+        _drop_unanswered_request_scoped_prompts(ctx.state)
         self._result = SetFinalResult(result.FinalResult(cast(NodeRunEndT, submission.output)))
         return self._result
 
@@ -4479,7 +4508,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=error, feedback=m)
         # A retry without a response gives up on this step, so its request-scoped parts go with it. When the
         # response was kept in history it answers them, and this is a no-op.
-        _drop_unanswered_request_scoped_prompts(ctx.state.message_history)
+        _drop_unanswered_request_scoped_prompts(ctx.state)
         retry_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[m]))
         self._result = retry_node
         return retry_node
@@ -4926,14 +4955,15 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             # those calls will never be answered and need synthesized `'interrupted'` returns.
             # Without it, a run cancelled during its first (or only) tool call would leave a history
             # that can't take a new prompt.
-            ctx.state.message_history.append(
+            ctx.state.appended_messages.append(
+                ctx.state.message_history,
                 _messages.ModelRequest(
                     parts=list(output_parts),
                     run_id=ctx.state.run_id,
                     conversation_id=ctx.state.conversation_id,
                     timestamp=now_utc(),
                     state='interrupted',
-                )
+                ),
             )
             raise
 
@@ -5046,12 +5076,13 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         tool_responses: list[_messages.ModelRequestPart],
     ) -> End[result.FinalResult[NodeRunEndT]]:
         ctx.deps.final_result_reached = True
-        messages = ctx.state.message_history
 
         # To allow this message history to be used in a future run without dangling tool calls,
         # append a new ModelRequest using the tool returns and retries
         if tool_responses:
-            messages.append(final_tool_results_request(tool_responses, ctx.state, final_result.output))
+            ctx.state.appended_messages.append(
+                ctx.state.message_history, final_tool_results_request(tool_responses, ctx.state, final_result.output)
+            )
 
         return End(final_result)
 
@@ -5071,7 +5102,7 @@ class SetFinalResult(AgentNode[DepsT, NodeRunEndT]):
         return End(self.final_result)
 
 
-def _drop_unanswered_request_scoped_prompts(messages: list[_messages.ModelMessage]) -> None:
+def _drop_unanswered_request_scoped_prompts(state: GraphAgentState) -> None:
     """Remove the request-scoped `SystemPromptPart`s that no response will answer, in place.
 
     Called once a step has given up on getting a response: the run raised or was cancelled, or a
@@ -5083,9 +5114,11 @@ def _drop_unanswered_request_scoped_prompts(messages: list[_messages.ModelMessag
     Edits the list in place, since it's the run's history, but replaces the affected requests rather
     than mutating them: instrumentation caches each message's serialized form. A request left empty
     is removed, unless every trailing request was, in which case one empty request is kept so the
-    history still ends on a `ModelRequest`, as `_drop_orphaned_tool_results` does.
+    history still ends on a `ModelRequest`, as `_drop_orphaned_tool_results` does. The run's record of
+    the messages it appended follows, so they aren't taken for a capability's rewrite.
     """
     is_request_scoped = _messages._is_request_scoped  # pyright: ignore[reportPrivateUsage]
+    messages = state.message_history
     start = len(messages)
     while start and isinstance(messages[start - 1], _messages.ModelRequest):
         start -= 1
@@ -5097,8 +5130,10 @@ def _drop_unanswered_request_scoped_prompts(messages: list[_messages.ModelMessag
         parts = [part for part in message.parts if not is_request_scoped(part)]
         if not parts and len(messages) - start > 1:
             del messages[index]
+            state.appended_messages.replace(message, None)
         else:
             messages[index] = replace(message, parts=parts)
+            state.appended_messages.replace(message, messages[index])
 
 
 def _model_selection_context(
@@ -5198,6 +5233,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         _pending_immediate_dispatches=ctx.deps.pending_immediate_dispatches,
         _event_stream_replacements=ctx.deps.event_stream_replacements,
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
+        _appended_messages=ctx.state.appended_messages,
         _output_submitter=_GraphOutputSubmitter(weakref.ref(ctx.state), weakref.ref(ctx.deps)),
         workspace=ctx.deps.workspace,
     )
@@ -5205,10 +5241,11 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
     # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the shared
     # identity of the mutable members passed by reference above — `loaded_capability_ids`,
     # `discovered_tool_names`, `pending_messages`, `_cancellation`, `_event_stream_buffer`,
-    # `_mcp_tool_defs_cache`, `_durable_operations`, `_run_capabilities_by_id` (see the invariant on
-    # `GraphAgentDeps.loaded_capability_ids`). Never add any of them as a `replace` kwarg — forking
+    # `_mcp_tool_defs_cache`, `_appended_messages`, `_durable_operations`, `_run_capabilities_by_id` (see the
+    # invariant on `GraphAgentDeps.loaded_capability_ids`). Never add any of them as a `replace` kwarg — forking
     # the object would silently break in-step capability loads / tool reveals / message enqueues /
-    # cancellation / event delivery / tool-defs caching / durable operation dispatch.
+    # cancellation / event delivery / tool-defs caching / the record of appended messages / durable operation
+    # dispatch.
     run_context = replace(run_context, validation_context=validation_context)
     return run_context
 
@@ -6077,14 +6114,14 @@ def _build_agent_graph(
     return g.build(validate_graph_structure=False)
 
 
-def _narrow_tool_call_parts(
+def _apply_tool_defs_to_call_parts(
     response: _messages.ModelResponse, model_request_parameters: models.ModelRequestParameters
 ) -> _messages.ModelResponse:
-    """Promote each base `ToolCallPart` in the response to its typed subclass via `ToolDefinition.tool_kind`.
+    """Stamp each `ToolCallPart` with its tool's `ui_visibility`, and promote a base one to its typed subclass.
 
     Lives here rather than in each model adapter so adapter authors emit base
     `ToolCallPart`s freely and the framework owns the typed-identity translation. Streaming
-    parts are typed up-front by `ModelResponsePartsManager` via the same lookup; this
+    parts are typed and stamped up-front by `ModelResponsePartsManager` via the same lookups; this
     function handles the non-streaming `Model.request()` return path. Either path produces
     the same typed end state — `isinstance(part, ToolSearchCallPart)` is true from the
     moment the call is emitted by the model.
@@ -6092,23 +6129,38 @@ def _narrow_tool_call_parts(
     tool_kind_by_name: dict[str, _messages.ToolPartKind] = {
         td.name: td.tool_kind for td in model_request_parameters.function_tools if td.tool_kind
     }
-    if not tool_kind_by_name:
+    return _stamp_and_type_call_parts(response, tool_kind_by_name, ui_visibility_stamps(model_request_parameters))
+
+
+def _stamp_ui_visibility(
+    response: _messages.ModelResponse, model_request_parameters: models.ModelRequestParameters
+) -> _messages.ModelResponse:
+    """Stamp each `ToolCallPart` of a response a capability supplied instead of `Model.request()` with its tool's `ui_visibility`.
+
+    Only the stamp is written: those calls keep the typing they came with, as execution types each call from its tool
+    (`ToolManager._with_tool_kind_and_visibility`).
+    """
+    return _stamp_and_type_call_parts(response, {}, ui_visibility_stamps(model_request_parameters))
+
+
+def _stamp_and_type_call_parts(
+    response: _messages.ModelResponse,
+    tool_kind_by_name: Mapping[str, _messages.ToolPartKind],
+    ui_visibility_by_name: Mapping[str, ToolUIVisibility],
+) -> _messages.ModelResponse:
+    """`response` with each `ToolCallPart` passed through `stamp_and_type_call_part`; `response` itself if none changes."""
+    if not tool_kind_by_name and not ui_visibility_by_name:
         return response
 
-    changed = False
-    new_parts: list[_messages.ModelResponsePart] = []
-    for part in response.parts:
-        if (
-            isinstance(part, _messages.ToolCallPart)
-            and part.tool_kind is None
-            and (tool_kind := tool_kind_by_name.get(part.tool_name)) is not None
-        ):
-            promoted = _messages.ToolCallPart.narrow_type(part, tool_kind=tool_kind)
-            new_parts.append(promoted)
-            changed = True
-        else:
-            new_parts.append(part)
-    return replace(response, parts=new_parts) if changed else response
+    new_parts: list[_messages.ModelResponsePart] = [
+        stamp_and_type_call_part(part, tool_kind_by_name, ui_visibility_by_name)
+        if isinstance(part, _messages.ToolCallPart)
+        else part
+        for part in response.parts
+    ]
+    if all(new is old for new, old in zip(new_parts, response.parts)):
+        return response
+    return replace(response, parts=new_parts)
 
 
 def _first_run_id_index(messages: Sequence[_messages.ModelMessage], run_id: str) -> int:
@@ -6138,6 +6190,43 @@ def _set_resumed_history(
         resumed_request=ctx.deps.resumed_request,
         resumed_request_index=ctx.deps.resumed_request_index,
     )
+
+
+def leading_requests(messages: Sequence[_messages.ModelMessage]) -> list[_messages.ModelRequest]:
+    """The requests `messages` starts with, before its first response."""
+    requests: list[_messages.ModelRequest] = []
+    for message in messages:
+        if not isinstance(message, _messages.ModelRequest):
+            break
+        requests.append(message)
+    return requests
+
+
+def _merged_stored_tail(
+    given: list[_messages.ModelMessage],
+    cleaned: list[_messages.ModelMessage],
+    unsaved: list[_messages.ModelMessage] | None,
+) -> _messages.ModelRequest | None:
+    """The last stored request of `given` as cleaning merges it, if cleaning `given` into `cleaned` merged the requests `unsaved` starts with into it.
+
+    See `GraphAgentState.conversation_merged_tail`.
+    """
+    boundary = len(given) - len(unsaved or ())
+    appended = leading_requests(unsaved or ())
+    first = boundary
+    while first > 0 and isinstance(given[first - 1], _messages.ModelRequest):
+        first -= 1
+    if not appended or first == boundary:
+        return None
+    stored = _merge_consecutive_messages(given[first:boundary])
+    merged = _merge_consecutive_messages([*stored, *appended])
+    if len(merged) != len(stored):
+        return None
+    parts = merged[-1].parts
+    if not any(isinstance(message, _messages.ModelRequest) and message.parts == parts for message in cleaned):
+        return None
+    # The stored request itself, with all its fields, unless cleaning merged it with others the store has.
+    return cast(_messages.ModelRequest, given[boundary - 1] if boundary - first == 1 else stored[-1])
 
 
 def _first_new_message_index(
