@@ -394,10 +394,10 @@ class OpenRouterProvider(_OpenAISDKProvider):
         # 1. Fallback layer — `OpenAIJsonSchemaTransformer` is the default unless an upstream profile sets one explicitly
         #    (e.g. `_openrouter_google_model_profile` installs `_OpenRouterGoogleJsonSchemaTransformer`), and video input
         #    is off unless a later layer turns it on.
-        # 2. OpenRouter's model list: the image, audio and video input flags from the snapshot in
-        #    `_openrouter_input_modalities`, for a model it lists. It's what OpenRouter reports for the model, so it beats
-        #    the fallback, but a hand-written upstream profile that sets a flag is a deliberate decision and beats it.
-        # 3. Upstream profile — model-specific traits from the lab's profile function.
+        # 2. Upstream profile — model-specific traits from the lab's profile function.
+        # 3. OpenRouter's model list: the image, audio and video input flags from the snapshot in
+        #    `_openrouter_input_modalities`, for a model it lists. OpenRouter routes only to endpoints that take the
+        #    request's kinds of file, so what it lists beats the upstream profile, which describes the lab's own API.
         # 4. Gateway-specific overrides — wins on every key it sets, because the upstream profile can't know what
         #    the OpenRouter gateway adds (web plugin, file URLs, custom thinking field, cache capabilities). OpenRouter
         #    accepts `reasoning` universally, so the gate also forces `supports_thinking=True` so the unified `thinking`
@@ -410,11 +410,11 @@ class OpenRouterProvider(_OpenAISDKProvider):
                 json_schema_transformer=OpenAIJsonSchemaTransformer,
                 # OpenRouter answers 404 "No endpoints found that support input video" for a model without video
                 # input (checked live with Claude, GPT and DeepSeek routes, 2026-11-12), so video is off unless the
-                # model list or the upstream profile turns it on, as Google's and Amazon Nova's do.
+                # upstream profile or the model list turns it on.
                 supports_video_input=False,
             ),
-            input_modalities_profile,
             profile,
+            input_modalities_profile,
             OpenRouterModelProfile(
                 openai_chat_send_back_thinking_parts='field',
                 openai_chat_thinking_field='reasoning',

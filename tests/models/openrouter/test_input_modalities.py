@@ -117,12 +117,12 @@ class TestOpenRouterInputModalities:
         """`document` is never set: OpenRouter parses a PDF to text for a model that doesn't take files."""
         assert provider_flags(model_name) == expected
 
-    def test_hand_written_profile_wins_over_snapshot(self):
-        """`google_model_profile` sets `supports_video_input` itself, so only the image and audio flags are listed."""
+    def test_snapshot_wins_over_upstream_profile(self):
+        """`google_model_profile` turns video on, but OpenRouter routes only to endpoints that take what it lists."""
         assert provider_flags('google/gemini-3-flash-preview') == {
             'image': True,
             'audio': False,
-            'video': True,
+            'video': False,
             'document': None,
         }
 
