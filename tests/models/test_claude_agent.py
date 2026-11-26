@@ -16,6 +16,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, BinaryImage, ImageUrl, ModelRetry, Tool, ToolReturn
+from pydantic_ai._genai_prices import lookup_context_window
 from pydantic_ai.direct import model_request
 from pydantic_ai.exceptions import (
     ModelAPIError,
@@ -864,3 +865,12 @@ async def test_an_empty_tool_result_continues_the_session():
     assert session.tool_results == snapshot(
         [{'tool_use_id': 'toolu_1', 'content': [{'type': 'text', 'text': ''}], 'isError': False}]
     )
+
+
+def test_the_context_window_is_the_claude_apis():
+    """Claude Code serves the Claude API's models, so compaction gets the same context window as on `anthropic:`."""
+    window = lookup_context_window('claude-haiku-4-5', provider_name='anthropic')
+
+    assert window is not None
+    assert ClaudeAgentModel('claude-haiku-4-5').context_window == window
+    assert ClaudeAgentModel('claude-not-a-model').context_window is None

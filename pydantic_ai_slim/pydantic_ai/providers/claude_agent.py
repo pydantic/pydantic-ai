@@ -11,6 +11,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Self
 
+from pydantic_ai._genai_prices import lookup_context_window
 from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.profiles.claude_agent import claude_agent_model_profile
 
@@ -65,8 +66,13 @@ class ClaudeAgentProvider(AnthropicProvider):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        # The Claude API's deprecation dates still apply: Claude Code serves the same models.
-        return merge_profile(AnthropicProvider.model_profile(model_name), claude_agent_model_profile(model_name))
+        # Claude Code serves the Claude API's models, so their deprecation dates and context windows still apply. The
+        # context window is looked up as Anthropic's, since this provider's name and URL are its own.
+        profile = merge_profile(AnthropicProvider.model_profile(model_name), claude_agent_model_profile(model_name))
+        context_window = lookup_context_window(model_name, provider_name='anthropic')
+        return (
+            profile if context_window is None else merge_profile(profile, ModelProfile(context_window=context_window))
+        )
 
     async def __aenter__(self) -> Self:
         await super().__aenter__()
