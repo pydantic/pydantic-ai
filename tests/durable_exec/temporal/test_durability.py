@@ -1017,13 +1017,13 @@ _pass_calls: list[str] = []
 def _fails_first_pass_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     _pass_calls.append('pass_primary')
     if len(_pass_calls) == 1:
-        raise ModelAPIError(model_name='pass_primary', message='down')
+        raise ModelUnavailableError(model_name='pass_primary', message='down')
     return ModelResponse(parts=[TextPart('second pass')])
 
 
 def _always_failing_pass_target_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     _pass_calls.append('pass_target')
-    raise ModelAPIError(model_name='pass_target', message='down')
+    raise ModelUnavailableError(model_name='pass_target', message='down')
 
 
 passes_durable_agent = Agent(
