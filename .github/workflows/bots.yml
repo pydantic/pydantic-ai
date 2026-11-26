@@ -646,6 +646,7 @@ jobs:
             - Assess design and behavior choices against issue guidance and repository standards. Use your judgment when those sources support a choice; do not ask a maintainer to confirm it.
             - Any line of code that violates the concrete guidelines/rules laid out in the relevant `AGENTS.md` file(s): the top-level guidelines apply to all changes, while directory-specific guidelines affect only the changes in that directory.
             - Anything else that the responsibilities you are assigned in `AGENTS.md` suggest that you should be calling out: use your best judgment.
+            - A finding can show that one piece of state is mishandled at a boundary, such as a resume, or in one of two sibling functions. In that case, check every other piece of state at that boundary, and every other field in the sibling. Report only the ones you can establish are mishandled.
             - A new test file or test that belongs in an existing file. Before accepting any new test file or test, search `pr-head/tests/` for an existing file that covers the same concern.
 
             Generally, the priority in terms of "crucial to get right" and "what to focus on first in a new PR" is public API > concepts and behavior > documentation > tests > code style.
