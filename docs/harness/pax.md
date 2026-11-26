@@ -26,7 +26,7 @@ workspaces are plugins too, so where the agent runs and where it works are yours
 choose. To run an agent of your own instead, use `pax --agent my_module:agent`, which
 loads that agent on its own without Pax's plugins.
 
-![Pax starting up in a project and adding a flag: its thinking, the files it read, the diff it made, and the test run](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/hero.png)
+![Pax in a terminal running anthropic:claude-opus-5-5: the PAX banner, a question about how a forecast is fetched, the tool calls it made with counts, a three-step answer, and the status row with the model, its context meter at 12k of 1m tokens and the cost](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/hero.png)
 
 
 **Contents:** [Why Pax](#why-pax) · [Pydantic AI, the harness SDK, `Coder`, and Pax](#pydantic-ai-the-harness-sdk-coder-and-pax) · [Install](#install) · [First run](#first-run) · [Plugins](#plugins) · [Working with Pax](#working-with-pax) · [Sessions](#sessions) · [Sandboxes](#sandboxes) · [Models and accounts](#models-and-accounts) · [Pax Web](#pax-web-alpha) · [Pax in your own code](#pax-in-your-own-code) · [Make it yours](#make-it-yours) · [Reference](#reference)
@@ -81,12 +81,13 @@ without installing it, run `uvx pydantic-ai-pax`.
 a little longer installing so the first start is quicker; `/update now` always installs this way whichever way you installed, and
 `UV_COMPILE_BYTECODE=1` does the same for `uvx`.
 
-Pax comes with the OpenAI and Anthropic SDKs. Other providers may need their SDK
-installed too; `/model` tells you which one when you pick the model. TypeSafe's Jev
-models need an extra:
+Pax comes with the OpenAI, Anthropic, and Google SDKs. Every other model provider has a Pax
+extra of the same name as its `pydantic-ai-slim` extra, such as `bedrock`, `groq`, or `typesafe`
+(TypeSafe's Jev), and `/model` tells you which one when you pick the model. `all` installs every
+provider and every `/sandbox` provider but `local`:
 
 ```bash
-uv tool install 'pydantic-ai-pax[typesafe]'
+uv tool install 'pydantic-ai-pax[groq]'
 ```
 
 ## First run
@@ -129,10 +130,9 @@ the folder (or a parent) has a `.env` file, Pax loads it at startup.
 The first time you start Pax in a folder, it asks whether you trust the files in it, and lists
 the instruction files, skills, and agent folders it found there. Answer **Yes** for your own
 projects. **No**, the default, keeps the folder untrusted: the agent still reads, edits, and runs
-code there, and capabilities that check workspace authority treat the folder's files as the
-repository's, not yours (walk-up instruction files, skills, and agent folders still load as before
-until they check authority). Pax remembers the answer for the whole repository, and `/trust` shows
-or changes it. The status row says `trusted` or `untrusted`. See
+code there, and instruction files and skills reach the model as the repository's, not yours
+(agent folders still reach it as yours either way, for now). Pax remembers the answer for the
+whole repository, and `/trust` shows or changes it. The status row says `trusted` or `untrusted`. See
 [folder trust](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#folder-trust)
 in the reference.
 
@@ -162,7 +162,7 @@ Turn on more when you need them, such as `github`, `linear`, `notion`, `slack`,
 `google_workspace`, and `logfire_mcp`.
 
 To install a plugin, clone it from Git, name a plugin or a harness capability by its import
-path, or drop a file in `~/.config/pydantic-clai2/plugins/`:
+path, or drop a file in `~/.config/pydantic-ai-pax/plugins/`:
 
 ```text
 /plugins add https://github.com/your-org/my-plugin.git
@@ -487,14 +487,15 @@ covers everything in detail:
 - [The plugin guide](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/PLUGINS.md):
   every plugin method, event, and rule
 
-The screenshots are real Pax sessions. Only the model is scripted (`demo:tour`), so they
-need no account and cost nothing. To make them again, run
-`src/pydantic_ai_pax/scripts/screenshots/capture.sh`.
+The screenshots are real Pax sessions. Every shot but the hero at the top uses a scripted model
+(`demo:tour`), so they need no account and cost nothing: run
+`src/pydantic_ai_pax/scripts/screenshots/capture.sh` to make them again. The hero shows a real
+`anthropic:claude-opus-5-5` turn; the top of `capture.sh` says how to re-render it.
 
 ### Where Pax keeps things
 
-Your settings, saved sessions, and plugins live in `~/.config/pydantic-clai2/`, or in
-`$XDG_CONFIG_HOME/pydantic-clai2/` if you set `XDG_CONFIG_HOME`:
+Your settings, saved sessions, and plugins live in `~/.config/pydantic-ai-pax/`, or in
+`$XDG_CONFIG_HOME/pydantic-ai-pax/` if you set `XDG_CONFIG_HOME`:
 
 - `config.db`: settings, saved models, plugin choices, and which folders you trust
 - `sessions.db`: saved conversations
@@ -536,6 +537,9 @@ There are two channels. Pick one with `/set updates.channel`:
 /set updates.channel main
 /update now
 ```
+
+Bookkeeping that isn't a preference, such as your workspaces and which Pax processes are running, lives in
+`~/.local/state/pydantic-ai-pax/`, or `$XDG_STATE_HOME/pydantic-ai-pax/`.
 
 `/update now` works when Pax was installed with `uv tool install`. On Windows, Pax closes
 first and installs in a new PowerShell window; start `pax` again when it is done.
