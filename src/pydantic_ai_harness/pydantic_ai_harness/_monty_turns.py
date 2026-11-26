@@ -345,6 +345,17 @@ class MontyFailure:
             case MontyCrashedError():
                 return cls('crashed', timed_out=error.timed_out)
             case MontyDisconnectError():
+                if 'RESOURCE_EXHAUSTED' in repr(error):
+                    # The server flagged the worker's death as resource exhaustion (a worker
+                    # dying mid-turn, typically of an out-of-memory kill), so present it like
+                    # the local worker's out-of-memory runtime error to reuse its advice.
+                    return cls(
+                        'runtime',
+                        display='MemoryError: the worker exceeded its memory limit and was terminated',
+                        message='the worker exceeded its memory limit and was terminated',
+                        type_name='MemoryError',
+                        exception_types=('MemoryError', 'Exception', 'BaseException', 'object'),
+                    )
                 return cls('disconnected', cause=error.cause)
             case Exception():
                 return cls('other', display=str(error), type_name=type(error).__name__)

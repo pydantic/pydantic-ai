@@ -36,10 +36,10 @@ class _RawCodec(CodecBase):
     def __content_subtype__(self) -> str:
         return 'proto'
 
-    def encode(self, message: Any, message_type: Any) -> bytes:  # pragma: no cover -- only bridged sessions (#8824)
+    def encode(self, message: Any, message_type: Any) -> bytes:
         return message
 
-    def decode(self, data: bytes, message_type: Any) -> Any:  # pragma: no cover -- only bridged sessions (#8824)
+    def decode(self, data: bytes, message_type: Any) -> Any:
         return data
 
 
@@ -58,7 +58,7 @@ class MontyRelay:
     def __mapping__(self) -> dict[str, Handler]:
         return {SESSION_METHOD: Handler(self._session, Cardinality.STREAM_STREAM, bytes, bytes)}
 
-    async def drop_streams(self) -> None:  # pragma: no cover -- only the skipped #8824 tests bridge a session
+    async def drop_streams(self) -> None:
         """Reset every open stream, as a lost worker connection does."""
         await asyncio.gather(*(stream.cancel() for stream in self._streams))
 
@@ -80,9 +80,9 @@ class MontyRelay:
             return
         if self.refuse:
             raise GRPCError(Status.UNAUTHENTICATED, 'unauthorized')
-        return await self._bridge(stream)  # pragma: no cover -- only the skipped #8824 tests bridge a session
+        return await self._bridge(stream)
 
-    async def _bridge(self, stream: Stream[bytes, bytes]) -> None:  # pragma: no cover -- only the skipped #8824 tests
+    async def _bridge(self, stream: Stream[bytes, bytes]) -> None:
         self._streams.append(stream)
         child = await asyncio.create_subprocess_exec(
             find_monty_binary(), 'subprocess', stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE
@@ -105,11 +105,33 @@ class MontyRelay:
                     (length,) = _LENGTH_PREFIX.unpack(await stdout.readexactly(_LENGTH_PREFIX.size))
                     await stream.send_message(await stdout.readexactly(length))
         finally:
+            # A child that exits while a turn is in flight died mid-turn (e.g. the allocator
+            # refuses an oversized allocation under an active memory limit). Ending the stream
+            # bare reads as an ordinary disconnect on the client, so surface the death as
+            # resource exhaustion, which failure classification maps to the worker
+            # out-of-memory error. Reap the child before classifying: the pipe's EOF can reach
+            # the reader before the exit status is collected, and an unreaped child still
+            # reports `returncode` `None`. The capped wait only elapses for a child that is
+            # still alive, which is one the disconnect and teardown paths kill below, so they
+            # keep ending the stream bare.
             to_child_task.cancel()
             await asyncio.gather(to_child_task, return_exceptions=True)
+            try:
+                with suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(asyncio.shield(child.wait()), 0.5)
+            except asyncio.CancelledError:
+                # The handler is being cancelled (client disconnect or server stop); still reap
+                # the child so the relay never tears down with a worker still running.
+                with suppress(ProcessLookupError):
+                    child.kill()
+                await child.wait()
+                raise
+            died_mid_turn = child.returncode not in (None, 0)
             with suppress(ProcessLookupError):
                 child.kill()
             await child.wait()
+            if died_mid_turn:
+                raise GRPCError(Status.RESOURCE_EXHAUSTED, 'monty worker died mid-turn')
 
 
 class _RelayServer(Server):

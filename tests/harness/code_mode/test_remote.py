@@ -2,7 +2,7 @@
 
 Refusal tests exercise native errors from a loopback gRPC server. Local-backed factory pool
 doubles cover factory plumbing and deterministic recovery branches, not remote execution.
-Real subprocess bridge tests remain skipped until #8824 is resolved.
+Bridge tests run the real subprocess relay end to end.
 """
 
 from __future__ import annotations
@@ -60,7 +60,6 @@ def _snippets_model(*snippets: str) -> FunctionModel:
     return FunctionModel(model)
 
 
-@pytest.mark.skip(reason='Hangs intermittently in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
 async def test_code_mode_runs_remotely(monty_relay: MontyRelay, tmp_path: Path) -> None:
     """Remote feeds keep REPL state while tools, prints, mounts, `gather`, and barriers stay host-side."""
     (tmp_path / 'input.txt').write_text('mounted data')
@@ -273,7 +272,6 @@ def test_deprecated_sandbox_url_becomes_monty_sandbox() -> None:
         CodeMode(monty_sandbox='https://a.example.com', monty_sandbox_url='https://b.example.com')
 
 
-@pytest.mark.skip(reason='Hangs intermittently in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
 async def test_disconnect_mid_snippet_reports_started_calls(monty_relay: MontyRelay) -> None:
     """A dropped worker connection resets the session and lists the calls that already started."""
     agent = Agent(
@@ -464,7 +462,7 @@ class TestCodeModeErrorRouting:
         error: Exception,
         guidance: str,
     ) -> None:
-        """Local-backed doubles pin crash/disconnect guidance while real bridge execution is unavailable (#8824).
+        """Local-backed doubles pin crash/disconnect guidance without running the remote bridge.
 
         Native crash/disconnect errors cannot be constructed in Python, so inject typed properties
         at the public native snapshot boundary after a real tool call, not into the harness executor.
@@ -603,15 +601,12 @@ class TestCodeModeErrorRouting:
             False,
             pytest.param(
                 True,
-                marks=pytest.mark.skip(
-                    reason='Hangs intermittently in CI: https://github.com/pydantic/pydantic-ai/issues/8824'
-                ),
             ),
         ],
         ids=['local', 'remote-bridge'],
     )
     async def test_native_worker_out_of_memory_resets(self, monty_relay: MontyRelay, remote: bool) -> None:
-        """A refused 1 EiB allocation kills a native worker; real remote coverage awaits the bridge fix (#8824).
+        """A refused 1 EiB allocation kills the native worker, locally and over the bridge.
 
         The allocation exceeds the address space, so the allocator refuses it without consuming host memory.
         Monty marks the checkout finished after this error; soft heap limits must also reset state.
