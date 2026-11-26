@@ -118,6 +118,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import (
     AgentInstructionSource,
+    Authority,
     CapabilitySource,
     DataCapabilityPart,
     InstructionCapabilityPart,
@@ -2433,14 +2434,18 @@ def test_cache_policy_key_for_an_operator_instruction_change_is_pinned():
     """An instruction change's default `authority` stays out of the key, so a flow retried across the upgrade that added it hits.
 
     The digest was computed before the field existed. A lowered authority changes how the block is rendered, so it
-    still forks the key.
+    still forks the key. A unit test, since a recorded run can't show that a key matches one computed by an earlier
+    version.
     """
     cache_policy = PrefectAgentInputs()
     mock_task_ctx = MagicMock()
 
-    def key_for(**kwargs: Any) -> str | None:
-        change = InstructionDeltaPart(
-            id=InstructionId(CapabilityInstructionSource('notes')), content='Keep notes short.', **kwargs
+    def key_for(authority: Authority | None = None) -> str | None:
+        instruction_id = InstructionId(CapabilityInstructionSource('notes'))
+        change = (
+            InstructionDeltaPart(id=instruction_id, content='Keep notes short.')
+            if authority is None
+            else InstructionDeltaPart(id=instruction_id, content='Keep notes short.', authority=authority)
         )
         return cache_policy.compute_key(
             task_ctx=mock_task_ctx, inputs={'messages': [ModelRequest(parts=[change])]}, flow_parameters={}
