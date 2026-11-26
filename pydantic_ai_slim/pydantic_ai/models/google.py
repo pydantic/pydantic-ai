@@ -789,7 +789,9 @@ class GoogleModel(Model[Client]):
         differently.
         """
         deprecations = GOOGLE_CLOUD_MODEL_DEPRECATIONS if self._is_google_cloud else GEMINI_API_MODEL_DEPRECATIONS
-        if (deprecation := deprecations.get(self._model_name)) is not None:
+        # `google-genai` sends a resource name such as `models/<id>` or `publishers/google/models/<id>` as is, where it
+        # would otherwise add that prefix to a bare id, so both spellings reach the same model.
+        if (deprecation := deprecations.get(self._model_name.rsplit('/', 1)[-1])) is not None:
             profile = merge_profile(profile, ModelProfile(deprecation=deprecation))
         if self._is_google_cloud:
             profile = merge_profile(

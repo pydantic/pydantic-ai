@@ -251,6 +251,16 @@ def test_google_dates_follow_the_client():
     )
 
 
+def test_google_resource_names_take_the_same_dates():
+    """A resource name reaches the same model as its bare id, as `google-genai` adds that prefix to a bare id."""
+    gemini_api = GoogleModel(f'models/{GEMINI}', provider=GoogleProvider(api_key='mock-api-key'))
+    assert gemini_api.profile.get('deprecation') == GEMINI_API_DEPRECATION
+    google_cloud = GoogleModel(
+        f'publishers/google/models/{GEMINI}', provider=GoogleCloudProvider(api_key='mock-api-key')
+    )
+    assert google_cloud.profile.get('deprecation') == GOOGLE_CLOUD_DEPRECATION
+
+
 def test_google_profile_override():
     """The user's `profile=` stops the warning for one Google model."""
     model = GoogleModel(GEMINI, provider=GoogleProvider(api_key='mock-api-key'), profile={'deprecation': None})
