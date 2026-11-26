@@ -38,11 +38,13 @@ loads that agent on its own without Pax's plugins.
 - **Everything is a plugin, the coding agent included.** Add tools, commands and menus without
   forking anything, or swap any piece out. Sandboxes and workspaces are plugins too.
 - **Any model, any account.** Switch models mid-conversation, sign in to several accounts, and
-  let a fallback chain move on when one refuses, errors, or runs out of tokens.
+  let a fallback chain move on when a model errors, refuses, or cuts its answer off at the
+  token limit.
 - **Run it in a sandbox.** `/sandbox` starts a conversation inside a micro-VM on your machine or
   a hosted sandbox, with the same file and shell tools either way.
-- **Fewer model turns with code mode.** The model calls many tools from one Python snippet, and
-  Pax starts running it while the model is still writing.
+- **Fewer model turns with code mode.** The model calls many tools from one Python snippet
+  instead of one per turn, and Pax runs each statement as the model writes it. Turn on
+  speculative execution and it starts the read-only calls before the model reaches them.
 - **Nothing gets lost.** Every conversation is saved: resume it, fork it into the background, or
   rewind it to an earlier prompt. `pax --resume-claude` and `pax --resume-codex` continue a
   Claude Code or Codex session, tool calls and sub-agents included, on any model.
@@ -297,10 +299,10 @@ and the session to resume if you want to continue it.
 
 By default Pax works in the directory you started it in, as you. `/sandbox` starts a new
 conversation somewhere else instead: a micro-VM on your own machine, with [smol](smol-sandbox.md) or [BoxLite](boxlite-sandbox.md), or
-a hosted sandbox with [E2B](e2b-sandbox.md), [Boxd](boxd-sandbox.md), [Daytona](daytona-sandbox.md), [OpenSandbox](opensandbox-sandbox.md), [Modal](modal-sandbox.md), [Render](render-sandbox.md), [Sprites](sprites-sandbox.md), [Kubernetes](kubernetes-sandbox.md). The file and shell tools are the same either way, and `!`
+a hosted sandbox with [E2B](e2b-sandbox.md), [boxd](boxd-sandbox.md), [Daytona](daytona-sandbox.md), [OpenSandbox](opensandbox-sandbox.md), [Modal](modal-sandbox.md), [Render](render-sandbox.md), [Sprites](sprites-sandbox.md), [Kubernetes](kubernetes-sandbox.md). The file and shell tools are the same either way, and `!`
 runs your command inside the sandbox rather than on your machine.
 
-The sandbox takes the launch directory's place for that conversation, so `/sandbox delete`
+The sandbox stands in for the launch directory for that conversation, and `/sandbox delete`
 removes it when you are done. A conversation stays in the sandbox its first turn ran in, and
 forked, resumed and background copies open that same sandbox.
 
@@ -522,7 +524,7 @@ from another folder shown in the terminal cannot run them. While another `pax` p
 runs from the same install, updating would break it, so Pax asks you to quit it first.
 
 When a newer build is out, the status row tells you, for example
-`update 0.57.0: /update`. Pax checks once at startup and again when you change channel.
+`update 0.76.0: /update`. Pax checks once at startup and again when you change channel.
 It shows nothing when you are offline.
 
 There are two channels. Pick one with `/set updates.channel`:
