@@ -432,6 +432,9 @@ navigation:
           - page: "Shell"
             path: "harness/shell.md"
             slug: "harness/shell"
+          - page: "Announce Working Directory"
+            path: "harness/announce-working-directory.md"
+            slug: "harness/announce-working-directory"
       - section: "Tools & Native Abilities"
         slug: ""
         contents:
