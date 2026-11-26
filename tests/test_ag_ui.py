@@ -10,7 +10,7 @@ import json
 import uuid
 import warnings
 from collections.abc import AsyncIterator, Callable, MutableMapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field, Json, TypeAdapter, ValidationError
 
 from pydantic_ai import (
     AgentRunResultEvent,
+    AgentStreamEvent,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -40,7 +41,10 @@ from pydantic_ai import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseOrigin,
     ModelResponsePart,
+    ModelResponseStartEvent,
     ModelSettingsDeltaEvent,
     ModelSettingsDeltaPart,
     NativeToolCallPart,
@@ -12627,3 +12631,79 @@ async def test_replaced_response_answers_its_tool_calls_and_gets_a_new_message()
     )
     # The replacement is a response of its own, under a message ID other than the replaced response's.
     assert events[7]['messageId'] != events[1]['messageId']
+
+
+def _boundary_events(status: Literal['failed', 'superseded']) -> list[AgentStreamEvent]:
+    """A response that streams a tool call and then ends without completing, followed for `superseded` by its successor."""
+    first = ModelResponseOrigin(run_id='run', run_step=1)
+    call = ToolCallPart(tool_name='show_map', args='{"city": "Paris"}', tool_call_id='call-1')
+    events: list[AgentStreamEvent] = [
+        ModelResponseStartEvent(origin=first, model_name='m', provider_name=None),
+        PartStartEvent(index=0, part=call),
+    ]
+    if status == 'failed':
+        events.append(
+            ModelResponseEndEvent(
+                origin=first, status='failed', response=ModelResponse(parts=[call]), error='RuntimeError: lost'
+            )
+        )
+    else:
+        # The durable engine ran the attempt again: the successor closes the previous execution's response, whose
+        # call it streams again, so the call is left for the successor to answer.
+        second = replace(first, execution_attempt=2)
+        events += [
+            ModelResponseEndEvent(origin=first, status='superseded', response=None),
+            ModelResponseStartEvent(origin=second, model_name='m', provider_name=None),
+            PartStartEvent(index=0, part=call),
+            PartEndEvent(index=0, part=call),
+            ModelResponseEndEvent(origin=second, status='complete', response=ModelResponse(parts=[call])),
+        ]
+    return events
+
+
+@pytest.mark.parametrize('status', ['failed', 'superseded'])
+async def test_a_response_that_does_not_complete_closes_its_tool_call(status: Literal['failed', 'superseded']):
+    """A failed response's streamed tool call is ended and answered; a superseded one's is ended but left unanswered.
+
+    The successor of a superseded response streams the same call again, so answering it would duplicate its result.
+    """
+    events = _boundary_events(status)
+
+    async def event_generator():
+        for event in events:
+            yield event
+
+    event_stream = AGUIEventStream(run_input=create_input(UserMessage(id='msg_1', content='Hello')))
+    chunks = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+    assert [(chunk['type'], chunk.get('toolCallId'), chunk.get('content')) for chunk in chunks] == snapshot(
+        {
+            'failed': [
+                ('RUN_STARTED', None, None),
+                ('TEXT_MESSAGE_START', None, None),
+                ('TEXT_MESSAGE_END', None, None),
+                ('TOOL_CALL_START', 'call-1', None),
+                ('TOOL_CALL_ARGS', 'call-1', None),
+                ('TOOL_CALL_END', 'call-1', None),
+                ('TOOL_CALL_RESULT', 'call-1', 'Tool execution was interrupted by an error.'),
+                ('REASONING_ENCRYPTED_VALUE', None, None),
+                ('RUN_FINISHED', None, None),
+            ],
+            'superseded': [
+                ('RUN_STARTED', None, None),
+                ('TEXT_MESSAGE_START', None, None),
+                ('TEXT_MESSAGE_END', None, None),
+                ('TOOL_CALL_START', 'call-1', None),
+                ('TOOL_CALL_ARGS', 'call-1', None),
+                ('TOOL_CALL_END', 'call-1', None),
+                ('TEXT_MESSAGE_START', None, None),
+                ('TEXT_MESSAGE_END', None, None),
+                ('TOOL_CALL_START', 'call-1', None),
+                ('TOOL_CALL_ARGS', 'call-1', None),
+                ('TOOL_CALL_END', 'call-1', None),
+                ('RUN_FINISHED', None, None),
+            ],
+        }
+    )[status]

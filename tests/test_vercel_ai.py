@@ -29,6 +29,7 @@ from pydantic_ai.conversation_store import ConversationEntry, ConversationRecord
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     AgentInstructionSource,
+    AgentStreamEvent,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -56,7 +57,10 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseOrigin,
     ModelResponsePart,
+    ModelResponseStartEvent,
     ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -15363,3 +15367,79 @@ async def test_output_retry_streams_each_response_as_its_own_step():
             'done',
         ]
     )
+
+
+def _boundary_events(status: Literal['failed', 'superseded']) -> list[AgentStreamEvent]:
+    """A response that streams a tool call and then ends without completing, followed for `superseded` by its successor."""
+    first = ModelResponseOrigin(run_id='run', run_step=1)
+    call = ToolCallPart(tool_name='show_map', args='{"city": "Paris"}', tool_call_id='call-1')
+    events: list[AgentStreamEvent] = [
+        ModelResponseStartEvent(origin=first, model_name='m', provider_name=None),
+        PartStartEvent(index=0, part=call),
+    ]
+    if status == 'failed':
+        events.append(
+            ModelResponseEndEvent(
+                origin=first, status='failed', response=ModelResponse(parts=[call]), error='RuntimeError: lost'
+            )
+        )
+    else:
+        # The durable engine ran the attempt again: the successor closes the previous execution's response, whose
+        # call it streams again, so the call is left for the successor to answer.
+        second = replace(first, execution_attempt=2)
+        events += [
+            ModelResponseEndEvent(origin=first, status='superseded', response=None),
+            ModelResponseStartEvent(origin=second, model_name='m', provider_name=None),
+            PartStartEvent(index=0, part=call),
+            PartEndEvent(index=0, part=call),
+            ModelResponseEndEvent(origin=second, status='complete', response=ModelResponse(parts=[call])),
+        ]
+    return events
+
+
+@pytest.mark.parametrize('status', ['failed', 'superseded'])
+async def test_a_response_that_does_not_complete_closes_its_tool_call(status: Literal['failed', 'superseded']):
+    """A failed response's streamed tool call is closed and answered; a superseded one's is closed but left unanswered.
+
+    The successor of a superseded response streams the same call again, so answering it would duplicate its result.
+    """
+    events = _boundary_events(status)
+
+    async def event_generator():
+        for event in events:
+            yield event
+
+    event_stream = VercelAIEventStream()
+    chunks = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+        if '[DONE]' not in event
+    ]
+    assert [
+        (chunk['type'], chunk.get('toolCallId'), chunk.get('output') or chunk.get('errorText')) for chunk in chunks
+    ] == snapshot(
+        {
+            'failed': [
+                ('start', None, None),
+                ('start-step', None, None),
+                ('tool-input-start', 'call-1', None),
+                ('tool-input-delta', 'call-1', None),
+                ('tool-input-available', 'call-1', None),
+                ('tool-output-error', 'call-1', 'Tool execution was interrupted by an error.'),
+                ('finish-step', None, None),
+                ('finish', None, None),
+            ],
+            'superseded': [
+                ('start', None, None),
+                ('start-step', None, None),
+                ('tool-input-start', 'call-1', None),
+                ('tool-input-delta', 'call-1', None),
+                ('finish-step', None, None),
+                ('start-step', None, None),
+                ('tool-input-start', 'call-1', None),
+                ('tool-input-delta', 'call-1', None),
+                ('finish-step', None, None),
+                ('finish', None, None),
+            ],
+        }
+    )[status]
