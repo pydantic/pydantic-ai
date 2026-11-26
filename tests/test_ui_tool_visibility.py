@@ -39,7 +39,7 @@ with try_import() as imports_successful:
     from ag_ui.core import CustomEvent, RunAgentInput, UserMessage
 
     from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
-    from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+    from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
     from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage, TextUIPart, UIMessage
     from pydantic_ai.ui.vercel_ai.response_types import DataChunk
 
@@ -533,6 +533,51 @@ async def test_client_held_history_warns_when_an_interrupted_redacted_call_is_cl
     assert '[REDACTED]' in run.wire
 
 
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_enqueued_tool_exchange_follows_the_stream_default(protocol: ProtocolName):
+    """A tool exchange a tool enqueues has no definition to be stamped from, so the stream's default decides it."""
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        if any(isinstance(part, ToolReturnPart) and part.tool_name == 'escalate' for m in messages for part in m.parts):
+            yield 'Done.'
+        else:
+            yield {0: DeltaToolCall(name='escalate', json_args='{}', tool_call_id='call_0')}
+
+    agent = Agent(FunctionModel(stream_function=stream))
+
+    @agent.tool
+    def escalate(ctx: RunContext[object]) -> str:
+        ctx.enqueue(
+            ModelResponse(parts=[ToolCallPart('lookup_notes', {}, tool_call_id='notes_0')]),
+            ModelRequest(parts=[ToolReturnPart('lookup_notes', SECRET, tool_call_id='notes_0')]),
+        )
+        return 'Escalated.'
+
+    run = await run_adapter(protocol, agent, default_ui_visibility='private')
+
+    enqueued_record = 'pydantic_ai_enqueued_messages' if protocol == 'ag_ui' else 'data-enqueued-messages'
+    assert enqueued_record in run.wire
+    assert 'Escalated.' not in run.wire
+    assert SECRET not in run.wire
+
+
+async def test_standalone_stream_closes_no_output_call_it_hid():
+    """An output call a standalone stream's non-public default hid has nothing to close when the run fails."""
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {0: DeltaToolCall(name='final_result', json_args='{"answer": ', tool_call_id='call_0')}
+        raise RuntimeError('The model went away.')
+
+    agent = Agent(FunctionModel(stream_function=stream), output_type=dict[str, str])
+    event_stream = VercelAIEventStream[None, Any](default_ui_visibility='private')
+    async with agent.run_stream_events('Where is my order?') as events:
+        chunks = [chunk async for chunk in event_stream.encode_stream(event_stream.transform_stream(events))]
+
+    wire = ''.join(chunks)
+    assert 'The model went away.' in wire
+    assert 'final_result' not in wire
+
+
 async def test_standalone_event_stream_default_applies_only_to_unstamped_parts():
     """Without an adapter, nothing writes the default into the stamps, so only unstamped parts take it.
 
@@ -627,4 +672,6 @@ def test_dump_drops_a_response_left_empty_by_private_parts():
     ]
     for protocol in PROTOCOLS:
         dumped = json.loads(dump(protocol, messages))
+        assert [message['role'] for message in dumped] == ['user', 'assistant']
+        assert 'Done.' in json.dumps(dumped[-1])
         assert 'lookup_order' not in json.dumps(dumped)

@@ -438,7 +438,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             and (tool_name := self._final_result_event.tool_name)
         ):
             self._final_result_event = None
-            self._pending_tool_calls[tool_call_id] = _PendingToolCall('output', tool_name)
+            # A call the client was sent nothing for has nothing to close.
+            if self._call_ui_visibilities.get(tool_call_id, self.default_ui_visibility) != 'private':
+                self._pending_tool_calls[tool_call_id] = _PendingToolCall('output', tool_name)
 
         # Pending tool calls
         for tool_call_id, (kind, tool_name) in self._pending_tool_calls.items():

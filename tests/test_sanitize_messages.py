@@ -657,6 +657,10 @@ _CORRELATION = Keep(
     "`conversation_id`')."
 )
 _KIND = Kind('Names the class, which the client picks by sending it.')
+_UI_VISIBILITY = Keep(
+    'Decides only what a UI adapter sends a client of the tool part, never what the model sees, so a stamp a client '
+    'sends shows or hides only a part that client already holds (docs/ui/overview.md, "Tool visibility").'
+)
 
 
 def _request(
@@ -937,6 +941,7 @@ POLICY: dict[type, Fields | Dropped] = {
             ),
             'tool_call_id': _CONVERSATION,
             'tool_kind': _CONVERSATION,
+            'ui_visibility': _UI_VISIBILITY,
             'metadata': Keep(
                 'Data for the application, not sent to the model. A capability that keeps state here, such as '
                 '`Permissions` remembering an approval, trusts the history it is given (docs/harness/permissions.md), '
@@ -1185,6 +1190,7 @@ POLICY: dict[type, Fields | Dropped] = {
                 ),
             ),
             'tool_kind': _CONVERSATION,
+            'ui_visibility': _UI_VISIBILITY,
             'id': _CONVERSATION,
             'provider_name': _CONVERSATION,
             'provider_details': _CONVERSATION,
@@ -1313,6 +1319,7 @@ _SURVIVAL_HISTORY: list[ModelMessage] = [
                 {'seen': [TextContent('Seen.')]},
                 tool_call_id='call-1',
                 tool_kind='lookup',
+                ui_visibility='redacted',
                 metadata={'mine': 1},
                 timestamp=_T,
                 outcome='failed',
@@ -1363,6 +1370,7 @@ _SURVIVAL_HISTORY: list[ModelMessage] = [
                 {'q': 1},
                 tool_call_id='call-1',
                 tool_kind='lookup',
+                ui_visibility='redacted',
                 id='item-1',
                 provider_name='openai',
                 provider_details={'k': 1},
