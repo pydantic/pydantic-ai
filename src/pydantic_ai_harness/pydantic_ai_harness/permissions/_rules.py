@@ -413,6 +413,8 @@ def parse_permission_rule(rule: str, verdict: PermissionVerdict, *, reason: str 
     - `'write_file(docs/**)'`: calls whose `path` argument matches the glob.
     - `'web_fetch(url=https://example.com/*)'`: calls whose `url` argument matches the glob.
 
+    A pattern ending in `:*` on any other name, such as a lowercase `'shell(rm -rf:*)'`, raises `UserError`.
+
     The text between the first `(` and the last `)` is the pattern, so a command may hold parentheses. Claude Code's
     own tool names, such as `Read` or `Edit`, raise `UserError` naming the tool to use: no tool here has them, so
     a rule naming one would match nothing.
@@ -437,6 +439,9 @@ def parse_permission_rule(rule: str, verdict: PermissionVerdict, *, reason: str 
         return PermissionRule(verdict, command=command, reason=reason)
     if inner is None:
         return PermissionRule(verdict, tools=[name], reason=reason)
+    if inner.endswith(':*'):
+        # Otherwise it would be a `path` glob that a shell tool's call never matches, so a deny would refuse nothing.
+        raise UserError(f'Permission rule {rule!r} uses `:*`, which only `Bash(...)` and `Shell(...)` take.')
     arg = _ARG_GLOB.fullmatch(inner)
     args = {'path': inner} if arg is None else {arg['arg']: arg['glob'].strip()}
     return PermissionRule(verdict, tools=[name], args=args, reason=reason)

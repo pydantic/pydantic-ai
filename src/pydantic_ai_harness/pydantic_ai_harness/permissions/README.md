@@ -156,6 +156,7 @@ permissions = Permissions(
 - `Bash(git push)`, without `:*`, is the same rule in `'ask'` and `'deny'`. In `'allow'` it raises `UserError`: Claude Code reads it as that exact command, while a command rule allows every command starting with its words, so the string must say `:*`.
 - `write_file` is every call to that tool, `write_file(docs/*)` globs its `path` argument, and `deploy(env=prod*)` globs a named one.
 - Claude Code's own tool names (`Read`, `Edit`, `MultiEdit`, `Write`, `Glob`, `Grep`, `WebFetch`) raise `UserError` naming the tool to use instead, such as `edit_file`, since a rule naming them would match nothing.
+- A pattern ending in `:*` on any name but `Bash` or `Shell`, such as `shell(rm -rf:*)`, raises `UserError` too: as a `path` glob it would match nothing.
 
 `parse_permission_rule(rule, verdict)` parses one string.
 

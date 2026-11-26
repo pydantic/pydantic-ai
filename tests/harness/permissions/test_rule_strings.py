@@ -115,6 +115,11 @@ class TestParsePermissionRule:
         with pytest.raises(UserError, match=re.escape(f'Permission rule {rule!r} must be a tool name')):
             parse_permission_rule(rule, 'deny')
 
+    @pytest.mark.parametrize('rule', ['shell(rm -rf:*)', 'run_command(git push:*)', 'bash(rm:*)'])
+    def test_a_command_pattern_on_another_name_raises(self, rule: str) -> None:
+        with pytest.raises(UserError, match=re.escape(f'Permission rule {rule!r} uses `:*`')):
+            parse_permission_rule(rule, 'deny')
+
     def test_an_empty_command_raises(self) -> None:
         with pytest.raises(UserError, match='must be a shell command'):
             parse_permission_rule('Bash(:*)', 'allow')
