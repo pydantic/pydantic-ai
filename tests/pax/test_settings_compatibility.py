@@ -374,6 +374,27 @@ def test_the_old_logfire_service_name_default_is_migrated_once(tmp_path: Path, s
     assert applied_migrations(path) == ['logfire-service-name']
 
 
+def test_a_failed_logfire_service_name_migration_changes_nothing_and_runs_again(tmp_path: Path) -> None:
+    """The rewrite and its `applied_migrations` row commit together, so a failure leaves no half-migrated store."""
+    path = tmp_path / 'config.db'
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('PRAGMA user_version = 1')
+        connection.execute('CREATE TABLE plugins (id TEXT PRIMARY KEY, declaration TEXT NOT NULL)')
+        connection.execute('INSERT INTO plugins VALUES (?, ?)', ('logfire', logfire_declaration('pydantic-clai2')))
+        connection.execute("CREATE TRIGGER refuse_update BEFORE UPDATE ON plugins BEGIN SELECT RAISE(FAIL, 'no'); END")
+
+    with pytest.raises(sqlite3.IntegrityError):
+        SettingsStore(path)
+    assert stored_declarations(path)['logfire'] == {'service_name': 'pydantic-clai2', 'include_content': True}
+    assert applied_migrations(path) == []
+
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('DROP TRIGGER refuse_update')
+    SettingsStore(path)
+    assert stored_declarations(path)['logfire'] == {'service_name': 'pydantic-ai-pax', 'include_content': True}
+    assert applied_migrations(path) == ['logfire-service-name']
+
+
 def test_a_store_without_logfire_settings_records_the_migration(tmp_path: Path) -> None:
     path = tmp_path / 'config.db'
     SettingsStore(path)
