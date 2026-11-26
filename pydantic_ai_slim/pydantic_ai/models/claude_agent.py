@@ -60,7 +60,7 @@ class ClaudeAgentModelSettings(AnthropicModelSettings, total=False):
 
 
 class ClaudeAgentModel(AnthropicModel):
-    """A model that runs on the user's logged-in Claude account, including Claude Code subscriptions (Pro and Max).
+    """A model that runs on the user's logged-in Claude account, on any Claude subscription that includes Claude Code.
 
     Each request goes to a Claude Code process started through the Claude Agent SDK, which signs it with the user's own
     login; this process never sees the credentials. The agent's instructions replace Claude Code's own coding-agent

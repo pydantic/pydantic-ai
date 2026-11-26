@@ -31,7 +31,7 @@ __all__ = ('ClaudeAgentProvider',)
 
 
 class ClaudeAgentProvider(AnthropicProvider):
-    """Provider for the user's logged-in Claude account, including Claude Code subscriptions (Pro and Max).
+    """Provider for the user's logged-in Claude account, on any Claude subscription that includes Claude Code.
 
     Requests go to a Claude Code process started through the [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview),
     not over the network from this process. Each conversation keeps its process while the provider, the model or an

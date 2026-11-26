@@ -1,10 +1,10 @@
 ---
-description: "Use your logged-in Claude account, including Claude Code subscriptions (Pro and Max), with Pydantic AI through the Claude Agent SDK, instead of a pay-per-token API key."
+description: "Use your logged-in Claude account, on any Claude subscription that includes Claude Code, with Pydantic AI through the Claude Agent SDK, instead of a pay-per-token API key."
 ---
 
 # Claude Agent
 
-The `claude-agent` provider runs your agent on your logged-in Claude account, including [Claude Code subscriptions](https://claude.com/pricing) (Pro and Max), instead of a pay-per-token API key. It runs [Claude Code](https://code.claude.com/docs/en/overview), unmodified, through the [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview), and Claude Code signs each request with the login you set up for it. Pydantic AI never reads, stores or forwards your Claude credentials. For API keys, use the [`anthropic` provider](anthropic.md) instead.
+The `claude-agent` provider runs your agent on your logged-in Claude account, on any [Claude subscription](https://claude.com/pricing) that includes Claude Code, instead of a pay-per-token API key. It runs [Claude Code](https://code.claude.com/docs/en/overview), unmodified, through the [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview), and Claude Code signs each request with the login you set up for it. Pydantic AI never reads, stores or forwards your Claude credentials. For API keys, use the [`anthropic` provider](anthropic.md) instead.
 
 !!! warning "For your own use only"
     Your use of Claude Code is governed by your agreement with Anthropic. Anthropic's [legal and compliance page](https://code.claude.com/docs/en/legal-and-compliance) lets you sign in to the unmodified Claude Code with your own subscription, but doesn't let developers offer Claude subscription login in their products, including agents built on the Agent SDK, or route requests through a subscription on behalf of their users. Use the `claude-agent` provider for your own work, and the [`anthropic` provider](anthropic.md) with an API key for anything you offer to others. Usage draws from your plan's limits.

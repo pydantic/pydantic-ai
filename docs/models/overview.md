@@ -25,7 +25,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [Microsoft Azure / Foundry](azure.md) | Cloud platform | `azure:`, `azure-responses:`; Anthropic client |
 | [Alibaba Cloud / Qwen (DashScope)](compatible-apis.md#alibaba-cloud-model-studio-dashscope) | Cloud platform; model developer | `alibaba:` |
 | [Cerebras](cerebras.md) | Inference platform | `cerebras:` |
-| [Claude Agent](claude-agent.md) | Your logged-in Claude account, including Claude Code subscriptions (Pro and Max) | `claude-agent:` |
+| [Claude Agent](claude-agent.md) | Your logged-in Claude account, on any Claude subscription that includes Claude Code | `claude-agent:` |
 | [Cohere](cohere.md) | Model developer | `cohere:` |
 | [Crusoe](crusoe.md) | Inference platform | `crusoe:` |
 | [DeepSeek](deepseek.md) | Model developer | `deepseek:`; explicit Responses model |
