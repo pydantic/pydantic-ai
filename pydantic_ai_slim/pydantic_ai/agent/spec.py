@@ -298,9 +298,9 @@ class CapabilityNamespace:
     `{'Coder': 'pydantic_ai_harness.coder:Coder'}`."""
 
     entry_points: str | None = None
-    """An [entry point](https://packaging.python.org/en/latest/specifications/entry-points/) group,
-    such as `'pydantic_ai.capabilities'`, whose entries map capability names to `module:attribute`
-    targets. Every installed package can contribute to it."""
+    """An [entry point](https://packaging.python.org/en/latest/specifications/entry-points/) group
+    whose entries map capability names to `module:attribute` targets, so every installed package can
+    contribute to it. Packages that publish capabilities register them in `'pydantic_ai.capabilities'`."""
 
     modules: Sequence[str] = ()
     """Modules whose capability classes are all made available: those listed in the module's

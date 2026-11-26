@@ -147,7 +147,7 @@ A namespace has four tiers. A name resolves in the first one that has it, in thi
 |---|---|---|
 | `types` | Capability classes, as in `custom_capability_types` | Already, by you |
 | `names` | Names mapped to `module:attribute` targets | When a spec uses the name |
-| `entry_points` | An [entry point](https://packaging.python.org/en/latest/specifications/entry-points/) group whose entries map names to targets, so any installed package can add to it | When a spec uses the name |
+| `entry_points` | An [entry point](https://packaging.python.org/en/latest/specifications/entry-points/) group whose entries map names to targets, so any installed package can add to it. Packages that publish capabilities use `pydantic_ai.capabilities` | When a spec uses the name |
 | `modules` | Modules whose capability classes are all made available | When the spec is loaded |
 
 A higher tier overrides a lower one, including a built-in of the same name, while two different classes for one name within one tier raise an error. A `names` or entry point target must be a capability whose own name matches the name it is listed under. Pass the same namespace to [`AgentSpec.to_file`][pydantic_ai.agent.AgentSpec.to_file] or [`model_json_schema_with_capabilities`][pydantic_ai.agent.AgentSpec.model_json_schema_with_capabilities] to include its capabilities in the generated JSON schema; that imports every class the namespace names.
