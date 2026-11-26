@@ -10,7 +10,6 @@ from __future__ import annotations
 import re
 import warnings
 from collections.abc import Sequence
-from typing import Literal
 
 import pytest
 from inline_snapshot import snapshot
@@ -174,15 +173,15 @@ def test_mapping_block_is_static_and_stable() -> None:
         [
             [
                 ('agent', 'Be brief.', False, 'rewrite'),
-                ('capability:model_instructions:text', 'GPT-6', False, 'rewrite'),
+                ('capability:model_instructions:text', 'GPT-6', False, 'append'),
             ],
             [
                 ('agent', 'Be brief.', False, 'rewrite'),
-                ('capability:model_instructions:text', 'GPT-6', False, 'rewrite'),
+                ('capability:model_instructions:text', 'GPT-6', False, 'append'),
             ],
             [
                 ('agent', 'Be brief.', False, 'rewrite'),
-                ('capability:model_instructions:text', 'GPT-6', False, 'rewrite'),
+                ('capability:model_instructions:text', 'GPT-6', False, 'append'),
             ],
         ]
     )
@@ -241,24 +240,19 @@ def test_added_after_the_agent_instructions_in_capability_order() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ('kind', 'on_change'),
-    [(None, 'rewrite'), ('tuning', 'rewrite'), ('rule', 'append')],
-)
-def test_model_fallback_resolves_each_model(kind: Literal['tuning', 'rule'] | None, on_change: str) -> None:
-    """The model `ModelFallback` moves a request on to gets its own text; `'tuning'` is the default, and rewrites."""
+def test_model_fallback_resolves_each_model() -> None:
+    """The model `ModelFallback` moves a request on to gets its own text, appended as a change."""
     tried: list[str | None] = []
 
     def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         tried.append(model_text(info.model_request_parameters.instruction_parts or []))
         raise ModelAPIError('gpt-6-luna', 'Overloaded')
 
-    instructions = {'gpt-6*': 'GPT-6', 'claude-*': 'Claude'}
     recorder = Recorder()
     agent = Agent(
         FunctionModel(primary, model_name='gpt-6-luna'),
         capabilities=[
-            ModelInstructions(instructions) if kind is None else ModelInstructions(instructions, kind=kind),
+            ModelInstructions({'gpt-6*': 'GPT-6', 'claude-*': 'Claude'}),
             ModelFallback(FunctionModel(recorder, model_name='claude-opus-5-5')),
         ],
     )
@@ -266,17 +260,17 @@ def test_model_fallback_resolves_each_model(kind: Literal['tuning', 'rule'] | No
 
     assert tried == ['GPT-6']
     assert [[(unwrap(part.content), part.on_change) for part in parts] for parts in recorder.requests] == [
-        [('Claude', on_change)]
+        [('Claude', 'append')]
     ]
     request = result.all_messages()[0]
     assert isinstance(request, ModelRequest)
     assert request.instructions == 'Claude'
 
 
-def switch_models(kind: Literal['tuning', 'rule'], *, to: str) -> tuple[str | None, list[tuple[str, str | None]]]:
-    """Run on a GPT model, continue on `to`, and return the instructions the second run sent and the changes it appended."""
-    agent = Agent(capabilities=[ModelInstructions({'gpt-6*': 'GPT-6', 'claude-*': 'Claude'}, kind=kind)])
-    first = agent.run_sync('Hi', model=FunctionModel(Recorder(), model_name='gpt-6-luna'))
+def switch_models(*, start: str, to: str) -> tuple[str | None, list[tuple[str, str | None]]]:
+    """Run on `start`, continue on `to`, and return the instructions the second run sent and the changes it appended."""
+    agent = Agent(capabilities=[ModelInstructions({'gpt-6*': 'GPT-6', 'claude-*': 'Claude'})])
+    first = agent.run_sync('Hi', model=FunctionModel(Recorder(), model_name=start))
     second = agent.run_sync(
         'Again', message_history=first.all_messages(), model=FunctionModel(Recorder(), model_name=to)
     )
@@ -286,25 +280,32 @@ def switch_models(kind: Literal['tuning', 'rule'], *, to: str) -> tuple[str | No
     return request.instructions, changes
 
 
-def test_a_rule_appends_the_change() -> None:
-    """A rule keeps the earlier text in the prefix and appends the change, or its withdrawal for an unmatched model."""
-    assert switch_models('rule', to='claude-opus-5-5') == ('GPT-6', [('capability:model_instructions:text', 'Claude')])
-    assert switch_models('rule', to='gemini-3-pro') == ('GPT-6', [('capability:model_instructions:text', None)])
+def test_a_switch_to_other_text_appends_the_change() -> None:
+    """The earlier model's text stays in the prefix, and the new model's is appended as a change."""
+    assert switch_models(start='gpt-6-luna', to='claude-opus-5-5') == snapshot(
+        ('GPT-6', [('capability:model_instructions:text', 'Claude')])
+    )
 
 
-@pytest.mark.moves_cache_prefix(reason='tuning rewrites the instructions when the conversation moves to another model')
-def test_tuning_rewrites_the_block() -> None:
-    """Tuning sends the new model what a fresh run on it would, with nothing appended, or no block when unmatched."""
-    assert switch_models('tuning', to='claude-opus-5-5') == ('Claude', [])
-    assert switch_models('tuning', to='gemini-3-pro') == (None, [])
+@pytest.mark.moves_cache_prefix(reason='a model with no text gets the instructions a fresh run on it would')
+def test_a_switch_to_no_text_rewrites_the_block_away() -> None:
+    """A model no pattern matches gets no block and no withdrawal, as if the block had never been sent."""
+    assert switch_models(start='gpt-6-luna', to='gemini-3-pro') == snapshot(
+        ('GPT-6', [('capability:model_instructions:text', None)])
+    )
+
+
+def test_a_switch_from_no_text_to_some_text() -> None:
+    """A model that matches after one that didn't gets its text."""
+    assert switch_models(start='gemini-3-pro', to='claude-opus-5-5') == snapshot(('Claude', []))
 
 
 def test_without_an_id_changes_rewrite() -> None:
-    """An unaddressable block can't append its changes, so even a rule rewrites them."""
+    """An unaddressable block can't append its changes, so it rewrites them."""
     recorder = Recorder()
     agent = Agent(
         FunctionModel(recorder, model_name='gpt-6-luna'),
-        capabilities=[ModelInstructions({'*': 'Any.'}, kind='rule', id=None)],
+        capabilities=[ModelInstructions({'*': 'Any.'}, id=None)],
     )
     agent.run_sync('Hi')
     assert [[(unwrap(part.content), part.on_change) for part in parts] for parts in recorder.requests] == [
@@ -342,10 +343,6 @@ def test_two_with_one_id_and_different_instructions_raise() -> None:
         UserError, match="used by multiple `ModelInstructions` capabilities that disagree on 'instructions'"
     ):
         Agent(TestModel(), capabilities=[ModelInstructions({'*': 'One.'}), ModelInstructions({'*': 'Two.'})])
-    with pytest.raises(UserError, match="disagree on 'kind'"):
-        Agent(
-            TestModel(), capabilities=[ModelInstructions({'*': 'One.'}), ModelInstructions({'*': 'One.'}, kind='rule')]
-        )
 
 
 def test_two_with_one_id_and_the_same_instructions_are_one() -> None:

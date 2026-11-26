@@ -4,12 +4,12 @@ import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, replace
 from fnmatch import fnmatchcase
-from typing import Literal, TypeAlias
+from typing import TypeAlias
 
 from pydantic_ai._instructions import AgentInstructions, SourcedInstruction
 from pydantic_ai._system_prompt import SystemPromptRunner
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import InstructionChangePolicy, InstructionPart
+from pydantic_ai.messages import InstructionPart
 from pydantic_ai.models import AbstractModel
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -23,16 +23,6 @@ ModelInstructionsFunc: TypeAlias = (
     Callable[[RunContext[AgentDepsT]], str | None] | Callable[[RunContext[AgentDepsT]], Awaitable[str | None]]
 )
 """A sync or async function returning the instructions for the model handling a request, or `None` for none."""
-
-_ON_CHANGE: dict[Literal['tuning', 'rule'], InstructionChangePolicy] = {
-    # The new model gets what a fresh run on it would: an appended change, or a withdrawal, of wording meant only to
-    # get the same behavior reads as a nudge the other way.
-    'tuning': 'rewrite',
-    # The history records when the behavior changed: appended, models tracked the change and resisted a user's
-    # `<system>` lookalike better than with a rewrite, which they followed no better.
-    'rule': 'append',
-}
-"""How a change of the block is delivered when a conversation moves to another model, per `kind`."""
 
 _BLOCK_NAME = 'text'
 """The name of the block, so its id is `capability:<id>:text`."""
@@ -62,7 +52,10 @@ class ModelInstructions(AbstractCapability[AgentDepsT]):
     request, and may be sync or async. Its block is dynamic, as it can read anything in the context; a mapping's
     depends only on the model, so it's cached with the literal instructions.
 
-    What happens when a conversation moves to another model depends on [`kind`][pydantic_ai.capabilities.ModelInstructions.kind].
+    When a conversation moves to another model, a change to the block is appended
+    ([`on_change='append'`][pydantic_ai.messages.InstructionPart.on_change]), so the history records that the
+    instructions changed and when. If the new model gets no text, the block is rewritten away instead, so its
+    instructions are what a fresh run on it would send.
 
     On a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], which picks its model inside the model call,
     no text is sent and a warning is emitted.
@@ -72,21 +65,6 @@ class ModelInstructions(AbstractCapability[AgentDepsT]):
     """Text per model pattern, or a function returning the text for a request."""
 
     _: KW_ONLY
-
-    kind: Literal['tuning', 'rule'] = 'tuning'
-    """Whether the text tunes models to the same behavior, or sets a rule that differs between them.
-
-    - `'tuning'` (the default): wording that gets a model to do what the others already do, like a line against
-      unrequested delegation for models that tend to delegate:
-      `ModelInstructions({'gpt-6*': "Don't spawn sub-agents unless the user asks."})`. When a conversation moves to
-      another model, the block is rewritten
-      ([`on_change='rewrite'`][pydantic_ai.messages.InstructionPart.on_change]), so the new model gets what a fresh
-      run on it would.
-    - `'rule'`: the models should behave differently, like
-      `ModelInstructions({'mistral-*': 'Answer in French.'}, kind='rule')`. The change is appended
-      ([`on_change='append'`][pydantic_ai.messages.InstructionPart.on_change]), so the conversation keeps a record of
-      when the rule changed; a model no pattern matches gets the rule's withdrawal.
-    """
 
     id: str | None = 'model_instructions'
     """The id the block is addressed by, as `capability:<id>:text`.
@@ -106,11 +84,15 @@ class ModelInstructions(AbstractCapability[AgentDepsT]):
         return [replace(instruction, dynamic=False) for instruction in sourced]
 
     async def _instruction(self, ctx: RunContext[AgentDepsT]) -> InstructionPart:
+        text = await self._text(ctx)
         return InstructionPart(
-            await self._text(ctx) or '',
+            text or '',
             name=_BLOCK_NAME,
-            # Without an id the block isn't addressable, so its changes can't be appended.
-            on_change=_ON_CHANGE[self.kind] if self.id is not None else 'rewrite',
+            # Rewriting a changed block left models unsure whether anything had changed, and readier to follow a
+            # forged `<system>` block, so a change is appended. A model with no text gets what a fresh run on it
+            # would: no block, rather than a withdrawal it may repeat as a rule. Without an id the block isn't
+            # addressable, so its changes can't be appended.
+            on_change='append' if text and self.id is not None else 'rewrite',
         )
 
     async def _text(self, ctx: RunContext[AgentDepsT]) -> str | None:
@@ -132,11 +114,10 @@ class ModelInstructions(AbstractCapability[AgentDepsT]):
         assert isinstance(first, ModelInstructions)
         for other in capabilities[1:]:
             assert isinstance(other, ModelInstructions)
-            if disagree := [name for name in ('instructions', 'kind') if getattr(other, name) != getattr(first, name)]:
-                names = ', '.join(repr(name) for name in disagree)
+            if other.instructions != first.instructions:
                 raise UserError(
                     f'Capability id {first.id!r} is used by multiple `ModelInstructions` capabilities that disagree '
-                    f'on {names}. Give each its own `id`, or make them agree.'
+                    "on 'instructions'. Give each its own `id`, or make them agree."
                 )
         return first
 

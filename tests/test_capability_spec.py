@@ -2311,7 +2311,6 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Instructions',
                             'type': 'object',
                         },
-                        'kind': {'enum': ['tuning', 'rule'], 'title': 'Kind', 'type': 'string'},
                     },
                     'required': ['instructions'],
                     'title': 'spec_params_ModelInstructions',
