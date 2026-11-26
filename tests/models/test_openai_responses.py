@@ -4419,6 +4419,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                         tool_name='final_result',
                         args='{"city":"Mexico City","country":"Mexico"}',
                         tool_call_id='call_iFBd0zULhSZRR908DfH73VwN',
+                        tool_kind='output',
                         id='fc_68477f0c91cc819e8024e7e633f0f09401dc81d4bc91f560',
                         provider_name='openai',
                     )
@@ -4452,6 +4453,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='call_iFBd0zULhSZRR908DfH73VwN',
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -12303,6 +12305,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                         tool_name='final_result',
                         args='{"species":"Axolotl","name":"Axie"}',
                         tool_call_id='call_eE7MHM5WMJnMt5srV69NmBJk',
+                        tool_kind='output',
                         id='fc_0360827931d9421b0068dd83918a8c81a08a765e558fd5e071',
                         provider_name='openai',
                     ),
@@ -12336,6 +12339,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='call_eE7MHM5WMJnMt5srV69NmBJk',
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -12997,6 +13001,7 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
                         tool_name='final_result',
                         args='{"city":"Mexico City","country":"Mexico"}',
                         tool_call_id='call_LIXPi261Xx3dGYzlDsOoyHGk',
+                        tool_kind='output',
                         id='fc_001fd29e2d5573f70068ece2ecc140819c97ca83bd4647a717',
                         provider_name='openai',
                     ),
@@ -13030,6 +13035,7 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='call_LIXPi261Xx3dGYzlDsOoyHGk',
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],

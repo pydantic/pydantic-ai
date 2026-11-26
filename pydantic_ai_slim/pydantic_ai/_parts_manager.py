@@ -64,8 +64,8 @@ class ModelResponsePartsManager:
     """
 
     model_request_parameters: ModelRequestParameters
-    """Active request context. The manager promotes streamed tool call parts to their typed
-    subclasses based on `ToolDefinition.tool_kind` from `function_tools` — so
+    """Active request context. The manager gives streamed tool call parts their tool's kind (an output
+    tool's is `'output'`) and promotes them to the kind's typed subclass based on `ToolDefinition.tool_kind` — so
     `isinstance(part, ToolSearchCallPart)` is true from the first `PartStartEvent` rather
     than only after a post-stream pass.
     """
@@ -82,12 +82,10 @@ class ModelResponsePartsManager:
     )
     """Unmaterialized string deltas, keyed by part index."""
     _tool_kind_by_name: dict[str, ToolPartKind] = field(default_factory=dict[str, ToolPartKind], init=False, repr=False)
-    """Cached `{tool_name: tool_kind}` built from `function_tools` at construction time."""
+    """Cached `{tool_name: tool_kind}` for the function and output tools, built at construction time."""
 
     def __post_init__(self) -> None:
-        self._tool_kind_by_name = {
-            td.name: td.tool_kind for td in self.model_request_parameters.function_tools if td.tool_kind is not None
-        }
+        self._tool_kind_by_name = self.model_request_parameters._tool_part_kinds  # pyright: ignore[reportPrivateUsage]
 
     def __repr__(self) -> str:
         return (

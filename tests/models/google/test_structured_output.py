@@ -960,6 +960,7 @@ async def test_tool_output_with_builtin_tools(allow_model_requests: None, google
                         tool_name='final_result',
                         args={'city': 'Mexico City', 'country': 'Mexico'},
                         tool_call_id='yylqxldm',
+                        tool_kind='output',
                         provider_name='google',
                         provider_details={'thought_signature': IsStr()},
                     ),
@@ -990,6 +991,7 @@ async def test_tool_output_with_builtin_tools(allow_model_requests: None, google
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='yylqxldm',
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1083,6 +1085,7 @@ async def test_auto_mode_with_function_and_builtin_tools(allow_model_requests: N
                         tool_name='final_result',
                         args={'city': 'Mexico City', 'country': 'Mexico'},
                         tool_call_id='4jh89wlf',
+                        tool_kind='output',
                         provider_name='google',
                         provider_details={'thought_signature': IsStr()},
                     ),
@@ -1114,6 +1117,7 @@ async def test_auto_mode_with_function_and_builtin_tools(allow_model_requests: N
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='4jh89wlf',
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],

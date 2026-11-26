@@ -6068,7 +6068,9 @@ def _build_agent_graph(
 def _narrow_tool_call_parts(
     response: _messages.ModelResponse, model_request_parameters: models.ModelRequestParameters
 ) -> _messages.ModelResponse:
-    """Promote each base `ToolCallPart` in the response to its typed subclass via `ToolDefinition.tool_kind`.
+    """Give each base `ToolCallPart` in the response its tool's kind, promoting it to the kind's typed subclass if one is registered.
+
+    A function tool's kind is its `ToolDefinition.tool_kind`; an output tool's is `'output'`.
 
     Lives here rather than in each model adapter so adapter authors emit base
     `ToolCallPart`s freely and the framework owns the typed-identity translation. Streaming
@@ -6077,9 +6079,7 @@ def _narrow_tool_call_parts(
     the same typed end state — `isinstance(part, ToolSearchCallPart)` is true from the
     moment the call is emitted by the model.
     """
-    tool_kind_by_name: dict[str, _messages.ToolPartKind] = {
-        td.name: td.tool_kind for td in model_request_parameters.function_tools if td.tool_kind
-    }
+    tool_kind_by_name = model_request_parameters._tool_part_kinds  # pyright: ignore[reportPrivateUsage]
     if not tool_kind_by_name:
         return response
 

@@ -21,6 +21,7 @@ from . import _function_schema, _utils, messages as _messages
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
 from .output import (
+    DEFAULT_OUTPUT_TOOL_NAME,
     NativeOutput,
     OutputContext,
     OutputDataT,
@@ -74,7 +75,6 @@ Usage `OutputValidatorFunc[AgentDepsT, T]`.
 """
 
 
-DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
 
 

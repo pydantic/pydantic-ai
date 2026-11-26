@@ -341,6 +341,7 @@ We need to provide answer in JSON format. Let's do that.\
                         tool_name='final_result',
                         args='{"city":"Paris","country":"France"}',
                         tool_call_id='call_o2vnpxrw',
+                        tool_kind='output',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=206, output_tokens=194),
@@ -361,6 +362,7 @@ We need to provide answer in JSON format. Let's do that.\
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='call_o2vnpxrw',
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],

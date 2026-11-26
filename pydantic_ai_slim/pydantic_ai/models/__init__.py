@@ -168,6 +168,7 @@ from ..messages import (
     ToolCallPart,
     ToolKind,
     ToolKindLike,
+    ToolPartKind,
     ToolReturnPart,
     ToolSearchCallPart,
     ToolSearchReturnPart,
@@ -190,7 +191,12 @@ from ..messages import (
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool, ComputerTool
 from ..native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchTool
-from ..output import OutputMode, OutputObjectDefinition, StructuredOutputMode
+from ..output import (
+    _OUTPUT_TOOL_PART_KIND,  # pyright: ignore[reportPrivateUsage]
+    OutputMode,
+    OutputObjectDefinition,
+    StructuredOutputMode,
+)
 from ..profiles import (
     DEFAULT_PROFILE,
     DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
@@ -573,6 +579,13 @@ class ModelRequestParameters:
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
+
+    @cached_property
+    def _tool_part_kinds(self) -> dict[str, ToolPartKind]:
+        """The `tool_kind` a tool's call parts get, by tool name: a function tool's declared kind, and `'output'` for an output tool."""
+        kinds = {td.name: td.tool_kind for td in self.function_tools if td.tool_kind is not None}
+        kinds.update((td.name, td.tool_kind or _OUTPUT_TOOL_PART_KIND) for td in self.output_tools)
+        return kinds
 
     @cached_property
     def declared_tool_defs(self) -> dict[str, ToolDefinition]:

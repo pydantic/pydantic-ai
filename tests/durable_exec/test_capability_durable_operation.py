@@ -769,14 +769,28 @@ async def test_durable_stream_replay_classifies_parts_as_the_unit_prepared_them(
                         TextPart(content='Let me look that up.'),
                         ToolCallPart(tool_name='look_up_city', args='{}', tool_call_id='call_1'),
                     ],
-                    [ToolCallPart(tool_name='final_result', args='{"response":"Paris"}', tool_call_id='call_2')],
+                    [
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args='{"response":"Paris"}',
+                            tool_call_id='call_2',
+                            tool_kind='output',
+                        )
+                    ],
                 ],
                 stream_responses=[
                     [
                         TextPart(content='Let me look that up.'),
                         ToolCallPart(tool_name='look_up_city', args='{}', tool_call_id='call_1'),
                     ],
-                    [ToolCallPart(tool_name='final_result', args='{"response":"Paris"}', tool_call_id='call_2')],
+                    [
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args='{"response":"Paris"}',
+                            tool_call_id='call_2',
+                            tool_kind='output',
+                        )
+                    ],
                 ],
             ),
             RunAndStreamResult(
@@ -786,13 +800,23 @@ async def test_durable_stream_replay_classifies_parts_as_the_unit_prepared_them(
                 run_responses=[
                     [
                         TextPart(content='Preamble text.'),
-                        ToolCallPart(tool_name='final_result', args='{"response":"Paris"}', tool_call_id='call_2'),
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args='{"response":"Paris"}',
+                            tool_call_id='call_2',
+                            tool_kind='output',
+                        ),
                     ]
                 ],
                 stream_responses=[
                     [
                         TextPart(content='Preamble text.'),
-                        ToolCallPart(tool_name='final_result', args='{"response":"Paris"}', tool_call_id='call_2'),
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args='{"response":"Paris"}',
+                            tool_call_id='call_2',
+                            tool_kind='output',
+                        ),
                     ]
                 ],
             ),

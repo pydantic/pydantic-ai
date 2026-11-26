@@ -432,6 +432,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_name='final_result',
                         args='{"response": [1, 2, 123]}',
                         tool_call_id='123',
+                        tool_kind='output',
                     )
                 ],
                 usage=RequestUsage(unmeasured_requests=1),
@@ -456,6 +457,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='123',
+                        tool_kind='output',
                         timestamp=IsNow(tz=UTC),
                     )
                 ],
@@ -5393,6 +5395,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                         tool_name='final_result',
                         args='{"city": "Mexico City", "country": "Mexico"}',
                         tool_call_id=IsStr(),
+                        tool_kind='output',
                     )
                 ],
                 usage=RequestUsage(
@@ -5429,6 +5432,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id=IsStr(),
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],

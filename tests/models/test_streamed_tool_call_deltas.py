@@ -296,6 +296,7 @@ CASES = [
                             tool_name='final_result',
                             args='{"first": "One", "second": "Two"}',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                         )
                     ],
                     usage=RequestUsage(output_tokens=10, input_tokens=20),
@@ -317,6 +318,7 @@ CASES = [
                             tool_name='final_result',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -347,6 +349,7 @@ CASES = [
                             tool_name='final_result',
                             args='{"first": "One", "second": "Two"}',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                         )
                     ],
                     usage=RequestUsage(unmeasured_requests=1),
@@ -366,6 +369,7 @@ CASES = [
                             tool_name='final_result',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -395,7 +399,10 @@ CASES = [
                         # Hugging Face is the one SDK whose entries carry an id, so the part keeps it
                         # instead of the generated one the other two get.
                         ToolCallPart(
-                            tool_name='final_result', args='{"first": "One", "second": "Two"}', tool_call_id='0'
+                            tool_name='final_result',
+                            args='{"first": "One", "second": "Two"}',
+                            tool_call_id='0',
+                            tool_kind='output',
                         )
                     ],
                     usage=RequestUsage(output_tokens=10, input_tokens=20),
@@ -415,6 +422,7 @@ CASES = [
                             tool_name='final_result',
                             content='Final result processed.',
                             tool_call_id='0',
+                            tool_kind='output',
                             timestamp=IsDatetime(),
                         )
                     ],

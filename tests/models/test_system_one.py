@@ -226,7 +226,9 @@ async def test_output_type(allow_model_requests: None):
     result = await agent.run('My invoice was charged twice and nobody answers the phone!')
 
     assert result.output == Ticket(urgent=True, area='billing')
-    assert result.response.parts == [ToolCallPart('final_result', result.output.model_dump(), tool_call_id=IsStr())]
+    assert result.response.parts == [
+        ToolCallPart('final_result', result.output.model_dump(), tool_call_id=IsStr(), tool_kind='output')
+    ]
     assert result.response.model_name == 'clm-latest'
     assert result.response.usage == RequestUsage(input_tokens=42)
     assert result.response.provider_name == 'system-one'

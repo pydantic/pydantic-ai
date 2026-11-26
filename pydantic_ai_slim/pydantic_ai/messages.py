@@ -1924,8 +1924,11 @@ ToolPartKind: TypeAlias = str
 Set on [`BaseToolCallPart.tool_kind`][pydantic_ai.messages.BaseToolCallPart.tool_kind],
 [`BaseToolReturnPart.tool_kind`][pydantic_ai.messages.BaseToolReturnPart.tool_kind], and
 [`ToolDefinition.tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind]. A user-defined kind is
-`'{namespace}.{name}'`, as in `'inventory.lookup'`; core's `'tool-search'` and `'capability-load'` are the
-only kinds without a namespace. See [Typed tool parts](../tools-advanced.md#typed-tool-parts).
+`'{namespace}.{name}'`, as in `'inventory.lookup'`; core's `'tool-search'`, `'capability-load'` and `'output'` are
+the only kinds without a namespace. See [Typed tool parts](../tools-advanced.md#typed-tool-parts).
+
+`'output'` marks an output tool's call and return parts, whatever the tool is named; see
+[`is_output_tool_part`][pydantic_ai.output.is_output_tool_part].
 
 A part may carry a kind that isn't defined in the current process, for example when it was recorded
 by a process that imported the defining module. It then stays a base part that keeps its `tool_kind`,

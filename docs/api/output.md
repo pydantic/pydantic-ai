@@ -16,3 +16,5 @@
             - DeferredToolRequests
             - PendingModelResponse
             - OutputObjectDefinition
+            - is_output_tool_part
+            - DEFAULT_OUTPUT_TOOL_NAME
