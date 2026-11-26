@@ -3480,20 +3480,17 @@ def _pid_is_running(pid: int) -> bool:
     return True
 
 
-async def _wait_for_pid_file(pid_file: Path) -> int:
-    for _ in range(200):
-        if pid_file.exists():
-            return int(pid_file.read_text(encoding='utf-8'))
-        await anyio.sleep(0.05)
-    raise AssertionError(f'server did not write its PID to {pid_file}')  # pragma: no cover
+def _read_pid_file(pid_file: Path) -> int:
+    """The stdio server writes its PID before serving, so a completed MCP handshake implies the file exists."""
+    return int(pid_file.read_text(encoding='utf-8'))
 
 
 async def _wait_for_process_exit(pid: int) -> None:
-    for _ in range(200):
-        if not _pid_is_running(pid):
-            return
-        await anyio.sleep(0.05)
-    raise AssertionError(f'server process {pid} did not exit')  # pragma: no cover
+    """Join the server child: a blocking `os.waitpid` in a worker thread waits on real death, no clock polling."""
+    try:
+        await anyio.to_thread.run_sync(os.waitpid, pid, 0)
+    except ChildProcessError:  # pragma: lax no cover # the transport teardown already reaped the child
+        pass
 
 
 def _stop_test_run_context() -> RunContext[None]:
@@ -3510,7 +3507,7 @@ async def test_stdio_toolset_script_path_server_stops_after_agent_exit(tmp_path:
 
     toolset = MCPToolset(server_path)
     async with toolset:
-        pid = await _wait_for_pid_file(pid_file)
+        pid = _read_pid_file(pid_file)
     await _wait_for_process_exit(pid)
 
 
@@ -3531,7 +3528,7 @@ async def test_load_mcp_toolsets_stdio_server_stops_after_agent_exit(tmp_path: P
     stdio = toolsets[0].wrapped
     assert isinstance(stdio, MCPToolset)
     async with stdio:
-        pid = await _wait_for_pid_file(pid_file)
+        pid = _read_pid_file(pid_file)
     await _wait_for_process_exit(pid)
 
 
@@ -3545,7 +3542,7 @@ async def test_stdio_toolset_exit_does_not_stop_user_supplied_transport(tmp_path
     transport = StdioTransport(command=sys.executable, args=[str(server_path)])
     toolset = MCPToolset(transport)
     async with toolset:
-        pid = await _wait_for_pid_file(pid_file)
+        pid = _read_pid_file(pid_file)
     assert _pid_is_running(pid)
     # The caller remains responsible for the transport it supplied.
     await transport.close()

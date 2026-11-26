@@ -2446,7 +2446,7 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
                 cwd=server.get('cwd'),
             )
             toolset = MCPToolset(transport, id=name)
-            toolset._owns_transport = True  # Built here, so the toolset stops it at final exit.
+            toolset._owns_transport = True  # pyright: ignore[reportPrivateUsage]  # Built here, so the toolset stops it at final exit.
         elif 'url' in server:
             toolset = MCPToolset(server['url'], id=name, headers=server.get('headers'))
         else:
