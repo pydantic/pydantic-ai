@@ -483,7 +483,8 @@ class RenderRunContextCodec(Generic[AgentDepsT]):
         instrumented = next((m for m in (model, self._agent.model) if isinstance(m, InstrumentedModel)), None)
         # The agent's `Instrumentation` capability wins over an `InstrumentedModel`, as it does in the run.
         return agent_instrumentation_settings(
-            self._agent, model_settings=instrumented.instrumentation_settings if instrumented is not None else None
+            self._agent,
+            model_instrumentation=instrumented.instrumentation_settings if instrumented is not None else None,
         )
 
     def _resolve_model(self, context: Mapping[str, Any]) -> Model | None:
