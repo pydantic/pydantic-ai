@@ -72,6 +72,7 @@ __all__ = (
     'UnsupportedSettingWarning',
     'DeprecatedModelWarning',
     'PartialRubricWarning',
+    'EnumDocstringsUnavailableWarning',
     'CostCalculationFailedWarning',
     'CostNotFoundWarning',
     'UsageExtractionFailedWarning',
@@ -1527,5 +1528,26 @@ class PartialRubricWarning(UserWarning):
     from pydantic_ai import PartialRubricWarning
 
     warnings.filterwarnings('ignore', category=PartialRubricWarning)
+    ```
+    """
+
+
+class EnumDocstringsUnavailableWarning(UserWarning):
+    """Warning emitted when an enum mixing in [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] has no source to read its member docstrings from.
+
+    The docstrings are read from the enum's source, or from the notebook cell it was defined in. An enum with
+    neither, such as one built by calling an opted-in enum class (`Priority('Urgency', {...})`) or defined in a
+    plain `python` REPL, is described to the model by its values alone, and this warning names it. Define it with a
+    `class` statement in a module or notebook cell, or describe the options with
+    [`Choices()`][pydantic_ai.output.Choices].
+
+    If the plain values are what you want, silence it with a warnings filter:
+
+    ```python {test="skip"}
+    import warnings
+
+    from pydantic_ai import EnumDocstringsUnavailableWarning
+
+    warnings.filterwarnings('ignore', category=EnumDocstringsUnavailableWarning)
     ```
     """

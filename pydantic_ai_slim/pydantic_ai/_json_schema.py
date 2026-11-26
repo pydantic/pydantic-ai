@@ -322,8 +322,9 @@ class UseEnumMemberDocstrings:
     their values, and their `str`/`int` behaviour are exactly what they would be without it.
 
     The docstrings are read from the enum's source. In a notebook or IPython session, where `inspect.getsource`
-    cannot find a class, they are read from the cell the enum was defined in. An enum built by the functional API
-    has no source, so it is described by its values alone, with a warning.
+    cannot find a class, they are read from the cell the enum was defined in. An enum built by calling an opted-in
+    enum class (`Priority('Urgency', {...})`) has no source, so it is described by its values alone, with an
+    [`EnumDocstringsUnavailableWarning`][pydantic_ai.exceptions.EnumDocstringsUnavailableWarning].
 
     See [enum options](../tools.md#enum-options) for an example.
     """

@@ -51,6 +51,7 @@ from pydantic_ai.capabilities import HandleDeferredToolCalls, IncludeToolReturnS
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
+    EnumDocstringsUnavailableWarning,
     ModelRetry,
     PydanticAIDeprecationWarning,
     ToolFailed,
@@ -5803,7 +5804,9 @@ def test_enum_member_docstrings_describe_options():
 
     agent = Agent(FunctionModel(get_json_schema))
 
-    with pytest.warns(UserWarning, match='`Undocumented` mixes in `UseEnumMemberDocstrings`, but its source'):
+    with pytest.warns(
+        EnumDocstringsUnavailableWarning, match='`Undocumented` mixes in `UseEnumMemberDocstrings`, but its source'
+    ):
 
         @agent.tool_plain
         def triage(priority: Priority, other: Undocumented) -> None: ...  # pragma: no cover
@@ -6018,7 +6021,9 @@ def test_enum_member_docstrings_do_not_need_the_enclosing_model_to_opt_in():
             'type': 'string',
         }
     )
-    with pytest.warns(UserWarning, match='`Functional` mixes in `UseEnumMemberDocstrings`, but its source'):
+    with pytest.warns(
+        EnumDocstringsUnavailableWarning, match='`Functional` mixes in `UseEnumMemberDocstrings`, but its source'
+    ):
         functional = defs(Functional)
     assert functional['$defs']['Functional'] == snapshot(
         {'enum': ['low', 'high'], 'title': 'Functional', 'type': 'string'}
@@ -6141,7 +6146,9 @@ def test_an_opted_in_enum_whose_source_cannot_be_read_warns_once(monkeypatch: py
     """Code run from a string nothing registered has no source to read, so its options go undescribed, once said."""
     Urgency = run_cell(NOTEBOOK_CELL, monkeypatch, registered=False)['first']
 
-    with pytest.warns(UserWarning, match='`Urgency` mixes in `UseEnumMemberDocstrings`, but its source could not'):
+    with pytest.warns(
+        EnumDocstringsUnavailableWarning, match='`Urgency` mixes in `UseEnumMemberDocstrings`, but its source could not'
+    ):
         schema = TypeAdapter(Urgency).json_schema(schema_generator=GenerateToolJsonSchema)
     assert schema == snapshot({'enum': [0, 1], 'title': 'Urgency', 'type': 'integer'})
     with warnings.catch_warnings():
@@ -6158,11 +6165,16 @@ def test_registered_text_that_does_not_parse_or_a_module_that_is_not_running_kee
     """
     for registered_source in ['class (\n', 'class Urgency:\x00\n']:
         Urgency = run_cell(NOTEBOOK_CELL, monkeypatch, registered_source=registered_source)['first']
-        with pytest.warns(UserWarning, match='`Urgency` mixes in `UseEnumMemberDocstrings`, but its source could'):
+        with pytest.warns(
+            EnumDocstringsUnavailableWarning, match='`Urgency` mixes in `UseEnumMemberDocstrings`, but its source could'
+        ):
             TypeAdapter(Urgency).json_schema(schema_generator=GenerateToolJsonSchema)
 
     Elsewhere = DescribedEnum('Elsewhere', {'a': 'a'}, module='a_module_that_is_not_running')
-    with pytest.warns(UserWarning, match='`Elsewhere` mixes in `UseEnumMemberDocstrings`, but its source could not'):
+    with pytest.warns(
+        EnumDocstringsUnavailableWarning,
+        match='`Elsewhere` mixes in `UseEnumMemberDocstrings`, but its source could not',
+    ):
         TypeAdapter(Elsewhere).json_schema(schema_generator=GenerateToolJsonSchema)
 
 

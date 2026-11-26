@@ -42,7 +42,7 @@ from ._deferred import (
 from ._json_schema import UseEnumMemberDocstrings
 from ._run_context import AgentDepsT, RunContext
 from ._warnings import PydanticAIDeprecationWarning
-from .exceptions import UserError
+from .exceptions import EnumDocstringsUnavailableWarning, UserError
 from .function_signature import FunctionSignature
 from .messages import (
     ToolPartKind,
@@ -307,7 +307,7 @@ def _warn_enum_source_unavailable(enum_cls: type[Enum]) -> None:
         f'`{enum_cls.__qualname__}` mixes in `UseEnumMemberDocstrings`, but its source could not be read, so its '
         'members are described to the model by their values alone. Define it with a `class` statement in a module '
         'or notebook cell, or describe the options with `Choices`.',
-        UserWarning,
+        EnumDocstringsUnavailableWarning,
     )
 
 
