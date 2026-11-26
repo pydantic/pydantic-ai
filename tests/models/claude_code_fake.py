@@ -17,7 +17,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from claude_agent_sdk import ClaudeAgentOptions, CLIConnectionError, CLINotFoundError, Transport
+from claude_agent_sdk import ClaudeAgentOptions, CLIConnectionError, CLINotFoundError, ProcessError, Transport
 
 
 @dataclass
@@ -31,8 +31,9 @@ class FakeResponse:
     """An `AssistantMessage.error` kind, such as `'authentication_failed'`, ending the turn without a response."""
     error_text: str = 'error'
     rate_limit_resets_at: int | None = None
-    cut: Literal['error', 'exit'] | None = None
-    """After the response has started, the turn fails (as when the API request breaks off) or the process exits."""
+    cut: Literal['error', 'exit', 'crash'] | None = None
+    """After the response has started, the turn fails (as when the API request breaks off), the process exits, or
+    reading from it fails."""
     exit: bool = False
     """The process exits instead of responding."""
     crash: BaseException | None = None
@@ -196,6 +197,8 @@ class FakeSession(Transport):
                 self._stream(response, cut=True)
                 if response.cut == 'exit':
                     self._outbox.put_nowait(None)
+                elif response.cut == 'crash':
+                    self._outbox.put_nowait(ProcessError('Command failed', exit_code=1))
                 else:
                     self._send(self._result(num_turns=1, is_error=True, result='Connection error.'))
                 return

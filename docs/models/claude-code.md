@@ -21,7 +21,7 @@ This installs the [`claude-agent-sdk`](https://pypi.org/project/claude-agent-sdk
 
 ## Usage
 
-Sign in to Claude Code once with `claude auth login`, from any Claude Code installation: every `claude` on the machine shares the login stored in its configuration directory. Claude Code always uses that login: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_BASE_URL`, which the `anthropic` provider reads, don't reach it. Then use the `claude-code:` prefix:
+Sign in to Claude Code once with `claude auth login`, from any Claude Code installation: every `claude` on the machine shares the login stored in its configuration directory. Claude Code always uses that login: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` and the `CLAUDE_CODE_USE_*` variables that switch it to a cloud provider don't reach it. Then use the `claude-code:` prefix:
 
 ```python {title="claude_code.py" test="skip - requires a Claude Code sign-in"}
 from pydantic_ai import Agent
@@ -81,4 +81,4 @@ With your instructions as its system prompt, Claude Code still adds:
 - Anthropic's server-side tools, such as web search and code execution, aren't available, and neither are uploaded files, batches, on-demand compaction, fast mode or [token counting](../agent.md#usage-limits) ahead of a request.
 - Documents aren't sent to the model, which gets a note in their place. Images are.
 - Claude Code runs a conversation's tool calls one at a time, after the model's response ends.
-- Errors Claude Code reports come as the [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] the Anthropic API would have raised: a [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError] when Claude Code isn't signed in, and a status of 429 with a `Retry-After` header when you've reached your plan's limit. When Claude Code fails to start or stops, the error has a status of 500.
+- Errors Claude Code reports come as the [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] the Anthropic API would have raised: a [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError] when Claude Code isn't signed in, and a status of 429 with a `Retry-After` header when you've reached your plan's limit. When Claude Code fails to start, or stops before it responds, the error has a status of 500.

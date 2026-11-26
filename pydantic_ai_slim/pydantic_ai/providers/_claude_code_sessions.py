@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 import httpx2
-from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter
+from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError
 
 from .. import __version__
 
@@ -50,7 +50,6 @@ try:
         ClaudeAgentOptions,
         ClaudeSDKClient,
         ClaudeSDKError,
-        CLIConnectionError,
         HookContext,
         HookInput,
         HookJSONOutput,
@@ -82,11 +81,23 @@ _MAX_SESSIONS = 8
 """Live sessions kept per provider; the least recently used idle one is closed to make room for another."""
 
 _ENV = {
-    # Claude Code prefers an API key or proxy from the environment over the user's login. Those are usually set for
-    # the `anthropic` provider, and would bill the API, or send the login's token to the proxy, instead.
-    'ANTHROPIC_API_KEY': '',
-    'ANTHROPIC_AUTH_TOKEN': '',
-    'ANTHROPIC_BASE_URL': '',
+    # Claude Code prefers an API key, proxy or cloud provider from the environment over the user's login. Those are
+    # usually set for other providers, and would bill the API, or send the login's token to the proxy, instead.
+    **dict.fromkeys(
+        (
+            'ANTHROPIC_API_KEY',
+            'ANTHROPIC_AUTH_TOKEN',
+            'ANTHROPIC_BASE_URL',
+            'CLAUDE_CODE_USE_BEDROCK',
+            'CLAUDE_CODE_USE_VERTEX',
+            'CLAUDE_CODE_USE_FOUNDRY',
+            'CLAUDE_CODE_USE_GATEWAY',
+            'CLAUDE_CODE_USE_MANTLE',
+            'CLAUDE_CODE_USE_ANTHROPIC_AWS',
+            'CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD',
+        ),
+        '',
+    ),
     # No session titles or other side requests that draw on the user's plan.
     'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1',
     # No `@file` expansion, turn-start attachments, CLAUDE.md files, memory, or compaction of the history we sent.
@@ -266,9 +277,17 @@ class _Turn:
     blocks: list[dict[str, JsonValue]] = field(default_factory=list[dict[str, JsonValue]])
     partial_json: dict[int, str] = field(default_factory=dict[int, str])
     stop_reason: str | None = None
+    complete: bool = True
+    """Whether every event was understood, so the blocks are what the next request continues from."""
 
     def record(self, raw_event: dict[str, JsonValue]) -> None:
-        event = _stream_event_ta.validate_python(raw_event)
+        try:
+            event = _stream_event_ta.validate_python(raw_event)
+        except ValidationError:
+            # An event from a newer Claude Code than the `anthropic` package knows; `AnthropicModel` still reads it,
+            # but the next request is replayed into a new session rather than continued from a partial record.
+            self.complete = False
+            return
         if isinstance(event, BetaRawContentBlockStartEvent):
             self.blocks.append(event.content_block.model_dump(mode='json', exclude_none=True))
         elif isinstance(event, BetaRawContentBlockDeltaEvent):
@@ -500,8 +519,8 @@ class ClaudeCodeSessions:
                 and (message := session.continuation(request.messages)) is not None
                 and await session.send(message)
             )
-        except (ClaudeCodeExited, CLIConnectionError):
-            # The process ended between requests; a new one takes over the conversation.
+        except (ClaudeCodeExited, ClaudeSDKError):
+            # The process ended or failed between requests; a new one takes over the conversation.
             pass
         finally:
             if not reused:
@@ -514,28 +533,25 @@ class ClaudeCodeSessions:
         session = await self._reusable(conversation_id, request)
         if session is None:
             session = await self._start(request)
-            if (
-                conversation_id is not None
-                and self.leases
-                and conversation_id not in self.sessions
-                and await self._make_room()
-            ):
-                self.sessions[conversation_id] = session
+            if conversation_id is not None and self.leases and conversation_id not in self.sessions:
+                await self._keep(conversation_id, session)
         session.busy = True
         session.seen = list(request.messages)
         return session, session in self.sessions.values()
 
-    async def _make_room(self) -> bool:
-        """Whether there's room to keep one more session, after closing the least recently used idle one if needed."""
-        if len(self.sessions) < _MAX_SESSIONS:
-            return True
-        idle = [session for session in self.sessions.values() if not session.busy]
-        if not idle:
-            return False
-        oldest = min(idle, key=lambda session: session.last_used)
-        self.sessions = {key: session for key, session in self.sessions.items() if session is not oldest}
-        await oldest.close()
-        return True
+    async def _keep(self, conversation_id: str, session: _Session) -> None:
+        """Keep the session, closing the least recently used idle one if that's needed to make room."""
+        evicted: _Session | None = None
+        if len(self.sessions) >= _MAX_SESSIONS:
+            idle = [other for other in self.sessions.values() if not other.busy]
+            if not idle:
+                return
+            evicted = min(idle, key=lambda other: other.last_used)
+            self.sessions = {key: other for key, other in self.sessions.items() if other is not evicted}
+        # Stored before the first `await`, so a concurrent request can't take the room too.
+        self.sessions[conversation_id] = session
+        if evicted is not None:
+            await evicted.close()
 
     async def release(self, session: _Session, *, kept: bool) -> None:
         session.busy = False
@@ -562,16 +578,20 @@ class _TurnStream(httpx2.AsyncByteStream):
     async def __aiter__(self) -> AsyncIterator[bytes]:
         for event in self._first:
             yield self._event(event)
-        async for message in self._session.messages:
-            if isinstance(message, StreamEvent) and message.parent_tool_use_id is None:
-                yield self._event(message.event)
-                if self._done:
+        try:
+            async for message in self._session.messages:
+                if isinstance(message, StreamEvent) and message.parent_tool_use_id is None:
+                    yield self._event(message.event)
+                    if self._done:
+                        return
+                elif isinstance(message, ResultMessage):
+                    # The turn ended before the response did, as when the API request fails partway.
+                    yield _stream_error(message.result or f'Claude Code ended with `{message.subtype}`.')
                     return
-            elif isinstance(message, ResultMessage):
-                # The turn ended before the response did, as when the API request fails partway.
-                yield _stream_error(message.result or f'Claude Code ended with `{message.subtype}`.')
-                return
-        yield _stream_error('Claude Code exited before the response ended.')
+        except ClaudeSDKError as e:
+            yield _stream_error(f'Claude Code failed: {e}')
+        else:
+            yield _stream_error('Claude Code exited before the response ended.')
 
     def _event(self, event: dict[str, JsonValue]) -> bytes:
         event = _with_pydantic_ai_tool_name(event)
@@ -585,6 +605,7 @@ class _TurnStream(httpx2.AsyncByteStream):
         session, turn = self._session, self._turn
         session.seen = [*session.seen, _Message(role='assistant', content=turn.blocks)]
         session.awaiting_results = turn.tool_use_ids if turn.stop_reason == 'tool_use' else []
+        session.broken |= not turn.complete
 
     async def aclose(self) -> None:
         # A response that didn't end leaves the session mid-turn.
@@ -594,10 +615,13 @@ class _TurnStream(httpx2.AsyncByteStream):
 
 def _with_pydantic_ai_tool_name(event: dict[str, JsonValue]) -> dict[str, JsonValue]:
     block = event.get('content_block')
-    if event.get('type') != 'content_block_start' or not isinstance(block, dict) or block.get('type') != 'tool_use':
+    if (
+        event.get('type') != 'content_block_start'
+        or not isinstance(block, dict)
+        or block.get('type') != 'tool_use'
+        or not isinstance(name := block.get('name'), str)
+    ):
         return event
-    name = block.get('name')
-    assert isinstance(name, str)
     return {**event, 'content_block': {**block, 'name': name.removeprefix(_TOOL_PREFIX)}}
 
 
@@ -619,7 +643,7 @@ class ClaudeCodeTransport(httpx2.AsyncBaseTransport):
         except ClaudeCodeExited:
             return _error_response(500, 'api_error', 'Claude Code exited while it was sent the history.')
         except ClaudeSDKError as e:
-            return _error_response(500, 'api_error', f'Claude Code failed to start: {e}')
+            return _error_response(500, 'api_error', f'Claude Code failed: {e}')
         try:
             try:
                 first, error = await _first_events(session)

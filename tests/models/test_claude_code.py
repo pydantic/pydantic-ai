@@ -96,7 +96,7 @@ async def test_safe_options_and_our_prompt():
         'nonessential_traffic': options.env.get('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC'),
         'max_output_tokens': options.env.get('CLAUDE_CODE_MAX_OUTPUT_TOKENS'),
         'credentials_from_env': {
-            name: options.env.get(name) for name in ('ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL')
+            name: value for name, value in options.env.items() if name.startswith(('ANTHROPIC_', 'CLAUDE_CODE_USE_'))
         },
     } == snapshot(
         {
@@ -112,7 +112,18 @@ async def test_safe_options_and_our_prompt():
             'client_app': IsStr(regex=r'pydantic-ai/.+'),
             'nonessential_traffic': '1',
             'max_output_tokens': '128000',
-            'credentials_from_env': {'ANTHROPIC_API_KEY': '', 'ANTHROPIC_AUTH_TOKEN': '', 'ANTHROPIC_BASE_URL': ''},
+            'credentials_from_env': {
+                'ANTHROPIC_API_KEY': '',
+                'ANTHROPIC_AUTH_TOKEN': '',
+                'ANTHROPIC_BASE_URL': '',
+                'CLAUDE_CODE_USE_BEDROCK': '',
+                'CLAUDE_CODE_USE_VERTEX': '',
+                'CLAUDE_CODE_USE_FOUNDRY': '',
+                'CLAUDE_CODE_USE_GATEWAY': '',
+                'CLAUDE_CODE_USE_MANTLE': '',
+                'CLAUDE_CODE_USE_ANTHROPIC_AWS': '',
+                'CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD': '',
+            },
         }
     )
     assert frame_shape(session) == snapshot([('user', ['text'], True)])
@@ -507,11 +518,36 @@ async def test_claude_code_that_fails_to_start():
     model, fake = claude_code()
     fake.missing = True
 
-    with pytest.raises(ModelHTTPError, match='Claude Code failed to start: Claude Code not found') as exc_info:
+    with pytest.raises(ModelHTTPError, match='Claude Code failed: Claude Code not found') as exc_info:
         await Agent(model).run('Count.')
 
     assert exc_info.value.status_code == 500
     assert len(fake.sessions) == 1
+
+
+async def test_a_claude_code_failure_after_the_response_started():
+    model, fake = claude_code(FakeResponse([text('Partial')], cut='crash'))
+
+    with pytest.raises(ModelAPIError, match='Claude Code failed: Command failed'):
+        await Agent(model).run('Count.')
+
+    assert fake.sessions[0].closed
+
+
+async def test_an_event_newer_than_the_anthropic_types_replays_the_next_request():
+    """A stop reason the installed `anthropic` types don't know still reaches the response, but isn't recorded."""
+    model, fake = claude_code(FakeResponse([text('One.')], stop_reason='a_new_reason'), FakeResponse([text('Two.')]))
+    agent = Agent(model)
+
+    async with agent:
+        first = await agent.run('Count.')
+        second = await agent.run('Again.', message_history=first.all_messages())
+
+    assert (first.output, second.output) == ('One.', 'Two.')
+    assert len(fake.sessions) == 2
+    assert frame_shape(fake.sessions[1]) == snapshot(
+        [('user', ['text'], False), ('assistant', ['text'], True), ('user', ['text'], True)]
+    )
 
 
 async def test_an_error_claude_code_has_no_status_for():
