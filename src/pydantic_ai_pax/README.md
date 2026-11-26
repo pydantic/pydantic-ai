@@ -302,7 +302,22 @@ a hosted sandbox with [E2B](https://pydantic.dev/docs/ai/harness/e2b-sandbox/), 
 runs your command inside the sandbox rather than on your machine.
 
 The sandbox takes the launch directory's place for that conversation, so `/sandbox delete`
-removes it when you are done. For what a sandboxed workspace can and cannot reach, and for
+removes it when you are done. A conversation stays in the sandbox its first turn ran in, and
+forked, resumed and background copies open that same sandbox.
+
+The sandbox gets your branch, its unpushed commits and your uncommitted changes, untracked files
+included. Your own checkout is not changed: the uncommitted files go into a commit made with a
+temporary index that no branch points to. If your checkout is on GitHub, the sandbox clones from
+GitHub signed in as you and only the commits that clone lacks are sent; any other checkout travels
+whole.
+
+`git` and `gh` inside the sandbox act as your `gh` login, and where that token sits depends on the
+provider. With E2B, boxd, Daytona and OpenSandbox, the provider's proxy adds the token to GitHub
+requests from outside the sandbox, which holds only a stand-in. With local smol and BoxLite, Modal,
+Render, Sprites and Kubernetes, the token is saved in the sandbox, where anything run there can read
+it, until the sandbox is deleted. Pax tells you which of the two you have when the sandbox starts.
+If your origin is not on GitHub, pushing from the sandbox needs credentials the sandbox does not
+have. For what a sandboxed workspace can and cannot reach, and for
 running your own agent the same way, see [the workspace docs](https://pydantic.dev/docs/ai/core-concepts/workspace/#run-it-in-a-sandbox).
 
 ## Models and accounts
