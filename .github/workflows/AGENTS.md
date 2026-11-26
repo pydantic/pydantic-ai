@@ -456,11 +456,11 @@ A run moves to the next provider when OpenCode exited non-zero, the next account
 - An OpenCode Go link failed the run with `provider.transport`, `provider.internal` or `provider.invalid-output`, before
   or after the run took steps. OpenCode 2.2.5 retries a failed step up to 10 times when `isRetryable` in
   [`provider-error.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/provider-error.ts) accepts
-  its error, which it does for a transport or internal error and not for most invalid provider output; see
-  [`step.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/runner/step.ts) and
-  [`model-retry.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/model-retry.ts). So a
-  transport or internal error in the stream outlasted those retries. The job log says that model failed the run with
-  that type, and names the link that restarts it.
+  its error, which it does for an internal error and most transport errors, and not for most invalid provider output;
+  see [`step.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/runner/step.ts) and
+  [`model-retry.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/model-retry.ts). So an
+  internal or transport error in the stream has usually outlasted those retries. The job log says that model failed the
+  run with that type, and names the link that restarts it.
 - A link other than the last served an answer the review rejects. The job log names the reason and the link that
   restarts the review. The last link's rejected answer fails the review.
 
