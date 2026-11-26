@@ -628,6 +628,35 @@ async def test_process_history_seeding_follows_capability_tree() -> None:
     assert markers['deferred'] not in model.messages
 
 
+async def test_process_history_seeding_runs_a_deferred_processor_the_seed_loaded() -> None:
+    """A deferred processor runs over the seed once the seeded history loaded it, as its other hooks would."""
+
+    def processor(marker: str) -> ProcessHistory[None]:
+        def append(messages: list[ModelMessage]) -> list[ModelMessage]:
+            return [*messages, ModelRequest(parts=[UserPromptPart(marker)])]
+
+        return ProcessHistory(append, id='deferred_processor', defer_loading=True)
+
+    def load_then_answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'deferred_processor'})])
+        return ModelResponse(parts=[TextPart('Loaded.')])
+
+    loading = Agent(FunctionModel(load_then_answer), deps_type=type(None), capabilities=[processor('loading run')])
+    seed = (await loading.run('Hi.')).all_messages()
+
+    model = _RecordingModel()
+    await _drain(Agent(capabilities=[processor('session')], deps_type=type(None)), model, message_history=seed)
+    assert model.messages is not None
+    assert [
+        part.content
+        for message in model.messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart) and part.content == 'session'
+    ] == ['session']
+
+
 async def test_loaded_capability_instructions_follow_processed_history() -> None:
     """The instructions of a capability the seeded history loaded are read from the processed history.
 
