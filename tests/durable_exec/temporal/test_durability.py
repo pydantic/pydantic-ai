@@ -8950,6 +8950,13 @@ class ContentRunOnContentFreeWorkerWorkflow:
     ('workflow_type', 'agent', 'expected_spans', 'recorded'),
     [
         pytest.param(
+            WorkspaceProbeWorkflow,
+            _workspace_probe_agent,
+            {'workspace run'},
+            ['process.command_args', 'process.command_args'],
+            id='run_on_worker_on',
+        ),
+        pytest.param(
             ContentFreeWorkspaceProbeWorkflow, _workspace_probe_agent, {'workspace run'}, [], id='run_off_worker_on'
         ),
         # `ctx` carries the run's flag, but a span a capability opens from it follows the worker's setting too.
