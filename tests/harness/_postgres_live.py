@@ -64,7 +64,7 @@ async def connect(*, retry_seconds: float = CONNECT_RETRY_SECONDS) -> asyncpg.Po
     """
     url = postgres_url()
     deadline = time.monotonic() + (retry_seconds if requires_live() else 0.0)
-    while url not in unreachable:
+    while url not in unreachable:  # real-wait: polls a live server that is still starting
         try:
             return await asyncpg.create_pool(  # pyright: ignore[reportUnknownMemberType]
                 url, min_size=1, max_size=4, timeout=CONNECT_TIMEOUT_SECONDS

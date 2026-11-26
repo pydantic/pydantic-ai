@@ -31,6 +31,7 @@ from pydantic_ai.conversation_store import (
     ConversationStore,
 )
 from pydantic_ai.models.test import TestModel
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 
 @dataclass
@@ -60,10 +61,6 @@ async def _saved(
     return record
 
 
-# How long a writer waits at a barrier for the other one, so a race test fails rather than hangs.
-_READINESS_WAIT_TIMEOUT = 5.0
-
-
 def _hold_writes_until_both_read(store: ConversationStore, monkeypatch: pytest.MonkeyPatch) -> None:
     """Make `write_record` wait for a second writer, so two saves both read the store before either writes."""
     both_read = anyio.Event()
@@ -80,7 +77,7 @@ def _hold_writes_until_both_read(store: ConversationStore, monkeypatch: pytest.M
         waiting += 1
         if waiting == 2:
             both_read.set()
-        with anyio.fail_after(_READINESS_WAIT_TIMEOUT):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             await both_read.wait()
         await write_record(record, new_entries=new_entries, expected_revision=expected_revision)
 
