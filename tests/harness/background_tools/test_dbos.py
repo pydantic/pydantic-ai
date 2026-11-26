@@ -28,7 +28,7 @@ from pydantic_ai_harness import BackgroundTools
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 try:
-    from dbos import DBOS, DBOSConfig, SetWorkflowID, WorkflowHandleAsync
+    from dbos import DBOS, DBOSConfig, SetWorkflowID, StepInfo, WorkflowHandleAsync
     from dbos._core import WorkflowHandleAsyncTask
 
     from pydantic_ai.durable_exec.dbos import DBOSDurability, resolve_external_event
@@ -154,17 +154,26 @@ def dbos(tmp_path_factory: pytest.TempPathFactory) -> Generator[DBOS]:
         DBOS.destroy()
 
 
+def _recorded_the_wait_and_the_background_result(steps: list[StepInfo]) -> bool:
+    names = {step['function_name'] for step in steps}
+    research_recorded = any(
+        step['function_name'] == 'research' and step['completed_at_epoch_ms'] is not None for step in steps
+    )
+    return 'DBOS.sleep' in names and research_recorded
+
+
 async def _stop_while_waiting(dbos: DBOS, handle: WorkflowHandleAsync[str]) -> None:
     """Stop the workflow's execution while it waits, as if its process died, leaving the workflow pending.
 
     It waits until the workflow recorded `ask`'s step and set up the receive, whose timeout DBOS records as a sleep:
     `ask` hands the token on before its step records the result, so a stop before then would run the step again.
+    The background step returns before DBOS records its result too, so it also waits for that result.
     """
     with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-        # real-wait: nothing in the process signals that DBOS recorded the step, so poll the system database
-        while 'DBOS.sleep' not in [
-            step['function_name'] for step in await dbos.list_workflow_steps_async(handle.workflow_id)
-        ]:
+        # real-wait: nothing in the process signals that DBOS recorded the steps, so poll the system database
+        while not _recorded_the_wait_and_the_background_result(
+            await dbos.list_workflow_steps_async(handle.workflow_id)
+        ):
             await anyio.sleep(0.01)
     # The handle of a workflow started in this process wraps the task running it.
     assert isinstance(handle, WorkflowHandleAsyncTask)
