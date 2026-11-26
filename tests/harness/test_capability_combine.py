@@ -146,7 +146,7 @@ def test_capability_combine_policy_holds(name: str) -> None:
     policy.check(type(first).combine([first, second]))
 
 
-def _conjoins(capability_type: type[AbstractCapability[Any]]) -> Conjoins | None:
+def _conjoins(capability_type: type[AbstractCapability[None]]) -> Conjoins | None:
     """The `Conjoins` policy `CASES` declares for `capability_type`, if any."""
     case = CASES.get(capability_type.__name__)
     return case.combine if case is not None and isinstance(case.combine, Conjoins) else None
