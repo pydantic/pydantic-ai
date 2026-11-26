@@ -5,7 +5,7 @@ import os
 import posixpath
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import Workspace, WorkspaceRef
@@ -72,21 +72,29 @@ class SandboxProvider(Protocol):
         """Whether the GitHub token is written into the sandbox, as it is where no proxy can sign requests."""
         ...
 
-    def missing(self) -> str | None:
+    @property
+    def desktop_at_create(self) -> bool:
+        """Whether only `create` can give a sandbox a desktop; otherwise `reopen(ref, desktop=True)` adds one."""
+        ...
+
+    def missing(self, *, desktop: bool = False) -> str | None:
         """What to do before a sandbox can be made, such as a key to add; `None` when nothing is missing."""
         ...
 
-    async def create(self, *, github: GitHubCredential | None) -> tuple[WorkspaceRef, SandboxBackend]:
+    async def create(
+        self, *, github: GitHubCredential | None, desktop: bool = False
+    ) -> tuple[WorkspaceRef, SandboxBackend]:
         """A new, running sandbox whose commands get `SANDBOX_ENV`, and its reference.
 
         With `github`, a provider whose proxy can sign requests gives the proxy the token for this sandbox only,
         and the sandbox holds a stand-in the proxy replaces. Where it cannot (`token_in_sandbox`), `/sandbox`
         writes the token in afterwards with `give_github_login`. Before raising, `create` deletes whatever it
-        made, as no caller has its reference to delete it later.
+        made, as no caller has its reference to delete it later. `desktop=True` gives the sandbox a screen
+        for `ComputerUse`.
         """
         ...
 
-    def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
+    def reopen(self, ref: WorkspaceRef, *, desktop: bool = False) -> SandboxBackend:
         """The sandbox `ref` names, attached on first use; its commands get `SANDBOX_ENV`."""
         ...
 
@@ -100,6 +108,18 @@ class SandboxProvider(Protocol):
         It keeps running too, except one that would otherwise outlive this process, such as a `local smol` VM run through
         the `smolvm` CLI: that one may be stopped, and its next command starts it again.
         """
+        ...
+
+
+@runtime_checkable
+class SupportsDesktopUrl(Protocol):
+    """A provider whose own website shows a sandbox's desktop, which the status row's `watch live ↗` opens."""
+
+    desktop_link_seconds: int | None
+    """How long a link from `desktop_url` opens the desktop; `None` when it does not expire."""
+
+    async def desktop_url(self, backend: SandboxBackend) -> str | None:
+        """A new link to the desktop of the sandbox `backend` is attached to; `None` when there is none."""
         ...
 
 

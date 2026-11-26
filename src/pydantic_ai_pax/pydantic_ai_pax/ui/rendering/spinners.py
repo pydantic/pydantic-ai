@@ -25,7 +25,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 from rich.cells import cell_len
 
-from pydantic_ai_pax.config.settings_store import config_dir
+from pydantic_ai_pax.paths import config_dir
 from pydantic_ai_pax.ui.rendering.spinner_frames import EXTRA_SPECS
 
 if sys.platform != 'win32':  # pragma: no branch
