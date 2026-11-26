@@ -164,7 +164,7 @@ Plugins load and unload while Pax runs. The rules that make that safe:
 - **The terminal shows one live session at a time.** `Terminal` (`ui/prompt/terminal.py`)
   owns the terminal console, the `LivePrompt`, the line prompt, the transcript, input
   history, and pasted images. Only the session shown (`SessionRuntime.terminal`,
-  `LiveRuntimes.focused`) reads the editor, prints to the console, and takes Ctrl-C
+  `LiveRuntimes.focused`) reads the editor, prints to the console, and takes Ctrl+C
   (`Interrupts.focus`); the others print nowhere (`Terminal.session_console`) and read
   their inbox. `chat` sets `live.build`, so the web UI opens sessions beside the
   terminal's. `/resume` of a conversation another live session holds shows that one
@@ -325,9 +325,11 @@ one that is not.
   hotkey that does the action, or nothing; Esc closes.
 - Footer hints separate actions with ` - ` and capitalize named keys (`Enter`,
   `Esc`, `Space`); letter hotkeys stay as typed (`c configure`, `R reset`).
+  Modifier keys join with `+` (`Ctrl+C`, `Ctrl+X Ctrl+S`, `Cmd+Shift+Z`) in
+  footers, dialogs, help text, and docs alike; `ctrl-c` is only a key name in code.
 - Nothing prints to the console while the menu is open; the alternate screen
   would hide it. Show empty states and errors inside the menu as disabled rows.
-- Esc and Ctrl-C close cleanly. They are not errors.
+- Esc and Ctrl+C close cleanly. They are not errors.
 - Make a new or changed menu searchable with `slash_search`
   (`ui/menus/slash_search.py`), not a bare `.searchable()`: plain letters stay
   hotkeys, `/` starts a search, Esc leaves it. Pass single-key actions as its
@@ -402,6 +404,11 @@ shades and diffs on pale lines with Pygments' `xcode` style; code fences keep th
 colours. On a dark or unknown background it is unchanged.
 `theme.color()` and `theme.syntax_theme()` raise a palette colour to WCAG AA contrast
 (or the palette's own text contrast); `test_theme_preview.py` checks both for every palette.
+
+Echo the user's own text through `rendering.prompt_line`, which paints it on
+`theme.prompt_background()`: under a palette, its background moved towards its text, on a truecolor
+terminal only (`theme.truecolor()`, as `theme.sgr` decides). The default theme has no tint, on a light
+terminal background as on a dark one.
 
 ## Source layout
 
@@ -515,8 +522,9 @@ uv run --no-sync pytest -p no:cacheprovider tests/pax
 change updates the reference (and the README when it changes what the tour shows)
 and `PLUGINS.md` in the same PR. The README is the PyPI page, so its links and
 images are absolute URLs on `main`; `scripts/screenshots/capture.sh` regenerates
-the images in `docs/images/`. `docs/harness/clai2.md` is generated from the README by
-`scripts/sync_docs_page.py`, which pre-commit runs; edit the README, never the page. Plain
+the images in `docs/images/`. `docs/harness/pax.md` is the same story as the README on the docs site, not a copy of it:
+edit both, keep code blocks identical, and see the "Pax front pages" section of
+`docs/AGENTS.md` for which link and model styles each one takes. Plain
 language, short sentences, no jargon a first-time plugin author would not know.
 
 Agent-readable docs are indexed by `pax_docs._PAX_DOCS`. Docs outside

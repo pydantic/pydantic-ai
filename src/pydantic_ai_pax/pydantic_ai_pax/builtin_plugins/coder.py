@@ -116,7 +116,9 @@ class CoderSettings(BaseModel):
 
     model_config = ConfigDict(extra='forbid', strict=True)
 
-    instructions: str | None = Field(default=None, description='Replace the default coding instructions.')
+    instructions: str | None = Field(
+        default=None, description='Add these instructions after the default coding instructions.'
+    )
     unrestricted_filesystem: bool = Field(
         default=False, description='Let file tools reach any path on this machine, not only the project directory.'
     )

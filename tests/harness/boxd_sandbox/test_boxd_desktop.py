@@ -32,6 +32,7 @@ from pydantic_ai.workspaces import WorkspaceError, WorkspaceUnavailableError
 from pydantic_ai_harness.boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
 from pydantic_ai_harness.boxd_sandbox._desktop import INSTALL_PANEL, START_PANEL, WRITE_PANEL_SETTINGS
 from pydantic_ai_harness.computer_use import ComputerUse, DisplayAction, UnsupportedActionError
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ..computer_use.display_fakes import full_display, look_click_then_finish
 from .fake_boxd import APIStatusError, FakeBoxd
@@ -281,6 +282,59 @@ def test_the_scripts_the_panel_buttons_run_parse(tmp_path: Path) -> None:
 
     for button in ('terminal', 'browser'):
         subprocess.run(['/bin/sh', '-n', str(tmp_path / '.config/pydantic-ai-desktop' / button)], check=True)
+
+
+# Stands in for xterm, agent-browser, xdotool and xwininfo on a desktop with one window. As on boxd's desktop, the
+# window is unviewable until the next computer call shows it, and showing it puts it back at the top left. Here that
+# call comes straight after the first look that finds the window unviewable. xterm runs until it has the keyboard.
+_FAKE_DESKTOP = """#!/bin/sh
+cd "$DESKTOP_STATE"
+shown() { [ -e shown ] || { touch shown; echo 0 0 >position; false; }; }
+case ${0##*/} in
+  agent-browser) exit;;
+  xterm) until [ -e focused ]; do sleep 0.01; done; exit;;
+  xwininfo) shown && echo IsViewable; exit 0;;
+esac
+case $1 in
+  search) echo 1; exit;;
+  getdisplaygeometry) echo WIDTH=1280 HEIGHT=800; exit;;
+esac
+while [ $# -gt 0 ]; do
+  case $1 in
+    windowmove) echo "$3 $4" >position;;
+    windowsize) echo "$3 $4" >size;;
+    windowfocus) shown || exit 1; touch focused; shift 2; continue;;
+  esac
+  shift 4
+done
+"""
+
+
+@pytest.mark.parametrize('button', ['terminal', 'browser'])
+def test_each_panel_button_opens_its_window_below_the_panel_with_the_keyboard(tmp_path: Path, button: str) -> None:
+    # The fake boxd doesn't run the panel, so a fake desktop runs the button's script, and the live test
+    # `test_the_panel_opens_a_terminal_below_it_that_has_the_keyboard` validates what it encodes.
+    bin_dir, state = tmp_path / 'bin', tmp_path / 'state'
+    bin_dir.mkdir()
+    state.mkdir()
+    (bin_dir / 'fake-desktop').write_text(_FAKE_DESKTOP)
+    (bin_dir / 'fake-desktop').chmod(0o755)
+    for program in ('xterm', 'agent-browser', 'xdotool', 'xwininfo'):
+        (bin_dir / program).symlink_to('fake-desktop')
+    env = {'HOME': str(tmp_path), 'PATH': f'{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin', 'DESKTOP_STATE': str(state)}
+    subprocess.run(['/bin/sh', '-c', WRITE_PANEL_SETTINGS], check=True, env=env, timeout=READINESS_WAIT_TIMEOUT)
+
+    # Bounded, so a script that never gives the window the keyboard fails here instead of hanging the run.
+    subprocess.run(
+        [str(tmp_path / '.config/pydantic-ai-desktop' / button)], check=True, env=env, timeout=READINESS_WAIT_TIMEOUT
+    )
+
+    assert {file.name: file.read_text() for file in state.iterdir()} == {
+        'shown': '',
+        'position': '0 40\n',
+        'size': '1280 760\n',
+        'focused': '',
+    }
 
 
 @pytest.mark.parametrize(

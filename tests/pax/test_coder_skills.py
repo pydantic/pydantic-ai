@@ -19,8 +19,8 @@ from pydantic_ai.capabilities import (
     LocalWorkspace,
     WrapperCapability,
 )
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_harness.coder import Coder
@@ -43,6 +43,8 @@ from pydantic_ai_pax.plugins import (
 )
 from pydantic_ai_pax.plugins.loader import PluginLoader
 from pydantic_ai_pax.runtime.session_runtime import create_shell
+from pydantic_ai_pax.runtime.workspace_trust import WorkspaceTrust, trust_scope
+from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
 from tests.pax.dialog_script import Back, Pick, ScriptedDialogs
 
 PromptT = TypeVar('PromptT')
@@ -133,6 +135,26 @@ def commands_of(loaded: LoadedPlugin[None]) -> Commands:
 
 def has_skills(loaded: LoadedPlugin[None]) -> bool:
     return Skills in bound_types(loaded)
+
+
+def per_run_plugin(sandbox: Path | None = None) -> LoadedPlugin[None]:
+    """A plugin whose capability function returns a `LocalWorkspace` at `sandbox`, or nothing without one."""
+
+    class PerRun(Plugin[NoSettings, None]):
+        def get_capabilities(self) -> Sequence[AgentCapability[None]]:
+            return (self.for_run,)
+
+        def for_run(self, ctx: RunContext[None]) -> LocalWorkspace[None] | None:
+            return None if sandbox is None else LocalWorkspace[None](sandbox)
+
+    return load_plugin(PerRun, PluginHost[None](name='per_run', console=Console(file=io.StringIO()), settings={}))
+
+
+def first_instructions(messages: Sequence[ModelMessage]) -> str:
+    """The instructions on the first request in `messages`."""
+    request = messages[0]
+    assert isinstance(request, ModelRequest)
+    return request.instructions or ''
 
 
 class TestSkillFolders:
@@ -526,6 +548,130 @@ class TestSkillCatalog:
         assert f'- review: {description}' in (request.instructions or '')
         expected = (sandbox if supplies_workspace else project).resolve()
         assert result.response.workspace_ref == WorkspaceRef(provider='local', id=str(expected))
+
+    @pytest.mark.parametrize('plugin_function', [False, True], ids=['without-function', 'with-function'])
+    async def test_skill_catalog_with_a_plugin_capability_function(self, project: Path, plugin_function: bool) -> None:
+        write_skill(project / '.agents' / 'skills', 'review', description='Project review.')
+        coder, _ = await load_coder()
+        session = Session(
+            create_stock_agent(TestModel(call_tools=[], custom_output_text='done')),
+            deps=None,
+            workspace=project,
+            plugins=[*coder.capabilities, *(per_run_plugin().capabilities if plugin_function else ())],
+        )
+        session.trust = WorkspaceTrust(scope=trust_scope(project))
+        result = await session.prompt('go')
+
+        instructions = first_instructions(result.new_messages())
+        assert '- review: Project review.' not in instructions
+        assert 'call `list_skills`' in instructions
+
+    async def test_skill_catalog_with_a_plugin_capability_function_and_every_skill_off(self, project: Path) -> None:
+        write_skill(project / '.agents' / 'skills', 'review', description='Project review.')
+        coder, _ = await load_coder({'disabled_skills': ['review']})
+        session = Session(
+            create_stock_agent(TestModel(call_tools=[], custom_output_text='done')),
+            deps=None,
+            workspace=project,
+            plugins=[*coder.capabilities, *per_run_plugin().capabilities],
+        )
+        session.trust = WorkspaceTrust(scope=trust_scope(project))
+        result = await session.prompt('go')
+
+        instructions = first_instructions(result.new_messages())
+        assert '- review: Project review.' not in instructions
+        assert 'list_skills' not in instructions
+
+    async def test_skill_catalog_with_a_plugin_capability_function_that_supplies_a_sandbox(
+        self, tmp_path: Path, project: Path
+    ) -> None:
+        # The sandbox is attached before `Skills` reads its catalog, so the untrusted project's skills are never read.
+        write_skill(project / '.agents' / 'skills', 'review', description='Project review.')
+        sandbox = tmp_path / 'sandbox'
+        write_skill(sandbox / '.agents' / 'skills', 'review', description='Sandbox review.')
+        coder, _ = await load_coder()
+        session = Session(
+            create_stock_agent(TestModel(call_tools=[], custom_output_text='done')),
+            deps=None,
+            workspace=project,
+            plugins=[*coder.capabilities, *per_run_plugin(sandbox).capabilities],
+        )
+        session.trust = WorkspaceTrust(scope=trust_scope(project))
+        result = await session.prompt('go')
+
+        instructions = first_instructions(result.new_messages())
+        assert '- review: Project review.' not in instructions
+        assert '- review: Sandbox review.' in instructions
+        assert result.response.workspace_ref == WorkspaceRef(provider='local', id=str(sandbox.resolve()))
+
+    @pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
+    async def test_skill_catalog_with_a_plugin_capability_function_across_two_prompts(
+        self, tmp_path: Path, project: Path
+    ) -> None:
+        write_skill(project / '.agents' / 'skills', 'review', description='Project review.')
+        coder, _ = await load_coder()
+        session = Session(
+            create_stock_agent(TestModel(call_tools=[], custom_output_text='done')),
+            deps=None,
+            workspace=project,
+            plugins=[*coder.capabilities, *per_run_plugin().capabilities],
+        )
+        trust = WorkspaceTrust(scope=trust_scope(project))
+        session.trust = trust
+
+        first = await session.prompt('go')
+        trust.decide(SettingsStore(tmp_path / 'config.db'), trusted=True)
+        second = await session.prompt('again')
+
+        assert '- review: Project review.' not in first_instructions(first.new_messages())
+        assert '- review: Project review.' in first_instructions(second.new_messages())
+
+    @pytest.mark.parametrize('decided', [True, False], ids=['decided', 'no-decision'])
+    async def test_skill_files_with_a_plugin_capability_function_that_supplies_a_sandbox(
+        self, tmp_path: Path, project: Path, decided: bool
+    ) -> None:
+        sandbox = tmp_path / 'sandbox'
+        for root, guide in ((project, 'Project guide.'), (sandbox, 'Sandbox guide.')):
+            references = write_skill(root / 'team', 'deploy', description='Team deploy.') / 'references'
+            references.mkdir()
+            (references / 'guide.md').write_text(guide, encoding='utf-8')
+        read: list[object] = []
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            request = messages[-1]
+            assert isinstance(request, ModelRequest)
+            read.extend(
+                part.content
+                for part in request.parts
+                if isinstance(part, ToolReturnPart) and part.tool_name == 'read_skill_file'
+            )
+            step = sum(isinstance(message, ModelResponse) for message in messages)
+            if step == 0:
+                yield {0: DeltaToolCall(name='load_capability', json_args='{"id": "deploy"}', tool_call_id='load')}
+            elif step == 1:
+                args = '{"skill": "deploy", "path": "references/guide.md"}'
+                yield {0: DeltaToolCall(name='read_skill_file', json_args=args, tool_call_id='read')}
+            else:
+                yield 'done'
+
+        coder, _ = await load_coder()
+        session = Session(
+            create_stock_agent(FunctionModel(stream_function=stream)),
+            deps=None,
+            workspace=project,
+            plugins=[
+                Skills[None](['team'], read_files=True),
+                *coder.capabilities,
+                *per_run_plugin(sandbox).capabilities,
+            ],
+        )
+        if decided:
+            trust = WorkspaceTrust(scope=trust_scope(project))
+            trust.decide(SettingsStore(tmp_path / 'config.db'), trusted=True)
+            session.trust = trust
+        await session.prompt('go')
+
+        assert read == ['Sandbox guide.']
 
     @pytest.mark.parametrize('first', ['coder', 'own'])
     async def test_another_skills_on_the_agent_combines_with_coders(self, project: Path, first: str) -> None:
