@@ -415,7 +415,7 @@ def test_splash_restores_streams(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_config_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('XDG_CONFIG_HOME', os.fspath(tmp_path))
-    assert SettingsStore().path == tmp_path / 'pydantic-clai2/config.db'
+    assert SettingsStore().path == tmp_path / 'pydantic-ai-pax/config.db'
 
 
 async def test_model_adds_and_selects_any_model(tmp_path: Path) -> None:

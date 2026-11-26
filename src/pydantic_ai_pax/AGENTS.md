@@ -440,8 +440,9 @@ The package was `pydantic-clai2` until it became `pydantic-ai-pax`. The `pydanti
 `src/pydantic_clai2/` depends on it and alone owns `pydantic_clai2/`, which aliases
 `pydantic_clai2.X` to `pydantic_ai_pax.X` and holds the deprecated `clai2` command. `PluginSettings` renames a `pydantic_clai2`
 factory as it validates, and `SettingsStore.save_plugin` stores factories under `pydantic_clai2`,
-which older builds sharing the database still import. On-disk names (`~/.config/pydantic-clai2`, the keyring service, the
-`clai2-bleeding` release) keep the old name so existing installs keep their data.
+which older builds sharing the database still import. The keyring service and the `clai2-bleeding` release keep the old
+name so existing installs keep their data. The config and state folders moved to `pydantic-ai-pax`: `paths.py` moves a
+`pydantic-clai2` folder on first use and leaves a symlink, so older builds still share it.
 
 ## File map
 

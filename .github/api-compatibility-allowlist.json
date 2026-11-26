@@ -149,6 +149,10 @@
     {
       "path": "src/pydantic_ai_pax/pydantic_ai_pax/models/model_catalog.py",
       "symbol": "CODEX_MODELS"
+    },
+    {
+      "path": "src/pydantic_ai_pax/pydantic_ai_pax/models/key_profiles.py",
+      "symbol": "KEY_VARIABLES"
     }
   ]
 }
