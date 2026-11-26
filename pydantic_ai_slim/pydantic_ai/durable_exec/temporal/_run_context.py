@@ -100,7 +100,7 @@ def _restore_tracer(ctx: RunContext[Any], agent: AbstractAgent[Any, Any] | None)
     if 'tracer' in ctx.__dict__:
         return
     settings = agent_instrumentation_settings(agent) if agent is not None else None
-    if 'trace_include_content' in ctx.__dataclass_fields__:
+    if 'trace_include_content' in ctx.__dict__:
         ctx.trace_include_content = ctx.trace_include_content and settings is not None and settings.include_content
     ctx.__dict__['tracer'] = settings.tracer if settings is not None else NoOpTracer()
     assert isinstance(ctx, DurableRunContext)
