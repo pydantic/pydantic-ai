@@ -71,6 +71,7 @@ from pydantic_ai_pax.runtime.speculative_mode import (
     guidance,
     speculative_capabilities,
 )
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 
 def streamed(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse]) -> FunctionModel:
@@ -925,6 +926,53 @@ class TestSandboxCallDisplay:
         # Each retried call gets a failure row under its own header.
         assert len([line for line in output.getvalue().splitlines() if line.startswith('  \u23bf ')]) == 2
 
+    async def test_claimed_call_is_reported_before_a_later_cold_call(self, tmp_path: Path) -> None:
+        """The stream can reach a claim after the snippet has moved on; the claimed call still comes first."""
+        cold_started = anyio.Event()
+        lag = Hooks[object]()
+
+        @lag.on.event(SpeculativeCallClaimedEvent)
+        async def reach_claim_late(ctx: RunContext[object], event: SpeculativeCallClaimedEvent) -> None:
+            # A consumer still busy with an earlier event holds the stream back like this.
+            await cold_started.wait()
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) > 1:
+                return ModelResponse(parts=[TextPart('done')])
+            code = 'text = await read_file(path="a.py")\nawait cold()\nfinished = True\n'
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
+
+        (tmp_path / 'a.py').write_text('contents of a.py\n')
+        counters = SpeculationCounters()
+        file_system = FileSystem()
+        sandbox = speculative_capabilities(counters, (file_system,))
+        agent: Agent[None, str] = Agent(
+            streamed(respond), capabilities=[file_system, lag, *sandbox, LocalWorkspace(tmp_path)]
+        )
+
+        @agent.tool_plain
+        def cold() -> str:
+            """Run without speculating."""
+            cold_started.set()
+            return 'ran'
+
+        reports: list[tuple[str, str]] = []
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            async with agent.run_stream_events('go') as events:
+                async for event in events:
+                    if isinstance(event, SandboxCallStartedEvent):
+                        reports.append(('started', event.call.tool_name))
+                    elif isinstance(event, SandboxCallFinishedEvent):
+                        reports.append(('finished', event.result.tool_name))
+
+        assert counters.hits == 1
+        assert reports == [
+            ('started', 'read_file'),
+            ('finished', 'read_file'),
+            ('started', 'cold'),
+            ('finished', 'cold'),
+        ]
+
     async def test_launch_evicted_while_running_is_not_held(self) -> None:
         show = ShowSandboxCalls[None]()
         call = ToolCallPart(tool_name='read_file', args={'path': 'a.py'}, tool_call_id='parent__spec_1')
@@ -940,8 +988,13 @@ class TestSandboxCallDisplay:
 
         tool_def = ToolDefinition(name='read_file')
         assert await show.wrap_tool_execute(context(), call=call, tool_def=tool_def, args={}, handler=late) == 'late'
-        # Nothing was held, so the claim reports nothing; emitting would fail, as this context has no stream.
-        await show.on_event(context(), event=claimed(ready=True, elapsed_ms=1, launch_id=call.tool_call_id))
+        claim = claimed(ready=True, elapsed_ms=1, launch_id=call.tool_call_id)
+
+        async def stream() -> AsyncIterator[SpeculativeCallClaimedEvent]:
+            yield claim
+
+        # Nothing was held, so the claim passes through without a report.
+        assert [event async for event in show.wrap_run_event_stream(context(), stream=stream())] == [claim]
 
 
 async def test_guidance_mentions_raw_triple_quoted_multiline_shell_commands(tmp_path: Path) -> None:

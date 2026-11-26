@@ -27,7 +27,7 @@ With `ReplStates`, the session's REPL outlives the run: `CodeMode` restores it o
 the guidance says so only to runs whose state is kept.
 """
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncIterable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal, TypeAlias, TypeGuard
 
@@ -479,6 +479,10 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
     snippet claims it; an evicted launch is dropped unseen. The result is always held by then:
     harness `SpeculationCoordinator.adopt` awaits the launch, which runs this hook to completion,
     before it emits `SpeculativeCallClaimedEvent`, even when the launch was not ready at the claim.
+
+    The claimed report follows the claim in the event stream, not in `on_event`: the stream can
+    reach the claim after the snippet has moved on, and an event emitted from `on_event` lands
+    after the later calls' reports.
     """
 
     _launched: dict[str, tuple[ToolCallPart, ToolReturnPart]] = field(
@@ -540,17 +544,24 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
             await ctx.emit(SandboxCallFinishedEvent(tool_call_id=call.tool_call_id, result=result))
 
     async def on_event(self, ctx: RunContext[AgentDepsT], *, event: AgentStreamEvent) -> None:
-        """Report a claimed launch as the claiming call; forget an evicted one."""
+        """Forget an evicted launch."""
         if isinstance(event, SpeculativeCallEvictedEvent):
             if event.state == 'pending':
                 self._evicted.add(event.launch_id)
             else:
                 self._launched.pop(event.launch_id, None)
-        elif isinstance(event, SpeculativeCallClaimedEvent) and event.launch_id in self._launched:
-            call, result = self._launched.pop(event.launch_id)
-            call_id = event.nested_tool_call_id
-            await ctx.emit(SandboxCallStartedEvent(tool_call_id=call_id, call=replace(call, tool_call_id=call_id)))
-            await ctx.emit(SandboxCallFinishedEvent(tool_call_id=call_id, result=replace(result, tool_call_id=call_id)))
+
+    async def wrap_run_event_stream(
+        self, ctx: RunContext[AgentDepsT], *, stream: AsyncIterable[AgentStreamEvent]
+    ) -> AsyncIterable[AgentStreamEvent]:
+        """Report a claimed launch as the claiming call, right after its claim."""
+        async for event in stream:
+            yield event
+            if isinstance(event, SpeculativeCallClaimedEvent) and event.launch_id in self._launched:
+                call, result = self._launched.pop(event.launch_id)
+                call_id = event.nested_tool_call_id
+                yield SandboxCallStartedEvent(tool_call_id=call_id, call=replace(call, tool_call_id=call_id))
+                yield SandboxCallFinishedEvent(tool_call_id=call_id, result=replace(result, tool_call_id=call_id))
 
 
 def speculative_capabilities(
