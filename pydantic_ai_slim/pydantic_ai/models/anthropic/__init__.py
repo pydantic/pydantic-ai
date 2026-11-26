@@ -454,13 +454,6 @@ _CODE_EXECUTION_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedr
 # The computer use tool has recorded runs only on the Claude API and both Bedrock APIs
 # (`tests/harness/computer_use/test_anthropic_live.py`), so these clients get the function tool.
 _COMPUTER_UNSUPPORTED_CLIENTS = (AsyncAnthropicVertex, AsyncAnthropicFoundry, AsyncAnthropicAWS)
-# Mid-conversation `{'role': 'system'}` messages are published as available on the Anthropic API,
-# Amazon Bedrock and Google Cloud, which leaves Microsoft Foundry as the only transport that has to
-# fall back to the `<system>`-tagged user rendering. Verified on Bedrock rather than assumed: with
-# `us.anthropic.claude-opus-4-8` the entry is served and acted on. An earlier version of this tuple
-# excluded Bedrock and Vertex on the strength of a Bedrock test that used `claude-sonnet-5`, a model
-# that ignores the entry on *every* transport — which measured the model, not the transport.
-_INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS = (AsyncAnthropicFoundry,)
 # Per-message effort (`mid-conversation-output-config-2026-07-01`) is documented for the Claude API, Google Cloud
 # and Amazon Bedrock. Foundry isn't listed, so it sends effort changes as the request-level setting. Both Bedrock
 # APIs serve a narrower model list, which `AnthropicModel.profile` applies. The Bedrock Messages API
@@ -1011,9 +1004,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         Anthropic web-tool availability depends on both model support and the client/platform, so the
         profile's `supported_native_tools` and `anthropic_supports_dynamic_filtering` are narrowed here
-        for clients that don't support them (e.g. Bedrock, Vertex). `supports_inline_system_prompts` is
-        narrowed the same way, and for the same reason: serving a `{'role': 'system'}` entry is a fact
-        about the transport as much as about the model. Thinking-block binding is likewise narrowed, but
+        for clients that don't support them (e.g. Bedrock, Vertex). Thinking-block binding is likewise narrowed, but
         by client class rather than by base URL: its beta and drop-block retry are verified against
         Anthropic's Messages API, which a proxied or gateway `AsyncAnthropic` still reaches.
         """
@@ -1031,12 +1022,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
             client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
         )
-        # Narrowed rather than handled in `_map_system_prompt_part` so `Model.prepare_messages` stays the only place
-        # that knows the `<system>`-tagged fallback: where this is `False`, the mid-conversation parts are
-        # rewritten before the adapter ever sees them.
-        supports_inline_system_prompts = _profile.get('supports_inline_system_prompts', False) and not isinstance(
-            client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS
-        )
         supports_mid_conversation_effort = (
             _profile.get('supports_mid_conversation_effort', False)
             and not isinstance(client, _MID_CONVERSATION_EFFORT_UNSUPPORTED_CLIENTS)
@@ -1050,12 +1035,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             AnthropicModelProfile(
                 supported_native_tools=supported_native_tools,
                 anthropic_supports_dynamic_filtering=supports_dynamic_filtering,
-                supports_inline_system_prompts=supports_inline_system_prompts,
                 supports_mid_conversation_effort=supports_mid_conversation_effort,
-                # A request-scoped entry is a `{'role': 'system'}` entry, so it needs a transport that serves the
-                # role, but not a model whose other system messages use it: a sealed model's are `<system>` blocks.
-                supports_request_scoped_system_prompts=_profile.get('supports_request_scoped_system_prompts', False)
-                and not isinstance(client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS),
                 anthropic_binds_thinking_blocks=_profile.get('anthropic_binds_thinking_blocks', False)
                 and not isinstance(client, _THINKING_BINDING_UNSUPPORTED_CLIENTS),
                 anthropic_accepts_file_and_container_ids=_profile.get('anthropic_accepts_file_and_container_ids', True)
@@ -1178,15 +1158,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 ),
             )
         return profile
-
-    @property
-    def tool_addition_mode(self) -> Literal['by_reference'] | None:
-        """The effective addition mode, narrowed for transports without inline system messages."""
-        mode = super().tool_addition_mode
-        provider = self.provider
-        if provider is not None and isinstance(provider.client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS):
-            return None
-        return mode if mode == 'by_reference' else None
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -3284,8 +3255,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         request_context: _MapModelRequestContext,
         map_context: _MapMessagesContext,
     ) -> None:
-        # Narrowed to transports that serve the role, like `supports_inline_system_prompts` below. Where
-        # this is `False`, `prepare_messages` has already left out every request-scoped part whose
+        # Where this is `False`, `prepare_messages` has already left out every request-scoped part whose
         # request has been answered.
         if part.scope == 'request' and self.profile.get('supports_request_scoped_system_prompts', False):
             # Its own entry, so `clear_at` covers it alone. It needs no cache-point
@@ -3394,8 +3364,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         tool_availability_blocks: list[dict[str, Any]],
         map_context: _MapMessagesContext,
     ) -> None:
-        # `tool_addition_mode` is already narrowed for transports that can't serve the `system` role, so
-        # this covers both halves of the gate — and it's the same flag the beta header is added under.
+        # The same flag the beta header is added under.
         if self.tool_addition_mode != 'by_reference':
             # `prepare_messages` projects the delta onto the local tool-search exchange
             # for every model and transport that can't render it natively, so arriving
