@@ -1184,7 +1184,7 @@ settings using the former import paths are redirected to the new modules.
 | `compaction` | `pydantic_ai_pax.builtin_plugins.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
 | `refinement` | `pydantic_ai_pax.builtin_plugins.refinement` | `{}` | `/refine`: the model reviews and revises its last answer |
 | `hooks` | `pydantic_ai_pax.builtin_plugins.hooks` | `{}` | runs your commands before and after tool calls and turns; see [lifecycle hooks](#lifecycle-hooks-commands-from-settings) |
-| `sandbox` | `pydantic_ai_pax.builtin_plugins.sandbox` | `{}` | `/sandbox`: runs a new conversation in a sandbox, a VM on this machine (`local smol` or `local boxlite`) or a cloud one, signed in to GitHub as your `gh` login; see [Sandboxes](docs/reference.md#sandboxes-sandbox) |
+| `sandbox` | `pydantic_ai_pax.builtin_plugins.sandbox` | `{}` | `/sandbox`: runs a new conversation in a sandbox, a VM on this machine (`local smol` or `local boxlite`) or a cloud one, signed in to GitHub as your `gh` login; `/computer-use` lets the model use its desktop; see [Sandboxes](docs/reference.md#sandboxes-sandbox) and [Computer use](docs/reference.md#computer-use-computer-use) |
 | `slack` (off until enabled) | `pydantic_ai_pax.builtin_plugins.slack` | `{}` | Slack's hosted tools as you, read-only by default; see [below](#slack-your-slack-workspace-as-you) |
 
 [`day_ai`](#day_ai-day-ai-crm-tools) and [`grain`](#grain-meetings-with-a-saved-sign-in)
@@ -2695,7 +2695,7 @@ contributes nothing:
 | `get_capabilities()` | capabilities (or per-run capability functions) added to every agent run |
 | `get_commands()` | `/commands` |
 | `render(event)` | a drawing for a stream event, or `None` for the default |
-| `get_status_segments()` | text in the main footer's configurable `plugins` group |
+| `get_status_segments()` | text or links in the main footer's configurable `plugins` group |
 | `get_spinners()` | working animations offered by `/spinner` |
 | `get_model_providers()` | `PREFIX:NAME` models Pax can run |
 | `get_side_panels()` | pages the web UI shows beside the conversation |
@@ -3673,7 +3673,8 @@ changes, or other tool side effects. It never replays tools or fires turn hooks.
 
 ### Add to the status row: `get_status_segments()`
 
-Each segment is a function that takes no arguments and returns a short string.
+Each segment is a function that takes no arguments and returns a short string,
+or a `StatusLink` to show a link.
 All plugin fragments form the `plugins` group in `display.footer_fields`, in
 registration order. The default layout places it after `activity`. Users can
 hide or move the group without unloading plugins; individual fragments do not
@@ -3705,6 +3706,24 @@ cost, working directory, and other optional fields, and before the model; see th
 text only; the colours in the row belong to Pax. A fragment that raises shows
 its error name in the row instead, so one broken plugin cannot take the footer
 down.
+
+Return `StatusLink(text=..., url=...)` from `pydantic_ai_pax.ui.rendering.status`
+to show a link. The row shows the text followed by `↗`, and a click on it opens
+the `http` or `https` URL in your browser. Other places that show the row, such
+as the line prompt, show only the text. The built-in `sandbox` plugin uses one
+for `watch live ↗` while computer use is on.
+
+```python
+from collections.abc import Sequence
+
+from pydantic_ai_pax.plugins import Plugin
+from pydantic_ai_pax.ui.rendering.status import StatusLink, StatusSegment
+
+
+class Docs(Plugin):
+    def get_status_segments(self) -> Sequence[StatusSegment]:
+        return (lambda: StatusLink(text='docs', url='https://pydantic.dev/docs/ai/'),)
+```
 
 ### Show a page beside the conversation: `get_side_panels()`
 
@@ -4147,9 +4166,9 @@ A `LiveSession` is one live session:
 | `wait_for_user(reason)` | mark a user wait, such as an approval dialog, until you call the idempotent function it returns; pair the call with `finally` so cancellation cannot leave a stale wait |
 | `setting(key)` | a Pax setting's value in it, as its `host.setting` reads it, with its own `model` and `run.*` |
 | `queued` | how many inputs wait for its running turn or command to end |
-| `queue` | those inputs, oldest first, each a `QueuedInput` with an `id` (stable while it waits, also when the terminal starts or stops showing the session) and its `text`; the same queue the terminal lists above its prompt |
-| `edit_queued(input_id, text)` | rewrite a waiting input in place, as Enter on a recalled one at the prompt does; raises `LookupError` once it has run or was removed, and `ValueError` for blank text |
-| `remove_queued(input_id)` | drop a waiting input; raises `LookupError` once it has run or was removed |
+| `queue` | those inputs, oldest first, each a `QueuedInput` with an `id` (stable while it waits, also when the terminal starts or stops showing the session) and its `text`; the same queue the terminal lists above its prompt. An input the terminal is editing (recalled with Up) keeps its place in the list but does not run until the edit ends, so the run takes the inputs around it; if nothing else is queued when the session goes idle, it leaves the queue and becomes the terminal's unsent draft |
+| `edit_queued(input_id, text)` | rewrite a waiting input in place, as Enter on a recalled one at the prompt does; raises `LookupError` once it has run, was removed, or became the terminal's draft, and `ValueError` for blank text |
+| `remove_queued(input_id)` | drop a waiting input; raises `LookupError` once it has run or was removed. Removing one the terminal is editing ends the edit and leaves the edited text in the terminal's input, unsent |
 | `steer(text)` | send `text` to its running turn now, as steering at the prompt does; its model reads it at its next request. `False` when nothing takes it: no turn runs, or it is a `/command` or `!` shell line |
 | `watchers` | how many `watch()` calls have not stopped yet |
 | `watch()` | count a watcher, such as a browser showing it, until you call the function it returns; a watched session is never closed for being idle |

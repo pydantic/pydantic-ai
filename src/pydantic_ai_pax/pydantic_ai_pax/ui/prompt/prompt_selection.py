@@ -4,7 +4,7 @@ The panel reports mouse buttons to scroll with the wheel, which stops most termi
 selecting text themselves. So the selection happens here instead, as in a terminal's own: a
 left-button drag in reading order, a double-click on a word, a triple-click on a line, and a drag
 after either extends by words or lines. The release copies it out. Reporting also stops terminals
-opening links, so a click on a URL finds it in the painted cells to open.
+opening links, so a click opens the hyperlink painted under it, or a URL read from the painted cells.
 """
 
 import math
@@ -13,7 +13,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TypeAlias
 
-from termflow.live import ScreenBuffer
+from termflow.ansi.utils import visible_length
+from termflow.live import Region, ScreenBuffer
 from termflow.live.buffer import REVERSE, WIDE_TAIL
 
 Cell: TypeAlias = tuple[int, int]
@@ -34,6 +35,10 @@ REPEAT_INTERVAL = 0.5
 """Seconds from one press to the next on the same cell that make a double- or triple-click, as in Ghostty."""
 WORD_BOUNDARIES = frozenset('\'"│`|:;,()[]{}<>$')
 """With blanks, the characters a double-click's word stops at: Ghostty's default `selection-word-chars`."""
+LINK_START = '\x1b]8;'
+LINK_END = '\x1b]8;;\x1b\\'
+_LINK = re.compile(r'\x1b\]8;[^;\x07\x1b]*;([^\x07\x1b]*)(?:\x07|\x1b\\)')
+"""An OSC 8 hyperlink's start (its URL) or end (no URL), as Rich and `hyperlink` write them."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -160,6 +165,46 @@ class Selection:
                 text += (line + cells).rstrip() + '\n'
                 line = ''
         return text.rstrip('\n')
+
+
+@dataclass(frozen=True, kw_only=True)
+class PaintedLink:
+    """A hyperlink's cells on one painted row: columns `start` up to `end`."""
+
+    row: int
+    start: int
+    end: int
+    url: str
+
+
+def hyperlink(text: str, *, url: str) -> str:
+    """`text` as an OSC 8 hyperlink to `url`."""
+    return f'{LINK_START};{url}\x1b\\{text}{LINK_END}'
+
+
+def paint_row(region: Region, *, y: int, row: str, links: list[PaintedLink]) -> None:
+    """Paint an ANSI `row` at `y`, adding the cells its `http(s)` hyperlinks cover to `links`.
+
+    Painted cells drop hyperlinks, so `links` keeps them. Only for rows the shell paints, as a click opens these
+    without showing where they go. Other schemes are left to the terminal.
+    """
+    region.ansi(0, y, row)
+    if LINK_START not in row:
+        return
+    url, start = '', 0
+    # The added end closes a link the row leaves open, as a cut one does.
+    for match in _LINK.finditer(row + LINK_END):
+        column = visible_length(row[: match.start()])
+        if url.startswith(('http://', 'https://')) and column > start:
+            x = region.rect.x
+            links.append(PaintedLink(row=region.rect.y + y, start=x + start, end=x + column, url=url))
+        url, start = match[1], column
+
+
+def link_at(links: Sequence[PaintedLink], cell: Cell) -> str | None:
+    """The URL of the hyperlink painted on `cell`, if any."""
+    row, column = cell
+    return next((link.url for link in links if link.row == row and link.start <= column < link.end), None)
 
 
 def trim_url(url: str) -> str:
