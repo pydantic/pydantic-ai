@@ -11,7 +11,7 @@ from opentelemetry.util.types import AttributeValue
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, Instrumentation
-from pydantic_ai.messages import ToolReturn, ToolReturnPart
+from pydantic_ai.messages import ToolReturn, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.tool_output_limits import (
     Band,
@@ -21,7 +21,6 @@ from pydantic_ai_harness.tool_output_limits import (
     ToolOutputLimits,
     Truncate,
 )
-from tests.harness._recording_durability import RecordingDurability
 from tests.harness.conftest import Instrumented
 
 
@@ -123,7 +122,6 @@ class TestToolOutputLimitsTelemetry:
                         'tool_output_limits.reduced_size': 50,
                         'tool_output_limits.size_unit': 'chars',
                         'tool_output_limits.fallback_from': 'summarize',
-                        'tool_output_limits.fallback_error': 'ValueError',
                     }
                 ),
                 id='failed-summary',
@@ -138,7 +136,6 @@ class TestToolOutputLimitsTelemetry:
                     'tool_output_limits.reduced_size': 500,
                     'tool_output_limits.size_unit': 'chars',
                     'tool_output_limits.fallback_from': 'spill',
-                    'tool_output_limits.fallback_error': 'OSError',
                 },
                 id='failed-spill-falls-back',
             ),
@@ -153,7 +150,6 @@ class TestToolOutputLimitsTelemetry:
                         'tool_output_limits.reduced_size': 50,
                         'tool_output_limits.size_unit': 'chars',
                         'tool_output_limits.fallback_from': 'spill',
-                        'tool_output_limits.fallback_error': 'OSError',
                     }
                 ),
                 id='chain-of-failures',
@@ -162,7 +158,7 @@ class TestToolOutputLimitsTelemetry:
             pytest.param(
                 ToolOutputLimits[object](store=FailingStore()),
                 b'\x00' * 200_000,
-                {'tool_output_limits.fallback_from': 'spill', 'tool_output_limits.fallback_error': 'OSError'},
+                {'tool_output_limits.fallback_from': 'spill'},
                 id='binary-store-fails',
             ),
             pytest.param(
@@ -192,7 +188,6 @@ class TestToolOutputLimitsTelemetry:
                         'tool_output_limits.content.reduced_size': 4000,
                         'tool_output_limits.content.size_unit': 'chars',
                         'tool_output_limits.content.fallback_from': 'spill',
-                        'tool_output_limits.content.fallback_error': 'OSError',
                     }
                 ),
                 id='separate-content-store-fails',
@@ -212,83 +207,54 @@ class TestToolOutputLimitsTelemetry:
 
         assert limits_attributes(exporter) == expected
 
-    @pytest.mark.parametrize('include_content', [False, True])
-    async def test_a_spill_records_its_handle_only_with_content(
-        self, include_content: bool, tmp_path: Path, instrumented: Instrumented
+    async def test_a_spilled_value_and_content_are_recorded_side_by_side(
+        self, tmp_path: Path, instrumented: Instrumented
     ):
         spill = ToolOutputLimits[object](
             bands=[Band(over=100, action=Spill())], store=LocalFileOverflowStore(base_dir=tmp_path)
         )
-        instrumentation, exporter = instrumented(include_content)
-        result = await agent_with_tool(spill, BINARY, instrumentation).run('go')
+        instrumentation, exporter = instrumented(False)
+        result = await agent_with_tool(spill, ToolReturn(return_value=BINARY, content='y' * 300), instrumentation).run(
+            'go'
+        )
+
+        parts = [part for message in result.all_messages() for part in message.parts]
+        [value_preview] = [part.content for part in parts if isinstance(part, ToolReturnPart)]
+        [content_preview] = [
+            part.content for part in parts if isinstance(part, UserPromptPart) and part.content != 'go'
+        ]
+        assert isinstance(value_preview, str) and isinstance(content_preview, str)
+        assert limits_attributes(exporter) == {
+            'tool_output_limits.action': 'spill',
+            'tool_output_limits.original_size': 500,
+            'tool_output_limits.reduced_size': len(value_preview.encode()),
+            'tool_output_limits.size_unit': 'bytes',
+            'tool_output_limits.content.action': 'spill',
+            'tool_output_limits.content.original_size': 300,
+            'tool_output_limits.content.reduced_size': len(content_preview),
+            'tool_output_limits.content.size_unit': 'chars',
+        }
+
+    async def test_a_tokenizer_that_rejects_the_replacement_leaves_the_result_alone(self, instrumented: Instrumented):
+        """Measuring the replacement is for the trace only, so its failure drops `reduced_size`, not the run."""
+
+        def tokenizer(text: str) -> int:
+            if text != 'x' * 2_000:
+                raise ValueError('unknown token')
+            return 500
+
+        tool_output_limits = ToolOutputLimits[object](
+            bands=[Band(over=100, action=Truncate(max_chars=100))], over_tokens=True, tokenizer=tokenizer
+        )
+        instrumentation, exporter = instrumented(False)
+        result = await agent_with_tool(tool_output_limits, 'x' * 2_000, instrumentation).run('go')
 
         [part] = [
             part for message in result.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)
         ]
-        assert part.metadata is not None
-        handle = {'tool_output_limits.handle': part.metadata['overflow_handle']} if include_content else {}
-        assert limits_attributes(exporter) == {
-            'tool_output_limits.action': 'spill',
-            'tool_output_limits.original_size': 500,
-            'tool_output_limits.reduced_size': 322,
-            'tool_output_limits.size_unit': 'bytes',
-            **handle,
-        }
-
-    @pytest.mark.parametrize('include_content', [False, True])
-    async def test_a_spilled_content_unit_records_its_handle_under_content_only_with_content(
-        self, include_content: bool, tmp_path: Path, instrumented: Instrumented
-    ):
-        spill = ToolOutputLimits[object](
-            bands=[Band(over=100, action=Spill())], store=LocalFileOverflowStore(base_dir=tmp_path)
-        )
-        instrumentation, exporter = instrumented(include_content)
-        await agent_with_tool(spill, ToolReturn(return_value='small', content='y' * 300), instrumentation).run('go')
-
-        attributes = limits_attributes(exporter)
-        handle = attributes.pop('tool_output_limits.content.handle', None)
-        assert isinstance(handle, str) is include_content
-        assert attributes == snapshot(
-            {
-                'tool_output_limits.content.action': 'spill',
-                'tool_output_limits.content.original_size': 300,
-                'tool_output_limits.content.reduced_size': 603,
-                'tool_output_limits.content.size_unit': 'chars',
-            }
-        )
-
-    @pytest.mark.parametrize(
-        ('journaled', 'error'),
-        [
-            pytest.param({'error': 'OSError'}, {'tool_output_limits.fallback_error': 'OSError'}, id='this-version'),
-            pytest.param(None, {}, id='earlier-version'),
-        ],
-    )
-    async def test_a_replayed_spill_failure_falls_back(
-        self, journaled: object, error: dict[str, str], instrumented: Instrumented
-    ):
-        """A replay decodes a journaled spill failure; an earlier version journaled it as `None`, with no error type."""
-        durability = RecordingDurability(
-            journal={'replayed__capability__tool_output_limits.spill': {'value': journaled, 'usage_delta': {}}}
-        )
-        instrumentation, exporter = instrumented(False)
-        agent: Agent[object, str] = Agent(
-            TestModel(call_tools=['big_tool']),
-            name='replayed',
-            capabilities=[limits(Spill(then=Truncate(max_chars=50))), durability, instrumentation],
-        )
-
-        @agent.tool_plain
-        def big_tool() -> str:
-            return TEXT
-
-        await agent.run('go')
-
+        assert len(part.model_response_str()) == 100
         assert limits_attributes(exporter) == {
             'tool_output_limits.action': 'truncate',
             'tool_output_limits.original_size': 500,
-            'tool_output_limits.reduced_size': 50,
-            'tool_output_limits.size_unit': 'chars',
-            'tool_output_limits.fallback_from': 'spill',
-            **error,
+            'tool_output_limits.size_unit': 'tokens',
         }
