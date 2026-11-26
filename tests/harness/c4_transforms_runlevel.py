@@ -15,6 +15,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai._utils import await_maybe
 from pydantic_ai.capabilities import HistoryProcessor, ProcessHistory
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
@@ -33,8 +34,8 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.compaction import SlidingWindowCompaction, SummarizingCompaction
 
-from ..append_only import drain_events
-from .test_capability_routes import RouteRun, _built, _Script  # pyright: ignore[reportPrivateUsage]
+from ..append_only import OneCallPerResponse, drain_events
+from .test_capability_routes import RouteRun, _built  # pyright: ignore[reportPrivateUsage]
 from .test_history_transformations import Check, Exempt, NativeRun, Transform, Transformation
 
 
@@ -61,24 +62,26 @@ def is_receipt(part: ModelRequestPart) -> bool:
 async def _model_fallback_switch(native: RouteRun, directory: Path) -> list[ModelMessage]:
     """The case rerun with a `FallbackModel` whose primary fails from its second request, so the backup finishes it."""
     assert isinstance(native, NativeRun)
-    script = _Script(native.calls.made)
+    backup = OneCallPerResponse(native.calls.made).model
+    assert backup.function is not None and backup.stream_function is not None
+    scripted, scripted_stream = backup.function, backup.stream_function
 
     def failing(step: int) -> None:
         if step >= 1:
             raise ModelHTTPError(status_code=503, model_name='primary', body='overloaded')
 
-    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         failing(sum(isinstance(message, ModelResponse) for message in messages))
-        return script.respond(messages, info)
+        return await await_maybe(scripted(messages, info))
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         failing(sum(isinstance(message, ModelResponse) for message in messages))
-        async for chunk in script.stream(messages, info):
+        async for chunk in scripted_stream(messages, info):
             yield chunk
 
     primary = FunctionModel(respond, stream_function=stream, model_name='primary')
     capabilities, observer = await _built(native.calls, directory)
-    agent = Agent(FallbackModel(primary, script.model), deps_type=type(None), capabilities=[*capabilities, observer])
+    agent = Agent(FallbackModel(primary, backup), deps_type=type(None), capabilities=[*capabilities, observer])
     result = await agent.run('go', event_stream_handler=drain_events)
     return result.all_messages()
 
@@ -138,7 +141,7 @@ async def run_with_processor(
     native: NativeRun, directory: Path, processor: HistoryProcessor[None]
 ) -> list[ModelMessage]:
     """The case rerun with a `ProcessHistory` capability, which also rewrites the history the run keeps."""
-    script = _Script(native.calls.made)
+    script = OneCallPerResponse(native.calls.made)
     capabilities, observer = await _built(native.calls, directory)
     capability = ProcessHistory[None](processor)
     agent = Agent(script.model, deps_type=type(None), capabilities=[*capabilities, observer, capability])

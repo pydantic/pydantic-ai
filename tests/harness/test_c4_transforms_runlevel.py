@@ -37,10 +37,9 @@ async def test_the_fallback_switch_finishes_on_the_backup(tmp_path: Path) -> Non
     native, output = await _transformed('model_fallback_switch', tmp_path)
     responses = [message for message in output if isinstance(message, ModelResponse)]
     assert len(responses) == sum(isinstance(message, ModelResponse) for message in native.messages)
-    assert [response.model_name for response in responses] == [
-        'primary',
-        *['function:respond:stream'] * (len(responses) - 1),
-    ]
+    first, *rest = [response.model_name for response in responses]
+    assert first == 'primary'
+    assert rest and 'primary' not in rest
 
 
 async def test_summarizing_replaces_history_with_a_summary(tmp_path: Path) -> None:
