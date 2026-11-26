@@ -282,6 +282,7 @@ TEMPORAL_ACTIVITY_NAMES = {
     'agent__compat__dynamic_toolset__dynamic__call_tool',
     'agent__compat__dynamic_toolset__dynamic__validate_args',
     'agent__compat__capability__compat__operation',
+    'agent__compat__external_event_ask',
 }
 
 TEMPORAL_CHILD_WORKFLOW_NAMES = {
@@ -846,6 +847,7 @@ def test_call_tool_result_carries_every_tool_manager_control_flow_exception() ->
                     'metadata': None,
                     'timeout': None,
                     'durable': None,
+                    'ui_visibility': None,
                     'defer_loading': False,
                     'unless_native': None,
                     'with_native': None,

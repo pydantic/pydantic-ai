@@ -33,6 +33,13 @@ Verify that the PR links an issue.
   job to its own paths and keeps the aggregate check green when that job is
   skipped. See `capability-authoring.md` "CI And Dependency Footprint".
 
+## Conformance
+
+- The capability's `CASES` entry passes every area in
+  [Capability Conformance](../../../agent_docs/capability-conformance.md), or
+  carries an exemption with a reason you checked. A description saying the
+  capability handles an area doesn't count.
+
 ## Executable Boundaries
 
 Apply these checks when a change invokes a command/parser, process/container,

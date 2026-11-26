@@ -1,0 +1,90 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "202"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          thinking_summaries: auto
+        store: false
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: What is 2+2? Reply with just the number.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=3496
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 106
+          total_input_tokens: 14
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 14
+          total_cached_tokens: 0
+          total_output_tokens: 1
+          total_tool_use_tokens: 0
+          total_thought_tokens: 91
+          initial_input_tokens: 13
+        created: 2026-11-06T02:44:00Z
+        updated: 2026-11-06T02:44:00Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            EpwDCpkDAWkUfRPHd1MdREAJMrXJ7o9MIdFmSdC4Kzjwvxi+NPPUeom95mrWxFaZuJh/yoQsu6qR5vfYZO3aQ0mGVLHikPNUytoLtZrl3Vm/X5fncyn1UMvTFj0V8hcqHjOgw+mMwj6JiX/p70MyADZ6VE9Wb5FyQRw0zo+KXZpFpFTbTXoWMt7CQPs1mHPjVnDu2bnSICP9TPNxyPxazpbVMNHNpLZixTvvTMXP2BU9ZYQ79Nml9TE/BrhZVoy6TYptow2AYexhyFDNn/dEJy9k5Epm+9F88RNnNDVUgKfy2ZzlYIeBTcrjDTObDo7nUk7+FTDmIZBzOU5zFtuq7yvwwJHFfGeR28DSdFcTvnVXciJebcmi/VNSmo4gD4yJtqQ95eKGZ1JHm0xRhZLSJ1BUdzyBgIUYIHcBLESmo2ZBdOTsDktByZX7ddl+K0c6ft2j6lLkB7H84jU7p7LKGOeSdA7diz8hBihTKmehqryP755okJWQvVNp6hpJC556oSd9uSQG1++7H9rQ9UUiozlpQeSTaj2nEjoNeRwnxg==
+          summary:
+          - text: |+
+              Okay, here's my process, distilled into a first-person summary, keeping in mind the user is a knowledgeable expert:
+
+              **Answering the Direct Numerical Query**
+
+              Alright, I've got a straightforward request here: "What is 2+2?" Seems simple enough. The key here is the specificity. The user has explicitly requested *just* the number as a response. I need to be precise.
+
+              First, I need to execute the calculation. 2 + 2 is a basic arithmetic operation, the answer, of course, is 4.
+
+              Next, I review the user's instructions. The emphasis is on *just* providing the number. No introductory phrases, no explanations, no fancy formatting. Just the bare numerical answer.
+
+              Therefore, the final output needs to be "4". Succinct, direct, and exactly what's requested. That's the most efficient and least error-prone approach for this type of request.
+
+
+            type: text
+          type: thought
+        - content:
+          - text: "4"
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:44:00.344020+00:00

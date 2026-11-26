@@ -71,6 +71,7 @@ from ...computer_use import COMPUTER_KIND
 from ...durable_exec._operation_backend import in_durable_unit
 from ...exceptions import (
     ModelConnectionError,
+    ModelEmptyResponseError,
     SuspendedResponseExpired,
     UnsupportedSettingWarning,
     UserError,
@@ -461,6 +462,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     @property
     def base_url(self) -> str:
         return str(self.client.base_url)
+
+    @property
+    def _rewrite_instructions_outside_prefix(self) -> bool:
+        # With this flag, dynamic rewrite-mode instructions stay in the top-level field, which the model reads after
+        # `input`.
+        return self.profile.get('openai_responses_stable_instructions_as_input', False)
 
     @property
     def batch_max_requests(self) -> int | None:
@@ -1435,7 +1442,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             # Covered by the Codex forced-stream path, which drains empty streams through here.
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+            raise ModelEmptyResponseError(self.model_name, 'Streamed response ended without content or tool calls')
         if isinstance(first_chunk, responses.ResponseErrorEvent):
             # Raise while the stream is being opened, so `FallbackModel` can still fall back on it.
             raise response_error(self.model_name, first_chunk.code, first_chunk.message, in_stream=True)

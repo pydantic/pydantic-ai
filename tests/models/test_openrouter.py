@@ -22,17 +22,15 @@ from pydantic_ai import (
     ModelConnectionError,
     ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelInvalidResponseError,
     ModelMessage,
     ModelNotFoundError,
-    ModelQuotaExceededError,
-    ModelRateLimitError,
     ModelRequest,
     ModelRequestRejectedError,
     ModelResponse,
     ModelServerError,
     ModelSettingsDeltaPart,
     ModelTimeoutError,
-    ModelUnavailableError,
     NativeOutput,
     PartEndEvent,
     PartStartEvent,
@@ -565,7 +563,7 @@ _CONTEXT_WINDOW_RAW = json.dumps(
 )
 _DEEPLY_NESTED_RAW = '[' * 1_000 + ']' * 1_000
 """Past `pydantic_core.from_json`'s depth limit, and deep enough that `json.loads` raises `RecursionError` on Python 3.11."""
-_OpenRouterModelClass = Literal['OpenRouterModel', 'OpenAIChatModel', 'OpenAIResponsesModel']
+_OpenRouterModelClass = Literal['OpenAIChatModel', 'OpenAIResponsesModel']
 """A model class that talks to OpenRouter, by name: the classes aren't defined when `openai` isn't installed."""
 
 
@@ -574,10 +572,9 @@ async def _openrouter_status_error(
     error_body: dict[str, object],
     *,
     stream: bool,
-    model_class: _OpenRouterModelClass = 'OpenRouterModel',
+    model_class: _OpenRouterModelClass,
 ) -> ModelAPIError:
     model_classes: dict[_OpenRouterModelClass, type[OpenAIChatModel] | type[OpenAIResponsesModel]] = {
-        'OpenRouterModel': OpenRouterModel,
         'OpenAIChatModel': OpenAIChatModel,
         'OpenAIResponsesModel': OpenAIResponsesModel,
     }
@@ -636,70 +633,6 @@ async def test_openrouter_context_window_exceeded_via_metadata_raw(
     assert error.body == cause.body
 
 
-@pytest.mark.vcr(ignore_hosts=['openrouter.example'])
-@pytest.mark.parametrize('stream', [False, True], ids=['run', 'run_stream'])
-@pytest.mark.parametrize(
-    ('status_code', 'error_body', 'expected_error'),
-    [
-        pytest.param(401, {'code': 401, 'metadata': {'raw': _CONTEXT_WINDOW_RAW}}, ModelAuthenticationError, id='401'),
-        pytest.param(403, {'code': 403, 'metadata': {'raw': _CONTEXT_WINDOW_RAW}}, ModelAuthenticationError, id='403'),
-        pytest.param(
-            403,
-            {'code': 403, 'metadata': {'raw': _CONTEXT_WINDOW_RAW, 'flagged_input': 'text', 'reasons': ['violence']}},
-            ModelRequestRejectedError,
-            id='403-flagged-input',
-        ),
-        pytest.param(404, {'code': 404, 'metadata': {'raw': _CONTEXT_WINDOW_RAW}}, ModelNotFoundError, id='404'),
-        pytest.param(402, {'code': 402, 'metadata': {'raw': _CONTEXT_WINDOW_RAW}}, ModelQuotaExceededError, id='402'),
-        pytest.param(429, {'code': 429, 'metadata': {'raw': _CONTEXT_WINDOW_RAW}}, ModelRateLimitError, id='429'),
-        pytest.param(503, {'code': 503, 'metadata': {'raw': _CONTEXT_WINDOW_RAW}}, ModelUnavailableError, id='503'),
-        pytest.param(
-            400,
-            {'code': 'model_not_found', 'metadata': {'raw': _CONTEXT_WINDOW_RAW}},
-            ModelNotFoundError,
-            id='400-model-not-found-code',
-        ),
-        pytest.param(
-            400,
-            {'code': 400, 'metadata': {'raw': {'error': {'message': _CONTEXT_WINDOW_MESSAGE}}}},
-            ModelRequestRejectedError,
-            id='400-object-raw',
-        ),
-        pytest.param(
-            400,
-            {'code': 400, 'metadata': {'raw': json.dumps({'error': {'type': 'BadRequestError', 'code': 400}})}},
-            ModelRequestRejectedError,
-            id='400-generic-nested-type',
-        ),
-        pytest.param(
-            400,
-            {'code': 400, 'metadata': {'raw': _DEEPLY_NESTED_RAW}},
-            ModelRequestRejectedError,
-            id='400-deeply-nested-raw',
-        ),
-    ],
-)
-async def test_openrouter_metadata_raw_keeps_outer_error_category(
-    allow_model_requests: None,
-    status_code: int,
-    error_body: dict[str, object],
-    expected_error: type[ModelAPIError],
-    stream: bool,
-) -> None:
-    """An error status keeps its category unless it's a generic rejection whose `metadata.raw` names an overflow.
-
-    A mock transport stands in for a cassette because OpenRouter can't be made to return these errors on demand.
-    Their transport-gave-up twins differ until https://github.com/pydantic/pydantic-ai/issues/14326, so these cases
-    aren't in `tests/models/test_error_categories.py`.
-    """
-    error = await _openrouter_status_error(
-        status_code, {'message': 'Provider returned error', **error_body}, stream=stream
-    )
-
-    assert isinstance(error, expected_error)
-    assert not isinstance(error, ModelContextWindowExceededError)
-
-
 async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('openai/gpt-5-mini', provider=provider)
@@ -752,12 +685,13 @@ async def test_openrouter_validate_non_json_response(openrouter_api_key: str) ->
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
 
-    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+    with pytest.raises(ModelInvalidResponseError) as exc_info:
         model._process_response('This is not JSON!')  # type: ignore[reportPrivateUsage]
 
     assert str(exc_info.value) == snapshot(
         'Invalid response from openrouter chat completions endpoint, expected JSON data'
     )
+    assert exc_info.value.body == 'This is not JSON!'
 
 
 async def test_openrouter_validate_error_response(openrouter_api_key: str) -> None:

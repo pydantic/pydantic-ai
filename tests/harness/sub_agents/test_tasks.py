@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -11,6 +12,7 @@ from pathlib import Path
 import anyio
 import pytest
 from inline_snapshot import snapshot
+from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, AgentRunResult, RunContext
 from pydantic_ai.capabilities import ReinjectSystemPrompt
@@ -52,6 +54,7 @@ from pydantic_ai_harness.sub_agents import (
     TaskQuestionPart,
     is_task_report,
 )
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.harness.conftest import CountingModel, IsDatetime, IsStr
 from tests.realtime_connections import InferredConnection
 
@@ -885,6 +888,56 @@ async def test_discover_reports_damaged_tasks_without_hiding_siblings(
     damaged = {identity: content for identity, content in files.items() if f'{identity}.json' in problems}
     assert list(damaged) == ['d' * 32, 'e' * 32, 'f' * 32, '1' * 32, '3' * 32, '4' * 32]
     assert {identity: (tmp_path / f'{identity}.json').read_text() for identity in damaged} == damaged
+
+
+async def test_an_owner_leaves_a_task_another_running_owner_runs_alone(tmp_path: Path) -> None:
+    """An owner opening the directory while another live owner runs a task neither settles nor saves it.
+
+    As when a second Pax session starts while the first runs a background task: the second one exiting after the
+    task finished must not replace its result with an interruption.
+    """
+    release = anyio.Event()
+
+    async def run(record: DelegationTask) -> str:
+        await release.wait()
+        return 'real result'
+
+    running = DelegationTasks(directory=tmp_path)
+    other = DelegationTasks(directory=tmp_path)
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        async with running.opened():
+            await running.delegate(
+                agent_name='worker',
+                prompt='go',
+                conversation_id='root',
+                model=None,
+                background=True,
+                resume=None,
+                run=run,
+            )
+            (record,) = running.records.values()
+            saved = TypeAdapter(DelegationTask).validate_json((tmp_path / f'{record.id}.json').read_bytes())
+            assert (saved.status, saved.owner_pid) == ('running', os.getpid())
+            # Opened by hand, so it closes after the running owner has saved the result, as the later exit.
+            opened = other.opened()
+            await opened.__aenter__()
+            assert record.id not in other.records
+            release.set()
+            await running.wait_children(None)
+        await opened.__aexit__(None, None, None)
+    saved = TypeAdapter(DelegationTask).validate_json((tmp_path / f'{record.id}.json').read_bytes())
+    assert (saved.outcome, saved.output, saved.owner_pid) == ('ok', 'real result', None)
+
+
+async def test_an_owner_settles_a_task_whose_process_is_gone(tmp_path: Path) -> None:
+    """A task saved running by a process that has exited is settled as interrupted, then saved without its owner."""
+    task_id = 'a' * 32
+    gone = json.loads(saved_task(task_id, status='running')) | {'owner_pid': 2**22 + 12345}
+    (tmp_path / f'{task_id}.json').write_text(json.dumps(gone))
+    async with DelegationTasks(directory=tmp_path).opened() as restored:
+        assert restored.records[task_id].outcome == 'cancelled'
+    saved = TypeAdapter(DelegationTask).validate_json((tmp_path / f'{task_id}.json').read_bytes())
+    assert (saved.status, saved.outcome, saved.owner_pid) == ('finished', 'cancelled', None)
 
 
 async def immediate(record: DelegationTask) -> str:

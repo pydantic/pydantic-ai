@@ -21,7 +21,7 @@ from ..._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict, is
 from ..._warnings import PydanticAIDeprecationWarning
 from ...capabilities.abstract import AbstractCapability
 from ...computer_use import COMPUTER_KIND
-from ...exceptions import UserError
+from ...exceptions import ModelEmptyResponseError, UserError
 from ...messages import (
     ERROR_OUTCOMES,
     AudioUrl,
@@ -388,6 +388,9 @@ _BATCH_UNSUPPORTED_CLIENTS = (
 # on Google Cloud (Google managed, Vertex AI's `AsyncAnthropicVertex`) set their own:
 # https://platform.claude.com/docs/en/about-claude/model-deprecations#overview
 _OWN_DEPRECATION_SCHEDULE_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicVertex)
+_SAMPLING_REJECTED_API_VERSION = '2026-10-21'
+"""The first Messages API version that rejects `temperature`, `top_p` and `top_k` on every model:
+https://platform.claude.com/docs/en/api/migration-2026-10-21"""
 # `_THINKING_BINDING_UNSUPPORTED_CLIENTS` is a client-class boundary, not a base-URL one: a plain
 # `AsyncAnthropic` carrying a proxy or Pydantic AI Gateway base URL keeps the flag. Anthropic documents
 # the binding beta for Amazon Bedrock and Google Cloud, and the SDK carries it through the legacy
@@ -1498,12 +1501,31 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> ModelSettings | None:
         """Drop the sampling settings the model rejects alone or with the rest of the request."""
         profile = self.profile
-        if profile.get('anthropic_disallows_sampling_settings', False):
+        if profile.get('anthropic_disallows_sampling_settings', False) or self._api_version_rejects_sampling(
+            model_settings
+        ):
             filtered: ModelSettings = {**model_settings}
             self._drop_unsupported_sampling_settings(filtered)
             return filtered or None
         thinking = request_thinking_type(profile, model_settings, model_request_parameters) is not None
         return drop_conflicting_sampling_settings(model_settings, profile, thinking=thinking) or None
+
+    def _api_version_rejects_sampling(self, model_settings: ModelSettings) -> bool:
+        """Whether the request's API version rejects `temperature`, `top_p` and `top_k` on every model.
+
+        `anthropic>=2` sends `anthropic-version: 2026-10-21` by default, which rejects them even at their defaults.
+        The version is the client's `default_headers` entry, unless the request's `extra_headers` sets its own.
+        The legacy Bedrock client pins its own version in the request body instead.
+        """
+        if isinstance(self.client, AsyncAnthropicBedrock):
+            return False
+        version = ''
+        headers = [*self.client.default_headers.items(), *(model_settings.get('extra_headers') or {}).items()]
+        for name, value in headers:
+            # The SDK folds header names case-insensitively, the last one winning, and drops one set to `omit`.
+            if name.lower() == 'anthropic-version':
+                version = value if isinstance(value, str) else ''
+        return version >= _SAMPLING_REJECTED_API_VERSION
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
         dropped = {setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in model_settings}
@@ -1981,10 +2003,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # schemas too.
             # Where the count drops advisor, dropping it here too makes `advisor_active` False so its call/result
             # history blocks are stripped during replay: replaying them without the tool definition would 400.
+            # A `CodeExecutionTool`'s files are cleared here, so the count carries none of the `container_upload`
+            # blocks that upload them: verified 2026-11-18 on `claude-fable-5-2`, the endpoint rejects one with a
+            # 400, "File sources are not supported in the token counting endpoint." (`req_011ChBEaMpfgxJrL826uzmt2`).
+            # They're dropped on every client: the others that send them serve the Claude API's endpoints, or, like
+            # Bedrock Mantle, aren't verified to accept them. The count leaves out the uploaded files' tokens.
             map_parameters = replace(
                 model_request_parameters,
                 native_tools=[
-                    tool
+                    replace(tool, files=None) if isinstance(tool, CodeExecutionTool) else tool
                     for tool in model_request_parameters.native_tools
                     if not isinstance(tool, AdvisorTool) or isinstance(tool, counted_native_tools)
                 ],
@@ -2667,7 +2694,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> AnthropicStreamedResponse:
         first_chunk = await response.peek()
         if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+            raise ModelEmptyResponseError(self.model_name, 'Streamed response ended without content or tool calls')
 
         assert isinstance(first_chunk, BetaRawMessageStartEvent)
 
