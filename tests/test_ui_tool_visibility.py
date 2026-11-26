@@ -12,9 +12,11 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 import pytest
+from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, AgentRunResult, ToolOutput
+from pydantic_ai import Agent, AgentRunResult, ToolKind, ToolOutput
 from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools, WrapModelRequestHandler
+from pydantic_ai.conversation import ConversationTypeAdapter
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, SkipModelRequest, ToolFailed
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -45,7 +47,7 @@ from pydantic_ai.tools import (
     ToolDenied,
     ToolUIVisibility,
 )
-from pydantic_ai.toolsets import ExternalToolset, FunctionToolset
+from pydantic_ai.toolsets import AbstractToolset, ExternalToolset, FunctionToolset
 
 from ._inline_snapshot import snapshot
 from .conftest import legacy_retry_prompt_part, try_import
@@ -72,6 +74,11 @@ with try_import() as imports_successful:
 with try_import() as interrupts_imports_successful:
     # AG-UI interrupts, which approve a call from the client, came with ag-ui-protocol 0.1.19.
     from ag_ui.core import ResumeEntry
+
+with try_import() as mcp_imports_successful:
+    from fastmcp import FastMCP
+
+    from pydantic_ai.mcp import MCPToolset
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='ag-ui-protocol or starlette not installed')
 
@@ -397,6 +404,63 @@ async def test_dump_reads_the_stamp_not_the_tool_definitions(protocol: ProtocolN
     assert SECRET in dump(protocol, unstamped)
     assert SECRET not in dump(protocol, unstamped, default_ui_visibility='redacted')
     assert 'lookup_order' not in dump(protocol, unstamped, default_ui_visibility='private')
+
+
+class OrderArgs(TypedDict):
+    order_id: str
+
+
+class OrderResult(TypedDict):
+    margin: str
+
+
+order_kind = ToolKind('ui_visibility_test', 'order', args=OrderArgs, content=OrderResult)
+
+
+class OrderCallPart(ToolCallPart[OrderArgs], kind=order_kind):
+    pass
+
+
+class OrderReturnPart(ToolReturnPart[OrderResult], kind=order_kind):
+    pass
+
+
+async def test_stamps_survive_the_conversation_round_trip_on_typed_parts():
+    """A stored `Conversation` keeps every stamp: on typed parts, and on the calls a paused run waits on.
+
+    A unit test of serialization: the stamps never reach a provider, so no recording can show them.
+    """
+    agent = Agent(
+        calling(('lookup_order', '{"order_id": "o_1"}'), ('escalate', '{"order_id": "o_1"}')),
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @agent.tool_plain(tool_kind=order_kind, ui_visibility='redacted')
+    def lookup_order(args: OrderArgs) -> OrderResult:
+        return {'margin': SECRET}
+
+    @agent.tool_plain(ui_visibility='private')
+    def escalate(order_id: str) -> str:
+        raise CallDeferred()
+
+    async with agent.run_stream_events('Where is my order?') as events:
+        result = [event async for event in events if isinstance(event, AgentRunResultEvent)][-1].result
+    stored = ConversationTypeAdapter.validate_json(ConversationTypeAdapter.dump_json(result.conversation))
+
+    assert [type(part) for message in stored.messages for part in message.parts if part.part_kind != 'user-prompt'] == [
+        OrderCallPart,
+        ToolCallPart,
+        OrderReturnPart,
+    ]
+    assert stamps(stored.messages) == [
+        ('tool-call', 'lookup_order', 'redacted'),
+        ('tool-call', 'escalate', 'redacted'),
+        ('tool-return', 'lookup_order', 'redacted'),
+    ]
+    assert stored.deferred_tool_requests is not None
+    assert [(call.tool_name, call.ui_visibility) for call in stored.deferred_tool_requests.calls] == [
+        ('escalate', 'redacted')
+    ]
 
 
 @pytest.mark.parametrize('protocol', PROTOCOLS)
@@ -1042,6 +1106,48 @@ async def test_failure_a_tool_reports_follows_its_visibility(
     assert run.tool_events() == EXPECTED_FAILURE_EVENTS[(protocol, ui_visibility, failure.__name__)]
 
 
+EXPECTED_INVALID_ARGS_EVENTS: dict[ProtocolName, Any] = {
+    'ag_ui': snapshot(
+        [
+            {'type': 'TOOL_CALL_START', 'toolCallId': 'call_0', 'toolCallName': 'lookup_order'},
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'call_0', 'delta': '{}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': 'call_0'},
+            {'type': 'TOOL_CALL_RESULT', 'toolCallId': 'call_0', 'content': '[REDACTED]'},
+        ]
+    ),
+    'vercel_ai': snapshot(
+        [
+            {'type': 'tool-input-start', 'toolCallId': 'call_0', 'toolName': 'lookup_order'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call_0', 'inputTextDelta': '{}'},
+            {
+                'type': 'tool-input-error',
+                'toolCallId': 'call_0',
+                'toolName': 'lookup_order',
+                'input': {},
+                'errorText': '[REDACTED]',
+            },
+        ]
+    ),
+}
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_redacted_call_with_invalid_args_gets_the_placeholder_as_its_error(protocol: ProtocolName):
+    """The validation error a call gets is its result, so a `'redacted'` tool's goes out as the placeholder.
+
+    The arguments are still sent, as they are for every `'redacted'` call.
+    """
+    agent = Agent(calling(('lookup_order', '{}')))
+
+    @agent.tool_plain(ui_visibility='redacted')
+    def lookup_order(order_id: str) -> str:
+        return SECRET  # pragma: no cover
+
+    run = await run_adapter(protocol, agent)
+
+    assert run.tool_events() == EXPECTED_INVALID_ARGS_EVENTS[protocol]
+
+
 async def test_standalone_event_stream_default_applies_only_to_unstamped_parts():
     """Without an adapter, nothing writes the default into the stamps, so only unstamped parts take it.
 
@@ -1129,16 +1235,48 @@ def test_ui_visibility_flows_from_each_tool_setter_into_the_tool_definition() ->
         assert seen == {'plain': 'private', 'with_ctx': 'redacted'}
 
 
-@pytest.mark.parametrize('protocol', PROTOCOLS)
-async def test_prepare_tools_sets_visibility_in_bulk(protocol: ProtocolName):
-    """`PrepareTools` reaches every tool, including toolset and MCP tools the decorators don't."""
+@pytest.fixture(
+    params=[
+        'decorator',
+        'toolset',
+        pytest.param('mcp', marks=pytest.mark.skipif(not mcp_imports_successful(), reason='fastmcp not installed')),
+    ]
+)
+def bulk_redacted_agent(request: pytest.FixtureRequest) -> Agent[None, Any]:
+    """An agent whose `lookup_order` comes from a decorator, a `FunctionToolset` or an MCP server, redacted in bulk.
+
+    A sync fixture, so FastMCP's task-extension import runs outside the event loop.
+    """
 
     def redact_lookups(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         return [replace(td, ui_visibility='redacted') if td.name.startswith('lookup_') else td for td in tool_defs]
 
-    agent = secret_agent(None, capabilities=[PrepareTools(redact_lookups)])
+    capabilities = [PrepareTools(redact_lookups)]
+    if request.param == 'decorator':
+        return secret_agent(None, capabilities=capabilities)
 
-    run = await run_adapter(protocol, agent)
+    def lookup_order(order_id: str) -> dict[str, str]:
+        return {'order_id': order_id, 'margin': SECRET}
+
+    toolset: AbstractToolset[Any]
+    if request.param == 'toolset':
+        toolset = FunctionToolset([lookup_order])
+    else:
+        server: FastMCP[None] = FastMCP('orders')
+        server.tool(lookup_order)
+        toolset = MCPToolset(server)
+    return Agent(
+        calling(('lookup_order', '{"order_id": "o_1"}')),
+        deps_type=type(None),
+        toolsets=[toolset],
+        capabilities=capabilities,
+    )
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_prepare_tools_sets_visibility_in_bulk(protocol: ProtocolName, bulk_redacted_agent: Agent[None, Any]):
+    """`PrepareTools` reaches every tool: a decorator's, a toolset's and an MCP server's."""
+    run = await run_adapter(protocol, bulk_redacted_agent)
 
     assert SECRET not in run.wire
     assert stamps(run.messages) == [
