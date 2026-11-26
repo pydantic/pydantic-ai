@@ -100,11 +100,12 @@ class Terminal(Generic[DepsT, OutputT]):
 
     async def show(self, runtime: 'SessionRuntime[DepsT, OutputT]') -> None:
         """Show `runtime`, live in this process, as `/resume` would: on a clear screen, with its history."""
-        self.attach(runtime)
-        await runtime.sessions.show_resumed()
-        runtime.console.print(
-            f'Showing session {runtime.session.conversation_id}, which is live in this Pax.', markup=False
-        )
+        with runtime.redrawn():
+            self.attach(runtime)
+            await runtime.sessions.show_resumed()
+            runtime.console.print(
+                f'Showing session {runtime.session.conversation_id}, which is live in this Pax.', markup=False
+            )
 
     def ended(self, runtime: 'SessionRuntime[DepsT, OutputT]', reason: SessionEndReason) -> None:
         """Note that the session shown, `runtime`, ended for `reason`, which ends `drive`.

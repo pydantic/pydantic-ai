@@ -1493,8 +1493,8 @@ replacement approver should show it in full too. A replacement for this plugin t
 focus and require explicit F2 focus before a choice authorizes a call. Generic
 send, steering, queue actions, custom text, and remembered question routing never
 approve tools. Each held command is printed once its own approval's choices are the
-ones shown, so concurrent approvals never leave one command printed above another's
-choices. A question or approval of a session the terminal does not show waits until
+ones shown, and again after the terminal redraws the session to show it, so concurrent
+approvals never leave one command printed above another's choices. A question or approval of a session the terminal does not show waits until
 the terminal shows that session: nothing reads keys or prints a picker for it
 meanwhile, and the browser can still answer it while the `web` plugin is loaded.
 
@@ -3213,8 +3213,8 @@ choice made with that focus answers, and `preamble` for text printed in the tran
 just before the request appears, such as the held command. A session the terminal does
 not show keeps the request until the terminal shows it, so race it with another way to
 answer, as the `web` plugin does, and cancel the call once that one answers. It returns
-`None` when no composer serves the session, as on a host built outside the shell or
-before the editor opens: ask in a picker of your own then.
+`None` when no composer serves the session, as on a host built outside the shell,
+before the editor opens, or in a Pax with no terminal: ask in a picker of your own then.
 `TerminalAnswerer(full_screen=..., console=..., composer=self.host.ask_in_composer)`
 does all of this.
 

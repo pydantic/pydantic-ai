@@ -43,6 +43,8 @@ class PromptQuestions:
         self.remember_choice = False
         self.notice = ''
         self.approval = False
+        self.preamble: RenderableType | None = None
+        """The active request's preamble, which `show_preamble` prints again after a redraw drops it."""
         self._reviewed = False
         self._armed = False
         self._ready = anyio.Event()
@@ -58,8 +60,8 @@ class PromptQuestions:
         printed last is always what the choices answer.
         """
         async with self._lock:
-            if preamble is not None:
-                self.show(preamble)
+            self.preamble = preamble
+            self.show_preamble()
             self.approval = approval
             answers: list[AskUserAnswer] = []
             child = DelegationTasks.child_id()
@@ -87,8 +89,14 @@ class PromptQuestions:
                 return AskUserResponse(answers=tuple(answers))
             finally:
                 self.menu = None
+                self.preamble = None
                 self.focused = self.routing = False
                 self.paint()
+
+    def show_preamble(self) -> None:
+        """Print the active request's preamble, if it has one."""
+        if self.preamble is not None:
+            self.show(self.preamble)
 
     def submit(self, answer: tuple[str, ...] | str | None) -> None:
         """Complete only the currently displayed question, once."""

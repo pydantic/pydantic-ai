@@ -812,6 +812,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     """The questions and approvals asked in this session's composer, shown while the terminal shows it."""
     _editor_bound: Event = field(init=False, repr=False)
     """Set while an editor reads for this session, so a request asked while hidden waits for it."""
+    _redrawing: bool = field(default=False, init=False, repr=False)
+    """Whether the terminal redraws this session to show it, which `redrawn` holds requests for."""
     forks: Forks[DepsT, OutputT] = field(init=False)
     tasks: Tasks = field(init=False)
     permissions: tuple[AgentCapability[DepsT], ...] = field(init=False)
@@ -980,7 +982,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             paint=lambda: self.editor.paint() if self.editor is not None else None,
             preference=lambda: self.context.settings.question_submit,
             remember=lambda preference: self.context.set_setting(['input.question_submit', preference]),
-            show=self.console.print,
+            # A preamble printed while hidden, or before a show's redraw, is lost: `redrawn` prints it again.
+            show=lambda preamble: None if self.editor is None or self._redrawing else self.console.print(preamble),
         )
         self._editor_bound = Event()
         self._question_status = QuestionStatus(self.live_session)
@@ -1069,11 +1072,27 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         While the terminal shows another session, the request waits to be shown, printing nothing and reading no
         keys meanwhile: a browser racing it can still answer it.
         """
-        if self.terminal is not None and self.editor is None:
+        if self.editor is None and (self.terminal is not None or self.process.live.focused is None):
+            # Shown before its editor opens, or in a Pax no terminal shows any session in, as `-p` or `pax --web`.
             return None
         while self.editor is None:
             await self._editor_bound.wait()
         return await self.questions.ask(request, approval=approval, preamble=preamble)
+
+    @contextmanager
+    def redrawn(self) -> Generator[None]:
+        """Hold this session's composer requests while the terminal redraws it to show it, then show the active one.
+
+        The redraw prints the history on a clear screen, which drops a held command printed before it.
+        """
+        self._redrawing = True
+        try:
+            yield
+        finally:
+            self._redrawing = False
+            if self.editor is not None:
+                self._editor_bound.set()
+                self.questions.show_preamble()
 
     def test_input_key(self) -> None:
         """Capture only after an explicit action; the editor remains the sole input reader."""
@@ -1302,7 +1321,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         self.tasks.wake = editor.wake if editor is not None else None
         if editor is not None:
             editor.questions = self.questions
-            self._editor_bound.set()
+            if not self._redrawing:
+                self._editor_bound.set()
             # Input a plugin entered while the editor read for another session, or did not exist yet.
             for entry in self._inbox.take():
                 editor.submit(entry)
