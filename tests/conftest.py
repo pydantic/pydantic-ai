@@ -4,13 +4,13 @@ import ast
 import asyncio
 import dataclasses
 import importlib.util
+import json
 import os
 import re
 import secrets
-import socket
 import sys
 import warnings
-from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequence
+from collections.abc import AsyncIterator, Callable, Coroutine, Generator, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -33,7 +33,15 @@ from pytest_mock import MockerFixture
 
 import pydantic_ai._http
 import pydantic_ai.models
-from pydantic_ai import Agent, BinaryContent, BinaryImage, DeferredToolRequests, Embedder, ImageGenerator
+from pydantic_ai import (
+    Agent,
+    BinaryContent,
+    BinaryImage,
+    DeferredToolRequests,
+    DeprecatedModelWarning,
+    Embedder,
+    ImageGenerator,
+)
 from pydantic_ai._cache_health import ConversationCacheMarkStore
 from pydantic_ai.capabilities import instrumentation as instrumentation_capability
 from pydantic_ai.exceptions import PydanticAIDeprecationWarning
@@ -63,8 +71,10 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from . import cassette_hooks, cost_guards, gc_isolation
+from . import cassette_hooks, cost_guards, gc_isolation, span_schema
 from ._inline_snapshot import Builder, Custom, customize
+from ._ports import reserve_loopback_port
+from ._timeouts import READINESS_WAIT_TIMEOUT
 from .cassette_utils import check_cache_prefix_stability
 from .function_model_prefix import RequestRecorder, check_function_model_prefix_stability, patch_models
 
@@ -90,7 +100,7 @@ T = TypeVar('T')
 # the `--package` matrix cells for other members do not do.
 collect_ignore = [
     directory
-    for directory, package in (('harness', 'pydantic_ai_harness'), ('clai2', 'pydantic_clai2'))
+    for directory, package in (('harness', 'pydantic_ai_harness'), ('pax', 'pydantic_ai_pax'))
     if importlib.util.find_spec(package) is None
 ]
 
@@ -131,6 +141,7 @@ os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 def pytest_configure(config: pytest.Config) -> None:
     config.pluginmanager.register(cost_guards, cost_guards.PLUGIN_NAME)
     config.pluginmanager.register(gc_isolation, gc_isolation.PLUGIN_NAME)
+    config.pluginmanager.register(span_schema, span_schema.PLUGIN_NAME)
     config.addinivalue_line(
         'markers',
         'moves_cache_prefix(reason): recorded conversation deliberately moves the cache prefix; reason required',
@@ -166,6 +177,7 @@ if TYPE_CHECKING:
 
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.xai import XaiProvider
+    from pydantic_ai.tools import ToolUIVisibility
 
     def IsInstance(arg: type[T]) -> T: ...
     def IsDatetime(*args: Any, **kwargs: Any) -> datetime: ...
@@ -537,6 +549,9 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # for a relative path. The harness relativizes absolute workspace paths with it.
     ('os.path.abspath', '<frozen posixpath>', 'relpath'),
     ('os.path.abspath', 'posixpath.py', 'relpath'),
+    # Pax looks for its config and state folders, and moves one under the old `pydantic-clai2` name, once per
+    # process for each, on the first `config_dir()` or `state_dir()` call, which may be in async code.
+    ('os.stat', 'pydantic_ai_pax/paths.py', 'pax_dir'),
     # Spawning a Monty worker pool locates the worker binary, once per pool.
     ('os.stat', 'pydantic_monty/_binary.py', 'find_monty_binary'),
     # Inside a Temporal workflow, Code Mode reaches Monty through a blocking portal, the only way to reach it
@@ -546,6 +561,9 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
         'pydantic_ai_harness/_monty_exec.py',
         ('get_session', 'call_monty', '_enter_monty', '_release_monty'),
     ),
+    # `/sandbox local smol` looks for the `smolvm` CLI in the `PATH` directories, a few stats, to say what to install when
+    # the user runs `/sandbox local` or `/sandbox local smol`, or a run reopens its VM.
+    *((func, 'pydantic_ai_harness/_smolvm_cli.py', 'find_cli') for func in ('os.stat', 'os.access')),
     # Capabilities resolve their executables, and clients their package versions, once when they're built.
     *(
         (func, f'pydantic_ai_harness/docker_container/{module}', constructor)
@@ -623,17 +641,18 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ),
     # The test blocks the agent loop on purpose, to check a run that never starts.
     ('threading.Lock.acquire', 'tests/harness/aws_lambda/test_aws_lambda.py', 'block_loop'),
-    # pydantic-clai2 reads keys once the event loop reports the terminal readable, and writes output straight to it.
+    # pydantic-ai-pax reads keys once the event loop reports the terminal readable, and writes output straight to it.
     ('os.read', 'prompt_toolkit/input/posix_utils.py', 'read'),
-    ('os.read', 'pydantic_clai2/cli/shell_terminal.py', '_key'),
-    ('os.write', 'pydantic_clai2/cli/shell_terminal.py', 'pass_through'),
-    ('os.write', 'pydantic_clai2/cli/self_update.py', '_print_line'),
+    ('os.read', 'pydantic_ai_pax/cli/shell_terminal.py', '_key'),
+    ('os.read', 'pydantic_ai_pax/cli/shell_terminal.py', 'key'),
+    ('os.write', 'pydantic_ai_pax/cli/shell_terminal.py', 'pass_through'),
+    ('os.write', 'pydantic_ai_pax/cli/self_update.py', '_print_line'),
     # On Windows, the socket pair that lets Ctrl+C wake the loop connects over loopback, once per turn.
-    ('socket.socket.accept', 'pydantic_clai2/ui/prompt/interrupts.py', '_wake'),
+    ('socket.socket.accept', 'pydantic_ai_pax/ui/prompt/interrupts.py', '_wake'),
     # Rich writes each render to its console's file: the terminal, `os.devnull` for a background agent, or a test's file.
     ('io.TextIOWrapper.write', 'rich/console.py', '_write_buffer'),
     ('io.BufferedWriter.write', 'rich/console.py', '_write_buffer'),
-    # `logging` handlers write each record synchronously, to a stream or to CLAI's telemetry log file.
+    # `logging` handlers write each record synchronously, to a stream or to Pax's telemetry log file.
     ('io.TextIOWrapper.write', 'logging/__init__.py', 'emit'),
     ('io.BufferedWriter.write', 'logging/__init__.py', 'emit'),
     # prompt-toolkit's `FileHistory` reads the input history when a prompt opens, and appends each entry it accepts.
@@ -650,32 +669,35 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # Whether a process still runs is read from `/proc`, which the kernel serves from memory.
     ('io.TextIOWrapper.read', 'pydantic_ai_harness/step_persistence/conversations.py', '_process_started'),
     # Configuring logfire at session start waits for the instance it replaces to shut down.
-    ('threading.Lock.acquire', 'pydantic_clai2/builtin_plugins/logfire.py', '__init__'),
+    ('threading.Lock.acquire', 'pydantic_ai_pax/builtin_plugins/logfire.py', '__init__'),
     # A module's first import runs its top-level code, which can read files such as its package's metadata, and waits
-    # for the module's lock while another thread, such as CLAI's import warm-up, imports it. The frames belong to
-    # importlib rather than the importing module, so these exemptions apply to every suite, not only `tests/clai2`.
+    # for the module's lock while another thread, such as Pax's import warm-up, imports it. The frames belong to
+    # importlib rather than the importing module, so these exemptions apply to every suite, not only `tests/pax`.
     ('io.TextIOWrapper.read', '<frozen importlib._bootstrap>', '_find_and_load'),
     ('os.listdir', '<frozen importlib._bootstrap>', '_find_and_load'),
     ('threading.Lock.acquire', '<frozen importlib._bootstrap>', ('_find_and_load', '_lock_unlock_module')),
+    # Under `coverage run`, the tracer takes coverage's own data lock when a call enters a measured file, on every such
+    # call with the C tracer. Another measured thread may hold it, but only for a dict lookup or insert.
+    ('threading.Lock.acquire', 'coverage/collector.py', 'lock_data'),
     # A session, and a plugin host built outside the shell, work in the current directory unless given one.
-    ('os.getcwd', 'pydantic_clai2/runtime/session.py', '__init__'),
-    ('os.getcwd', 'pydantic_clai2/plugins/__init__.py', 'workspace'),
+    ('os.getcwd', 'pydantic_ai_pax/runtime/session.py', '__init__'),
+    ('os.getcwd', 'pydantic_ai_pax/plugins/__init__.py', 'workspace'),
     # The test's model holds another writer's lock on the session database open on purpose, on its own connection.
-    ('sqlite3.Connection.execute', 'tests/clai2/test_sessions.py', 'model'),
+    ('sqlite3.Connection.execute', 'tests/pax/test_sessions.py', 'model'),
 ]
 
 
-# pydantic-clai2 keeps its settings, credentials, plugins, and logs in small local files and SQLite databases, which its
+# pydantic-ai-pax keeps its settings, credentials, plugins, and logs in small local files and SQLite databases, which its
 # commands, menus, and startup read and write synchronously. These modules hold nothing but such stores. Every file and
 # database call beneath one of their functions is exempt, so list only synchronous code that does its own I/O. They are
 # exempt even where async code calls them on the event loop, as making the stores async is a separate redesign.
 BLOCKBUSTER_LOCAL_STORES: tuple[str, ...] = (
-    'src/pydantic_clai2/pydantic_clai2/config/credential_store.py',
-    'src/pydantic_clai2/pydantic_clai2/config/settings_store.py',
-    'src/pydantic_clai2/pydantic_clai2/mcp/store.py',
-    'src/pydantic_clai2/pydantic_clai2/builtin_plugins/workspaces/registry.py',
-    'src/pydantic_clai2/pydantic_clai2/ui/prompt/input_history.py',
-    'src/pydantic_clai2/pydantic_clai2/ui/telemetry_log.py',
+    'src/pydantic_ai_pax/pydantic_ai_pax/config/credential_store.py',
+    'src/pydantic_ai_pax/pydantic_ai_pax/config/settings_store.py',
+    'src/pydantic_ai_pax/pydantic_ai_pax/mcp/store.py',
+    'src/pydantic_ai_pax/pydantic_ai_pax/builtin_plugins/workspaces/registry.py',
+    'src/pydantic_ai_pax/pydantic_ai_pax/ui/prompt/input_history.py',
+    'src/pydantic_ai_pax/pydantic_ai_pax/ui/telemetry_log.py',
 )
 
 
@@ -686,35 +708,38 @@ BLOCKBUSTER_LOCAL_STORES: tuple[str, ...] = (
 # shell construction and plugin loading at startup and in `/plugins`, with the welcome banner and version they show,
 # since making them async is the same separate redesign as for the stores, and the status row's `spinners.json` read.
 BLOCKBUSTER_LOCAL_FILES: list[tuple[str, str | tuple[str, ...]]] = [
-    # pydantic-clai2's commands, menus, and sign-ins check and update its own small files in the user's folders.
-    ('pydantic_clai2/config/api_keys.py', ('save_key', 'load_keys')),
-    ('pydantic_clai2/config/project_settings.py', ('_present', 'load_project_settings')),
-    ('pydantic_clai2/ui/menus/key_menu.py', 'storage'),
-    ('pydantic_clai2/builtin_plugins/coder_folders.py', ('_directory_problem', '_same_directory', 'path')),
-    ('pydantic_clai2/builtin_plugins/logfire.py', 'credentials'),
-    ('pydantic_clai2/builtin_plugins/logfire_destination.py', ('remember', 'remembered')),
+    # pydantic-ai-pax's commands, menus, and sign-ins check and update its own small files in the user's folders.
+    ('pydantic_ai_pax/config/api_keys.py', ('save_key', 'load_keys')),
+    ('pydantic_ai_pax/config/project_settings.py', ('_present', 'load_project_settings')),
+    # A session's trust in its folder is looked up as the shell is built: where the folder's repository is, and
+    # the decision saved for it.
+    ('pydantic_ai_pax/runtime/workspace_trust.py', ('saved', 'from_scope', 'trust_scope')),
+    ('pydantic_ai_pax/ui/menus/key_menu.py', 'storage'),
+    ('pydantic_ai_pax/builtin_plugins/coder_folders.py', ('_directory_problem', '_same_directory', 'path')),
+    ('pydantic_ai_pax/builtin_plugins/logfire.py', 'credentials'),
+    ('pydantic_ai_pax/builtin_plugins/logfire_destination.py', ('remember', 'remembered')),
     # The status row reads `spinners.json` on each repaint, so an edit shows on the next frame.
-    ('pydantic_clai2/ui/rendering/spinners.py', '_user_text'),
+    ('pydantic_ai_pax/ui/rendering/spinners.py', '_user_text'),
     # A pasted path is checked to be an image file, which is then read and decoded, once per paste.
-    ('pydantic_clai2/ui/prompt/image_input.py', ('pasted_paths', '<genexpr>', 'read_image')),
+    ('pydantic_ai_pax/ui/prompt/image_input.py', ('pasted_paths', '<genexpr>', 'read_image')),
     # Plugins load from local files: their folder is created and listed, and each module read and imported, at load.
     (
-        'pydantic_clai2/plugins/process_plugins.py',
+        'pydantic_ai_pax/plugins/process_plugins.py',
         ('_discover', 'project_files', 'import_module'),
     ),
-    ('pydantic_clai2/plugins/factories.py', 'import_file'),
-    ('pydantic_clai2/plugins/describe.py', ('describe', '_source')),
+    ('pydantic_ai_pax/plugins/factories.py', 'import_file'),
+    ('pydantic_ai_pax/plugins/describe.py', ('describe', '_source')),
     # Installed packages' metadata, logfire's configuration, and the banner's font are read once per process or session,
     # and logfire records a plugin that fails to load with its traceback, which reads the source files it quotes.
-    ('pydantic_clai2/cli/self_update.py', 'installed'),
-    ('pydantic_clai2/models/model_catalog.py', 'check_installed'),
-    ('pydantic_clai2/builtin_plugins/logfire.py', '__init__'),
-    ('pydantic_clai2/ui/telemetry.py', 'log_error'),
-    ('pydantic_clai2/ui/rendering/branding.py', 'print_banner'),
+    ('pydantic_ai_pax/cli/self_update.py', 'installed'),
+    ('pydantic_ai_pax/models/model_catalog.py', 'check_installed'),
+    ('pydantic_ai_pax/builtin_plugins/logfire.py', '__init__'),
+    ('pydantic_ai_pax/ui/telemetry.py', 'log_error'),
+    ('pydantic_ai_pax/ui/rendering/branding.py', 'print_banner'),
     # Tests' stand-ins, and the plugins tests write, set up or record what happened in small files.
-    ('tests/clai2/test_live_runtimes.py', 'folder'),
-    ('tests/clai2/test_shell_passthrough.py', 'hold'),
-    ('tests/clai2/test_plugin_git_cleanup.py', 'readonly_pack'),
+    ('tests/pax/test_live_runtimes.py', 'folder'),
+    ('tests/pax/test_shell_passthrough.py', 'hold'),
+    ('tests/pax/test_plugin_git_cleanup.py', 'readonly_pack'),
     ('/lifecycle_probe.py', 'record'),
     ('/cwd_probe.py', 'get_capabilities'),
 ]
@@ -731,6 +756,7 @@ BLOCKBUSTER_TEST_DOUBLES: tuple[str, ...] = (
     'tests/harness/kubernetes_sandbox/fake_sandboxd.py',
     'tests/harness/opensandbox_sandbox/fake_opensandbox.py',
     'tests/harness/render_sandbox/workspace_helpers.py',
+    'tests/harness/smol_sandbox/fake_smolvm.py',
 )
 
 
@@ -742,10 +768,13 @@ BLOCKBUSTER_LIBRARY_SETUP: tuple[tuple[str, str], ...] = (
     # use: `kubernetes_asyncio` reads the kubeconfig and writes its embedded certificates to temporary
     # files synchronously (its exec credential plugins run as asyncio subprocesses and stay covered).
     ('k8s_agent_sandbox/async_k8s_helper.py', '_ensure_initialized'),
-    # Render's SDK reads its own package metadata for the User-Agent of each client it builds. CLAI's
+    # Render's SDK reads its own package metadata for the User-Agent of each client it builds. Pax's
     # `/sandbox render` builds one in its synchronous `reopen`, which cannot offload it, so that the key
     # can come from `/keys`.
     ('render/version.py', 'get_version'),
+    # MCP SDK v2 imports `jsonschema` on its first tool-result validation, which happens inside a call
+    # on the event loop; the import loads `jsonschema_specifications`' bundled schema files from disk once.
+    ('jsonschema_specifications/_core.py', '_schemas'),
 )
 
 
@@ -757,10 +786,10 @@ def _function_names(path: str) -> tuple[str, ...]:
 
 
 def _blockbuster_packages() -> list[str]:
-    """The shipped packages the detector scans. The harness and CLAI aren't installed in every CI lane (`pydantic-evals`)."""
+    """The shipped packages the detector scans. The harness and Pax aren't installed in every CI lane (`pydantic-evals`)."""
     optional = [
         package
-        for package in ('pydantic_ai_harness', 'pydantic_clai2')
+        for package in ('pydantic_ai_harness', 'pydantic_ai_pax')
         if importlib.util.find_spec(package) is not None
     ]
     return ['pydantic_ai', *optional, 'pydantic_graph', 'pydantic_evals', 'clai']
@@ -1001,6 +1030,32 @@ def no_leaked_tasks(loop: asyncio.AbstractEventLoop | None = None) -> Generator[
     assert asyncio.all_tasks(loop) - before == set()
 
 
+async def assert_cancellation_leaks_no_tasks(
+    start: Callable[[], Coroutine[Any, Any, object]], *, max_ticks: int = 500
+) -> None:
+    """Cancel `start()` after 0, 1, 2, ... event loop ticks, failing if a cancelled run leaves a task it started pending.
+
+    Stops at the first run that completes before its cancellation arrives, by which point every tick of it has been
+    covered.
+    """
+    for ticks in range(max_ticks):  # pragma: no branch
+        with no_leaked_tasks():
+            task = asyncio.create_task(start())
+            for _ in range(ticks):
+                await asyncio.sleep(0)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                completed = False
+            else:
+                completed = True
+            await asyncio.sleep(0)
+        if completed:
+            return
+    pytest.fail(f'run never completed within {max_ticks} ticks')  # pragma: no cover
+
+
 @pytest.fixture(autouse=True)
 def no_instrumentation_by_default():
     Agent.instrument_all(False)
@@ -1013,6 +1068,71 @@ def fresh_cache_mark_store(monkeypatch: pytest.MonkeyPatch) -> None:
     """Prompt-cache marks are kept process-wide per conversation; tests that reuse a fixed conversation
     id (or pin the clock) must not see each other's."""
     monkeypatch.setattr(instrumentation_capability, '_conversation_cache_marks', ConversationCacheMarkStore())
+
+
+DEPRECATED_MODELS_IN_RECORDINGS: tuple[str, ...] = (
+    # Anthropic, retires 2026-06-15: https://github.com/pydantic/pydantic-ai/issues/14036
+    'claude-sonnet-4-20250514',
+    # Anthropic, retires 2026-08-05: https://github.com/pydantic/pydantic-ai/issues/14036
+    'claude-opus-4-1-20250805',
+    # Anthropic, retires 2026-11-30: https://github.com/pydantic/pydantic-ai/issues/14036
+    'claude-sonnet-4-5',
+    'claude-sonnet-4-5-20250929',
+    # Anthropic, retires 2027-01-22: https://github.com/pydantic/pydantic-ai/issues/14036
+    'claude-opus-4-5',
+    'claude-opus-4-5-20251101',
+    # Anthropic, no retirement date: https://github.com/pydantic/pydantic-ai/issues/14036
+    'claude-mythos-preview',
+    # Google, retires 2026-10-20 on Google Cloud and 2026-12-01 on the Gemini API:
+    # https://github.com/pydantic/pydantic-ai/issues/14676
+    'gemini-2.5-pro',
+    'gemini-2.5-flash',
+    # OpenAI, retires 2025-07-14: https://github.com/pydantic/pydantic-ai/issues/14037
+    'gpt-4.5-preview',
+    # OpenAI, retires 2025-10-27: https://github.com/pydantic/pydantic-ai/issues/14037
+    'o1-mini',
+    # OpenAI, retires 2026-05-07: https://github.com/pydantic/pydantic-ai/issues/14037
+    'gpt-4o-audio-preview',
+    # OpenAI, retires 2026-07-23: https://github.com/pydantic/pydantic-ai/issues/14037
+    'computer-use-preview',
+    # OpenAI, retires 2026-10-23: https://github.com/pydantic/pydantic-ai/issues/14037
+    'gpt-4.1-nano',
+    'o3-mini',
+    'o4-mini',
+    # OpenAI, retires 2026-12-11: https://github.com/pydantic/pydantic-ai/issues/14037
+    'gpt-5',
+    'gpt-5-mini',
+    'gpt-5-pro',
+    'o3',
+    # OpenAI, retires 2027-01-20: https://github.com/pydantic/pydantic-ai/issues/14037
+    'gpt-audio-mini',
+    # OpenAI, retires 2027-04-01: https://github.com/pydantic/pydantic-ai/issues/14037
+    'gpt-5.4-nano',
+)
+"""Models the suite's recordings and mocks use, which their providers have since deprecated.
+
+Grouped by the provider's announcement, each group with its retirement date and the issue tracking the move of its
+tests to a current model. See `ignore_deprecated_models_in_recordings`.
+"""
+
+
+def ignore_deprecated_models_in_recordings(record_mode: str | None) -> None:
+    """Ignore the deprecation warnings for `DEPRECATED_MODELS_IN_RECORDINGS`, unless the run records cassettes.
+
+    Replaying an existing recording against one of these models is fine, but recording a new one must fail, so a test
+    moves to a current model before it's re-recorded. That covers Pydantic AI's `DeprecatedModelWarning` and the
+    `anthropic` SDK's own `DeprecationWarning` for the models in its table, which pytest shows.
+    """
+    if record_mode not in (None, 'none'):
+        return
+    model_ids = '|'.join(map(re.escape, DEPRECATED_MODELS_IN_RECORDINGS))
+    warnings.filterwarnings('ignore', f"Model '[^']*:(?:{model_ids})' is deprecated", DeprecatedModelWarning)
+    warnings.filterwarnings('ignore', f"The model '(?:{model_ids})' is deprecated", DeprecationWarning)
+
+
+@pytest.fixture(autouse=True)
+def replay_deprecated_models(request: pytest.FixtureRequest) -> None:
+    ignore_deprecated_models_in_recordings(request.config.getoption('record_mode'))
 
 
 @pytest.fixture
@@ -1073,26 +1193,6 @@ except ImportError:
     pass
 
 
-def _reserve_loopback_port() -> int:
-    """A loopback port that no other `bind(0)` is handed while it is in `TIME_WAIT`, but a server can still bind.
-
-    Closing an accepted connection first leaves the port itself in `TIME_WAIT`: the kernel then skips it
-    when allocating a port, while a server that sets `SO_REUSEADDR` (uvicorn does) can bind it. Linux
-    allows that bind only if the socket that left the port in `TIME_WAIT` set `SO_REUSEADDR` too, so the
-    listener sets it, as Rust's `TcpListener::bind` does for the Temporal SDK, which reserves its
-    dev-server ports the same way.
-    """
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        listener.bind(('127.0.0.1', 0))
-        listener.listen()
-        port: int = listener.getsockname()[1]
-        with socket.create_connection(('127.0.0.1', port)):
-            accepted, _ = listener.accept()
-            accepted.close()
-    return port
-
-
 @pytest.fixture(scope='session')
 def prefect_test_server() -> Iterator[None]:
     """A Prefect test server with an isolated database, shared by every Prefect test in the worker.
@@ -1104,7 +1204,11 @@ def prefect_test_server() -> Iterator[None]:
     """
     pytest.importorskip('prefect')
     import prefect.testing.utilities
-    from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
+    from prefect.settings import (
+        PREFECT_API_REQUEST_TIMEOUT,
+        PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED,
+        temporary_settings,
+    )
     from prefect.testing.utilities import prefect_test_harness
 
     # The task-run recorder is a background writer against the same sqlite file the flows write to.
@@ -1113,12 +1217,23 @@ def prefect_test_server() -> Iterator[None]:
     # here reads what it records: task run states reach the API through the task engine.
     with (
         pytest.MonkeyPatch.context() as monkeypatch,
-        temporary_settings({PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False}),
+        temporary_settings(
+            {
+                PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False,
+                # The client's default request timeout is that same 60s, but a state change the server has read
+                # can wait that long for the write lock, and longer on a stalled runner. It then commits after the
+                # client gave up, and the client resends it: a resent `Failed` replaces the `AwaitingRetry` the
+                # server just stored, so a `@flow(retries=...)` run ends instead of retrying. A client that
+                # outwaits the server gets every reply: the committed state, or a 503 it can safely retry when
+                # the lock wait runs out.
+                PREFECT_API_REQUEST_TIMEOUT: READINESS_WAIT_TIMEOUT,
+            }
+        ),
     ):
         # The harness picks its port by binding port 0 and closing the socket, which leaves the port free
         # for the 15-25s uvicorn takes to bind it. A server another worker starts meanwhile, such as a
         # Temporal dev server, can be handed it and answer the harness's health check, failing its setup.
-        monkeypatch.setattr(prefect.testing.utilities, '_find_available_port', _reserve_loopback_port)
+        monkeypatch.setattr(prefect.testing.utilities, '_find_available_port', reserve_loopback_port)
         with prefect_test_harness(server_startup_timeout=120):
             yield
 
@@ -1949,6 +2064,25 @@ def legacy_retry_prompt_part(
     if timestamp is not None:
         part.timestamp = timestamp
     return part
+
+
+def sse_data(encoded: Sequence[str]) -> list[dict[str, Any]]:
+    """The JSON payloads of a server-sent event stream, without its closing `[DONE]`."""
+    return [
+        json.loads(line.removeprefix('data: '))
+        for line in ''.join(encoded).splitlines()
+        if line.startswith('data: ') and line != 'data: [DONE]'
+    ]
+
+
+def tool_part_stamps(messages: Sequence[ModelMessage]) -> list[tuple[str, str, ToolUIVisibility | None]]:
+    """Each tool call and return part in `messages`, as `(part kind, tool name, ui_visibility stamp)`."""
+    return [
+        (part.part_kind, part.tool_name, part.ui_visibility)
+        for message in messages
+        for part in message.parts
+        if isinstance(part, (ToolCallPart, ToolReturnPart, NativeToolCallPart, NativeToolReturnPart))
+    ]
 
 
 _RequestPartT = TypeVar(

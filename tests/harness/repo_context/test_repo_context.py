@@ -7,7 +7,7 @@ import sys
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 from unittest.mock import AsyncMock, MagicMock
 
 import anyio.to_thread
@@ -18,6 +18,7 @@ from pydantic_ai import Agent, AgentRunResult, RunContext
 from pydantic_ai.capabilities import AbstractCapability, PrefixTools
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    Authority,
     CompactionPart,
     ModelMessage,
     ModelRequest,
@@ -55,6 +56,7 @@ from pydantic_ai_harness.repo_context._loader import (
     find_dir_context_file,
     render_context_files,
 )
+from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 from tests.harness._rendering import sent_messages
 
 from ...workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend
@@ -117,6 +119,26 @@ class TestDiscoverInstructionFiles:
         (directory / 'AGENTS.md').symlink_to(outside)
         assert await discover_instruction_files(workspace, directory, None, ('AGENTS.md',)) == []
         assert await find_dir_context_file(workspace, directory, ('AGENTS.md',)) is None
+
+    @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
+    async def test_a_linked_directory_in_a_filename_must_resolve_inside_the_scanned_directory(
+        self, tmp_path: Path, workspace: Workspace
+    ) -> None:
+        project = tmp_path / 'project'
+        _write(tmp_path / 'outside' / 'copilot-instructions.md', 'outside')
+        _write(project / 'docs' / 'copilot-instructions.md', 'inside')
+        filenames = ('.github/copilot-instructions.md',)
+
+        (project / '.github').symlink_to(tmp_path / 'outside', target_is_directory=True)
+        assert await discover_instruction_files(workspace, project, None, filenames) == []
+        assert await find_dir_context_file(workspace, project, filenames) is None
+
+        (project / '.github').unlink()
+        (project / '.github').symlink_to('docs', target_is_directory=True)
+        files = await discover_instruction_files(workspace, project, None, filenames)
+        assert [f.content for f in files] == ['inside']
+        found = await find_dir_context_file(workspace, project, filenames)
+        assert found is not None and found.content == 'inside'
 
     @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
     async def test_does_not_load_a_link_to_a_file_that_is_not_an_instruction_file(
@@ -211,7 +233,8 @@ class TestDiscoverInstructionFiles:
         workspace = MagicMock(spec=Workspace)
         workspace.working_dir = AsyncMock(return_value=tmp_path.as_posix())
         workspace.stat = AsyncMock(side_effect=error)
-        cap = RepoContext[object](expose_inventory_tool=False)
+        # Without nested traversal, so setup asks the mock nothing about authority.
+        cap = RepoContext[object](expose_inventory_tool=False, nested_traversal=False)
         ctx = _run_context(workspace=workspace)
 
         await cap.before_run(ctx)
@@ -500,7 +523,7 @@ ends with &lt;/context-file
 
     async def test_autoload_off_keeps_inventory_hint(self, tmp_path: Path, workspace: Workspace) -> None:
         _write(tmp_path / 'CLAUDE.md', 'ignored')
-        cap = RepoContext[object](autoload_instructions=False, expose_inventory_tool=True)
+        cap = RepoContext[object](autoload_instructions=False, expose_inventory_tool=True, nested_traversal=False)
         await cap.before_run(_run_context(workspace=workspace))
         instructions = cap.get_instructions()
         assert isinstance(instructions, str)
@@ -523,9 +546,12 @@ root
 Instruction files (`AGENTS.md`, `CLAUDE.md`) apply to the directory they are in and everything below it. Where instruction files conflict, the more deeply nested one takes precedence, and the user's direct instructions take precedence over all of them.\
 """)
 
-    def test_nested_traversal_without_autoload_keeps_the_statement_static(self) -> None:
-        instructions = RepoContext[object](autoload_instructions=False).get_instructions()
-        assert instructions == snapshot(
+    async def test_nested_traversal_without_autoload_states_how_files_relate(self, workspace: Workspace) -> None:
+        # Rendered after `before_run`, which checks whether any file nested traversal reads is below `'operator'`.
+        cap = RepoContext[object](autoload_instructions=False)
+        ctx = _run_context(workspace=workspace)
+        await cap.before_run(ctx)
+        assert _render_capability_instructions(cap, ctx) == snapshot(
             "Instruction files (`AGENTS.md`, `CLAUDE.md`) apply to the directory they are in and everything below it. Where instruction files conflict, the more deeply nested one takes precedence, and the user's direct instructions take precedence over all of them."
         )
 
@@ -738,7 +764,10 @@ class TestToolset:
 
     @pytest.mark.parametrize('asset_roots', [('.claude', '.agents'), ('../shared',)])
     def test_inventory_hint_is_static(self, asset_roots: tuple[str, ...]) -> None:
-        cap = RepoContext[object](autoload_instructions=False, expose_inventory_tool=True, asset_roots=asset_roots)
+        # Without nested traversal, whose precedence sentence depends on the run's levels.
+        cap = RepoContext[object](
+            autoload_instructions=False, expose_inventory_tool=True, asset_roots=asset_roots, nested_traversal=False
+        )
         instructions = cap.get_instructions()
         assert isinstance(instructions, str)
         assert 'inventory_agent_context' in instructions
@@ -1314,6 +1343,96 @@ class TestNestedTraversal:
             ['<context_file path="two/AGENTS.md">TTTTTTTTTTTTTTTTTTTT</context_file>']
         )
 
+    @pytest.mark.parametrize(
+        ('nested_exclude', 'expected'),
+        [
+            pytest.param(None, ['pkg/AGENTS.md'], id='default-skips-node-modules'),
+            pytest.param(('d?p',), ['pkg/AGENTS.md', 'pkg/node_modules/AGENTS.md'], id='custom-pattern'),
+            pytest.param(
+                (), ['pkg/AGENTS.md', 'pkg/node_modules/AGENTS.md', 'pkg/node_modules/dep/AGENTS.md'], id='none'
+            ),
+        ],
+    )
+    async def test_excluded_directories_and_everything_beneath_them_are_not_surfaced(
+        self, tmp_path: Path, nested_exclude: tuple[str, ...] | None, expected: list[str]
+    ) -> None:
+        _write(tmp_path / 'pkg' / 'AGENTS.md', 'PKG BODY')
+        _write(tmp_path / 'pkg' / 'node_modules' / 'AGENTS.md', 'MODULES BODY')
+        _write(tmp_path / 'pkg' / 'node_modules' / 'dep' / 'AGENTS.md', 'DEP BODY')
+        _write(tmp_path / 'pkg' / 'node_modules' / 'dep' / 'index.js', 'x')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                path = 'pkg/node_modules/dep/index.js'
+                yield {0: DeltaToolCall(name='read_file', json_args=f'{{"path":"{path}"}}', tool_call_id='x')}
+            else:
+                yield 'done'
+
+        repo_context = (
+            RepoContext(autoload_instructions=False, nested_inject='pointer')
+            if nested_exclude is None
+            else RepoContext(autoload_instructions=False, nested_inject='pointer', nested_exclude=nested_exclude)
+        )
+        result = await Agent(
+            FunctionModel(stream_function=stream), capabilities=[FileSystem(root_dir=tmp_path), repo_context]
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        # Pointer notes, shallowest first, so the comparison also checks the order the model reads them in.
+        assert _repo_notes(result.all_messages()) == [
+            f'<context_file_path>{path}</context_file_path>' for path in expected
+        ]
+
+    @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
+    async def test_a_link_into_an_excluded_directory_is_not_surfaced(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'libs' / 'AGENTS.md', 'LIBS BODY')
+        _write(tmp_path / 'node_modules' / 'dep' / 'AGENTS.md', 'DEP BODY')
+        _write(tmp_path / 'node_modules' / 'dep' / 'index.js', 'DEP SOURCE')
+        (tmp_path / 'libs' / 'dep').symlink_to(tmp_path / 'node_modules' / 'dep', target_is_directory=True)
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {
+                    0: DeltaToolCall(name='read_file', json_args='{"path":"libs/dep/index.js"}', tool_call_id='read')
+                }
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[FileSystem(root_dir=tmp_path), RepoContext(autoload_instructions=False)],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        # The read itself is allowed; only the dependency's instruction file is held back.
+        returns = [
+            str(part.content)
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_call_id == 'read'
+        ]
+        assert len(returns) == 1 and 'DEP SOURCE' in returns[0]
+        assert _repo_notes(result.all_messages()) == snapshot(
+            ['<context_file path="libs/AGENTS.md">LIBS BODY</context_file>']
+        )
+
+    async def test_a_working_directory_inside_an_excluded_name_is_not_excluded(self, tmp_path: Path) -> None:
+        working_dir = tmp_path / 'node_modules' / 'pkg'
+        _write(working_dir / 'sub' / 'AGENTS.md', 'SUB BODY')
+        _write(working_dir / 'sub' / 'x.py', 'x')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {0: DeltaToolCall(name='read_file', json_args='{"path":"sub/x.py"}', tool_call_id='x')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[FileSystem(root_dir=working_dir), RepoContext(autoload_instructions=False)],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=working_dir))
+        assert ['SUB BODY' in note for note in _repo_notes(result.all_messages())] == [True]
+
+    def test_nested_exclude_rejects_a_bare_string(self) -> None:
+        with pytest.raises(UserError, match=r'`RepoContext\.nested_exclude` takes a sequence of patterns'):
+            RepoContext(nested_exclude='node_modules')
+
     def test_negative_budget_is_rejected(self) -> None:
         with pytest.raises(UserError, match=r'`RepoContext\.nested_max_chars` must not be negative'):
             RepoContext(nested_max_chars=-1)
@@ -1666,7 +1785,7 @@ class TestNestedTraversal:
                 assert len(_repo_notes(messages)) == 1
                 yield 'done'
 
-        def list_dir(target: Any) -> str:
+        def list_dir(target: object) -> str:
             return 'listed'
 
         with pytest.warns(HarnessDeprecationWarning, match='Traversal detection now reacts'):
@@ -1697,7 +1816,7 @@ class TestNestedTraversal:
                 assert outside.as_posix() in notes[0]
                 yield 'done'
 
-        def list_dir(target: Any) -> str:
+        def list_dir(target: object) -> str:
             return 'listed'
 
         with pytest.warns(HarnessDeprecationWarning, match='Traversal detection now reacts'):
@@ -1724,7 +1843,7 @@ class TestNestedTraversal:
             else:
                 yield 'done'
 
-        def list_dir(target: Any) -> str:
+        def list_dir(target: object) -> str:
             return 'listed'
 
         with pytest.warns(HarnessDeprecationWarning, match='Traversal detection now reacts'):
@@ -1743,6 +1862,285 @@ class TestNestedTraversal:
         assert _repo_notes(result.all_messages()) == snapshot(
             ['<context_file path="../AGENTS.md">PARENT BODY</context_file>']
         )
+
+
+class TestWalkUpAuthority:
+    """Walk-up files below `'operator'` authority reach the model as something other than instructions."""
+
+    @staticmethod
+    def _repo(tmp_path: Path) -> Path:
+        _write(tmp_path / 'AGENTS.md', 'repo rules')
+        working_dir = tmp_path / 'packages' / 'foo'
+        _write(working_dir / 'AGENTS.md', 'package rules')
+        return working_dir
+
+    @staticmethod
+    async def _run(
+        tmp_path: Path,
+        workspace: Workspace,
+        message_history: list[ModelMessage] | None = None,
+        *,
+        nested_traversal: bool = False,
+    ) -> tuple[str, list[ContextFilePart], AgentRunResult[str]]:
+        """The instructions the model was sent, the `ContextFilePart`s the run recorded, and the run's result."""
+        instructions: list[str | None] = []
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            del info
+            request = messages[-1]
+            assert isinstance(request, ModelRequest)
+            instructions.append(request.instructions)
+            yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[RepoContext(home_dir=str(tmp_path), nested_traversal=nested_traversal)],
+        ).run('go', workspace=workspace, message_history=message_history)
+        parts = [
+            part
+            for message in result.new_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ContextFilePart)
+        ]
+        assert instructions[0] is not None
+        return instructions[0], parts, result
+
+    async def test_operator_workspace_loads_every_file_as_instructions(self, tmp_path: Path) -> None:
+        working_dir = self._repo(tmp_path)
+        instructions, parts, _ = await self._run(tmp_path, Workspace(LocalWorkspaceBackend(working_dir)))
+        assert 'repo rules' in instructions
+        assert 'package rules' in instructions
+        assert parts == []
+
+    async def test_untrusted_workspace_names_its_file_and_sends_ancestors_as_data(self, tmp_path: Path) -> None:
+        working_dir = self._repo(tmp_path)
+        workspace = AuthorityWorkspace(Workspace(LocalWorkspaceBackend(working_dir)), authority='none')
+        instructions, parts, result = await self._run(tmp_path, workspace)
+        assert instructions == snapshot("""\
+<pyai:context id="capability:repo_context">
+The working directory has an instruction file that is not loaded here, because it isn't from the operator: `AGENTS.md`. Read it with your file tools if it is relevant to your task.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""")
+        assert [(part.path, part.content, part.source.authority) for part in parts] == snapshot(
+            [('../../AGENTS.md', 'repo rules', 'none')]
+        )
+        assert all(isinstance(part.source, WorkspaceSource) for part in parts)
+        assert _repo_notes(result.new_messages()) == snapshot(
+            ['<context_file path="../../AGENTS.md">repo rules</context_file>']
+        )
+
+    async def test_ancestor_data_does_not_use_up_the_nested_budget(self, tmp_path: Path) -> None:
+        # The ancestor goes out as a `ContextFilePart` too, but `nested_max_chars` is for nested files alone.
+        _write(tmp_path / 'AGENTS.md', 'R' * 40)
+        working_dir = tmp_path / 'packages' / 'foo'
+        _write(working_dir / 'sub' / 'AGENTS.md', 'nested rules')
+        _write(working_dir / 'sub' / 'x.py', 'x')
+        workspace = AuthorityWorkspace(Workspace(LocalWorkspaceBackend(working_dir)), authority='none')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {0: DeltaToolCall(name='read_file', json_args='{"path":"sub/x.py"}', tool_call_id='read')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=working_dir),
+                RepoContext(home_dir=str(tmp_path), nested_traversal=True, nested_max_chars=20),
+            ],
+        ).run('go', workspace=workspace)
+
+        parts = [
+            (type(part), part.content)
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ContextFilePart | ContextFilePathPart)
+        ]
+        assert parts == [(ContextFilePart, 'R' * 40), (ContextFilePart, 'nested rules')]
+
+    async def test_an_operator_workspace_can_lower_its_own_file(self, tmp_path: Path) -> None:
+        # The docs case: an `'operator'` workspace whose `path_authority` lowers the working directory's own file.
+        working_dir = self._repo(tmp_path)
+        workspace = AuthorityWorkspace(
+            Workspace(LocalWorkspaceBackend(working_dir)),
+            authority='operator',
+            path_authority={str(tmp_path / 'AGENTS.md'): 'operator', 'AGENTS.md': 'none'},
+        )
+        instructions, parts, _ = await self._run(tmp_path, workspace, nested_traversal=True)
+        assert 'repo rules' in instructions and parts == []
+        assert 'package rules' not in instructions
+        assert "isn't from the operator: `AGENTS.md`" in instructions
+        assert 'takes precedence' not in instructions
+
+    async def test_a_lowered_subdirectory_leaves_out_the_precedence_sentence(self, tmp_path: Path) -> None:
+        # Every walk-up file is the operator's, but nested traversal can surface `vendor/AGENTS.md` below it.
+        working_dir = self._repo(tmp_path)
+        workspace = AuthorityWorkspace(
+            Workspace(LocalWorkspaceBackend(working_dir)),
+            authority='operator',
+            path_authority={str(tmp_path / 'AGENTS.md'): 'operator', 'vendor': 'none'},
+        )
+        instructions, parts, _ = await self._run(tmp_path, workspace, nested_traversal=True)
+        assert 'repo rules' in instructions and parts == []
+        assert 'takes precedence' not in instructions
+
+    @pytest.mark.parametrize('authority', ['operator', 'none'])
+    async def test_the_precedence_sentence_only_ranks_operator_files(
+        self, tmp_path: Path, authority: Authority
+    ) -> None:
+        # In operator voice, "the more deeply nested one takes precedence" would rank the repository's files over
+        # the operator's, so it's left out once the run reads any instruction file below `'operator'`.
+        working_dir = self._repo(tmp_path)
+        workspace = AuthorityWorkspace(
+            Workspace(LocalWorkspaceBackend(working_dir)),
+            authority=authority,
+            path_authority={str(tmp_path / 'AGENTS.md'): 'operator'},
+        )
+        instructions, _, _ = await self._run(tmp_path, workspace, nested_traversal=True)
+        if authority == 'operator':
+            assert 'takes precedence' in instructions
+        else:
+            assert instructions == snapshot("""\
+<pyai:context id="capability:repo_context">
+<context-file path="../../AGENTS.md">
+repo rules
+</context-file>
+
+The working directory has an instruction file that is not loaded here, because it isn't from the operator: `AGENTS.md`. Read it with your file tools if it is relevant to your task.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""")
+
+    @pytest.mark.parametrize('path_authority', [{}, {'vendor': 'none'}])
+    async def test_the_precedence_sentence_without_autoload_follows_path_entries(
+        self, tmp_path: Path, path_authority: dict[str, Authority]
+    ) -> None:
+        # Nested traversal still reads `vendor/AGENTS.md` without the walk-up, so a lower `vendor` keeps its files
+        # from ranking over the operator's.
+        _write(tmp_path / 'vendor' / 'AGENTS.md', 'vendored rules')
+        workspace = AuthorityWorkspace(
+            Workspace(LocalWorkspaceBackend(tmp_path)), authority='operator', path_authority=path_authority
+        )
+        instructions: list[str | None] = []
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            request = messages[-1]
+            assert isinstance(request, ModelRequest)
+            instructions.append(request.instructions)
+            yield 'done'
+
+        await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[RepoContext(autoload_instructions=False, nested_traversal=True, expose_inventory_tool=False)],
+        ).run('go', workspace=workspace)
+
+        assert ('takes precedence' in (instructions[0] or '')) is (not path_authority)
+
+    async def test_an_ancestor_covered_by_path_authority_keeps_its_level(self, tmp_path: Path) -> None:
+        working_dir = self._repo(tmp_path)
+        workspace = AuthorityWorkspace(
+            Workspace(LocalWorkspaceBackend(working_dir)),
+            authority='none',
+            path_authority={str(tmp_path / 'AGENTS.md'): 'operator'},
+        )
+        instructions, parts, _ = await self._run(tmp_path, workspace)
+        assert 'repo rules' in instructions
+        assert 'package rules' not in instructions
+        assert 'Read it with your file tools' in instructions
+        assert parts == []
+
+    async def test_an_untrusted_ancestor_lowers_only_itself(self, tmp_path: Path) -> None:
+        working_dir = self._repo(tmp_path)
+        workspace = AuthorityWorkspace(
+            Workspace(LocalWorkspaceBackend(working_dir)),
+            authority='operator',
+            path_authority={str(tmp_path / 'AGENTS.md'): 'none'},
+        )
+        instructions, parts, _ = await self._run(tmp_path, workspace)
+        assert 'package rules' in instructions
+        assert 'repo rules' not in instructions
+        assert [part.content for part in parts] == ['repo rules']
+
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+    async def test_a_compaction_during_the_run_puts_an_ancestor_back(self, tmp_path: Path) -> None:
+        working_dir = self._repo(tmp_path)
+        workspace = AuthorityWorkspace(Workspace(LocalWorkspaceBackend(working_dir)), authority='none')
+        requests = 0
+
+        @dataclass
+        class CompactBeforeTheSecondRequest(AbstractCapability[object]):
+            async def before_model_request(
+                self, ctx: RunContext[object], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                # Like `SummarizingCompaction`: rewrite history in place, dropping the ancestor's part.
+                if requests == 1:
+                    ctx.messages[:] = [
+                        ModelRequest(parts=[UserPromptPart('go')]),
+                        ModelRequest(parts=[CompactionPart('The agent looked around.')]),
+                    ]
+                    return replace(request_context, messages=list(ctx.messages))
+                return request_context
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            nonlocal requests
+            step, requests = requests, requests + 1
+            if step == 0:
+                yield {0: DeltaToolCall(name='look', json_args='{}', tool_call_id='look0')}
+            else:
+                yield 'done'
+
+        agent = Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                CompactBeforeTheSecondRequest(),
+                RepoContext(home_dir=str(tmp_path), nested_traversal=False),
+            ],
+        )
+
+        @agent.tool_plain
+        def look() -> str:
+            return 'looked'
+
+        result = await agent.run('go', workspace=workspace)
+        parts = [
+            part
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ContextFilePart)
+        ]
+        # The compaction dropped the part sent with the first request; the second request puts it back.
+        assert [part.content for part in parts] == ['repo rules']
+
+    async def test_a_lower_copy_does_not_drop_an_operator_file(self, tmp_path: Path) -> None:
+        # Identical files are deduped broadest first, but only against files at the same level: a repository author
+        # copying the operator's file into an ancestor mustn't take it out of the instructions.
+        working_dir = self._repo(tmp_path)
+        _write(tmp_path / 'AGENTS.md', 'package rules')
+        workspace = AuthorityWorkspace(
+            Workspace(LocalWorkspaceBackend(working_dir)), authority='none', path_authority={'AGENTS.md': 'operator'}
+        )
+        instructions, parts, _ = await self._run(tmp_path, workspace)
+        assert 'package rules' in instructions
+        assert [part.content for part in parts] == ['package rules']
+
+    async def test_an_ancestor_is_sent_again_only_when_it_changed(self, tmp_path: Path) -> None:
+        working_dir = self._repo(tmp_path)
+        workspace = AuthorityWorkspace(Workspace(LocalWorkspaceBackend(working_dir)), authority='none')
+        _, _, first = await self._run(tmp_path, workspace)
+        _, parts, second = await self._run(tmp_path, workspace, first.all_messages())
+        assert parts == []
+        _write(tmp_path / 'AGENTS.md', 'new repo rules')
+        _, parts, third = await self._run(tmp_path, workspace, second.all_messages())
+        assert [part.content for part in parts] == ['new repo rules']
+        # Changed back: the latest copy the model saw is the new one, so the old text goes out again.
+        _write(tmp_path / 'AGENTS.md', 'repo rules')
+        _, parts, _ = await self._run(tmp_path, workspace, third.all_messages())
+        assert [part.content for part in parts] == ['repo rules']
 
 
 class TestForRunAndMisc:

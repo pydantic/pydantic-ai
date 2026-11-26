@@ -23,6 +23,7 @@ from collections.abc import Generator
 from typing import Any
 
 import pytest
+from pydantic import BaseModel
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -45,6 +46,12 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import CodeMode
+from tests.harness.code_mode.stored_sessions import stored_session_pool
+
+
+class Total(BaseModel):
+    total: int
+
 
 pytestmark = pytest.mark.xdist_group(name='harness-dbos')
 
@@ -125,6 +132,22 @@ code_mode_agent = Agent(
 )
 
 
+remote_code_mode_agent = Agent(
+    FunctionModel(_code_mode_model),
+    name='remote_code_mode_dbos_agent',
+    toolsets=[FunctionToolset(tools=[add], id='math')],
+    capabilities=[
+        CodeMode(id='code', monty_sandbox=stored_session_pool),
+        DBOSDurability(),
+    ],
+)
+
+
+@DBOS.workflow()
+def run_remote_code_mode_agent(prompt: str) -> str:
+    return str(remote_code_mode_agent.run_sync(prompt).output)
+
+
 @DBOS.workflow()
 def run_code_mode_agent(prompt: str) -> dict[str, Any]:
     result = code_mode_agent.run_sync(prompt)
@@ -146,6 +169,8 @@ def run_limited_code_mode_agent(prompt: str, tool_calls_limit: int) -> None:
         _limit_errors.append(str(error))
         if len(_limit_errors) == 1:
             raise _LimitAbortCrash from error
+        # Recovery runs on a DBOS executor thread, where `run_sync` sets a new event loop that nothing else closes.
+        asyncio.get_event_loop().close()
         raise
 
 
@@ -188,9 +213,35 @@ def run_gather_agent(prompt: str) -> str:
     return gather_agent.run_sync(prompt).output
 
 
+def _submit_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
+    code = 'total = await add(a=40, b=2)\nfinal_result(total=total)'
+    return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code}, tool_call_id='submit')])
+
+
+submit_agent = Agent(
+    FunctionModel(_submit_model),
+    name='code_mode_dbos_submit_agent',
+    output_type=Total,
+    toolsets=[FunctionToolset(tools=[add], id='math')],
+    capabilities=[CodeMode(allow_final_output=True), DBOSDurability()],
+)
+
+
+@DBOS.workflow()
+def run_submit_agent(prompt: str) -> dict[str, int]:
+    result = submit_agent.run_sync(prompt)
+    return {'total': result.output.total, 'requests': result.usage.requests}
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+
+def test_remote_code_mode_with_an_id_runs_in_dbos_workflow(dbos_instance: DBOS) -> None:
+    """Turn activities are Temporal's: under DBOS a `CodeMode` with an `id` and a remote sandbox runs as before."""
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert run_remote_code_mode_agent('Calculate 3 + 4') == 'done: 7'
 
 
 def test_code_mode_runs_in_dbos_workflow(dbos_instance: DBOS) -> None:
@@ -328,3 +379,10 @@ def test_gathered_calls_overlap_in_dbos_workflow(dbos_instance: DBOS) -> None:
         output = run_gather_agent('Gather three fetches.')
 
     assert output == "done: ['a', 'b', 'c']"
+
+
+def test_code_mode_submits_final_output_in_dbos_workflow(dbos_instance: DBOS) -> None:
+    """`run_code` runs in the workflow under DBOS, so the code can submit the run's output."""
+    with SetWorkflowID(str(uuid.uuid4())):
+        result = run_submit_agent('Add 40 and 2')
+    assert result == {'total': 42, 'requests': 1}

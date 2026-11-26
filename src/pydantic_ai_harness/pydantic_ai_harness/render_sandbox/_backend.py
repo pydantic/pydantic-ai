@@ -49,6 +49,9 @@ from pydantic_ai_harness._workspace_provider import (
     require_asyncio,
     run_to_completion,
 )
+from pydantic_ai_harness.computer_use import Display, SupportsDisplay
+from pydantic_ai_harness.computer_use._display import checked_desktop_size
+from pydantic_ai_harness.computer_use._x11 import DISPLAY, x11_display
 
 try:
     from render import RenderAsync
@@ -81,7 +84,7 @@ def check_sandbox_timeout(value: int) -> None:
 _ASYNCIO_ONLY = 'Render sandbox needs the asyncio event loop: the backend runs its calls on asyncio tasks.'
 
 
-class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
+class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsDisplay):
     """A [Render sandbox](https://render.com/docs/sandboxes) as a Pydantic AI [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend].
 
     Building one does no I/O. Built without a ref, the first operation creates a sandbox; built with one,
@@ -101,6 +104,10 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
             new sandbox; an attached sandbox must already have it. `None` uses the sandbox's home directory.
         env: Environment variables every command gets; per-command `env` is layered on top. Nothing is
             read from the host environment.
+        desktop: Whether the sandbox has a display for
+            [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for 1280x800, or its
+            `(width, height)`. The first use installs the programs it needs with `apt-get`, so a new sandbox needs
+            `allow_internet_access`.
     """
 
     def __init__(
@@ -112,12 +119,12 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         sandbox_timeout: int = DEFAULT_SANDBOX_TIMEOUT,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        desktop: bool | tuple[int, int] = False,
     ) -> None:
         if ref is not None:
             check_provider(ref, 'render')
         check_sandbox_timeout(sandbox_timeout)
         check_env(env)
-        self._env = dict(env or {})
         self._client = client
         self._ref = ref
         self._allow_internet_access = allow_internet_access
@@ -130,6 +137,23 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         self._resolved_working_dir: str | None = None
         # A sandbox this backend created still needs its `working_dir` made, even if readiness is retried.
         self._working_dir_pending = False
+        self._display = x11_display(
+            self._run_argv,
+            checked_desktop_size(desktop),
+            lambda: f'Render sandbox {self._ref.id if self._ref else "(not created)"}',
+        )
+        # An existing sandbox already has whatever its display needs.
+        if self._display and ref is None and not allow_internet_access:
+            raise UserError(
+                "A new desktop sandbox installs the display's programs with `apt-get` on first use, which needs "
+                '`allow_internet_access=True`.'
+            )
+        self._env = {**({'DISPLAY': DISPLAY} if self._display else {}), **(env or {})}
+
+    @property
+    def display(self) -> Display | None:
+        """The sandbox's desktop, when created with `desktop=True`."""
+        return self._display
 
     @property
     def ref(self) -> WorkspaceRef | None:
@@ -144,7 +168,7 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
 
     async def _create(self, client: RenderAsync) -> None:
         try:
-            async with asyncio.timeout(_OPERATION_TIMEOUT):
+            async with asyncio.timeout(_OPERATION_TIMEOUT):  # noqa: TID251  (not converted to anyio yet)
                 sandbox = await client.sandboxes.create(
                     timeout_seconds=self._sandbox_timeout,
                     # Render suspends idle sandboxes by default, and a suspended one never reports `running`.
@@ -171,14 +195,14 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
                 await run_to_completion(lambda: self._create(client))
             assert self._ref is not None
             try:
-                async with asyncio.timeout(_READINESS_TIMEOUT):
+                async with asyncio.timeout(_READINESS_TIMEOUT):  # noqa: TID251  (not converted to anyio yet)
                     while True:
                         sandbox = await client.sandboxes.from_id(self._ref.id)
                         if sandbox.status == 'running':
                             break
                         if sandbox.status in ('errored', 'terminated'):
                             raise WorkspaceUnavailableError(f'Render sandbox is {sandbox.status}')
-                        await asyncio.sleep(_POLL_INTERVAL)
+                        await asyncio.sleep(_POLL_INTERVAL)  # noqa: TID251  (not converted to anyio yet)
                 resolve = prepare_command(
                     command_argv(self._resolve_script(), shell=True), working_dir='/', env=self._env
                 )
@@ -232,8 +256,16 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         prepare_command(
             argv, working_dir=self._resolved_working_dir or self._working_dir or '/', env=values, timeout=timeout
         )
+        if self._display is not None:
+            # Started first, so a program the command opens shows on the screen.
+            await self._display.start()
         async with self._operation() as client:
             return await self._run(client, argv, values, timeout)
+
+    async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
+        """Run `argv` without starting the display, as the display's own commands do."""
+        async with self._operation() as client:
+            return await self._run(client, argv, {**self._env, **env}, timeout)
 
     async def _run(
         self, client: RenderAsync, argv: list[str], env: Mapping[str, str], timeout: float | None
@@ -253,7 +285,7 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
             # After an uncertain stream, report a dead sandbox as unavailable. If the status check itself
             # fails, raise the stream error: the command may have run, so nothing may look retryable.
             try:
-                async with asyncio.timeout(_OPERATION_TIMEOUT):
+                async with asyncio.timeout(_OPERATION_TIMEOUT):  # noqa: TID251  (not converted to anyio yet)
                     sandbox = await client.sandboxes.from_id(self._ref.id)
             except SandboxNotFoundError as status_error:
                 raise WorkspaceUnavailableError('Render sandbox is unavailable') from status_error
@@ -326,7 +358,7 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
                 await local.write_bytes(data)
             # The public SDK has per-connection timeouts but no total file deadline.
             # Never retry an uncertain upload or hide failure with a shell fallback.
-            async with asyncio.timeout(self._deadline(size if data is None else len(data))):
+            async with asyncio.timeout(self._deadline(size if data is None else len(data))):  # noqa: TID251  (not converted to anyio yet)
                 if data is not None:
                     await client.sandboxes.copy_to(sandbox_id, str(local), remote)
                     return b''

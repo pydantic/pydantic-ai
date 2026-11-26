@@ -56,6 +56,7 @@ from ...messages import (
     ToolPartKind,
     ToolReturnContent,
     ToolReturnPart,
+    ToolUIVisibility,
     UploadedFile,
     UserContent,
     UserPromptPart,
@@ -89,7 +90,14 @@ from .._adapter import (
     tool_availability_delta_payload,
     warn_dropped_tool_results,
 )
-from .._utils import MCP_APPS_UI_TYPE, client_error_text, get_ui_message_id, mcp_app_ui_payload, set_ui_message_id
+from .._utils import (
+    MCP_APPS_UI_TYPE,
+    client_error_text,
+    client_view,
+    get_ui_message_id,
+    mcp_app_ui_payload,
+    set_ui_message_id,
+)
 
 try:
     from ag_ui.core import (
@@ -463,6 +471,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         preserve_file_data: bool = False,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         manage_message_history: Literal['client', 'server'] = 'client',
+        default_ui_visibility: ToolUIVisibility = 'public',
         conversation_store: ConversationStore | None = None,
         conversation_scope: str | None = None,
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
@@ -480,6 +489,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             preserve_file_data=preserve_file_data,
             manage_system_prompt=manage_system_prompt,
             manage_message_history=manage_message_history,
+            default_ui_visibility=default_ui_visibility,
             conversation_store=conversation_store,
             conversation_scope=conversation_scope,
             allowed_file_url_schemes=allowed_file_url_schemes,
@@ -600,6 +610,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             use_encrypted_value=parse_ag_ui_version(DEFAULT_AG_UI_VERSION) >= ENCRYPTED_VALUE_VERSION,
             preserve_file_data=preserve_file_data,
         )
+        chat_message_target: ModelMessage | None = None
         for msg in messages:
             checkpoint = builder.checkpoint()
             match msg:
@@ -637,11 +648,16 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             # message or the previous one extended, and some AG-UI messages add no parts at all, so ask the
             # builder rather than assume the tail. An AG-UI message lands in a request or a response, never
             # both (an `ActivityMessage` can be either), so whichever lookup answers is the one.
+            # An `ActivityMessage` never replaces the id a chat message kept on the same message, the rule
+            # `dump_messages` follows when it puts the id back.
             target = builder.last_modified(checkpoint, of_type=ModelRequest) or builder.last_modified(
                 checkpoint, of_type=ModelResponse
             )
-            if target is not None:
-                set_ui_message_id(target, msg.id)
+            if target is None or (isinstance(msg, ActivityMessage) and target is chat_message_target):
+                continue
+            set_ui_message_id(target, msg.id)
+            if not isinstance(msg, ActivityMessage):
+                chat_message_target = target
 
         # Parts above are built as base `ToolCallPart`/`ToolReturnPart`/`NativeTool*Part` carrying a
         # `tool_kind` claim; promote them to their typed subclasses in one best-effort pass.
@@ -774,8 +790,13 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         *,
         ag_ui_version: str = DEFAULT_AG_UI_VERSION,
         preserve_file_data: bool = False,
+        default_ui_visibility: ToolUIVisibility = 'public',
     ) -> list[Message]:
-        """Transform Pydantic AI messages into AG-UI messages.
+        """Transform Pydantic AI messages into AG-UI messages, as the client is to be sent them.
+
+        A tool's calls and returns are dumped by their `ui_visibility` stamp: neither for a `'private'` tool, and a
+        `'redacted'` tool's calls with a placeholder instead of each result. See
+        [Tool visibility](../../ui/overview.md#tool-visibility).
 
         Note: The round-trip `dump_messages` -> `load_messages` is not fully lossless:
 
@@ -783,7 +804,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           no trusted message-level carrier for framework or provider state; general client-controlled
           metadata must not be restored as server-side state. The one thing `load_messages` keeps in
           the reserved `__pydantic_ai__` namespace is the AG-UI message id, which comes back on the
-          last message dumped from each `ModelMessage`.
+          last chat message dumped from each `ModelMessage`. An activity message dumped beside a chat
+          message never takes it; a message that dumps to activity messages alone puts it on the last of them.
         - A response's [`canonical_system`][pydantic_ai.messages.ModelResponse.canonical_system] comes back,
           with its `provider_name`, only from a part that carries the response's `provider_name`: a
           `ThinkingPart`, a `CompactionPart`, or a `FilePart` with `preserve_file_data=True`. Its other
@@ -848,10 +870,15 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             ag_ui_version: AG-UI protocol version controlling `ThinkingPart` emission.
             preserve_file_data: Whether to include `FilePart` and `UploadedFile` items as `ActivityMessage`s.
                 (Multimodal tool-return files always ride inline in `ToolMessage.content` and are unaffected.)
+            default_ui_visibility: What the client is sent for a tool part with no `ui_visibility` stamp, as
+                [`UIAdapter.default_ui_visibility`][pydantic_ai.ui.UIAdapter.default_ui_visibility]. A stamped
+                part is dumped by its stamp, so this only reaches history without stamps, such as one from an
+                earlier version or a run that didn't set a default.
 
         Returns:
             A list of AG-UI Message objects.
         """
+        messages = client_view(messages, default_ui_visibility)
         result: list[Message] = []
 
         if parse_ag_ui_version(ag_ui_version) < ENCRYPTED_VALUE_VERSION and any(
@@ -885,10 +912,16 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             else:
                 assert_never(msg)
             # `load_messages` kept the id of the last AG-UI message merged into `msg`, so it goes back on the
-            # last AG-UI message dumped from it. The others keep their fresh ids: several tool results in one
-            # request become several `ToolMessage`s, and those need distinct ids.
+            # last chat message dumped from it. The others keep their fresh ids: several tool results in one
+            # request become several `ToolMessage`s, and those need distinct ids. An `ActivityMessage` is
+            # skipped: it carries a framework record the run added after the client's message, such as the
+            # settings change behind a user prompt, and `@ag-ui/client` never sends it back, so the id has
+            # to stay on the message the client will resend for a regenerate or edit to find the stored turn
+            # (https://github.com/pydantic/pydantic-ai/issues/12691). A message that dumps to activities
+            # alone keeps the id on the last of them.
             if dumped and (ui_message_id := get_ui_message_id(msg)) is not None:
-                dumped[-1].id = ui_message_id
+                target = next((m for m in reversed(dumped) if not isinstance(m, ActivityMessage)), dumped[-1])
+                target.id = ui_message_id
             result.extend(dumped)
 
         return result
@@ -1067,7 +1100,7 @@ def _load_reasoning_message(reasoning_msg: ReasoningMessage, builder: MessagesBu
         metadata: dict[str, Any] = json.loads(reasoning_msg.encrypted_value) if reasoning_msg.encrypted_value else {}
         if not isinstance(metadata, dict):
             metadata = {}
-    except (json.JSONDecodeError, RecursionError):  # `RecursionError` on deeply nested JSON
+    except (ValueError, RecursionError):  # also integers past the digit limit, and deeply nested JSON
         metadata = {}
     builder.add(
         ThinkingPart(

@@ -1,0 +1,11 @@
+--- expected
++++ actual
+@@ -16 +16 @@
+-       "identifier": "chart"
++       "identifier": "cd560a"
+@@ -23 +23 @@
+-       "identifier": "contract"
++       "identifier": "baf6c1"
+@@ -31 +31 @@
+-       "identifier": "logo"
++       "identifier": "321211"

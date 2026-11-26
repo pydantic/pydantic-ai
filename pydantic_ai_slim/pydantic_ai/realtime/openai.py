@@ -159,6 +159,7 @@ from .codec import (
     ToolCall,
     ToolResult,
     TruncateOutput,
+    UpdateTools,
 )
 from .model import RealtimeClientSecret, RealtimeModel, RealtimeProviderSession, WebRTCAnswer
 from .profiles import DEFAULT_AUDIO_SAMPLE_RATE, RealtimeModelProfileSpec
@@ -499,8 +500,12 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         prune_tool_items: bool = False,
         keep_tool_items: AbstractSet[str] = frozenset(),
         manual_turns: bool = False,
+        session_config: dict[str, Any] | None = None,
     ) -> None:
         self._ws = ws
+        # The `session.update` the handshake configured the session with, which a re-dial sends again: `UpdateTools`
+        # rewrites its `tools` in place, so a reconnect advertises the tools revealed since.
+        self._session_config: dict[str, Any] = session_config if session_config is not None else {}
         # See `OpenAIRealtimeModelSettings.openai_prune_tool_items` and `openai_keep_tool_items`.
         self._prune_tool_items = prune_tool_items
         self._keep_tool_items = keep_tool_items
@@ -643,8 +648,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         """Send content to the OpenAI Realtime API.
 
         Accepts `BinaryAudio` (raw PCM16, 24kHz, mono), a `str` text turn, `TextContext` (text added
-        without soliciting a reply), `BinaryImage`, `ToolResult`, and the control verbs `CommitAudio`, `ClearAudio`, `CreateResponse`,
-        `CancelResponse`, and `TruncateOutput`.
+        without soliciting a reply), `BinaryImage`, `ToolResult`, `UpdateTools`, and the control verbs `CommitAudio`,
+        `ClearAudio`, `CreateResponse`, `CancelResponse`, and `TruncateOutput`.
         """
         input_index = self._inputs_received
         self._inputs_received += 1
@@ -715,8 +720,22 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     self._output_speech_clear_sent = True
             case TruncateOutput():
                 await self._truncate_output(content)
+            case UpdateTools():
+                await self._update_tools(content)
             case _:
                 raise UserError(f'{self._provider_label} does not support {type(content).__name__} input.')
+
+    async def _update_tools(self, content: UpdateTools) -> None:
+        tools = [tool_def_to_openai(tool) for tool in content.tools]
+        # Only the tools: the rest of the configuration stands, and once the model has spoken OpenAI refuses an
+        # update that sends its voice again. The GA configuration needs its `type`, which xAI's and Voice Live's lack.
+        session: dict[str, Any] = {'tools': tools}
+        if (session_type := self._session_config.get('type')) is not None:
+            session['type'] = session_type
+        # Kept before it goes out, so a re-dial after the send fails advertises them too.
+        self._session_config['tools'] = tools
+        # No waiting for `session.updated`: the frames that follow on this socket are taken after it.
+        await self._send_event({'type': SESSION_UPDATE_EVENT, 'session': session})
 
     async def _truncate_output(self, content: TruncateOutput) -> None:
         if content.item_id is None:
@@ -1329,11 +1348,14 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             # terminal we will ever get for the response it was meant to close. Treating it as "no
             # information" leaves `_response_active` set forever, and every later `create_response()`
             # then queues behind a response that can never complete.
-            self._lifecycle.response_unreadable(self._active_response_id)
+            ended_response_id = self._active_response_id
+            self._lifecycle.response_unreadable(ended_response_id)
             self._clear_active_response()
             if self._pending_response:
                 inputs, answers = self._take_deferred_response_inputs()
                 await self._request_response(inputs, answers=answers)
+            # Its tool calls are answered as after a completed response: with no status to read, no barge-in is known.
+            await self._close_tool_call_batch(ended_response_id, barged_in=False)
             return [], False
         response = done.response
         function_call_only = bool(response.output) and all(item.type == 'function_call' for item in response.output)
@@ -1341,6 +1363,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             'tool_call' if response.status == 'completed' and function_call_only else response_finish_reason(response)
         )
         response_id = response.id
+        # An id-less done ends the active response, as `matches_active_response` in `_settle_response` takes it to.
+        ended_response_id = response_id if isinstance(response_id, str) else self._active_response_id
         # The cancelled response is now closed; stop suppressing its stragglers (its own usage still emits
         # below). A no-op for any other response.
         was_cancelled_response = isinstance(response_id, str) and response_id == self._cancelled_response_id
@@ -1348,14 +1372,14 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             response.status if response.status in ('cancelled', 'failed', 'incomplete') else 'completed'
         )
         self._lifecycle.response_done(
-            response_id or None,
+            ended_response_id or None,
             status=status,
             finish_reason=finish_reason,
             provider_details=response_provider_details(response),
         )
         self._close_cancelled_response(response_id)
         matches_active_response, superseded = await self._settle_response(
-            response, was_cancelled_response=was_cancelled_response
+            response, ended_response_id=ended_response_id, was_cancelled_response=was_cancelled_response
         )
         # Validated only now that all the response state above is settled: a malformed usage payload
         # raises `ValueError`, which `frames` surfaces as a recoverable frame error and keeps reading
@@ -1367,9 +1391,12 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         )
         return events, superseded
 
-    async def _settle_response(self, response: ProtocolResponse, *, was_cancelled_response: bool) -> tuple[bool, bool]:
+    async def _settle_response(
+        self, response: ProtocolResponse, *, ended_response_id: str | None, was_cancelled_response: bool
+    ) -> tuple[bool, bool]:
         """Release the connection's hold on a response that is done.
 
+        `ended_response_id` is the response the done ended, whose tool calls it closes.
         Returns `(matches_active_response, superseded)`, as `_handle_response_done` uses them.
         """
         response_id = response.id
@@ -1415,14 +1442,13 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             # whether the provider refuses it on that response's account or the connection drops first. (xAI cancels
             # a response of its own for ours with another reason, and starts ours.)
             self._in_flight_cut_off = self._request_in_flight is not None
-        if isinstance(response_id, str):
-            await self._close_tool_call_batch(
-                response_id, barged_in=response.status == 'cancelled' and not was_client_cancel
-            )
+        await self._close_tool_call_batch(
+            ended_response_id, barged_in=response.status == 'cancelled' and not was_client_cancel
+        )
         return matches_active_response, superseded
 
-    async def _close_tool_call_batch(self, response_id: str, *, barged_in: bool) -> None:
-        if (batch := self._tool_call_batches.get(response_id)) is None:
+    async def _close_tool_call_batch(self, response_id: str | None, *, barged_in: bool) -> None:
+        if response_id is None or (batch := self._tool_call_batches.get(response_id)) is None:
             return
         # No more calls can join the response: its tool results are answered once all are in.
         batch.done = True
@@ -1891,6 +1917,7 @@ class OpenAIRealtimeModel(RealtimeModel):
                 prune_tool_items=settings.get('openai_prune_tool_items', False),
                 keep_tool_items=settings.get('openai_keep_tool_items', frozenset()),
                 manual_turns=config_has_manual_turns(session_config),
+                session_config=session_config,
             )
             connection._history_items_sent(seed)  # pyright: ignore[reportPrivateUsage]
             yield connection
@@ -2004,4 +2031,5 @@ class OpenAIRealtimeModel(RealtimeModel):
             prune_tool_items=settings.get('openai_prune_tool_items', False),
             keep_tool_items=settings.get('openai_keep_tool_items', frozenset()),
             manual_turns=config_has_manual_turns(session_config),
+            session_config=session_config,
         )

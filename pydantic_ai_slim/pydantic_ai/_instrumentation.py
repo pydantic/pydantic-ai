@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeAlias, c
 from urllib.parse import urlparse
 
 from opentelemetry import context as otel_context
-from opentelemetry.baggage import get_baggage
+from opentelemetry.baggage import get_baggage, remove_baggage
 from opentelemetry.trace import INVALID_SPAN, Span, SpanKind, Status, StatusCode, Tracer, get_current_span
 from opentelemetry.util.types import AttributeValue
 from pydantic import ConfigDict, PydanticUserError, TypeAdapter
@@ -45,6 +45,8 @@ DEFAULT_INSTRUMENTATION_VERSION = 5
 AGENT_NAME_BAGGAGE_KEY = 'gen_ai.agent.name'
 RUN_ID_BAGGAGE_KEY = 'gen_ai.agent.call.id'
 CONVERSATION_ID_BAGGAGE_KEY = 'gen_ai.conversation.id'
+ROOT_CONVERSATION_ID_ATTRIBUTE = 'pydantic_ai.root_conversation_id'
+"""The top-level run's `conversation_id`, set on the spans of a run started inside it whose own differs."""
 
 GEN_AI_SYSTEM_ATTRIBUTE = 'gen_ai.system'
 GEN_AI_REQUEST_MODEL_ATTRIBUTE = 'gen_ai.request.model'
@@ -173,6 +175,13 @@ def current_model_request_span() -> Span | None:
     return policy.span
 
 
+def add_input_transformations_event(provider: str, reported: Sequence[Mapping[str, object]]) -> None:
+    """Record the replayed items a provider withheld as an event on the model request span."""
+    if (span := current_model_request_span()) is not None:
+        key = f'{provider}.input_transformations'
+        span.add_event(key, attributes={key: to_json(reported).decode()})
+
+
 @contextmanager
 def request_policy_scope(policy: ContentPolicy | None) -> Generator[None]:
     """Install `policy` for the scope, for a durable unit that runs outside the context that opened the request."""
@@ -261,7 +270,11 @@ unsupported (see `MessageHistoryMutatedWarning`).
 
 
 def get_agent_run_baggage_attributes() -> dict[str, Any]:
-    """Read agent name, run ID, and conversation ID from OTel baggage and return as span attributes."""
+    """Return the current agent run's name, run ID and conversation IDs as span attributes.
+
+    The name, run ID and `conversation_id` come from OTel baggage. The top-level run's
+    `conversation_id` comes from `_top_level_conversation_id` instead (see there for why).
+    """
     attrs: dict[str, Any] = {}
     agent_name = get_baggage(AGENT_NAME_BAGGAGE_KEY)
     if agent_name is not None:
@@ -272,7 +285,48 @@ def get_agent_run_baggage_attributes() -> dict[str, Any]:
     conversation_id = get_baggage(CONVERSATION_ID_BAGGAGE_KEY)
     if conversation_id is not None:
         attrs[CONVERSATION_ID_BAGGAGE_KEY] = conversation_id
+    attrs.update(root_conversation_attributes(conversation_id))
     return attrs
+
+
+_top_level_conversation_id: ContextVar[str | None] = ContextVar('pydantic_ai.top_level_conversation_id', default=None)
+"""The top-level run's `conversation_id`, while an instrumented agent run is running.
+
+A run started inside it, such as a sub-agent, reads this to find the conversation it belongs to.
+It is a context variable rather than OTel baggage because baggage is also filled from the headers
+of incoming requests, which would let any HTTP client choose the value.
+"""
+
+
+def root_conversation_attributes(conversation_id: object) -> dict[str, str]:
+    """Return the top-level run's `conversation_id` as a span attribute, or nothing.
+
+    A run started inside another run, such as a sub-agent, gets its own `conversation_id`, so its
+    cost is missed when cost is added up by `gen_ai.conversation.id`. Returns nothing outside an
+    agent run, for a top-level run, and for a run that shares the top-level run's `conversation_id`.
+    """
+    top_level_conversation_id = _top_level_conversation_id.get()
+    if not top_level_conversation_id or top_level_conversation_id == conversation_id:
+        return {}
+    return {ROOT_CONVERSATION_ID_ATTRIBUTE: top_level_conversation_id}
+
+
+@contextmanager
+def track_top_level_conversation(conversation_id: str | None) -> Generator[None]:
+    """Make the top-level run's `conversation_id` visible to the runs started inside this one.
+
+    Also removes `pydantic_ai.root_conversation_id` from the OTel baggage for the run, so that no
+    span started inside it can take that attribute from the baggage. Logfire copies every baggage
+    key onto each span, and a web app fills baggage from the `baggage` header of each request, so
+    without this any client could choose the value on the spans of a top-level run.
+    """
+    token = _top_level_conversation_id.set(_top_level_conversation_id.get() or conversation_id)
+    baggage_token = otel_context.attach(remove_baggage(ROOT_CONVERSATION_ID_ATTRIBUTE))
+    try:
+        yield
+    finally:
+        otel_context.detach(baggage_token)
+        _top_level_conversation_id.reset(token)
 
 
 CIRCULAR_REFERENCE_PLACEHOLDER = '<circular reference>'
@@ -347,6 +401,8 @@ def _redact_binary_content(value: Any, active: set[int]) -> object:
                 'calls': _redact_binary_content(value.calls, active),
                 'approvals': _redact_binary_content(value.approvals, active),
                 'metadata': _redact_binary_content(value.metadata, active),
+                # `validated_args` is left out: it's already dumped to JSON, where a validation hook's
+                # `BinaryContent` or `bytes` is base64 text that can't be told apart from other text.
                 # Kind names, so never binary; serialized only when there are questions, as the type does.
                 **({'_kinds': value._kinds} if value._kinds else {}),  # pyright: ignore[reportPrivateUsage]
             }
@@ -905,7 +961,7 @@ class _FinishModelRequestSpan(Protocol):
 
 
 def _prepare_model_request_span_context(
-    settings: InstrumentationSettings, request_context: ModelRequestContext
+    settings: InstrumentationSettings, request_context: ModelRequestContext, span: Span
 ) -> tuple[ModelRequestContext, dict[str, AttributeValue]]:
     # The model warns about ignored settings when it prepares the request to send it.
     with suppress_unsupported_setting_warnings():
@@ -914,6 +970,9 @@ def _prepare_model_request_span_context(
         )
     prepared = replace(request_context, model_settings=prepared_settings, model_request_parameters=prepared_parameters)
     attributes: dict[str, AttributeValue] = model_attributes(prepared.model)
+    # A sampled-out span drops its attributes; metrics need only the model attributes above.
+    if not span.is_recording():
+        return prepared, attributes
     json_schema_properties: dict[str, dict[str, str]] = {}
     if settings.include_model_request_parameters:
         attributes.update(
@@ -1059,7 +1118,7 @@ def open_model_request_span(
 
             def set_request_attributes(context: ModelRequestContext) -> ModelRequestContext:
                 nonlocal prepared_request_context
-                prepared, request_attributes = _prepare_model_request_span_context(settings, context)
+                prepared, request_attributes = _prepare_model_request_span_context(settings, context, span)
 
                 # Keep attributes set on the span since it opened, but describe the model this request
                 # is now made to: a hook can move it on to another model for a later attempt (#7018).

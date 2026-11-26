@@ -9,9 +9,10 @@ from typing import Protocol
 import anyio
 import pytest
 
-from pydantic_ai import Agent, DeferredToolRequests, FunctionToolset
+from pydantic_ai import Agent, DeferredToolRequests, FunctionToolset, ToolCallPart, ToolDefinition, ToolReturnPart
+from pydantic_ai.capabilities import Hooks, ValidatedToolArgs
 from pydantic_ai.durable_exec._operation import ToolsetCallToolId
-from pydantic_ai.exceptions import CallDeferred, ContentFilterError, ModelRetry, UserError
+from pydantic_ai.exceptions import CallDeferred, ContentFilterError, ModelRetry, ToolFailed, UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
@@ -23,7 +24,12 @@ try:
     from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
     from temporalio.common import RetryPolicy
     from temporalio.contrib.pydantic import pydantic_data_converter
-    from temporalio.exceptions import ApplicationError, CancelledError as TemporalCancelledError, TerminatedError
+    from temporalio.exceptions import (
+        ApplicationError,
+        CancelledError as TemporalCancelledError,
+        ChildWorkflowError,
+        TerminatedError,
+    )
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import (
         ChildWorkflowCancellationType,
@@ -43,7 +49,7 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
-pytestmark = [pytest.mark.xdist_group(name='temporal-durability')]
+pytestmark = [pytest.mark.xdist_group(name='temporal-child-workflows')]
 
 CHILD_WORKFLOW_TYPE = 'agent__child_workflow_agent__toolset__child_workflow_tools__call_tool__child_workflow'
 
@@ -174,8 +180,10 @@ async def test_child_workflow_metadata_added_after_worker_configured(client: Cli
     assert cause.message == snapshot(
         "Toolset 'late_child_tools' has a tool configured to run as a Temporal child workflow, but its child "
         'workflow was not registered with the worker, because no tool in the toolset had `child_workflow` metadata '
-        'when the worker was configured. Set the metadata on the tool, or with a `SetToolMetadata` capability, '
-        'before creating the worker, and register the worker through `PydanticAIPlugin` or `AgentPlugin`.'
+        'when the worker was configured, or because the worker was configured with '
+        '`AgentPlugin(agent, register_workflows=False)`. Set the metadata on the tool, or with a `SetToolMetadata` '
+        'capability, before creating the worker, and register the worker that runs this workflow through '
+        '`PydanticAIPlugin` or `AgentPlugin` without `register_workflows=False`.'
     )
 
 
@@ -254,6 +262,66 @@ async def test_child_workflow_tool_exception_fails_the_child(client: Client) -> 
 
     cause = _workflow_failure_cause(exc_info.value)
     assert (cause.type, cause.message) == ('ValueError', 'Something broke in the child.')
+
+
+recovered_failure_toolset = FunctionToolset[None](id='recovered_failure_child_tools')
+
+
+@recovered_failure_toolset.tool_plain(metadata={'temporal': {'child_workflow': _CHILD_WORKFLOW}})
+async def recovered_failure_child_tool() -> str:
+    raise ValueError('Something broke in the child.')
+
+
+child_failure_hooks = Hooks[None]()
+
+
+@child_failure_hooks.on.tool_execute_error
+async def child_failure_as_tool_result(
+    ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs, error: Exception
+) -> str:
+    assert isinstance(error, ChildWorkflowError)
+    cause = error.cause
+    assert isinstance(cause, ApplicationError)
+    raise ToolFailed(f'{cause.type}: {cause.message}')
+
+
+recovered_failure_agent = Agent(
+    TestModel(call_tools='all'),
+    name='recovered_failure_child_workflow_agent',
+    deps_type=type(None),
+    toolsets=[recovered_failure_toolset],
+    capabilities=[child_failure_hooks, TemporalDurability()],
+)
+
+
+@workflow.defn
+class RecoveredChildFailureWorkflow:
+    @workflow.run
+    async def run(self) -> list[str]:
+        result = await recovered_failure_agent.run('call the tool')
+        return [
+            f'{part.outcome}: {part.content}'
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+
+
+async def test_child_workflow_failure_reaches_parent_hook_as_child_workflow_error(client: Client) -> None:
+    """The parent's tool call raises `ChildWorkflowError`, which an `on_tool_execute_error` hook can turn into a result."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RecoveredChildFailureWorkflow],
+        plugins=[AgentPlugin(recovered_failure_agent)],
+    ):
+        tool_returns = await client.execute_workflow(
+            RecoveredChildFailureWorkflow.run,
+            id='test_child_workflow_failure_reaches_parent_hook_as_child_workflow_error',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert tool_returns == ['failed: ValueError: Something broke in the child.']
 
 
 user_error_toolset = FunctionToolset[None](id='user_error_child_tools')
@@ -668,6 +736,63 @@ async def test_child_workflow_runs_nested_durable_agent(client: Client) -> None:
     # The nested agent's model request is a durable activity in the child's history, not the parent's.
     assert scheduled_activity_types(child_history) == ['agent__nested_sub_agent__model_request']
     assert 'agent__nested_sub_agent__model_request' not in scheduled_activity_types(history)
+
+
+@workflow.defn
+class SplitWorkersDelegatingWorkflow:
+    # No `__pydantic_ai_agents__`, so the client's `PydanticAIPlugin` registers no activities on the workflow worker.
+    @workflow.run
+    async def run(self) -> str:
+        return (await delegating_agent.run('delegate this')).output
+
+
+async def test_activity_only_worker_registers_no_child_workflows(client: Client) -> None:
+    workflow_id = 'test_activity_only_worker_registers_no_child_workflows'
+    durability = TemporalDurability.from_agent(delegating_agent)
+    assert durability is not None
+    _, child_workflows = worker_registrations(durability)
+    assert child_workflows
+
+    # By default, the plugin registers the agent's child workflow on whatever worker it's attached to.
+    default_config = AgentPlugin(delegating_agent).configure_worker({'workflows': []})
+    assert default_config.get('workflows') == child_workflows  # pyright: ignore[reportUnknownMemberType]
+
+    # An activity-only plugin doesn't record the child workflow as registered in this process, so the workflow-side
+    # guard still fails a run whose workflow worker lacks it. The `worker_registrations` call above recorded it for
+    # the workflow worker below, which registers the child workflow classes itself.
+    registered = set(registered_child_workflow_names)
+    registered_child_workflow_names.clear()
+    try:
+        activity_plugin = AgentPlugin(delegating_agent, register_workflows=False)
+        assert registered_child_workflow_names == set()
+    finally:
+        registered_child_workflow_names.update(registered)
+
+    workflow_worker = Worker(
+        client, task_queue=TASK_QUEUE, workflows=[SplitWorkersDelegatingWorkflow, *child_workflows]
+    )
+    activity_worker = Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        plugins=[activity_plugin, AgentPlugin(sub_agent, register_workflows=False)],
+    )
+    assert workflow_worker.config(active_config=True).get('activities') == []  # pyright: ignore[reportUnknownMemberType]
+    assert activity_worker.config(active_config=True).get('workflows') == []  # pyright: ignore[reportUnknownMemberType]
+
+    # Every activity, in the parent and in the child, can only run on the activity-only worker.
+    async with workflow_worker, activity_worker:
+        result = await client.execute_workflow(
+            SplitWorkersDelegatingWorkflow.run, id=workflow_id, task_queue=TASK_QUEUE
+        )
+
+    assert 'success (no tool calls)' in result
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    child_start = _child_start(history)
+    assert child_start.workflow_type.name == (
+        'agent__delegating_agent__toolset__delegation_tools__call_tool__child_workflow'
+    )
+    child_history = await client.get_workflow_handle(child_start.workflow_id).fetch_history()
+    assert scheduled_activity_types(child_history) == ['agent__nested_sub_agent__model_request']
 
 
 class _ChildWorkflow(Protocol):

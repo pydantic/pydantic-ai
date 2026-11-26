@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import httpx2
 import pytest
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart
@@ -20,6 +21,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 try:
+    from openai import AsyncOpenAI
     from temporalio import activity, workflow
     from temporalio.client import Client
     from temporalio.common import RetryPolicy
@@ -28,12 +30,14 @@ try:
     from temporalio.workflow import ActivityConfig
 
     from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, TemporalDurability
+    from pydantic_ai.models.openai_codex import OpenAICodexModel
+    from pydantic_ai.providers.openai_codex import OpenAICodexProvider
 
     from ._shared import BASE_ACTIVITY_CONFIG, TASK_QUEUE, scheduled_activity_types
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
-pytestmark = [pytest.mark.xdist_group(name='temporal-durability')]
+pytestmark = [pytest.mark.xdist_group(name='temporal-count-tokens')]
 
 _counted_in_activity: list[bool] = []
 """Whether each count ran in an activity. Activities run outside the workflow sandbox, so they append to this module."""
@@ -176,6 +180,37 @@ class _MisconfiguredCountModel(_RejectedCountModel):
     error = _CountConfigError('The app is misconfigured.')
 
 
+class _OwnCannotCountError(UserError, NotImplementedError):
+    """A third-party model's own error with both bases, which is recorded as the `NotImplementedError` it also is."""
+
+
+class _OwnCannotCountModel(_RejectedCountModel):
+    kind = 'own_cannot_count_error'
+    error = _OwnCannotCountError('This model cannot count.')
+
+
+_sent_requests: list[str] = []
+"""Each request the no-count-endpoint model's client was asked to send. Its transport sends none of them."""
+
+
+def _refuse_request(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover - no request is sent
+    _sent_requests.append(str(request.url))
+    return httpx2.Response(400)
+
+
+class _NoCountEndpointModel(OpenAICodexModel):
+    """A model whose provider serves no token counting, so its `count_tokens` raises before any request."""
+
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> RequestUsage:
+        _count_attempts.append('no_count_endpoint')
+        return await super().count_tokens(messages, model_settings, model_request_parameters)
+
+
 # Retries allowed, so a count error that Temporal retried would show up as a second attempt.
 _RETRYING_ACTIVITY_CONFIG = ActivityConfig(
     start_to_close_timeout=timedelta(seconds=60),
@@ -196,10 +231,29 @@ _misconfigured_count_agent = Agent(
     name='count_tokens_user_error_subclass',
     capabilities=[TemporalDurability(activity_config=_RETRYING_ACTIVITY_CONFIG)],
 )
+_own_cannot_count_agent = Agent(
+    _OwnCannotCountModel(_reply),
+    name='count_tokens_own_cannot_count_error',
+    capabilities=[TemporalDurability(activity_config=_RETRYING_ACTIVITY_CONFIG)],
+)
+_no_count_endpoint_agent = Agent(
+    _NoCountEndpointModel(
+        'gpt-5.5',
+        provider=OpenAICodexProvider(
+            openai_client=AsyncOpenAI(
+                api_key='mock-api-key', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(_refuse_request))
+            )
+        ),
+    ),
+    name='count_tokens_no_count_endpoint',
+    capabilities=[TemporalDurability(activity_config=_RETRYING_ACTIVITY_CONFIG)],
+)
 _count_error_agents = {
     'not_implemented': _cannot_count_agent,
     'user_error': _rejected_count_agent,
     'user_error_subclass': _misconfigured_count_agent,
+    'own_cannot_count_error': _own_cannot_count_agent,
+    'no_count_endpoint': _no_count_endpoint_agent,
 }
 
 
@@ -228,15 +282,27 @@ class CountTokensErrorWorkflow:
         ),
         ('user_error', 'UserError: This request cannot be counted.'),
         ('user_error_subclass', 'ActivityError: _CountConfigError: The app is misconfigured.'),
+        ('own_cannot_count_error', 'NotImplementedError: This model cannot count.'),
+        (
+            'no_count_endpoint',
+            "UserError: Server-side token counting is not available for openai-codex models ('gpt-5.5'); "
+            'the provider does not expose the input-tokens endpoint.',
+        ),
     ],
 )
-async def test_count_tokens_errors_fail_the_count_once(client: Client, error: str, expected: str):
+async def test_count_tokens_errors_fail_the_count_once(
+    allow_model_requests: None, client: Client, error: str, expected: str
+):
     """A model that can't count, or a request it rejects, fails the count once, with the error the model raised.
 
     `NotImplementedError` is what Pydantic AI Harness falls back on when a nested agent's model can't count. A
     `UserError` subclass carries more than its message, so it fails the activity as it would fail a model request's.
+    A model whose provider serves no token counting raises a `UserError` that is also a `NotImplementedError`, and
+    the workflow sees it as a `UserError`, which fails the workflow instead of its task. Any other error with both
+    bases reaches the workflow as a `NotImplementedError`.
     """
     _count_attempts.clear()
+    _sent_requests.clear()
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -252,3 +318,4 @@ async def test_count_tokens_errors_fail_the_count_once(client: Client, error: st
         )
     assert output == expected
     assert _count_attempts == [error]
+    assert _sent_requests == []

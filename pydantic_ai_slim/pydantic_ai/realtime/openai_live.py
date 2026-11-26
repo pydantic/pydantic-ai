@@ -132,6 +132,7 @@ from ._utils import (
     wrap_seeded_system_prompts,
 )
 from .codec import (
+    AppendVoiceInstructions,
     AudioDelta,
     CancelResponse,
     ClearAudio,
@@ -148,6 +149,7 @@ from .codec import (
     ToolCall,
     ToolResult,
     TruncateOutput,
+    UpdateTools,
 )
 from .model import RealtimeClientSecret, RealtimeModel, RealtimeProviderSession, WebRTCAnswer, WebRTCSession
 from .profiles import RealtimeModelProfileSpec
@@ -158,6 +160,7 @@ try:
     import websockets
     from openai import AsyncOpenAI
     from openai.types.live import (
+        CustomVoiceParam,
         DataChannelConfigParam,
         DelegationCreatedEvent,
         ErrorEvent,
@@ -242,8 +245,11 @@ _VOICE_FLOOR = 64
 #: tool call's quiet wait would arrive as a spoken part with nothing in it.
 _MAX_FORWARDED_PAUSE_MS = 500
 
-#: The most tokens Live accepts in one `session.thinking.append`.
+#: The most tokens Live accepts in one `session.thinking.append` or `session.instructions.append`.
 _CONTEXT_TOKEN_LIMIT = 500
+#: The most tokens of `instructions` a session can start with, in the same tokenizer (checked live: 16,384 start, 16,385
+#: are refused).
+_START_INSTRUCTIONS_TOKEN_LIMIT = 16_384
 #: The tokenizer Live counts that limit in. Checked live: 500 `o200k_base` tokens are accepted, 501 refused.
 _CONTEXT_ENCODING = 'o200k_base'
 #: How a user's typed turn is put to Live as silent context, while the backend gets it as the user's message.
@@ -409,11 +415,17 @@ class OpenAILiveModelSettings(RealtimeModelSettings, total=False):
 
     See [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] for the shared settings.
     Live has no turn-detection, truncation, token-limit, or temperature controls: it owns turn-taking
-    entirely, and voice, audio format and instructions are immutable once the session has started.
+    entirely, and voice and audio format are immutable once the session has started. Its instructions
+    can only be added to, with
+    [`append_voice_instructions`][pydantic_ai.realtime.RealtimeSession.append_voice_instructions].
     """
 
-    openai_voice: str
-    """The voice used for Live speech, e.g. `marin` (the provider default). Immutable after startup."""
+    openai_voice: str | CustomVoiceParam
+    """The voice used for Live speech, e.g. `marin` (the provider default) or `{'id': 'voice_1234'}`.
+
+    A string names a built-in voice. A custom voice created through OpenAI's voice API is selected by its ID in
+    the OpenAI SDK's `CustomVoiceParam` form (`openai.types.live.CustomVoiceParam`). Immutable after startup.
+    """
 
     openai_live_instructions: str
     """Instructions for the Live model's *spoken* behavior: persona, language, voice, pacing,
@@ -422,7 +434,8 @@ class OpenAILiveModelSettings(RealtimeModelSettings, total=False):
     The agent's own instructions and system prompt describe the work and go only to the backend
     prompt, never to the Live model, so this is where persona and conversational style belong.
     Defaults to a short prompt that tells the model to delegate anything it can't answer from the
-    conversation itself; one set here replaces it, so say when to delegate too."""
+    conversation itself; one set here replaces it, so say when to delegate too. Add to it mid-session with
+    [`append_voice_instructions`][pydantic_ai.realtime.RealtimeSession.append_voice_instructions]."""
 
     openai_live_delegation: OpenAILiveResponsesDelegation
     """Configuration for the Responses backend the Live session delegates work to."""
@@ -852,11 +865,18 @@ class OpenAILiveConnection(RealtimeConnection):
         reconnect: ReconnectPolicy | None = None,
         forks: bool = False,
         backend: dict[str, Any] | None = None,
+        session_start: dict[str, Any] | None = None,
     ) -> None:
         self._ws = ws
         # The delegation backend's configuration as the session started it, which a redial starts the new session
         # with: an instruction change updates its `instructions` in place, so the new session has them too.
         self._backend: dict[str, Any] = backend if backend is not None else {}
+        # The configuration a redial starts a replacement session with, whose `instructions` (the voice model's)
+        # appended voice instructions are folded into; `None` where nothing redials.
+        self._session_start = session_start
+        self._start_instructions: str = session_start.get('instructions', '') if session_start is not None else ''
+        # The voice instructions appended so far that still fit in a replacement session's start, oldest first.
+        self._voice_instructions: list[str] = []
         self._idle_audio = idle_audio
         # Re-opening the session after a drop: by forking it, which Live can only do for a stored
         # session, or else by starting a new one seeded with the history so far.
@@ -868,7 +888,7 @@ class OpenAILiveConnection(RealtimeConnection):
         self._recent_event_ids: deque[str] = deque(maxlen=_REPLAYED_EVENTS_REMEMBERED)
         self._seen_event_ids: set[str] = set()
         # Set when a re-attach replaces the socket or is given up on, for the sends waiting on it (see `_send_event`).
-        self._socket_changed = asyncio.Event()
+        self._socket_changed = asyncio.Event()  # noqa: TID251  (not converted to anyio yet)
         self._reconnect = reconnect
         self._forks = forks
         self._message_history: Callable[[], Sequence[ModelMessage]] | None = None
@@ -1012,20 +1032,11 @@ class OpenAILiveConnection(RealtimeConnection):
         if isinstance(content, str):
             await self._send_text(content, input_index)
             return True
-        if isinstance(content, InstructionChangeContext):
-            # The agent's instructions are the backend's, not Live's (see `OpenAILiveResponsesDelegation`), and only
-            # the backend's settings can be updated once the session has started. Its instructions can only be
-            # replaced, so the change is appended to them, as a standard model would receive it after its prefix.
-            instructions = '\n\n'.join(
-                text for text in (self._backend.get('instructions'), content.system_prompt) if text
-            )
-            await self._send_event(
-                {
-                    'type': _SESSION_UPDATE_EVENT,
-                    'session': {'delegation': {'type': 'responses', 'responses': {'instructions': instructions}}},
-                }
-            )
-            self._backend['instructions'] = instructions
+        if isinstance(content, (InstructionChangeContext, UpdateTools)):
+            await self._update_backend(content)
+            return True
+        if isinstance(content, AppendVoiceInstructions):
+            await self._append_voice_instructions(content.text)
             return True
         if isinstance(content, TextContext):
             # Context that `thinking` carries without prompting speech itself. The model may still
@@ -1073,6 +1084,52 @@ class OpenAILiveConnection(RealtimeConnection):
                 self._input_audio_end, self._audio_end = booked
                 raise
         return True
+
+    async def _update_backend(self, content: InstructionChangeContext | UpdateTools) -> None:
+        """Update the delegation backend's instructions or tools, the agent's, with `session.update`.
+
+        The agent's instructions and tools are the backend's, not Live's (see `OpenAILiveResponsesDelegation`), and only
+        the backend's settings can be updated once the session has started. A redial starts the new session with the
+        update too.
+        """
+        responses: dict[str, Any]
+        if isinstance(content, InstructionChangeContext):
+            # The backend's instructions can only be replaced, so the change is appended to them, as a standard model
+            # would receive it after its prefix.
+            instructions = '\n\n'.join(
+                text for text in (self._backend.get('instructions'), content.system_prompt) if text
+            )
+            responses = {'instructions': instructions}
+        else:
+            # The backend calls the tools, so its list is the one replaced. It also holds the native tools, which stay.
+            tools = [tool_def_to_live(tool) for tool in content.tools]
+            tools += [tool for tool in self._backend.get('tools', ()) if tool['type'] != 'function']
+            responses = {'tools': tools}
+        await self._send_event(
+            {'type': _SESSION_UPDATE_EVENT, 'session': {'delegation': {'type': 'responses', 'responses': responses}}}
+        )
+        self._backend.update(responses)
+
+    async def _append_voice_instructions(self, text: str) -> None:
+        if (tokens := await _context_tokens_over_cap(text)) is not None:
+            raise UserError(
+                f'OpenAI GPT-Live accepts at most {_CONTEXT_TOKEN_LIMIT} tokens per `append_voice_instructions()`, '
+                f'and this is {tokens}. Add the instructions in shorter pieces.'
+            )
+        await self._send_event({'type': 'session.instructions.append', 'delegation_id': None, 'content': text})
+        # An empty append adds nothing for a replacement session to start with, and would never be dropped.
+        if self._session_start is None or not text:
+            return
+        # A replacement session starts with the voice model's own instructions and those appended since, but no more
+        # than Live's cap: the newest that fit, as the running session took them all and the newest take precedence.
+        self._voice_instructions.append(text)
+        while True:
+            instructions = '\n\n'.join(part for part in (self._start_instructions, *self._voice_instructions) if part)
+            over = await _context_tokens_over_cap(instructions, limit=_START_INSTRUCTIONS_TOKEN_LIMIT)
+            if over is None or not self._voice_instructions:
+                break
+            del self._voice_instructions[0]
+        self._session_start['instructions'] = instructions
 
     async def _send_text(self, content: str, input_index: InputId) -> None:
         # A user turn. Live has no user-message event of its own, so the text goes to the backend as the
@@ -1145,7 +1202,7 @@ class OpenAILiveConnection(RealtimeConnection):
         """
         while (delay := self._idle_frame_due() - _pump_clock()) > 0:
             # In short steps, so a schedule a redial cuts short (see `_forget_session_state`) takes effect.
-            await asyncio.sleep(min(delay, _IDLE_AUDIO_FRAME))
+            await asyncio.sleep(min(delay, _IDLE_AUDIO_FRAME))  # noqa: TID251  (not converted to anyio yet)
         # Booked from now rather than from when it was due, so a stalled loop doesn't catch up with a
         # burst of frames that would run Live's timeline ahead of the clock.
         self._next_idle_frame = max(self._idle_frame_due(), _pump_clock()) + _IDLE_AUDIO_FRAME
@@ -1248,7 +1305,7 @@ class OpenAILiveConnection(RealtimeConnection):
     def _socket_change_settled(self) -> None:
         """Wake the sends waiting for a re-attach: the sideband was replaced, or won't be."""
         self._socket_changed.set()
-        self._socket_changed = asyncio.Event()
+        self._socket_changed = asyncio.Event()  # noqa: TID251  (not converted to anyio yet)
 
     async def _end_session(self) -> AsyncIterator[SessionUsage]:
         """Send `session.close`, and read on until `session.closed` reports the session's final usage.
@@ -2283,12 +2340,13 @@ def _is_audio_or_video_url(item: DocumentUrl) -> bool:
     return media_type.startswith(('audio/', 'video/'))
 
 
-async def _context_tokens_over_cap(text: str) -> int | None:
-    """How many tokens context text is, in the tokenizer Live counts with, if that is over Live's cap; else `None`.
+async def _context_tokens_over_cap(text: str, *, limit: int = _CONTEXT_TOKEN_LIMIT) -> int | None:
+    """How many tokens text is, in the tokenizer Live counts with, if that is over `limit`; else `None`.
 
-    A token spans at least one byte, so text that short can't be over and skips loading the tokenizer.
+    `limit` defaults to Live's cap on context. A token spans at least one byte, so text that short can't be over and
+    skips loading the tokenizer.
     """
-    if len(text.encode()) <= _CONTEXT_TOKEN_LIMIT:
+    if len(text.encode()) <= limit:
         return None
     # Loading an encoding can download it on first use, so it stays off the event loop. tiktoken caches
     # the loaded encoding under a lock, so concurrent first sends load it once.
@@ -2296,7 +2354,7 @@ async def _context_tokens_over_cap(text: str) -> int | None:
     # Special-token text such as `<|endoftext|>` is counted as the one token it is, as Live counts it
     # (checked live), rather than refused as tiktoken does by default.
     tokens = len(encoding.encode(text, allowed_special='all'))
-    return tokens if tokens > _CONTEXT_TOKEN_LIMIT else None
+    return tokens if tokens > limit else None
 
 
 async def _check_context_length(text: str) -> None:
@@ -2805,9 +2863,10 @@ class OpenAILiveModel(RealtimeModel):
                 forwards_output_audio=False,
                 reattach=attach,
                 reconnect=settings.get('reconnect'),
+                # What the offer started the backend with, which an update builds on: its native tools stay.
                 backend=(
-                    {'instructions': delegation.responses.instructions}
-                    if delegation and delegation.type == 'responses' and delegation.responses.instructions
+                    delegation.responses.model_dump(mode='json', include={'instructions', 'tools'}, exclude_none=True)
+                    if delegation and delegation.type == 'responses'
                     else None
                 ),
             )
@@ -2885,6 +2944,7 @@ class OpenAILiveModel(RealtimeModel):
                 # Only a stored session can be forked. Storing it is the user's call, never made for them.
                 forks=bool(settings.get('openai_live_store')),
                 backend=session_config['delegation']['responses'],
+                session_start=session_config,
             )
             yield connection
         finally:

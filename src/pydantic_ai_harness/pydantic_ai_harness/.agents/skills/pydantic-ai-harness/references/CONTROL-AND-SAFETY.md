@@ -16,6 +16,7 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Stop tool calls failing on trailing commas, single quotes, truncated JSON | `RepairToolArguments()` |
 | Refuse or redact a prompt before it reaches the model | `InputGuardrail(guard=...)` |
 | Block, redact, or retry the final output | `OutputGuardrail(guard=...)` |
+| Keep an unattended run going until a completion check you define accepts the output | `Goal(goal=..., verify=...)` |
 | Screen each streamed text, thinking or tool-call part before the caller sees it | `StreamGuardrail(guard=...)` |
 | Block/rewrite tool arguments, redact tool results, or hide tools | `ToolGuardrail(guard=..., result_guard=..., hidden=[...])` |
 | Mask API keys, tokens, PII in text | `guardrails.detectors.redact_secrets` / `redact_personal_data` in a guard |
@@ -25,15 +26,20 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Keep injected instructions, exfiltration commands, hidden text out of memory and skills | `Memory(scanner=ArtifactScanner())`, `Skills(..., scanner=ArtifactScanner())` |
 | Ask a second model whether each selected tool call should run | `ToolCallJudge(model, question=..., tools=...)` |
 | Let a second model approve low-risk calls that need approval, and ask a person about the rest | `ApprovalReviewer(model, question=..., tools=...)` |
-| Ask a person before file writes and commands, by permission mode (full, auto, read-only) | `Permissions(mode)` with `ask_permissions` in a `HandleDeferredToolCalls` handler |
+| Ask a person before file writes and commands, by permission mode (full, auto, read-only) | `Permissions(mode)` with core `HandleDeferredToolCalls(approval_ask(approver))` |
+| Allow, ask about, or deny tool calls and shell commands by rule | `Permissions(rules=[PermissionRule(...)])` |
 | Cap USD or tokens per day/month/run, per tenant, across workers | `SpendLimits(budgets=[Budget(...)])` |
 | Cap tokens/cost for one run only | core `UsageLimits` (no harness capability needed) |
+| Tell the model how much of its usage limits and spend budgets is left, every request | `ReportRemainingBudget(spend_limits=...)` |
 | Let the model ask the user multiple-choice questions and wait | `AskUser(answerer=...)` |
 | Counter instruction fade in long runs, cache-safe | `SystemReminders` |
 | Have a second model review the run and steer it when it drifts | `TrajectoryJudge` |
 | Interrupt an agent that keeps repeating the same tool call, result, or response, or repeats itself within a streaming response | `DetectLoops` |
 | Cap calls per tool or per run, or refuse exact repeats, and let the run continue | `ToolBudgets(per_tool=..., total=..., refuse_repeats=...)` |
 | Have the agent review and revise its answer before the run ends | `RefineOutput` |
+| Send an exception a tool raises to the model instead of ending the run | `ReportToolErrors(format_error=...)` |
+| Send a coding agent back to run its checks before it finishes after an edit | `RequireVerification` |
+| End the run with a final answer instead of `UsageLimitExceeded` at a usage limit | `WrapUpAtLimits` |
 
 ## RepairToolArguments
 
@@ -416,7 +422,13 @@ Gotchas:
 Holds the `FileSystem` writes and `Shell` commands a permission mode asks about by raising
 `ApprovalRequired`: `'full'` (default) asks about nothing, `'auto'` asks about commands matching
 `ask_commands` (`DEFAULT_ASK_COMMANDS`: `rm -rf`, `git push`, `sudo`, network clients, installs), and
-`'read-only'` asks about every write and command. Other tools are not checked.
+`'read-only'` asks about every write and command. Other tools are not checked unless a rule matches them.
+
+`rules=[PermissionRule(...)]` decide before the mode: each rule is `'allow'`, `'ask'`, or `'deny'` for calls
+matching its `tools` selector, `args` globs, and shell `command` words. `'deny'` beats `'ask'` beats `'allow'`,
+whatever the order. A compound command runs by rule only if an allow rule matches every simple command in it, while
+an ask or deny rule matching any one decides it. An allow skips `'read-only'`'s blanket ask but not `ask_commands`.
+A denied call returns a `ToolReturnPart` with `outcome='denied'`, even when it was approved.
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -427,7 +439,7 @@ from pydantic_ai_harness.permissions import (
     PermissionDecision,
     PermissionRequest,
     Permissions,
-    ask_permissions,
+    approval_ask,
 )
 
 
@@ -441,7 +453,7 @@ agent = Agent(
         LocalWorkspace('.'),
         Coder(),
         Permissions('auto'),
-        HandleDeferredToolCalls(handler=lambda ctx, requests: ask_permissions(requests, approve)),
+        HandleDeferredToolCalls(approval_ask(approve)),
     ],
 )
 ```
@@ -449,12 +461,22 @@ agent = Agent(
 Gotchas:
 
 - Without a handler a held call ends the run as `DeferredToolRequests` output, like `requires_approval=True`.
+- `approval_ask` takes a resume token, which durable runs on engines other than AWS Lambda (`AWSLambdaDurability`)
+  refuse; there, pass the two-parameter handler `lambda ctx, requests: ask_permissions(requests, approve)`. On
+  Lambda, `approval_ask` answers in place in a recorded step: keep the approver quick and set `timeout=...`.
+- A plain two-parameter handler runs before a token handler such as `approval_ask`, whatever the list order: a
+  second handler for other approvals must skip the calls `permission_requests(requests)` returns.
 - `mode` may be a function of the run context, read on every call. `PermissionDecision(remember=True)`
   skips asking about the same tool and command or path for the rest of the conversation, via the caller-ownable
   `remembered` set; inside durable execution it is kept in the message history instead.
 - Delegates are only checked when `Permissions` reaches them: pass it in `SubAgents(shared_capabilities=[...])`.
-- `ask_commands` patterns are a convenience, not a sandbox: use a sandbox workspace when the agent must not
-  reach something.
+- `ask_commands` patterns and `rules` are a convenience, not a sandbox: use a sandbox workspace when the agent
+  must not reach something. An allow rule trusts everything after its words (`find` allows `find . -delete`).
+- Commands with `$`, backticks, quoted operators, brace expansion, globbed command names, subshells,
+  here-documents, or line breaks, and every command on a `'windows'` workspace, cannot be split: no `command` rule
+  allows them. Their quote-stripped text is still checked against ask and deny rules, and when the shell expands
+  part of them (`$`, backticks, braces, line continuations, globbed command names) they ask if an ask or deny
+  command rule applies.
 
 ## SpendLimits
 
@@ -605,7 +627,12 @@ print(agent.run_sync('Set up storage').output)
 - Each question is a deferred call marked `kind='question'` (`requests.kind(id) == 'question'`); `AskUser`
   answers its own in `handle_deferred_tool_calls`, after the step's other tool calls finish, one question
   at a time, through core `wait_for_external_event` like a token-taking `HandleDeferredToolCalls` handler: in process by default, journaled
-  and suspended on AWS Lambda durable functions; on Temporal/DBOS/Prefect the engine refuses it with `UserError`
+  and suspended on AWS Lambda durable functions and on Temporal (`TemporalDurability`: the answerer runs in
+  a local activity whose result the history records, the workflow waits on a condition, and the token is
+  resolved with `await pydantic_ai.durable_exec.temporal.resolve_external_event(client, token, payload)`,
+  which signals the workflow; the tool runs in an activity, which can't emit events yet (#7971), so
+  `AskUserRequestedEvent` isn't emitted there; import the agent's module under
+  `workflow.unsafe.imports_passed_through()`, or the answerer is the sandbox's copy); on DBOS/Prefect the engine refuses it with `UserError`
   (an unrecorded wait could diverge from the journal on replay). Works under `run_stream()` too: the
   tool body defers, so streaming doesn't stop on the call.
 - Three required positional parameters receive `(ctx, request, token)` (`TokenAnswerer[DepsT]`): return the
@@ -624,8 +651,28 @@ print(agent.run_sync('Set up storage').output)
   `DeferredToolResults(calls={call.tool_call_id: ask_user_result(request, response)})`.
 - Observe with `AskUserRequestedEvent` / `AskUserAnsweredEvent`. An answerer that raises still
   emits the answered event, with `failed=True`, before its error propagates. Two `AskUser` on one agent
-  collide on the tool name. It has a spec name, but a spec cannot supply the `answerer` callable,
-  so pass it with `capabilities=` on `Agent.from_spec`/`Agent.from_file`.
+  collide on the tool name. A spec can set `answerer` only to `null`, which defers every call as above;
+  pass an `AskUser` with an answerer callable with `capabilities=` on `Agent.from_spec`/`Agent.from_file`.
+
+## Deny Unanswered
+
+`DenyUnanswered` ends the wait in an unattended run: a held approval is denied with
+`message` (`ToolDenied`) and a deferred `AskUser` question is answered with
+`question_message` (nobody is available to answer, not "the user declined"),
+so the run finishes instead of pausing on `DeferredToolRequests`. Any other deferred call
+stays deferred for its own handler.
+
+Pairs with `AskUser` for unattended runs, where deferred calls exist for a caller who
+answers them in a second run and nobody ever does. `message` and `question_message` change
+the two texts.
+
+`SubAgents` delegations and `DynamicWorkflow` child runs carry the parent run's
+`DenyUnanswered` into the child, so a delegate's question or approval request is denied
+inside the child too and the delegation finishes. This per-capability forwarding is interim:
+a general hook for passing capabilities on to child runs is being designed in #13135. A
+delegation a durable engine runs as a tool activity (a named sub-agent under
+`TemporalDurability`) and a remote sub-agent run by a `SubAgentWorker` get no forwarded
+instance: give that child, or the worker's agent, its own `DenyUnanswered`.
 
 ## SystemReminders
 
@@ -871,6 +918,89 @@ print([part.metadata for part in parts if isinstance(part, ToolReturnPart) and p
   rounds the budget is per round, not per task.
 - Emits a `tool call refused` span (`tool_budgets.reason`, `tool_budgets.tool_name`).
 
+## ReportToolErrors
+
+Wraps the agent's toolset and turns an exception a function tool raises into `ToolFailed`, as if the
+tool raised it, so the model gets a failed tool result (`outcome='failed'`) and the run continues.
+
+```python
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+from pydantic_ai_harness import ReportToolErrors
+
+
+def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('divide', {'a': 1, 'b': 0})])
+    return ModelResponse(parts=[TextPart("Can't divide by zero.")])
+
+
+agent = Agent(FunctionModel(model), capabilities=[ReportToolErrors()])
+
+
+@agent.tool_plain
+def divide(a: int, b: int) -> float:
+    return a / b
+
+
+result = agent.run_sync('What is 1 / 0?')
+parts = [part for message in result.all_messages() for part in message.parts]
+print([part.content for part in parts if isinstance(part, ToolReturnPart)])
+#> ['`divide` raised ZeroDivisionError']
+```
+
+- The default text leaves out the exception's message (it can carry paths, hosts, connection strings).
+- `format_error(ctx, info) -> str` replaces the text, for example to include `info.error`; `info` is a
+  `ToolErrorInfo` (`name`, `args`, `tool_call_id`, `error`) from `pydantic_ai_harness.report_tool_errors`;
+  `exceptions=(TimeoutError, ...)` reports only those types (default `(Exception,)`), the rest propagate.
+- No limit of its own and the tool stays available; `UsageLimits.request_limit` stops a model that keeps
+  failing (`tool_calls_limit` counts only successful calls; `ToolBudgets` caps one tool).
+- Under Temporal, a failed tool activity reaches the workflow as `ActivityError` after its retry policy gives
+  up; `ReportToolErrors` leaves it alone, so the run fails as without it.
+- `ModelRetry`, `ToolFailed`, `ApprovalRequired`, `CallDeferred`, `SkipToolExecution`, `RunCancelled` pass
+  through; `UsageLimitExceeded` and `UserError` still end the run, and so does a tool that exhausts its
+  `retries` (`Coder` reports those instead). Output tools and argument validation aren't affected.
+- A `ToolGuardrail` `result_guard` screens the reported text. `on_tool_execute_error` hooks aren't called
+  for a reported exception, in any order; narrow `exceptions` to leave a type to such a hook. Under `CodeMode`, a
+  snippet's nested tool call raises the `ToolFailed`, not the original exception. With several,
+  the last listed formats the error. Emits no spans.
+
+## ReportRemainingBudget
+
+In `before_model_request`, enqueues a request-scoped `RemainingBudgetPart` (`InstructionCapabilityPart`) with what is left of the run's
+`UsageLimits` (read from `ctx.usage_limits` and `ctx.usage`) and, given `spend_limits=`, of each
+`SpendLimits` budget with a ceiling (read with `status(ctx)`). Disclosure only; enforcement stays with
+`UsageLimits` and `SpendLimits`.
+
+```python
+from decimal import Decimal
+
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import ReportRemainingBudget, SpendLimits
+from pydantic_ai_harness.spend_limits import Budget
+
+spend = SpendLimits(budgets=[Budget(usd=Decimal(10), window='day')])
+agent = Agent('test', capabilities=[spend, ReportRemainingBudget(spend_limits=spend)])
+```
+
+```text
+Budget remaining:
+- this run: 8 requests including this one, about 38k total tokens, $1.42
+- today: $12.50
+```
+
+- The run line lists requests (including the one being sent), tool calls, input/output/total tokens and
+  `cost_limit`, for each limit set; `per_request_input_tokens_limit` isn't reported. Spend lines are labelled
+  by window (`spend limit for this run`, `this conversation`, `today`, `this month`, `in total`) plus `name` unless
+  `'default'`; counter-only budgets are left out. Tokens of 1,000 or more and USD are rounded down (`about 38k`).
+- Pass the same `SpendLimits` instance the agent carries; its store is read on every request.
+- A run without `usage_limits=` still reports core's default `request_limit=50`; nothing is sent only with
+  `UsageLimits(request_limit=None)`, no other limit and no `spend_limits`. No spans: the status is part of
+  the recorded model request.
+
 ## RefineOutput
 
 When a run would end with an output, adds a system prompt telling the model to review its last answer
@@ -906,10 +1036,136 @@ print(agent.run_sync('Explain the change').output)
   every answer, the first one included.
 - Several on one agent each count their own rounds and add their instructions to a round. Emits no spans.
 
+## Goal
+
+States the run's goal in the instructions and, when you pass an async `verify(ctx, output)`, calls it
+on every final output. Return `None` to accept or a nonempty string saying
+what remains; a rejection raises `ModelRetry` with the goal and the gap, so the model keeps working
+in the same conversation. No per-run state, not serializable to an agent spec.
+
+```python
+from pydantic_ai import Agent, RunContext
+
+from pydantic_ai_harness import Goal
+
+
+async def verify(ctx: RunContext[None], output: object) -> str | None:
+    return None if output == 'done' else 'Finish the migration before answering.'
+
+
+agent = Agent('test', retries={'output': 3}, capabilities=[Goal(goal='Migrate the config.', verify=verify)])
+```
+
+- Rejections share the `retries={'output': n}` budget with other output validation, and exhaustion
+  raises `UnexpectedModelBehavior`; `UsageLimits` still end the run. For a final tool-less answer at the
+  limit add `WrapUpAtLimits`: its answer still goes through `verify`, and a rejection there raises
+  `UsageLimitExceeded` since no request is left for the retry.
+- Verify real evidence (files, tests, external state), not the model's claim. An LLM judge agent
+  inside `verify` works: pass `usage=ctx.usage` to its `run()` and give it evidence, not just the answer.
+- Output functions run before the check and can run again after a rejection, so keep them idempotent.
+- Without `verify`, `Goal` only adds the goal instructions. `headless=False` drops the
+  nobody-is-available text for interactive runs; a `verify` is still enforced. To let an interactive
+  run stop and ask, set `headless=False` and leave `verify` unset.
+- Pick `OutputGuardrail` instead for block/redact/retry policies that don't depend on a goal.
+- Default `id='goal'`: two that disagree under one `id` raise, so give each extra `Goal` its own `id`.
+  `verify` runs as the durable operation `verify` under Temporal, DBOS, and Prefect: a replay reuses
+  its result; on Temporal a structured output arrives as JSON data (validate it, don't `isinstance`),
+  `ctx.messages` is unavailable, and a verifier exception retries the activity instead of propagating.
+- Emits a `goal.verify` span (`goal.met`; `goal.description`/`goal.gap` with `trace_include_content`).
+
+## RequireVerification
+
+When a run would end after an edit (a `FileSystem` `write_file`/`edit_file` call, matched by tool kind, or a
+shell command matching `edit_commands`) and the latest run of every check since then (a shell command
+matching `verification_commands`) did not pass, adds an instruction telling the model to run its checks or
+explain the blocker. Up to `max_attempts=2` times per run; after that the run ends and emits a
+`CompletionUnverifiedEvent` (`attempts`, `failed_commands`), dispatched immediately so `Hooks.on.event`
+listeners get it before the run returns; at most once per run.
+
+```python
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import FileSystem, RequireVerification, Shell
+
+agent = Agent('test', capabilities=[FileSystem(), Shell(), RequireVerification()])
+```
+
+- Any edit makes every earlier check stale. `write_file`/`edit_file` edits to `exempt_paths` (`*.md`, `*.mdx`,
+  `*.rst`) don't count; shell edit commands always count, since the file they touch isn't known.
+- Commands come from tools whose metadata sets `code_arg_language='shell'` and `code_arg_name`, as
+  `Shell`'s do. A check is an `&&`-joined step of the last `;`/newline statement that starts with a
+  `verification_commands` match (`cd pkg; pytest` counts, `pytest; echo done` does not). `|`, `||`,
+  background `&`, command substitution, and `exit`/`exec`/`return` disqualify it; `2>&1` and quoted
+  text are ignored. Pass/fail is read from `Shell`'s `[exit code: N]`/timeout/file-limit trailer, the `shell`
+  tool's `exit_code`, or ACP's `[exited with code N]`/`[terminated by signal S]` (other formats pass); a background or still-running command never counts and clears that
+  command's earlier result. A check that an edit in a parallel call of the same response overtook
+  records nothing. Results are keyed by command text, not working directory; probes (`--version`, `--help`,
+  `--collect-only`) are not checks; results are read inside `ToolOutputLimits`. `edit_commands` match outside quotes (defaults include formatters, `--fix`, `sed -i`,
+  `git checkout`/`stash`/..., `mv`/`cp`/`rm`, `sh -c`/`python -c`/`node -e`, and `>` except `->`, `>&`, `/dev/null`).
+- The redirect is a `VerificationRequiredPart` (an `InstructionCapabilityPart` from
+  `pydantic_ai_harness.require_verification`, with `attempt`); find it by `isinstance`, never by text.
+- State is per run (`for_run`); a run resumed after a deferred-tool pause recovers earlier `write_file`/`edit_file`
+  and shell edits of the turn from history (not check results). An answer to a redirect with no tool call ends the redirects
+  and emits the event. Hooks run in workflow code under Temporal, DBOS, and Prefect. Skipped like
+  `RefineOutput`: deferred or pending output, output from no model request, and `run_stream()`.
+- Emits `verification required` (`require_verification.attempt`) and `completion unverified`
+  (`require_verification.attempts`) spans.
+
+## WrapUpAtLimits
+
+When the run's `UsageLimits` leave room for one more model request but not another, makes that request
+the last: `tool_choice='none'` with the tool definitions kept (cached tools and instructions match), plus a
+request-scoped `WrapUpPart` (an `InstructionCapabilityPart` from `pydantic_ai_harness.wrap_up_at_limits`)
+with `prompt` (default `DEFAULT_WRAP_UP_PROMPT`). The answer is the
+run's output instead of `UsageLimitExceeded`.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.usage import UsageLimits
+
+from pydantic_ai_harness import WrapUpAtLimits
+
+
+def research(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if info.model_settings and info.model_settings.get('tool_choice') == 'none':
+        return ModelResponse(parts=[TextPart('partial answer')])
+    return ModelResponse(parts=[ToolCallPart('look_up', {'topic': 'x'})])
+
+
+agent = Agent(FunctionModel(research), capabilities=[WrapUpAtLimits()])
+
+
+@agent.tool_plain
+def look_up(topic: str) -> str:
+    return topic
+
+
+print(agent.run_sync('Research', usage_limits=UsageLimits(request_limit=2)).output)
+#> partial answer
+```
+
+- Triggers on `request_limit` (the last allowed request), `tool_calls_limit` (fewer calls left than the
+  largest batch so far), and input/output/total token limits (projected from the run's responses).
+  `cost_limit` and `per_request_input_tokens_limit` are not projected. A larger batch that goes over
+  `tool_calls_limit` still raises. With no `usage_limits`, the default `request_limit=50` applies.
+- `wrapped_up_by(result.new_messages())` returns the `LimitName` that cut the run short, or `None`; it reads
+  the `WrapUpPart` on the final request, found by type.
+- With tool output, `tool_choice='none'` sends only the output tools; Anthropic caches messages per
+  `tool_choice`.
+- List it after capabilities that spend from the run's usage before a request, so it sees what they spent.
+- For a sub-agent, give it its own `SubAgent.usage_limits`; sharing the parent's budget spends the parent's
+  last request.
+- Compaction still runs on the final request; a summarizing strategy has no request left there, so wrap
+  it in `FallbackCompaction(fallback_on=(..., UsageLimitExceeded))`. Stateless and durable-safe. Span: `run wrapped up`
+  (`wrap_up_at_limits.limit`).
+
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/repair-tool-arguments/
 - https://pydantic.dev/docs/ai/harness/guardrails/
+- https://pydantic.dev/docs/ai/harness/goal/
 - https://pydantic.dev/docs/ai/harness/prompt-injection-defender/
 - https://pydantic.dev/docs/ai/harness/tool-call-judge/
 - https://pydantic.dev/docs/ai/harness/approval-reviewer/
@@ -919,4 +1175,7 @@ print(agent.run_sync('Explain the change').output)
 - https://pydantic.dev/docs/ai/harness/trajectory-judge/
 - https://pydantic.dev/docs/ai/harness/detect-loops/
 - https://pydantic.dev/docs/ai/harness/refine-output/
+- https://pydantic.dev/docs/ai/harness/report-tool-errors/
+- https://pydantic.dev/docs/ai/harness/require-verification/
+- https://pydantic.dev/docs/ai/harness/wrap-up-at-limits/
 - https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/ (core tool approval and deferred tools)

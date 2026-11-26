@@ -11,12 +11,13 @@ import httpx2
 import pydantic_core
 from pydantic import JsonValue
 
-from .. import UnexpectedModelBehavior, _model_errors, _utils
+from .. import _model_errors, _utils
 from .._file_input import TEXT_DOCUMENT_MEDIA_TYPES
 from .._http import HTTPTimeout
 from .._run_context import RunContext
 from .._utils import (
     generate_tool_call_id as _generate_tool_call_id,
+    has_yaml_structured_suffix as _has_yaml_structured_suffix,
     is_text_like_media_type as _is_text_like_media_type,
     now_utc as _now_utc,
     number_to_datetime,
@@ -24,6 +25,7 @@ from .._utils import (
 from ..exceptions import (
     ModelAPIError,
     ModelContextWindowExceededError,
+    ModelEmptyResponseError,
     ModelHTTPError,
 )
 from ..messages import (
@@ -287,7 +289,7 @@ class MistralModel(Model[Mistral]):
     _unsupported_file_inputs = frozenset({'audio', 'video'})
     # Tool results are text-only here, so a tool's files go on the user channel, framed.
     _relocates_tool_files = True
-    _supported_document_media_types = frozenset({'application/pdf', *TEXT_DOCUMENT_MEDIA_TYPES})
+    _supported_media_types = {'document': frozenset({'application/pdf', *TEXT_DOCUMENT_MEDIA_TYPES})}
 
     _model_name: MistralModelName = field(repr=False)
     _provider: Provider[Mistral] = field(repr=False)
@@ -525,11 +527,16 @@ class MistralModel(Model[Mistral]):
 
     def _process_response(self, response: MistralChatCompletionResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        assert response.choices, 'Unexpected empty response choice.'
+        if not response.choices:
+            raise ModelEmptyResponseError(
+                self.model_name, f'Empty response from {self.system}: no choices', body=response.model_dump()
+            )
 
         choice = response.choices[0]
-        if choice.message is None:  # pragma: no cover
-            raise UnexpectedModelBehavior('Unexpected empty response message from Mistral')
+        if choice.message is None:
+            raise ModelEmptyResponseError(
+                self.model_name, 'Unexpected empty response message from Mistral', body=response.model_dump()
+            )
         content = choice.message.content
         tool_calls = choice.message.tool_calls
 
@@ -574,9 +581,7 @@ class MistralModel(Model[Mistral]):
         with _map_api_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior(  # pragma: no cover
-                'Streamed response ended without content or tool calls'
-            )
+            raise ModelEmptyResponseError(self.model_name, 'Streamed response ended without content or tool calls')
 
         return MistralStreamedResponse(
             model_request_parameters=model_request_parameters,
@@ -889,7 +894,10 @@ class MistralModel(Model[Mistral]):
         return MistralImageURLChunk(image_url=image_url, type='image_url')
 
     def _map_binary_content(self, item: BinaryContent) -> MistralContentChunk:
-        if _is_text_like_media_type(item.media_type):
+        # An `image/*+yaml` type is an image, and keeps its image chunk.
+        if _is_text_like_media_type(item.media_type) or (
+            _has_yaml_structured_suffix(item.media_type) and not item.is_image
+        ):
             return MistralTextChunk(
                 text=self._format_inlined_text_file(
                     item.data.decode('utf-8'),
