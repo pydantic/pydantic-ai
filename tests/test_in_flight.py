@@ -14,11 +14,13 @@ from datetime import timedelta
 
 import anyio
 import pytest
+from opentelemetry.trace import StatusCode
 from pydantic import JsonValue, TypeAdapter
 
 from pydantic_ai import Agent, RunCancelled, RunContext
 from pydantic_ai._enqueue import EnqueueGuard
 from pydantic_ai.capabilities import HandleDeferredToolCalls
+from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ApprovalRequired, UserError
 from pydantic_ai.external_events import ExternalEventWaiter, external_event_scope, wait_for_external_event
 from pydantic_ai.in_flight import (
@@ -39,13 +41,19 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PendingModelResponse
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.usage import RunUsage
 
 from ._timeouts import READINESS_WAIT_TIMEOUT
-from .conftest import no_leaked_tasks
+from .conftest import no_leaked_tasks, try_import
+
+with try_import() as otel_sdk_installed:
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 
 @dataclass
@@ -574,6 +582,45 @@ async def test_work_failing_while_the_run_waits_ends_the_run(emitted: _Emitted):
     with pytest.raises(ValueError, match='boom'):
         await agent.run('go')
     assert emitted.phases == ['started', 'draining', 'settled']
+
+
+@pytest.mark.skipif(not otel_sdk_installed(), reason='opentelemetry-sdk not installed')
+async def test_drain_span_records_a_failure_without_content(emitted: _Emitted):
+    """With content capture off, the `in_flight drain` span keeps the failed work's error type, not its message."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='start', args={})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[
+            Instrumentation(settings=InstrumentationSettings(include_content=False, tracer_provider=provider))
+        ],
+    )
+
+    @agent.tool
+    async def start(ctx: RunContext) -> str:
+        async def fail() -> None:
+            await emitted.until('draining')
+            raise ValueError('secret result')
+
+        ctx.in_flight.start(fail, kind='test', name='fail', id='fail')
+        return 'started'
+
+    with pytest.raises(ValueError, match='secret result'):
+        await agent.run('go')
+
+    [span] = [span for span in exporter.get_finished_spans() if span.name == 'in_flight drain']
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.status.description is None
+    assert [(event.name, dict(event.attributes or {})) for event in span.events] == [
+        ('exception', {'exception.type': 'ValueError', 'exception.escaped': 'False'})
+    ]
 
 
 async def test_registered_work_handles_and_waiting_for_idle():

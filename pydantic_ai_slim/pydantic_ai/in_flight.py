@@ -19,6 +19,7 @@ from pydantic_graph import End
 
 from . import _durable_replay, _utils
 from ._enqueue import run_queue
+from ._instrumentation import record_uncaught_errors
 from .exceptions import UserError
 from .messages import AgentStreamEvent, CapabilityEvent
 from .output import PendingModelResponse
@@ -597,7 +598,11 @@ class InFlightRegistry:
                 ctx.tracer,
                 'in_flight drain',
                 attributes={'in_flight.waiting': len(waiting), 'in_flight.until': 'all' if pause else 'queued'},
+                record_exception=False,
+                set_status_on_exception=False,
             ) as span,
+            # The error of failed work may quote content, so it's recorded only as the run's content policy allows.
+            record_uncaught_errors(span, include_content=ctx.trace_include_content),
             queue.notifying(lambda: self._notify_from(loop)),
         ):
             self._emit('draining', waiting)
