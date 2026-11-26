@@ -1321,9 +1321,10 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     calls[index] = redacted[call.tool_call_id] = dataclasses.replace(call, ui_visibility='redacted')
         if not redacted:
             return
-        for tool_call_id, validated in self.question_calls.items():
-            if (call := redacted.get(tool_call_id)) is not None:
-                self.question_calls[tool_call_id] = dataclasses.replace(validated, call=call)
+        for tool_call_id in redacted.keys() & self.question_calls.keys():
+            self.question_calls[tool_call_id] = dataclasses.replace(
+                self.question_calls[tool_call_id], call=redacted[tool_call_id]
+            )
         history = self.ctx.state.message_history
         index = next(i for i in range(len(history) - 1, -1, -1) if isinstance(history[i], _messages.ModelResponse))
         response = history[index]
