@@ -141,14 +141,18 @@ Requests to `gemini-2.5-pro` and `gemini-2.5-flash` emit a [`DeprecatedModelWarn
 From December 1, 2026, the Gemini API [routes them](https://aistudio.google.com/docs/deprecations#gemini-2.5-pro-models)
 to other models, billed at those models' rates: `gemini-2.5-pro` to `gemini-3.8-flash`, and `gemini-2.5-flash` to
 `gemini-3.5-flash-lite`. Google Cloud [lists October 20, 2026](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions#gemini-models)
-as the retirement date of both.
+as the retirement date of both, and recommends `gemini-3.8-flash` first among their replacements.
 
-`GoogleModel` keeps building Gemini 2.5 requests for these model names. Sent to the new models on 2026-11-26, they
-worked, except for two:
+`GoogleModel` keeps building Gemini 2.5 requests for these model names. On the models the Gemini API routes them to,
+the thinking settings, tools, structured output and native tools keep working, with these differences, which Google's
+migration guides for [Gemini 3.8 Flash](https://aistudio.google.com/docs/whats-new-gemini-3.8#migrate-to-gemini-3-8-flash)
+and [Gemini 3.5 Flash-Lite](https://aistudio.google.com/docs/whats-new-gemini-3.6#migrate-to-gemini-3-5-flash-lite)
+describe:
 
-- `google_logprobs` on `gemini-2.5-pro`: `gemini-3.8-flash` answers `Logprobs is not enabled for this model`.
-- A request that ends with a model turn, which only the [direct API](../direct.md) sends: both new models answer
-  `Requests ending with a model turn are not supported`.
+- `temperature`, `top_p` and `top_k` are [ignored](https://aistudio.google.com/docs/whats-new-gemini-3.6#sampling-parameter-deprecation).
+- A request that ends with a model turn, which only the [direct API](../direct.md) sends, fails with a 400 error.
+- `gemini-3.8-flash` rejects `google_logprobs` with `Logprobs is not enabled for this model`, so that setting fails on
+  `gemini-2.5-pro`.
 
 `NativeOutput` with function tools, and native tools with function tools, stay unavailable on these model names, as on
 Gemini 2.5. To use the new models' features, change the model name.
