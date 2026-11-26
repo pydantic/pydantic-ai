@@ -114,6 +114,62 @@ A run that fails can still be stored, so the user can see what it did before it 
 
 Pass `scope=` to `save` to record whose conversation it is, such as a user ID, and [`list_conversations`][pydantic_ai.conversation_store.ConversationStore.list_conversations] by it, most recently saved first, with `limit=` for the newest few. Pass the same `scope=` to `load` and the other methods that read or change a conversation, to keep it to its owner: one saved with another scope is treated as one the store doesn't have, so a guessed `conversation_id` doesn't reach it.
 
+### Loading from a capability
+
+To have a run load its conversation itself, so the caller passes only a `conversation_id`, load it in a capability's [`load_conversation`][pydantic_ai.capabilities.AbstractCapability.load_conversation] hook. It gets the run's dependencies, to load only the user's own conversations:
+
+```python {title="load_from_a_capability.py"}
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, Conversation
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.conversation_store import ConversationStore, InMemoryConversationStore
+
+
+@dataclass
+class User:
+    """The user a request comes from, passed to each run as its dependencies.
+
+    Example:
+        result = await agent.run(prompt, conversation_id=conversation_id, deps=User(user_id='user-1'))
+    """
+
+    user_id: str
+
+
+@dataclass
+class LoadConversation(AbstractCapability[User]):
+    """Load the conversation a run is given the `conversation_id` of, from the user's conversations in `store`.
+
+    Example:
+        agent = Agent(model, deps_type=User, capabilities=[LoadConversation(store)])
+    """
+
+    store: ConversationStore
+
+    async def load_conversation(self, conversation_id: str, *, deps: User) -> Conversation | None:
+        return await self.store.load(conversation_id, scope=deps.user_id)
+
+
+store = InMemoryConversationStore()
+agent = Agent('{{ openai:medium }}', deps_type=User, capabilities=[LoadConversation(store)])
+
+
+async def chat(user: User, conversation_id: str, prompt: str) -> str:
+    result = await agent.run(prompt, conversation_id=conversation_id, deps=user)
+    await store.save(result, scope=user.user_id)
+    return result.output
+
+
+async def main():
+    user = User(user_id='user-1')
+    await chat(user, 'support-42', 'Tell me a joke.')
+    print(await chat(user, 'support-42', 'Explain?'))
+    #> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
+```
+
+The run continues the loaded conversation as if it were passed as `conversation=`, so `save` still appends only the messages the run added and catches a conflicting save, and a run that resumes [deferred tool calls](deferred-tools.md#pausing-a-conversation) gets the requests the conversation is waiting on. It's asked only for a run given a `conversation_id` and none of `conversation=`, `message_history=` or `usage=`, and a `None` it returns starts the conversation empty. A `conversation_id` can come from a client, so scope the load to the user the run's dependencies authorize, as above. It isn't asked for a [realtime session](realtime/overview.md), and it runs before the run's `timeout=` starts and its cancellation token is watched. Under [durable execution](durable_execution/overview.md) it runs where the run starts, in a Temporal workflow inside the workflow, and can't be a durable operation, so load through the engine's own durable step there, such as a Temporal activity. Adding one to an agent whose runs are already in progress changes their steps, so deploy it as you would any other workflow change.
+
 A conversation's record also has a [`title`][pydantic_ai.conversation_store.ConversationRecord.title], for a list of conversations to show, and [`metadata`][pydantic_ai.conversation_store.ConversationRecord.metadata] for anything else the app keeps about it. Set them with [`update`][pydantic_ai.conversation_store.ConversationStore.update]. An update doesn't change the conversation's revision, so it never makes the next save conflict, and a save never undoes it. `metadata` is replaced whole, and of two updates at once the last one written wins, so keep a value that several writers change at once in a field of its own.
 
 An agent that titles a conversation after its first turn passes `expected_title=None`, so the title is written only while the conversation has none, and a title the user set is never replaced:

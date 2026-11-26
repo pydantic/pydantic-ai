@@ -51,6 +51,7 @@ from .wrapper import WrapperCapability
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.agent.abstract import AbstractAgent
+    from pydantic_ai.conversation import Conversation
     from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
@@ -590,6 +591,15 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for capability in reversed(self._dispatch):
             if (conversation_id := capability.get_default_conversation_id(run_id)) is not None:
                 return conversation_id
+        return None
+
+    async def load_conversation(self, conversation_id: str, *, deps: AgentDepsT) -> Conversation | None:
+        for capability in reversed(self._dispatch):
+            if (
+                capability.defer_loading is not True
+                and (conversation := await capability.load_conversation(conversation_id, deps=deps)) is not None
+            ):
+                return conversation
         return None
 
     def get_run_clock(self) -> Callable[[], datetime] | None:

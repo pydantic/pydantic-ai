@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
     from pydantic_ai.capabilities.prefix_tools import PrefixTools
+    from pydantic_ai.conversation import Conversation
     from pydantic_ai.models import (
         KnownModelName,
         Model,
@@ -848,6 +849,19 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         Durable execution capabilities whose `run_id` is replay-stable can derive it with
         [`conversation_id_from_run_id()`][pydantic_ai.durable_exec.conversation_id_from_run_id],
         as the Temporal, DBOS and Prefect capabilities do.
+        """
+        return None
+
+    async def load_conversation(self, conversation_id: str, *, deps: AgentDepsT) -> Conversation | None:
+        """Return the conversation a run given only its `conversation_id` continues, or `None` to start it empty.
+
+        Asked before the run is assembled, for a run given `conversation_id=` (other than `'new'`) and none
+        of `conversation=`, `message_history=` or `usage=`. The run continues the result as if it were
+        passed as `conversation=`. Return the conversation with that `conversation_id`. The last answer in
+        capability order wins, so by default a capability passed to the run takes precedence; like
+        [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model], a deferred capability isn't
+        asked. A `conversation_id` can come from a client, so scope the load to the user `deps` authorize.
+        It can't be a durable operation; see [Loading from a capability](../persistence.md#loading-from-a-capability).
         """
         return None
 

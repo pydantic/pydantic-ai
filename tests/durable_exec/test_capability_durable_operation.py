@@ -1820,6 +1820,7 @@ def test_duplicate_operation_names_fail_during_agent_construction() -> None:
         'wrap_output_validate',
         'wrap_output_process',
         'wrap_run_event_stream',
+        'load_conversation',
     ],
 )
 def test_never_durable_hooks_fail_at_bind(hook: str) -> None:

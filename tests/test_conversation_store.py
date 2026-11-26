@@ -29,7 +29,7 @@ from pydantic_ai import (
     capture_run_conversation,
     messages as _messages,
 )
-from pydantic_ai.capabilities import AbstractCapability, ProcessHistory
+from pydantic_ai.capabilities import AbstractCapability, ProcessHistory, WrapperCapability
 from pydantic_ai.conversation import ConversationTypeAdapter
 from pydantic_ai.conversation_store import (
     ConversationConflict,
@@ -1746,3 +1746,148 @@ async def test_a_nested_run_s_cancellation_keeps_its_own_conversation_as_the_cau
     assert isinstance(nested, RunCancelled)
     assert nested.conversation is not None and nested.conversation.conversation_id == 'inner'
     assert nested.conversation.messages == nested.all_messages()
+
+
+@dataclasses.dataclass
+class _User:
+    user_id: str
+
+
+@dataclasses.dataclass
+class _LoadFromStore(AbstractCapability[_User]):
+    """Loads the conversation a run is given only the `conversation_id` of, scoped to the run's user."""
+
+    store: ConversationStore
+    calls: list[str] = dataclasses.field(default_factory=lambda: [])
+
+    async def load_conversation(self, conversation_id: str, *, deps: _User) -> Conversation | None:
+        self.calls.append(conversation_id)
+        return await self.store.load(conversation_id, scope=deps.user_id)
+
+
+async def test_a_capability_loads_the_conversation_a_run_is_given_the_id_of() -> None:
+    store = InMemoryConversationStore()
+    loader = _LoadFromStore(store)
+    agent = Agent(TestModel(), deps_type=_User, capabilities=[loader])
+    user = _User('user-1')
+
+    first = await agent.run('Hello', conversation_id='chat-1', deps=user)
+    await store.save(first, scope=user.user_id)
+    second = await agent.run('Again', conversation_id='chat-1', deps=user)
+    await store.save(second, scope=user.user_id)
+
+    assert loader.calls == ['chat-1', 'chat-1']
+    assert second.all_messages()[: len(first.all_messages())] == first.all_messages()
+    assert second.usage.requests == 2
+    stored = await store.load('chat-1', scope=user.user_id)
+    assert stored is not None
+    assert stored.messages == second.all_messages()
+
+
+async def test_a_conversation_the_capability_does_not_have_starts_empty() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel(), deps_type=_User, capabilities=[_LoadFromStore(store)])
+    await store.save(await agent.run('Hello', conversation_id='chat-1', deps=_User('user-1')), scope='user-1')
+
+    result = await agent.run('Hello', conversation_id='chat-1', deps=_User('user-2'))
+
+    assert len(result.all_messages()) == 2
+    # The stored conversation is another user's, so saving this one as new conflicts instead of overwriting it.
+    with pytest.raises(ConversationConflict):
+        await store.save(result, scope='user-2')
+
+
+async def test_load_conversation_is_only_asked_for_a_run_given_just_an_id() -> None:
+    store = InMemoryConversationStore()
+    loader = _LoadFromStore(store)
+    agent = Agent(TestModel(), deps_type=_User, capabilities=[loader])
+    user = _User('user-1')
+    history = (await agent.run('Hello', deps=user)).all_messages()
+    assert loader.calls == []
+
+    await agent.run('Hello', conversation_id='new', deps=user)
+    await agent.run('Hello', message_history=history, conversation_id='chat-1', deps=user)
+    await agent.run('Hello', conversation=Conversation(conversation_id='chat-1'), deps=user)
+    # `usage=` is part of a conversation too, as for a delegate that counts on from its caller's usage.
+    await agent.run('Hello', conversation_id='chat-1', usage=RunUsage(), deps=user)
+
+    assert loader.calls == []
+
+
+async def test_a_deferred_capability_is_not_asked_to_load_a_conversation() -> None:
+    store = InMemoryConversationStore()
+    loader = _LoadFromStore(store)
+    loader.id = 'loader'
+    loader.description = 'Loads stored conversations.'
+    loader.defer_loading = True
+    agent = Agent(TestModel(call_tools=[]), deps_type=_User, capabilities=[loader])
+
+    await agent.run('Hello', conversation_id='chat-1', deps=_User('user-1'))
+
+    assert loader.calls == []
+
+
+async def test_the_last_capability_that_loads_a_conversation_wins() -> None:
+    @dataclasses.dataclass
+    class Fixed(AbstractCapability[None]):
+        reply: str | None
+
+        async def load_conversation(self, conversation_id: str, *, deps: None) -> Conversation | None:
+            if self.reply is None:
+                return None
+            return Conversation(
+                messages=[ModelRequest.user_text_prompt('Hi'), ModelResponse(parts=[TextPart(self.reply)])],
+                conversation_id=conversation_id,
+            )
+
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[Fixed('from the agent')])
+
+    result = await agent.run(
+        'Hello', conversation_id='chat-1', capabilities=[WrapperCapability(Fixed('from the run')), Fixed(None)]
+    )
+
+    loaded_reply = result.all_messages()[1]
+    assert isinstance(loaded_reply, ModelResponse)
+    assert loaded_reply.parts == [TextPart('from the run')]
+
+
+async def test_a_loaded_conversation_with_another_id_is_refused() -> None:
+    class WrongId(AbstractCapability[None]):
+        async def load_conversation(self, conversation_id: str, *, deps: None) -> Conversation | None:
+            return Conversation(conversation_id='chat-2')
+
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[WrongId()])
+
+    with pytest.raises(UserError, match=r"`load_conversation\('chat-1'\)` returned conversation 'chat-2'"):
+        await agent.run('Hello', conversation_id='chat-1')
+
+
+async def test_a_loaded_conversation_resumes_its_deferred_tool_calls() -> None:
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('approve_refund', {'order_id': 'A-1'}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart('Refund issued.')])
+
+    store = InMemoryConversationStore()
+    agent = Agent(
+        FunctionModel(model),
+        deps_type=_User,
+        output_type=[str, DeferredToolRequests],
+        capabilities=[_LoadFromStore(store)],
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def approve_refund(order_id: str) -> str:
+        return f'Refunded {order_id}'
+
+    user = _User('user-1')
+    paused = await agent.run('Refund order A-1', conversation_id='chat-1', deps=user)
+    assert isinstance(paused.output, DeferredToolRequests)
+    await store.save(paused, scope=user.user_id)
+
+    resumed = await agent.run(
+        conversation_id='chat-1', deps=user, deferred_tool_results=DeferredToolResults(approvals={'call-1': True})
+    )
+
+    assert resumed.output == 'Refund issued.'
+    await store.save(resumed, scope=user.user_id)

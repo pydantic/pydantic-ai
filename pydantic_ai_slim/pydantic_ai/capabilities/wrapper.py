@@ -51,6 +51,7 @@ from .abstract import (
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
+    from pydantic_ai.conversation import Conversation
     from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
@@ -374,6 +375,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def get_default_conversation_id(self, run_id: str) -> str | None:
         return self.wrapped.get_default_conversation_id(run_id)
+
+    async def load_conversation(self, conversation_id: str, *, deps: AgentDepsT) -> Conversation | None:
+        return await self.wrapped.load_conversation(conversation_id, deps=deps)
 
     def get_run_clock(self) -> Callable[[], datetime] | None:
         return self.wrapped.get_run_clock()
