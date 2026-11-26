@@ -337,6 +337,7 @@ class FileUrl(ABC):
 
     Supported by:
     - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing, `vendor_metadata['media_processing']` is forwarded as the per-Part `media_processing` field: https://ai.google.dev/gemini-api/docs/video-understanding#agentic-video-understanding, and `vendor_metadata['media_resolution']` is forwarded as the per-Part `media_resolution` field for any file type: https://ai.google.dev/gemini-api/docs/media-resolution
+    - `GoogleInteractionsModel`: video `start_offset`, `end_offset` and `fps` map to static `processing`; `vendor_metadata['media_processing']` replaces that processing, including its offsets and fps. `vendor_metadata['media_resolution']` sets per-file resolution, overriding `google_video_resolution`.
     - `OpenAIChatModel`, `OpenAIResponsesModel`, `OpenAIDecisionsModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     - `GoogleDecisionsModel`: `ImageUrl.vendor_metadata['media_resolution']`, as `GoogleModel` takes it, sets the image's `resolution`: `{'level': 'MEDIA_RESOLUTION_LOW'}` is sent as `'low'`
     - `XaiModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
@@ -810,6 +811,7 @@ class BinaryContent:
 
     Supported by:
     - `GoogleModel`: `BinaryContent.vendor_metadata` is used as `video_metadata` for video files: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing, `vendor_metadata['media_processing']` is forwarded as the per-Part `media_processing` field: https://ai.google.dev/gemini-api/docs/video-understanding#agentic-video-understanding, and `BinaryContent.vendor_metadata['media_resolution']` is forwarded as the per-Part `media_resolution` field: https://ai.google.dev/gemini-api/docs/media-resolution
+    - `GoogleInteractionsModel`: video `start_offset`, `end_offset` and `fps` map to static `processing`; `vendor_metadata['media_processing']` replaces that processing, including its offsets and fps. `vendor_metadata['media_resolution']` sets per-file resolution, overriding `google_video_resolution`.
     - `OpenAIChatModel`, `OpenAIResponsesModel`, `OpenAIDecisionsModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     - `GoogleDecisionsModel`: `BinaryContent.vendor_metadata['media_resolution']`, as `GoogleModel` takes it, sets the image's `resolution`: `{'level': 'MEDIA_RESOLUTION_LOW'}` is sent as `'low'`
     - `XaiModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
@@ -1078,6 +1080,7 @@ class UploadedFile:
     - [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]
     - [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel]
     - [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Gemini API: [Files API](https://ai.google.dev/gemini-api/docs/files) URIs, Google Cloud: GCS `gs://` URIs)
+    - [`GoogleInteractionsModel`][pydantic_ai.models.google_interactions.GoogleInteractionsModel] (Gemini API: [Files API](https://ai.google.dev/gemini-api/docs/files) URIs, Google Cloud: GCS `gs://` URIs)
     - [`XaiModel`][pydantic_ai.models.xai.XaiModel]
     """
 
@@ -1087,6 +1090,7 @@ class UploadedFile:
     For most providers, this is the file ID returned by the provider's upload API.
     For GoogleModel (Google Cloud), this must be a GCS URI (`gs://bucket/path`).
     For GoogleModel (Gemini API), this must be a Google Files API URI (`https://generativelanguage.googleapis.com/...`).
+    `GoogleInteractionsModel` takes the same URIs as `GoogleModel` on each transport.
     For BedrockConverseModel, this must be an S3 URI (`s3://bucket/key`).
     """
 
@@ -1108,6 +1112,7 @@ class UploadedFile:
 
     Supported by:
     - `GoogleModel`: used as `video_metadata` for video files, `vendor_metadata['media_processing']` is forwarded as the per-Part `media_processing` field: https://ai.google.dev/gemini-api/docs/video-understanding#agentic-video-understanding, and `UploadedFile.vendor_metadata['media_resolution']` is forwarded as the per-Part `media_resolution` field: https://ai.google.dev/gemini-api/docs/media-resolution
+    - `GoogleInteractionsModel`: video `start_offset`, `end_offset` and `fps` map to static `processing`; `vendor_metadata['media_processing']` replaces that processing, including its offsets and fps. `vendor_metadata['media_resolution']` sets per-file resolution, overriding `google_video_resolution`.
     - `OpenAIResponsesModel`: `UploadedFile.vendor_metadata['detail']` is used as `detail` setting for image files
     """
 
@@ -2031,6 +2036,18 @@ and the tool decorators. See [Typed tool parts](../tools-advanced.md#typed-tool-
 """
 
 
+ToolUIVisibility: TypeAlias = Literal['public', 'redacted', 'private']
+"""What a [UI adapter](../ui/overview.md#tool-visibility) sends a client for a tool's calls and returns.
+
+- `'public'`: the call and the result, in full.
+- `'redacted'`: the call, with its arguments, and a placeholder instead of the result.
+- `'private'`: neither the call nor the result.
+
+Set on [`ToolDefinition.ui_visibility`][pydantic_ai.tools.ToolDefinition.ui_visibility] and stamped on the
+tool's call and return parts.
+"""
+
+
 def _tool_kind_id(value: ToolKindLike | None) -> ToolPartKind | None:  # pyright: ignore[reportUnusedFunction]
     """The id of the kind a tool declares, given as a [`ToolKind`][pydantic_ai.messages.ToolKind] or its id."""
     return value.id if isinstance(value, ToolKind) else value
@@ -2468,6 +2485,16 @@ class BaseToolReturnPart(_RecordsContentFiles, Generic[ContentT_co, MetadataT_co
     it stays a base part that keeps the kind, as does a return whose `outcome` isn't `'success'`. Only
     core's own kinds, which deserialization routes straight to their subclass, are stripped from a base
     part whose data doesn't fit them. See [Typed tool parts](../tools-advanced.md#typed-tool-parts).
+    """
+
+    ui_visibility: ToolUIVisibility | None = None
+    """What a UI adapter sends a client for this return, copied from its call's
+    [`ui_visibility`][pydantic_ai.messages.BaseToolCallPart.ui_visibility] where the framework builds the return
+    from the call.
+
+    `None` if the tool had no setting, or if the return was built without its call, such as an output tool's retry. A
+    UI adapter then follows the call's stamp, and its own default for a call without one. Never sent to the model.
+    See [Tool visibility](../ui/overview.md#tool-visibility).
     """
 
     metadata: Any = None
@@ -4473,6 +4500,16 @@ class BaseToolCallPart(Generic[ArgsT_co]):
     the full semantics.
     """
 
+    ui_visibility: ToolUIVisibility | None = None
+    """What a UI adapter sends a client for this call and its return, stamped when the call is made.
+
+    Taken from the tool's [`ToolDefinition.ui_visibility`][pydantic_ai.tools.ToolDefinition.ui_visibility], or
+    from the adapter's `default_ui_visibility` for a tool without a setting. `None` if neither set one, in which
+    case a UI adapter applies its own default when it sends the part. UI adapters read this stamp, never the
+    current tool definitions, so a conversation reloaded from history is sent the way it was streamed. Never
+    sent to the model. See [Tool visibility](../ui/overview.md#tool-visibility).
+    """
+
     id: str | None = None
     """An optional identifier of the tool call part, separate from the tool call ID.
 
@@ -6098,10 +6135,46 @@ class ModelResponse:
         ]
 
     def cost(self) -> genai_types.PriceCalculation:
-        """Calculate the cost of the usage.
+        """Calculate the cost of this response's usage with [`genai-prices`](https://github.com/pydantic/genai-prices).
 
-        Uses [`genai-prices`](https://github.com/pydantic/genai-prices). Raises `ValueError` when the response
-        omitted usage information, since its cost would be incomplete.
+        Requires `model_name` to be set. On [Pydantic AI Gateway](../gateway.md#request-cost), `response.usage.cost`
+        already holds the gateway-reported cost when available, whereas `cost()` always computes a local estimate
+        via `genai-prices`.
+
+        If `cost()` raises `LookupError` because the provider wasn't matched, call `genai_prices.calc_price` directly
+        with an explicit `provider_id`:
+
+        ```python
+        from genai_prices import calc_price
+
+        from pydantic_ai import ModelResponse, RequestUsage, TextPart
+
+        # e.g. a custom OpenAI-compatible endpoint serving a Doubleword model
+        response = ModelResponse(
+            parts=[TextPart('Hello')],
+            usage=RequestUsage(input_tokens=100, output_tokens=50),
+            model_name='deepseek-ai/DeepSeek-V4.1-Flash',
+            provider_name='openai',
+        )
+
+        try:
+            price = response.cost()
+        except LookupError:
+            assert response.model_name
+            price = calc_price(
+                response.usage,
+                response.model_name,
+                provider_id='doubleword',
+                genai_request_timestamp=response.timestamp,
+                price_context=response.provider_details,
+            )
+        ```
+
+        Raises:
+            ValueError: If the response omitted usage (`usage.unmeasured_requests` is non-zero) or contains
+                inconsistent usage counts.
+            LookupError: If `genai-prices` has no pricing data for the provider or model — for example, on a custom
+                OpenAI-compatible endpoint whose provider `genai-prices` can't infer.
         """
         assert self.model_name, 'Model name is required to calculate price'
         if self.usage.unmeasured_requests:
@@ -6679,6 +6752,7 @@ def _synthesized_tool_returns(response: ModelResponse, calls: list[ToolCallPart]
             content=INTERRUPTED_TOOL_RETURN_CONTENT,
             tool_call_id=call.tool_call_id,
             tool_kind=call.tool_kind,
+            ui_visibility=call.ui_visibility,
             metadata={SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True},
             timestamp=response.timestamp,
             outcome='interrupted',
@@ -6938,6 +7012,10 @@ def sanitize_messages(
       Pydantic AI routes later requests by it, like a suspended response's continuation going back to the
       [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] candidate that started it, so it is only honored on
       trusted server-side `message_history`.
+    - [`ui_visibility`][pydantic_ai.messages.BaseToolCallPart.ui_visibility] on tool call and return parts,
+      resetting it to `None`. It decides what a [UI adapter](../ui/overview.md#tool-visibility) sends a client of a
+      tool's result, so only the server sets it: a call from this history that the run executes, such as one the
+      user approved, is stamped again from its tool's definition before it runs.
     - The framework-reserved `__pydantic_ai__` key from
       [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] and
       [`ModelResponse.metadata`][pydantic_ai.messages.ModelResponse.metadata], keeping your own keys
@@ -7494,12 +7572,12 @@ def _sanitize_tool_return_part(
     dropped_uploaded_file_providers: set[str],
     stripped_text_metadata: list[TextContent],
 ) -> _ReturnPartT:
-    """Sanitize the file references in a tool return part's content; see `_sanitize_tool_return_content`.
+    """Sanitize the file references in a tool return part's content, and reset its `ui_visibility`.
 
-    Typed parts are sanitized too: neither a client-claimed `tool_kind` nor a declared content shape
-    guarantees the content is free of file references. A typed part whose content sanitizing changes
-    may no longer fit its declared shape, so it falls back to `base` and is promoted again only if it
-    still fits.
+    See `_sanitize_tool_return_content` for the content. Typed parts are sanitized too: neither a
+    client-claimed `tool_kind` nor a declared content shape guarantees the content is free of file
+    references. A typed part whose content sanitizing changes may no longer fit its declared shape, so
+    it falls back to `base` and is promoted again only if it still fits.
     """
     keep_content, sanitized_content = _sanitize_tool_return_content(
         part.content,
@@ -7513,10 +7591,10 @@ def _sanitize_tool_return_part(
     )
     content = sanitized_content if keep_content else None
     if type(part) is base:
-        return replace(part, content=content)
+        return replace(part, content=content, ui_visibility=None)
     if content == part.content:
-        return part
-    return _narrow_return(_utils.copy_dataclass_fields(part, base, content=content), None)
+        return part if part.ui_visibility is None else replace(part, ui_visibility=None)
+    return _narrow_return(_utils.copy_dataclass_fields(part, base, content=content, ui_visibility=None), None)
 
 
 def _sanitize_tool_return_content(
@@ -7637,7 +7715,8 @@ def _sanitize_response_parts(
 ) -> list[ModelResponsePart]:
     """Sanitize unsafe metadata and file references in an untrusted response's parts.
 
-    Strips compaction provenance stamps from `CompactionPart.provider_details`. Drops
+    Strips compaction provenance stamps from `CompactionPart.provider_details`, and resets `ui_visibility`
+    on tool call and return parts. Drops
     non-allowlisted schemes and resets non-allowlisted `force_download` values on
     [`FileUrl`][pydantic_ai.messages.FileUrl]s nested in tool return parts, and drops
     [`UploadedFile`][pydantic_ai.messages.UploadedFile]s nested in tool return parts unless
@@ -7661,6 +7740,8 @@ def _sanitize_response_parts(
                 key: value for key, value in part.provider_details.items() if key != STANDING_PROMPT_PLANTED_KEY
             }
             new_parts.append(replace(part, provider_details=provider_details))
+        elif isinstance(part, ToolCallPart | NativeToolCallPart) and part.ui_visibility is not None:
+            new_parts.append(replace(part, ui_visibility=None))
         elif isinstance(part, NativeToolReturnPart):
             new_parts.append(
                 _sanitize_tool_return_part(

@@ -75,6 +75,9 @@ class ModelDeprecation:
     replacement: str | None = None
     """The model the provider recommends instead, or `None` if it names none."""
 
+    rerouted_to: str | None = None
+    """The model the provider answers this model's requests with from `retirement_date`, or `None` if they fail then."""
+
 
 class ModelProfile(TypedDict, total=False):
     """Describes how requests to and responses from specific models or families of models need to be constructed and processed to get the best results, independent of the model and provider classes used.
@@ -572,8 +575,11 @@ class ModelProfile(TypedDict, total=False):
     Set by [`AnthropicProvider`][pydantic_ai.providers.anthropic.AnthropicProvider] and
     [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] from the providers' deprecation pages, except
     where the model is served by another platform with a schedule of its own: the Amazon Bedrock and Google Cloud
-    Vertex AI clients of `AnthropicModel`, the Azure client of the OpenAI models, and the Codex backend. Set it to
-    `None` to stop the warning for one model, or to a `ModelDeprecation` of your own for a model you serve elsewhere.
+    Vertex AI clients of `AnthropicModel`, the Azure client of the OpenAI models, and the Codex backend. Set by
+    [`GoogleModel`][pydantic_ai.models.google.GoogleModel] and
+    [`GoogleInteractionsModel`][pydantic_ai.models.google_interactions.GoogleInteractionsModel] from the Gemini API's or
+    Google Cloud's deprecation page, whichever its client reaches. Set it to `None` to stop the warning for one model, or to a `ModelDeprecation` of
+    your own for a model you serve elsewhere.
     See [Deprecated models](../models/overview.md#deprecated-models).
     """
 

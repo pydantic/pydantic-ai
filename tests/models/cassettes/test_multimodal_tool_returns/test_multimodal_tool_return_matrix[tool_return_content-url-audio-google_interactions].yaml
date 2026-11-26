@@ -1,0 +1,193 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "385"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: >-
+              Use the get_file tool now to retrieve a audio file, then describe what you
+              received.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=2183
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: requires_action
+        usage:
+          total_tokens: 120
+          total_input_tokens: 36
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 36
+          total_cached_tokens: 0
+          total_output_tokens: 10
+          total_tool_use_tokens: 0
+          total_thought_tokens: 74
+          initial_input_tokens: 29
+        created: 2026-11-06T02:51:31Z
+        updated: 2026-11-06T02:51:31Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            EvcCCvQCAWkUfRNMuO7bZElFa1vwUMySdDIdexycUwbc5OshrN09siNxhJ6EcHw6ZZkiOPP4/HzDpJ8EZUm/sdt4yImtLsP9W8KZHdwWb+Fo3zT2zzkBhRGByiaMw5sabUVnqiw2wsxk4Bahi6I8pBDn4YdM2RHUaFUMSd6xLyd5fstkdj9aH4w1auPC7LawEWeJm05Pc8aBesAwvxLXvSkeK4wp+gHCVTCUQZAtFS7QrCPZsQMEavLVmfH00Y0y8n+yvyewMdW7tpsiP3yxxX6KddwR35sMSk9pUSjbEb+sgTvq1eH4HldbNnhztggc8Ih+ve7Adl7ejytt3AprINFeVJ37TBdJwWlYzoLV0WIRhyMBZmwXdwTGVFHnR6icsUUbPdkFZFpklmhhNx/DrH15zoUJjOpi/+Uf+QACEgf1VWEAyCf2SnunjkHGcT7A6MCmJwPnt0uAU1M12jxi0kjh3AIJEmUGayvtphXaQqnMqhbHPjM6lf/b
+          type: thought
+        - id: call_318473609442957050
+          type: function_call
+          name: get_file
+          arguments: {}
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:51:32.015640+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1293"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: >-
+              Use the get_file tool now to retrieve a audio file, then describe what you
+              received.
+        - signature: >-
+            EvcCCvQCAWkUfRNMuO7bZElFa1vwUMySdDIdexycUwbc5OshrN09siNxhJ6EcHw6ZZkiOPP4/HzDpJ8EZUm/sdt4yImtLsP9W8KZHdwWb+Fo3zT2zzkBhRGByiaMw5sabUVnqiw2wsxk4Bahi6I8pBDn4YdM2RHUaFUMSd6xLyd5fstkdj9aH4w1auPC7LawEWeJm05Pc8aBesAwvxLXvSkeK4wp+gHCVTCUQZAtFS7QrCPZsQMEavLVmfH00Y0y8n+yvyewMdW7tpsiP3yxxX6KddwR35sMSk9pUSjbEb+sgTvq1eH4HldbNnhztggc8Ih+ve7Adl7ejytt3AprINFeVJ37TBdJwWlYzoLV0WIRhyMBZmwXdwTGVFHnR6icsUUbPdkFZFpklmhhNx/DrH15zoUJjOpi/+Uf+QACEgf1VWEAyCf2SnunjkHGcT7A6MCmJwPnt0uAU1M12jxi0kjh3AIJEmUGayvtphXaQqnMqhbHPjM6lf/b
+          type: thought
+        - id: call_318473609442957050
+          name: get_file
+          type: function_call
+          arguments: {}
+        - type: function_result
+          name: get_file
+          call_id: call_318473609442957050
+          is_error: false
+          result:
+          - type: text
+            text: File attached
+        - type: user_input
+          content:
+          - mime_type: audio/mpeg
+            type: audio
+            uri: https://download.samplelib.com/mp3/sample-3s.mp3
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=6881
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 752
+          total_input_tokens: 209
+          input_tokens_by_modality:
+          - modality: audio
+            tokens: 80
+          - modality: text
+            tokens: 129
+          total_cached_tokens: 0
+          total_output_tokens: 94
+          total_tool_use_tokens: 0
+          total_thought_tokens: 449
+          initial_input_tokens: 222
+        created: 2026-11-06T02:51:38Z
+        updated: 2026-11-06T02:51:38Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            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
+          type: thought
+        - content:
+          - text: |-
+              I received a short audio clip (approximately 4 seconds long).
+
+              ### Audio Description:
+              * **Genre/Style:** Electronic / Synth-pop / Dance
+              * **Instrumentation:** Features an upbeat, rhythmic electronic drum beat paired with a driving synth bassline and melodic synthesizer chords/arpeggios.
+              * **Tempo/Mood:** Fast-paced, energetic, and modern, sounding like a short music loop, bumper/intro, or production cue.
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:51:38.929059+00:00
