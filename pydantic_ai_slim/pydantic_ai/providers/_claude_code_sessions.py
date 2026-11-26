@@ -315,7 +315,8 @@ class _Turn:
     """What the session saw of the response it's streaming, for the next request to continue from."""
 
     blocks: list[dict[str, JsonValue]] = field(default_factory=list[dict[str, JsonValue]])
-    partial_json: dict[int, str] = field(default_factory=dict[int, str])
+    pieces: dict[tuple[int, str], list[str]] = field(default_factory=dict[tuple[int, str], list[str]])
+    """The streamed text of each block's field, joined once the block stops."""
     stop_reason: str | None = None
     complete: bool = True
     """Whether every event was understood, so the blocks are what the next request continues from."""
@@ -336,21 +337,29 @@ class _Turn:
         elif isinstance(event, BetaRawContentBlockDeltaEvent):
             self._apply_delta(self.blocks[event.index], event.index, event.delta)
         elif isinstance(event, BetaRawContentBlockStopEvent):
-            if (raw := self.partial_json.pop(event.index, None)) is not None:
-                self.blocks[event.index]['input'] = json.loads(raw) if raw else {}
+            self._finish_block(event.index)
         elif isinstance(event, BetaRawMessageDeltaEvent):
             self.stop_reason = event.delta.stop_reason
 
+    def _finish_block(self, index: int) -> None:
+        block = self.blocks[index]
+        for key in ('text', 'thinking'):
+            if (pieces := self.pieces.pop((index, key), None)) is not None:
+                block[key] = f'{block.get(key, "")}{"".join(pieces)}'
+        if (raw := self.pieces.pop((index, 'input'), None)) is not None:
+            joined = ''.join(raw)
+            block['input'] = json.loads(joined) if joined else {}
+
     def _apply_delta(self, block: dict[str, JsonValue], index: int, delta: BetaRawContentBlockDelta) -> None:
         if isinstance(delta, BetaTextDelta):
-            block['text'] = f'{block.get("text", "")}{delta.text}'
+            self.pieces.setdefault((index, 'text'), []).append(delta.text)
         elif isinstance(delta, BetaThinkingDelta):
-            block['thinking'] = f'{block.get("thinking", "")}{delta.thinking}'
+            self.pieces.setdefault((index, 'thinking'), []).append(delta.thinking)
         elif isinstance(delta, BetaSignatureDelta):
             block['signature'] = delta.signature
         elif isinstance(delta, BetaInputJSONDelta):  # pragma: no branch
             # Citation deltas don't reach the blocks the next request continues from: Claude Code's tools are off.
-            self.partial_json[index] = f'{self.partial_json.get(index, "")}{delta.partial_json}'
+            self.pieces.setdefault((index, 'input'), []).append(delta.partial_json)
 
     @property
     def tool_use_ids(self) -> list[str]:

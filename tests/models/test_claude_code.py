@@ -678,6 +678,16 @@ async def test_an_error_claude_code_has_no_status_for():
     assert exc_info.value.status_code == 500
 
 
+async def test_the_api_requests_own_status_wins():
+    """Claude Code reports the failed API request's status, which is more precise than its error kind's."""
+    model, _ = claude_code(FakeResponse(error='server_error', error_text='Overloaded', api_error_status=529))
+
+    with pytest.raises(ModelHTTPError, match='Overloaded') as exc_info:
+        await Agent(model).run('Hello')
+
+    assert exc_info.value.status_code == 529
+
+
 async def test_a_session_that_fails_to_continue_is_closed(monkeypatch: pytest.MonkeyPatch):
     model, fake = claude_code(FakeResponse([text('One.')]), FakeResponse([text('Two.')]))
     agent = Agent(model)

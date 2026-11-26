@@ -29,6 +29,8 @@ class FakeResponse:
     stop_reason: str = 'end_turn'
     usage: dict[str, int] = field(default_factory=lambda: {'input_tokens': 10, 'output_tokens': 5})
     error: str | None = None
+    api_error_status: int | None = None
+    """The HTTP status of the failed API request, which Claude Code reports with the result."""
     """An `AssistantMessage.error` kind, such as `'authentication_failed'`, ending the turn without a response."""
     error_text: str = 'error'
     rate_limit_resets_at: int | None = None
@@ -267,7 +269,10 @@ class FakeSession(Transport):
             self._send({'type': 'rate_limit_event', 'rate_limit_info': info, 'uuid': 'u', 'session_id': 'fake-session'})
         message = {'role': 'assistant', 'model': 'claude', 'content': [text(response.error_text)]}
         self._send({'type': 'assistant', 'message': message, 'parent_tool_use_id': None, 'error': response.error})
-        self._send(self._result(num_turns=1, is_error=True, result=response.error_text))
+        result = self._result(num_turns=1, is_error=True, result=response.error_text)
+        if response.api_error_status is not None:
+            result['api_error_status'] = response.api_error_status
+        self._send(result)
 
     def _stream(self, response: FakeResponse, *, cut: bool = False) -> None:
         message: dict[str, Any] = {
