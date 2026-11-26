@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import copy
 import dataclasses
-import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
@@ -177,8 +176,13 @@ class PostInit(BaseModel):
         pass
 
 
+def _default_key() -> str:
+    # Deterministic: Temporal's workflow sandbox rejects `uuid.uuid4`, which the workflow's own validation would call.
+    return 'generated'
+
+
 class Keyed(BaseModel):
-    key: uuid.UUID = Field(default_factory=uuid.uuid4)
+    key: str = Field(default_factory=_default_key)
     n: int = 0
 
 

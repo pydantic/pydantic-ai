@@ -1583,7 +1583,11 @@ async def test_function_tool_argument_shapes_cross_the_activity_input(client: Cl
         client, task_queue=TASK_QUEUE, workflows=[ArgShapesWorkflow], plugins=[AgentPlugin(_arg_shapes_agent)]
     ):
         handle = await client.start_workflow(
-            ArgShapesWorkflow.run, id=f'{ArgShapesWorkflow.__name__}-{uuid.uuid4()}', task_queue=TASK_QUEUE
+            ArgShapesWorkflow.run,
+            id=f'{ArgShapesWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+            # A failing workflow task retries without end; the timeout turns that into a test failure.
+            execution_timeout=timedelta(seconds=30),
         )
         assert await handle.result() == 'done'
 
