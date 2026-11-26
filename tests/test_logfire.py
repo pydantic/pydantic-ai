@@ -5280,8 +5280,15 @@ async def test_sub_agent_cost_rolls_up_to_the_root_conversation(capfire: Capture
         and span['attributes']['gen_ai.agent.name'] == 'leaf'
     }
     assert leaf_chat_roots == snapshot({None})
+    root_by_tool = {
+        span['attributes']['gen_ai.tool.name']: span['attributes'].get('pydantic_ai.root_conversation_id')
+        for span in capfire.exporter.exported_spans_as_dict()
+        if span['attributes'].get('gen_ai.operation.name') == 'execute_tool'
+    }
+    assert root_by_tool == snapshot({'ask_middle': None, 'ask_leaf': 'chat'})
 
 
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 async def test_root_conversation_id_ignores_incoming_baggage() -> None:
     """A conversation ID sent in a request's baggage header is not recorded as the top-level one.
 
@@ -5294,10 +5301,6 @@ async def test_root_conversation_id_ignores_incoming_baggage() -> None:
     This is not a VCR test: it checks which attributes the spans carry, which a recorded provider
     response wouldn't change.
     """
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-
     from pydantic_ai.direct import model_request
     from pydantic_ai.models.instrumented import InstrumentedModel
 
