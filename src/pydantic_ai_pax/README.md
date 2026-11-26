@@ -144,8 +144,7 @@ Your settings, saved sessions, and plugins live in `~/.config/pydantic-ai-pax/`,
 - `input-history`: what you typed, for the <kbd>↑</kbd> arrow
 
 Bookkeeping that isn't a preference, such as your workspaces and which Pax processes are running, lives in
-`~/.local/state/pydantic-ai-pax/`, or `$XDG_STATE_HOME/pydantic-ai-pax/`. An earlier Pax kept both under
-`pydantic-clai2/`: the first launch moves them and leaves a link at the old path.
+`~/.local/state/pydantic-ai-pax/`, or `$XDG_STATE_HOME/pydantic-ai-pax/`.
 
 Sign-ins and API keys are encrypted, with the key kept in your system keychain. Without a
 keychain, they are saved unencrypted in a file only you can read. A
