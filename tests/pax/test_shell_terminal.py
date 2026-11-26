@@ -174,7 +174,7 @@ async def test_full_screen_program_gets_the_terminal(user: int) -> None:
     # output, so they can follow `\x1b[?1049l`. Pax has written them all once the command is done.
     with suppress(BlockingIOError):
         while data := os.read(user, 65536):
-            screen.extend(data)  # pragma: lax no cover -- the screen may already hold everything.
+            screen.extend(data)  # pragma: lax no cover
     assert events == ['hold leave_screen=True', 'release']
     assert b'oops' in screen
     assert b'got:typed\x03' in screen
