@@ -291,6 +291,50 @@ Temporal activities keep it (see [Remote turns as activities](#remote-turns-as-a
 memory and suspension caps still apply. Put time-bounded work behind an activity: a tool the
 snippet calls (see [Azure Durable Task durability](#azure-durable-task-durability)).
 
+## Submitting the final output
+
+When the code has computed the final output, such as an object built from tool results with long IDs in it, returning it means the model has to copy it into its output on another turn, at the cost of a model request and the risk of a mistyped ID. Pass `allow_final_output=True` to let the code submit it directly:
+
+```python
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+from pydantic_ai_harness import CodeMode
+
+
+class Invoice(BaseModel):
+    order_id: str
+    customer_id: str
+    total_cents: int
+
+
+agent = Agent('anthropic:claude-sonnet-5-5', output_type=Invoice, capabilities=[CodeMode(allow_final_output=True)])
+
+
+@agent.tool_plain
+def get_order(order_id: str) -> dict:
+    """Look up an order."""
+    return {'id': order_id, 'customer': 'cus_Q8fZ3kLmW2', 'lines': [1250, 4999]}
+
+
+result = agent.run_sync('Invoice order ord_8Kq2Zp.')
+print(result.output)
+#> order_id='ord_8Kq2Zp' customer_id='cus_Q8fZ3kLmW2' total_cents=6249
+```
+
+The sandbox gets one function per output type, named and typed like the outputs in [`RunContext.output_tools`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.RunContext.output_tools), whatever the [output mode](https://ai.pydantic.dev/output/#output-modes). Here that's `final_result`, so the model can write:
+
+```python
+order = await get_order(order_id='ord_8Kq2Zp')
+final_result(order_id=order['id'], customer_id=order['customer'], total_cents=sum(order['lines']))
+```
+
+With a union output type, there's one function per member, so the code picks the type it means by calling its function. On a fresh REPL's first snippet, the sandbox's type checker checks the arguments against the function's signature before the code runs. Either way, they then go through [`RunContext.submit_output`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.RunContext.submit_output), which validates and processes them exactly like output from the model, so the run still only ends on output that matches `output_type`.
+
+Calling an output function stops the code there. If the output is accepted, `run_code` returns as usual with what the code printed before it, and the run ends without another model request. If it's rejected, `run_code` is answered with the validation errors, the rejection uses up one of the agent's output retries, and the REPL keeps the variables the code defined, so the model can fix the value and call the function again.
+
+If the same response has other tool calls, the agent's [`end_strategy`](https://ai.pydantic.dev/api/agent/#pydantic_ai.agent.Agent.end_strategy) decides whether they still run, as for a parallel output tool call. An output function whose name clashes with a sandboxed tool raises a `UserError`; rename the output with `ToolOutput(name=...)`.
+
 ## Concurrent tool calls
 
 Sandboxed tools render as `async def` functions, so code can start several calls and await them with
@@ -632,8 +676,8 @@ Only code execution moves to the worker. Tools, `os_access`, and `print` output 
 process, and REPL state persists across `run_code` calls as it does locally. `mount` directories are
 read in your process too, except when turns run as activities, where the activity worker reads them.
 
-Run the server on `pydantic-monty>=1.5.0`; earlier servers speak WebSockets, which this client no
-longer uses. The `run_code` description lists the modules Monty 1.5 can import.
+Run the server on `pydantic-monty>=1.7.0`, the first release that imports every module the `run_code`
+description lists. Servers before 1.5 speak WebSockets, which this client no longer uses.
 
 ### Error handling
 
@@ -982,7 +1026,8 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
 - No third-party imports (allowed stdlib: `sys`, `typing`, `asyncio`, `math`, `json`, `re`,
   `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`,
   `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `fnmatch`,
-  `hashlib`, `os.path`, `tomllib`, `annotationlib`); each must be imported before use
+  `hashlib`, `os.path`, `tomllib`, `annotationlib`, `colorsys`, `keyword`, `stat`,
+  `statistics`); each must be imported before use
 - `asyncio.gather(...)` takes positional awaitables but no keyword arguments; other task creation
   and wait APIs are unavailable
 - No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`,
@@ -1032,6 +1077,7 @@ CodeMode(
     speculate=None,  # read-only tool names, or 'declared'
     monty_sandbox=None,  # http(s):// server root URL, or a pool factory
     repl_store=None,  # keep the REPL across runs (CodeModeReplStore)
+    allow_final_output=False,  # let the code submit the run's final output
     dynamic_catalog=True,
 )
 ```
