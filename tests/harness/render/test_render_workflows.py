@@ -141,11 +141,22 @@ async def test_agent_runs_inline_outside_render_task() -> None:
 
 
 class RetriedTaskContext(RecordingTaskContext):
-    """An attempt of one entry task run: Render gives each retry a new context with the same task run ID."""
+    """An attempt of one task run: Render gives each retry a new context with the same task run ID.
+
+    Each chained task runs under a context of its own, whose task run ID names the task.
+    """
+
+    def __init__(self, task_run_id: str = 'trn-entry') -> None:
+        super().__init__()
+        self.task_run_id = task_run_id
 
     @property
     def metadata(self) -> TaskRunMetadata:
-        return TaskRunMetadata(task_run_id='trn-entry', root_task_run_id='trn-entry')
+        return TaskRunMetadata(task_run_id=self.task_run_id, root_task_run_id='trn-entry')
+
+    async def run(self, task: TaskDefinition[P, R], *args: P.args, **kwargs: P.kwargs) -> R:
+        self.task_names.append(task.name)
+        return await RecordingTaskContext.run(RetriedTaskContext(f'trn-{task.name}'), task, *args, **kwargs)
 
 
 async def test_run_identity_is_stable_across_entry_task_retries() -> None:
@@ -208,8 +219,13 @@ async def test_sub_agent_in_a_tool_task_takes_its_run_id_from_that_task_run() ->
         with runtime.activate(RetriedTaskContext()):
             await agent.run('go')
 
-    # `RetriedTaskContext` runs the tool task under its own task run ID, which a retry keeps.
-    assert sub_run_ids == ['trn-entry:sub:0', 'trn-entry:sub:0']
+    # The tool task runs under its own task run ID, which a retry keeps.
+    assert sub_run_ids == snapshot(
+        [
+            'trn-support__function_toolset__<agent>.call_tool:sub:0',
+            'trn-support__function_toolset__<agent>.call_tool:sub:0',
+        ]
+    )
 
 
 async def test_independent_tool_calls_fan_out_as_render_child_tasks() -> None:
