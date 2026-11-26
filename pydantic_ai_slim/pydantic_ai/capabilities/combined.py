@@ -1160,39 +1160,63 @@ def _make_model_request_wrap(
         held = _held_to_ceiling(cap_ctx)
         if held is None:
             return await cap.wrap_model_request(cap_ctx, request_context=request_context, handler=inner)
-        # What the handler returned or raised is the model's or an inner capability's, not this one's.
-        # Each response with a copy of its parts, so a change made to it in place isn't taken for the handler's.
-        from_handler: list[tuple[ModelResponse, Sequence[ModelResponsePart]]] = []
-        # Each error with what it told the model when raised, so one changed before it's re-raised isn't handed on.
-        raised_by_handler: list[tuple[BaseException, object]] = []
-
-        async def handler(request_context: ModelRequestContext) -> ModelResponse:
-            try:
-                response = await inner(request_context)
-            except BaseException as e:
-                raised_by_handler.append((e, _what_it_says(e, copy=True)))
-                raise
-            from_handler.append((response, deepcopy(response.parts)))
-            return response
-
+        handler = _HeldHandler(held, inner, request_context)
         try:
             response = await cap.wrap_model_request(cap_ctx, request_context=request_context, handler=handler)
         except SkipModelRequest as e:
-            if _handed_on(e, raised_by_handler):
+            if handler.handed_on(e):
                 raise
             raise _writes_model_turn(held, 'raise `SkipModelRequest` with a response') from e
         except ModelRetry as e:
-            if not _handed_on(e, raised_by_handler):
+            if not handler.handed_on(e):
                 # The retry keeps the handler's response in history, so it can't have changed it either.
-                _check_handler_responses_unchanged(held, from_handler)
+                _check_handler_responses_unchanged(held, handler.returned)
                 hold_feedback(e, held)
             raise
-        if not any(response is returned for returned, _ in from_handler):
+        if not any(response is returned for returned, _ in handler.returned):
             raise _writes_model_turn(held, "return a response from `wrap_model_request` other than its handler's")
-        _check_handler_responses_unchanged(held, from_handler)
+        _check_handler_responses_unchanged(held, handler.returned)
         return response
 
     return wrapped
+
+
+class _HeldHandler:
+    """The handler a capability below `'operator'` gets in `wrap_model_request`, recording what it hands back.
+
+    What the handler returned or raised is the model's or an inner capability's, not the capability's own, and what
+    the capability added to the request before calling it is held as `before_model_request`'s additions are.
+    """
+
+    def __init__(
+        self,
+        held: tuple[str, Authority],
+        inner: Callable[[ModelRequestContext], Awaitable[ModelResponse]],
+        request_context: ModelRequestContext,
+    ) -> None:
+        self._held = held
+        self._inner = inner
+        self._snapshot = snapshot_messages(request_context.messages)
+        self._instructions = deepcopy(request_context.model_request_parameters.instruction_parts or [])
+        # Each response with a copy of its parts, so a change made to it in place isn't taken for the handler's.
+        self.returned: list[tuple[ModelResponse, Sequence[ModelResponsePart]]] = []
+        # Each error with what it told the model when raised, so one changed before it's re-raised isn't handed on.
+        self._raised: list[tuple[BaseException, object]] = []
+
+    async def __call__(self, request_context: ModelRequestContext) -> ModelResponse:
+        hold_added_messages(request_context.messages, self._snapshot, *self._held)
+        _check_instructions_unchanged(self._held, self._instructions, request_context)
+        try:
+            response = await self._inner(request_context)
+        except BaseException as e:
+            self._raised.append((e, _what_it_says(e, copy=True)))
+            raise
+        self.returned.append((response, deepcopy(response.parts)))
+        return response
+
+    def handed_on(self, error: BaseException) -> bool:
+        """Whether `error` is one the handler raised, unchanged."""
+        return any(error is raised and _what_it_says(error) == said for raised, said in self._raised)
 
 
 def _make_tool_validate_wrap(
@@ -1493,11 +1517,6 @@ def _what_it_says(error: BaseException, *, copy: bool = False) -> object:
     if isinstance(error, ModelRetry):
         return error.message
     return None
-
-
-def _handed_on(error: BaseException, raised_by_handler: Sequence[tuple[BaseException, object]]) -> bool:
-    """Whether `error` is one the handler raised, re-raised telling the model what it did then."""
-    return any(error is raised and _what_it_says(error) == said for raised, said in raised_by_handler)
 
 
 def _check_handler_responses_unchanged(

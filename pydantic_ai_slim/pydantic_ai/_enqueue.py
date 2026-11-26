@@ -668,13 +668,12 @@ def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestCon
     return request_context
 
 
-def hold_feedback(error: ModelRetry, held: tuple[str, Authority] | None) -> None:
-    """Mark retry feedback a capability below `'operator'` raised, so it reaches the model with that authority.
+def hold_feedback(error: ModelRetry, held: tuple[str, Authority]) -> None:
+    """Mark retry feedback a capability below `'operator'` wrote, so it reaches the model with that authority.
 
-    The innermost capability that raised it is the one that wrote it: one that only re-raised it leaves the mark.
+    Only for one it raised or changed: one that hands on an inner capability's unchanged keeps that one's mark.
     """
-    if held is not None and feedback_held_to(error) is None:
-        error._held_to = held  # pyright: ignore[reportAttributeAccessIssue]
+    error._held_to = held  # pyright: ignore[reportAttributeAccessIssue]
 
 
 def feedback_held_to(error: ModelRetry) -> tuple[str, Authority] | None:
@@ -746,8 +745,6 @@ def hold_added_messages(
     received had, raises `UserError`. Held in place, so the history the deprecated mirroring already appended them to
     is held too.
     """
-    if ceiling == 'operator':
-        return
     added = _Added(snapshot)
     for message in messages:
         if added(message):
