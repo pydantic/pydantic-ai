@@ -104,7 +104,7 @@ _DOCS_DIR = _ROOT / '../../docs/harness'
 _NON_CAPABILITY_PAGES = {
     'AGENTS.md',
     'CLAUDE.md',
-    'clai2.md',
+    'pax.md',
     'examples.md',
     'gh-aw.md',
     'index.md',

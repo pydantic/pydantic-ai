@@ -294,7 +294,7 @@ async def test_destroy_refuses_a_folder_outside_the_workspaces_root(directory: P
 
 async def test_the_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path))
-    assert workspaces_dir() == tmp_path / 'pydantic-clai2' / 'workspaces'
+    assert workspaces_dir() == tmp_path / 'pydantic-ai-pax' / 'workspaces'
     assert Workspaces(kinds={}).registry.directory == workspaces_dir() / 'registry'
     registry = Registry(tmp_path / 'missing')
     assert registry.all() == []
