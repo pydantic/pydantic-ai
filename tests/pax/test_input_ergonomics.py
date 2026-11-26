@@ -23,7 +23,6 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse, Question, QuestionOption
-from pydantic_ai_pax import config
 from pydantic_ai_pax.builtin_plugins.ask_user_menu import TerminalAnswerer
 from pydantic_ai_pax.cli.command_context import CommandContext
 from pydantic_ai_pax.config import Settings
@@ -219,43 +218,6 @@ async def test_input_command_resets_every_input_setting_and_hands_key_tests_to_t
             'Test a key now. Ctrl+G closes; Ctrl+J is the newline fallback.'
         )
         assert live.key_test is not None
-
-
-def test_input_preferences_roundtrip_and_unknown_settings_survive(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    store = SettingsStore(tmp_path / 'settings.db')
-    store.set('display.thinking', False)
-    previous = store.overrides()
-    assert previous == {'display.thinking': False}
-    assert store.load().input_bindings == InputBindings()
-    assert store.load().busy_delivery == 'after-turn'
-    store.set('input.busy_delivery', 'next-checkpoint')
-    store.set('input.keyboard_labels', 'mac')
-    store.set('input.question_submit', 'answer')
-    store.set('input.bindings', {'send': 'ctrl-s', 'steer': 'alt-enter', 'newline': 'shift-enter'})
-    reopened = SettingsStore(store.path)
-    assert reopened.load().keyboard_labels == 'mac'
-    assert reopened.load().question_submit == 'answer'
-    assert reopened.load().busy_delivery == 'next-checkpoint'
-    assert reopened.load().input_bindings.send == 'ctrl-s'
-    saved = reopened.overrides()
-    with pytest.raises(ValidationError, match='collide'):
-        reopened.set('input.bindings', {'send': 'enter', 'newline': 'ctrl-enter'})
-    assert reopened.overrides() == saved
-    # An older build knows none of these names but must preserve their stored values.
-    older = {key: field for key, field in config.SETTING_FIELDS.items() if not key.startswith('input.')}
-    with monkeypatch.context() as build:
-        build.setattr('pydantic_ai_pax.config.SETTING_FIELDS', older)
-        build.setattr('pydantic_ai_pax.config.settings_store.SETTING_FIELDS', older)
-        older_store = SettingsStore(store.path)
-        assert older_store.overrides() == previous
-        older_store.set('display.thinking', True)
-        older_store.reset('display.thinking')
-        assert older_store.overrides() == {}
-    inputs = {key: value for key, value in saved.items() if key.startswith('input.')}
-    assert len(inputs) == 4
-    assert SettingsStore(store.path).overrides() == inputs
 
 
 def question_request(*, batch: bool = False) -> AskUserRequest:
@@ -687,7 +649,10 @@ async def test_delivery_mode_is_persistent_and_reachable_without_queued_messages
         live.remember_busy_delivery = remember
         live.feed('f4')
         await anyio.lowlevel.checkpoint()
-        assert 'New busy: after turn | m change' in '\n'.join(live.frame())
+        frame = '\n'.join(live.frame())
+        assert 'New busy: after turn | m change | Esc close' in frame and 'e Edit' not in frame
+        live.feed('e')  # Nothing is queued, so nothing was ever queued to edit.
+        assert live.notice == '' and 'm change' in '\n'.join(live.frame())
         live.feed('m')
         assert context.settings.busy_delivery == 'next-checkpoint'
         assert SettingsStore(store.path).load().busy_delivery == 'next-checkpoint'

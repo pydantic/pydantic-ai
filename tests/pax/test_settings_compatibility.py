@@ -30,6 +30,7 @@ from pydantic_ai_pax.cli.command_context import CommandContext
 from pydantic_ai_pax.commands import Commands, config_command
 from pydantic_ai_pax.config import DEFAULT_FOOTER_FIELDS, SETTING_FIELDS, PluginSettings, Settings, features
 from pydantic_ai_pax.config.api_keys import KeyReference
+from pydantic_ai_pax.config.input_bindings import InputBindings
 from pydantic_ai_pax.config.plugin_requirements import apply_requirements, stored_requirements
 from pydantic_ai_pax.config.project_settings import PROJECT_FILE, load_project_settings
 from pydantic_ai_pax.config.settings_store import SettingsStore, StoredAccount
@@ -1854,3 +1855,40 @@ def test_database_from_before_folder_trust_keeps_its_settings_and_trusts_nothing
     with closing(sqlite3.connect(path)) as connection:
         assert connection.execute("SELECT value_json FROM settings WHERE key = 'future.setting'").fetchone() == ('1',)
         assert connection.execute('PRAGMA user_version').fetchone() == (1,)
+
+
+def test_input_preferences_roundtrip_and_unknown_settings_survive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = SettingsStore(tmp_path / 'settings.db')
+    store.set('display.thinking', False)
+    previous = store.overrides()
+    assert previous == {'display.thinking': False}
+    assert store.load().input_bindings == InputBindings()
+    assert store.load().busy_delivery == 'after-turn'
+    store.set('input.busy_delivery', 'next-checkpoint')
+    store.set('input.keyboard_labels', 'mac')
+    store.set('input.question_submit', 'answer')
+    store.set('input.bindings', {'send': 'ctrl-s', 'steer': 'alt-enter', 'newline': 'shift-enter'})
+    reopened = SettingsStore(store.path)
+    assert reopened.load().keyboard_labels == 'mac'
+    assert reopened.load().question_submit == 'answer'
+    assert reopened.load().busy_delivery == 'next-checkpoint'
+    assert reopened.load().input_bindings.send == 'ctrl-s'
+    saved = reopened.overrides()
+    with pytest.raises(ValidationError, match='collide'):
+        reopened.set('input.bindings', {'send': 'enter', 'newline': 'ctrl-enter'})
+    assert reopened.overrides() == saved
+    # An older build knows none of these names but must preserve their stored values.
+    older = {key: field for key, field in SETTING_FIELDS.items() if not key.startswith('input.')}
+    with monkeypatch.context() as build:
+        build.setattr('pydantic_ai_pax.config.SETTING_FIELDS', older)
+        build.setattr('pydantic_ai_pax.config.settings_store.SETTING_FIELDS', older)
+        older_store = SettingsStore(store.path)
+        assert older_store.overrides() == previous
+        older_store.set('display.thinking', True)
+        older_store.reset('display.thinking')
+        assert older_store.overrides() == {}
+    inputs = {key: value for key, value in saved.items() if key.startswith('input.')}
+    assert len(inputs) == 4
+    assert SettingsStore(store.path).overrides() == inputs

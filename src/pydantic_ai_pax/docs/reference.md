@@ -1430,7 +1430,7 @@ action. Commands and shell lines retain their explicit routing and are never ste
 Delivery actions never answer questions or approve tools.
 
 Changing delivery mode does not promote existing entries. F4 opens delivery controls
-even with an empty queue. `/input` and `/set` also edit/reset the preference; reset
+even with an empty queue, showing only the delivery mode then. `/input` and `/set` also edit/reset the preference; reset
 restores `after-turn`. Bare settings menus such as
 `/set` are the exception: they open during the turn (see "Settings and commands"). An unsubmitted draft stays
 in the editor as turns finish. Queued messages are not saved as conversation turns

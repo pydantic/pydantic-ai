@@ -487,11 +487,13 @@ class LivePrompt:
         """Apply an explicit action only while the selected entry is still runnable."""
         entries = self.runnable_prompts()
         entry = self._queue_selected
+        if entry is None:
+            # The panel opened on an empty queue, so it offers only the delivery mode.
+            return True
         if entry not in entries:
             self._queue_open = False
             self.notice = 'That message is no longer queued.'
             return True
-        assert entry is not None
         match key:
             case 'up' | 'down':
                 self._queue_selected = entries[(entries.index(entry) + (-1 if key == 'up' else 1)) % len(entries)]
@@ -1058,7 +1060,12 @@ class LivePrompt:
         if not self._queue_open:
             return None
         entry = self._queue_selected
-        preview = 'No message selected' if entry is None else ' '.join(terminal_text(entry.text).split())
+        if entry is None:
+            return (
+                truncate(f'New busy: {self.busy_delivery().replace("-", " ")} | m change | Esc close', width),
+                *self.buffer.rows(width=width, limit=max(1, height - 3)),
+            )
+        preview = ' '.join(terminal_text(entry.text).split())
         return (
             truncate('e Edit | d Remove | s Steer | Esc close', width),
             truncate(f'New busy: {self.busy_delivery().replace("-", " ")} | m change', width),
