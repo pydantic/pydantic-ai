@@ -3858,96 +3858,104 @@ def infer_model(  # noqa: C901
     # OpenRouter, Cerebras, Crusoe, Ollama, Z.AI, Snowflake, GitHub Copilot and OpenAI Codex need to
     # be checked before OpenAI, as they are in `OpenAIChatCompatibleProvider` or
     # `OpenAIResponsesCompatibleProvider` but have their own model classes.
-    if model_kind == 'openrouter':
-        from .openrouter import OpenRouterModel
+    match model_kind:
+        case 'openrouter':
+            from .openrouter import OpenRouterModel
 
-        return OpenRouterModel(model_name, provider=provider)
-    elif model_kind == 'cerebras':
-        from .cerebras import CerebrasModel
+            return OpenRouterModel(model_name, provider=provider)
+        case 'cerebras':
+            from .cerebras import CerebrasModel
 
-        return CerebrasModel(model_name, provider=provider)
-    elif model_kind == 'crusoe':
-        from .crusoe import CrusoeModel
+            return CerebrasModel(model_name, provider=provider)
+        case 'crusoe':
+            from .crusoe import CrusoeModel
 
-        return CrusoeModel(model_name, provider=provider)
-    elif model_kind == 'snowflake':
-        from .snowflake import SnowflakeModel
+            return CrusoeModel(model_name, provider=provider)
+        case 'snowflake':
+            from .snowflake import SnowflakeModel
 
-        return SnowflakeModel(model_name, provider=provider)
-    elif model_kind == 'ollama':
-        from .ollama import OllamaModel
+            return SnowflakeModel(model_name, provider=provider)
+        case 'ollama':
+            from .ollama import OllamaModel
 
-        return OllamaModel(model_name, provider=provider)
-    elif model_kind == 'zai':
-        from .zai import ZaiModel
+            return OllamaModel(model_name, provider=provider)
+        case 'zai':
+            from .zai import ZaiModel
 
-        return ZaiModel(model_name, provider=provider)
-    elif model_kind == 'github-copilot':
-        from .github_copilot import GitHubCopilotModel
+            return ZaiModel(model_name, provider=provider)
+        case 'github-copilot':
+            from .github_copilot import GitHubCopilotModel
 
-        return GitHubCopilotModel(model_name, provider=provider)
-    elif model_kind == 'openai-codex':
-        from .openai_codex import OpenAICodexModel
+            return GitHubCopilotModel(model_name, provider=provider)
+        case 'openai-codex':
+            from .openai_codex import OpenAICodexModel
 
-        return OpenAICodexModel(model_name, provider=provider)
-    # Meta's Chat Completions API doesn't return reasoning or accept the `phase` and encrypted reasoning that
-    # keep multi-turn Muse runs on track, so `meta:` uses the Responses API. ChatGPT plan usage only serves
-    # the Responses API.
-    elif model_kind in ('openai', 'openai-responses', 'azure-responses', 'meta', 'openai-chatgpt'):
-        from .openai import OpenAIResponsesModel
+            return OpenAICodexModel(model_name, provider=provider)
+        # Meta's Chat Completions API doesn't return reasoning or accept the `phase` and encrypted reasoning that
+        # keep multi-turn Muse runs on track, so `meta:` uses the Responses API. ChatGPT plan usage only serves
+        # the Responses API.
+        case 'openai' | 'openai-responses' | 'azure-responses' | 'meta' | 'openai-chatgpt':
+            from .openai import OpenAIResponsesModel
 
-        return OpenAIResponsesModel(model_name, provider=provider)
-    elif model_kind in ('openai-chat', *get_args(OpenAIChatCompatibleProvider.__value__)):
-        from .openai import OpenAIChatModel
+            return OpenAIResponsesModel(model_name, provider=provider)
+        case kind if kind in ('openai-chat', *get_args(OpenAIChatCompatibleProvider.__value__)):
+            from .openai import OpenAIChatModel
 
-        return OpenAIChatModel(model_name, provider=provider)
-    elif model_kind in ('google', 'google-cloud'):
-        from .google import GoogleModel
+            return OpenAIChatModel(model_name, provider=provider)
+        case 'google' | 'google-cloud':
+            from .google import GoogleModel
 
-        return GoogleModel(model_name, provider=provider)
-    elif model_kind == 'groq':
-        from .groq import GroqModel
+            return GoogleModel(model_name, provider=provider)
+        case 'groq':
+            from .groq import GroqModel
 
-        return GroqModel(model_name, provider=provider)
-    elif model_kind == 'cohere':
-        from .cohere import CohereModel
+            return GroqModel(model_name, provider=provider)
+        case 'cohere':
+            from .cohere import CohereModel
 
-        return CohereModel(model_name, provider=provider)
-    elif model_kind == 'mistral':
-        from .mistral import MistralModel
+            return CohereModel(model_name, provider=provider)
+        case 'mistral':
+            from .mistral import MistralModel
 
-        return MistralModel(model_name, provider=provider)
-    elif model_kind == 'typesafe':
-        from .typesafe import TypeSafeModel
+            return MistralModel(model_name, provider=provider)
+        case 'typesafe':
+            from .typesafe import TypeSafeModel
 
-        return TypeSafeModel(model_name, provider=provider)
-    elif model_kind == 'system-one':
-        from ..providers.system_one import SystemOneProvider
-        from .system_one import SystemOneModel
+            return TypeSafeModel(model_name, provider=provider)
+        case 'system-one':
+            from ..providers.system_one import SystemOneProvider
+            from .system_one import SystemOneModel
 
-        if not isinstance(provider, SystemOneProvider):
-            raise UserError('System One models require a `SystemOneProvider`.')
-        return SystemOneModel(model_name, provider=provider)
-    elif model_kind in ('openai-decisions', 'google-decisions'):
-        return _decisions_model(model_kind, model_name, provider)
-    elif model_kind == 'anthropic':
-        from .anthropic import AnthropicModel
+            if not isinstance(provider, SystemOneProvider):
+                raise UserError('System One models require a `SystemOneProvider`.')
+            return SystemOneModel(model_name, provider=provider)
+        case 'openai-decisions' | 'google-decisions':
+            return _decisions_model(model_kind, model_name, provider)
+        case 'anthropic':
+            from .anthropic import AnthropicModel
 
-        return AnthropicModel(model_name, provider=provider)
-    elif model_kind == 'bedrock':
-        from .bedrock import BedrockConverseModel
+            return AnthropicModel(model_name, provider=provider)
+        case 'claude-code':
+            from ..providers.claude_code import ClaudeCodeProvider
+            from .claude_code import ClaudeCodeModel
 
-        return BedrockConverseModel(model_name, provider=provider)
-    elif model_kind == 'huggingface':
-        from .huggingface import HuggingFaceModel
+            if not isinstance(provider, ClaudeCodeProvider):
+                raise UserError('Claude Code models require a `ClaudeCodeProvider`.')
+            return ClaudeCodeModel(model_name, provider=provider)
+        case 'bedrock':
+            from .bedrock import BedrockConverseModel
 
-        return HuggingFaceModel(model_name, provider=provider)
-    elif model_kind == 'xai':
-        from .xai import XaiModel
+            return BedrockConverseModel(model_name, provider=provider)
+        case 'huggingface':
+            from .huggingface import HuggingFaceModel
 
-        return XaiModel(model_name, provider=provider)
-    else:
-        raise UserError(f'Unknown model: {model}')  # pragma: no cover
+            return HuggingFaceModel(model_name, provider=provider)
+        case 'xai':
+            from .xai import XaiModel
+
+            return XaiModel(model_name, provider=provider)
+        case _:
+            raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
 
 def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> AsyncClient:

@@ -110,6 +110,12 @@ with try_import() as anthropic_available:
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
+with try_import() as claude_code_available:
+    from pydantic_ai.models.claude_code import ClaudeCodeModel
+    from pydantic_ai.providers.claude_code import ClaudeCodeProvider
+
+    from .claude_code_fake import FakeClaudeCode, FakeResponse
+
 with try_import() as google_available:
     from google.genai.types import HttpRetryOptions
 
@@ -443,6 +449,30 @@ def http_probe(build: Callable[[httpx2.AsyncClient], Model]) -> Probe:
     return probe
 
 
+async def claude_code_probe(settings: ModelSettings) -> ProbeResult:
+    """Probe `ClaudeCodeModel` by what reaches Claude Code: the options its session starts with and the frames it's
+    sent. Its Messages API request never leaves the process, and the transport keeps only what Claude Code takes, so
+    a diff of the HTTP body would credit it with settings it drops."""
+    fake = FakeClaudeCode([FakeResponse(error='invalid_request')])
+    provider = ClaudeCodeProvider()
+    provider._sessions.transport_factory = fake  # pyright: ignore[reportPrivateUsage]
+    observed = await run_probe_request(ClaudeCodeModel('claude-sonnet-4-5', provider=provider), settings)
+    recorder = Recorder()
+    for session in fake.sessions:
+        options = session.options
+        recorder.record(
+            {
+                'model': options.model,
+                'system_prompt': options.system_prompt,
+                'thinking': options.thinking,
+                'effort': options.effort,
+                'env': options.env,
+                'frames': session.frames,
+            }
+        )
+    return ProbeResult(recorder.first, observed)
+
+
 def legacy_http_probe(build: Callable[[httpx.AsyncClient], Model]) -> Probe:
     """Probe a model whose SDK still rejects HTTPX2, so its provider takes a legacy `httpx.AsyncClient`.
 
@@ -744,6 +774,7 @@ CASES = [
         _needs(openai_available, 'openai'),
     ),
     Case('OpenAIResponsesModel', ('OpenAI',), http_probe(_openai_responses), _needs(openai_available, 'openai')),
+    Case('ClaudeCodeModel', ('Claude Code',), claude_code_probe, _needs(claude_code_available, 'claude-agent-sdk')),
     # `temperature`/`top_p` provoke the reasoning-model sampling warning, which the suite's
     # `filterwarnings = error` would otherwise turn into a request that never sends.
     Case(

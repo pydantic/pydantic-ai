@@ -186,6 +186,7 @@ class ModelSettings(TypedDict, total=False):
     * Snowflake
     * Z.AI
     * Bedrock Mantle
+    * Claude Code
     """
 
     temperature: float

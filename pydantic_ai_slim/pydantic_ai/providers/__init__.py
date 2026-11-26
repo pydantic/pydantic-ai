@@ -277,6 +277,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
             from .openai_chatgpt import OpenAIChatGPTProvider
 
             return OpenAIChatGPTProvider
+        case 'claude-code':
+            from .claude_code import ClaudeCodeProvider
+
+            return ClaudeCodeProvider
         case 'deepseek':
             from .deepseek import DeepSeekProvider
 
