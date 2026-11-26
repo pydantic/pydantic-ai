@@ -13,11 +13,13 @@ from pydantic_ai import Agent, ModelResponse, NativeOutput, PromptedOutput
 from pydantic_ai.capabilities import WebFetch, WebSearch
 from pydantic_ai.exceptions import ModelServerError, UserError
 from pydantic_ai.messages import (
+    ContentCitationAnchor,
     ModelMessagesTypeAdapter,
     NativeToolCallPart,
     NativeToolReturnPart,
     TextPart,
     ThinkingPart,
+    WebCitationSource,
 )
 from pydantic_ai.models import Model
 from pydantic_ai.native_tools import WebFetchTool, WebSearchTool
@@ -179,6 +181,64 @@ async def test_deepseek_web_search_usage(
     assert set(tool_calls.values()) == {'web_search'}
     assert response.usage.details['tool_search'] == queries
     assert sum(len(part.citations or ()) for part in response.parts if isinstance(part, TextPart)) == citations
+
+
+_RFC_TITLE = 'The title of RFC 9110 on rfc-editor.org is "HTTP Semantics"'
+_RFC_URL = 'https://www.rfc-editor.org/rfc/rfc9110.html'
+_RFC_INFO = 'https://www.rfc-editor.org/info/rfc9110/'
+_RFC_ERRATA = 'https://www.rfc-editor.org/errata/eid7419'
+_RFC_ERRATA_SEARCH = 'https://www.rfc-editor.org/errata_search.php?rfc=9110&rec_status=15&presentation=records'
+
+
+@pytest.mark.parametrize(
+    ('api', 'stream', 'cited_text', 'urls'),
+    [
+        ('chat', True, _RFC_TITLE, [_RFC_URL, _RFC_INFO, _RFC_ERRATA]),
+        (
+            'responses',
+            True,
+            _RFC_TITLE,
+            [_RFC_INFO, 'https://www.rfc-editor.org/authors/rfc10049.pdf#4#4#4', _RFC_ERRATA],
+        ),
+        ('messages', True, _RFC_TITLE + ' ', [_RFC_URL, _RFC_INFO, _RFC_ERRATA_SEARCH]),
+        (
+            'messages',
+            False,
+            'The title of RFC 9110 is "HTTP Semantics"',
+            [_RFC_URL, _RFC_ERRATA_SEARCH, 'https://www.rfc-editor.org/errata/eid7870'],
+        ),
+    ],
+)
+async def test_deepseek_search_citation_sources_and_anchors(
+    api: str, stream: bool, cited_text: str, urls: list[str], allow_model_requests: None
+) -> None:
+    # These recorded answers cite the sentence before its final punctuation. Messages puts the period in a separate block.
+    suffix = 'sse' if stream else 'json'
+    content = (_FIXTURES / f'{api}-citations.{suffix}').read_bytes()
+    media_type = 'text/event-stream' if stream else 'application/json'
+    transport = httpx2.MockTransport(
+        lambda _: httpx2.Response(200, content=content + b'\n', headers={'content-type': media_type})
+    )
+    async with httpx2.AsyncClient(transport=transport) as client:
+        agent = Agent(deepseek_model(api, client), capabilities=[WebSearch()], model_settings={'thinking': False})
+        prompt = 'Search for the title of RFC 9110 on rfc-editor.org. Answer in one short sentence with a citation.'
+        if stream:
+            async with agent.run_stream(prompt) as result:
+                await result.get_output()
+                response = result.response
+        else:
+            response = (await agent.run(prompt)).response
+
+    source_urls: list[str] = []
+    for part in response.parts:
+        if isinstance(part, TextPart):
+            for citation in part.citations or ():
+                assert isinstance(citation.anchor, ContentCitationAnchor)
+                assert part.content[citation.anchor.start : citation.anchor.end] == cited_text
+                for source in citation.sources:
+                    assert isinstance(source, WebCitationSource)
+                    source_urls.append(source.url)
+    assert source_urls == urls
 
 
 async def test_deepseek_messages_http_200_generation_error(allow_model_requests: None) -> None:

@@ -1,0 +1,110 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"eacd321b-04d8-4776-9c52-e64d455fcd54","object":"response","created_at":1795683987,"status":"in_progress","background":false,"completed_at":null,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":800,"max_tool_calls":null,"model":"deepseek-flash","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":"none","summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":null},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+event: response.in_progress
+data: {"type":"response.in_progress","response":{"id":"eacd321b-04d8-4776-9c52-e64d455fcd54","object":"response","created_at":1795683987,"status":"in_progress","background":false,"completed_at":null,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":800,"max_tool_calls":null,"model":"deepseek-flash","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":"none","summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":null},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","item":{"type":"web_search_call","id":"srvtoolu_s_00_258832e48fb94b338cb6c5230399caa2","status":"in_progress","kind":"search","action":{"type":"search","queries":["\"RFC 9110\" title site:rfc-editor.org","site:rfc-editor.org RFC 9110","RFC 9110 title rfc-editor.org"]}},"output_index":0,"sequence_number":2}
+
+event: response.web_search_call.in_progress
+data: {"type":"response.web_search_call.in_progress","item_id":"srvtoolu_s_00_258832e48fb94b338cb6c5230399caa2","output_index":0,"sequence_number":3}
+
+event: response.web_search_call.searching
+data: {"type":"response.web_search_call.searching","item_id":"srvtoolu_s_00_258832e48fb94b338cb6c5230399caa2","output_index":0,"sequence_number":4}
+
+event: response.web_search_call.completed
+data: {"type":"response.web_search_call.completed","item_id":"srvtoolu_s_00_258832e48fb94b338cb6c5230399caa2","output_index":0,"sequence_number":5}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","item":{"type":"web_search_call","id":"srvtoolu_s_00_258832e48fb94b338cb6c5230399caa2","status":"completed","kind":"search","action":{"type":"search","queries":["\"RFC 9110\" title site:rfc-editor.org","site:rfc-editor.org RFC 9110","RFC 9110 title rfc-editor.org"],"sources":[{"type":"url","url":"https://www.rfc-editor.org/rfc/inline-errata/rfc9110.html","title":"rfc9110"}]}},"output_index":0,"sequence_number":6}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","item":{"type":"message","id":"083aaeb4-2313-4c78-b76b-115584a0be22","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":1,"sequence_number":7}
+
+event: response.content_part.added
+data: {"type":"response.content_part.added","content_index":0,"item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","output_index":1,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":8}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"The","item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","logprobs":[],"output_index":1,"sequence_number":9}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" title","item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","logprobs":[],"output_index":1,"sequence_number":10}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" of","item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","logprobs":[],"output_index":1,"sequence_number":11}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" RFC","item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","logprobs":[],"output_index":1,"sequence_number":12}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","logprobs":[],"output_index":1,"sequence_number":13}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"911","item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","logprobs":[],"output_index":1,"sequence_number":14}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"0","item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","logprobs":[],"output_index":1,"sequence_number":15}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" on","item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","logprobs":[],"output_index":1,"sequence_number":16}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" r","item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","logprobs":[],"output_index":1,"sequence_number":17}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"fc","item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","logprobs":[],"output_index":1,"sequence_number":18}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"-ed","item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","logprobs":[],"output_index":1,"sequence_number":19}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"itor","item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","logprobs":[],"output_index":1,"sequence_number":20}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".org","item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","logprobs":[],"output_index":1,"sequence_number":21}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" is","item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","logprobs":[],"output_index":1,"sequence_number":22}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" \"","item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","logprobs":[],"output_index":1,"sequence_number":23}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"HTTP","item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","logprobs":[],"output_index":1,"sequence_number":24}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" Sem","item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","logprobs":[],"output_index":1,"sequence_number":25}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"antics","item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","logprobs":[],"output_index":1,"sequence_number":26}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"\"","item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","logprobs":[],"output_index":1,"sequence_number":27}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","logprobs":[],"output_index":1,"sequence_number":28}
+
+event: response.output_text.annotation.added
+data: {"type":"response.output_text.annotation.added","annotation":{"type":"url_citation","url":"https://www.rfc-editor.org/info/rfc9110/","title":"RFC 9110: HTTP Semantics | RFC Editor","start_index":0,"end_index":59},"annotation_index":0,"content_index":0,"item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","output_index":1,"sequence_number":29}
+
+event: response.output_text.annotation.added
+data: {"type":"response.output_text.annotation.added","annotation":{"type":"url_citation","url":"https://www.rfc-editor.org/authors/rfc10049.pdf#4#4#4","title":"[RFC9110] Fielding, R","start_index":0,"end_index":59},"annotation_index":1,"content_index":0,"item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","output_index":1,"sequence_number":30}
+
+event: response.output_text.annotation.added
+data: {"type":"response.output_text.annotation.added","annotation":{"type":"url_citation","url":"https://www.rfc-editor.org/errata/eid7419","title":"RFC Errata Report","start_index":0,"end_index":59},"annotation_index":2,"content_index":0,"item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","output_index":1,"sequence_number":31}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":".","item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","logprobs":[],"output_index":1,"sequence_number":32}
+
+event: response.output_text.done
+data: {"type":"response.output_text.done","content_index":0,"item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","logprobs":[],"output_index":1,"sequence_number":33,"text":"The title of RFC 9110 on rfc-editor.org is \"HTTP Semantics\" ."}
+
+event: response.content_part.done
+data: {"type":"response.content_part.done","content_index":0,"item_id":"083aaeb4-2313-4c78-b76b-115584a0be22","output_index":1,"part":{"type":"output_text","annotations":[{"type":"url_citation","url":"https://www.rfc-editor.org/info/rfc9110/","title":"RFC 9110: HTTP Semantics | RFC Editor","start_index":0,"end_index":59},{"type":"url_citation","url":"https://www.rfc-editor.org/authors/rfc10049.pdf#4#4#4","title":"[RFC9110] Fielding, R","start_index":0,"end_index":59},{"type":"url_citation","url":"https://www.rfc-editor.org/errata/eid7419","title":"RFC Errata Report","start_index":0,"end_index":59}],"logprobs":[],"text":"The title of RFC 9110 on rfc-editor.org is \"HTTP Semantics\" ."},"sequence_number":34}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","item":{"type":"message","id":"083aaeb4-2313-4c78-b76b-115584a0be22","status":"completed","content":[{"type":"output_text","annotations":[{"type":"url_citation","url":"https://www.rfc-editor.org/info/rfc9110/","title":"RFC 9110: HTTP Semantics | RFC Editor","start_index":0,"end_index":59},{"type":"url_citation","url":"https://www.rfc-editor.org/authors/rfc10049.pdf#4#4#4","title":"[RFC9110] Fielding, R","start_index":0,"end_index":59},{"type":"url_citation","url":"https://www.rfc-editor.org/errata/eid7419","title":"RFC Errata Report","start_index":0,"end_index":59}],"logprobs":[],"text":"The title of RFC 9110 on rfc-editor.org is \"HTTP Semantics\" ."}],"phase":"final_answer","role":"assistant"},"output_index":1,"sequence_number":35}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"eacd321b-04d8-4776-9c52-e64d455fcd54","object":"response","created_at":1795683987,"status":"completed","background":false,"completed_at":1795683989,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":800,"max_tool_calls":null,"model":"deepseek-flash","moderation":null,"output":[{"type":"web_search_call","id":"srvtoolu_s_00_258832e48fb94b338cb6c5230399caa2","status":"completed","kind":"search","action":{"type":"search","queries":["\"RFC 9110\" title site:rfc-editor.org","site:rfc-editor.org RFC 9110","RFC 9110 title rfc-editor.org"],"sources":[{"type":"url","url":"https://www.rfc-editor.org/rfc/inline-errata/rfc9110.html","title":"rfc9110"}]}},{"type":"message","id":"083aaeb4-2313-4c78-b76b-115584a0be22","status":"completed","content":[{"type":"output_text","annotations":[{"type":"url_citation","url":"https://www.rfc-editor.org/info/rfc9110/","title":"RFC 9110: HTTP Semantics | RFC Editor","start_index":0,"end_index":59},{"type":"url_citation","url":"https://www.rfc-editor.org/authors/rfc10049.pdf#4#4#4","title":"[RFC9110] Fielding, R","start_index":0,"end_index":59},{"type":"url_citation","url":"https://www.rfc-editor.org/errata/eid7419","title":"RFC Errata Report","start_index":0,"end_index":59}],"logprobs":[],"text":"The title of RFC 9110 on rfc-editor.org is \"HTTP Semantics\" ."}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":"none","summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":null},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":5304,"input_tokens_details":{"cached_tokens":0},"output_tokens":32,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":5336,"server_tool_use":{"tool_search":3,"tool_fetch":0,"tool_image_search":0}},"user":null,"metadata":{}},"sequence_number":36}
