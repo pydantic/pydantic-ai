@@ -482,6 +482,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             messages,
             sdk_version=self.sdk_version,
             generate_message_id=lambda _message, role, index: f'{event.enqueue_id}-{role}-{index}',
+            default_ui_visibility=self.default_ui_visibility,
         )
         yield DataChunk(
             type=ENQUEUED_MESSAGES_DATA_TYPE,

@@ -294,7 +294,7 @@ When a streamed response is [rejected](../agent.md#rejected-responses) and anoth
 
 ## MCP Apps
 
-After the result of an [MCP Apps](../mcp/client.md#mcp-apps) tool call, the stream carries a `data-mcp-apps` [data chunk](#data-chunks) with `id` set to the tool call ID. Its `data`: `resourceUri`, `toolInput`, `result` (the full MCP `CallToolResult`), and `serverId` and `serverHash` (both the toolset `id`, when set). Dumped history keeps it as a data part; loading ignores it.
+After the result of an [MCP Apps](../mcp/client.md#mcp-apps) tool call, the stream carries a `data-mcp-apps` [data chunk](#data-chunks) with `id` set to the tool call ID. Its `data`: `resourceUri`, `toolInput`, `result` (the full MCP `CallToolResult`), and `serverId` and `serverHash` (both the toolset `id`, when set). Dumped history keeps it as a data part; loading ignores it. A [`'redacted'` or `'private'`](./overview.md#tool-visibility) tool's result gets neither the chunk nor the data part, since they hold the full result.
 
 To show the page with AI SDK UI's `experimental_MCPAppRenderer`, give it the resource URI as `toolMetadata.app` and the full result as `output`, both from the chunk. The tool part's own `output` is what the model saw, without the `structuredContent` and `_meta` the page needs:
 
@@ -357,7 +357,7 @@ Tool approval responses are trusted from the request by design, matching the pro
 
 `tool-input-available` is emitted **after** the agent has validated the call against the tool's schema and any custom [`args_validator`](../tools-advanced.md#args-validator), so the chunk only fires once the args are known to be acceptable. The chunk's `input` field carries the raw arguments the model emitted.
 
-When validation fails, the adapter emits `tool-input-error` instead of `tool-input-available`. The chunk carries the same `tool_call_id`, `tool_name`, and `input` (the raw arguments) plus an `error_text` field rendered from the message that will be sent back to the model. When the validation failure is retryable, the agent retries the call (subject to the tool's `retries` setting) and emits a new `tool-input-(available|error)` for each attempt; when a custom validator raises [`ToolFailed`](../tools-advanced.md#tool-failed), the failure is terminal and no retry follows.
+When validation fails, the adapter emits `tool-input-error` instead of `tool-input-available`. The chunk carries the same `tool_call_id`, `tool_name`, and `input` (the raw arguments) plus an `error_text` field rendered from the message that will be sent back to the model. A [`'redacted'`](./overview.md#what-a-placeholder-replaces) tool's `error_text` is the placeholder instead, and a `'private'` tool's call isn't sent at all. When the validation failure is retryable, the agent retries the call (subject to the tool's `retries` setting) and emits a new `tool-input-(available|error)` for each attempt; when a custom validator raises [`ToolFailed`][pydantic_ai.exceptions.ToolFailed], the failure is terminal and no retry follows.
 
 A call that isn't executed because a final result was already processed (see [`end_strategy`](../output.md#parallel-output-tool-calls)) isn't validated either. It gets `tool-input-available` with its raw arguments, followed by `tool-output-available` carrying the "not executed" return recorded in message history.
 
