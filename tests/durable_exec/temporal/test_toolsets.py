@@ -13,7 +13,7 @@ from typing import Annotated, Any, cast
 from unittest.mock import patch
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, Json
 from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import (
@@ -1413,6 +1413,87 @@ async def test_aliased_args_reach_the_activity(client: Client, path: str):
 
     assert output == 'Done.'
     assert _received_bookings == [('Ada', Place(cityName='Paris'), Revision(draftNumber=0, draft=7))]
+
+
+class Batch(BaseModel):
+    nums: Json[list[int]]
+
+
+_received_json_args: list[tuple[str, list[int]]] = []
+"""The arguments `sum_nums` and `sum_batch` ran with, recorded in the activity."""
+
+
+def sum_nums(nums: Json[list[int]]) -> int:
+    """Sum numbers."""
+    _received_json_args.append(('sum_nums', nums))
+    return sum(nums)
+
+
+def sum_batch(batch: Batch) -> int:
+    """Sum a batch."""
+    _received_json_args.append(('sum_batch', batch.nums))
+    return sum(batch.nums)
+
+
+def _json_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(
+            parts=[
+                ToolCallPart('sum_nums', {'nums': '[1, 2]'}, tool_call_id='c1'),
+                ToolCallPart('sum_batch', {'nums': '[3, 4]'}, tool_call_id='c2'),
+            ]
+        )
+    return ModelResponse(parts=[TextPart('Done.')])
+
+
+_json_args_durable_agent = Agent(
+    FunctionModel(_json_args_model),
+    name='json_args_durable',
+    tools=[sum_nums, sum_batch],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+_json_args_wrapped_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    Agent(FunctionModel(_json_args_model), name='json_args_wrapped', tools=[sum_nums, sum_batch]),
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class JsonArgsWorkflow:
+    @workflow.run
+    async def run(self, path: str) -> str:
+        agent = _json_args_durable_agent if path == 'durability' else _json_args_wrapped_agent
+        result = await agent.run('Sum the numbers.')
+        return result.output
+
+
+@pytest.mark.parametrize('path', ['durability', 'temporal_agent'])
+async def test_json_args_reach_the_activity(client: Client, path: str):
+    """`Json` arguments run in the activity with the values the workflow validated.
+
+    A validated `Json` value is the parsed list, which the tool's schema rejects with `json_type` when the
+    activity validates it again, so the workflow ships it as a JSON string again, at the top level and nested in
+    a model.
+    """
+    _received_json_args.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[JsonArgsWorkflow],
+        plugins=[AgentPlugin(_json_args_durable_agent if path == 'durability' else _json_args_wrapped_agent)],
+    ):
+        output = await client.execute_workflow(
+            JsonArgsWorkflow.run,
+            args=[path],
+            id=f'{JsonArgsWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == 'Done.'
+    assert sorted(_received_json_args, key=lambda call: call[0]) == [
+        ('sum_batch', [3, 4]),
+        ('sum_nums', [1, 2]),
+    ]
 
 
 def _tool_return_metadata_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

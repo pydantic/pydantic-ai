@@ -7,7 +7,7 @@ from datetime import date
 from typing import Annotated
 
 import pytest
-from pydantic import BaseModel, ConfigDict, Field, with_config
+from pydantic import BaseModel, ConfigDict, Field, Json, with_config
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from render.workflows import TaskContext, Workflows
 from typing_extensions import TypedDict
@@ -245,6 +245,62 @@ async def test_nested_aliased_function_arguments_cross_the_json_boundary_by_alia
 
     assert await pending == 'nested aliased arguments arrived'
     assert seen == [('A1', 10.0, 'Ada')]
+
+
+class Batch(BaseModel):
+    nums: Json[list[int]]
+
+
+def json_argument_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    del info
+    returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+    if returns:
+        return ModelResponse(parts=[TextPart(', '.join(f'{part.tool_name}: {part.outcome}' for part in returns))])
+    return ModelResponse(
+        parts=[
+            ToolCallPart('sum_nums', {'nums': '[1, 2]'}, tool_call_id='nums'),
+            ToolCallPart('sum_batch', {'nums': '[3, 4]'}, tool_call_id='batch'),
+        ]
+    )
+
+
+async def test_json_function_arguments_cross_the_json_boundary_as_json_strings() -> None:
+    """A validated `Json` value is the parsed list, which the tool's schema rejects with `json_type` after the boundary.
+
+    So it crosses as a JSON string again, at the top level and nested in a model.
+
+    Not a VCR test: the claim is about the arguments crossing into the chained task run, and no provider request
+    is involved.
+    """
+    seen: dict[str, list[int]] = {}
+    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
+    agent = Agent[None, str](
+        FunctionModel(json_argument_model),
+        name='json-arguments',
+        deps_type=type(None),
+        capabilities=[runtime],
+    )
+
+    @agent.tool_plain
+    async def sum_nums(nums: Json[list[int]]) -> int:
+        seen['sum_nums'] = nums
+        return sum(nums)
+
+    @agent.tool_plain
+    async def sum_batch(batch: Batch) -> int:
+        seen['sum_batch'] = batch.nums
+        return sum(batch.nums)
+
+    async def run_agent_impl(ctx: TaskContext) -> str:
+        del ctx
+        return (await agent.run('sum the numbers')).output
+
+    run_agent = runtime.task(run_agent_impl)
+    pending = run_agent.func(RecordingTaskContext())
+    assert inspect.isawaitable(pending)
+
+    assert await pending == 'sum_nums: success, sum_batch: success'
+    assert seen == {'sum_nums': [1, 2], 'sum_batch': [3, 4]}
 
 
 class Venue(TypedDict):
