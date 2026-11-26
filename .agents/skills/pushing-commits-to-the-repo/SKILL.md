@@ -65,7 +65,7 @@ Its description `Requires a marked, successful douwebot approval on the current 
 If douwebot already reviewed the head, triage its findings in step 4; otherwise trigger douwebot as step 3 of the loop says. Do not debug that failure as a CI failure.
 
 `PR Review Checks` passed means its commit status reads `success` on the current head.
-[`.github/workflows/AGENTS.md`](../../../.github/workflows/AGENTS.md#pr-review-checks-reviews-every-pull-request-head) and [`publish_pr_review_checks.py`](../../../.github/scripts/publish_pr_review_checks.py) define the workflow and its verdict.
+[`.github/workflows/AGENTS.md`](../../../.github/workflows/AGENTS.md#pr-review-checks-reviews-every-same-repository-pull-request-head) and [`publish_pr_review_checks.py`](../../../.github/scripts/publish_pr_review_checks.py) define the workflow and its verdict.
 A maintainer can pass a head despite its findings by applying `pr-review-checks:accepted`. That label covers only the current head; a push removes it.
 Never apply `pr-review-checks:accepted` yourself.
 `PR Review Checks` posts as `github-actions[bot]` with its own `<!-- pr-review-checks run=… head=… -->` receipt. Its comments are not douwebot comments.
@@ -379,10 +379,21 @@ Apply the prose-only documentation and mechanical text/data exceptions above fir
 Otherwise, run this gate before the first push and later pushes while the review budget remains.
 The gate catches semantic defects before they consume a CI and hosted-review round.
 
-Dispatch `pre-push-review` at most three times per PR during one task. Count every dispatch,
-including repeated reviews after findings. Reserve the next count before dispatch and include
-`call N of 3` in the reviewer prompt. The final metadata review does not count against this budget,
-and neither does an additional local review the author asks for after the loop completes.
+Dispatch `pre-push-review` at most three times per PR during one task, plus the one remediation
+review below. Count every dispatch, including repeated reviews after findings. Reserve the next
+count before dispatch and include `call N of 3` in the reviewer prompt. The final metadata review
+does not count against this budget, and neither does an additional local review the author asks for
+after the loop completes.
+
+After the third review, the budget holds one remediation review. Dispatch it for the first
+remediation after the third review whose delta is neither [prose-only
+documentation](#prose-only-documentation) nor exempt under the exempt-delta table below. Apply the
+prose-only definition to the remediation delta, not to the whole PR. The remediation may fix a
+review finding or a CI failure. Scope the remediation review to the remediation delta: the diff from
+the last reviewed SHA to the remediation commit, plus the affected callers and invariants that
+[Review scope](#review-scope) names for follow-ups. Include `remediation review after call 3 of 3`
+in the reviewer prompt, and title its record `pre-push remediation review at <candidate-head-sha>`.
+That record in `pr-decisions.md` spends the remediation review.
 
 Record each dispatch in `pr-decisions.md` — not in the session, which does not survive a handoff:
 
@@ -429,15 +440,17 @@ session reads the budget off the log; without it the cap silently resets.
    Escalate persistent disagreement.
 
 Stop after a review returns no findings. After the third review, remediate its findings and run the
-relevant local checks. Do not dispatch a fourth review. Continue with the push, CI, and hosted
-review. Budget exhaustion is one of four ways a pushed SHA can go un-reviewed; the others are an
-evidence-backed dismissal on unchanged reviewed content, above, an exempt delta from the table
-below, and a push the author authorized over a gate that could not be met, recorded under their
-name. The first three you may decide. The fourth only they may. Nothing else.
+relevant local checks. Do not dispatch a fourth review other than the remediation review above.
+Remediate the remediation review's findings, run the relevant local checks, and dispatch no further
+review. Continue with the push, CI, and hosted review. Budget exhaustion is one of four ways a
+pushed SHA can go un-reviewed; the others are an evidence-backed dismissal on unchanged reviewed
+content, above, an exempt delta from the table below, and a push the author authorized over a gate
+that could not be met, recorded under their name. The first three you may decide. The fourth only
+they may. Nothing else.
 
 Immediately before pushing, verify the worktree is clean and its tree equals the recorded reviewed tree.
 A different commit with the same tree keeps the verdict; record the new commit alongside the reviewed anchor.
-After third-review remediation, verify HEAD equals the locally checked remediation commit instead. Any other mismatch restarts the gate while the budget remains, unless
+When no review covers the last remediation, verify HEAD equals the locally checked remediation commit instead. Any other mismatch restarts the gate while the budget remains, unless
 the delta is exempt below.
 
 ### When a later push does not need another review
@@ -513,8 +526,10 @@ if the head changes, capture the new SHA and restart the loop.
      `gh api repos/pydantic/pydantic-ai/commits/<sha>/status --jq '.statuses[] | select(.context == "PR Review Checks")'`.
      No status yet, or `pending`, means the review has not finished; wait for `success` or `failure`.
      When the status reads "Awaiting maintainer", the author lacks write access.
-     Ask a maintainer to apply `pr-review-checks:run`; the label also covers later pushes.
+     Ask a maintainer to apply `trusted:ci-run`; the label also covers later pushes and starts the PR Bots labels.
      It does nothing on a PR whose author has write access.
+     A fork PR gets no `PR Review Checks` status: recreate it as a same-repository PR.
+     A Dependabot push gets none either: a maintainer removes and reapplies `trusted:ci-run`.
      A `failure` leaves the gate unsatisfied until a later head passes or a maintainer applies `pr-review-checks:accepted`.
      A `failure` whose description names `Incomplete`, `No result` or a rerun, and not `Blocking findings`, has no finding to triage. Rerun that `PR Review Checks` run once, then escalate.
      A rerun keeps the original run's `pr-review-checks.yml`, including the secrets its steps receive, but checks out its scripts from current `main`. When a fix to that workflow file has merged since, push a new head instead.
@@ -526,8 +541,8 @@ if the head changes, capture the new SHA and restart the loop.
      is the source of truth). Do not add that label or dispatch the workflow unless the person
      driving you asks. When `CI Review` posts on your PR, triage its findings in step 4 like any
      other review.
-   - **Douwebot:** required for both same-repository and fork PRs, except an obviously trivial S PR.
-     `CI Review` deliberately skips forks without leaving a head check. First apply the
+   - **Douwebot:** required for every same-repository PR, except an obviously trivial S PR.
+     A fork PR gets no douwebot review: recreate it as a same-repository PR. First apply the
      agent-config guard from `.github/workflows/bots.yml` to the captured base-to-head diff. If the
      PR changes an `AGENTS.md` or `CLAUDE.md` at any depth, `CLAUDE.local.md`, `.mcp.json`,
      `.claude/`, `.agents/`, or `agent_docs/`, check whether the PR author has write or admin access.
@@ -634,8 +649,8 @@ if the head changes, capture the new SHA and restart the loop.
 
 Skip this choice for prose-only documentation, mechanical text/data refreshes defined above, and [flake fixes](#flake-fixes).
 
-The required reviews are not on this menu. Step 3 applies the merge bar to both same-repository
-and fork PRs. `CI Review` starts on a write-access approval of the head, a `final-review` label,
+The required reviews are not on this menu. Step 3 applies the merge bar to them.
+`CI Review` starts on a write-access approval of the head, a `final-review` label,
 or a dispatch. Green CI alone never starts `CI Review`.
 
 What this section chooses is a second opinion on top of the required reviews, and the choice belongs to the

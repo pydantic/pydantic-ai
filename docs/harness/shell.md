@@ -134,8 +134,9 @@ every other failure the model can act on:
 - a working directory an earlier command deleted or replaced with a file
 - a command the operating system refuses to spawn because it holds a NUL byte or
   a character the operating system cannot encode
-- a command too long for the operating system to start (the model is asked to
-  write it to a file and run that instead)
+- a command too long for the operating system to start (on a local workspace the
+  model is asked to write it to a file and run that instead; a remote one passes
+  on the shell's own error)
 
 Failures the model can do nothing about abort the run:
 
@@ -394,6 +395,9 @@ that after it runs, its final working directory is recorded to a private file
 inside the workspace, and that directory is carried into subsequent calls. The path is only
 updated when the command exits `0`. If the recorded directory disappears, the next command reports a retry and resets to the workspace working directory. The record is written out-of-band (not
 to stdout) so command output can never spoof the tracked directory.
+
+The instructions name the working directory through [`AnnounceWorkingDirectory`](announce-working-directory.md), which states it once however
+many capabilities bring it, and starts a sandbox that isn't running to ask for it.
 
 ```python
 from pydantic_ai import Agent

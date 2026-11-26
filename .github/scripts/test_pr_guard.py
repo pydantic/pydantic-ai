@@ -1,12 +1,11 @@
 """Regression tests for PR Guard's issue-assignment rule.
 
-`.github/workflows/pr-guard.yml` closes an outside contributor's pull request unless it links an
-open issue assigned to them. It triggers on `pull_request_target`, and GitHub runs such a workflow
-from the **default branch of the base repository**, so the PR that edits the guard never exercises
-its own change — these tests are the only place its logic runs before `main`.
+`.github/scripts/pr_guard.sh` closes an outside contributor's pull request unless it links an
+open issue assigned to them. `.github/workflows/pr-guard.yml` runs it on a schedule from the
+**default branch**, so the PR that edits the guard never exercises its own change — these tests
+are the only place its logic runs before `main`.
 
-As in `test_protect_github_dir.py`, the tests extract the guard's `run:` block straight from the
-YAML and execute it against a stubbed `gh`, so they track the file that Actions actually runs.
+The tests execute that script against a stubbed `gh`, so they track the file that Actions runs.
 """
 
 from __future__ import annotations
@@ -20,13 +19,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
-import yaml
 
 REPO = 'pydantic/pydantic-ai'
 PR_NUMBER = 1234
 ISSUE_NUMBER = 1200
 CONTRIBUTOR = 'outside-contributor'
-WORKFLOW = Path(__file__).parent.parent / 'workflows' / 'pr-guard.yml'
+GUARD = Path(__file__).with_name('pr_guard.sh')
 
 # Each login's `role_name` on the repo. The role lookup fails for a login missing here, as it
 # does for a bot (GitHub answers 404) or for any login during a rate limit or outage.
@@ -95,7 +93,7 @@ elif args[:1] == ['api']:
             not_found()
         respond({'role_name': role})
     elif endpoint == f'repos/{repo}/issues/{pr}/timeline':
-        respond([])
+        respond(state['pr_timeline'])
     elif endpoint == f'repos/{repo}/issues/{issue}/timeline':
         if state['issue_timeline'] is None:
             not_found()
@@ -136,6 +134,7 @@ class Case:
     fails: bool = False
     # A closing reference to a pull request links no issue.
     issue_is_pull_request: bool = False
+    pr_timeline: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
 
 
 PYDANTY_TRIAGE = [
@@ -201,16 +200,15 @@ CASES: list[Case] = [
         issue_author='reporter',
         issue_timeline=[_event('commented', 'writer')],
     ),
+    # Each case runs the guard as the contributor, as the sweep does when the author's event in its window is the
+    # latest, even when a maintainer reopened the PR after it.
+    Case(id='reopened-by-a-maintainer', closed=False, pr_timeline=[_event('reopened', 'lead')]),
+    Case(id='reopened-only-by-its-author', closed=True, pr_timeline=[_event('reopened', CONTRIBUTOR)]),
 ]
 
 
 def _run_guard(case: Case, tmp_path: Path) -> tuple[subprocess.CompletedProcess[str], list[dict[str, str]]]:
-    """Execute the guard's `run:` block for one case; return the result and the PR actions it took."""
-    script = yaml.safe_load(WORKFLOW.read_text(encoding='utf-8'))['jobs']['guard']['steps'][0]['run']
-    assert isinstance(script, str)
-    script_path = tmp_path / 'guard.sh'
-    script_path.write_text(script, encoding='utf-8')
-
+    """Execute the guard for one case; return the result and the PR actions it took."""
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir()
     gh = bin_dir / 'gh'
@@ -230,12 +228,13 @@ def _run_guard(case: Case, tmp_path: Path) -> tuple[subprocess.CompletedProcess[
             **({'pull_request': {}} if case.issue_is_pull_request else {}),
         },
         'issue_timeline': case.issue_timeline,
+        'pr_timeline': case.pr_timeline,
         'roles': ROLES,
         'files': [{'filename': 'pydantic_ai_slim/pydantic_ai/agent.py'}],
     }
     actions_path = tmp_path / 'actions.jsonl'
     result = subprocess.run(
-        ['bash', str(script_path)],
+        ['bash', str(GUARD)],
         capture_output=True,
         text=True,
         env={
