@@ -332,6 +332,8 @@ This avoids double-counting in observability backends that aggregate usage attri
 
 An agent run span reports what that run spent. A run that [delegates to another agent](multi-agent-applications.md#agent-delegation) does not include the delegate's tokens, whether or not the delegate is instrumented: if it is, its own run span reports them. So the agent run spans in a trace can be added up as they are — the total matches the sum of the `gen_ai.usage.*` attributes on the model request spans underneath them.
 
+To add up cost per conversation instead of per trace, sub-agents included, use the `pydantic_ai.root_conversation_id` attribute described in [Correlating runs with `run_id` and `conversation_id`](message-history.md#correlating-runs-with-run_id-and-conversation_id).
+
 !!! note "Custom namespace"
     The `gen_ai.aggregated_usage.*` namespace is a custom extension not part of the [OpenTelemetry Semantic Conventions for GenAI](https://opentelemetry.io/docs/specs/semconv/gen-ai/). It was introduced to work around double-counting in observability backends. If OpenTelemetry introduces an official convention for aggregated usage in the future, this namespace may be updated or deprecated.
 

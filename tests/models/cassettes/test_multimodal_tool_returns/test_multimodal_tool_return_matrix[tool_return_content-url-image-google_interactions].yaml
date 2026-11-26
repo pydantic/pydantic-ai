@@ -1,0 +1,193 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "385"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: >-
+              Use the get_file tool now to retrieve a image file, then describe what you
+              received.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=2101
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: requires_action
+        usage:
+          total_tokens: 114
+          total_input_tokens: 36
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 36
+          total_cached_tokens: 0
+          total_output_tokens: 10
+          total_tool_use_tokens: 0
+          total_thought_tokens: 68
+          initial_input_tokens: 29
+        created: 2026-11-06T02:51:17Z
+        updated: 2026-11-06T02:51:17Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            EukCCuYCAWkUfRNo3aTqxjpIO7Y7PA5nBNBQ9Mg52YWQzS3W89V0+lQYqqWRIdjzT6QL9bpswIxR/k6r2TqqXUh287yCVtmSecb9B6gbvZUkLgq3OjIUDpWXv1DzpLdk0jDa4JPgfwOrSuw+J2zJGEb6MaYsB5VNZLTDUTFHIkhn3Eimu1mrSX+7kE5oO2c3ssEvUZSDYEcyQ0iTjhpO8MK78GwqMA06xeNGIFICplHhIZPmYnH2emVnifVtWWV5o2iD98H7jM8CECptDFpgvM9yH+MG9M6L0T56I06CdKpQeg81tVu8OM+GwQBqOEt1w8CSEzVt5Ks1JSDmqxOISnuE1PA60uqbZXdSLDsFhfVpbcvQKavcWUuVMgfLWpu8DlwIQcoFNMdlCLvTtdmukgF2PM7hjsiMhmmmA9X7f57c4RT1ws9mFyurDwuLJV6RnfC7yb2wt2XS1azzBK7Z234aFjFGLzQziUmTIw==
+          type: thought
+        - id: call_10072697687892748991
+          type: function_call
+          name: get_file
+          arguments: {}
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:51:17.725532+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1275"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: validated
+        store: false
+        tools:
+        - description: ""
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: >-
+              Use the get_file tool now to retrieve a image file, then describe what you
+              received.
+        - signature: >-
+            EukCCuYCAWkUfRNo3aTqxjpIO7Y7PA5nBNBQ9Mg52YWQzS3W89V0+lQYqqWRIdjzT6QL9bpswIxR/k6r2TqqXUh287yCVtmSecb9B6gbvZUkLgq3OjIUDpWXv1DzpLdk0jDa4JPgfwOrSuw+J2zJGEb6MaYsB5VNZLTDUTFHIkhn3Eimu1mrSX+7kE5oO2c3ssEvUZSDYEcyQ0iTjhpO8MK78GwqMA06xeNGIFICplHhIZPmYnH2emVnifVtWWV5o2iD98H7jM8CECptDFpgvM9yH+MG9M6L0T56I06CdKpQeg81tVu8OM+GwQBqOEt1w8CSEzVt5Ks1JSDmqxOISnuE1PA60uqbZXdSLDsFhfVpbcvQKavcWUuVMgfLWpu8DlwIQcoFNMdlCLvTtdmukgF2PM7hjsiMhmmmA9X7f57c4RT1ws9mFyurDwuLJV6RnfC7yb2wt2XS1azzBK7Z234aFjFGLzQziUmTIw==
+          type: thought
+        - id: call_10072697687892748991
+          name: get_file
+          type: function_call
+          arguments: {}
+        - type: function_result
+          name: get_file
+          call_id: call_10072697687892748991
+          is_error: false
+          result:
+          - type: text
+            text: File attached
+        - type: user_input
+          content:
+          - mime_type: image/png
+            type: image
+            uri: https://www.gstatic.com/webp/gallery3/1.png
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=6119
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 1500
+          total_input_tokens: 1225
+          input_tokens_by_modality:
+          - modality: image
+            tokens: 1102
+          - modality: text
+            tokens: 123
+          total_cached_tokens: 0
+          total_output_tokens: 144
+          total_tool_use_tokens: 0
+          total_thought_tokens: 131
+          initial_input_tokens: 1218
+        created: 2026-11-06T02:51:23Z
+        updated: 2026-11-06T02:51:23Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            EsMFCsAFAWkUfRNNThR45Nk8ofD43SKKkyyykC6HMOtBLBkvtTb1rWS81KwxqaycjeM4U+vX1tHgrLCrMTrB5DrdBYGKr5DES+kRKeqs8oEQlrIGQLdptOGNFAe+jG0XgqQTzWJ+W1jLMHjrSAdEbUBM4pHaY14DNjkn/pgpsXqZER/+3FLTpqx5CdBR+1F6pIAnZH7KK1W7Ka3rC2zaxzeOiHpSCecdw3dFqt/Ak/1bU9jORbHF5CHNIW4VLzDxGeEgBSs+JK95fLFlPZ+eMdqIx9l3qtVrT8DHU29vBooXVtb+9YC57Ioz8u3eRO320mYv+dVugjTzQ9ZvghV9nGcohtfsK4KJJPOQKFCZfToywKcTK0Es01EV4RIW4dPcDPJbiHY6odpjJ64H6y3RipeHz/BorDLTrUWs1Ld0ZKVLnt8N84wCqtc8nP6pOWeEolBeUr497zwrVlZdYQuWicYToonI7mmogJ5MKmQo8ct8voCW3nQ/U8QuoSkAmIokIkJs3/V4r+M8ukBLfrJjKQg23BecmdUf7YPeDGGqH9BTBCVSAwMlmoA5gqTYHvEquAOH4mpBUidCqj8QOVOMFELq8NswoDNnUG1E/L0msQGAN1Fos5xjmQyy21J2yeFLsuT6I/f+HKgIKEke1sSoF+35guCmI2KqU/Dx/wBBeDvQ6TmB5QttA31hqbV4FCXp2oeE76H0tPp/JTi7gEHNYqRS9ZNiRvmg+mP+RuIaEPzKBsFgLlPqkiaXrhNCUOc6CqQPe18tGr/LK55+sjqXvV/cXlvnbKMGtEBEZX+Uj15hIw7aWQ7fWbWhVy+znus+RCe15xJ7wRkm+RR4rb4E7BBosGqaCJACg0OU6SY7r1/6MiYaUVKDQn52Q5R/TijfcvLUE/FLFzglPduvVKgVNfDqSmSXNCe2jvEm8REcjlrFlwIzRQU=
+          type: thought
+        - content:
+          - text: |-
+              The image shows a single cut rose set against a plain white (or transparent) background:
+
+              * **Flower & Color:** The rose features warm yellow, peach, and apricot-toned petals with vibrant pink and coral blushing around the outer edges and tips.
+              * **Details:** Fresh water droplets (dewdrops) are visibly beaded across the upper, pink-tinged outer petal and scattered lightly on other petals.
+              * **Stem & Foliage:** A slender green stem with subtle reddish accents extends upward and to the right, with small green leaves and sepals visible behind the bloom.
+              * **Angle:** The flower head is captured in a graceful three-quarter profile, tilting slightly downward toward the lower left.
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:51:23.865965+00:00

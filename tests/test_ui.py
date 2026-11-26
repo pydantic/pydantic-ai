@@ -2178,6 +2178,42 @@ async def test_conversation_store_without_protocol_saved_events_still_saves():
     )
 
 
+class _Answer(BaseModel):
+    text: str
+
+
+async def test_conversation_store_saves_each_output_tool_result_once():
+    """The run merges the stored output tool result into the new turn's prompt; the store gets each once.
+
+    See https://github.com/pydantic/pydantic-ai/issues/13276.
+    """
+    agent = Agent(TestModel(), output_type=_Answer)
+    store = InMemoryConversationStore()
+    for turn in range(3):
+        run_input = DummyUIRunInput(messages=[_with_ui_id(ModelRequest.user_text_prompt(f'turn {turn}'), f'u{turn}')])
+        adapter = DummyUIAdapter(agent=agent, run_input=run_input, conversation_store=store)
+        async for _ in adapter.run_stream(conversation_id='chat'):
+            pass
+
+    conversation = await store.load('chat')
+    assert conversation is not None
+    assert conversation_view(conversation.messages) == snapshot(
+        [
+            'user-prompt: turn 0',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+            'user-prompt: turn 1',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+            'user-prompt: turn 2',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+        ]
+    )
+    record = await store.read_record('chat')
+    assert record is not None and record.branches == []
+
+
 async def test_conversation_store_announces_only_a_run_it_saved():
     """`transform_stream` on a native stream the adapter didn't run has no save to announce."""
     agent, _ = _recording_agent()
