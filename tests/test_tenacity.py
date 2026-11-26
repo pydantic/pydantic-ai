@@ -899,21 +899,33 @@ class TestWaitRetryAfter:
         fallback.assert_called_once_with(retry_state)
 
     @pytest.mark.parametrize(
-        ('attempt_number', 'expected'),
+        ('headers', 'attempt_number', 'expected'),
         [
-            pytest.param(1, 1.0, id='first-backoff'),
+            pytest.param(None, 1, 1.0, id='first-backoff'),
             # 2 ** 6 = 64 s uncapped
-            pytest.param(7, 60.0, id='capped'),
+            pytest.param(None, 7, 60.0, id='capped'),
+            pytest.param({}, 7, 60.0, id='capped-no-retry-after'),
+            pytest.param({'retry-after': 'invalid-value'}, 7, 60.0, id='capped-invalid-retry-after'),
         ],
     )
-    def test_default_fallback_strategy(self, attempt_number: int, expected: float):
-        """The default fallback backs off exponentially from 1 s and never waits more than 60 s."""
+    def test_default_fallback_strategy(self, headers: dict[str, str] | None, attempt_number: int, expected: float):
+        """The default fallback backs off exponentially from 1 s and never waits more than 60 s.
+
+        `headers=None` retries with no exception; otherwise the retry follows a 429 carrying `headers`.
+        """
         wait_func = wait_retry_after(max_wait=300)
 
-        # Create a retry state with no exception to trigger fallback
         retry_state = Mock(spec=RetryCallState)
-        retry_state.outcome = None
         retry_state.attempt_number = attempt_number
+        if headers is None:
+            retry_state.outcome = None
+        else:
+            request = httpx2.Request('GET', 'https://example.com')
+            response = httpx2.Response(429, headers=headers, request=request)
+            retry_state.outcome = Mock()
+            retry_state.outcome.exception.return_value = httpx2.HTTPStatusError(
+                'Rate limited', request=request, response=response
+            )
 
         assert wait_func(retry_state) == expected
 
