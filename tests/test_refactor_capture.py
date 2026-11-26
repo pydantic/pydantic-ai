@@ -878,7 +878,7 @@ import asyncio
 import pytest
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
-from pydantic import BaseModel
+from pydantic import BaseModel, model_serializer
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Instrumentation, ProcessEventStream
@@ -998,6 +998,42 @@ def test_spans_of_a_tracer():
         with tracer.start_as_current_span('inner', attributes={{'answer': 42}}):
             pass
     outer.end()
+
+
+class Unformattable(Exception):
+    def __str__(self):
+        raise RuntimeError('formatting blew up')
+
+
+async def fail_unformattably(ctx, stream):
+    async for event in stream:
+        yield event
+        raise Unformattable()
+
+
+def test_unformattable_error():
+    agent = Agent(FunctionModel(stream_function=call_then_answer), capabilities=[ProcessEventStream(fail_unformattably)])
+    with pytest.raises(Unformattable):
+        agent.run_sync('echo')
+
+
+def test_tool_metadata():
+    serializations = []
+
+    class Tracked(BaseModel):
+        @model_serializer
+        def serialize(self) -> str:
+            serializations.append('tracked')
+            return 'tracked'
+
+    agent = Agent(TestModel(call_tools=[]))
+
+    @agent.tool_plain(metadata={{'tracked': Tracked(), 'plain': {{'kind': 'lookup', 'tags': ['a']}}}})
+    def lookup(key: str) -> str:
+        return key
+
+    agent.run_sync('hello')
+    assert serializations == []
 """
 
 DURABLE = """
@@ -2525,7 +2561,7 @@ def test_capture_records_run_event_streams_agent_stream_calls_and_spans(run: Run
     spans are in the order they started, each parent named by its number, or as `external` when no span started for
     it; an exception event leaves out its stack trace, and a span ended twice is recorded once.
     """
-    run(tmp_path, agent_runs=True).assert_outcomes(passed=6)
+    run(tmp_path, agent_runs=True).assert_outcomes(passed=8)
 
     records = [json.loads(line) for line in (tmp_path / 'main.jsonl').read_text().splitlines()]
     assert [
@@ -2549,6 +2585,8 @@ def test_capture_records_run_event_streams_agent_stream_calls_and_spans(run: Run
             ('test_agent_stream_calls', ['part_start', 'final_result', 'part_delta', 'part_delta', 'part_end'], None),
             ('test_agent_stream_calls', ['part_start', 'final_result', 'part_end'], None),
             ('test_spans', ['function_tool_call'], 'LookupError: tool failed'),
+            ('test_unformattable_error', ['part_start'], {'unrecorded': 'Unformattable: `str()` raised RuntimeError'}),
+            ('test_tool_metadata', [], None),
         ]
     )
     assert [
@@ -2716,6 +2754,56 @@ value
             'logfire.msg': 'running tool: fail',
             'logfire.json_schema': '{"type":"object","properties":{"gen_ai.tool.call.arguments":{"type":"object"},"gen_ai.tool.call.result":{"type":"object"},"gen_ai.tool.name":{},"gen_ai.tool.call.id":{}}}',
         }
+    )
+
+
+def test_capture_records_an_unreadable_error_message_as_unrecorded(run: RunCapture, tmp_path: Path):
+    """An exception whose `__str__` raises, which a run event stream raises and a `pytest.raises` block catches, has its
+    message recorded as `unrecorded`, with the class of the error `__str__` raised, instead of the capture raising that
+    error into the test.
+    """
+    run(tmp_path, agent_runs=True).assert_outcomes(passed=8)
+
+    records = [json.loads(line) for line in (tmp_path / 'main.jsonl').read_text().splitlines()]
+    assert [
+        {key: value for key, value in record.items() if key in ('kind', 'error', 'exception')}
+        for record in records
+        if record['node'].endswith('::test_unformattable_error') and record['kind'] in ('run_event_stream', 'exception')
+    ] == snapshot(
+        [
+            {'kind': 'run_event_stream', 'error': {'unrecorded': 'Unformattable: `str()` raised RuntimeError'}},
+            {
+                'kind': 'exception',
+                'exception': {
+                    'type': 'test_agent_runs.Unformattable',
+                    'message': {'unrecorded': '`str()` raised RuntimeError'},
+                    'suppress_context': True,
+                },
+            },
+        ]
+    )
+
+
+def test_capture_records_only_the_tool_metadata_json_can_write(run: RunCapture, tmp_path: Path):
+    """A request record keeps each tool metadata value `json` can write, and records a model as `unrecorded`, with its
+    class, without serializing it: the test that counts its serializer's calls passes.
+    """
+    run(tmp_path, agent_runs=True).assert_outcomes(passed=8)
+
+    records = [json.loads(line) for line in (tmp_path / 'main.jsonl').read_text().splitlines()]
+    assert [
+        [tool['metadata'] for tool in record['model_request_parameters']['function_tools']]
+        for record in records
+        if record['node'].endswith('::test_tool_metadata') and record['kind'] == 'request'
+    ] == snapshot(
+        [
+            [
+                {
+                    'tracked': {'unrecorded': 'test_agent_runs.test_tool_metadata.<locals>.Tracked'},
+                    'plain': {'kind': 'lookup', 'tags': ['a']},
+                }
+            ]
+        ]
     )
 
 

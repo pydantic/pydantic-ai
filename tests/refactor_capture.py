@@ -52,11 +52,12 @@ client, escape it.
 
 A test that drives `FunctionModel` or `TestModel` sends no request either, since the model answers in process, so each
 call on a method `IN_PROCESS_MODELS` lists is recorded as a request too, with the method as the target and the
-messages, model settings and model request parameters the model is handed. A model that wraps another, like
-`FallbackModel`, is recorded through the call it makes on the model it wraps; a subclass that overrides a listed method
-without calling `super()` escapes it. When a capture starts, it runs an agent over each of those models, streamed and
-not, and stops the run if a call on a listed method wasn't recorded, so an agent that stops calling a model through
-them fails loudly.
+messages, model settings and model request parameters the model is handed. A tool's metadata isn't sent to the model,
+so a metadata value `json` can't write, like a model, whose serializer can be a test's, is recorded as `unrecorded`,
+with its class. A model that wraps another, like `FallbackModel`, is recorded through the call it makes on the model it
+wraps; a subclass that overrides a listed method without calling `super()` escapes it. When a capture starts, it runs
+an agent over each of those models, streamed and not, and stops the run if a call on a listed method wasn't recorded,
+so an agent that stops calling a model through them fails loudly.
 
 What the UI adapters produce is recorded as lines of kind `ui`, each with the target that produced it. A
 `UIEventStream.transform_stream` call is recorded under the class of the event stream it's called on, Vercel AI's,
@@ -163,6 +164,8 @@ lines of the code it edits. One the filters raise as an error is recorded only a
 they ignore isn't. Neither is a `ResourceWarning`, which a finalizer raises whenever garbage collection reaches it, so
 in whichever test the allocations made put it. A recorded hook or `MCPSamplingModel.request` call is one more frame on
 the stack, so a warning raised inside one with a `stacklevel` that reaches past it would report the capture's frame.
+Wherever the capture records an exception's or a warning's message, one whose `__str__` raises is recorded as
+`unrecorded`, with the class of the error it raised, which the code under test never sees.
 
 What durable execution does is recorded once a test imports Temporal, DBOS or Prefect: the capture wraps what it needs
 from a module once the module first runs, and imports none of them itself, since tests configure Prefect through
@@ -248,6 +251,7 @@ import argparse
 import asyncio
 import base64
 import builtins
+import copy
 import dataclasses
 import functools
 import importlib.abc
@@ -330,6 +334,7 @@ from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.realtime.lifecycle import InferredLifecycle, RealtimeFrame, StaleEvent
 from pydantic_ai.result import AgentStream
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.ui import UIAdapter, UIEventStream
 
 REPO = Path(__file__).resolve().parent.parent
@@ -1049,7 +1054,7 @@ class RefactorCapture:
                     events.append(normalized(event))
                     yield event
             except Exception as e:
-                record['error'] = normalized(f'{type(e).__name__}: {e}')
+                record['error'] = error_text(e)
                 raise
             finally:
                 record['response'] = built_response(stream)
@@ -1083,7 +1088,7 @@ class RefactorCapture:
                     events.append(normalized(event))
                     yield event
             except Exception as e:
-                record['error'] = normalized(f'{type(e).__name__}: {e}')
+                record['error'] = error_text(e)
                 raise
             finally:
                 # `transform_stream` runs its cleanup when it's closed, so it's closed with this rather than collected.
@@ -1108,7 +1113,7 @@ class RefactorCapture:
             try:
                 result = original.__get__(None, adapter_class)(*args, **kwargs)
             except Exception as e:
-                record['error'] = normalized(f'{type(e).__name__}: {e}')
+                record['error'] = error_text(e)
                 raise
             record['result'] = normalized(result)
             record['uncompared_fields'] = uncompared_fields(result)
@@ -1157,7 +1162,7 @@ class RefactorCapture:
                         'kind': 'realtime',
                         'node': self.node,
                         'target': target,
-                        'error': normalized(f'{type(e).__name__}: {e}'),
+                        'error': error_text(e),
                     }
                 )
                 raise
@@ -1187,7 +1192,7 @@ class RefactorCapture:
             try:
                 result = await original(connection, content)
             except Exception as e:
-                record['error'] = normalized(f'{type(e).__name__}: {e}')
+                record['error'] = error_text(e)
                 raise
             finally:
                 _RECORDING_CONNECTION_SEND.reset(token)
@@ -1267,7 +1272,7 @@ class RefactorCapture:
             try:
                 return await original(double, *args, **kwargs)
             except Exception as e:
-                record['error'] = normalized(f'{type(e).__name__}: {e}')
+                record['error'] = error_text(e)
                 raise
             finally:
                 _RECORDING_DOUBLE_SEND.reset(token)
@@ -1315,7 +1320,7 @@ class RefactorCapture:
                     'node': self.node,
                     'target': method_target(type(session), name),
                     'session': self._number('session', session),
-                    'error': normalized(f'{type(e).__name__}: {e}'),
+                    'error': error_text(e),
                 }
             )
             raise
@@ -1360,7 +1365,7 @@ class RefactorCapture:
                     events.append(tagged(event))
                     yield event
             except Exception as e:
-                record['error'] = normalized(f'{type(e).__name__}: {e}')
+                record['error'] = error_text(e)
                 raise
             finally:
                 await iterator.aclose()
@@ -1453,7 +1458,7 @@ class RefactorCapture:
             try:
                 record['played_audio_bytes'] = session.played_audio_bytes
             except Exception as e:
-                record['played_audio_bytes'] = {'error': normalized(f'{type(e).__name__}: {e}')}
+                record['played_audio_bytes'] = {'error': error_text(e)}
             for exception, context in handled_chain:
                 exception.__context__ = context
             record['drops'] = {name: getattr(session, name) for name in SESSION_DROP_COUNTERS}
@@ -1501,7 +1506,7 @@ class RefactorCapture:
             try:
                 result = original(owner, *args, **kwargs)
             except Exception as e:
-                record['error'] = normalized(f'{type(e).__name__}: {e}')
+                record['error'] = error_text(e)
                 raise
             finally:
                 running.reset(token)
@@ -1527,7 +1532,7 @@ class RefactorCapture:
             try:
                 model = original(*args, **kwargs)
             except Exception as e:
-                record['error'] = normalized(f'{type(e).__name__}: {e}')
+                record['error'] = error_text(e)
                 raise
             record['result'] = {
                 'type': f'{type(model).__module__}.{type(model).__qualname__}',
@@ -1657,6 +1662,9 @@ class RefactorCapture:
             *args: object,
             **kwargs: object,
         ) -> object:
+            recorded_parameters = copy.copy(model_request_parameters)
+            recorded_parameters.function_tools = self._recorded_tools(model_request_parameters.function_tools)
+            recorded_parameters.output_tools = self._recorded_tools(model_request_parameters.output_tools)
             self.records.append(
                 {
                     'kind': 'request',
@@ -1664,12 +1672,36 @@ class RefactorCapture:
                     'target': target,
                     'messages': normalized(messages),
                     'model_settings': normalized(model_settings),
-                    'model_request_parameters': normalized(model_request_parameters),
+                    'model_request_parameters': normalized(recorded_parameters),
                 }
             )
             return original(model, messages, model_settings, model_request_parameters, *args, **kwargs)
 
         self._monkeypatch.setattr(model_class, name, recording_method)
+
+    @staticmethod
+    def _recorded_tools(tools: list[ToolDefinition]) -> list[ToolDefinition]:
+        """Copies of `tools` that keep each metadata value `json` can write, and record each other one as `unrecorded`,
+        with its class.
+
+        A tool's metadata isn't sent to the model, so the code under test may never serialize it, and serializing a value
+        like a model can run a test's serializer.
+        """
+        recorded_tools: list[ToolDefinition] = []
+        for tool in tools:
+            recorded = copy.copy(tool)
+            if tool.metadata is not None:
+                metadata: dict[str, object] = tool.metadata
+                recorded.metadata = {}
+                for key, value in metadata.items():
+                    try:
+                        json.dumps(value)
+                    except (TypeError, ValueError):
+                        recorded.metadata[key] = {'unrecorded': qualified_name(type(value))}
+                    else:
+                        recorded.metadata[key] = value
+            recorded_tools.append(recorded)
+        return recorded_tools
 
     def _wrap_capability(self, cls: type[AbstractCapability[object]]) -> None:
         self._wrap_tool_hooks(cls)
@@ -1708,7 +1740,7 @@ class RefactorCapture:
                     events.append(normalized(event))
                     yield event
             except Exception as e:
-                record['error'] = normalized(f'{type(e).__name__}: {e}')
+                record['error'] = error_text(e)
                 raise
             finally:
                 # The consumer closes the stream once it's done, which closes the streams of the capabilities inside
@@ -1763,7 +1795,7 @@ class RefactorCapture:
                         yields.append(normalized(item))
                         yield item
                 except Exception as e:
-                    record['error'] = normalized(f'{type(e).__name__}: {e}')
+                    record['error'] = error_text(e)
                     raise
                 finally:
                     # What it holds open, like the stream of text deltas `stream_text` reads, it closes when it's
@@ -1783,7 +1815,7 @@ class RefactorCapture:
             try:
                 result = await original(stream, *args, **kwargs)
             except Exception as e:
-                record['error'] = normalized(f'{type(e).__name__}: {e}')
+                record['error'] = error_text(e)
                 raise
             record['result'] = normalized(result)
             return result
@@ -1866,9 +1898,7 @@ class RefactorCapture:
                     'target': method_target(type(capability), name),
                     # The run context is the run's, and the handler a function.
                     'kwargs': {
-                        arg: normalized(
-                            f'{type(value).__name__}: {value}' if isinstance(value, BaseException) else value
-                        )
+                        arg: error_text(value) if isinstance(value, BaseException) else normalized(value)
                         for arg, value in kwargs.items()
                         if arg not in ('ctx', 'handler')
                     },
@@ -1880,7 +1910,7 @@ class RefactorCapture:
                 try:
                     result = await original(capability, *args, **kwargs)
                 except Exception as e:
-                    record['error'] = normalized(f'{type(e).__name__}: {e}')
+                    record['error'] = error_text(e)
                     raise
                 finally:
                     _RUNNING_TOOL_HOOKS.reset(token)
@@ -1919,7 +1949,7 @@ class RefactorCapture:
             try:
                 response = await original(model, messages, model_settings, model_request_parameters)
             except Exception as e:
-                record['error'] = normalized(f'{type(e).__name__}: {e}')
+                record['error'] = error_text(e)
                 raise
             finally:
                 if isinstance(create_message, NonCallableMock):
@@ -1966,7 +1996,7 @@ class RefactorCapture:
                         'kind': 'warning',
                         'node': self.node,
                         'category': qualified_name(message.category),
-                        'message': normalized(str(message.message)),
+                        'message': readable_text(message.message),
                         'frame': self._reported_frame(message),
                     }
                 )
@@ -2284,7 +2314,7 @@ class RefactorCapture:
             try:
                 key = original(policy, *args, **kwargs)
             except Exception as e:
-                record['error'] = normalized(f'{type(e).__name__}: {e}')
+                record['error'] = error_text(e)
                 raise
             else:
                 if call.run_scoped or (isinstance(policy, run_id_policy) and key is not None):
@@ -2350,6 +2380,22 @@ def in_workflow_sandbox() -> bool:
     return workflow.unsafe.in_sandbox()
 
 
+def readable_text(value: object, prefix: str = '') -> object:
+    """`prefix` and `str(value)`, normalized, or, when `value`'s `__str__` raises, `unrecorded` with the class of the
+    error it raised, which is never raised into the code under test.
+    """
+    try:
+        text = f'{prefix}{value}'
+    except Exception as e:
+        return {'unrecorded': f'{prefix}`str()` raised {type(e).__name__}'}
+    return normalized(text)
+
+
+def error_text(e: BaseException) -> object:
+    """`e`'s class and message, as `readable_text` records them."""
+    return readable_text(e, f'{type(e).__name__}: ')
+
+
 def recorded_value(value: object, decode: Callable[[object], object] | None = None) -> object:
     """`value`, decoded by `decode` if given, normalized, or the error decoding or normalizing it raised, like on a
     reference cycle, which is never raised into the code under test.
@@ -2357,7 +2403,7 @@ def recorded_value(value: object, decode: Callable[[object], object] | None = No
     try:
         return normalized(value if decode is None else decode(value))
     except Exception as e:
-        return {'unrecorded': normalized(f'{type(e).__name__}: {e}')}
+        return {'unrecorded': error_text(e)}
 
 
 def built_response(stream: StreamedResponse) -> object:
@@ -2368,7 +2414,7 @@ def built_response(stream: StreamedResponse) -> object:
     try:
         return stream.get()
     except Exception as e:
-        return {'unrecorded': normalized(f'{type(e).__name__}: {e}')}
+        return {'unrecorded': error_text(e)}
 
 
 def holds_run_values(value: object, recorded: object) -> bool:
@@ -2472,7 +2518,7 @@ def described_exception(exception: BaseException, chain: frozenset[int] = frozen
     A context that is the cause is described as `'cause'`. An exception met again along the chain, which a chain set by
     hand can loop back to, is described without its own.
     """
-    description: dict[str, object] = {'type': qualified_name(type(exception)), 'message': normalized(str(exception))}
+    description: dict[str, object] = {'type': qualified_name(type(exception)), 'message': readable_text(exception)}
     if (notes := getattr(exception, '__notes__', None)) is not None:
         description['notes'] = normalized(notes)
     if id(exception) in chain:
