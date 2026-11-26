@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import Literal, cast
 
+from openai import Omit
 from openai.types import chat, responses
 from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter
 
@@ -140,6 +142,16 @@ def check_web_output(params: ModelRequestParameters) -> None:
         isinstance(tool, WebSearchTool | WebFetchTool) for tool in params.native_tools
     ):
         raise UserError('DeepSeek web tools require text output. Use text or tool output, or disable the web tools.')
+
+
+def check_web_settings(tools: Sequence[Mapping[str, object]] | Omit, **settings: object) -> None:
+    if isinstance(tools, Omit) or not any(
+        tool.get('type') in ('deepseek_web_search', 'deepseek_read_url') for tool in tools
+    ):
+        return
+    for name, value in settings.items():
+        if not isinstance(value, Omit):
+            raise UserError(f'DeepSeek web tools do not support `{name}`. Remove the setting or disable the web tools.')
 
 
 def chat_web_tool_param(tool: WebSearchTool | WebFetchTool) -> chat.ChatCompletionToolParam:

@@ -139,6 +139,7 @@ from ._deepseek_web_tools import (
     chat_web_tool_param,
     check_chat_web_error,
     check_web_output,
+    check_web_settings,
 )
 from ._errors import check_azure_content_filter, is_azure, map_api_errors
 from ._model_names import OpenAIModelName
@@ -611,6 +612,12 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         keep_implicit_cache_without_breakpoints(model_settings, openai_messages)
 
         drop_unsupported_params(profile, model_settings)
+        if profile.get('openai_deepseek_web_tools', False):
+            check_web_settings(
+                tools,
+                openai_logprobs=model_settings.get('openai_logprobs') or OMIT,
+                openai_top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
+            )
 
         with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:

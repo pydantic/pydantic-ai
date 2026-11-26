@@ -26,7 +26,7 @@ from ..conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.deepseek_messages import DeepSeekMessagesProvider
 
@@ -77,7 +77,10 @@ async def test_deepseek_web_fetch_history(
 
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         model = deepseek_model(api, client)
-        agent = Agent(model, capabilities=[WebFetch()], model_settings={'thinking': False, 'max_tokens': 256})
+        settings = OpenAIResponsesModelSettings(thinking=False, max_tokens=256)
+        if api == 'chat':
+            settings['openai_logprobs'] = False
+        agent = Agent(model, capabilities=[WebFetch()], model_settings=settings)
         prompt = 'Read https://httpbin.org/uuid and reply READY.'
         if stream:
             async with agent.run_stream(prompt) as result:
@@ -220,3 +223,25 @@ async def test_deepseek_web_tools_reject_non_text_format(api: str, native: bool,
         )
         with pytest.raises(UserError, match='DeepSeek web tools require text output'):
             await agent.run('Search the web.')
+
+
+@pytest.mark.parametrize(
+    ('api', 'settings', 'setting'),
+    [
+        ('chat', {'openai_logprobs': True}, 'openai_logprobs'),
+        ('chat', {'openai_top_logprobs': 0}, 'openai_top_logprobs'),
+        ('responses', {'openai_top_logprobs': 0}, 'openai_top_logprobs'),
+        ('responses', {'openai_previous_response_id': 'resp_123'}, 'openai_previous_response_id'),
+        ('responses', {'openai_conversation_id': 'conv_123'}, 'openai_conversation_id'),
+    ],
+)
+async def test_deepseek_web_tools_reject_incompatible_settings(
+    api: str, settings: OpenAIResponsesModelSettings, setting: str, allow_model_requests: None
+) -> None:
+    def handle(_: httpx2.Request) -> httpx2.Response:
+        pytest.fail(f'{setting} should be rejected before sending the request.')
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
+        agent = Agent(deepseek_model(api, client), capabilities=[WebFetch()])
+        with pytest.raises(UserError, match=setting):
+            await agent.run('Read the page.', model_settings=settings)

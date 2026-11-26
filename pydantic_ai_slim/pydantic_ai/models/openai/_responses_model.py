@@ -186,7 +186,7 @@ from ._computer import (
     map_computer_result,
     stored_computer_call,
 )
-from ._deepseek_web_tools import check_web_output, web_tool_param, web_tool_parts, web_tool_replay
+from ._deepseek_web_tools import check_web_output, check_web_settings, web_tool_param, web_tool_parts, web_tool_replay
 from ._errors import (
     check_azure_content_filter,
     is_azure,
@@ -2183,6 +2183,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
         keep_implicit_cache_without_breakpoints(model_settings, request_params.input)
         drop_unsupported_params(profile, model_settings)
+        if profile.get('openai_deepseek_web_tools', False):
+            check_web_settings(
+                request_params.tools,
+                openai_top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
+                openai_previous_response_id=request_params.previous_response_id,
+                openai_conversation_id=request_params.conversation,
+            )
         store = self._resolve_store(model_settings)
 
         # The SDK's Responses `PromptCacheOptions` has keys ours doesn't expose, so the TypedDicts aren't assignable.

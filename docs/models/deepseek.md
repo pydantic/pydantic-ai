@@ -131,7 +131,7 @@ With `deepseek-flash`, [`WebSearch()`][pydantic_ai.capabilities.WebSearch] enabl
 
 The tools have no domain filters or caller-specified use limits. Keep the complete message history to let DeepSeek restore signed page context in later turns, including turns with web tools disabled. Use the same API for those turns.
 
-Chat Completions and Responses require a text response format when these tools are enabled. Use plain text or [`ToolOutput`][pydantic_ai.output.ToolOutput] for these requests.
+Chat Completions and Responses require a text response format when these tools are enabled. Use plain text or [`ToolOutput`][pydantic_ai.output.ToolOutput] for these requests. Leave `openai_top_logprobs` unset on both APIs. Chat Completions also requires `openai_logprobs` to be off. On Responses, pass the full message history and leave `openai_previous_response_id` and `openai_conversation_id` unset.
 
 Use `pydantic-ai-slim[anthropic]` for the Messages endpoint and pair [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] with `DeepSeekMessagesProvider`. The provider reads `DEEPSEEK_API_KEY` by default.
 
