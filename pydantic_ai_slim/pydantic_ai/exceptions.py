@@ -636,22 +636,20 @@ class ContentFilterError(UnexpectedModelBehavior):
     """Raised when a model provider triggers content filtering or refuses a request.
 
     During an agent run, the agent loop raises `ContentFilterError` when a response has
-    `finish_reason='content_filter'` (including safety refusals such as Anthropic's `stop_reason='refusal'`,
-    OpenAI's `refusal`, and Azure's content filter) and contains no actionable output (no parts, empty text, or
-    thinking-only). A `content_filter` response that still includes text is returned as output unless you add
+    `finish_reason='content_filter'` and no actionable output (no parts, empty text, or thinking-only). A
+    `content_filter` response that still includes text is returned as output unless you add
     [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError].
 
-    Because this inherits from `UnexpectedModelBehavior` (not `ModelAPIError`),
-    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] does not fall back on it unless you pass
-    `fallback_on=(ModelAPIError, ContentFilterError)`. The [`ModelFallback`](../capabilities/model-fallback.md#refusals)
-    capability falls back on non-streamed refusals by default.
-
-    When raised by the agent loop or `RaiseContentFilterError`, `message` includes the finish reason and, when the
-    provider returns one, the refusal text, while `body` holds a one-element JSON list containing the serialized
+    When raised by the agent loop or `RaiseContentFilterError`, `message` includes the finish or block reason and,
+    when returned, the provider's refusal text; `body` holds a one-element JSON list containing the serialized
     [`ModelResponse`][pydantic_ai.messages.ModelResponse] (loadable via
     [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter], including `provider_details` such as
     `refusal` and `refusal_category`). Image generation and decision models may also raise `ContentFilterError` with
     provider-specific `message` and `body`.
+
+    Because the agent loop raises this only after the model request returns, `FallbackModel` can't catch it as a
+    normal exception — naming `ContentFilterError` itself in `fallback_on` is what makes fallback reject any
+    `'content_filter'` response. See [Falling back when a model refuses](../capabilities/model-fallback.md#refusals).
     """
 
 
