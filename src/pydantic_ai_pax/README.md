@@ -27,7 +27,7 @@ workspaces are plugins too, so where the agent runs and where it works are yours
 choose. To run an agent of your own instead, use `pax --agent my_module:agent`, which
 loads that agent on its own without Pax's plugins.
 
-![Pax starting up in a project and adding a flag: its thinking, the files it read, the diff it made, and the test run](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/hero.png)
+![Pax in a terminal running anthropic:claude-opus-5-5: the PAX banner, a question about how a forecast is fetched, the tool calls it made with counts, a three-step answer, and the status row with the model, its context meter at 12k of 1m tokens and the cost](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/hero.png)
 
 - **Any model, any account.** Switch models mid-conversation. Sign in to several
   accounts and let Pax move to the next one when you hit a limit.
@@ -78,12 +78,13 @@ the `pydantic-clai2` package installed, or its imports changed to `pydantic_ai_p
 `/update now` uses it too. To try Pax without installing, run `uvx pydantic-ai-pax`; set
 `UV_COMPILE_BYTECODE=1` to compile the bytecode up front there too.
 
-Pax comes with the OpenAI and Anthropic SDKs. Other providers may need their SDK
-installed too; `/model` tells you which one when you pick the model. TypeSafe's Jev
-models need an extra:
+Pax comes with the OpenAI, Anthropic, and Google SDKs. Every other model provider has a Pax
+extra of the same name as its `pydantic-ai-slim` extra, such as `bedrock`, `groq`, or `typesafe`
+(TypeSafe's Jev), and `/model` tells you which one when you pick the model. `all` installs every
+provider and every `/sandbox` provider but `local`:
 
 ```bash
-uv tool install --compile-bytecode 'pydantic-ai-pax[typesafe]'
+uv tool install --compile-bytecode 'pydantic-ai-pax[groq]'
 ```
 
 ## First run
@@ -134,13 +135,16 @@ in the reference.
 
 ### Where Pax keeps things
 
-Your settings, saved sessions, and plugins live in `~/.config/pydantic-clai2/`, or in
-`$XDG_CONFIG_HOME/pydantic-clai2/` if you set `XDG_CONFIG_HOME`:
+Your settings, saved sessions, and plugins live in `~/.config/pydantic-ai-pax/`, or in
+`$XDG_CONFIG_HOME/pydantic-ai-pax/` if you set `XDG_CONFIG_HOME`:
 
 - `config.db`: settings, saved models, plugin choices, and which folders you trust
 - `sessions.db`: saved conversations
 - `plugins/`: plugins you drop in
 - `input-history`: what you typed, for the <kbd>↑</kbd> arrow
+
+Bookkeeping that isn't a preference, such as your workspaces and which Pax processes are running, lives in
+`~/.local/state/pydantic-ai-pax/`, or `$XDG_STATE_HOME/pydantic-ai-pax/`.
 
 Sign-ins and API keys are encrypted, with the key kept in your system keychain. Without a
 keychain, they are saved unencrypted in a file only you can read. A
@@ -429,7 +433,7 @@ Turn on more when you need them, such as `github`, `linear`, `notion`, `slack`,
 `google_workspace`, and `logfire_mcp`.
 
 To install a plugin, clone it from Git, name a plugin or a harness capability by its import
-path, or drop a file in `~/.config/pydantic-clai2/plugins/`:
+path, or drop a file in `~/.config/pydantic-ai-pax/plugins/`:
 
 ```text
 /plugins add https://github.com/your-org/my-plugin.git
@@ -481,9 +485,10 @@ covers everything in detail:
 - [The plugin guide](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/PLUGINS.md):
   every plugin method, event, and rule
 
-The screenshots are real Pax sessions. Only the model is scripted (`demo:tour`), so they
-need no account and cost nothing. To make them again, run
-`src/pydantic_ai_pax/scripts/screenshots/capture.sh`.
+The screenshots are real Pax sessions. Every shot but the hero at the top uses a scripted model
+(`demo:tour`), so they need no account and cost nothing: run
+`src/pydantic_ai_pax/scripts/screenshots/capture.sh` to make them again. The hero shows a real
+`anthropic:claude-opus-5-5` turn; the top of `capture.sh` says how to re-render it.
 
 ## Legacy CLI
 

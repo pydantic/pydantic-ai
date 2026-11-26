@@ -24,8 +24,12 @@ def new_id(repo: str) -> str:
 
 
 def works_in(directory: Path | str, folder: Path) -> bool:
-    """Whether a session working in `directory` works in `folder` or below it."""
-    return Path(directory).resolve().is_relative_to(folder)
+    """Whether a session working in `directory` works in `folder` or below it.
+
+    Both sides are resolved: a workspace recorded under the state folder's earlier name is reached through the link
+    left at that name, while a session there now reports the moved path.
+    """
+    return Path(directory).resolve().is_relative_to(folder.resolve())
 
 
 async def close_sessions_in(live: LiveSessions, folder: Path) -> None:

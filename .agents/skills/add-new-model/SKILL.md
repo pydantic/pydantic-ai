@@ -1,6 +1,6 @@
 ---
 name: add-new-model
-description: Add support for a newly-released language or image generation model in pydantic-ai (e.g. openai:gpt-5.6, anthropic:claude-sonnet-5, openai:gpt-image-2). Use when a provider ships a new model id and you need to wire literals, profile flags, adapters, and tests to recognize it. Handles SDK-lag, gateway list conventions, capability probing, and direct image-model geometry. Also use when Anthropic or OpenAI deprecates or retires a model, to update the deprecation tables.
+description: Add support for a newly-released language or image generation model in pydantic-ai (e.g. openai:gpt-5.6, anthropic:claude-sonnet-5, openai:gpt-image-2). Use when a provider ships a new model id and you need to wire literals, profile flags, adapters, and tests to recognize it. Handles SDK-lag, gateway list conventions, capability probing, and direct image-model geometry. Also use when Anthropic, OpenAI or Google deprecates or retires a model, to update the deprecation tables.
 user-invocable: true
 allowed-tools: Bash, Read, Edit, Write, Glob, Grep, WebFetch, WebSearch, AskUserQuestion
 ---
@@ -42,10 +42,13 @@ because its id left a literal.
 ## Deprecated and retired models
 
 A request to a model in `pydantic_ai_slim/pydantic_ai/providers/_model_deprecations.py` emits
-`DeprecatedModelWarning`. When Anthropic or OpenAI announces a deprecation or retirement, update that file.
+`DeprecatedModelWarning`. When Anthropic, OpenAI or Google announces a deprecation or retirement, update that file.
 
-1. Read the announcement on [Anthropic's](https://platform.claude.com/docs/en/about-claude/model-deprecations) or
-   [OpenAI's](https://developers.openai.com/api/docs/deprecations) deprecations page. Never write an entry from memory.
+1. Read the announcement on [Anthropic's](https://platform.claude.com/docs/en/about-claude/model-deprecations),
+   [OpenAI's](https://developers.openai.com/api/docs/deprecations) or Google's
+   ([Gemini API](https://aistudio.google.com/docs/deprecations),
+   [Google Cloud](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions)) deprecations
+   page. Never write an entry from memory.
 2. Add or update the entries as the module docstring's rules say.
 3. Run the test files that use each newly listed id. A test that replays a recording or mock on that id now fails
    with `DeprecatedModelWarning`. Add the id to `DEPRECATED_MODELS_IN_RECORDINGS` in `tests/conftest.py`, in the group
