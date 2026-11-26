@@ -827,9 +827,9 @@ CASES: dict[str, CapabilityCase] = {
             _coder_repo,
             durable_steps=DurableSteps(
                 streams=True,
-                dbos=_workspace_steps(34),
+                dbos=_workspace_steps(35),
                 # `write_file` and `edit_file` run in the workflow, so their workspace calls are activities.
-                temporal=(*('capability__workspace__call',) * 27, 'toolset__file_system__call_tool'),
+                temporal=(*('capability__workspace__call',) * 28, 'toolset__file_system__call_tool'),
             ),
         ),
     ),
@@ -979,8 +979,8 @@ CASES: dict[str, CapabilityCase] = {
             # Not a measure of #14492 (capability instruction ids under Temporal): the calls only read files.
             durable_steps=DurableSteps(
                 streams=True,
-                dbos=_workspace_steps(19),
-                temporal=(*('capability__workspace__call',) * 8, 'toolset__file_system__call_tool'),
+                dbos=_workspace_steps(21),
+                temporal=(*('capability__workspace__call',) * 10, 'toolset__file_system__call_tool'),
             ),
         ),
     ),
