@@ -751,7 +751,7 @@ class TestBuildSchemaTypes:
             schema = AgentSpec.model_json_schema_with_capabilities([PricedSession])
         assert [str(warning.message) for warning in record] == snapshot(
             [
-                "Capability 'PricedSession': the agent spec schema publishes only its name, because the schema for its parameters could not be built (SchemaError). Override `from_spec` with the parameters a spec can set."
+                "Capability 'PricedSession': the agent spec schema publishes only its name, because the schema for its parameters could not be built (SchemaError), and the type hints of `rate` could not be resolved (NameError: name 'Decimal' is not defined). Override `from_spec` with the parameters a spec can set."
             ]
         )
         assert [key for key in schema['$defs'] if key.endswith('_PricedSession')] == []
@@ -835,7 +835,7 @@ class TestBuildSchemaTypes:
             schema = AgentSpec.model_json_schema_with_capabilities([PricedHook])
         assert [str(warning.message) for warning in record] == snapshot(
             [
-                "Capability 'PricedHook': the agent spec schema publishes only its name, because a required parameter takes a type with no JSON form. Override `from_spec` with the parameters a spec can set."
+                "Capability 'PricedHook': the agent spec schema publishes only its name, because a required parameter takes a type with no JSON form, and the type hints of `rate` could not be resolved (NameError: name 'Decimal' is not defined). Override `from_spec` with the parameters a spec can set."
             ]
         )
         name_only = {'model': 'test', 'capabilities': ['PricedHook']}

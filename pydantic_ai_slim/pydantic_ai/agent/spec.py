@@ -14,7 +14,7 @@ from pydantic_core import PydanticOmit, SchemaError, from_json, to_json
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 
 from pydantic_ai._agent_graph import EndStrategy
-from pydantic_ai._spec import CapabilitySpec, build_registry, build_schema_types
+from pydantic_ai._spec import CapabilitySpec, UnresolvedHints, build_registry, build_schema_types
 from pydantic_ai._utils import get_function_type_hints, is_str_dict
 from pydantic_ai.agent.abstract import AgentRetries
 from pydantic_ai.exceptions import UserError
@@ -373,8 +373,11 @@ def _capability_schema_target(cls: type[Any]) -> Any:
 
 def _init_spec_forms_build(cls: type[Any]) -> bool:
     """Whether `cls.__init__` has spec forms that can be built from the type hints that resolve, warning if not."""
+    unresolved: list[UnresolvedHints] = []
     try:
-        schema_types = build_schema_types({cls.__name__: cls}, get_schema_target=lambda _: cls.__init__)
+        schema_types = build_schema_types(
+            {cls.__name__: cls}, get_schema_target=lambda _: cls.__init__, on_unresolved_hints=unresolved.append
+        )
         for schema_type in schema_types:
             TypeAdapter(schema_type).json_schema()
     # What `TypeAdapter` raises for a type with no core or JSON schema, as `_spec._type_accepts_object` expects.
@@ -384,6 +387,7 @@ def _init_spec_forms_build(cls: type[Any]) -> bool:
         if schema_types:
             return True
         reason = 'a required parameter takes a type with no JSON form'
+    reason += ''.join(f', and {hints.cause}' for hints in unresolved)
     warnings.warn(
         f'Capability {cls.get_serialization_name()!r}: the agent spec schema publishes only its name, because '
         f'{reason}. Override `from_spec` with the parameters a spec can set.',

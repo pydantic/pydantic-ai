@@ -291,21 +291,22 @@ class UnresolvedHints:
     required: frozenset[str]
     """The required parameters among them, which the schema accepts any value for instead of leaving out."""
 
+    @property
+    def cause(self) -> str:
+        """Say which type hints could not be resolved, and why."""
+        reasons = '; '.join(dict.fromkeys(self.errors.values()))
+        return f'the type hints of {", ".join(f"`{name}`" for name in self.errors)} could not be resolved ({reasons})'
+
     def describe(self, schema: str) -> str:
         """Say which parameters `schema` leaves out or accepts any value for, and why."""
-        names = {name: f'`{name}`' for name in self.errors}
-        left_out = [code for name, code in names.items() if name not in self.required]
-        any_value = [code for name, code in names.items() if name in self.required]
+        left_out = [f'`{name}`' for name in self.errors if name not in self.required]
+        any_value = [f'`{name}`' for name in self.errors if name in self.required]
         effects: list[str] = []
         if left_out:
             effects.append(f'leaves out {", ".join(left_out)}')
         if any_value:
             effects.append(f'accepts any value for {", ".join(any_value)}')
-        reasons = '; '.join(dict.fromkeys(self.errors.values()))
-        return (
-            f'the type hints of {", ".join(names.values())} could not be resolved ({reasons}), '
-            f'so the {schema} {" and ".join(effects)}'
-        )
+        return f'{self.cause}, so the {schema} {" and ".join(effects)}'
 
 
 def build_schema_types(
