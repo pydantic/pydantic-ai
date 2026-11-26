@@ -17,7 +17,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.util.types import AttributeValue
 
 from pydantic_ai import Agent, RunContext, Tool
-from pydantic_ai._telemetry import run_telemetry_scope
+from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelMessage,
@@ -27,6 +27,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -110,7 +111,8 @@ async def diverged_prefix_attributes(
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
-    tracer = provider.get_tracer('test')
+    settings = InstrumentationSettings(tracer_provider=provider, include_content=False)
+    tracer = settings.tracer
     started = asyncio.Event()
 
     async def ready_tool() -> object:
@@ -128,9 +130,14 @@ async def diverged_prefix_attributes(
         run_step=0,
         pending_messages=[],
         tracer=tracer,
+        trace_include_content=settings.include_content,
     )
-    # A real run publishes its telemetry before any tool runs; this hand-built run does it here.
-    with run_telemetry_scope(ctx):
+    # The hand-built calls run inside a real instrumented run's tool, which publishes that run's telemetry;
+    # `ctx` has the same tracer and content setting, so the helpers trace it as that run.
+    host_agent = Agent(TestModel(call_tools=['host']), capabilities=[Instrumentation(settings=settings)])
+
+    @host_agent.tool_plain
+    async def host() -> str:
         async with root:
             manager = await ToolManager(toolset=root).for_run_step(ctx)
             ctx.tool_manager = manager
@@ -146,7 +153,7 @@ async def diverged_prefix_attributes(
             async for _ in capability.wrap_run_event_stream(ctx, stream=stream()):
                 pass
             await asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT)
-            # Dispatched outside any span, so its own outcome is not recorded.
+            # Dispatched under the host tool's span, which is left out of the result below.
             sync_ctx = dataclasses.replace(ctx, tool_call_id='c2', tool_name='run_code')
             try:
                 await toolset.call_tool('run_code', {'code': sync_code}, sync_ctx, run_code)
@@ -159,7 +166,10 @@ async def diverged_prefix_attributes(
                 pytest.raises(ModelRetry, match='no longer matches'),
             ):
                 await toolset.call_tool('run_code', {'code': rewritten}, exec_ctx, run_code)
-    return code_mode_attributes(exporter)
+        return 'done'
+
+    await host_agent.run('go')
+    return [found for found in code_mode_attributes(exporter) if found[0] != 'execute_tool host']
 
 
 def run_code_span(*, budget_exhausted: bool = False, **failure: str | bool) -> tuple[str, dict[str, AttributeValue]]:
