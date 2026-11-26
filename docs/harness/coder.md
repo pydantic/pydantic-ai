@@ -77,7 +77,7 @@ agent = Agent('{{ anthropic:large }}', capabilities=[ModalSandbox(), Coder()])
 With `LocalWorkspace`, [`agent.to_cli_sync()`](https://pydantic.dev/docs/ai/cli/) and [`agent.to_web()`](https://pydantic.dev/docs/ai/web/) work in the same directory. With a sandbox, the CLI keeps one sandbox for the session, but `to_web()` starts a new one for each message because the web protocol does not carry the workspace ref, so use `LocalWorkspace` when files must persist between web messages.
 
 The exported `pydantic_ai_harness.coder:coder_agent` is the same agent, model-less and named `coder`, working in the directory that is current when it is imported.
-[Pax](clai2.md) runs this agent in your terminal, with `--agent` taking the import path. It loads no plugins, and needs a model because the export carries none:
+[Pax](pax.md) runs this agent in your terminal, with `--agent` taking the import path. It loads no plugins, and needs a model because the export carries none:
 
 ```bash
 uvx pydantic-ai-pax --agent pydantic_ai_harness.coder:coder_agent -m {{ anthropic:large }}
@@ -186,7 +186,7 @@ narrows it: `Shell(allowed_commands=['pytest'])` restricts `Coder`'s `shell` too
 
 | Tool | Behavior |
 | --- | --- |
-| `read_file(path, offset=0, limit=None)` | Zero-based line offset, one-based displayed line numbers, 2,000 lines unless `limit` says otherwise, and at most 50,000 characters of complete lines; the continuation hint names the exact next offset, and a line too long for the window is named and skippable. No hash header. |
+| `read_file(path, offset=1, limit=None)` | 1-indexed line offset, matching the displayed line numbers, 2,000 lines unless `limit` says otherwise, and at most 50,000 characters of complete lines; the continuation hint names the exact next offset, and a line too long for the window is named and skippable. No hash header. |
 | `write_file(path, content)` | Create a file in an existing directory, or replace one. No `expected_hash`. |
 | `edit_file(path, old_text, new_text)` or `edit_file(path, replacements=[...])` | Exact replacements, each matching once; a batch is checked in memory and written only if every replacement matches. |
 | `list_files(path='.', glob=None)` | `rg --files`, sorted by path, respecting ignore files and skipping hidden files. |
