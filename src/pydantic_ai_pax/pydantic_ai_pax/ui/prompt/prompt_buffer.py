@@ -270,13 +270,7 @@ class PromptBuffer:
 
     def rows(self, *, width: int, limit: int) -> list[str]:
         """Wrap into terminal cells at word boundaries and keep the nonblinking cursor in view."""
-        width = max(1, width)
-        rows: list[list[str]] = [[]]
-        cells = 0
-        cursor_row = 0
-        # Where the last row's unfinished word starts, in items and in cells, and whether the cursor is in it.
-        word = word_cells = 0
-        cursor_in_word = False
+        wrapped = _WrappedRows(width=max(1, width))
         text, cursor = self.display()
         # A newline under the cursor paints as a blank, a tab as four spaces.
         painted = {'\n': ' ', '\t': '    '}
@@ -284,40 +278,61 @@ class PromptBuffer:
             is_cursor = index == cursor
             if index == len(text) and not is_cursor:
                 break
-            if char == '\n' and not is_cursor:
-                rows.append([])
-                cells = word = 0
-                continue
-            display = painted.get(char, char if char.isprintable() else '?')
-            size = visible_length(display)
-            blank = char in painted or char == ' '
-            if cells + size > width:
-                if blank and not is_cursor:
-                    # A blank that does not fit ends its row unpainted, so the next word starts at the left edge.
-                    cells, word = width, 0
-                    continue
-                if word and not blank and cells - word_cells + size <= width:
-                    # A word that does not fit moves to the next row whole, unless it would not fit there either.
-                    rows.append(rows[-1][word:])
-                    del rows[-2][word:]
-                    cells -= word_cells
-                    cursor_row += cursor_in_word
-                else:
-                    # The cursor's own blank starts a row, and so does the rest of a word longer than the row.
-                    rows.append([])
-                    cells = 0
-                word = 0
-            if is_cursor:
-                cursor_row = len(rows) - 1
-                display = f'\x1b[7m{display}\x1b[27m'
-            rows[-1].append(display)
-            cells += size
-            if blank:
-                word, word_cells, cursor_in_word = len(rows[-1]), cells, False
-            elif is_cursor:
-                cursor_in_word = True
+            if char != '\n' or is_cursor:
+                display = painted.get(char, char if char.isprintable() else '?')
+                wrapped.add(display, blank=char in painted or char == ' ', is_cursor=is_cursor)
             if char == '\n':
-                rows.append([])
-                cells = word = 0
-        start = max(0, cursor_row - limit + 1)
-        return [''.join(row) for row in rows[start : start + limit]]
+                wrapped.new_row()
+        start = max(0, wrapped.cursor_row - limit + 1)
+        return [''.join(row) for row in wrapped.rows[start : start + limit]]
+
+
+@dataclass(kw_only=True)
+class _WrappedRows:
+    """Painted characters laid out in rows of at most `width` cells, broken at blanks where a row allows it."""
+
+    width: int
+    rows: list[list[str]] = field(default_factory=lambda: [[]])
+    cursor_row: int = 0
+    cells: int = 0
+    """Cells used on the last row."""
+    word: int = 0
+    """Where the last row's unfinished word starts, as an index into the row; zero when the row has no blank yet."""
+    word_cells: int = 0
+    """Cells used on the last row before that word."""
+    cursor_in_word: bool = False
+
+    def new_row(self) -> None:
+        self.rows.append([])
+        self.cells = self.word = 0
+
+    def add(self, display: str, *, blank: bool, is_cursor: bool) -> None:
+        size = visible_length(display)
+        if self.cells + size > self.width:
+            if blank and not is_cursor:
+                # A blank that does not fit ends its row unpainted, so the next word starts at the left edge.
+                self.cells, self.word = self.width, 0
+                return
+            self._wrap(size, blank=blank)
+        if is_cursor:
+            self.cursor_row = len(self.rows) - 1
+            display = f'\x1b[7m{display}\x1b[27m'
+        self.rows[-1].append(display)
+        self.cells += size
+        if blank:
+            self.word, self.word_cells, self.cursor_in_word = len(self.rows[-1]), self.cells, False
+        elif is_cursor:
+            self.cursor_in_word = True
+
+    def _wrap(self, size: int, *, blank: bool) -> None:
+        """Start a row for a character of `size` cells that does not fit on the last one."""
+        if not self.word or blank or self.cells - self.word_cells + size > self.width:
+            # The cursor's own blank starts a row, and so does the rest of a word too long to move whole.
+            self.new_row()
+            return
+        # A word that does not fit moves to the next row whole.
+        self.rows.append(self.rows[-1][self.word :])
+        del self.rows[-2][self.word :]
+        self.cells -= self.word_cells
+        self.cursor_row += self.cursor_in_word
+        self.word = 0
