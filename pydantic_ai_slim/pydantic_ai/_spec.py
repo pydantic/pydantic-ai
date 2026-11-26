@@ -11,6 +11,7 @@ import types
 import typing
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, Any, Literal, NotRequired, TypeVar, cast
 
 from pydantic import (
@@ -274,10 +275,43 @@ def filter_serializable_type(tp: Any) -> Any | None:
     return tp
 
 
+@dataclass(frozen=True)
+class UnresolvedHints:
+    """The spec parameters of a schema target whose type hints could not be resolved, like a `TYPE_CHECKING` import."""
+
+    name: str
+    """The name the target is registered under."""
+
+    module: str
+    """The module whose namespace the type hints were resolved in."""
+
+    errors: dict[str, str]
+    """Each parameter's resolution error, as `ExceptionType: message`, in parameter order."""
+
+    required: frozenset[str]
+    """The required parameters among them, which the schema accepts any value for instead of leaving out."""
+
+    def describe(self, schema: str) -> str:
+        """Say which parameters `schema` leaves out or accepts any value for, and why."""
+        left_out = [name for name in self.errors if name not in self.required]
+        any_value = [name for name in self.errors if name in self.required]
+        effects: list[str] = []
+        if left_out:
+            effects.append(f'leaves out {", ".join(left_out)}')
+        if any_value:
+            effects.append(f'accepts any value for {", ".join(any_value)}')
+        reasons = '; '.join(dict.fromkeys(self.errors.values()))
+        return (
+            f'the type hints of {", ".join(self.errors)} could not be resolved ({reasons}), '
+            f'so the {schema} {" and ".join(effects)}'
+        )
+
+
 def build_schema_types(
     registry: Mapping[str, type[Any]],
     *,
     get_schema_target: Callable[[type[Any]], Any] | None = None,
+    on_unresolved_hints: Callable[[UnresolvedHints], None] | None = None,
 ) -> list[Any]:
     """Build a list of schema types from a registry for JSON schema generation.
 
@@ -285,6 +319,8 @@ def build_schema_types(
         registry: Mapping from names to classes.
         get_schema_target: Optional callback to get the schema target (e.g. `from_spec` method)
             from a class. Default: use the class itself.
+        on_unresolved_hints: Optional callback, called for each target whose schema types leave out or accept any
+            value for parameters whose type hints could not be resolved.
 
     Returns:
         A list of types suitable for use in a Union for JSON schema generation.
@@ -292,17 +328,23 @@ def build_schema_types(
     schema_types: list[Any] = []
     for name, cls in registry.items():
         target = get_schema_target(cls) if get_schema_target is not None else cls
-        schema_types.extend(_target_schema_types(name, target))
+        schema_types.extend(_target_schema_types(name, target, on_unresolved_hints))
 
     return schema_types
 
 
-def _target_schema_types(name: str, target: Callable[..., object]) -> list[Any]:
+def _target_schema_types(
+    name: str, target: Callable[..., object], on_unresolved_hints: Callable[[UnresolvedHints], None] | None
+) -> list[Any]:
     """The schema types of the spec forms that can load `target` under `name`."""
-    spec_type_hints = _spec_param_type_hints(target)
+    hints, unresolved = _spec_annotation_hints(target)
+    spec_type_hints = _spec_param_type_hints(target, hints)
     if spec_type_hints is None:
         return []
     type_hints, required_type_hints = spec_type_hints
+    if unresolved and on_unresolved_hints is not None:
+        required = frozenset(unresolved.keys() & required_type_hints.keys())
+        on_unresolved_hints(UnresolvedHints(name, target.__module__, unresolved, required))
     keyword_only_params = _keyword_only_spec_params(target, type_hints)
     schema_types: list[Any] = []
 
@@ -326,14 +368,15 @@ def _target_schema_types(name: str, target: Callable[..., object]) -> list[Any]:
     return schema_types
 
 
-def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any], dict[str, Any]] | None:
-    """The type hints of `target`'s spec parameters, with optional ones as `NotRequired`.
+def _spec_param_type_hints(
+    target: Callable[..., object], hints: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """The type hints of `target`'s spec parameters, with optional ones as `NotRequired`, from its resolved `hints`.
 
     The second dict holds the type hints of its required parameters only. Returns `None` when a required parameter's
     type has no JSON form, since no spec entry can then load `target`.
     """
     parameters = inspect.signature(target).parameters
-    hints = _spec_annotation_hints(target)
     hints.pop('return', None)
 
     # Filter out non-serializable types (TypeVars, Callables) from unions
@@ -363,8 +406,8 @@ def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any
     return type_hints, required_type_hints
 
 
-def _spec_annotation_hints(target: Callable[..., object]) -> dict[str, Any]:
-    """The resolved type hints of `target`'s annotations that can be spec parameters.
+def _spec_annotation_hints(target: Callable[..., object]) -> tuple[dict[str, Any], dict[str, str]]:
+    """The resolved type hints of `target`'s annotations that can be spec parameters, and the errors of the others.
 
     A class target's annotations also name attributes its `__init__` doesn't take, like a `ClassVar` or an
     `init=False` dataclass field. A target that takes `*args` or `**kwargs` may take any of them except a `ClassVar`.
@@ -373,18 +416,18 @@ def _spec_annotation_hints(target: Callable[..., object]) -> dict[str, Any]:
     parameters = inspect.signature(target).parameters
     if any(p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD) for p in parameters.values()):
         hints = get_function_type_hints(target)
-        return {name: hint for name, hint in hints.items() if not is_classvar_annotation(hint)}
+        return {name: hint for name, hint in hints.items() if not is_classvar_annotation(hint)}, {}
     try:
-        return get_function_type_hints(target, include_keys=set(parameters))
+        return get_function_type_hints(target, include_keys=set(parameters)), {}
     except (NameError, TypeError, AttributeError):
         hints: dict[str, Any] = {}
+        errors: dict[str, str] = {}
         for name in parameters:
             try:
                 hints |= get_function_type_hints(target, include_keys={name})
-            except (NameError, TypeError, AttributeError):
-                # TODO(report): `name` is left out of the schema if optional, and takes any value if required.
-                pass
-        return hints
+            except (NameError, TypeError, AttributeError) as e:
+                errors[name] = f'{type(e).__name__}: {e}'
+        return hints, errors
 
 
 def _without_not_required(type_hint: object) -> object:

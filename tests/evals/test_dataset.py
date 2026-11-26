@@ -1884,7 +1884,7 @@ def test_add_invalid_evaluator():
 
 
 def test_evaluator_schema_with_type_checking_only_hint():
-    """A parameter whose hint resolves only under `TYPE_CHECKING` is left out of the schema; the others stay.
+    """A parameter whose hint resolves only under `TYPE_CHECKING` is left out of the schema with a warning.
 
     Schema generation makes no model request, so there is nothing to record.
     """
@@ -1897,7 +1897,13 @@ def test_evaluator_schema_with_type_checking_only_hint():
         def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> bool:  # pragma: no cover
             return True
 
-    schema = Dataset[TaskInput, TaskOutput, TaskMetadata].model_json_schema_with_evaluators([PricedEvaluator])
+    with pytest.warns(UserWarning) as record:
+        schema = Dataset[TaskInput, TaskOutput, TaskMetadata].model_json_schema_with_evaluators([PricedEvaluator])
+    assert [str(warning.message) for warning in record] == snapshot(
+        [
+            "Evaluator 'PricedEvaluator': the type hints of rate could not be resolved (NameError: name 'Decimal' is not defined), so the `Dataset` schema leaves out rate. Import those types at runtime in `tests.evals.test_dataset`."
+        ]
+    )
     assert {key: schema['$defs'][key] for key in schema['$defs'] if key.endswith('_PricedEvaluator')} == snapshot(
         {
             'short_spec_PricedEvaluator': {

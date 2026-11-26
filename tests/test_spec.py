@@ -647,7 +647,7 @@ class TestBuildSchemaTypes:
 
     @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
     def test_type_checking_only_optional_hint_capability_schema(self):
-        """An optional parameter whose hint resolves only under `TYPE_CHECKING` is left out; the others stay.
+        """An optional parameter whose hint resolves only under `TYPE_CHECKING` is left out with a warning; the others stay.
 
         Not a VCR test: schema generation and `Agent.from_spec` run before any model request.
         """
@@ -658,7 +658,13 @@ class TestBuildSchemaTypes:
             limit: int = 3
             rate: 'Decimal | None' = None
 
-        schema = AgentSpec.model_json_schema_with_capabilities([PricedLabel])
+        with pytest.warns(UserWarning) as record:
+            schema = AgentSpec.model_json_schema_with_capabilities([PricedLabel])
+        assert [str(warning.message) for warning in record] == snapshot(
+            [
+                "Capability 'PricedLabel': the type hints of rate could not be resolved (NameError: name 'Decimal' is not defined), so the agent spec schema leaves out rate. Override `from_spec` with the parameters a spec can set, or import those types at runtime in `tests.test_spec`."
+            ]
+        )
         assert schema['$defs']['spec_params_PricedLabel'] == snapshot(
             {
                 'additionalProperties': False,
@@ -684,7 +690,7 @@ class TestBuildSchemaTypes:
 
     @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
     def test_type_checking_only_required_hint_capability_schema(self):
-        """A required parameter whose hint resolves only under `TYPE_CHECKING` accepts any value, as if unannotated.
+        """A required parameter whose hint resolves only under `TYPE_CHECKING` accepts any value, with a warning.
 
         Not a VCR test: schema generation and `Agent.from_spec` run before any model request.
         """
@@ -694,7 +700,13 @@ class TestBuildSchemaTypes:
             rate: 'Decimal'
             limit: int = 3
 
-        schema = AgentSpec.model_json_schema_with_capabilities([Priced])
+        with pytest.warns(UserWarning) as record:
+            schema = AgentSpec.model_json_schema_with_capabilities([Priced])
+        assert [str(warning.message) for warning in record] == snapshot(
+            [
+                "Capability 'Priced': the type hints of rate could not be resolved (NameError: name 'Decimal' is not defined), so the agent spec schema accepts any value for rate. Override `from_spec` with the parameters a spec can set, or import those types at runtime in `tests.test_spec`."
+            ]
+        )
         assert schema['$defs']['spec_params_Priced'] == snapshot(
             {
                 'additionalProperties': False,
@@ -722,7 +734,7 @@ class TestBuildSchemaTypes:
 
     @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
     def test_type_checking_only_hint_schema_error_capability_schema(self):
-        """A class whose schema can't be built from the hints that resolve publishes its name alone, as before.
+        """A class whose schema can't be built from the hints that resolve publishes its name alone, with a warning.
 
         Not a VCR test: schema generation and `Agent.from_spec` run before any model request.
         """
@@ -735,7 +747,13 @@ class TestBuildSchemaTypes:
             session: Session | None = None
             rate: 'Decimal | None' = None
 
-        schema = AgentSpec.model_json_schema_with_capabilities([PricedSession])
+        with pytest.warns(UserWarning) as record:
+            schema = AgentSpec.model_json_schema_with_capabilities([PricedSession])
+        assert [str(warning.message) for warning in record] == snapshot(
+            [
+                "Capability 'PricedSession': the agent spec schema publishes only its name, because the schema for its parameters could not be built (SchemaError). Override `from_spec` with the parameters a spec can set."
+            ]
+        )
         assert [key for key in schema['$defs'] if key.endswith('_PricedSession')] == []
         name_only = {'model': 'test', 'capabilities': ['PricedSession']}
         assert list(validator_for(schema)(schema).iter_errors(name_only)) == []
@@ -743,7 +761,7 @@ class TestBuildSchemaTypes:
         assert [c for c in capabilities if isinstance(c, PricedSession)] == [PricedSession()]
 
     def test_type_checking_only_hint_from_spec_schema(self):
-        """A `from_spec` parameter whose hint resolves only under `TYPE_CHECKING` is left out; the others stay."""
+        """A `from_spec` parameter whose hint resolves only under `TYPE_CHECKING` is left out with a warning."""
 
         @dataclass
         class PricedFromSpec(AbstractCapability[None]):
@@ -753,7 +771,13 @@ class TestBuildSchemaTypes:
             def from_spec(cls, limit: int = 3, rate: 'Decimal | None' = None) -> Self:
                 return cls(limit=limit)  # pragma: no cover
 
-        schema = AgentSpec.model_json_schema_with_capabilities([PricedFromSpec])
+        with pytest.warns(UserWarning) as record:
+            schema = AgentSpec.model_json_schema_with_capabilities([PricedFromSpec])
+        assert [str(warning.message) for warning in record] == snapshot(
+            [
+                "Capability 'PricedFromSpec': the type hints of rate could not be resolved (NameError: name 'Decimal' is not defined), so the agent spec schema leaves out rate. Override `from_spec` with the parameters a spec can set, or import those types at runtime in `tests.test_spec`."
+            ]
+        )
         assert {key: schema['$defs'][key] for key in schema['$defs'] if key.endswith('_PricedFromSpec')} == snapshot(
             {
                 'short_spec_PricedFromSpec': {

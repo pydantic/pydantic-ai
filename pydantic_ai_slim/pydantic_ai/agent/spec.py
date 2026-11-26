@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from contextvars import ContextVar
@@ -340,33 +341,50 @@ def load_capability_from_nested_spec(spec: CapabilitySpec | dict[str, Any] | str
 
 def _build_capability_schema_types(registry: Mapping[str, type[Any]]) -> list[Any]:
     """Build a list of schema types for capabilities from a registry."""
-    from pydantic_ai.capabilities.abstract import AbstractCapability
-
-    def _get_schema_target(cls: type[Any]) -> Any:
-        # When from_spec is not overridden, it delegates to cls(*args, **kwargs).
-        # Use __init__ directly so build_schema_types sees the actual parameter types.
-        if 'from_spec' not in cls.__dict__:
-            try:
-                get_function_type_hints(cls.__init__)
-                return cls.__init__
-            except (NameError, TypeError, AttributeError):
-                # build_schema_types resolves the hints one parameter at a time, so a hint that doesn't resolve (e.g. a
-                # TYPE_CHECKING import) leaves only its own parameter unannotated. Fall back to from_spec, as before,
-                # if a superclass overrides it or the spec forms can't be built from the hints that resolve.
-                if cls.from_spec.__func__ is AbstractCapability.from_spec.__func__:
-                    with suppress(SchemaError, PydanticUserError, PydanticOmit, NameError, TypeError, AttributeError):
-                        for schema_type in build_schema_types(
-                            {cls.__name__: cls}, get_schema_target=lambda _: cls.__init__
-                        ):
-                            TypeAdapter(schema_type).json_schema()
-                        return cls.__init__
-                    # TODO(report): the schema publishes only the name of `cls`, as its spec forms can't be built.
-        return cls.from_spec
-
     return build_schema_types(
         registry,
-        get_schema_target=_get_schema_target,
+        get_schema_target=_capability_schema_target,
+        on_unresolved_hints=lambda hints: warnings.warn(
+            f'Capability {hints.name!r}: {hints.describe("agent spec schema")}. Override `from_spec` with the '
+            f'parameters a spec can set, or import those types at runtime in `{hints.module}`.',
+            UserWarning,
+        ),
     )
+
+
+def _capability_schema_target(cls: type[Any]) -> Any:
+    """The callable whose parameters the agent spec schema publishes for `cls`."""
+    from pydantic_ai.capabilities.abstract import AbstractCapability
+
+    if 'from_spec' in cls.__dict__:
+        return cls.from_spec
+    # When from_spec is not overridden, it delegates to cls(*args, **kwargs).
+    # Use __init__ directly so build_schema_types sees the actual parameter types.
+    with suppress(NameError, TypeError, AttributeError):
+        get_function_type_hints(cls.__init__)
+        return cls.__init__
+    # build_schema_types resolves the hints one parameter at a time, so a hint that doesn't resolve (e.g. a
+    # TYPE_CHECKING import) leaves only its own parameter unannotated. Fall back to from_spec, as before,
+    # if a superclass overrides it or the spec forms can't be built from the hints that resolve.
+    if cls.from_spec.__func__ is AbstractCapability.from_spec.__func__ and _init_spec_forms_build(cls):
+        return cls.__init__
+    return cls.from_spec
+
+
+def _init_spec_forms_build(cls: type[Any]) -> bool:
+    """Whether the spec forms of `cls.__init__` can be built from the type hints that resolve, warning if not."""
+    try:
+        for schema_type in build_schema_types({cls.__name__: cls}, get_schema_target=lambda _: cls.__init__):
+            TypeAdapter(schema_type).json_schema()
+    except (SchemaError, PydanticUserError, PydanticOmit, NameError, TypeError, AttributeError) as e:
+        warnings.warn(
+            f'Capability {cls.get_serialization_name()!r}: the agent spec schema publishes only its name, because '
+            f'the schema for its parameters could not be built ({type(e).__name__}). '
+            'Override `from_spec` with the parameters a spec can set.',
+            UserWarning,
+        )
+        return False
+    return True
 
 
 def _replace_capability_spec_refs(schema: dict[str, Any], cap_items_schema: dict[str, Any]) -> None:

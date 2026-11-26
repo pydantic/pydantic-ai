@@ -849,12 +849,14 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         evaluator_schema_types = _build_evaluator_schema_types(
             _get_evaluator_registry(
                 _evaluator_types(custom_evaluator_types), Evaluator, DEFAULT_EVALUATORS, 'evaluator'
-            )
+            ),
+            'evaluator',
         )
         report_evaluator_schema_types = _build_evaluator_schema_types(
             _get_evaluator_registry(
                 custom_report_evaluator_types, ReportEvaluator, DEFAULT_REPORT_EVALUATORS, 'report evaluator'
-            )
+            ),
+            'report evaluator',
         )
 
         in_type, out_type, meta_type = cls._params()
@@ -1520,6 +1522,13 @@ def _load_evaluator_from_registry(
     )
 
 
-def _build_evaluator_schema_types(registry: Mapping[str, type[Any]]) -> list[Any]:
+def _build_evaluator_schema_types(registry: Mapping[str, type[Any]], label: str) -> list[Any]:
     """Build a list of schema types for evaluators from a registry."""
-    return build_schema_types(registry)
+    return build_schema_types(
+        registry,
+        on_unresolved_hints=lambda hints: warnings.warn(
+            f'{label.capitalize()} {hints.name!r}: {hints.describe("`Dataset` schema")}. '
+            f'Import those types at runtime in `{hints.module}`.',
+            UserWarning,
+        ),
+    )
