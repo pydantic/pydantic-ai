@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 import json
+import warnings
 from abc import abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Collection, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -2194,15 +2195,20 @@ def _rubric(options: dict[Any, str | None], limits: _Limits) -> list[str] | None
     not a rubric. Any other whole numbers -- status codes, levels with nothing said about them, more levels than the
     model takes -- are labels, and are a pick-one instead.
     """
-    if not all(isinstance(option, int) and not isinstance(option, bool) for option in options):
+    if not _rubric_levels(options, limits):
         return None
+    criteria = [meaning for level in sorted(options) if (meaning := options[level])]
+    return criteria if len(criteria) == len(options) else None
+
+
+def _rubric_levels(options: dict[Any, str | None], limits: _Limits) -> bool:
+    """Whether the options are levels a rubric can have: two or more whole numbers from zero, within the limit."""
+    if not all(isinstance(option, int) and not isinstance(option, bool) for option in options):
+        return False
     levels = sorted(options)
     if levels != list(range(len(levels))) or len(levels) < 2:
-        return None
-    if limits.score_levels is not None and len(levels) > limits.score_levels:
-        return None
-    criteria = [meaning for level in levels if (meaning := options[level])]
-    return criteria if len(criteria) == len(levels) else None
+        return False
+    return limits.score_levels is None or len(levels) <= limits.score_levels
 
 
 def _with_none(
@@ -2411,6 +2417,14 @@ def _option_question(
     """The question a field with options becomes: a rubric to score, a yes/no, or a choice."""
     if (criteria := _rubric(options, limits)) is not None:
         return ScoreQuestion(instructions=asked, criteria=cast('list[JsonValue]', criteria))
+    if _rubric_levels(options, limits) and any(options.values()):
+        # Describing some levels says a rubric was meant, and a level whose description was left out (or whose
+        # docstring could not be read) would otherwise turn it into a pick-one with nothing said.
+        warnings.warn(
+            f'Output field {name!r} has levels 0 to {len(options) - 1}, but not every level is described, so it '
+            'is asked as a pick-one rather than scored as a rubric. Describe every level to score it.',
+            UserWarning,
+        )
     if len(options) == 2 and all(isinstance(option, bool) for option in options):
         # `True` and `False` are the two options a yes/no already has, so an `Enum` or `Literal` of
         # exactly those is that same question, with somewhere to say what each answer means.

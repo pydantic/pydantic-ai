@@ -1980,6 +1980,7 @@ def choose(label: str, seen: list[dict[str, Any]] | None = None) -> Callable[[ht
             2,
             {'0': 'Bottom.', '1': 'Middle.', '2': ''},
             id='a level with no meaning',
+            marks=pytest.mark.filterwarnings('ignore:Output field .value. has levels 0 to 2:UserWarning'),
         ),
         pytest.param(
             Annotated[Literal[tuple(range(11))], rubric(*((level, f'Level {level}.') for level in range(11)))],

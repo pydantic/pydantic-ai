@@ -5,6 +5,7 @@ import asyncio
 import copy
 import functools
 import inspect
+import linecache
 import math
 import re
 import sys
@@ -12,6 +13,7 @@ import textwrap
 import time
 import uuid
 import warnings
+import weakref
 from builtins import BaseExceptionGroup as BaseExceptionGroup
 from collections.abc import (
     AsyncGenerator,
@@ -31,7 +33,7 @@ from dataclasses import MISSING, dataclass, fields, is_dataclass
 from datetime import UTC, datetime
 from enum import Enum
 from functools import partial
-from types import GenericAlias
+from types import FrameType, GenericAlias
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -1367,17 +1369,62 @@ def estimate_string_tokens(text: str) -> int:
     return len(_TOKEN_SPLIT_PATTERN.split(text.strip()))
 
 
-def enum_member_docstrings(cls: type[Enum]) -> dict[str, str]:
-    """The docstring under each member of an `Enum`, by member name.
+_captured_class_sources: weakref.WeakKeyDictionary[type, str] = weakref.WeakKeyDictionary()
+"""The source of each class `capture_class_source` found, for `enum_member_docstrings` to fall back on."""
+
+
+def capture_class_source(cls: type, frame: FrameType | None) -> None:
+    """Keep the source of a class whose module has no file, from the text the interpreter registered for it.
+
+    `inspect.getsource` finds a class through its module's `__file__`, which the `__main__` of a notebook or
+    IPython session does not have, so it never reads a class defined in a cell. IPython and ipykernel do register
+    each cell's text in `linecache` under the filename they compile it with, which is how `getsource` works for a
+    function defined there. While the class is being created, one of `frame`'s callers is the frame running the
+    `class` statement, which knows that filename and the line it is on, so the class can be found in the cell
+    then, and told apart from another class of the same name in it.
+
+    A class whose module has a file is left to `getsource`, so importing a module costs nothing.
+    """
+    if getattr(sys.modules.get(cls.__module__), '__file__', None):
+        return
+    # Walk out of the metaclass's machinery (`enum`'s, for an enum) to the frame running the `class` statement.
+    while frame is not None and frame.f_globals.get('__name__') != cls.__module__:
+        frame = frame.f_back
+    if frame is None:
+        return
+    lines = linecache.getlines(frame.f_code.co_filename, frame.f_globals)
+    try:
+        tree = ast.parse(''.join(lines))
+    except SyntaxError:
+        return
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == cls.__name__:
+            start = min([node.lineno, *(decorator.lineno for decorator in node.decorator_list)])
+            end = node.end_lineno or node.lineno
+            if start <= frame.f_lineno <= end:
+                _captured_class_sources[cls] = ''.join(lines[node.lineno - 1 : end])
+                return
+
+
+def _class_source(cls: type) -> str | None:
+    """A class's source, from `inspect.getsource` or else what `capture_class_source` kept, or `None` if neither."""
+    try:
+        return inspect.getsource(cls)
+    except (OSError, TypeError):
+        return _captured_class_sources.get(cls)
+
+
+def enum_member_docstrings(cls: type[Enum]) -> dict[str, str] | None:
+    """The docstring under each member of an `Enum`, by member name, or `None` when its source cannot be read.
 
     Pydantic reads a docstring under a model field with `use_attribute_docstrings`, but not one under an enum
-    member; this does the same for enums, so each option can be described where it is declared. Empty when the
-    source is not available, such as for a class defined in the REPL.
+    member; this does the same for enums, so each option can be described where it is declared. The source is
+    read with `inspect.getsource`, or for a class defined in a notebook cell, from what `capture_class_source`
+    kept when the class was created. An enum built by the functional API has no source to read.
     """
-    try:
-        source = inspect.getsource(cls)
-    except (OSError, TypeError):
-        return {}
+    source = _class_source(cls)
+    if source is None:
+        return None
     class_def = ast.parse(textwrap.dedent(source)).body[0]
     if not isinstance(class_def, ast.ClassDef):  # pragma: no cover
         return {}

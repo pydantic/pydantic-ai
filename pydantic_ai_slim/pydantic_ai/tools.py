@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import inspect
 import warnings
+import weakref
 from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -294,6 +295,21 @@ DocstringFormat: TypeAlias = Literal['google', 'numpy', 'sphinx', 'auto']
 
 A = TypeVar('A')
 
+_warned_enum_source_unavailable: weakref.WeakSet[type[Enum]] = weakref.WeakSet()
+
+
+def _warn_enum_source_unavailable(enum_cls: type[Enum]) -> None:
+    """Say once per enum that it opted into its member docstrings, but they could not be read."""
+    if enum_cls in _warned_enum_source_unavailable:
+        return
+    _warned_enum_source_unavailable.add(enum_cls)
+    warnings.warn(
+        f'`{enum_cls.__qualname__}` mixes in `UseEnumMemberDocstrings`, but its source could not be read, so its '
+        'members are described to the model by their values alone. Define it with a `class` statement in a module '
+        'or notebook cell, or describe the options with `Choices`.',
+        UserWarning,
+    )
+
 
 class GenerateToolJsonSchema(GenerateJsonSchema):
     def enum_schema(self, schema: core_schema.EnumSchema) -> JsonSchemaValue:
@@ -317,6 +333,9 @@ class GenerateToolJsonSchema(GenerateJsonSchema):
         # for; `setdefault` keeps the canonical name's own docstring when both have one, since `__members__`
         # lists a member before its aliases.
         declared = _utils.enum_member_docstrings(enum_cls)
+        if declared is None:
+            _warn_enum_source_unavailable(enum_cls)
+            return json_schema
         docstrings: dict[str, str] = {}
         for name, member in enum_cls.__members__.items():
             if (docstring := declared.get(name)) is not None:

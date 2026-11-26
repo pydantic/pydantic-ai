@@ -42,6 +42,8 @@ send the docstring written under each member as that option's description; the e
 described `const`s. This is the enum counterpart to `model_config = ConfigDict(use_attribute_docstrings=True)`
 on a Pydantic model — an `Enum` has no config to carry a flag, and any assigned class attribute becomes a
 member, so a base class is the marker.
+The docstrings are read from source (a notebook cell works); a functional-API enum has none, so it warns and
+stays a plain list: use `Choices()` for options built at run time.
 
 ```python
 from enum import StrEnum

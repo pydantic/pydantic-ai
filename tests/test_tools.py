@@ -1,8 +1,13 @@
+import inspect
 import json
+import linecache
 import logging
 import re
+import sys
 import threading
 import time
+import types
+import warnings
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, replace
 from enum import Enum
@@ -5798,8 +5803,10 @@ def test_enum_member_docstrings_describe_options():
 
     agent = Agent(FunctionModel(get_json_schema))
 
-    @agent.tool_plain
-    def triage(priority: Priority, other: Undocumented) -> None: ...  # pragma: no cover
+    with pytest.warns(UserWarning, match='`Undocumented` mixes in `UseEnumMemberDocstrings`, but its source'):
+
+        @agent.tool_plain
+        def triage(priority: Priority, other: Undocumented) -> None: ...  # pragma: no cover
 
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
@@ -6011,7 +6018,9 @@ def test_enum_member_docstrings_do_not_need_the_enclosing_model_to_opt_in():
             'type': 'string',
         }
     )
-    assert defs(Functional)['$defs']['Functional'] == snapshot(
+    with pytest.warns(UserWarning, match='`Functional` mixes in `UseEnumMemberDocstrings`, but its source'):
+        functional = defs(Functional)
+    assert functional['$defs']['Functional'] == snapshot(
         {'enum': ['low', 'high'], 'title': 'Functional', 'type': 'string'}
     )
     assert defs(Level)['$defs']['Level'] == snapshot(
@@ -6025,6 +6034,135 @@ def test_enum_member_docstrings_do_not_need_the_enclosing_model_to_opt_in():
             'type': 'string',
         }
     )
+
+
+def run_cell(
+    source: str, monkeypatch: pytest.MonkeyPatch, *, registered: bool = True, registered_source: str | None = None
+) -> dict[str, Any]:
+    """Run `source` the way IPython and ipykernel run a notebook cell, returning the names it defines.
+
+    They compile a cell under a synthetic filename, register its text in `linecache` under that name, and run it in
+    a `__main__` that has no `__file__`. That last part is why `inspect.getsource` cannot find a class defined in a
+    cell, even though it finds a function there through the function's code object. `registered_source` registers
+    other text than what runs, and `registered=False` none at all, as running a string with `exec` does.
+    """
+    filename = f'<ipython-input-{len(linecache.cache)}>'
+    if registered:
+        text = source if registered_source is None else registered_source
+        monkeypatch.setitem(linecache.cache, filename, (len(text), None, text.splitlines(True), filename))
+    module = types.ModuleType('__main__')
+    monkeypatch.setitem(sys.modules, '__main__', module)
+    exec(compile(source, filename, 'exec'), module.__dict__)
+    return module.__dict__
+
+
+NOTEBOOK_CELL = """\
+from enum import IntEnum
+
+from pydantic_ai import UseEnumMemberDocstrings
+
+
+class Urgency(UseEnumMemberDocstrings, IntEnum):
+    routine = 0
+    \"\"\"It can wait a few days.\"\"\"
+
+    now = 1
+    \"\"\"Money is at risk until someone acts.\"\"\"
+
+
+first = Urgency
+
+
+def decorated(cls):
+    return cls
+
+
+@decorated
+class Urgency(UseEnumMemberDocstrings, IntEnum):
+    later = 0
+    \"\"\"The same name, redefined further down the same cell.\"\"\"
+
+    sooner = 1
+
+
+def nested():
+    class Inner(UseEnumMemberDocstrings, IntEnum):
+        low = 0
+        \"\"\"Defined inside a function in the cell.\"\"\"
+
+        high = 1
+
+    return Inner
+"""
+
+
+def test_enum_member_docstrings_are_read_from_a_notebook_cell(monkeypatch: pytest.MonkeyPatch):
+    """A class defined in a cell has no file `inspect.getsource` can find, so its source is kept when it is created.
+
+    Two classes of the same name in one cell are told apart by the line each `class` statement ran on.
+    """
+    cell = run_cell(NOTEBOOK_CELL, monkeypatch)
+
+    def schema(enum: type[Enum]) -> dict[str, Any]:
+        return TypeAdapter(enum).json_schema(schema_generator=GenerateToolJsonSchema)
+
+    with pytest.raises(OSError):
+        inspect.getsource(cell['first'])
+    assert schema(cell['first']) == snapshot(
+        {
+            'anyOf': [
+                {'const': 0, 'description': 'It can wait a few days.'},
+                {'const': 1, 'description': 'Money is at risk until someone acts.'},
+            ],
+            'title': 'Urgency',
+            'type': 'integer',
+        }
+    )
+    assert schema(cell['Urgency']) == snapshot(
+        {
+            'anyOf': [
+                {'const': 0, 'description': 'The same name, redefined further down the same cell.'},
+                {'const': 1},
+            ],
+            'title': 'Urgency',
+            'type': 'integer',
+        }
+    )
+    assert schema(cell['nested']()) == snapshot(
+        {
+            'anyOf': [{'const': 0, 'description': 'Defined inside a function in the cell.'}, {'const': 1}],
+            'title': 'Inner',
+            'type': 'integer',
+        }
+    )
+
+
+def test_an_opted_in_enum_whose_source_cannot_be_read_warns_once(monkeypatch: pytest.MonkeyPatch):
+    """Code run from a string nothing registered has no source to read, so its options go undescribed, once said."""
+    Urgency = run_cell(NOTEBOOK_CELL, monkeypatch, registered=False)['first']
+
+    with pytest.warns(UserWarning, match='`Urgency` mixes in `UseEnumMemberDocstrings`, but its source could not'):
+        schema = TypeAdapter(Urgency).json_schema(schema_generator=GenerateToolJsonSchema)
+    assert schema == snapshot({'enum': [0, 1], 'title': 'Urgency', 'type': 'integer'})
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        TypeAdapter(Urgency).json_schema(schema_generator=GenerateToolJsonSchema)
+
+
+def test_registered_text_that_does_not_parse_or_a_module_that_is_not_running_keeps_no_source(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Nothing is kept when the registered text is not code, or when no running frame belongs to the class's module.
+
+    Either way the class still gets created, and its options go undescribed with the same warning.
+    """
+    Urgency = run_cell(NOTEBOOK_CELL, monkeypatch, registered_source='class (\n')['first']
+    with pytest.warns(UserWarning, match='`Urgency` mixes in `UseEnumMemberDocstrings`, but its source could not'):
+        TypeAdapter(Urgency).json_schema(schema_generator=GenerateToolJsonSchema)
+
+    Elsewhere = DescribedEnum('Elsewhere', {'a': 'a'}, module='a_module_that_is_not_running')
+    with pytest.warns(UserWarning, match='`Elsewhere` mixes in `UseEnumMemberDocstrings`, but its source could not'):
+        TypeAdapter(Elsewhere).json_schema(schema_generator=GenerateToolJsonSchema)
 
 
 def test_admonition_sections_reach_tool_description():
