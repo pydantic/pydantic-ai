@@ -40,6 +40,7 @@ from pydantic_ai.tools import ToolDefinition
 
 from ..batch_utils import UNRUN_MESSAGES
 from ..conftest import try_import
+from .conftest import anthropic_2023_06_01_client
 
 with try_import() as imports_successful:
     import httpx2
@@ -255,8 +256,8 @@ async def test_anthropic_batch_ignores_max_retries() -> None:
 
 
 async def test_anthropic_batch_preserves_supported_settings() -> None:
-
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test'))
+    provider = AnthropicProvider(anthropic_client=anthropic_2023_06_01_client('test'))
+    model = AnthropicModel('claude-sonnet-4-5', provider=provider)
     request = await model.batch_encode(
         BatchRequest(
             custom_id='item',
