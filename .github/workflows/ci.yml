@@ -1712,7 +1712,8 @@ jobs:
     needs: classify
     if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
-    timeout-minutes: 10
+    # The Temporal replay suite starts a dev server, which may first download its binary.
+    timeout-minutes: 15
     env:
       CI: true
       # No other job installs `browser-use`, so the `coverage` job sees `BrowserUse` only from here.
@@ -1749,11 +1750,10 @@ jobs:
       # The capability contracts skip `BrowserUse` on every other job.
       - run: uv run --no-sync coverage run -m pytest tests/harness/test_capability_contracts.py -k BrowserUse
       # Likewise the durable conformance suites, which `--all-extras` gives DBOS and Temporal (#14802).
-      - run: >-
-          uv run --no-sync coverage run -m pytest -k BrowserUse
-          tests/harness/test_durable_tool_io.py tests/harness/test_durable_temporal_replay.py
+      - run: uv run --no-sync coverage run -m pytest tests/harness/test_durable_tool_io.py -k BrowserUse
+      - run: uv run --no-sync coverage run -m pytest tests/harness/test_durable_temporal_replay.py -k BrowserUse
         env:
-          # As in `test-durable-exec`, which runs these suites for every other case.
+          # As in `test-durable-exec`, which runs this suite for every other case.
           BLOCKBUSTER_ENABLED: false
           TEMPORAL_DEBUG: '1'
       - run: uv run --no-sync pyright -p tests/harness/browser_use
