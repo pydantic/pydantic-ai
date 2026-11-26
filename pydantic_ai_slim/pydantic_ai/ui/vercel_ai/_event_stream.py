@@ -530,14 +530,15 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         invalidated_part = self._invalidated_tool_calls.pop(tool_call_id, None)
         streamed_part = self._streamed_call_parts.pop(tool_call_id, None)
         # The call closes with `tool-input-error` on SDK v6+ when its args failed validation, or when it
-        # was streamed but never made available and a failed or interrupted result closes it: the run
-        # discarded it, and backfilling `tool-input-available` would have the client run it through `onToolCall`.
+        # was streamed but never made available: the run discarded it, by skipping it after the final
+        # result or by erroring or being cancelled before it ran. Backfilling `tool-input-available`
+        # would have the client run it through `onToolCall`.
         input_error_part = invalidated_part
         if (
             input_error_part is None
             and streamed_part is not None
             and self.sdk_version >= 6
-            and part.outcome in ('failed', 'interrupted')
+            and part.outcome != 'denied'
         ):
             input_error_part = streamed_part
 

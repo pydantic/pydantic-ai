@@ -55,7 +55,7 @@ import anyio
 import pytest
 from pydantic_core import to_jsonable_python
 
-from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai import Agent, ModelRetry, RunContext, ToolOutput
 from pydantic_ai.capabilities import AbstractCapability, Capability
 from pydantic_ai.conversation_store import InMemoryConversationStore
 from pydantic_ai.messages import (
@@ -1641,5 +1641,40 @@ async def test_vercel_discarded_tool_call_never_reaches_on_tool_call(js_driver: 
             'state': 'output-error',
             'rawInput': {'query': 'hi'},
             'errorText': 'Tool execution was interrupted by an error.',
+        }
+    )
+
+
+async def test_vercel_skipped_tool_call_never_reaches_on_tool_call(js_driver: JSDriver) -> None:
+    """A function tool call skipped because the output tool already ended the run doesn't reach `onToolCall`.
+
+    With `end_strategy='early'`, the run records a "Tool not executed" stub for the call. `tool-input-available` would
+    have the client run it through `onToolCall`, so the adapter closes it with `tool-input-error` instead.
+    """
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {0: DeltaToolCall(name='final_result', json_args='{"response": "done"}', tool_call_id='output_call')}
+        yield {1: DeltaToolCall(name='frontend_tool', json_args='{"query": "hi"}', tool_call_id='skipped_call')}
+
+    agent = Agent(FunctionModel(stream_function=stream_function), output_type=ToolOutput(str), end_strategy='early')
+
+    @agent.tool_plain
+    def frontend_tool(query: str) -> str:
+        raise NotImplementedError  # never called: the run skips it
+
+    client = VercelClient(js_driver, 'skipped-tool-call', {})
+    adapter = client.adapter(cast(Agent[None, str], agent), client.submit('Hello', None))
+    result = client.receive([chunk async for chunk in adapter.encode_stream(adapter.run_stream())])
+
+    # The output tool call reaches `onToolCall` like any other output tool call; the skipped call must not.
+    assert 'skipped_call' not in result['toolCalls']
+    [tool_part] = [part for part in result['messages'][-1]['parts'] if part['type'] == 'tool-frontend_tool']
+    assert tool_part == snapshot(
+        {
+            'type': 'tool-frontend_tool',
+            'toolCallId': 'skipped_call',
+            'state': 'output-error',
+            'rawInput': {'query': 'hi'},
+            'errorText': 'Tool not executed - a final result was already processed.',
         }
     )

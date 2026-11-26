@@ -3997,6 +3997,117 @@ async def test_run_stream_error_keeps_available_tool_call_closeout():
     )
 
 
+def _agent_skipping_a_call_after_the_final_result() -> Agent[None, str]:
+    async def stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {0: DeltaToolCall(name='final_result', json_args='{"response": "done"}', tool_call_id='output_call')}
+        yield {1: DeltaToolCall(name='my_tool', json_args='{"query": "hi"}', tool_call_id='skipped_call')}
+
+    agent = Agent(FunctionModel(stream_function=stream_function), output_type=ToolOutput(str), end_strategy='early')
+
+    @agent.tool_plain
+    def my_tool(query: str) -> str:
+        raise NotImplementedError  # never called: the run skips it
+
+    return agent
+
+
+async def test_run_stream_closes_call_skipped_after_final_result_with_input_error():
+    """A call skipped because the output tool already ended the run is closed with `tool-input-error` on v6.
+
+    `tool-input-available` would have the client run the skipped call through `onToolCall`.
+    """
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(_agent_skipping_a_call_after_the_final_result(), request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'output_call', 'toolName': 'final_result'},
+            {'type': 'tool-input-delta', 'toolCallId': 'output_call', 'inputTextDelta': '{"response": "done"}'},
+            {'type': 'tool-input-start', 'toolCallId': 'skipped_call', 'toolName': 'my_tool'},
+            {'type': 'tool-input-delta', 'toolCallId': 'skipped_call', 'inputTextDelta': '{"query": "hi"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'output_call',
+                'toolName': 'final_result',
+                'input': {'response': 'done'},
+            },
+            {'type': 'tool-output-available', 'toolCallId': 'output_call', 'output': 'Final result processed.'},
+            {
+                'type': 'tool-input-error',
+                'toolCallId': 'skipped_call',
+                'toolName': 'my_tool',
+                'input': {'query': 'hi'},
+                'errorText': 'Tool not executed - a final result was already processed.',
+            },
+            {
+                'type': 'message-metadata',
+                'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_call_skipped_after_final_result_v5():
+    """AI SDK v5 has no `tool-input-error`, so a skipped call still gets `tool-input-available` and the stub output."""
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(_agent_skipping_a_call_after_the_final_result(), request, sdk_version=5)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'output_call', 'toolName': 'final_result'},
+            {'type': 'tool-input-delta', 'toolCallId': 'output_call', 'inputTextDelta': '{"response": "done"}'},
+            {'type': 'tool-input-start', 'toolCallId': 'skipped_call', 'toolName': 'my_tool'},
+            {'type': 'tool-input-delta', 'toolCallId': 'skipped_call', 'inputTextDelta': '{"query": "hi"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'output_call',
+                'toolName': 'final_result',
+                'input': {'response': 'done'},
+            },
+            {'type': 'tool-output-available', 'toolCallId': 'output_call', 'output': 'Final result processed.'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'skipped_call',
+                'toolName': 'my_tool',
+                'input': {'query': 'hi'},
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': 'skipped_call',
+                'output': 'Tool not executed - a final result was already processed.',
+            },
+            {
+                'type': 'message-metadata',
+                'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
 async def test_run_stream_on_complete_error():
     agent = Agent(model=TestModel())
 
