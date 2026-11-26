@@ -1335,10 +1335,17 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         assert index is not None, 'deferred calls come from a response in the history'
         response = history[index]
         assert isinstance(response, _messages.ModelResponse)
+        # A response can repeat a `tool_call_id` across `'graceful'` batches, so only the deferred call itself, the
+        # `'private'` call to the same tool, is swapped, for a copy of itself.
         shown = dataclasses.replace(
             response,
             parts=[
-                redacted.get(part.tool_call_id, part) if isinstance(part, _messages.ToolCallPart) else part
+                dataclasses.replace(part, ui_visibility='redacted')
+                if isinstance(part, _messages.ToolCallPart)
+                and part.ui_visibility == 'private'
+                and (call := redacted.get(part.tool_call_id)) is not None
+                and part.tool_name == call.tool_name
+                else part
                 for part in response.parts
             ],
         )

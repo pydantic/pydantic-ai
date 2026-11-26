@@ -105,7 +105,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import FunctionToolset
 
 from .._inline_snapshot import snapshot
-from ..conftest import try_import
+from ..conftest import sse_data, try_import
 from .conftest import HERE, JSDriver
 
 with try_import() as imports_successful:
@@ -1077,15 +1077,6 @@ SCENARIOS = [
 # --- Clients ------------------------------------------------------------------------------------------------------
 
 
-def _sse_data(encoded: Sequence[str]) -> list[dict[str, Any]]:
-    """The JSON payloads of a server-sent event stream."""
-    return [
-        json.loads(line.removeprefix('data: '))
-        for line in ''.join(encoded).splitlines()
-        if line.startswith('data: ') and line != 'data: [DONE]'
-    ]
-
-
 @dataclass
 class Turn:
     """One request from the client, as the server received it, and what the server did with it."""
@@ -1199,7 +1190,7 @@ class VercelClient(Client):
         return VercelAIAdapter(agent, VercelAIAdapter.build_run_input(body), sdk_version=6, **self.adapter_kwargs)
 
     def stream(self, encoded: list[str]) -> dict[str, Any]:
-        return {'chunks': _sse_data(encoded)}
+        return {'chunks': sse_data(encoded)}
 
 
 class AGUIClient(Client):
@@ -1221,7 +1212,7 @@ class AGUIClient(Client):
         return AGUIAdapter(agent, AGUIAdapter.build_run_input(body), **self.adapter_kwargs)
 
     def stream(self, encoded: list[str]) -> dict[str, Any]:
-        return {'events': _sse_data(encoded)}
+        return {'events': sse_data(encoded)}
 
 
 CLIENTS: dict[Protocol, type[Client]] = {'vercel': VercelClient, 'agui': AGUIClient}

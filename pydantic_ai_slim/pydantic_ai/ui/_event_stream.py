@@ -177,6 +177,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     _warns_on_hidden_tools: bool = field(default=False, init=False)
     """Whether to warn the first time a non-public tool part is hidden or redacted; set by an adapter run with client-held history."""
 
+    _closeout_hid_tools: bool = field(default=False, init=False)
+    """Whether the error path's closeout hid or redacted a tool result, so the warning goes out after the error."""
+
     _turn: Literal['request', 'response'] | None = None
 
     _result: AgentRunResult[OutputDataT] | None = None
@@ -331,6 +334,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             async with aclosing(self._closing_events(exc, cancelled, on_cancel)) as closing_events:
                 async for e in closing_events:
                     yield e
+            if self._closeout_hid_tools:
+                # Warned only now, so a warning raised as an error can't take the place of the run's own error.
+                self._warn_once_on_hidden_tools()
         finally:
             await _utils.aclose_if_supported(stream)
 
@@ -497,7 +503,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             # `tool_call_id` takes over that id's visibility, so its closing result is hidden too.
             return
         if client_part is not error_part:
-            self._warn_once_on_hidden_tools()
+            self._closeout_hid_tools = True
         handler = (
             self.handle_output_tool_result(OutputToolResultEvent(client_part))
             if kind == 'output'
@@ -650,6 +656,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             if self._hidden_calls.pop(call.tool_call_id, None) is None:
                 continue
             self._call_ui_visibilities[call.tool_call_id] = 'redacted'
+            # Now that the client was sent the call, the error path has to close it.
+            self._pending_tool_calls[call.tool_call_id] = _PendingToolCall('function', call.tool_name)
             async for e in self.handle_part_start(PartStartEvent(index=0, part=call)):
                 yield e
             async for e in self.handle_part_end(PartEndEvent(index=0, part=call)):

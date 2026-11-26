@@ -4,6 +4,7 @@ import ast
 import asyncio
 import dataclasses
 import importlib.util
+import json
 import os
 import re
 import secrets
@@ -176,6 +177,7 @@ if TYPE_CHECKING:
 
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.xai import XaiProvider
+    from pydantic_ai.tools import ToolUIVisibility
 
     def IsInstance(arg: type[T]) -> T: ...
     def IsDatetime(*args: Any, **kwargs: Any) -> datetime: ...
@@ -2055,6 +2057,25 @@ def legacy_retry_prompt_part(
     if timestamp is not None:
         part.timestamp = timestamp
     return part
+
+
+def sse_data(encoded: Sequence[str]) -> list[dict[str, Any]]:
+    """The JSON payloads of a server-sent event stream, without its closing `[DONE]`."""
+    return [
+        json.loads(line.removeprefix('data: '))
+        for line in ''.join(encoded).splitlines()
+        if line.startswith('data: ') and line != 'data: [DONE]'
+    ]
+
+
+def tool_part_stamps(messages: Sequence[ModelMessage]) -> list[tuple[str, str, ToolUIVisibility | None]]:
+    """Each tool call and return part in `messages`, as `(part kind, tool name, ui_visibility stamp)`."""
+    return [
+        (part.part_kind, part.tool_name, part.ui_visibility)
+        for message in messages
+        for part in message.parts
+        if isinstance(part, (ToolCallPart, ToolReturnPart, NativeToolCallPart, NativeToolReturnPart))
+    ]
 
 
 _RequestPartT = TypeVar(

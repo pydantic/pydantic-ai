@@ -2428,6 +2428,40 @@ def test_cache_policy_keys_for_instruction_ids_are_pinned():
     )
 
 
+def test_cache_policy_keys_for_unset_ui_visibility_are_pinned():
+    """An unset `ui_visibility` stays out of the key, so a flow retried across the upgrade that added it hits.
+
+    The digests were computed before the field existed. A set stamp stays in the key: the model task's cached response
+    carries it.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+    tool_def = ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'})
+    history: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='get_weather', args='{}', tool_call_id='call_1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_weather', content='sunny', tool_call_id='call_1')]),
+    ]
+
+    def key_for(value: Any) -> str | None:
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'value': value}, flow_parameters={})
+
+    assert key_for(tool_def) == snapshot('cc5bcf7fd396f7c465b0f76f152dd958')
+    assert key_for(ModelRequestParameters(function_tools=[tool_def])) == snapshot('feac05e3f14461938e4e34e24d9c1493')
+    assert key_for(history) == snapshot('b738f0514ffcdc82afbe3d15062093a1')
+    assert key_for(replace(tool_def, ui_visibility='private')) != key_for(tool_def)
+    stamped_history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='get_weather', args='{}', tool_call_id='call_1', ui_visibility='private')]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='get_weather', content='sunny', tool_call_id='call_1', ui_visibility='private')
+            ]
+        ),
+    ]
+    assert key_for(stamped_history) != key_for(history)
+
+
 def test_cache_policy_normalizes_only_framework_tool_call_ids():
     cache_policy = PrefectAgentInputs()
     mock_task_ctx = MagicMock()

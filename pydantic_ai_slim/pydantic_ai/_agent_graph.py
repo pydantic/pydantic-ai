@@ -6094,7 +6094,7 @@ def _stamp_ui_visibility(
     """Stamp each `ToolCallPart` of a response a capability supplied instead of `Model.request()` with its tool's `ui_visibility`.
 
     Only the stamp is written: those calls keep the typing they came with, as execution types each call from its tool
-    (`ToolManager._with_tool_kind`).
+    (`ToolManager._with_tool_kind_and_visibility`).
     """
     return _stamp_and_type_call_parts(response, {}, ui_visibility_stamps(model_request_parameters))
 

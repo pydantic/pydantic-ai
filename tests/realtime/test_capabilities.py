@@ -97,6 +97,7 @@ from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.toolsets._deferred_capability_loader import LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 
+from ..conftest import tool_part_stamps
 from ..realtime_connections import InferredConnection
 from .test_session import (
     FakeRealtimeConnection,
@@ -335,16 +336,8 @@ async def test_session_stamps_tool_parts_like_a_run() -> None:
         async for _ in session:  # pragma: no branch
             pass
 
-    def stamps(messages: Sequence[ModelMessage]) -> list[tuple[str, str, ToolUIVisibility | None]]:
-        return sorted(
-            (part.part_kind, part.tool_name, part.ui_visibility)
-            for message in messages
-            for part in message.parts
-            if isinstance(part, (ToolCallPart, ToolReturnPart))
-        )
-
-    assert stamps(session.all_messages()) == stamps(run.all_messages())
-    assert stamps(run.all_messages()) == [
+    assert sorted(tool_part_stamps(session.all_messages())) == sorted(tool_part_stamps(run.all_messages()))
+    assert sorted(tool_part_stamps(run.all_messages())) == [
         ('tool-call', 'private_tool', 'private'),
         ('tool-call', 'redacted_tool', 'redacted'),
         ('tool-call', 'unset_tool', None),

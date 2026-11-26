@@ -2473,10 +2473,12 @@ class BaseToolReturnPart(_RecordsContentFiles, Generic[ContentT_co, MetadataT_co
 
     ui_visibility: ToolUIVisibility | None = None
     """What a UI adapter sends a client for this return, copied from its call's
-    [`ui_visibility`][pydantic_ai.messages.BaseToolCallPart.ui_visibility].
+    [`ui_visibility`][pydantic_ai.messages.BaseToolCallPart.ui_visibility] where the framework builds the return
+    from the call.
 
-    `None` if the tool had no setting, in which case a UI adapter applies its own default. Never sent to the
-    model. See [Tool visibility](../ui/overview.md#tool-visibility).
+    `None` if the tool had no setting, or if the return was built without its call, such as an output tool's retry. A
+    UI adapter then follows the call's stamp, and its own default for a call without one. Never sent to the model.
+    See [Tool visibility](../ui/overview.md#tool-visibility).
     """
 
     metadata: Any = None

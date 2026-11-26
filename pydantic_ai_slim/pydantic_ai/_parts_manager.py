@@ -49,18 +49,19 @@ Type alias for a vendor identifier, which can be any hashable type (e.g., a stri
 """
 
 
-def tool_def_ui_visibility(tool_def: ToolDefinition) -> ToolUIVisibility | None:
+def tool_def_ui_visibility(tool_def: ToolDefinition, *, approved: bool = False) -> ToolUIVisibility | None:
     """The `ui_visibility` a call to `tool_def` is stamped with, or `None` when the tool sets none.
 
     A tool's own [`ui_visibility`][pydantic_ai.tools.ToolDefinition.ui_visibility], except that an external tool's
     result comes from the client and an output tool's arguments are the run's answer, so both are `'public'`, and a
-    `'private'` tool that needs approval is `'redacted'`, since the user can't approve a call they can't see.
+    `'private'` call that needs approval, or that the user `approved`, is `'redacted'`, since the user can't approve a
+    call they can't see.
     """
     if (visibility := tool_def.ui_visibility) is None:
         return None
     if tool_def.kind in ('external', 'output'):
         return 'public'
-    if tool_def.kind == 'unapproved' and visibility == 'private':
+    if visibility == 'private' and (approved or tool_def.kind == 'unapproved'):
         return 'redacted'
     return visibility
 

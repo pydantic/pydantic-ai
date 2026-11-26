@@ -875,7 +875,7 @@ class ToolManager(Generic[AgentDepsT]):
 
         return await cap.after_tool_execute(ctx, call=call, tool_def=tool_def, args=args, result=tool_result)
 
-    def _with_tool_kind(self, call: ToolCallPart, *, approved: bool) -> ToolCallPart:
+    def _with_tool_kind_and_visibility(self, call: ToolCallPart, *, approved: bool) -> ToolCallPart:
         """Give a call its tool's `tool_kind` and `ui_visibility` when it lacks them, promoted to the typed part registered for it.
 
         Calls the model issues are promoted and stamped from the same `ToolDefinition` before they get here;
@@ -887,8 +887,11 @@ class ToolManager(Generic[AgentDepsT]):
         if self.tools is None or (tool := self.tools.get(call.tool_name)) is None:
             return call
         tool_def = tool.tool_def
-        if call.ui_visibility is None and (visibility := tool_def_ui_visibility(tool_def)) is not None:
-            call = replace(call, ui_visibility='redacted' if approved and visibility == 'private' else visibility)
+        if (
+            call.ui_visibility is None
+            and (visibility := tool_def_ui_visibility(tool_def, approved=approved)) is not None
+        ):
+            call = replace(call, ui_visibility=visibility)
         if call.tool_kind is None and (kind := tool_def.tool_kind) is not None:
             call = ToolCallPart.narrow_type(call, tool_kind=kind)
         return call
@@ -1060,7 +1063,7 @@ class ToolManager(Generic[AgentDepsT]):
         assert self.ctx is not None
         ctx = self.ctx
         tool: ToolsetTool[AgentDepsT] | None = None
-        call = self._with_tool_kind(call, approved=approved)
+        call = self._with_tool_kind_and_visibility(call, approved=approved)
 
         try:
             _name, tool = self._resolve_tool(call)
@@ -1543,7 +1546,7 @@ class ToolManager(Generic[AgentDepsT]):
             CallDeferred / ApprovalRequired: No handler resolved the call, or the
                 approved tool re-raised a deferral.
         """
-        call = self._with_tool_kind(call, approved=approved)
+        call = self._with_tool_kind_and_visibility(call, approved=approved)
         try:
             validated = await self.validate_tool_call(
                 call,

@@ -14,6 +14,8 @@ from pydantic_ai import ToolsetTool
 from pydantic_ai._utils import TOOL_CALL_ID_PREFIX
 from pydantic_ai.messages import (
     AgentInstructionSource,
+    BaseToolCallPart,
+    BaseToolReturnPart,
     CapabilityInstructionSource,
     CapabilityPart,
     CapabilitySource,
@@ -235,6 +237,10 @@ def _excluded_fields(obj: object, *, is_framework: bool) -> frozenset[str]:
         excluded_fields |= _CAPABILITY_PART_EXCLUDED_FIELDS
     elif isinstance(obj, _INSTRUCTION_SOURCE_TYPES):
         excluded_fields |= _INSTRUCTION_SOURCE_EXCLUDED_FIELDS
+    elif isinstance(obj, ToolDefinition | BaseToolCallPart | BaseToolReturnPart) and obj.ui_visibility is None:
+        # Left out while unset, so keys stay what they were before the field was added; a set stamp stays in the key,
+        # since the model task's cached response carries it.
+        excluded_fields |= {'ui_visibility'}
     return excluded_fields
 
 
