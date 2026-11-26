@@ -2403,6 +2403,83 @@ async def test_prefix_tools_returns_none_when_no_toolset():
     """PrefixTools.get_toolset() returns None if the wrapped capability has no toolset."""
     cap = PrefixTools(wrapped=CustomCapability(), prefix='ns')
     assert cap.get_toolset() is None
+    assert cap.get_wrapper_toolset(FunctionToolset()) is None
+
+
+async def test_prefix_tools_prefixes_wrapper_toolset_added_tools():
+    """PrefixTools.get_wrapper_toolset() prefixes tools added by the wrapper without renaming passed-through tools."""
+    from dataclasses import dataclass
+
+    from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
+
+    @dataclass
+    class _AddingWrapperToolset(WrapperToolset[None]):
+        tag: str
+
+        async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+            tools = dict(await super().get_tools(ctx))
+            helper = FunctionToolset()
+
+            @helper.tool_plain
+            def run_code(code: str) -> str:
+                return f'{self.tag}:{code}'
+
+            tools.update(await helper.get_tools(ctx))
+            return tools
+
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+        ) -> Any:
+            if name == 'run_code':
+                return f'{self.tag}:{tool_args["code"]}'
+            return await super().call_tool(name, tool_args, ctx, tool)
+
+    @dataclass
+    class _WrapperCapability(AbstractCapability[None]):
+        tag: str
+
+        def get_wrapper_toolset(self, toolset: AbstractToolset[None]) -> AbstractToolset[None]:
+            return _AddingWrapperToolset(wrapped=toolset, tag=self.tag)
+
+    seen_tools: list[str] = []
+    step = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal step
+        if step == 0:
+            seen_tools[:] = sorted(t.name for t in info.function_tools)
+            step += 1
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('a_run_code', {'code': 'x'}),
+                    ToolCallPart('b_run_code', {'code': 'y'}),
+                    ToolCallPart('outer_tool', {}),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[
+            PrefixTools(wrapped=_WrapperCapability(tag='A'), prefix='a'),
+            PrefixTools(wrapped=_WrapperCapability(tag='B'), prefix='b'),
+        ],
+    )
+
+    @agent.tool_plain
+    def outer_tool() -> str:
+        return 'outer'
+
+    result = await agent.run('run')
+    assert result.output == 'done'
+    assert seen_tools == ['a_run_code', 'b_run_code', 'outer_tool']
+    tool_returns = [
+        (part.tool_name, part.content)
+        for msg in result.all_messages()
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert tool_returns == [('a_run_code', 'A:x'), ('b_run_code', 'B:y'), ('outer_tool', 'outer')]
 
 
 async def test_prefix_tools_with_callable_toolset():
