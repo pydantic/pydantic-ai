@@ -1273,6 +1273,8 @@ def test_gh_cli_answers_disposition_lookups(listed: int):
                     return '{"created_at": "2026-11-19T04:57:52Z"}'
                 case 'repos/o/r/issues/13' | 'repos/o/r/collaborators/stranger/permission':
                     raise GateError('Not Found (HTTP 404)')
+                case 'repos/o/r/issues/15':
+                    raise GateError('Gone (HTTP 410)')
                 case 'repos/o/r/collaborators/maintainer/permission':
                     return '{"permission": "write"}'
                 case _:
@@ -1286,6 +1288,8 @@ def test_gh_cli_answers_disposition_lookups(listed: int):
     assert len(calls) == (1 if listed == 1 else 8)
     assert github.issue_created_at(12) == datetime(2026, 11, 19, 4, 57, 52, tzinfo=UTC)
     assert github.issue_created_at(13) is None
+    # A deleted issue answers 410 and names no issue, as a missing one does.
+    assert github.issue_created_at(15) is None
     with pytest.raises(GateError):
         github.issue_created_at(14)
     assert github.permission('maintainer') == 'write'
