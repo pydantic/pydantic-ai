@@ -16,7 +16,7 @@ import pytest
 
 from pydantic_ai import Agent, ToolOutput
 from pydantic_ai.capabilities import Capability, PrepareTools
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolFailed
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -603,6 +603,64 @@ async def test_standalone_stream_closes_no_output_call_it_hid():
     wire = ''.join(chunks)
     assert 'The model went away.' in wire
     assert 'final_result' not in wire
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+@pytest.mark.parametrize('prefix_tool', ['public', 'default_redacted'])
+async def test_tool_name_streamed_in_pieces_is_stamped_from_the_complete_name(
+    protocol: ProtocolName, prefix_tool: Literal['public', 'default_redacted']
+):
+    """A name that first matches another tool, `lookup` for `lookup_secret`, takes the complete name's stamp.
+
+    The call has already started under the shorter name by then, which the docs call out; its result never goes out.
+    """
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        if any(isinstance(part, ToolReturnPart) for m in messages for part in m.parts):
+            yield 'Done.'
+        else:
+            yield {0: DeltaToolCall(name='lookup', tool_call_id='call_0')}
+            yield {0: DeltaToolCall(name='_secret')}
+            yield {0: DeltaToolCall(json_args='{}')}
+
+    agent = Agent(FunctionModel(stream_function=stream))
+
+    @agent.tool_plain(ui_visibility='public' if prefix_tool == 'public' else None)
+    def lookup() -> str:
+        return 'Nothing to see.'  # pragma: no cover
+
+    @agent.tool_plain(ui_visibility='private')
+    def lookup_secret() -> str:
+        return SECRET
+
+    default: ToolUIVisibility = 'redacted' if prefix_tool == 'default_redacted' else 'public'
+    run = await run_adapter(protocol, agent, default_ui_visibility=default)
+
+    assert stamps(run.messages) == [
+        ('tool-call', 'lookup_secret', 'private'),
+        ('tool-return', 'lookup_secret', 'private'),
+    ]
+    assert SECRET not in run.wire
+    assert 'lookup_secret' not in run.wire
+    assert SECRET not in dump(protocol, run.messages)
+    assert 'lookup_secret' not in dump(protocol, run.messages)
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+@pytest.mark.parametrize('ui_visibility', ['redacted', 'private'])
+async def test_failure_a_tool_reports_follows_its_visibility(protocol: ProtocolName, ui_visibility: ToolUIVisibility):
+    """A `ToolFailed` message is the tool's result, so it stays off the stream and out of the dump like any result."""
+    agent = Agent(calling(('lookup_order', '{"order_id": "o_1"}')))
+
+    @agent.tool_plain(ui_visibility=ui_visibility)
+    def lookup_order(order_id: str) -> str:
+        raise ToolFailed(SECRET)
+
+    run = await run_adapter(protocol, agent)
+
+    assert 'Done.' in run.wire
+    assert SECRET not in run.wire
+    assert SECRET not in dump(protocol, run.messages)
 
 
 async def test_standalone_event_stream_default_applies_only_to_unstamped_parts():

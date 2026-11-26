@@ -162,6 +162,14 @@ class ModelResponsePartsManager:
         """Stamp a call with its tool's `ui_visibility`, and promote a base part to its typed subclass via `tool_kind`."""
         return resolved_call_part(part, self._tool_kind_by_name, self._ui_visibility_by_name)
 
+    def _retyped_call_part(self, part: ToolCallPart, delta: ToolCallPartDelta) -> ToolCallPart:
+        """`_typed_call_part` for a call that `delta` just changed."""
+        if delta.tool_name_delta:
+            # A name streamed in pieces can first match another tool, whose stamp the grown name mustn't keep:
+            # stamp it again from the tool it names now.
+            part = replace(part, ui_visibility=None)
+        return self._typed_call_part(part)
+
     def get_parts(self) -> list[ModelResponsePart]:
         """Return only model response parts that are complete (i.e., not ToolCallPartDelta's).
 
@@ -497,7 +505,7 @@ class ModelResponsePartsManager:
             try:
                 updated_part = self._apply_tool_call_delta(part_index, existing_part, delta)
                 if isinstance(updated_part, ToolCallPart):
-                    updated_part = self._typed_call_part(updated_part)
+                    updated_part = self._retyped_call_part(updated_part, delta)
             except Exception:
                 self._parts[part_index] = existing_part
                 if buffer is None:
