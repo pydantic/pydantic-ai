@@ -1410,6 +1410,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/__init__.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_operation_backend.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_model.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::<module>",
