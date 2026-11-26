@@ -14,10 +14,13 @@ from pydantic_ai import ToolsetTool
 from pydantic_ai._utils import TOOL_CALL_ID_PREFIX
 from pydantic_ai.messages import (
     AgentInstructionSource,
+    BaseToolCallPart,
+    BaseToolReturnPart,
     CapabilityInstructionSource,
     CapabilityPart,
     CapabilitySource,
     RunInstructionSource,
+    ToolReturnPart,
     ToolsetInstructionSource,
 )
 from pydantic_ai.tools import RunContext, ToolDefinition
@@ -235,7 +238,22 @@ def _excluded_fields(obj: object, *, is_framework: bool) -> frozenset[str]:
         excluded_fields |= _CAPABILITY_PART_EXCLUDED_FIELDS
     elif isinstance(obj, _INSTRUCTION_SOURCE_TYPES):
         excluded_fields |= _INSTRUCTION_SOURCE_EXCLUDED_FIELDS
+    elif isinstance(obj, ToolDefinition | BaseToolCallPart | BaseToolReturnPart):
+        excluded_fields |= _unset_added_fields(obj)
     return excluded_fields
+
+
+def _unset_added_fields(obj: ToolDefinition | BaseToolCallPart | BaseToolReturnPart[Any]) -> frozenset[str]:
+    """Fields added after keys were first computed, left out while unset so a flow retried across the upgrade hits.
+
+    Set, they stay in the key: the model task's cached response carries them.
+    """
+    unset: set[str] = set()
+    if obj.ui_visibility is None:
+        unset.add('ui_visibility')
+    if isinstance(obj, ToolReturnPart) and not obj.attachments:
+        unset.add('attachments')
+    return frozenset(unset)
 
 
 def _strip_cache_excluded_fields(

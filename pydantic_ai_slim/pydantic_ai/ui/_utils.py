@@ -2,21 +2,33 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from typing import Any, Final
+from typing import Any, Final, TypeVar, assert_never, overload
 
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai import messages as _messages
-from pydantic_ai._mcp_apps import MCPAppToolResult
+from pydantic_ai._mcp_apps import MCP_APP_METADATA_KEY, MCPAppToolResult
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
     BaseToolReturnPart,
     ModelMessage,
+    ModelRequest,
+    ModelRequestPart,
+    ModelResponse,
+    ModelResponsePart,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]
     TextContent,
+    ToolCallPart,
     ToolResultAttachment,
     ToolReturnContent,
+    ToolReturnPart,
+    ToolUIVisibility,
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
 
 INTERNAL_METADATA_KEY = _messages._PYDANTIC_AI_METADATA_KEY  # pyright: ignore[reportPrivateUsage]
@@ -143,3 +155,157 @@ def mcp_app_ui_payload(app: MCPAppToolResult) -> dict[str, Any]:
     if app['toolset_id'] is not None:
         payload['serverId'] = payload['serverHash'] = app['toolset_id']
     return payload
+
+
+_ReturnPartT = TypeVar('_ReturnPartT', ToolReturnPart[Any], NativeToolReturnPart[Any])
+
+
+def ui_visibility_of(
+    part: ToolCallPart | NativeToolCallPart | BaseToolReturnPart[Any],
+    *,
+    call_visibility: ToolUIVisibility | None,
+    default: ToolUIVisibility,
+) -> ToolUIVisibility:
+    """What a client is sent for `part`: its own stamp, else its call's (for a return), else the adapter's default.
+
+    A value outside `ToolUIVisibility` raises rather than reading as `'public'`.
+    """
+    visibility = part.ui_visibility or call_visibility or default
+    match visibility:
+        case 'public' | 'redacted' | 'private':
+            return visibility
+        case _:
+            assert_never(visibility)
+
+
+def client_tool_return(part: _ReturnPartT, visibility: ToolUIVisibility) -> _ReturnPartT | None:
+    """`part` as a client is sent it under `visibility`: `None` when it is `'private'`.
+
+    A `'redacted'` return's content becomes the placeholder and its attachments go, a retry loses the feedback it
+    carries, a native return loses the provider's details, and the MCP Apps record, which holds the full result,
+    leaves the metadata. The rest of the metadata stays: the events a tool puts there are the channel it chose for the
+    client.
+    """
+    match visibility:
+        case 'public':
+            return part
+        case 'private':
+            return None
+        case 'redacted':
+            placeholder = '[REDACTED]'
+            metadata = part.metadata
+            if is_str_dict(metadata) and MCP_APP_METADATA_KEY in metadata:
+                metadata = {key: value for key, value in metadata.items() if key != MCP_APP_METADATA_KEY} or None
+            match part:
+                case ToolReturnPart():
+                    return replace(part, content=placeholder, metadata=metadata, retry=None, attachments=())
+                case NativeToolReturnPart():
+                    return replace(part, content=placeholder, metadata=metadata, provider_details=None)
+                case _:
+                    assert_never(part)
+        case _:
+            assert_never(visibility)
+
+
+def warn_client_held_history_with_hidden_tools(*, stacklevel: int) -> None:
+    """Warn that a client holding the history sends back what it was sent of a non-public tool as the tool's result."""
+    warnings.warn(
+        "A tool's `ui_visibility` keeps its result from the client, but the client holds the history, so it sends "
+        'back the placeholder (or nothing) as the result and the model loses the real one. '
+        "Keep the history on the server with `manage_message_history='server'` or a `conversation_store`.",
+        UserWarning,
+        stacklevel=stacklevel,
+    )
+
+
+def return_ui_visibility(
+    part: BaseToolReturnPart[Any],
+    visibility_by_call_id: Mapping[str, ToolUIVisibility],
+    default_ui_visibility: ToolUIVisibility,
+) -> ToolUIVisibility:
+    """What a client is sent for return `part`, by its stamp, else its call's visibility in `visibility_by_call_id`."""
+    return ui_visibility_of(
+        part, call_visibility=visibility_by_call_id.get(part.tool_call_id), default=default_ui_visibility
+    )
+
+
+@overload
+def message_with_parts(message: ModelResponse, parts: list[ModelResponsePart]) -> ModelResponse | None: ...
+@overload
+def message_with_parts(message: ModelRequest, parts: list[ModelRequestPart]) -> ModelRequest | None: ...
+def message_with_parts(
+    message: ModelMessage, parts: list[ModelResponsePart] | list[ModelRequestPart]
+) -> ModelMessage | None:
+    """`message` with the parts `client_view` shows: itself if they are its own, `None` if there are none left."""
+    if len(parts) == len(message.parts) and all(new is old for new, old in zip(parts, message.parts)):
+        return message
+    return replace(message, parts=parts) if parts else None
+
+
+def client_response_part(
+    part: ModelResponsePart, visibility_by_call_id: dict[str, ToolUIVisibility], default_ui_visibility: ToolUIVisibility
+) -> ModelResponsePart | None:
+    """`part` as a client is sent it; `None` for nothing.
+
+    Each tool call's visibility is recorded in `visibility_by_call_id`, for its return.
+    """
+    if isinstance(part, (ToolCallPart, NativeToolCallPart)):
+        visibility = visibility_by_call_id[part.tool_call_id] = ui_visibility_of(
+            part, call_visibility=None, default=default_ui_visibility
+        )
+        return None if visibility == 'private' else part
+    if isinstance(part, NativeToolReturnPart):
+        return client_tool_return(part, return_ui_visibility(part, visibility_by_call_id, default_ui_visibility))
+    return part
+
+
+def client_request_part(
+    part: ModelRequestPart,
+    visibility_by_call_id: Mapping[str, ToolUIVisibility],
+    default_ui_visibility: ToolUIVisibility,
+) -> ModelRequestPart | None:
+    """`part` as `client_view` shows it.
+
+    A legacy retry bound to a tool call is that call's return, as the dumps translate it, so it takes the call's
+    visibility; a shown one is left for the dumps to translate.
+    """
+    if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+        translated = _translate_legacy_retry_part(part)
+        if not isinstance(translated, ToolReturnPart):
+            return part
+        shown = client_tool_return(
+            translated, return_ui_visibility(translated, visibility_by_call_id, default_ui_visibility)
+        )
+        return part if shown is translated else shown
+    if isinstance(part, ToolReturnPart):
+        return client_tool_return(part, return_ui_visibility(part, visibility_by_call_id, default_ui_visibility))
+    return part
+
+
+def client_view(messages: Sequence[ModelMessage], default_ui_visibility: ToolUIVisibility) -> list[ModelMessage]:
+    """`messages` as a client is sent them, by each tool part's `ui_visibility` stamp.
+
+    A `'private'` call and its return are left out, a `'redacted'` return gets the placeholder, and a message
+    left with no parts is dropped. A part with no stamp takes its call's, then `default_ui_visibility`. The messages
+    themselves are not changed.
+    """
+    visibility_by_call_id: dict[str, ToolUIVisibility] = {}
+    view: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            response_parts = [
+                shown
+                for part in message.parts
+                if (shown := client_response_part(part, visibility_by_call_id, default_ui_visibility)) is not None
+            ]
+            projected: ModelMessage | None = message_with_parts(message, response_parts)
+        else:
+            request_parts = [
+                shown
+                for part in message.parts
+                if (shown := client_request_part(part, visibility_by_call_id, default_ui_visibility)) is not None
+            ]
+            projected = message_with_parts(message, request_parts)
+        if projected is not None:
+            view.append(projected)
+    return view

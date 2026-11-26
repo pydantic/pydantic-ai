@@ -37,6 +37,7 @@ from .._deferred_capabilities import LoadCapabilityCallPart, registered_loaded_c
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from .._framing import SYSTEM_TAG, frame
 from .._instrumentation import annotate_tool_call_otel_metadata
+from .._parts_manager import tool_def_ui_visibility
 from .._run_context import (
     _CURRENT_RUN_CONTEXT,  # pyright: ignore[reportPrivateUsage]
     RealtimeEventBuffer,
@@ -99,6 +100,7 @@ from ..messages import (
     ToolPartKind,
     ToolReturnPart,
     ToolSearchReturnPart,
+    ToolUIVisibility,
     UserContent,
     UserPromptPart,
 )
@@ -471,6 +473,11 @@ def _tool_kinds(tools: Sequence[ToolDefinition]) -> dict[str, ToolPartKind]:
     return {tool.name: tool.tool_kind for tool in tools if tool.tool_kind is not None}
 
 
+def _tool_ui_visibilities(tools: Sequence[ToolDefinition]) -> dict[str, ToolUIVisibility]:
+    """The `ui_visibility` a call to each tool that sets one is stamped with, by name."""
+    return {tool.name: visibility for tool in tools if (visibility := tool_def_ui_visibility(tool)) is not None}
+
+
 def _build_session_tool_return(
     tool_result: Any, call_part: ToolCallPart, tool_manager: ToolManager[Any]
 ) -> _SettledToolResult:
@@ -549,6 +556,7 @@ def _unsettled_call_return(call: ToolCallPart, error: BaseException) -> ToolRetu
         content=content,
         tool_call_id=call.tool_call_id,
         tool_kind=call.tool_kind,
+        ui_visibility=call.ui_visibility,
         outcome='failed',
     )
 
@@ -809,6 +817,8 @@ class RealtimeSession:
         # Deliberately shared with the core by reference and updated in place by `_reveal_tools`, so a call to a tool
         # revealed mid-session is promoted too: don't copy it on either side.
         self._tool_kinds: dict[str, ToolPartKind] = _tool_kinds(self._advertised_tools)
+        # The `ui_visibility` each of those tools stamps its calls with, shared with the core the same way.
+        self._tool_ui_visibilities: dict[str, ToolUIVisibility] = _tool_ui_visibilities(self._advertised_tools)
         self._warned_undelivered_reveal = False
         self._wrap_event_stream = wrap_event_stream
         self._instructions = instructions
@@ -1021,6 +1031,7 @@ class RealtimeSession:
             usage=self.usage,
             annotate_response=self._annotate_response,
             tool_kinds=self._tool_kinds,
+            tool_ui_visibilities=self._tool_ui_visibilities,
         )
 
     def _run_event_buffer(self) -> RealtimeEventBuffer:
@@ -2694,6 +2705,7 @@ class RealtimeSession:
                 content=INTERRUPTED_TOOL_RETURN_CONTENT,
                 tool_call_id=call_part.tool_call_id,
                 tool_kind=call_part.tool_kind,
+                ui_visibility=call_part.ui_visibility,
                 outcome='interrupted',
             )
             events.extend(self._complete_tool_call(call_part, cancelled_part))
@@ -2953,6 +2965,7 @@ class RealtimeSession:
             return recorded, None
         self._advertised_tools = [*self._advertised_tools, *added]
         self._tool_kinds.update(_tool_kinds(added))
+        self._tool_ui_visibilities.update(_tool_ui_visibilities(added))
         tools, _ = resolve_advertised_tools(self._advertised_tools, (self._model_settings or {}).get('tool_choice'))
         return recorded, UpdateTools(tools=tools)
 
@@ -3269,7 +3282,7 @@ class RealtimeSession:
         tool_run_step = self._tool_run_step
         # Promoted to its typed part as the core records it (see `SessionCore`), so a `load_capability` call names the
         # capability it loads.
-        call_part = tool_call_part(event, self._tool_kinds)
+        call_part = tool_call_part(event, self._tool_kinds, self._tool_ui_visibilities)
         mode = self._tool_manager.get_parallel_execution_mode()
         is_barrier = mode == 'sequential' or self._tool_manager.is_sequential(call_part)
         # `parallel_ordered_events` keeps calls concurrent but hands their result events to the
