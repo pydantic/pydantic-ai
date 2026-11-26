@@ -372,20 +372,24 @@ def _capability_schema_target(cls: type[Any]) -> Any:
 
 
 def _init_spec_forms_build(cls: type[Any]) -> bool:
-    """Whether the spec forms of `cls.__init__` can be built from the type hints that resolve, warning if not."""
+    """Whether `cls.__init__` has spec forms that can be built from the type hints that resolve, warning if not."""
     try:
-        for schema_type in build_schema_types({cls.__name__: cls}, get_schema_target=lambda _: cls.__init__):
+        schema_types = build_schema_types({cls.__name__: cls}, get_schema_target=lambda _: cls.__init__)
+        for schema_type in schema_types:
             TypeAdapter(schema_type).json_schema()
     # What `TypeAdapter` raises for a type with no core or JSON schema, as `_spec._type_accepts_object` expects.
     except (SchemaError, PydanticUserError, PydanticOmit) as e:
-        warnings.warn(
-            f'Capability {cls.get_serialization_name()!r}: the agent spec schema publishes only its name, because '
-            f'the schema for its parameters could not be built ({type(e).__name__}). '
-            'Override `from_spec` with the parameters a spec can set.',
-            UserWarning,
-        )
-        return False
-    return True
+        reason = f'the schema for its parameters could not be built ({type(e).__name__})'
+    else:
+        if schema_types:
+            return True
+        reason = 'a required parameter takes a type with no JSON form'
+    warnings.warn(
+        f'Capability {cls.get_serialization_name()!r}: the agent spec schema publishes only its name, because '
+        f'{reason}. Override `from_spec` with the parameters a spec can set.',
+        UserWarning,
+    )
+    return False
 
 
 def _replace_capability_spec_refs(schema: dict[str, Any], cap_items_schema: dict[str, Any]) -> None:

@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from functools import partial, wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import anyio
 import pytest
@@ -1918,13 +1918,14 @@ def test_evaluator_schema_with_type_checking_only_hint():
 
 
 def test_evaluator_schema_with_type_checking_only_hint_and_var_keyword_init():
-    """An evaluator whose `__init__` takes `**kwargs` resolves its fields' hints one at a time too.
+    """An evaluator whose `__init__` takes `**kwargs` resolves its fields' hints one at a time too, and skips a `ClassVar`.
 
     Schema generation makes no model request, so there is nothing to record.
     """
 
     @dataclass(init=False)
     class PricedKwargsEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        kind: ClassVar[Decimal | None] = None
         threshold: int = 1
         rate: Decimal | None = None
 
@@ -1951,6 +1952,30 @@ def test_evaluator_schema_with_type_checking_only_hint_and_var_keyword_init():
             }
         }
     )
+
+
+def test_evaluator_schema_with_type_checking_only_hint_and_no_spec_form():
+    """An evaluator left with no spec form by a required `Callable` still warns about the hints that didn't resolve.
+
+    Schema generation makes no model request, so there is nothing to record.
+    """
+
+    @dataclass
+    class PricedHookEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        hook: Callable[[], None]
+        rate: Decimal | None = None
+
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> bool:  # pragma: no cover
+            return True
+
+    with pytest.warns(UserWarning) as record:
+        schema = Dataset[TaskInput, TaskOutput, TaskMetadata].model_json_schema_with_evaluators([PricedHookEvaluator])
+    assert [str(warning.message) for warning in record] == snapshot(
+        [
+            "Evaluator 'PricedHookEvaluator': the type hints of `rate` could not be resolved (NameError: name 'Decimal' is not defined), so the `Dataset` schema leaves out `rate`. Import those types at runtime in `tests.evals.test_dataset`."
+        ]
+    )
+    assert [key for key in schema['$defs'] if key.endswith('_PricedHookEvaluator')] == []
 
 
 def test_import_generate_dataset():

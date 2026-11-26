@@ -340,12 +340,13 @@ def _target_schema_types(
     """The schema types of the spec forms that can load `target` under `name`."""
     hints, unresolved = _spec_annotation_hints(target)
     spec_type_hints = _spec_param_type_hints(target, hints)
+    if unresolved and on_unresolved_hints is not None:
+        # Without a spec form, no parameter accepts any value.
+        required = frozenset[str](unresolved.keys() & spec_type_hints[1].keys() if spec_type_hints else ())
+        on_unresolved_hints(UnresolvedHints(name, target.__module__, unresolved, required))
     if spec_type_hints is None:
         return []
     type_hints, required_type_hints = spec_type_hints
-    if unresolved and on_unresolved_hints is not None:
-        required = frozenset(unresolved.keys() & required_type_hints.keys())
-        on_unresolved_hints(UnresolvedHints(name, target.__module__, unresolved, required))
     keyword_only_params = _keyword_only_spec_params(target, type_hints)
     schema_types: list[Any] = []
 
@@ -417,9 +418,12 @@ def _spec_annotation_hints(target: Callable[..., object]) -> tuple[dict[str, Any
     parameters = inspect.signature(target).parameters
     if not any(p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD) for p in parameters.values()):
         return _resolve_hints(target, list(parameters))
+    not_spec_params = {'return', *(p.name for p in parameters.values() if p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD))}
     hints, errors = _resolve_hints(target, None)
-    errors.pop('return', None)
-    return {name: hint for name, hint in hints.items() if not is_classvar_annotation(hint)}, errors
+    return (
+        {name: hint for name, hint in hints.items() if not is_classvar_annotation(hint)},
+        {name: error for name, error in errors.items() if name not in not_spec_params},
+    )
 
 
 def _resolve_hints(target: Callable[..., object], names: list[str] | None) -> tuple[dict[str, Any], dict[str, str]]:
@@ -433,7 +437,7 @@ def _resolve_hints(target: Callable[..., object], names: list[str] | None) -> tu
         pass
     if names is None:
         names = (
-            list(own_annotations(target))
+            [name for name, annotation in own_annotations(target).items() if not is_classvar_annotation(annotation)]
             if isinstance(target, type)
             else [*inspect.signature(target).parameters, 'return']
         )

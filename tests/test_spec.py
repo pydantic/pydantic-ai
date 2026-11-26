@@ -1,6 +1,5 @@
 """Tests for the shared _spec.py module."""
 
-import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Protocol, Self
@@ -792,13 +791,13 @@ class TestBuildSchemaTypes:
         )
 
     def test_type_checking_only_hint_var_keyword_capability_schema(self):
-        """An `__init__` taking `**kwargs` also resolves its hints one parameter at a time."""
+        """An `__init__` taking `**kwargs` also resolves its hints one parameter at a time, and never reports `kwargs`."""
 
         @dataclass(init=False)
         class PricedKwargs(AbstractCapability[None]):
             limit: int = 3
 
-            def __init__(self, limit: int = 3, rate: 'Decimal | None' = None, **kwargs: object) -> None:
+            def __init__(self, limit: int = 3, rate: 'Decimal | None' = None, **kwargs: 'Decimal') -> None:
                 self.limit = limit  # pragma: no cover
 
         with pytest.warns(UserWarning) as record:
@@ -820,10 +819,11 @@ class TestBuildSchemaTypes:
             }
         )
 
+    @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
     def test_type_checking_only_hint_unloadable_capability_schema(self):
-        """A class with a required parameter no JSON form can hold stays out of the schema, without a warning.
+        """A class left with no spec form keeps its name-only entry, with a warning, as when none of its hints resolved.
 
-        No spec entry can load it whatever its other hints resolve to, so its unresolved hint changes nothing.
+        Not a VCR test: schema generation runs before any model request.
         """
 
         @dataclass
@@ -831,8 +831,15 @@ class TestBuildSchemaTypes:
             hook: Callable[[], None]
             rate: 'Decimal | None' = None
 
-        schema = AgentSpec.model_json_schema_with_capabilities([PricedHook])
-        assert 'PricedHook' not in json.dumps(schema)
+        with pytest.warns(UserWarning) as record:
+            schema = AgentSpec.model_json_schema_with_capabilities([PricedHook])
+        assert [str(warning.message) for warning in record] == snapshot(
+            [
+                "Capability 'PricedHook': the agent spec schema publishes only its name, because a required parameter takes a type with no JSON form. Override `from_spec` with the parameters a spec can set."
+            ]
+        )
+        name_only = {'model': 'test', 'capabilities': ['PricedHook']}
+        assert list(validator_for(schema)(schema).iter_errors(name_only)) == []
 
     def test_type_checking_only_hint_inherited_from_spec_schema(self):
         """A class whose `__init__` hints don't all resolve keeps the schema of the `from_spec` override it inherits."""
