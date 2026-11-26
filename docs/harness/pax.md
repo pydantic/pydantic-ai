@@ -3,15 +3,17 @@ title: Pax
 description: "Pax is a coding agent TUI built on the Pydantic AI Harness SDK's Coder, and a terminal interface for any Pydantic AI agent."
 ---
 
-<!-- Generated from src/pydantic_ai_pax/README.md by src/pydantic_ai_pax/scripts/sync_docs_page.py. Edit the README instead. -->
-
 # Pax
 
-A coding agent TUI built on the [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)
-SDK's [`Coder`](https://pydantic.dev/docs/ai/harness/coder/), ready to run as it comes or
+A coding agent TUI built on the [Pydantic AI Harness](index.md)
+SDK's [`Coder`](coder.md), ready to run as it comes or
 with a harness of your own. Pax is also a terminal
-[interface](https://pydantic.dev/docs/ai/overview/interfaces/) for any
-[Pydantic AI](https://pydantic.dev/docs/ai/) agent.
+[interface](../interfaces.md) for any
+[Pydantic AI](../index.md) agent.
+
+Pax is in beta, on the road to 1.0 alongside the Harness. If you try it out, please let us know
+what you think in [our Slack](https://logfire.pydantic.dev/docs/join-slack/) or in a
+[GitHub issue](https://github.com/pydantic/pydantic-ai/issues).
 
 Pax reads your code, edits files, and runs commands, and you see every step as it
 happens. Use the model you like: sign in with your ChatGPT or GitHub Copilot
@@ -24,7 +26,7 @@ workspaces are plugins too, so where the agent runs and where it works are yours
 choose. To run an agent of your own instead, use `pax --agent my_module:agent`, which
 loads that agent on its own without Pax's plugins.
 
-![Pax starting up in a project and adding a flag: its thinking, the files it read, the diff it made, and the test run](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/hero.png)
+![Pax in a terminal running anthropic:claude-opus-5-5: the PAX banner, a question about how a forecast is fetched, the tool calls it made with counts, a three-step answer, and the status row with the model, its context meter at 12k of 1m tokens and the cost](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/hero.png)
 
 - **Any model, any account.** Switch models mid-conversation. Sign in to several
   accounts and let Pax move to the next one when you hit a limit.
@@ -51,12 +53,12 @@ An agent on its own is a loop calling a model and tools. A **harness** is everyt
 
 | Layer | What it is | Start here when |
 |---|---|---|
-| [Pydantic AI](https://pydantic.dev/docs/ai/) (`pydantic-ai`) | The agent framework: the agent loop, models from every major provider, tools, structured output, and the capability system | You are building an agent, or an LLM feature in your own application |
-| [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) (`pydantic-ai-harness`) | The SDK you build a harness of your own from: workspaces, file and shell tools, memory, sub-agents, context management, and ready-made agents like `Coder` | Your agent needs to edit files, run commands, remember, delegate, or keep working through long runs |
-| [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) | A ready-made coding agent in one capability: file and shell tools, task delegation, repo instructions and context management. You supply the workspace it runs in, and any guardrails | You want a coding agent in your own code, to run, extend or swap parts of |
+| [Pydantic AI](../index.md) (`pydantic-ai`) | The agent framework: the agent loop, models from every major provider, tools, structured output, and the capability system | You are building an agent, or an LLM feature in your own application |
+| [Pydantic AI Harness](index.md) (`pydantic-ai-harness`) | The SDK you build a harness of your own from: workspaces, file and shell tools, memory, sub-agents, context management, and ready-made agents like `Coder` | Your agent needs to edit files, run commands, remember, delegate, or keep working through long runs |
+| [`Coder`](coder.md) | A ready-made coding agent in one capability: file and shell tools, task delegation, repo instructions and context management. You supply the workspace it runs in, and any guardrails | You want a coding agent in your own code, to run, extend or swap parts of |
 | [Pax](#install) (`pydantic-ai-pax`) | The TUI in front of `Coder`, and a terminal interface for any Pydantic AI agent; everything in it is a plugin, the coding agent included | You want to use a coding agent rather than build one, or run your own agent in a terminal |
 
-Each package installs the one it is built on: `pydantic-ai-harness` installs `pydantic-ai-slim`, and `pydantic-ai-pax` installs `pydantic-ai-harness`. `Coder` supplies the tools, context management and recovery; you choose the workspace it runs in and any guardrails, and Pax is the interface in front of it. That is why either works without the other: build on `Coder` and never open Pax, or point Pax at an agent that is entirely your own. Neither is the [`clai` chat CLI](https://pydantic.dev/docs/ai/integrations/cli/) that ships with Pydantic AI.
+Each package installs the one it is built on: `pydantic-ai-harness` installs `pydantic-ai-slim`, and `pydantic-ai-pax` installs `pydantic-ai-harness`. `Coder` supplies the tools, context management and recovery; you choose the workspace it runs in and any guardrails, and Pax is the interface in front of it. That is why either works without the other: build on `Coder` and never open Pax, or point Pax at an agent that is entirely your own. Neither is [`clai`](../cli.md), the legacy CLI that ships with Pydantic AI.
 
 ## Install
 
@@ -67,6 +69,7 @@ uv tool install --compile-bytecode pydantic-ai-pax
 ```
 
 This gives you the `pax` command (and `pydantic-ai-pax`, which does the same).
+If `pax` doesn't start Pax right after installing, open a new terminal (or run `rehash`), or run it as `pydantic-ai-pax`.
 The package used to be `pydantic-clai2`, with the command `clai2`. Those names still work and print a note
 pointing here; your settings, sessions, and plugins carry over. A plugin that imports `pydantic_clai2` needs
 the `pydantic-clai2` package installed, or its imports changed to `pydantic_ai_pax`.
@@ -74,12 +77,13 @@ the `pydantic-clai2` package installed, or its imports changed to `pydantic_ai_p
 `/update now` uses it too. To try Pax without installing, run `uvx pydantic-ai-pax`; set
 `UV_COMPILE_BYTECODE=1` to compile the bytecode up front there too.
 
-Pax comes with the OpenAI and Anthropic SDKs. Other providers may need their SDK
-installed too; `/model` tells you which one when you pick the model. TypeSafe's Jev
-models need an extra:
+Pax comes with the OpenAI, Anthropic, and Google SDKs. Every other model provider has a Pax
+extra of the same name as its `pydantic-ai-slim` extra, such as `bedrock`, `groq`, or `typesafe`
+(TypeSafe's Jev), and `/model` tells you which one when you pick the model. `all` installs every
+provider and every `/sandbox` provider but `local`:
 
 ```bash
-uv tool install --compile-bytecode 'pydantic-ai-pax[typesafe]'
+uv tool install --compile-bytecode 'pydantic-ai-pax[groq]'
 ```
 
 ## First run
@@ -122,22 +126,24 @@ the folder (or a parent) has a `.env` file, Pax loads it at startup.
 The first time you start Pax in a folder, it asks whether you trust the files in it, and lists
 the instruction files, skills, and agent folders it found there. Answer **Yes** for your own
 projects. **No**, the default, keeps the folder untrusted: the agent still reads, edits, and runs
-code there, and capabilities that check workspace authority treat the folder's files as the
-repository's, not yours (walk-up instruction files, skills, and agent folders still load as before
-until they check authority). Pax remembers the answer for the whole repository, and `/trust` shows
-or changes it. The status row says `trusted` or `untrusted`. See
+code there, and instruction files and skills reach the model as the repository's, not yours
+(agent folders still reach it as yours either way, for now). Pax remembers the answer for the
+whole repository, and `/trust` shows or changes it. The status row says `trusted` or `untrusted`. See
 [folder trust](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#folder-trust)
 in the reference.
 
 ### Where Pax keeps things
 
-Your settings, saved sessions, and plugins live in `~/.config/pydantic-clai2/`, or in
-`$XDG_CONFIG_HOME/pydantic-clai2/` if you set `XDG_CONFIG_HOME`:
+Your settings, saved sessions, and plugins live in `~/.config/pydantic-ai-pax/`, or in
+`$XDG_CONFIG_HOME/pydantic-ai-pax/` if you set `XDG_CONFIG_HOME`:
 
 - `config.db`: settings, saved models, plugin choices, and which folders you trust
 - `sessions.db`: saved conversations
 - `plugins/`: plugins you drop in
 - `input-history`: what you typed, for the <kbd>↑</kbd> arrow
+
+Bookkeeping that isn't a preference, such as your workspaces and which Pax processes are running, lives in
+`~/.local/state/pydantic-ai-pax/`, or `$XDG_STATE_HOME/pydantic-ai-pax/`.
 
 Sign-ins and API keys are encrypted, with the key kept in your system keychain. Without a
 keychain, they are saved unencrypted in a file only you can read. A
@@ -426,7 +432,7 @@ Turn on more when you need them, such as `github`, `linear`, `notion`, `slack`,
 `google_workspace`, and `logfire_mcp`.
 
 To install a plugin, clone it from Git, name a plugin or a harness capability by its import
-path, or drop a file in `~/.config/pydantic-clai2/plugins/`:
+path, or drop a file in `~/.config/pydantic-ai-pax/plugins/`:
 
 ```text
 /plugins add https://github.com/your-org/my-plugin.git
@@ -434,7 +440,7 @@ path, or drop a file in `~/.config/pydantic-clai2/plugins/`:
 ```
 
 The second line adds web search from
-[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/). It needs the `exa` extra and an `EXA_API_KEY`:
+[Pydantic AI Harness](index.md). It needs the `exa` extra and an `EXA_API_KEY`:
 
 ```bash
 uv tool install --compile-bytecode pydantic-ai-pax --with 'pydantic-ai-harness[exa]'
@@ -478,6 +484,13 @@ covers everything in detail:
 - [The plugin guide](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/PLUGINS.md):
   every plugin method, event, and rule
 
-The screenshots are real Pax sessions. Only the model is scripted (`demo:tour`), so they
-need no account and cost nothing. To make them again, run
-`src/pydantic_ai_pax/scripts/screenshots/capture.sh`.
+The screenshots are real Pax sessions. Every shot but the hero at the top uses a scripted model
+(`demo:tour`), so they need no account and cost nothing: run
+`src/pydantic_ai_pax/scripts/screenshots/capture.sh` to make them again. The hero shows a real
+`anthropic:claude-opus-5-5` turn; the top of `capture.sh` says how to re-render it.
+
+## Legacy CLI
+
+Pydantic AI also ships [`clai`](../cli.md), the legacy CLI that came before Pax. It still
+works, and it is still what serves the [Web Chat UI](../web.md) with `clai web` and what
+`agent.to_cli_sync()` opens from your own code. New work in the terminal belongs in Pax.

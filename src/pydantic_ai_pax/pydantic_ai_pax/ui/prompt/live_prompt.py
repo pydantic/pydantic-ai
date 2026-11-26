@@ -27,11 +27,13 @@ from pydantic_ai_pax.ui.prompt.prompt_completion import CompletionWorker
 from pydantic_ai_pax.ui.prompt.prompt_keys import PromptKeys, ctrl_enter_steers
 from pydantic_ai_pax.ui.prompt.prompt_queue import QueuedPrompt, can_steer, input_kind
 from pydantic_ai_pax.ui.prompt.prompt_resize import resize_notifications
+from pydantic_ai_pax.ui.prompt.prompt_selection import LINK_END, LINK_START, hyperlink
 from pydantic_ai_pax.ui.prompt.prompt_surface import TRANSCRIPT_KEYS, PromptSurface
 from pydantic_ai_pax.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.duration import format_duration
 from pydantic_ai_pax.ui.rendering.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER, Spinner
+from pydantic_ai_pax.ui.rendering.status import LinkText
 from pydantic_ai_pax.ui.rendering.tool_output import terminal_text
 
 IDLE_REPAINT = 1.0
@@ -798,13 +800,12 @@ class LivePrompt:
         footer = (
             ' '.join(terminal_text(notice).split())
             if notice
-            else ''.join(
-                (theme.sgr(style) if style else muted) + ' '.join(terminal_text(text).splitlines())
-                for style, text in self.toolbar()
-            )
+            else ''.join((theme.sgr(style) if style else muted) + _toolbar_text(text) for style, text in self.toolbar())
         )
         # Cut the notice or toolbar, not the queue count after it.
-        return truncate(footer, max(0, width - visible_length(queued))) + queued
+        footer = truncate(footer, max(0, width - visible_length(queued)))
+        # A cut can drop a link's end, which would link the rest of the row.
+        return footer + (LINK_END if LINK_START in footer else '') + queued
 
     def paint(self) -> None:
         """Draw only when the editor owns the terminal."""
@@ -933,3 +934,9 @@ def _submission(text: str, commands: Commands) -> dict[str, telemetry.Attribute]
     if kind == 'shell':
         return {'kind': kind, 'chars': len(text)}
     return {'kind': kind, 'chars': len(text), **telemetry.prompt_text(text)}
+
+
+def _toolbar_text(text: str) -> str:
+    """One toolbar fragment on one row; a link becomes an OSC 8 hyperlink, which a click opens on either screen."""
+    shown = ' '.join(terminal_text(text).splitlines())
+    return hyperlink(shown, url=text.url) if isinstance(text, LinkText) else shown

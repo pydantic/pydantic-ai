@@ -640,6 +640,7 @@ async def test_agent_with_filesystem_does_not_warn(fake_modal: FakeModal) -> Non
 
 
 async def test_prefixed_filesystem_does_not_warn(fake_modal: FakeModal) -> None:
+    fake_modal.responder = lambda argv, timeout: ('/root\n', '', 0)
     agent = Agent(TestModel(call_tools=[]), capabilities=[ModalSandbox(), PrefixTools(FileSystem(), prefix='repo')])
     with warnings.catch_warnings():
         warnings.simplefilter('error')

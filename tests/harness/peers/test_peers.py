@@ -691,6 +691,7 @@ class TestPeers:
         "content": "finished",
         "tool_call_id": "pyd_ai_tool_call_id__wait_tool",
         "tool_kind": null,
+        "ui_visibility": null,
         "metadata": null,
         "timestamp": "<datetime>",
         "outcome": "success",
