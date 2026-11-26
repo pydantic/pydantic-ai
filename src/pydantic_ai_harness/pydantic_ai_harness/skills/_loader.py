@@ -450,6 +450,17 @@ def parse_skill(text: str, skill_file: str) -> SkillDefinition:
     )
 
 
+def catalog_description(skill: SkillDefinition) -> str:
+    """The text the model is shown for `skill`: its description, then its `when_to_use`.
+
+    The same in the catalog and from `list_skills`.
+    """
+    if skill.when_to_use is None:
+        return skill.description
+    # Appended verbatim, Claude Code style: the author writes the trigger clause, e.g. 'Use when ...'.
+    return f'{skill.description} {skill.when_to_use}'
+
+
 async def load_skill_libraries(
     workspace: Workspace,
     directories: Sequence[str | Path],
