@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from functools import partial
 from pathlib import Path
-from typing import Generic, Self
+from typing import Any, Generic, Self
 
 import anyio
 from pydantic import (
@@ -28,7 +28,8 @@ from pydantic_ai.capabilities import AbstractCapability, AgentCapability, Combin
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, ModelResolutionContext
 from pydantic_ai.tools import RunContext
-from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
+from pydantic_ai.toolsets import AbstractToolset, AgentToolset, ToolsetTool, WrapperToolset
+from pydantic_ai.workspaces import AuthorityWorkspace, LocalWorkspaceBackend, Workspace
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.repo_context import RepoContext
@@ -41,7 +42,13 @@ from pydantic_ai_pax.config.project_settings import repository_directories
 from pydantic_ai_pax.models.profiles import parse_model
 from pydantic_ai_pax.plugins import DepsT, Plugin, PluginHost, SessionStart
 from pydantic_ai_pax.plugins.menus import FieldRow, SettingsMenu
-from pydantic_ai_pax.runtime.session import ModelDefaults, SessionModels, resolve_model_name, supports_local_workspace
+from pydantic_ai_pax.runtime.session import (
+    ModelDefaults,
+    SessionModels,
+    folder_authority,
+    resolve_model_name,
+    supports_local_workspace,
+)
 from pydantic_ai_pax.runtime.strict_schemas import NON_STRICT_SCHEMAS
 from pydantic_ai_pax.runtime.tasks import REVIEW_AGENT_NAME, review_workspace
 from pydantic_ai_pax.ui.menus.field_menu import first_error
@@ -116,7 +123,9 @@ class CoderSettings(BaseModel):
 
     model_config = ConfigDict(extra='forbid', strict=True)
 
-    instructions: str | None = Field(default=None, description='Replace the default coding instructions.')
+    instructions: str | None = Field(
+        default=None, description='Add these instructions after the default coding instructions.'
+    )
     unrestricted_filesystem: bool = Field(
         default=False, description='Let file tools reach any path on this machine, not only the project directory.'
     )
@@ -358,7 +367,10 @@ class _ProjectSkills(WrapperCapability[DepsT]):
     When a plugin adds a capability function, Pax attaches the project directory only once the run's
     capability functions resolve, so a sandbox one supplies wins (see `local_workspace`). `Skills` reads
     its catalog in `for_run`, before then, and would find no workspace. It reads the project directory
-    instead, where the run works unless a capability function supplies a workspace of its own.
+    instead, where the run works unless a capability function supplies a workspace of its own, with the
+    `authority` the session gives that directory's files when it is the session's folder (`folder_authority`).
+    Below `'operator'`, `list_skills` and `load_skill` read the skills again when called, so the skills' tools
+    read that directory in the same run too; at `'operator'` they read the run's workspace.
 
     The `Skills` sits in a group, so core still sees it and another `Skills` on the agent combines with it.
     Core keeps the combined one where the last of them was, so one combined outside this wrapper reads
@@ -369,9 +381,41 @@ class _ProjectSkills(WrapperCapability[DepsT]):
     """The session's directory (`PluginHost.workspace`), where the commands' skills are read."""
 
     async def for_run(self, ctx: RunContext[DepsT]) -> AbstractCapability[DepsT]:
-        if not ctx.workspace.attached:
-            ctx = replace(ctx, workspace=Workspace(self.project))
-        return await super().for_run(ctx)
+        if ctx.workspace.attached:
+            return await super().for_run(ctx)
+        authority = await folder_authority(self.project.ref.id)
+        if authority == 'operator':
+            return await super().for_run(replace(ctx, workspace=Workspace(self.project)))
+        project = AuthorityWorkspace(Workspace(self.project), authority=authority)
+        return _CapabilityWithWorkspace[DepsT](
+            await super().for_run(replace(ctx, workspace=project)), workspace=project
+        )
+
+
+@dataclass
+class _CapabilityWithWorkspace(WrapperCapability[DepsT]):
+    """The capability it wraps, whose tools see `workspace` as the run's workspace."""
+
+    workspace: Workspace = field(kw_only=True)
+
+    def get_toolset(self) -> AgentToolset[DepsT] | None:
+        toolset = super().get_toolset()
+        if not isinstance(toolset, AbstractToolset):
+            return toolset
+        # Pyright can't narrow the `ToolsetFunc` alias out of the union, as in `PrefixTools`.
+        return _ToolsetWithWorkspace[DepsT](toolset, workspace=self.workspace)  # pyright: ignore[reportUnknownArgumentType]
+
+
+@dataclass
+class _ToolsetWithWorkspace(WrapperToolset[DepsT]):
+    """The toolset it wraps, whose tools see `workspace` as the run's workspace."""
+
+    workspace: Workspace = field(kw_only=True)
+
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[DepsT], tool: ToolsetTool[DepsT]
+    ) -> Any:
+        return await super().call_tool(name, tool_args, replace(ctx, workspace=self.workspace), tool)
 
 
 class CoderPlugin(Plugin[CoderSettings, DepsT]):

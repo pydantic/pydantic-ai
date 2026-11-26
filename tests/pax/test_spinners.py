@@ -430,6 +430,11 @@ async def test_prompt_title_follows_the_selection(width: int) -> None:
             assert plain.startswith(hint)
             live.ctrl_enter_steers = True
             assert Text.from_ansi(live.frame()[1]).plain.startswith(hint.replace('Alt+', 'Ctrl+'))
+            # Editing a recalled queued prompt swaps in the keys that finish the edit.
+            live.feed('up')
+            follow_up, plain = (Text.from_ansi(row).plain for row in live.frame()[:2])
+            assert follow_up == 'Follow-up (editing): follow up'
+            assert plain.startswith(f'─ Working {frame} 0s · Enter to save · Esc to stop editing · Clear it to remove ')
         else:
             # Too narrow to show the whole frame: nothing is highlighted rather than half a frame.
             assert plain.startswith('─ Working') and accent not in title
