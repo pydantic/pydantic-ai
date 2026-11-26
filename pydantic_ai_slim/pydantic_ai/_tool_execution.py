@@ -384,6 +384,11 @@ def _segment_by_barriers(indices: list[int], *, is_barrier: Callable[[int], bool
     return segments
 
 
+def last_response_index(history: Sequence[_messages.ModelMessage]) -> int | None:
+    """The index of the last `ModelResponse` in `history`, or `None` if it has none."""
+    return next((i for i in range(len(history) - 1, -1, -1) if isinstance(history[i], _messages.ModelResponse)), None)
+
+
 async def process_tool_calls(
     tool_manager: ToolManager[DepsT],
     *,
@@ -1326,7 +1331,8 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 self.question_calls[tool_call_id], call=redacted[tool_call_id]
             )
         history = self.ctx.state.message_history
-        index = next(i for i in range(len(history) - 1, -1, -1) if isinstance(history[i], _messages.ModelResponse))
+        index = last_response_index(history)
+        assert index is not None, 'deferred calls come from a response in the history'
         response = history[index]
         assert isinstance(response, _messages.ModelResponse)
         history[index] = dataclasses.replace(

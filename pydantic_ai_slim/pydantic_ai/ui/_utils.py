@@ -184,10 +184,14 @@ def warn_client_held_history_with_hidden_tools(*, stacklevel: int) -> None:
 
 
 def return_ui_visibility(
-    part: BaseToolReturnPart[Any], calls: Mapping[str, ToolUIVisibility], default_ui_visibility: ToolUIVisibility
+    part: BaseToolReturnPart[Any],
+    visibility_by_call_id: Mapping[str, ToolUIVisibility],
+    default_ui_visibility: ToolUIVisibility,
 ) -> ToolUIVisibility:
-    """What a client is sent for return `part`, by its stamp, else the visibility `calls` holds for its call."""
-    return ui_visibility_of(part, call_visibility=calls.get(part.tool_call_id), default=default_ui_visibility)
+    """What a client is sent for return `part`, by its stamp, else its call's visibility in `visibility_by_call_id`."""
+    return ui_visibility_of(
+        part, call_visibility=visibility_by_call_id.get(part.tool_call_id), default=default_ui_visibility
+    )
 
 
 @overload
@@ -204,21 +208,26 @@ def message_with_parts(
 
 
 def client_response_part(
-    part: ModelResponsePart, calls: dict[str, ToolUIVisibility], default_ui_visibility: ToolUIVisibility
+    part: ModelResponsePart, visibility_by_call_id: dict[str, ToolUIVisibility], default_ui_visibility: ToolUIVisibility
 ) -> ModelResponsePart | None:
-    """`part` as a client is sent it, recording each tool call's visibility in `calls` for its return; `None` for nothing."""
+    """`part` as a client is sent it; `None` for nothing.
+
+    Each tool call's visibility is recorded in `visibility_by_call_id`, for its return.
+    """
     if isinstance(part, (ToolCallPart, NativeToolCallPart)):
-        visibility = calls[part.tool_call_id] = ui_visibility_of(
+        visibility = visibility_by_call_id[part.tool_call_id] = ui_visibility_of(
             part, call_visibility=None, default=default_ui_visibility
         )
         return None if visibility == 'private' else part
     if isinstance(part, NativeToolReturnPart):
-        return client_tool_return(part, return_ui_visibility(part, calls, default_ui_visibility))
+        return client_tool_return(part, return_ui_visibility(part, visibility_by_call_id, default_ui_visibility))
     return part
 
 
 def client_request_part(
-    part: ModelRequestPart, calls: Mapping[str, ToolUIVisibility], default_ui_visibility: ToolUIVisibility
+    part: ModelRequestPart,
+    visibility_by_call_id: Mapping[str, ToolUIVisibility],
+    default_ui_visibility: ToolUIVisibility,
 ) -> ModelRequestPart | None:
     """`part` as `client_view` shows it.
 
@@ -229,10 +238,12 @@ def client_request_part(
         translated = _translate_legacy_retry_part(part)
         if not isinstance(translated, ToolReturnPart):
             return part
-        shown = client_tool_return(translated, return_ui_visibility(translated, calls, default_ui_visibility))
+        shown = client_tool_return(
+            translated, return_ui_visibility(translated, visibility_by_call_id, default_ui_visibility)
+        )
         return part if shown is translated else shown
     if isinstance(part, ToolReturnPart):
-        return client_tool_return(part, return_ui_visibility(part, calls, default_ui_visibility))
+        return client_tool_return(part, return_ui_visibility(part, visibility_by_call_id, default_ui_visibility))
     return part
 
 
@@ -243,21 +254,21 @@ def client_view(messages: Sequence[ModelMessage], default_ui_visibility: ToolUIV
     left with no parts is dropped. A part with no stamp takes its call's, then `default_ui_visibility`. The messages
     themselves are not changed.
     """
-    calls: dict[str, ToolUIVisibility] = {}
+    visibility_by_call_id: dict[str, ToolUIVisibility] = {}
     view: list[ModelMessage] = []
     for message in messages:
         if isinstance(message, ModelResponse):
             response_parts = [
                 shown
                 for part in message.parts
-                if (shown := client_response_part(part, calls, default_ui_visibility)) is not None
+                if (shown := client_response_part(part, visibility_by_call_id, default_ui_visibility)) is not None
             ]
             projected: ModelMessage | None = message_with_parts(message, response_parts)
         else:
             request_parts = [
                 shown
                 for part in message.parts
-                if (shown := client_request_part(part, calls, default_ui_visibility)) is not None
+                if (shown := client_request_part(part, visibility_by_call_id, default_ui_visibility)) is not None
             ]
             projected = message_with_parts(message, request_parts)
         if projected is not None:

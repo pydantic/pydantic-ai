@@ -333,9 +333,16 @@ async def test_adapter_default_applies_to_tools_without_a_setting(protocol: Prot
     assert 'shipped' in dumped
 
 
+CLIENT_ROUND_TRIPS: dict[ProtocolName, Callable[[Sequence[ModelMessage]], list[ModelMessage]]] = {
+    'ag_ui': lambda messages: AGUIAdapter.load_messages(AGUIAdapter.dump_messages(messages)),
+    'vercel_ai': lambda messages: VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(messages)),
+}
+"""The history a client holding it sends back, after it was sent `messages`."""
+
+
 @pytest.mark.parametrize('protocol', PROTOCOLS)
 async def test_dump_reads_the_stamp_not_the_tool_definitions(protocol: ProtocolName):
-    """A reload projects from the stamps alone: the tool can be renamed or removed, and a dump default doesn't override a stamp."""
+    """A dump projects from the stamps alone, never the tool definitions, and its default doesn't override a stamp."""
     run = await run_adapter(protocol, secret_agent('redacted'))
 
     assert SECRET not in dump(protocol, run.messages)
@@ -347,10 +354,7 @@ async def test_dump_reads_the_stamp_not_the_tool_definitions(protocol: ProtocolN
     assert SECRET not in dump(protocol, stored)
 
     # The protocols don't carry them, so a history the client sends back has none, and only the placeholder.
-    if protocol == 'ag_ui':
-        client_copy = AGUIAdapter.load_messages(AGUIAdapter.dump_messages(run.messages))
-    else:
-        client_copy = VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(run.messages))
+    client_copy = CLIENT_ROUND_TRIPS[protocol](run.messages)
     assert [stamp for *_, stamp in stamps(client_copy)] == [None, None]
     assert SECRET not in dump(protocol, client_copy)
 
@@ -428,6 +432,12 @@ async def test_approval_required_private_tool_is_shown_redacted(protocol: Protoc
     assert 'refund' in dump(protocol, run.messages)
 
 
+EXPECTED_DENIED_EVENTS: dict[ProtocolName, Any] = {
+    'ag_ui': snapshot([{'type': 'TOOL_CALL_RESULT', 'toolCallId': 'call_0', 'content': '[REDACTED]'}]),
+    'vercel_ai': snapshot([{'type': 'tool-output-denied', 'toolCallId': 'call_0'}]),
+}
+
+
 @pytest.mark.parametrize('protocol', PROTOCOLS)
 async def test_denied_redacted_tool_sends_the_placeholder_for_the_denial(protocol: ProtocolName):
     """A denial message is the call's result, so a `'redacted'` tool's denial goes out as the placeholder.
@@ -445,11 +455,12 @@ async def test_denied_redacted_tool_sends_the_placeholder_for_the_denial(protoco
     run = await resume(protocol, agent, paused.messages, DeferredToolResults(approvals={'call_0': ToolDenied(denial)}))
 
     assert SECRET not in run.wire
-    assert ('[REDACTED]' in run.wire) == (protocol == 'ag_ui')
+    assert run.tool_events() == EXPECTED_DENIED_EVENTS[protocol]
     assert SECRET not in dump(protocol, run.messages)
 
 
-DEFERRALS: dict[str, Callable[[], CallDeferred | ApprovalRequired]] = {
+DeferralName = Literal['CallDeferred', 'ApprovalRequired', 'question']
+DEFERRALS: dict[DeferralName, Callable[[], CallDeferred | ApprovalRequired]] = {
     'CallDeferred': CallDeferred,
     'ApprovalRequired': ApprovalRequired,
     'question': lambda: CallDeferred(kind='question'),
@@ -458,7 +469,7 @@ DEFERRALS: dict[str, Callable[[], CallDeferred | ApprovalRequired]] = {
 
 @pytest.mark.parametrize('protocol', PROTOCOLS)
 @pytest.mark.parametrize('deferral', list(DEFERRALS))
-async def test_private_tool_that_defers_at_runtime_is_shown_redacted(protocol: ProtocolName, deferral: str):
+async def test_private_tool_that_defers_at_runtime_is_shown_redacted(protocol: ProtocolName, deferral: DeferralName):
     """The call was hidden when it streamed; once it defers, the client has to see what it is answering."""
     agent = Agent(calling(('escalate', '{"order_id": "o_1"}')), output_type=[str, DeferredToolRequests])
 
@@ -472,6 +483,12 @@ async def test_private_tool_that_defers_at_runtime_is_shown_redacted(protocol: P
     # The response in history holds a `'redacted'` copy of the call; the part that was streamed is left as it was.
     assert stamps(run.messages) == [('tool-call', 'escalate', 'redacted')]
     assert 'escalate' in dump(protocol, run.messages)
+
+
+EXPECTED_RESUMED_EVENTS: dict[ProtocolName, Any] = {
+    'ag_ui': snapshot([{'type': 'TOOL_CALL_RESULT', 'toolCallId': 'call_0', 'content': '[REDACTED]'}]),
+    'vercel_ai': snapshot([{'type': 'tool-output-available', 'toolCallId': 'call_0', 'output': '[REDACTED]'}]),
+}
 
 
 @pytest.mark.parametrize('protocol', PROTOCOLS)
@@ -488,11 +505,11 @@ async def test_private_tool_deferred_at_runtime_resumes_redacted(protocol: Proto
 
     assert stamps(run.messages) == [('tool-call', 'escalate', 'redacted'), ('tool-return', 'escalate', 'redacted')]
     assert SECRET not in run.wire
-    assert '[REDACTED]' in run.wire
+    assert run.tool_events() == EXPECTED_RESUMED_EVENTS[protocol]
     assert SECRET not in dump(protocol, run.messages)
 
 
-EXPECTED_DEFERRED_EVENTS: dict[tuple[ProtocolName, str], Any] = {
+EXPECTED_DEFERRED_EVENTS: dict[tuple[ProtocolName, DeferralName], Any] = {
     ('ag_ui', 'question'): snapshot(
         [
             {'type': 'TOOL_CALL_START', 'toolCallId': 'call_0', 'toolCallName': 'escalate'},
@@ -704,6 +721,31 @@ async def test_client_held_history_warns_about_non_public_tools(protocol: Protoc
     await run_adapter(protocol, secret_agent(None), manage_message_history='client')
 
 
+EXPECTED_INTERRUPTED_EVENTS: dict[ProtocolName, Any] = {
+    'ag_ui': snapshot(
+        [
+            {'type': 'TOOL_CALL_START', 'toolCallId': 'call_0', 'toolCallName': 'lookup_order'},
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'call_0', 'delta': '{"order_id": "o_1"}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': 'call_0'},
+            {'type': 'TOOL_CALL_RESULT', 'toolCallId': 'call_0', 'content': '[REDACTED]'},
+        ]
+    ),
+    'vercel_ai': snapshot(
+        [
+            {'type': 'tool-input-start', 'toolCallId': 'call_0', 'toolName': 'lookup_order'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call_0', 'inputTextDelta': '{"order_id": "o_1"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'call_0',
+                'toolName': 'lookup_order',
+                'input': {'order_id': 'o_1'},
+            },
+            {'type': 'tool-output-error', 'toolCallId': 'call_0', 'errorText': '[REDACTED]'},
+        ]
+    ),
+}
+
+
 @pytest.mark.parametrize('protocol', PROTOCOLS)
 async def test_client_held_history_warns_when_an_interrupted_redacted_call_is_closed(protocol: ProtocolName):
     """A redacted call is sent in full, so the first thing hidden can be the placeholder that closes it on an error."""
@@ -716,7 +758,7 @@ async def test_client_held_history_warns_when_an_interrupted_redacted_call_is_cl
     with pytest.warns(UserWarning, match="`manage_message_history='server'`") as record:
         run = await run_adapter(protocol, agent, manage_message_history='client')
     assert len(record) == 1
-    assert '[REDACTED]' in run.wire
+    assert run.tool_events() == EXPECTED_INTERRUPTED_EVENTS[protocol]
 
 
 ENQUEUED_RECORDS: dict[ProtocolName, str] = {
@@ -814,6 +856,56 @@ async def test_tool_name_streamed_in_pieces_is_stamped_from_the_complete_name(
     assert 'lookup_secret' not in dump(protocol, run.messages)
 
 
+EXPECTED_FAILURE_EVENTS: dict[tuple[ProtocolName, ToolUIVisibility, str], Any] = {
+    ('ag_ui', 'redacted', 'ToolFailed'): snapshot(
+        [
+            {'type': 'TOOL_CALL_START', 'toolCallId': 'call_0', 'toolCallName': 'lookup_order'},
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'call_0', 'delta': '{"order_id": "o_1"}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': 'call_0'},
+            {'type': 'TOOL_CALL_RESULT', 'toolCallId': 'call_0', 'content': '[REDACTED]'},
+        ]
+    ),
+    ('ag_ui', 'redacted', 'ModelRetry'): snapshot(
+        [
+            {'type': 'TOOL_CALL_START', 'toolCallId': 'call_0', 'toolCallName': 'lookup_order'},
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'call_0', 'delta': '{"order_id": "o_1"}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': 'call_0'},
+            {'type': 'TOOL_CALL_RESULT', 'toolCallId': 'call_0', 'content': '[REDACTED]'},
+        ]
+    ),
+    ('ag_ui', 'private', 'ToolFailed'): snapshot([]),
+    ('ag_ui', 'private', 'ModelRetry'): snapshot([]),
+    ('vercel_ai', 'redacted', 'ToolFailed'): snapshot(
+        [
+            {'type': 'tool-input-start', 'toolCallId': 'call_0', 'toolName': 'lookup_order'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call_0', 'inputTextDelta': '{"order_id": "o_1"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'call_0',
+                'toolName': 'lookup_order',
+                'input': {'order_id': 'o_1'},
+            },
+            {'type': 'tool-output-error', 'toolCallId': 'call_0', 'errorText': '[REDACTED]'},
+        ]
+    ),
+    ('vercel_ai', 'redacted', 'ModelRetry'): snapshot(
+        [
+            {'type': 'tool-input-start', 'toolCallId': 'call_0', 'toolName': 'lookup_order'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call_0', 'inputTextDelta': '{"order_id": "o_1"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'call_0',
+                'toolName': 'lookup_order',
+                'input': {'order_id': 'o_1'},
+            },
+            {'type': 'tool-output-error', 'toolCallId': 'call_0', 'errorText': '[REDACTED]'},
+        ]
+    ),
+    ('vercel_ai', 'private', 'ToolFailed'): snapshot([]),
+    ('vercel_ai', 'private', 'ModelRetry'): snapshot([]),
+}
+
+
 @pytest.mark.parametrize('protocol', PROTOCOLS)
 @pytest.mark.parametrize('ui_visibility', ['redacted', 'private'])
 @pytest.mark.parametrize('failure', [ToolFailed, ModelRetry])
@@ -835,7 +927,7 @@ async def test_failure_a_tool_reports_follows_its_visibility(
     assert 'Done.' in run.wire
     assert SECRET not in run.wire
     assert SECRET not in dump(protocol, run.messages)
-    assert ('[REDACTED]' in run.wire) == (ui_visibility == 'redacted')
+    assert run.tool_events() == EXPECTED_FAILURE_EVENTS[(protocol, ui_visibility, failure.__name__)]
 
 
 async def test_standalone_event_stream_default_applies_only_to_unstamped_parts():
@@ -984,6 +1076,10 @@ async def test_dispatch_request_passes_the_default_to_the_adapter(protocol: Prot
     assert SECRET not in wire
 
 
+LEGACY_RETRY_SENT: dict[ToolUIVisibility, list[str]] = {'redacted': ['lookup_order', '[REDACTED]'], 'private': []}
+"""What a dump sends of a call and its legacy retry, by the call's stamp: the call and the placeholder, or nothing."""
+
+
 @pytest.mark.parametrize('protocol', PROTOCOLS)
 @pytest.mark.parametrize('ui_visibility', ['redacted', 'private'])
 def test_dump_projects_a_legacy_retry_as_its_calls_result(protocol: ProtocolName, ui_visibility: ToolUIVisibility):
@@ -997,8 +1093,9 @@ def test_dump_projects_a_legacy_retry_as_its_calls_result(protocol: ProtocolName
         ModelRequest(parts=[legacy_retry_prompt_part(SECRET, tool_name='lookup_order', tool_call_id='call_0')]),
     ]
 
-    assert SECRET not in dump(protocol, messages)
-    assert ('[REDACTED]' in dump(protocol, messages)) == (ui_visibility == 'redacted')
+    dumped = dump(protocol, messages)
+    assert SECRET not in dumped
+    assert [text for text in ('lookup_order', '[REDACTED]') if text in dumped] == LEGACY_RETRY_SENT[ui_visibility]
 
 
 @pytest.mark.parametrize('protocol', PROTOCOLS)
@@ -1062,6 +1159,10 @@ def test_unknown_visibility_raises_rather_than_sends_the_result():
         dump('vercel_ai', [ModelResponse(parts=[call])])
 
 
+AnswerPath = Literal['wrap', 'skip', 'recover']
+"""How a capability answers a model request: by wrapping it, by skipping it, or by recovering from its error."""
+
+
 def _lookup_call() -> ModelResponse:
     return ModelResponse(parts=[ToolCallPart('lookup_order', {'order_id': 'o_1'}, tool_call_id='call_0')])
 
@@ -1070,7 +1171,7 @@ def _lookup_call() -> ModelResponse:
 class AnswersForTheModel(AbstractCapability[Any]):
     """Answers the first request with a call to `lookup_order` instead of the model, the way `path` says."""
 
-    path: Literal['wrap', 'skip', 'recover']
+    path: AnswerPath
 
     async def wrap_model_request(
         self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
@@ -1089,7 +1190,7 @@ class AnswersForTheModel(AbstractCapability[Any]):
         return _lookup_call()
 
 
-def answered_agent(path: Literal['wrap', 'skip', 'recover']) -> Agent[None, Any]:
+def answered_agent(path: AnswerPath) -> Agent[None, Any]:
     """A `'private'` `lookup_order` whose call comes from `AnswersForTheModel`; the model only fails, then answers."""
 
     def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1110,14 +1211,12 @@ def answered_agent(path: Literal['wrap', 'skip', 'recover']) -> Agent[None, Any]
     return agent
 
 
-ANSWER_PATHS: list[Literal['wrap', 'skip', 'recover']] = ['wrap', 'skip', 'recover']
+ANSWER_PATHS: list[AnswerPath] = ['wrap', 'skip', 'recover']
 
 
 @pytest.mark.parametrize('protocol', PROTOCOLS)
 @pytest.mark.parametrize('path', ANSWER_PATHS)
-async def test_response_a_capability_supplies_is_stamped(
-    protocol: ProtocolName, path: Literal['wrap', 'skip', 'recover']
-):
+async def test_response_a_capability_supplies_is_stamped(protocol: ProtocolName, path: AnswerPath):
     """A call in a response a capability gives instead of the model's is stamped from its tool like the model's own."""
     run = await run_adapter(protocol, answered_agent(path))
 
@@ -1143,7 +1242,7 @@ async def test_recovered_response_keeps_its_tools_setting_under_a_non_public_def
 
 
 @pytest.mark.parametrize('path', ANSWER_PATHS)
-async def test_response_a_capability_supplies_is_stamped_without_streaming(path: Literal['wrap', 'skip', 'recover']):
+async def test_response_a_capability_supplies_is_stamped_without_streaming(path: AnswerPath):
     """A run that doesn't stream stamps the supplied response too, so a later dump with no default leaves it out."""
     result = await answered_agent(path).run('Where is my order?')
 

@@ -55,8 +55,8 @@ from pydantic_ai._instrumentation import (
     open_request_policy,
 )
 from pydantic_ai._model_request_attempts import AttemptStart, carried_attempts
-from pydantic_ai._parts_manager import call_part_from_tool_defs, ui_visibility_stamps
-from pydantic_ai._tool_execution import process_tool_calls
+from pydantic_ai._parts_manager import stamp_and_type_call_part, ui_visibility_stamps
+from pydantic_ai._tool_execution import last_response_index, process_tool_calls
 from pydantic_ai._utils import (
     ScopedTask,
     aclose_if_supported,
@@ -1356,7 +1356,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 # The history ends on what a run that paused for deferred tool calls wrote after its response.
                 # Run the response's unanswered calls again, as a history ending on the response would, so
                 # deferred ones pause the run again.
-                index = _last_response_index(messages)
+                index = last_response_index(messages)
                 assert index is not None  # `_answered_at_pause` found it.
                 response, _ = await self._adopt_resumed_response(ctx, messages, index)
                 return CallToolsNode[DepsT, NodeRunEndT](response, _answered_calls=answered_at_pause)
@@ -1617,7 +1617,7 @@ def _answered_at_pause(history: Sequence[_messages.ModelMessage]) -> tuple[_Tool
     that run or by a later one that paused again. Returns `None` for any other history: a new message, or a
     request whose model call failed, continues the run.
     """
-    index = _last_response_index(history)
+    index = last_response_index(history)
     if index is None or index == len(history) - 1:
         return None
     response = history[index]
@@ -1669,10 +1669,6 @@ def final_tool_results_request(
     if isinstance(output, DeferredToolRequests):
         mark_deferred_pause(request)
     return request
-
-
-def _last_response_index(history: Sequence[_messages.ModelMessage]) -> int | None:
-    return next((i for i in range(len(history) - 1, -1, -1) if isinstance(history[i], _messages.ModelResponse)), None)
 
 
 def _resumed_request(request: _messages.ModelRequest) -> _messages.ModelRequest:
@@ -4319,11 +4315,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         try:
             if not root_capability._handles_model_request_error(run_context, request_context):  # pyright: ignore[reportPrivateUsage]
                 raise error
-            recovered = await root_capability.on_model_request_error(
-                run_context, request_context=request_context, error=error
-            )
             # Before `after_model_request` and the streamed replay, as `Model.request()`'s own response is stamped.
-            return _stamp_ui_visibility(recovered, request_context.model_request_parameters)
+            return _stamp_ui_visibility(
+                await root_capability.on_model_request_error(run_context, request_context=request_context, error=error),
+                request_context.model_request_parameters,
+            )
         except exceptions.RetryModelRequest as retry:
             failed.record(request_context, error, start, retry)
             raise
@@ -6057,7 +6053,7 @@ def _apply_tool_defs_to_call_parts(
     tool_kind_by_name: dict[str, _messages.ToolPartKind] = {
         td.name: td.tool_kind for td in model_request_parameters.function_tools if td.tool_kind
     }
-    return _with_call_parts_from_tool_defs(response, tool_kind_by_name, ui_visibility_stamps(model_request_parameters))
+    return _stamp_and_type_call_parts(response, tool_kind_by_name, ui_visibility_stamps(model_request_parameters))
 
 
 def _stamp_ui_visibility(
@@ -6068,20 +6064,20 @@ def _stamp_ui_visibility(
     Only the stamp is written: those calls keep the typing they came with, as execution types each call from its tool
     (`ToolManager._with_tool_kind`).
     """
-    return _with_call_parts_from_tool_defs(response, {}, ui_visibility_stamps(model_request_parameters))
+    return _stamp_and_type_call_parts(response, {}, ui_visibility_stamps(model_request_parameters))
 
 
-def _with_call_parts_from_tool_defs(
+def _stamp_and_type_call_parts(
     response: _messages.ModelResponse,
     tool_kind_by_name: Mapping[str, _messages.ToolPartKind],
     ui_visibility_by_name: Mapping[str, ToolUIVisibility],
 ) -> _messages.ModelResponse:
-    """`response` with each `ToolCallPart` passed through `call_part_from_tool_defs`; `response` itself if none changes."""
+    """`response` with each `ToolCallPart` passed through `stamp_and_type_call_part`; `response` itself if none changes."""
     if not tool_kind_by_name and not ui_visibility_by_name:
         return response
 
     new_parts: list[_messages.ModelResponsePart] = [
-        call_part_from_tool_defs(part, tool_kind_by_name, ui_visibility_by_name)
+        stamp_and_type_call_part(part, tool_kind_by_name, ui_visibility_by_name)
         if isinstance(part, _messages.ToolCallPart)
         else part
         for part in response.parts

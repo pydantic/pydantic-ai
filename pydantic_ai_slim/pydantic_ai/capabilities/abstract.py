@@ -321,10 +321,10 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
     _safe_at_runtime: ClassVar[bool] = False
     """Whether this capability can be added per-run when a durability capability is bound.
 
-    Internal, in-tree only. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation]
-    is the only built-in capability that sets this to `True`; the bundled `durable_exec`
-    integrations read it to allow `Instrumentation` to attach per-run despite the
-    blanket restriction on runtime capability additions.
+    Internal, in-tree only. Built-in capabilities that are safe to attach per-run, such as
+    [`Instrumentation`][pydantic_ai.capabilities.Instrumentation], set this to `True`; the bundled
+    `durable_exec` integrations read it to allow them despite the blanket restriction on runtime
+    capability additions.
 
     A first-class extension point that derives this from a capability's overridden
     hooks (so third-party capabilities don't need to set a flag manually) is tracked

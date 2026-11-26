@@ -68,7 +68,7 @@ def ui_visibility_stamps(model_request_parameters: ModelRequestParameters) -> di
     return stamps
 
 
-def call_part_from_tool_defs(
+def stamp_and_type_call_part(
     part: ToolCallPart,
     tool_kind_by_name: Mapping[str, ToolPartKind],
     ui_visibility_by_name: Mapping[str, ToolUIVisibility],
@@ -158,17 +158,17 @@ class ModelResponsePartsManager:
             )
         return NotImplemented
 
-    def _call_part_from_tool_defs(self, part: ToolCallPart) -> ToolCallPart:
+    def _stamp_and_type(self, part: ToolCallPart) -> ToolCallPart:
         """Stamp a call with its tool's `ui_visibility`, and promote a base part to its typed subclass via `tool_kind`."""
-        return call_part_from_tool_defs(part, self._tool_kind_by_name, self._ui_visibility_by_name)
+        return stamp_and_type_call_part(part, self._tool_kind_by_name, self._ui_visibility_by_name)
 
-    def _call_part_after_delta(self, part: ToolCallPart, delta: ToolCallPartDelta) -> ToolCallPart:
-        """`_call_part_from_tool_defs` for a call that `delta` just changed."""
+    def _stamp_and_type_after_delta(self, part: ToolCallPart, delta: ToolCallPartDelta) -> ToolCallPart:
+        """`_stamp_and_type` for a call that `delta` just changed."""
         if delta.tool_name_delta:
             # A name streamed in pieces can first match another tool, whose stamp the grown name mustn't keep:
             # stamp it again from the tool it names now.
             part = replace(part, ui_visibility=None)
-        return self._call_part_from_tool_defs(part)
+        return self._stamp_and_type(part)
 
     def get_parts(self) -> list[ModelResponsePart]:
         """Return only model response parts that are complete (i.e., not ToolCallPartDelta's).
@@ -485,7 +485,7 @@ class ModelResponsePartsManager:
             )
             part = delta.as_part() or delta
             if isinstance(part, ToolCallPart):
-                part = self._call_part_from_tool_defs(part)
+                part = self._stamp_and_type(part)
             new_part_index = self._append_part(part, vendor_part_id)
             # Only emit a PartStartEvent if we have enough information to produce a full ToolCallPart
             if isinstance(part, ToolCallPart | NativeToolCallPart):
@@ -505,7 +505,7 @@ class ModelResponsePartsManager:
             try:
                 updated_part = self._apply_tool_call_delta(part_index, existing_part, delta)
                 if isinstance(updated_part, ToolCallPart):
-                    updated_part = self._call_part_after_delta(updated_part, delta)
+                    updated_part = self._stamp_and_type_after_delta(updated_part, delta)
             except Exception:
                 self._parts[part_index] = existing_part
                 if buffer is None:
@@ -606,7 +606,7 @@ class ModelResponsePartsManager:
             provider_name=provider_name,
             provider_details=provider_details,
         )
-        new_part = self._call_part_from_tool_defs(new_part)
+        new_part = self._stamp_and_type(new_part)
         if vendor_part_id is None:
             # vendor_part_id is None, so we unconditionally append a new ToolCallPart to the end of the list
             new_part_index = self._append_part(new_part)
@@ -799,7 +799,7 @@ class ModelResponsePartsManager:
             assert not isinstance(part.args, dict), 'Cannot materialize string arguments onto dictionary arguments'
             materialized = replace(part, args=value)
             if isinstance(materialized, ToolCallPart):
-                materialized = self._call_part_from_tool_defs(materialized)
+                materialized = self._stamp_and_type(materialized)
             return materialized
         raise AssertionError(f'Cannot materialize string deltas for {part!r}')  # pragma: no cover
 
