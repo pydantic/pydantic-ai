@@ -44,6 +44,7 @@ from pydantic_ai_pax.runtime.permissions import (
     UNANSWERED,
     approval_handler,
     approval_question,
+    call_approval_question,
     decision,
     proposed_diff,
     session_permissions,
@@ -195,6 +196,16 @@ def test_approval_question_offers_the_three_choices() -> None:
     assert approval_question(request('write', 'a.py')).questions[0].question == 'Asks. Write a.py?'
     long = approval_question(request(subject='x' * 600)).questions[0].question
     assert len(long) == 500 and long.endswith('…')
+
+
+def test_call_approval_question_offers_approve_or_deny() -> None:
+    """A call `Permissions` does not hold has no subject to remember, so the question offers no session choice."""
+    question = call_approval_question(ToolCallPart('delete', {'path': 'a\tb.txt'}, tool_call_id='call1'))
+    [asked] = question.questions
+    assert (question.id, asked.header, asked.question) == ('call1', HEADER, 'Run delete({"path":"a\\tb.txt"})?')
+    assert [option.label for option in asked.options] == [APPROVE, DENY]
+    long = call_approval_question(ToolCallPart('delete', {'path': 'x' * 600})).questions[0].question
+    assert len(long) == 500 and long.endswith('…?')
 
 
 @pytest.mark.parametrize(

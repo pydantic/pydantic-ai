@@ -96,7 +96,7 @@ def run(*, splash: Splash | None = None) -> None:
         metavar='MODULE:ATTR',
         help=(
             'Chat with an existing Pydantic AI Agent instance, e.g. pydantic_ai.main:my_cool_agent; '
-            "loads no plugins for this session and keeps the agent's model unless -m is given"
+            "loads no plugins for this session (with --web, only web) and keeps the agent's model unless -m is given"
         ),
     )
     parser.add_argument('-m', '--model', help='Provider-qualified model name')

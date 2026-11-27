@@ -10,7 +10,7 @@ harness `approval_ask`. A call no handler answered, as in a session no one can b
 
 import difflib
 import unicodedata
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -21,9 +21,11 @@ from pydantic_ai.exceptions import SkipToolExecution
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import (
     AgentDepsT,
+    DeferredToolApprovalResult,
     DeferredToolRequests,
     DeferredToolResults,
     RunContext,
+    ToolApproved,
     ToolDefinition,
     ToolDenied,
 )
@@ -190,6 +192,53 @@ def approval_question(request: PermissionRequest) -> AskUserRequest:
             ),
         ),
     )
+
+
+def call_approval_question(call: ToolCallPart) -> AskUserRequest:
+    """A held call `Permissions` does not hold, as a question: approve it once, or deny it; a typed answer denies."""
+    text = _printable(f'Run {call.tool_name}({call.args_as_json_str()})?')
+    if len(text) > _QUESTION_LENGTH:
+        text = text[: _QUESTION_LENGTH - 2] + '…?'
+    return AskUserRequest(
+        id=call.tool_call_id,
+        questions=(
+            Question(
+                header=HEADER,
+                question=text,
+                options=(
+                    QuestionOption(label=APPROVE, description='Run it this once.'),
+                    QuestionOption(
+                        label=DENY, description='Do not run it. Type a reason instead to send it to the model.'
+                    ),
+                ),
+            ),
+        ),
+    )
+
+
+async def ask_call_approvals(
+    requests: DeferredToolRequests, approve: Callable[[ToolCallPart], Awaitable[PermissionDecision]]
+) -> DeferredToolResults | None:
+    """Put each approval in `requests` that `Permissions` does not hold to `approve`, one at a time.
+
+    Those are calls such as a `requires_approval=True` tool's; the ones `Permissions` holds are left to its handler.
+    `None` when there is none.
+    """
+    held = {request.call.tool_call_id for request in permission_requests(requests)}
+    calls = [call for call in requests.approvals if call.tool_call_id not in held]
+    if not calls:
+        return None
+    approvals: dict[str, bool | DeferredToolApprovalResult] = {}
+    for call in calls:
+        answer = await approve(call)
+        if answer.approved:
+            approvals[call.tool_call_id] = ToolApproved()
+            continue
+        message = 'The user denied this tool call, so it did not run.'
+        approvals[call.tool_call_id] = ToolDenied(
+            f'{message} Their reason: {answer.reason}' if answer.reason else message
+        )
+    return DeferredToolResults(approvals=approvals)
 
 
 def shown_in_full(request: PermissionRequest) -> bool:

@@ -182,8 +182,8 @@ async def _serve_web(
                 await shell.loader.load(WEB)
             web = _loaded_web(shell.loader)
             assert web is not None, 'a failed load raises'
-            # An agent of your own gets approvals in the browser, but no tool it didn't define.
-            web.offers_questions = not own_agent
+            # An agent of your own gets its approvals answered in the browser, but no tool it didn't define.
+            web.own_agent = own_agent
             if resume is not None:
                 shell.session.record_resumed()
             if notice:

@@ -11,7 +11,7 @@ import sys
 from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import ParamSpec
+from typing import ParamSpec, cast
 
 import anyio
 import httpx
@@ -28,6 +28,7 @@ from pydantic_ai import (
     PartStartEvent,
     RunContext,
 )
+from pydantic_ai.capabilities import HandleDeferredToolCalls
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
@@ -45,6 +46,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserResponse, Question, QuestionOption
 from pydantic_ai_harness.file_system import (
@@ -55,7 +57,12 @@ from pydantic_ai_harness.file_system import (
 )
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
-from pydantic_ai_pax.builtin_plugins.web import WebPlugin, channel as channel_module, server as server_module
+from pydantic_ai_pax.builtin_plugins.web import (
+    WebPlugin,
+    channel as channel_module,
+    live as live_module,
+    server as server_module,
+)
 from pydantic_ai_pax.builtin_plugins.web.app import HEADER, Receive, Scope, Send
 from pydantic_ai_pax.builtin_plugins.web.dialogs import BrowserDialogs
 from pydantic_ai_pax.builtin_plugins.web.live import BrowserAnswerer, Hub
@@ -74,6 +81,7 @@ from pydantic_ai_pax.builtin_plugins.web.protocol import (
     LiveEntry,
     Notice,
     OrchestratorMessage,
+    Questions,
     ServerMessage,
     ShellDone,
     Snapshot,
@@ -108,6 +116,7 @@ from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.plugins import CommandEnd, ForkEnd, ForkInfo, PluginHost, Transcript
 from pydantic_ai_pax.plugins.menus import Option
 from pydantic_ai_pax.runtime.monty_cells import MontyCell
+from pydantic_ai_pax.runtime.permissions import call_approval_question
 from pydantic_ai_pax.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
 from pydantic_ai_pax.runtime.session_runtime import SessionRuntime
 from pydantic_ai_pax.runtime.worktrees import Worktree
@@ -969,6 +978,108 @@ async def test_run_web_serves_an_agent_of_your_own(tmp_path: Path, monkeypatch: 
     # Nor the guidance that tells the model to call it.
     assert not any('ask_user_question' in text for text in instructions)
     assert len(await SqliteConversationStore(database=store.path.with_name('sessions.db')).listing(limit=10)) == 2
+
+
+async def test_run_web_asks_in_the_browser_about_your_own_agents_approvals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`pax --web --agent` puts each call of the agent's `requires_approval` tools to the browser, one at a time:
+    an approved call runs, and a typed answer denies it with that reason."""
+    monkeypatch.setattr('pydantic_ai_pax.builtin_plugins.web.open_browser', list[str]().append)
+    returned: list[str] = []
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        returns = [part for part in messages[-1].parts if isinstance(part, ToolReturnPart)]
+        if not returns:
+            yield {
+                0: DeltaToolCall(name='delete', json_args='{"path": "a.txt"}', tool_call_id='first'),
+                1: DeltaToolCall(name='delete', json_args='{"path": "b.txt"}', tool_call_id='second'),
+            }
+        else:
+            returned.extend(part.model_response_str() for part in returns)
+            yield 'Done.'
+
+    agent = Agent(FunctionModel(stream_function=respond, model_name='custom'))
+    deleted: list[str] = []
+
+    @agent.tool_plain(requires_approval=True)
+    def delete(path: str) -> str:
+        """Delete `path`."""
+        deleted.append(path)
+        return f'Deleted {path}'
+
+    # Each question is open in the browser once the next one is built.
+    building, built = anyio.create_memory_object_stream[None](2)
+
+    def observed(call: ToolCallPart) -> AskUserRequest:
+        building.send_nowait(None)
+        return call_approval_question(call)
+
+    monkeypatch.setattr(live_module, 'call_approval_question', observed)
+    store = SettingsStore(tmp_path / 'config.db')
+    output = _Output()
+    with building, built, anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        async with anyio.create_task_group() as group:
+            group.start_soon(
+                lambda: run_web(
+                    settings_for=cli._settings_for(  # pyright: ignore[reportPrivateUsage]
+                        store, model=None, request_limit=None, agent=True, agent_model=True
+                    ),
+                    store=store,
+                    project=ProjectSettings(),
+                    console=Console(file=output, force_terminal=False, width=500),
+                    agent=agent,
+                )
+            )
+            await output.ready.wait()
+            found = re.search(r'(http://\S+)/\?token=(\S+)', output.getvalue())
+            assert found is not None
+            async with httpx.AsyncClient(base_url=found[1], headers={HEADER: found[2]}, trust_env=False) as client:
+
+                async def asked() -> Questions:
+                    await built.receive()
+                    message = WIRE.validate_json((await client.get('/api/state')).content)
+                    assert isinstance(message, Snapshot)
+                    [question] = message.questions
+                    return question
+
+                await client.post('/api/input', json={'text': 'Delete both'})
+                first = await asked()
+                assert first.id == 'first' and first.approval is None
+                [question] = first.questions
+                assert (question.header, [option.label for option in question.options]) == (
+                    'Approve?',
+                    ['Approve', 'Deny'],
+                )
+                assert question.question == 'Run delete({"path":"a.txt"})?'
+                approve = {'answers': [{'header': 'Approve?', 'selected': ['Approve']}]}
+                assert (await client.post('/api/questions/first', json=approve)).status_code == 204
+                second = await asked()
+                assert second.id == 'second'
+                deny = {'answers': [{'header': 'Approve?', 'custom': 'Keep b.txt'}]}
+                assert (await client.post('/api/questions/second', json=deny)).status_code == 204
+                await output.logged('Done in').wait()
+            group.cancel_scope.cancel()
+    assert deleted == ['a.txt']
+    assert returned == ['Deleted a.txt', 'The user denied this tool call, so it did not run. Their reason: Keep b.txt']
+
+
+async def test_web_answers_other_approvals_only_for_an_agent_of_your_own() -> None:
+    """With the stock agent, `web` leaves approvals `/permissions` does not hold as they were, as before
+    `pax --web --agent`; with your own, it leaves the ones `/permissions` holds to the `/permissions` handler."""
+    plugin = WebPlugin.from_host(PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={}))
+    *_, own_approvals = plugin.get_capabilities()
+    assert isinstance(own_approvals, HandleDeferredToolCalls)
+    own_approvals = cast(HandleDeferredToolCalls[None], own_approvals)
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    plain = DeferredToolRequests(approvals=[ToolCallPart('delete', {'path': 'a.txt'}, tool_call_id='plain')])
+    assert await own_approvals.handle_deferred_tool_calls(ctx, requests=plain) is None
+    plugin.own_agent = True
+    held = DeferredToolRequests(
+        approvals=[ToolCallPart('run_shell', {'command': 'rm a.txt'}, tool_call_id='held')],
+        metadata={'held': {'permissions': {'action': 'command', 'subject': 'rm a.txt', 'reason': 'It deletes.'}}},
+    )
+    assert await own_approvals.handle_deferred_tool_calls(ctx, requests=held) is None
 
 
 def test_web_flag_returns_after_the_web_ui(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
