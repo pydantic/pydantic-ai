@@ -1,0 +1,51 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/decisions
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "123"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-decision-0
+        input: Server is down
+        questions:
+          q0:
+            type: noul
+            instructions: Urgent?
+  response:
+    status: 404
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=90
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        error:
+          message: >-
+            Requested model not found. See https://ai.google.dev/gemini-api/docs/models for
+            a list of available models.
+          code: not_found
+  recorded_at: 2026-11-11T16:49:12.045888+00:00

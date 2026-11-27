@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
+import shutil
 import sys
 import urllib.parse
 from collections.abc import Mapping
@@ -9,10 +11,14 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 import pytest
+import yaml
+from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).parent))
 import latest_versions_canary_report as report
 
+CANARY = Path(__file__).parents[1] / 'workflows' / 'latest-versions-canary.yml'
+NIGHTLY = CANARY.with_name('latest-versions-canary-nightly.yml')
 REPO = 'pydantic/pydantic-ai'
 BOT = 'github-actions[bot]'
 DAY = dt.timedelta(days=1)
@@ -423,10 +429,104 @@ def test_a_session_that_stopped_short_is_incomplete(tmp_path: Path, root: Path):
     assert client.posted == []
 
 
+def test_a_report_cut_short_names_the_failures_before_the_cut(
+    tmp_path: Path, root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    union = case('tests/models/test_anthropic.py', 'test_request', UNION_311)
+    prefect = case('tests/conftest.py', 'test_flow', PREFECT_TEXT)
+    reports = failing_reports(tmp_path, 'reports', [union, prefect])
+    junit = (reports / 'latest-versions-canary-3.11' / 'junit.xml').read_bytes()
+    cut = junit.rindex(b'<testcase')
+    # Python 3.11's report passes the read limit and 3.15's breaks off, both before the Prefect failure.
+    monkeypatch.setattr(report, '_REPORT_FILE_LIMIT', cut)
+    (reports / 'latest-versions-canary-3.15' / 'junit.xml').write_bytes(junit[:cut])
+
+    observation = report.collect(reports, root)
+    assert {signature: sorted(failure.pythons) for signature, failure in observation.failures.items()} == {
+        UNION: ['3.11', '3.15']
+    }
+    limit_reason, parse_reason = observation.failures[UNION].details
+    assert limit_reason == f'Python 3.11 JUnit report read only in part: junit.xml exceeds {cut} bytes'
+    assert parse_reason.startswith('Python 3.15 JUnit report read only in part: no element found')
+    assert not observation.complete
+
+    # The issue says its count stops at the cut, and an open issue for a signature past it is not told it passes.
+    client = FakeClient()
+    run(client, root, failing_reports(tmp_path, 'prefect', [prefect]), 1)
+    assert run(client, root, reports, 2) == [f'#101: filed `{UNION}`']
+    assert limit_reason in str(client.created[1]['body'])
+    assert client.posted == []
+
+
+def test_an_unreadable_report_is_named_as_such(tmp_path: Path, root: Path, monkeypatch: pytest.MonkeyPatch):
+    reports = failing_reports(tmp_path, 'reports', [case('tests/models/test_anthropic.py', 'test_request', UNION_311)])
+    monkeypatch.setattr(report, '_REPORT_FILE_LIMIT', 200)
+    (reports / 'latest-versions-canary-3.15' / 'junit.xml').write_bytes(b'<testsuites><testcase')
+
+    observation = report.collect(reports, root)
+    assert {signature: failure.details for signature, failure in observation.failures.items()} == {
+        'pytest fails on Python 3.11 and leaves no readable JUnit report': ['junit.xml exceeds 200 bytes'],
+        'pytest fails on Python 3.15 and leaves no readable JUnit report': ['unclosed token: line 1, column 12'],
+    }
+    assert not observation.complete
+
+
 def test_a_missing_leg_makes_the_run_incomplete(tmp_path: Path, root: Path):
     reports = tmp_path / 'reports'
     write_leg(reports, '3.11', cases=[case('tests/models/test_anthropic.py', 'test_request', UNION_311)])
     assert not report.collect(reports, root).complete
+
+
+class _Step(BaseModel):
+    uses: str = ''
+    settings: dict[str, str] = Field(default_factory=dict[str, str], alias='with')
+
+
+class _Job(BaseModel):
+    env: dict[str, str] = Field(default_factory=dict[str, str])
+    steps: list[_Step] = Field(default_factory=list[_Step])
+
+
+class _Workflow(BaseModel):
+    jobs: dict[str, _Job]
+
+
+def _step(path: Path, job: str, action: str) -> tuple[_Job, _Step]:
+    # `BaseLoader` reads every scalar as a string, as the runner receives `with:` inputs.
+    workflow = _Workflow.model_validate(yaml.load(path.read_text(encoding='utf-8'), Loader=yaml.BaseLoader))
+    (step,) = [step for step in workflow.jobs[job].steps if step.uses.startswith(f'actions/{action}@')]
+    return workflow.jobs[job], step
+
+
+def test_one_uploaded_leg_or_two_land_where_the_report_job_reads_them(tmp_path: Path, root: Path):
+    leg, upload = _step(CANARY, 'latest-versions', 'upload-artifact')
+    _, download = _step(NIGHTLY, 'report', 'download-artifact')
+    # A leg writes its report only under `canary-report/$REPORT_NAME/` and uploads `canary-report/`, so the
+    # artifact holds one directory named like the artifact.
+    assert upload.settings['name'] == '${{ env.REPORT_NAME }}'
+    assert upload.settings['path'] == '${{ runner.temp }}/canary-report/'
+    outside = re.compile(r'canary-report/(?!\$\{REPORT_NAME\}|\$\{\{ env\.REPORT_NAME \}\}|$)', re.MULTILINE)
+    assert outside.findall(CANARY.read_text(encoding='utf-8')) == []
+
+    # A runner lost mid-run leaves one artifact, as in https://github.com/pydantic/pydantic-ai/actions/runs/45775560566.
+    for pythons in (['3.11', '3.15'], ['3.15']):
+        reports = tmp_path / '-'.join(pythons) / 'reports'
+        for python in pythons:
+            name = leg.env['REPORT_NAME'].replace('${{ matrix.python-version }}', python)
+            assert name == f'latest-versions-canary-{python}'
+            # The leg's `canary-report/`.
+            uploaded = tmp_path / '-'.join(pythons) / python
+            write_leg(uploaded, python, cases=[case('tests/models/test_anthropic.py', 'test_request', UNION_311)])
+            # `actions/download-artifact` v8.0.2 extracts into `path` itself when `merge-multiple` is set or
+            # one artifact matched, and each artifact into `path/<name>/` otherwise.
+            merged = download.settings.get('merge-multiple') == 'true' or len(pythons) == 1
+            shutil.copytree(uploaded, reports if merged else reports / name, dirs_exist_ok=True)
+
+        observation = report.collect(reports, root)
+        assert {signature: sorted(failure.pythons) for signature, failure in observation.failures.items()} == {
+            UNION: pythons
+        }
+        assert observation.complete == (len(pythons) == 2)
 
 
 def test_new_signature_files_one_labeled_issue_with_fenced_evidence(tmp_path: Path, root: Path):
@@ -693,6 +793,6 @@ def test_main_reports_only_failed_or_green_runs(tmp_path: Path, root: Path, monk
     monkeypatch.setenv('GITHUB_RUN_ID', '8')
     assert report.main() == 0
     assert [issue['title'] for issue in client.created[1:]] == [
-        f'Latest versions canary: pytest fails on Python {python} with no failing test reported'
+        f'Latest versions canary: pytest fails on Python {python} and leaves no readable JUnit report'
         for python in ('3.11', '3.15')
     ]

@@ -23,7 +23,7 @@ import anyio
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent
-from pydantic_ai._framing import neutralize_tags
+from pydantic_ai._framing import neutralize_tags, second_model_prompt
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.messages import (
@@ -34,7 +34,6 @@ from pydantic_ai.messages import (
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     ToolCallPart,
     ToolReturnPart,
-    UserPromptPart,
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -43,13 +42,12 @@ from pydantic_ai_harness._message_text import CHARS_PER_TOKEN, tool_return_text,
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness.compaction._capability_loads import deferred_capability_ids, keep_loaded_state
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
-from pydantic_ai_harness.compaction._pinning import is_pinned, reinject_pinned
+from pydantic_ai_harness.compaction._pinning import reinject_pinned
 from pydantic_ai_harness.compaction._receipts import (
     ReceiptInfo,
     discover_transcript_handle,
     format_receipt,
     is_receipt_message,
-    is_receipt_part,
     make_receipt_part,
     record_receipt,
 )
@@ -63,9 +61,10 @@ from pydantic_ai_harness.compaction._shared import (
     estimate_token_count,
     exceeds,
     find_token_cutoff,
-    is_harness_data,
+    is_user_part,
     record_compaction_reclaim,
     resolve_token_trigger,
+    starts_user_turn,
     validate_token_trigger,
 )
 from pydantic_ai_harness.compaction._summarizing_compaction import (
@@ -180,7 +179,7 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
             capabilities=[
                 RelevanceCompaction(
                     'system-one:nimble',
-                    summarizer=SummarizingCompaction(model='anthropic:claude-haiku-5-5', max_messages=1),
+                    summarizer=SummarizingCompaction(model='anthropic:claude-haiku-5-5'),
                     max_fraction=0.8,
                 )
             ],
@@ -255,7 +254,7 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
     """Insert a deterministic note after the head of the history saying how much was summarized or dropped."""
 
     tokenizer: Callable[[str], int] | None = None
-    """Optional token counter; defaults to the characters-per-token heuristic."""
+    """Optional token counter; defaults to the built-in text estimate."""
 
     id: str | None = 'relevance_compaction'
     """Stable identity for durable operations; two on one agent merge into one."""
@@ -480,28 +479,18 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
             step_messages = messages[step.start : step.end]
             if index in kept:
                 middle.extend(step_messages)
-            elif index in reduced and self.summarizer is None:
-                middle.extend(self._truncated(step_messages))
-            elif index in reduced:
-                summarized.extend(step_messages)
+            elif index not in reduced:
                 removed.extend(step_messages)
+            elif self.summarizer is None:
+                middle.extend(self._truncated(step_messages))
             else:
+                summarized.extend(step_messages)
                 removed.extend(step_messages)
 
         added: list[ModelMessage] = []
         if self.summarizer is not None and summarized:
-            previous = extract_previous_summary(messages) if self.summarizer.incremental else None
-            if previous is None and (earlier := _summary_parts(head)):
-                # Without an anchor the earlier summary is summarized again, as `SummarizingCompaction` does.
-                summarized = [ModelRequest(parts=earlier), *summarized]
-            written = await self._summarize(ctx, summarized, previous)
-            # A result recorded before the write time was kept is a bare `str`, and its summary goes without one.
-            text, created_at = (written, None) if isinstance(written, str) else (written.text, written.created_at)
-            # The summarizer is reused as configured, including its cross-model bridge note.
-            summary = bridge_summary(self.summarizer, text, messages, ctx)
+            added.append(await self._summary_request(self.summarizer, messages, ctx, head, summarized))
             head = _without_summaries(head)
-            # Written as `SummarizingCompaction` writes its own: a marked `CompactionPart` in a request of its own.
-            added.append(summary_request(summary, created_at))
         if self.receipts and removed:
             head = [message for message in head if not is_receipt_message(message)]
             added.append(self._receipt(ctx, removed, has_summary=bool(summarized)))
@@ -521,6 +510,27 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
             deferred_ids=deferred_capability_ids(ctx),
             preserve=self.preserve_loaded_capabilities,
         )
+
+    async def _summary_request(
+        self,
+        summarizer: SummarizingCompaction[AgentDepsT],
+        messages: list[ModelMessage],
+        ctx: RunContext[AgentDepsT],
+        head: Sequence[ModelRequest],
+        summarized: list[ModelMessage],
+    ) -> ModelRequest:
+        """The request holding the summary of *summarized*, written as an update of the newest earlier one, if any."""
+        previous = extract_previous_summary(messages) if summarizer.incremental else None
+        if previous is None and (earlier := _summary_parts(head)):
+            # Without an anchor the earlier summary is summarized again, as `SummarizingCompaction` does.
+            summarized = [ModelRequest(parts=earlier), *summarized]
+        written = await self._summarize(ctx, summarized, previous)
+        # A result recorded before the write time was kept is a bare `str`, and its summary goes without one.
+        text, created_at = (written, None) if isinstance(written, str) else (written.text, written.created_at)
+        # The summarizer is reused as configured, including its cross-model bridge note.
+        summary = bridge_summary(summarizer, text, messages, ctx)
+        # Written as `SummarizingCompaction` writes its own: a marked `CompactionPart` in a request of its own.
+        return summary_request(summary, created_at)
 
     def _receipt(
         self, ctx: RunContext[AgentDepsT], removed: Sequence[ModelMessage], *, has_summary: bool
@@ -555,12 +565,8 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
         requests of one compaction count as one request of the run, checked against its limits like the
         summary request, and their tokens are added to its usage.
         """
-        judgements: list[_Judgement | None] = [None] * len(steps)
         keys = [_cache_key(task, step) for step in steps]
-        for index, key in enumerate(keys):
-            if (cached := self._judgements.get(key)) is not None:
-                self._judgements.move_to_end(key)
-                judgements[index] = _Judgement(*cached, cached=True)
+        judgements = self._cached_judgements(keys)
         pending = [index for index, judgement in enumerate(judgements) if judgement is None]
         if pending and (limits := reserved_usage_limits(ctx.usage_limits)) is not None:
             limits.check_before_request(ctx.usage)
@@ -572,14 +578,15 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
             nonlocal error
             try:
                 async with gate:
-                    result = await self._judge_agent.run(
-                        _judge_prompt(task, context, steps[index]),
-                        conversation_id=ctx.conversation_id,
-                        usage=usage,
-                        # The run's own limits are checked around the whole set; without this, the shared
-                        # usage would hit `Agent.run`'s default 50-request limit on a long history.
-                        usage_limits=UsageLimits(request_limit=None),
-                    )
+                    with second_model_prompt():
+                        result = await self._judge_agent.run(
+                            _judge_prompt(task, context, steps[index]),
+                            conversation_id=ctx.conversation_id,
+                            usage=usage,
+                            # The run's own limits are checked around the whole set; without this, the shared
+                            # usage would hit `Agent.run`'s default 50-request limit on a long history.
+                            usage_limits=UsageLimits(request_limit=None),
+                        )
             except Exception as exc:
                 # Stop the other requests and raise this error itself, not an exception group around it.
                 error = error or exc
@@ -601,6 +608,15 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
             ctx.usage_limits.check_tokens(ctx.usage)
             ctx.usage_limits.check_cost(ctx.usage)
         return [judgement for judgement in judgements if judgement is not None]
+
+    def _cached_judgements(self, keys: Sequence[str]) -> list[_Judgement | None]:
+        """The cached judgement of each step by its key, or `None`, marking each one found as recently used."""
+        judgements: list[_Judgement | None] = [None] * len(keys)
+        for index, key in enumerate(keys):
+            if (cached := self._judgements.get(key)) is not None:
+                self._judgements.move_to_end(key)
+                judgements[index] = _Judgement(*cached, cached=True)
+        return judgements
 
     def _remember(self, key: str, judgement: tuple[float, float]) -> None:
         self._judgements[key] = judgement
@@ -630,20 +646,7 @@ def _split_steps(messages: Sequence[ModelMessage], counts: Sequence[int], start:
     if not bounds:
         return []
     ranges = [(begin, stop) for begin, stop in zip(bounds, [*bounds[1:], end])]
-    owner: dict[str, int] = {}
-    joined: set[int] = set()
-    for index, (begin, stop) in enumerate(ranges):
-        for message in messages[begin:stop]:
-            if isinstance(message, ModelResponse):
-                for response_part in message.parts:
-                    if isinstance(response_part, ToolCallPart):
-                        owner[response_part.tool_call_id] = index
-                continue
-            for part in message.parts:
-                # TODO(v3): remove RetryPromptPart; a caller-passed history can still hold one
-                if isinstance(part, ToolReturnPart | RetryPromptPart):  # pyright: ignore[reportDeprecated]
-                    caller = owner.get(part.tool_call_id, index)
-                    joined.update(range(caller + 1, index + 1))
+    joined = _joined_ranges(messages, ranges)
     steps: list[_Step] = []
     for index, (begin, stop) in enumerate(ranges):
         if index in joined:
@@ -654,28 +657,38 @@ def _split_steps(messages: Sequence[ModelMessage], counts: Sequence[int], start:
                 start=begin,
                 end=stop,
                 tokens=sum(counts[begin:stop]),
-                has_user_prompt=any(_is_user_request(message) for message in messages[begin:stop]),
+                has_user_prompt=any(starts_user_turn(message) for message in messages[begin:stop]),
             )
         )
     return steps
 
 
-def _is_user_request(message: ModelMessage) -> bool:
-    return isinstance(message, ModelRequest) and any(_is_user_part(part) for part in message.parts)
+def _joined_ranges(messages: Sequence[ModelMessage], ranges: Sequence[tuple[int, int]]) -> set[int]:
+    """Indices of the ranges that merge into the range before them, because a tool result links them to its call.
 
-
-def _is_user_part(part: ModelRequestPart) -> bool:
-    """A user prompt the user wrote, not a pin, receipt or harness capability's content."""
-    return isinstance(part, UserPromptPart) and not (is_pinned(part) or is_receipt_part(part) or is_harness_data(part))
+    Each range is a response and the requests up to the next response. A result in range `i` answering a call in
+    range `c` joins ranges `c + 1` through `i`.
+    """
+    owner: dict[str, int] = {}
+    joined: set[int] = set()
+    for index, (begin, stop) in enumerate(ranges):
+        for response_part in messages[begin].parts:
+            if isinstance(response_part, ToolCallPart):
+                owner[response_part.tool_call_id] = index
+        for request in messages[begin + 1 : stop]:
+            for part in request.parts:
+                # TODO(v3): remove RetryPromptPart; a caller-passed history can still hold one
+                if isinstance(part, ToolReturnPart | RetryPromptPart):  # pyright: ignore[reportDeprecated]
+                    caller = owner.get(part.tool_call_id, index)
+                    joined.update(range(caller + 1, index + 1))
+    return joined
 
 
 def _user_text(message: ModelMessage) -> str:
     """The text of the user prompts the user wrote in *message*, or `''`."""
     if not isinstance(message, ModelRequest):
         return ''
-    return '\n'.join(
-        user_prompt_text(part) for part in message.parts if isinstance(part, UserPromptPart) and _is_user_part(part)
-    )
+    return '\n'.join(user_prompt_text(part) for part in message.parts if is_user_part(part))
 
 
 def _summary_parts(messages: Sequence[ModelRequest]) -> list[ModelRequestPart]:

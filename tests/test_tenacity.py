@@ -2,14 +2,20 @@ from __future__ import annotations as _annotations
 
 import threading
 import time
-from datetime import UTC, datetime
-from email.utils import formatdate
+from collections.abc import AsyncIterator, Callable, Iterable, Iterator
+from datetime import UTC, datetime, timedelta, tzinfo
+from email.utils import format_datetime
+from functools import partial
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import AsyncMock, Mock
 
+import anyio
+import httpcore2
 import httpx
 import httpx2
 import pytest
+
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from .conftest import try_import
 
@@ -36,6 +42,88 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='install tenaci
 # Only the classes that construct the deprecated transports may silence their warning; the `httpx2` classes
 # run under the repo-wide `filterwarnings = ["error"]` so a deprecation escaping into them fails the test.
 ignore_deprecation = pytest.mark.filterwarnings('ignore::pydantic_ai._warnings.PydanticAIDeprecationWarning')
+
+
+class _NetworkStream(httpx2.SyncByteStream, httpx2.AsyncByteStream):
+    """A response body that, like one from the network, is read only when iterated, and can fail mid-read."""
+
+    def __init__(self, *, fail_read: bool):
+        self.fail_read = fail_read
+        self.iterated = False
+        self.closed = False
+
+    def __iter__(self) -> Iterator[bytes]:
+        self.iterated = True
+        if self.fail_read:
+            raise httpx2.ReadError('connection lost')
+        yield b'{"error": "rejected"}'
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for chunk in self:
+            yield chunk
+
+    def close(self) -> None:
+        self.closed = True
+
+    async def aclose(self) -> None:
+        self.close()
+
+
+class _StalledConnection(httpcore2.AsyncNetworkStream):
+    """A connection that sends a 503's headers, then stalls its body until the reader is cancelled."""
+
+    def __init__(self):
+        self.reading_body = anyio.Event()
+        self.closed = False
+        self._head = [b'HTTP/1.1 503 Service Unavailable\r\nContent-Length: 64\r\n\r\n']
+
+    async def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
+        if self._head:
+            return self._head.pop()
+        self.reading_body.set()
+        await anyio.sleep_forever()
+        return b''  # pragma: no cover
+
+    async def write(self, buffer: bytes, timeout: float | None = None) -> None:
+        pass
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class _StalledConnectionBackend(httpcore2.AsyncNetworkBackend):
+    def __init__(self, connection: _StalledConnection):
+        self.connection = connection
+
+    async def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Iterable[object] | None = None,
+    ) -> httpcore2.AsyncNetworkStream:
+        return self.connection
+
+
+def _reject(response: httpx2.Response) -> None:
+    raise httpx2.HTTPStatusError(f'rejected {response.status_code}', request=response.request, response=response)
+
+
+def _read_content(response: httpx2.Response) -> bytes | None:
+    try:
+        return response.content
+    except httpx2.ResponseNotRead:
+        return None
+
+
+_REJECTED_RESPONSES = [
+    pytest.param(429, False, True, b'{"error": "rejected"}', id='error-status-read'),
+    pytest.param(200, False, False, None, id='success-status-closed-unread'),
+    pytest.param(503, True, True, None, id='failed-read-keeps-validator-error'),
+]
+"""`(status_code, fail_read, iterated, content)`: a response `validate_response` rejected reads its body only for an
+error status, and a failed read still raises the validator's exception."""
 
 
 class TestHTTPX2TenacityTransport:
@@ -140,6 +228,75 @@ class TestHTTPX2TenacityTransport:
 
         wrapped.handle_async_request.assert_awaited_once_with(request)
         wrapped.aclose.assert_awaited_once_with()
+
+    @pytest.mark.parametrize(('status_code', 'fail_read', 'iterated', 'content'), _REJECTED_RESPONSES)
+    def test_sync_transport_reads_rejected_error_body_before_closing(
+        self, status_code: int, fail_read: bool, iterated: bool, content: bytes | None
+    ):
+        """Below any model, so a test can see whether the body was read and the stream closed, which no model shows."""
+        stream = _NetworkStream(fail_read=fail_read)
+        transport = HTTPX2TenacityTransport(
+            config=RetryConfig(stop=stop_after_attempt(1), reraise=True),
+            wrapped=httpx2.MockTransport(lambda request: httpx2.Response(status_code, stream=stream)),
+            validate_response=_reject,
+        )
+
+        with httpx2.Client(transport=transport) as client, pytest.raises(httpx2.HTTPStatusError) as exc_info:
+            client.get('https://example.com')
+
+        assert exc_info.value.response.status_code == status_code
+        assert _read_content(exc_info.value.response) == content
+        assert stream.iterated == iterated
+        assert stream.closed
+
+    @pytest.mark.parametrize(('status_code', 'fail_read', 'iterated', 'content'), _REJECTED_RESPONSES)
+    async def test_async_transport_reads_rejected_error_body_before_closing(
+        self, status_code: int, fail_read: bool, iterated: bool, content: bytes | None
+    ):
+        """The async counterpart; `test_retrying_transport_gave_up_keeps_streamed_error_body` covers it through a model."""
+        stream = _NetworkStream(fail_read=fail_read)
+        transport = AsyncHTTPX2TenacityTransport(
+            config=RetryConfig(stop=stop_after_attempt(1), reraise=True),
+            wrapped=httpx2.MockTransport(lambda request: httpx2.Response(status_code, stream=stream)),
+            validate_response=_reject,
+        )
+
+        async with httpx2.AsyncClient(transport=transport) as client:
+            with pytest.raises(httpx2.HTTPStatusError) as exc_info:
+                await client.get('https://example.com')
+
+        assert exc_info.value.response.status_code == status_code
+        assert _read_content(exc_info.value.response) == content
+        assert stream.iterated == iterated
+        assert stream.closed
+
+    @pytest.mark.parametrize('anyio_backend', ['asyncio', 'trio'])
+    async def test_async_transport_closes_rejected_response_when_body_read_is_cancelled(self):
+        """Cancelling the error body's read still closes the default transport's connection.
+
+        Otherwise each cancelled attempt would hold a pooled connection
+        (https://github.com/pydantic/pydantic-ai/issues/2724). `httpx2.AsyncHTTPTransport` takes no network backend,
+        so its pool is replaced with one on a stalled connection; the transport's own response stream still sits
+        between the read and that connection.
+        """
+        connection = _StalledConnection()
+        pool = httpcore2.AsyncConnectionPool(network_backend=_StalledConnectionBackend(connection))
+        wrapped = httpx2.AsyncHTTPTransport()
+        wrapped._pool = pool  # pyright: ignore[reportPrivateUsage]
+        transport = AsyncHTTPX2TenacityTransport(
+            config=RetryConfig(stop=stop_after_attempt(1), reraise=True), wrapped=wrapped, validate_response=_reject
+        )
+
+        async with httpx2.AsyncClient(transport=transport) as client:
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(client.get, 'http://example.com')
+                with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                    await connection.reading_body.wait()
+                tg.cancel_scope.cancel()
+
+            # Checked before the client closes, since closing it closes the pool and every connection in it.
+            assert connection.closed
+            assert pool.connections == []
 
 
 class TestLegacyHTTPXTransports:
@@ -484,6 +641,33 @@ class TestAsyncTenacityTransport:
         mock_response_success.raise_for_status.assert_called_once()
 
 
+_FROZEN_NOW = datetime(2095, 11, 6, 8, 49, 37, tzinfo=UTC)
+
+
+class _FrozenDatetimeMeta(type):
+    def __instancecheck__(cls, instance: object) -> bool:
+        return isinstance(instance, datetime)
+
+
+class _FrozenDatetime(datetime, metaclass=_FrozenDatetimeMeta):
+    """`datetime` whose `now()` is `_FROZEN_NOW`.
+
+    `wait_retry_after` checks the parsed date with `isinstance` against this patched name, and
+    `parsedate_to_datetime` returns a real `datetime`, so the metaclass accepts real instances.
+    """
+
+    @classmethod
+    def now(cls, tz: tzinfo | None = None) -> datetime:
+        return _FROZEN_NOW
+
+
+@pytest.fixture
+def frozen_now(monkeypatch: pytest.MonkeyPatch) -> datetime:
+    """Freeze the clock `wait_retry_after` measures `Retry-After` dates against, so waits are exact."""
+    monkeypatch.setattr('pydantic_ai.retries.datetime', _FrozenDatetime)
+    return _FROZEN_NOW
+
+
 class TestWaitRetryAfter:
     """Tests for the wait_retry_after wait strategy."""
 
@@ -538,15 +722,16 @@ class TestWaitRetryAfter:
         assert result == 2.0
         fallback.assert_called_once_with(retry_state)
 
-    def test_retry_after_seconds_format(self):
-        """Test parsing Retry-After header in seconds format."""
+    @pytest.mark.parametrize(('retry_after', 'expected'), [('30', 30.0), pytest.param('0', 0.0, id='zero')])
+    def test_retry_after_seconds_format(self, retry_after: str, expected: float):
+        """Test parsing Retry-After header in seconds format, including `0` for an immediate retry."""
         fallback = Mock()
         wait_func = wait_retry_after(fallback_strategy=fallback, max_wait=300)
 
         # Create HTTP status error with Retry-After in seconds
         request = httpx.Request('GET', 'https://example.com')
         response = Mock(spec=httpx.Response)
-        response.headers = {'retry-after': '30'}
+        response.headers = {'retry-after': retry_after}
         http_error = httpx.HTTPStatusError('Rate limited', request=request, response=response)
 
         retry_state = Mock(spec=RetryCallState)
@@ -556,7 +741,7 @@ class TestWaitRetryAfter:
 
         result = wait_func(retry_state)
 
-        assert result == 30.0
+        assert result == expected
         fallback.assert_not_called()
 
     def test_httpx2_retry_after_seconds_format(self):
@@ -604,6 +789,9 @@ class TestWaitRetryAfter:
             pytest.param({'retry-after-ms': '1500', 'retry-after': '2'}, 300, 1.5, id='ms-preferred'),
             pytest.param({'retry-after-ms': '90000'}, 60, 60.0, id='ms-capped'),
             pytest.param({'retry-after-ms': 'invalid', 'retry-after': '2'}, 300, 2.0, id='invalid-ms-falls-through'),
+            pytest.param({'retry-after-ms': '-1', 'retry-after': '2'}, 300, 2.0, id='negative-ms-falls-through'),
+            pytest.param({'retry-after-ms': 'inf', 'retry-after': '2'}, 300, 2.0, id='inf-ms-falls-through'),
+            pytest.param({'retry-after-ms': 'nan', 'retry-after': '2'}, 300, 2.0, id='nan-ms-falls-through'),
         ],
     )
     def test_retry_after_ms(self, headers: dict[str, str], max_wait: float, expected: float):
@@ -622,39 +810,39 @@ class TestWaitRetryAfter:
         assert wait_func(retry_state) == expected
         fallback.assert_not_called()
 
-    def test_retry_after_http_date_format(self):
-        """Test parsing Retry-After header in HTTP date format."""
+    @pytest.mark.parametrize(
+        'format_date',
+        [
+            pytest.param(partial(format_datetime, usegmt=True), id='imf-fixdate'),
+            pytest.param(datetime.ctime, id='asctime'),
+        ],
+    )
+    @pytest.mark.parametrize(
+        ('offset', 'max_wait', 'expected'),
+        [
+            pytest.param(30, 300, 30.0, id='within-max-wait'),
+            pytest.param(120, 60, 60.0, id='capped'),
+        ],
+    )
+    def test_retry_after_http_date(
+        self,
+        frozen_now: datetime,
+        format_date: Callable[[datetime], str],
+        offset: int,
+        max_wait: float,
+        expected: float,
+    ):
+        """An HTTP-date `Retry-After` waits until that date, capped at `max_wait`.
+
+        Both formats are covered: IMF-fixdate, and asctime, which carries no timezone and is read as UTC.
+        """
         fallback = Mock()
-        wait_func = wait_retry_after(fallback_strategy=fallback, max_wait=300)
+        wait_func = wait_retry_after(fallback_strategy=fallback, max_wait=max_wait)
 
-        # Create a future date (30 seconds from now)
-        future_time = datetime.now(UTC).timestamp() + 30
-        http_date = formatdate(future_time, usegmt=True)
-
-        # Create HTTP status error with Retry-After in HTTP date format
-        request = httpx.Request('GET', 'https://example.com')
-        response = Mock(spec=httpx.Response)
-        response.headers = {'retry-after': http_date}
-        http_error = httpx.HTTPStatusError('Rate limited', request=request, response=response)
-
-        retry_state = Mock(spec=RetryCallState)
-        retry_state.outcome = Mock()
-        retry_state.outcome.failed = True
-        retry_state.outcome.exception.return_value = http_error
-
-        result = wait_func(retry_state)
-
-        # Should be approximately 30 seconds (allow some tolerance for test timing)
-        assert 25 <= result <= 35
-        fallback.assert_not_called()
-
-    def test_retry_after_asctime_date_format(self):
-        """Asctime `Retry-After` dates are parsed locally without a provider request."""
-        retry_time = datetime(2095, 11, 6, 8, 49, 37, tzinfo=UTC)
         request = httpx2.Request('GET', 'https://example.com')
         response = httpx2.Response(
             429,
-            headers={'retry-after': retry_time.ctime()},
+            headers={'retry-after': format_date(frozen_now + timedelta(seconds=offset))},
             request=request,
         )
         http_error = httpx2.HTTPStatusError('Rate limited', request=request, response=response)
@@ -662,22 +850,16 @@ class TestWaitRetryAfter:
         retry_state.outcome = Mock()
         retry_state.outcome.exception.return_value = http_error
 
-        wait_func = wait_retry_after(fallback_strategy=wait_fixed(1), max_wait=float('inf'))
+        assert wait_func(retry_state) == expected
+        fallback.assert_not_called()
 
-        before = datetime.now(UTC)
-        wait_seconds = wait_func(retry_state)
-        after = datetime.now(UTC)
-
-        assert (retry_time - after).total_seconds() <= wait_seconds <= (retry_time - before).total_seconds()
-
-    def test_retry_after_http_date_past_time_uses_fallback(self):
-        """Test that past dates in Retry-After fall back to fallback strategy."""
+    @pytest.mark.parametrize('offset', [pytest.param(-30, id='past'), pytest.param(0, id='now')])
+    def test_retry_after_http_date_not_in_future_uses_fallback(self, frozen_now: datetime, offset: int):
+        """A `Retry-After` date that is not after now falls back to the fallback strategy."""
         fallback = Mock(return_value=1.0)
         wait_func = wait_retry_after(fallback_strategy=fallback, max_wait=300)
 
-        # Create a past date
-        past_time = datetime.now(UTC).timestamp() - 30
-        http_date = formatdate(past_time, usegmt=True)
+        http_date = format_datetime(frozen_now + timedelta(seconds=offset), usegmt=True)
 
         # Create HTTP status error with Retry-After in HTTP date format
         request = httpx.Request('GET', 'https://example.com')
@@ -694,31 +876,6 @@ class TestWaitRetryAfter:
 
         assert result == 1.0
         fallback.assert_called_once_with(retry_state)
-
-    def test_retry_after_http_date_respects_max_wait(self):
-        """Test that max_wait is respected for HTTP date format."""
-        fallback = Mock()
-        wait_func = wait_retry_after(fallback_strategy=fallback, max_wait=60)
-
-        # Create a future date (120 seconds from now, > max_wait)
-        future_time = datetime.now(UTC).timestamp() + 120
-        http_date = formatdate(future_time, usegmt=True)
-
-        # Create HTTP status error with Retry-After in HTTP date format
-        request = httpx.Request('GET', 'https://example.com')
-        response = Mock(spec=httpx.Response)
-        response.headers = {'retry-after': http_date}
-        http_error = httpx.HTTPStatusError('Rate limited', request=request, response=response)
-
-        retry_state = Mock(spec=RetryCallState)
-        retry_state.outcome = Mock()
-        retry_state.outcome.failed = True
-        retry_state.outcome.exception.return_value = http_error
-
-        result = wait_func(retry_state)
-
-        assert result == 60.0  # Capped at max_wait
-        fallback.assert_not_called()
 
     @pytest.mark.parametrize('retry_after', ['invalid-value', '-1', 'Wed, 21 Oct 999999999999 07:28:00 GMT'])
     def test_invalid_retry_after_uses_fallback(self, retry_after: str):
@@ -741,19 +898,36 @@ class TestWaitRetryAfter:
         assert result == 4.0
         fallback.assert_called_once_with(retry_state)
 
-    def test_default_fallback_strategy(self):
-        """Test that default fallback strategy is used when none is provided."""
+    @pytest.mark.parametrize(
+        ('headers', 'attempt_number', 'expected'),
+        [
+            pytest.param(None, 1, 1.0, id='first-backoff'),
+            # 2 ** 6 = 64 s uncapped
+            pytest.param(None, 7, 60.0, id='capped'),
+            pytest.param({}, 7, 60.0, id='capped-no-retry-after'),
+            pytest.param({'retry-after': 'invalid-value'}, 7, 60.0, id='capped-invalid-retry-after'),
+        ],
+    )
+    def test_default_fallback_strategy(self, headers: dict[str, str] | None, attempt_number: int, expected: float):
+        """The default fallback backs off exponentially from 1 s and never waits more than 60 s.
+
+        `headers=None` retries with no exception; otherwise the retry follows a 429 carrying `headers`.
+        """
         wait_func = wait_retry_after(max_wait=300)
 
-        # Create a retry state with no exception to trigger fallback
         retry_state = Mock(spec=RetryCallState)
-        retry_state.outcome = None
-        retry_state.attempt_number = 1
+        retry_state.attempt_number = attempt_number
+        if headers is None:
+            retry_state.outcome = None
+        else:
+            request = httpx2.Request('GET', 'https://example.com')
+            response = httpx2.Response(429, headers=headers, request=request)
+            retry_state.outcome = Mock()
+            retry_state.outcome.exception.return_value = httpx2.HTTPStatusError(
+                'Rate limited', request=request, response=response
+            )
 
-        # Should use default exponential backoff, exact value depends on retry state
-        result = wait_func(retry_state)
-
-        assert result == 1  # first backoff
+        assert wait_func(retry_state) == expected
 
     def test_default_max_wait(self):
         """Test that default max_wait of 300 seconds is used."""
@@ -774,16 +948,23 @@ class TestWaitRetryAfter:
 
         assert result == 300.0  # Capped at default max_wait
 
-    def test_case_insensitive_header_access(self):
-        """Test that Retry-After header access is case insensitive."""
+    @pytest.mark.parametrize(
+        ('headers', 'expected'),
+        [
+            pytest.param({'Retry-After': '45'}, 45.0, id='retry-after'),
+            pytest.param({'Retry-After-Ms': '1500'}, 1.5, id='retry-after-ms'),
+        ],
+    )
+    def test_case_insensitive_header_access(self, headers: dict[str, str], expected: float):
+        """`Retry-After` and `retry-after-ms` are read case-insensitively from a legacy `httpx` error."""
         fallback = Mock()
         wait_func = wait_retry_after(fallback_strategy=fallback, max_wait=300)
 
-        # Create HTTP status error with uppercase Retry-After header
+        # Create HTTP status error with uppercase headers
         request = httpx.Request('GET', 'https://example.com')
         response = Mock(spec=httpx.Response)
         # httpx headers are case-insensitive, so this should work
-        response.headers = httpx.Headers({'Retry-After': '45'})
+        response.headers = httpx.Headers(headers)
         http_error = httpx.HTTPStatusError('Rate limited', request=request, response=response)
 
         retry_state = Mock(spec=RetryCallState)
@@ -793,7 +974,7 @@ class TestWaitRetryAfter:
 
         result = wait_func(retry_state)
 
-        assert result == 45.0
+        assert result == expected
         fallback.assert_not_called()
 
 

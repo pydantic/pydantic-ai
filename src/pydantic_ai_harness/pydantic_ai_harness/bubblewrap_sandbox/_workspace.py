@@ -94,11 +94,23 @@ travels on the command line because `bwrap` may run on another host, which recei
 open files.
 """
 
-_LOGIN_PATHS = ('.ssh/', '.config/fish/', '.bashrc', '.zshenv', '.cshrc', '.tcshrc', '.pam_environment')
+_LOGIN_PATHS = (
+    '.ssh/',
+    '.config/fish/',
+    '.bashrc',
+    '.bashrc.d/',
+    '.cargo/env',
+    '.local/bin/env',
+    '.zshenv',
+    '.cshrc',
+    '.tcshrc',
+    '.pam_environment',
+)
 """Paths under `$HOME` that the host reads or runs when the next SSH connection logs in, before the command.
 
 `sshd` runs `~/.ssh/rc` and reads `~/.ssh/environment` and `~/.pam_environment`; the login shell runs the
-command with `-c`, which makes bash run `~/.bashrc`, zsh `~/.zshenv`, csh and tcsh `~/.cshrc` or `~/.tcshrc`,
+command with `-c`, which makes bash run `~/.bashrc` (which on common setups sources `~/.bashrc.d/*`,
+`~/.cargo/env`, and `~/.local/bin/env`), zsh `~/.zshenv`, csh and tcsh `~/.cshrc` or `~/.tcshrc`,
 and fish its `~/.config/fish`. A trailing `/` marks a directory.
 """
 
@@ -190,6 +202,25 @@ def _contains(root: str, path: str) -> bool:
     return root == '/' or path == root or path.startswith(root + '/')
 
 
+def _login_path_kinds(root: str, *, home: str, zdotdir: str) -> dict[str, str]:
+    """The protected login paths inside `root`, and the directories between them and `root`, each with its kind."""
+    # Path to kind, as `_ENSURE_LOGIN_PATHS` takes them: `p` for a parent pinned in place by binding it onto
+    # itself, `d` for a protected directory, `f` for a protected file.
+    kinds: dict[str, str] = {}
+    protected = [(posixpath.join(home, name.rstrip('/')), 'd' if name.endswith('/') else 'f') for name in _LOGIN_PATHS]
+    if zdotdir and zdotdir != home:
+        protected.append((posixpath.join(zdotdir, '.zshenv'), 'f'))
+    for path, kind in protected:
+        if not _contains(root, path):
+            continue
+        kinds[path] = kind
+        parent = posixpath.dirname(path)
+        while parent != root and _contains(root, parent):
+            kinds.setdefault(parent, 'p')
+            parent = posixpath.dirname(parent)
+    return kinds
+
+
 class _SandboxedCommands(WorkspaceBackend, SupportsCommands):
     """A backend that runs every command in the sandbox, for core's shell-based file methods to build on."""
 
@@ -235,9 +266,11 @@ class BubblewrapWorkspace(WrapperWorkspace):
     or serving any socket, including the host's Unix sockets. They share the host's processes, so a detached
     command keeps running after the call that started it, and they can signal the host user's other processes.
     `bwrap` and, without the network, `base64` are taken from a `PATH` directory outside the working
-    directory, so a command cannot replace the next launch by writing there. When that directory contains
-    files the next SSH login runs on the host, such as `~/.ssh/rc` or `~/.bashrc`, they are bind-mounted
-    read-only (and created if missing), so a command cannot run code outside the sandbox through them.
+    directory, so a command cannot replace the next launch by writing there. When the working directory
+    contains files the next SSH login runs on the host, a fixed list of them, such as `~/.ssh/rc` and
+    `~/.bashrc`, is bind-mounted read-only (and created if missing). The rest of the home directory stays
+    writable, including files they source, so give the wrapper a project working directory rather than one
+    containing `$HOME`.
 
     File methods run in the sandbox too, as shell commands, so they see what commands see and can't be
     tricked into writing outside it through a symlink. Only when the wrapped workspace is read-only (and so
@@ -304,6 +337,7 @@ class BubblewrapWorkspace(WrapperWorkspace):
         shell: bool = False,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
+        cwd: str | None = None,
     ) -> CommandResult:
         check_timeout(timeout)
         if isinstance(command, str):
@@ -317,6 +351,8 @@ class BubblewrapWorkspace(WrapperWorkspace):
         else:
             # Through `sh`, a missing program exits 127 as the contract says, not with `bwrap`'s own 1.
             argv = ['sh', '-c', 'exec "$@"', 'sh', *command]
+        if cwd is not None:
+            argv = [*await self._command_in(cwd, argv, shell=False)]
         sandbox = await self._sandbox()
         # Set inside the sandbox, not on the host launcher, so a call `env` cannot swap out `bwrap`.
         env_args = [arg for name, value in (env or {}).items() for arg in ('--setenv', name, value)]
@@ -381,23 +417,7 @@ class BubblewrapWorkspace(WrapperWorkspace):
                 'bubblewrap found a relative ZDOTDIR, which zsh would resolve against the working directory; '
                 'this cannot be made safe inside the sandbox'
             )
-        root = posixpath.normpath(working_dir)
-        # Path to kind, as `_ENSURE_LOGIN_PATHS` takes them: `p` for a parent pinned in place by binding it onto
-        # itself, `d` for a protected directory, `f` for a protected file.
-        kinds: dict[str, str] = {}
-        protected = [
-            (posixpath.join(home, name.rstrip('/')), 'd' if name.endswith('/') else 'f') for name in _LOGIN_PATHS
-        ]
-        if zdotdir and zdotdir != home:
-            protected.append((posixpath.join(zdotdir, '.zshenv'), 'f'))
-        for path, kind in protected:
-            if not _contains(root, path):
-                continue
-            kinds[path] = kind
-            parent = posixpath.dirname(path)
-            while parent != root and _contains(root, parent):
-                kinds.setdefault(parent, 'p')
-                parent = posixpath.dirname(parent)
+        kinds = _login_path_kinds(posixpath.normpath(working_dir), home=home, zdotdir=zdotdir)
         # Sorted, a parent comes before what's inside it, both to be created and to be mounted.
         paths = sorted(kinds)
         if paths:

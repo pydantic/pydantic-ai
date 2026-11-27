@@ -1,0 +1,88 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "163"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 256
+        messages:
+        - role: user
+          content:
+          - text: "Reply with exactly: OK"
+            type: text
+        model: claude-fable-5-2
+        speed: fast
+        stream: true
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=97
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-082bb5c459d95bc3ea1b42d0ad83b38b-b7efbc853b5212c7-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-fable-5-2","id":"msg_011CguadHd2HEwa8DUPPsG96","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":18,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":6,"service_tier":"standard","inference_geo":"global","speed":"fast"},"diagnostics":null}        }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}       }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS0QQKEAgTGAI4AUIIdGhpbmtpbmcSDOHQ6+pRj9IsNLUFdxoMrn8w1zX7kE1/1kodIjD3E6uZ80uRrXn+UNkngSAf+1CB/yr5iaqJSulmbrN8w2/omEYfMGKvxdTU9CNgWqUq7gMlO2yYNx2NK67avd+ZFZoh/QcAcaebqMz0zVCqLM7jkwhQGHfGhmR7W6XwWULOD65yZ4Db01/VReWMLwPplWvqX7AuQCCU9XASH6RSwa2Kxy4d309t70kDI/6ea6dk6FM68QRQK7O42BFeVkJARjjVYfpH/x0z2MgEkt5c61jujncWPDfYyjDoBY3fqExOdpA+TNc93BS0dfhrKBwvpsN5ZlyNbrMBbWI9svLM5Wo9FthBYASHVpLE6n/TAyfuL4QwF5ajcaH7O4Ub5+RiIKrTmoUJZzFmc2Y1FmUbP2oxJKXS/9330MR8UoGAZpaW0toOTH8KDss9YlDb/gjz1t4663iL0GQS3nDwHw7ZEHxhIBTBplaVZstH30KIaze8Sb3m10JgdwzHMlkIdSBL8NmiazlHBMlTPPJQH32r854xpDmr70bK9c6kW3vES+0E3aepcL+1ZPXvN0gqF1nhogs/0aYPaxaFGTNS+YOVaemTIV92JA0E6HKlUZsk7S6AQdpgaLJN9+uhKo4T2j5IS+kKvx4pldnJRKHuOMPBS2KPpVlBZx7PvXgaPJC8+hMrXcQH3dF4eu5aeEI32ErNDkC0fnQZDHLxQc82RGJBjekbbE/lIfghaUTmYnuTi/Lz04JgnR2ktOqBVeIRmj29HhgB"}        }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0 }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"OK"}  }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1   }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":18,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":17,"output_tokens_details":{"thinking_tokens":13}}    }
+
+        event: message_stop
+        data: {"type":"message_stop"     }
+
+  recorded_at: 2026-11-10T16:41:44.626526+00:00

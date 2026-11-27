@@ -276,6 +276,8 @@ Instrumented agent runs report prompt-cache health without additional configurat
 | `pydantic_ai.cache.missed_tokens` | Previously established tokens that were not read after a collapse. |
 | `pydantic_ai.cache.collapse_reason` | Collapse classification: `unexpected`, `ttl_expired`, `compacted`, `unknown`, or `unreported`. More values may be added. |
 | `pydantic_ai.cache.not_enabled` | `true` when the request was long enough to cache on a model that needs caching configured, but none was configured (see below). |
+| `pydantic_ai.cache.requested_breakpoints` | The cache breakpoints an Anthropic request asked for, as paths into the request: `system[i]`, `tools[i]` and `messages[i].content[j]`, plus `automatic` for the breakpoint [automatic caching](capabilities/caching.md#anthropic) places itself (see below). The indices are into the request as sent to Anthropic, after consecutive request parts are merged into one message, not into the message history: a [`CachePoint`][pydantic_ai.messages.CachePoint] is marked on the block before it rather than being an entry of its own. |
+| `pydantic_ai.cache.applied_breakpoints` | The breakpoints that request was sent with, after dropping the ones over Anthropic's limit. |
 
 These attributes are on model-request spans only. The agent-run span carries no cache ratio, since one aggregated across requests to different models isn't interpretable (the OpenTelemetry GenAI conventions dropped cache attributes from `invoke_agent` spans for the same reason); compute a run-level figure from its `gen_ai.aggregated_usage.*` token counts if you need one.
 
@@ -294,6 +296,8 @@ A sustained collapse, such as a prefix that moves on every request so the provid
 A response reporting neither cache reads nor writes is ambiguous: on providers that report cache writes (Anthropic, Bedrock) it means the cache wasn't engaged for that request — caching disabled, or a prompt below the provider's minimum cacheable size — while on providers that only report reads (OpenAI's implicit caching) it is what a full cache miss looks like. The established prefix was re-sent uncached either way, so the collapse and its missed tokens are recorded as `unreported`, but the cause can't be determined from usage alone, so no event is emitted. Before anything has been cached, such responses are ignored entirely.
 
 Models such as Anthropic's, Bedrock's Claude and Nova, and OpenRouter's Anthropic routes only cache what the request asks them to. When a request of at least 4,096 input tokens (above every supported model's minimum cacheable prompt) goes to such a model with no caching configured (neither the unified [`cache`][pydantic_ai.settings.ModelSettings.cache] setting nor a provider-specific one), no [`CachePoint`][pydantic_ai.messages.CachePoint] in its history, and no cache usage reported, its span gets `pydantic_ai.cache.not_enabled` and a `pydantic_ai.cache.not_enabled` event carrying `input_tokens` and the `provider_name` and `model_name` that served it, once per conversation and model. Enable caching with `cache=True` or the [`Caching`][pydantic_ai.capabilities.Caching] capability; setting `cache=False` says it was left off on purpose, which isn't reported.
+
+Anthropic allows at most four cache breakpoints per request, and the breakpoint automatic caching places takes one of them, so explicit [`CachePoint`][pydantic_ai.messages.CachePoint]s that don't fit are dropped, in the order [Caching](capabilities/caching.md#provider-translation) describes. That's the best the request can do rather than a mistake, so it isn't a warning: instead, an [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] request with any breakpoint records `pydantic_ai.cache.requested_breakpoints` and `pydantic_ai.cache.applied_breakpoints` on its span, and a path in the first list that's missing from the second is a breakpoint that was dropped. Only the request records them, not the token count that [`count_tokens_before_request`][pydantic_ai.usage.UsageLimits.count_tokens_before_request] makes before it.
 
 A request that the provider paused and resumed, such as an Anthropic `pause_turn` continuation, is one model request whose usage sums every segment's, so it is judged by its final segment, whose prompt carries the whole prefix. A response whose cache reads may be summed over a native tool's internal model calls, such as web search, is still judged, but doesn't raise the established prefix or re-arm the event, since its total isn't a prefix the next request can read back.
 
@@ -328,6 +332,8 @@ This avoids double-counting in observability backends that aggregate usage attri
 
 An agent run span reports what that run spent. A run that [delegates to another agent](multi-agent-applications.md#agent-delegation) does not include the delegate's tokens, whether or not the delegate is instrumented: if it is, its own run span reports them. So the agent run spans in a trace can be added up as they are — the total matches the sum of the `gen_ai.usage.*` attributes on the model request spans underneath them.
 
+To add up cost per conversation instead of per trace, sub-agents included, use the `pydantic_ai.root_conversation_id` attribute described in [Correlating runs with `run_id` and `conversation_id`](message-history.md#correlating-runs-with-run_id-and-conversation_id).
+
 !!! note "Custom namespace"
     The `gen_ai.aggregated_usage.*` namespace is a custom extension not part of the [OpenTelemetry Semantic Conventions for GenAI](https://opentelemetry.io/docs/specs/semconv/gen-ai/). It was introduced to work around double-counting in observability backends. If OpenTelemetry introduces an official convention for aggregated usage in the future, this namespace may be updated or deprecated.
 
@@ -350,6 +356,8 @@ Versions 2, 3, and 4 are deprecated compatibility formats. Passing one of these 
 
 Version 6 is opt-in: it changes the role of messages you already receive, so pass it explicitly once your telemetry consumer is ready for the new role.
 
+Agent run spans carry the agent name under both `agent_name` and `gen_ai.agent.name` at every version, so a dashboard keyed on either name keeps working when you change versions.
+
 #### Version 2 (deprecated)
 
 Uses the newer OpenTelemetry GenAI spec and stores messages in the following attributes:
@@ -367,6 +375,7 @@ Builds on version 2 with the following improvements:
 - **Spec-compliant span names:**
     - `agent run` becomes `invoke_agent {gen_ai.agent.name}` (with the agent name filled in)
     - `running tool` becomes `execute_tool {gen_ai.tool.name}` (with the tool name filled in)
+    - `running output function` becomes `execute_tool {gen_ai.tool.name}`, so output tools and output functions share the span name used for other tools
 - **Spec-compliant attribute names:**
     - `tool_arguments` becomes `gen_ai.tool.call.arguments`
     - `tool_response` becomes `gen_ai.tool.call.result`

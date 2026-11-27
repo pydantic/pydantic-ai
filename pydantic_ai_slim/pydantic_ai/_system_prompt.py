@@ -28,7 +28,7 @@ class SystemPromptRunner(Generic[AgentDepsT, PromptT]):
     function: PromptFunc[AgentDepsT, PromptT]
     dynamic: bool = False
     context_id: str | None = None
-    """For a dynamic system prompt with `on_change='append'`, the id of the `<context>` element its statements are sent as."""
+    """For a dynamic system prompt with `on_change='append'`, the id of the `<pyai:context>` element its statements are sent as."""
     _takes_ctx: bool = field(init=False)
     _is_async: bool = field(init=False)
 

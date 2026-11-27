@@ -67,8 +67,8 @@ from pydantic_ai_harness.experimental.acp._presentation import (
 )
 from pydantic_ai_harness.experimental.acp._serialize import bounded_jsonable, chunk_text, jsonable
 from pydantic_ai_harness.experimental.acp._session import (
-    AcpSession,
-    AcpSessionConfig,
+    ACPSession,
+    ACPSessionConfig,
     McpServers,
     SessionConfigFunc,
     SessionState,
@@ -271,9 +271,9 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
             name: Name advertised to the client. Defaults to the agent's name, then `'pydantic-ai-agent'`.
             version: Version advertised to the client.
             session_config: Optional factory called once per session with the client's
-                [`AcpSession`][pydantic_ai_harness.experimental.acp.AcpSession] setup (its `cwd`, MCP servers,
+                [`ACPSession`][pydantic_ai_harness.experimental.acp.ACPSession] setup (its `cwd`, MCP servers,
                 and capabilities). It returns an
-                [`AcpSessionConfig`][pydantic_ai_harness.experimental.acp.AcpSessionConfig] whose `deps`,
+                [`ACPSessionConfig`][pydantic_ai_harness.experimental.acp.ACPSessionConfig] whose `deps`,
                 `capabilities`, `toolsets`, and optional `workspace` are applied to every run in that session. May be
                 sync or async.
             permission_policy: Optional function deciding the scope under which an "always
@@ -301,7 +301,7 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
             models: Optional models the client may switch between with the stable ACP session
                 config option `model`. The first is each session's default. A selection applies as
                 a per-run override (the shared agent is never mutated) and is persisted with the
-                session. Pass `'all'` to offer every model Pydantic AI knows (its default is then
+                session. Pass `'all'` to offer every model `KnownModelName` lists (its default is then
                 the first known model, so the user should pick one). Defaults to `None`,
                 advertising no model config option.
             model_resolver: Optional hook mapping an advertised model id to the `Model` (or model
@@ -513,7 +513,7 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
         state = self._sessions.get(session_id)
         return self._model_option(state.model) if state is not None else None
 
-    async def _build_config(self, session_id: str, cwd: str, mcp_servers: McpServers) -> AcpSessionConfig[AgentDepsT]:
+    async def _build_config(self, session_id: str, cwd: str, mcp_servers: McpServers) -> ACPSessionConfig[AgentDepsT]:
         """Derive a session's run configuration, calling the `session_config` factory if present.
 
         Raises:
@@ -529,10 +529,10 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
                         'mcp_server_count': len(mcp_servers),
                     }
                 )
-            return AcpSessionConfig(deps=self._deps)
+            return ACPSessionConfig(deps=self._deps)
         if self._conn is None:  # pragma: no cover - on_connect always runs before session setup
             raise RuntimeError('_build_config called before on_connect()')
-        session = AcpSession(
+        session = ACPSession(
             cwd=cwd,
             mcp_servers=mcp_servers or [],
             client_capabilities=self._client_capabilities,
@@ -954,7 +954,7 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
         """
         await self._send_update(turn, acp.update_tool_call(tool_call_id=tool_call_id, status=status))
 
-    def _static_toolsets(self, config: AcpSessionConfig[AgentDepsT]) -> list[AbstractToolset[AgentDepsT]]:
+    def _static_toolsets(self, config: ACPSessionConfig[AgentDepsT]) -> list[AbstractToolset[AgentDepsT]]:
         """The toolsets visible without a live run context: agent, session, and statically-contributed.
 
         A session capability is asked for its toolset the same way; the callable arm of the
@@ -968,7 +968,7 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
                 toolsets.append(cast(AbstractToolset[AgentDepsT], contributed))
         return toolsets
 
-    def _scan_approval_names(self, config: AcpSessionConfig[AgentDepsT]) -> tuple[frozenset[str], frozenset[str]]:
+    def _scan_approval_names(self, config: ACPSessionConfig[AgentDepsT]) -> tuple[frozenset[str], frozenset[str]]:
         """Split the statically visible tools into those that require approval and those that don't.
 
         Only `FunctionToolset`-held tools expose `requires_approval` without a live run context, so

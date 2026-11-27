@@ -1,45 +1,35 @@
 """How two capabilities that resolve to the same `id` compose.
 
-Every capability Pydantic AI ships is listed in `COMBINE_POLICY`, and
-`test_every_capability_declares_a_combine_policy` fails when one is missing. Adding a capability is
-therefore a decision about what two of it mean, taken once, here -- not something that defaults
+Every capability Pydantic AI ships has a case in `tests/capability_cases.py` whose `combine` says what
+two of it mean, and `test_every_capability_has_a_case` fails when one is missing. Adding a capability is
+therefore a decision about what two of it mean, taken once, there -- not something that defaults
 quietly to whatever `AbstractCapability` happens to do.
 """
 
 from __future__ import annotations
 
-import importlib
-import pkgutil
 from collections.abc import Callable, Sequence
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import KW_ONLY, dataclass, field
 from functools import cached_property
 from types import MethodType
-from typing import Any, ClassVar, NamedTuple, TypeGuard, cast
+from typing import Any, ClassVar, NamedTuple, cast
 
 import pytest
 from inline_snapshot import snapshot
 
-import pydantic_ai.capabilities as capabilities_package
 from pydantic_ai import Agent, BinaryImage, FunctionToolset, RunContext, Tool
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     MCP,
-    Caching,
     Capability,
     CapabilityOrdering,
-    Citations,
-    FileUnderstanding,
     Hooks,
     ImageGeneration,
     Instrumentation,
     LocalWorkspace,
-    RaiseContentFilterError,
     ReinjectSystemPrompt,
     Thinking,
-    ToolSearch,
     Toolset,
-    UseThreadExecutor,
     WebFetch,
     WebSearch,
     XSearch,
@@ -62,7 +52,7 @@ from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.native_tools import MCPServerTool, WebFetchTool, WebSearchTool, XSearchTool
+from pydantic_ai.native_tools import MCPServerTool, WebSearchTool, XSearchTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
@@ -70,270 +60,17 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
 
-
-@dataclass
-class Anonymous:
-    """No default `id`: two of these are two different things, so `combine` is never reached.
-
-    The run derives a distinct id per occurrence instead. A user who gives two the same `id`
-    explicitly gets the base `combine`, which raises -- that is a mistake, not a composition.
-    """
-
-    reason: str
+from .capability_cases import CASES, CORE_CAPABILITY_PACKAGES, Anonymous, Combines, shipped_capability_types
 
 
-@dataclass
-class Combines:
-    """A default `id`: two of these are one configuration stated twice, and `combine` resolves them."""
-
-    reason: str
-    make: Callable[[], tuple[AbstractCapability[Any], AbstractCapability[Any]]]
-    """Builds two instances that state *different* configuration, so a merge is observable."""
-    check: Callable[[Any], None]
-    """Asserts what survived. Reads derived state too, not just the declared fields."""
-
-
-Policy = Anonymous | Combines
-
-
-def _check_caching(merged: Caching) -> None:
-    assert merged.retention == '1h', 'a scalar takes the later value'
-
-
-def _check_thinking(merged: Thinking) -> None:
-    assert merged.effort == 'high', 'a scalar takes the later value'
-
-
-def _check_web_search(merged: WebSearch) -> None:
-    assert merged.allowed_domains == ['a.com', 'b.com'], 'allow-lists are unioned, not replaced'
-    # The native tool is what reaches the provider, so the merge has to reach it too.
-    assert isinstance(merged.native, WebSearchTool)
-    assert merged.native.allowed_domains == ['a.com', 'b.com'], (
-        'the merged allow-list must reach the native tool, or the request goes out unrestricted'
-    )
-
-
-def _check_web_fetch(merged: WebFetch) -> None:
-    assert merged.allowed_domains == ['a.com', 'b.com']
-    assert isinstance(merged.native, WebFetchTool)
-    assert merged.native.allowed_domains == ['a.com', 'b.com']
-
-
-def _check_reinject(merged: ReinjectSystemPrompt) -> None:
-    assert merged.replace_existing is True
-
-
-def _check_content_filter(merged: RaiseContentFilterError) -> None:
-    assert merged.id == 'raise_content_filter_error'
-
-
-def _check_citations(merged: Citations) -> None:
-    assert merged.id == 'citations'
-
-
-def _check_x_search(merged: XSearch) -> None:
-    assert merged.allowed_x_handles == ['a', 'b']
-    assert isinstance(merged.native, XSearchTool)
-    assert merged.native.allowed_x_handles == ['a', 'b']
-
-
-def _check_image_generation(merged: ImageGeneration) -> None:
-    assert merged.quality == 'high'
-
-
-def _check_file_understanding(merged: FileUnderstanding) -> None:
-    assert merged.instructions == 'One sentence.', 'a scalar takes the later value'
-
-
-def _check_instrumentation(merged: Instrumentation) -> None:
-    assert merged.settings is not None
-    assert merged.settings.include_content is False, 'a scalar takes the later value'
-
-
-_FIRST_EXECUTOR = ThreadPoolExecutor(1, 'first')
-_SECOND_EXECUTOR = ThreadPoolExecutor(1, 'second')
-
-
-def _check_local_workspace(merged: LocalWorkspace[Any]) -> None:
-    # One environment: the later workspace replaces the earlier whole, so the first one's `env` never leaks.
-    assert (merged.working_dir, merged.env, merged.read_only) == ('/second', None, False)
-
-
-def _check_tool_search(merged: ToolSearch) -> None:
-    assert merged.max_results == 20, 'a scalar takes the later value'
-
-
-def _check_thread_executor(merged: UseThreadExecutor) -> None:
-    assert merged.executor is _SECOND_EXECUTOR, 'the executor that would have shadowed the other'
-
-
-COMBINE_POLICY: dict[str, Policy] = {
-    # -- One per agent: a default `id`, and `combine` says what two of them mean. --
-    'Caching': Combines(
-        'an agent has one caching configuration',
-        lambda: (Caching('5m'), Caching('1h')),
-        _check_caching,
-    ),
-    'Thinking': Combines(
-        'an agent has one thinking configuration',
-        lambda: (Thinking(effort='low'), Thinking(effort='high')),
-        _check_thinking,
-    ),
-    'WebSearch': Combines(
-        'one web search configuration, but its allow-list must not be silently widened',
-        lambda: (WebSearch(allowed_domains=['a.com']), WebSearch(allowed_domains=['b.com'])),
-        _check_web_search,
-    ),
-    'WebFetch': Combines(
-        'one web fetch configuration, same allow-list concern as `WebSearch`',
-        lambda: (WebFetch(allowed_domains=['a.com']), WebFetch(allowed_domains=['b.com'])),
-        _check_web_fetch,
-    ),
-    'XSearch': Combines(
-        'one X search configuration',
-        lambda: (
-            XSearch(fallback_subagent_model='xai:grok-4.3', allowed_x_handles=['a']),
-            XSearch(fallback_subagent_model='xai:grok-4.3', allowed_x_handles=['b']),
-        ),
-        _check_x_search,
-    ),
-    'ImageGeneration': Combines(
-        'one image generation configuration',
-        lambda: (
-            ImageGeneration(fallback_subagent_model='openai-responses:gpt-5.4', quality='low'),
-            ImageGeneration(fallback_subagent_model='openai-responses:gpt-5.4', quality='high'),
-        ),
-        _check_image_generation,
-    ),
-    'FileUnderstanding': Combines(
-        'an agent describes files one way',
-        lambda: (
-            FileUnderstanding(fallback_subagent_model='openai:gpt-5.6-sol'),
-            FileUnderstanding(fallback_subagent_model='openai:gpt-5.6-sol', instructions='One sentence.'),
-        ),
-        _check_file_understanding,
-    ),
-    'Instrumentation': Combines(
-        'an agent is instrumented one way',
-        lambda: (
-            Instrumentation(settings=InstrumentationSettings(include_content=True)),
-            Instrumentation(settings=InstrumentationSettings(include_content=False)),
-        ),
-        _check_instrumentation,
-    ),
-    'ReinjectSystemPrompt': Combines(
-        'one reinjection policy per agent',
-        lambda: (ReinjectSystemPrompt(), ReinjectSystemPrompt(replace_existing=True)),
-        _check_reinject,
-    ),
-    'Citations': Combines(
-        'carries no configuration at all, so two are interchangeable',
-        lambda: (Citations(), Citations()),
-        _check_citations,
-    ),
-    'RaiseContentFilterError': Combines(
-        'carries no configuration at all, so two are interchangeable',
-        lambda: (RaiseContentFilterError(), RaiseContentFilterError()),
-        _check_content_filter,
-    ),
-    'LocalWorkspace': Combines(
-        'the later configuration replaces the earlier one whole',
-        lambda: (LocalWorkspace('/first', env={'FIRST_SECRET': 'x'}, read_only=True), LocalWorkspace('/second')),
-        _check_local_workspace,
-    ),
-    'ToolSearch': Combines(
-        'one tool-discovery configuration per agent',
-        lambda: (ToolSearch(max_results=5), ToolSearch(max_results=20)),
-        _check_tool_search,
-    ),
-    'UseThreadExecutor': Combines(
-        'exactly one executor is in effect; nesting already made this last-wins implicitly',
-        lambda: (UseThreadExecutor(_FIRST_EXECUTOR), UseThreadExecutor(_SECOND_EXECUTOR)),
-        _check_thread_executor,
-    ),
-    # -- Several of these is the normal case, so they stay anonymous. --
-    'Capability': Anonymous('a generic bundle; several per agent is the usual shape'),
-    'CombinedCapability': Anonymous('structural container; nesting is the semantic'),
-    'WrapperCapability': Anonymous('structural wrapper; nesting is the semantic'),
-    'PrefixTools': Anonymous('structural wrapper, applied once per wrapped capability'),
-    'DynamicCapability': Anonymous('one per capability function'),
-    'ResolvedDynamicCapability': Anonymous('the resolved form of a `DynamicCapability`'),
-    'NativeTool': Anonymous('one per native tool'),
-    'NativeOrLocalTool': Anonymous('used directly it is parameterized by the tools passed to it'),
-    'MCP': Anonymous(
-        'several servers per agent is the normal case; the URL derives its *toolset* id, not a capability id'
-    ),
-    'Toolset': Anonymous('one per toolset'),
-    'Hooks': Anonymous('several hook bundles compose'),
-    'HandleDeferredToolCalls': Anonymous('`CombinedCapability` chains handlers via `remaining`'),
-    'ResolveModelId': Anonymous('returns `None` to let a later capability resolve; chaining is the feature'),
-    'SelectModel': Anonymous('receives the lower-precedence model; chaining is designed'),
-    'ModelFallback': Anonymous('each instance walks its own chain; the innermost handles a failure first'),
-    'BatchModelRequests': Anonymous(
-        'each instance is its own batching pool; a model already batched is not batched again'
-    ),
-    'ProcessHistory': Anonymous('history processors stack'),
-    'ProcessEventStream': Anonymous('event-stream processors stack'),
-    'PrepareTools': Anonymous('tool preparers stack'),
-    'PrepareOutputTools': Anonymous('output-tool preparers stack'),
-    'SetToolMetadata': Anonymous('one per `ToolSelector`; several selectors compose'),
-    'IncludeToolReturnSchemas': Anonymous('one per `ToolSelector`; several selectors compose'),
-    'DeferredCapabilityLoader': Anonymous('auto-injected only when absent'),
-    'PendingMessageDrainCapability': Anonymous('auto-injected only when absent'),
-    '_GroupMember': Anonymous('internal: dispatches a deferred group member, never registered'),
-}
-
-
-def _is_capability_class(obj: object) -> TypeGuard[type[AbstractCapability[Any]]]:
-    """Whether `obj` is a capability class, and not something that merely looks like one."""
-    return isinstance(obj, type) and issubclass(obj, AbstractCapability)
-
-
-def _shipped_capability_types() -> dict[str, type[AbstractCapability[Any]]]:
-    """Every capability class in `pydantic_ai.capabilities`, public or not."""
-    found: dict[str, type[AbstractCapability[Any]]] = {}
-    classes: set[type[AbstractCapability[Any]]] = set()
-    for module_info in pkgutil.walk_packages(capabilities_package.__path__, f'{capabilities_package.__name__}.'):
-        module = importlib.import_module(module_info.name)
-        for obj in vars(module).values():
-            if (
-                _is_capability_class(obj)
-                and obj is not AbstractCapability
-                and obj.__module__.startswith('pydantic_ai.')
-            ):
-                found[obj.__name__] = obj
-                classes.add(obj)
-    # `COMBINE_POLICY` is keyed by name, so two classes sharing one would collapse into a single
-    # entry and let whichever lost ship with no policy at all -- the exact gap this guards.
-    assert len(found) == len(classes), (
-        f'two capability classes share a name: {sorted(cls.__module__ + "." + cls.__name__ for cls in classes)}'
-    )
-    return found
-
-
-def test_every_capability_declares_a_combine_policy() -> None:
-    """A new capability must say what two of it mean before it can ship.
-
-    Without this the answer defaults to whatever the base class does, which is the one outcome
-    nobody chose. Add an entry to `COMBINE_POLICY` -- `Anonymous` when several per agent is normal,
-    `Combines` when it carries a default `id`.
-    """
-    shipped = set(_shipped_capability_types())
-    declared = set(COMBINE_POLICY)
-    assert not (shipped - declared), (
-        f'capabilities with no `COMBINE_POLICY` entry: {sorted(shipped - declared)}. '
-        'Decide what two of them mean and add an entry.'
-    )
-    assert not (declared - shipped), (
-        f'`COMBINE_POLICY` names capabilities that no longer exist: {sorted(declared - shipped)}.'
-    )
-
-
-@pytest.mark.parametrize('name', sorted(COMBINE_POLICY))
+@pytest.mark.parametrize('name', sorted(CASES))
 def test_capability_combine_policy_holds(name: str) -> None:
     """Each capability composes -- or refuses to -- the way its policy says."""
-    policy = COMBINE_POLICY[name]
-    capability_type = _shipped_capability_types()[name]
+    policy = CASES[name].combine
+    shipped, _ = shipped_capability_types(CORE_CAPABILITY_PACKAGES)
+    if name not in shipped:  # pragma: lax no cover
+        pytest.skip(f'{name} needs an optional dependency group that is not installed')
+    capability_type = shipped[name]
 
     if isinstance(policy, Anonymous):
         # Anonymous capabilities declare no default id, so two never meet under one key. Read
@@ -344,6 +81,7 @@ def test_capability_combine_policy_holds(name: str) -> None:
         )
         return
 
+    assert isinstance(policy, Combines), f'{name}: a core capability is `Anonymous` or `Combines`'
     assert _declares_default_id(capability_type), (
         f'{name} is declared `Combines` but declares no default id, so two never meet'
     )
@@ -889,7 +627,7 @@ def _a_local_tool(prompt: str) -> str:  # pragma: no cover
 def test_a_merge_takes_the_later_fallback_subagent_model() -> None:
     """`fallback_subagent_model` is a scalar, so two differing values take the later one.
 
-    `COMBINE_POLICY` only pins the field where both sides agree, so this covers the differing
+    The `combine` of its case only pins the field where both sides agree, so this covers the differing
     case through the general scalar rule.
     """
 
@@ -1282,6 +1020,36 @@ async def test_run_wrapper_overrides_preserve_identity_and_tool_prefixes(agent_d
     agent = Agent(FunctionModel(model_fn), capabilities=[agent_capability])
     await agent.run('hi', capabilities=[run_capability])
     assert seen == [['run_' * run_depth + 'lookup']]
+
+
+@dataclass
+class _BringsACompanion(AbstractCapability[object]):
+    """Adds a companion capability for each run, holding itself next to it in a container."""
+
+    async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+        return CombinedCapability([self, ReinjectSystemPrompt()])
+
+    def get_toolset(self) -> FunctionToolset[object]:
+        def lookup() -> str:
+            return 'found'  # pragma: no cover
+
+        return FunctionToolset([lookup])
+
+
+async def test_wrapper_readopts_identity_when_the_run_copy_is_a_container() -> None:
+    """A wrapper that adopted its capability's `id` doesn't keep it once that capability returns a container for the run.
+
+    The container holds the capability, which keeps the `id`; the wrapper claiming it too would be two types under one id.
+    """
+    seen: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append([tool.name for tool in info.function_tools])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[_BringsACompanion(id='lookup').prefix_tools('p')])
+    await agent.run('hi')
+    assert seen == [['p_lookup']]
 
 
 async def test_explicitly_renamed_wrapper_does_not_adopt_an_unrelated_identity() -> None:

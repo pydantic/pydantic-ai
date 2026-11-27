@@ -38,6 +38,7 @@ from pydantic_ai.durable_exec import (
     JournalOperationNamer,
     ModelCancelSuspendedResponseId,
     ModelCompactMessagesId,
+    ModelCountTokensId,
     ModelRequestId,
     OperationConfigRole,
     ToolsetCallToolId,
@@ -75,8 +76,10 @@ from pydantic_ai.messages import (
     CapabilityEvent,
     CapabilityLoadDeltaEvent,
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     CompactionPart,
     CustomEvent,
+    DataCapabilityPart,
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
     EnqueuedMessagesEvent,
@@ -100,6 +103,7 @@ from pydantic_ai.messages import (
     NativeToolReturnPart,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
+    OperatorSource,
     OutputToolCallEvent,
     OutputToolResultEvent,
     PartDeltaEvent,
@@ -141,6 +145,7 @@ from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
+from ..manifests import union_members
 from ..workspace_fakes import FakeWorkspace
 
 
@@ -153,6 +158,7 @@ def test_public_engine_builder_exports() -> None:
         'ModelCancelSuspendedResponseId',
         'CapabilityOperationId',
         'ModelCompactMessagesId',
+        'ModelCountTokensId',
         'DurabilityCodec',
         'DurabilityEngineSpec',
         'DurableOperationBackend',
@@ -197,6 +203,12 @@ def test_public_engine_builder_exports() -> None:
         'WorkspaceCall',
         'WorkspaceCallParams',
         'WorkspaceCallResult',
+        'ExternalEventError',
+        'ExternalEventWaiter',
+        'external_event_scope',
+        'record_durable_unit',
+        'replay_scope',
+        'model_error_retry_after',
     ]
     assert all(getattr(durable_exec, name) is not None for name in durable_exec.__all__)
 
@@ -215,6 +227,8 @@ JOURNAL_OPERATION_NAMES = {
     'compat__model.cancel_suspended_response.registered',
     'compat__model.compact_messages',
     'compat__model.compact_messages.registered',
+    'compat__model.count_tokens',
+    'compat__model.count_tokens.registered',
     'compat__event_stream_handler',
     'compat__function_toolset__functions.call_tool:function_tool',
     'compat__function_toolset__functions.validate_args',
@@ -237,6 +251,7 @@ PREFECT_OPERATION_NAMES = {
     'Model Request (Streaming): test',
     'Cancel Suspended Response: test',
     'Compact Messages: test',
+    'Count Tokens: test',
     'Handle Stream Event',
     'Get MCP Tools: mcp',
     'Get MCP Instructions: mcp',
@@ -254,6 +269,7 @@ TEMPORAL_ACTIVITY_NAMES = {
     'agent__compat__model_request_stream',
     'agent__compat__model_cancel_suspended_response',
     'agent__compat__model_compact_messages',
+    'agent__compat__model_count_tokens',
     'agent__compat__event_stream_handler',
     'agent__compat__toolset__<agent>__call_tool',
     'agent__compat__toolset__<agent>__validate_args',
@@ -266,6 +282,7 @@ TEMPORAL_ACTIVITY_NAMES = {
     'agent__compat__dynamic_toolset__dynamic__call_tool',
     'agent__compat__dynamic_toolset__dynamic__validate_args',
     'agent__compat__capability__compat__operation',
+    'agent__compat__external_event_ask',
 }
 
 TEMPORAL_CHILD_WORKFLOW_NAMES = {
@@ -278,6 +295,7 @@ DBOS_OPERATION_NAMES = {
     'compat__model.request_stream',
     'compat__model.cancel_suspended_response',
     'compat__model.compact_messages',
+    'compat__model.count_tokens',
     'compat__event_stream_handler',
     'compat__mcp_server__mcp.get_tools',
     'compat__mcp_server__mcp.get_instructions',
@@ -298,6 +316,7 @@ RENDER_TASK_NAMES = {
     'compat__model.request_stream',
     'compat__model.cancel_suspended_response',
     'compat__model.compact_messages',
+    'compat__model.count_tokens',
     'compat__event_stream_handler',
     'compat__function_toolset__<agent>.call_tool',
     'compat__function_toolset__<agent>.validate_args',
@@ -323,6 +342,8 @@ def _operation_ids() -> list[DurableOperationId]:
         ModelCancelSuspendedResponseId('registered', model_name='test'),
         ModelCompactMessagesId(None, model_name='test'),
         ModelCompactMessagesId('registered', model_name='test'),
+        ModelCountTokensId(None, model_name='test'),
+        ModelCountTokensId('registered', model_name='test'),
         EventStreamHandlerId(),
         ToolsetCallToolId('function', toolset_id='functions'),
         ToolsetValidateToolArgumentsId('function', toolset_id='functions'),
@@ -661,6 +682,10 @@ def test_temporal_activity_name_matrix_and_assembly_completeness() -> None:
         (_ToolReturn('ok'), {'result': 'ok', 'kind': 'tool_return'}),
         (_ApprovalRequired({'scope': 'write'}), {'metadata': {'scope': 'write'}, 'kind': 'approval_required'}),
         (_CallDeferred({'ticket': 7}), {'metadata': {'ticket': 7}, 'kind': 'call_deferred'}),
+        (
+            _CallDeferred({'ticket': 7}, call_kind='question'),
+            {'metadata': {'ticket': 7}, 'call_kind': 'question', 'kind': 'call_deferred'},
+        ),
         (_ModelRetry('retry me'), {'message': 'retry me', 'kind': 'model_retry'}),
         (
             _ValidationError(
@@ -821,6 +846,8 @@ def test_call_tool_result_carries_every_tool_manager_control_flow_exception() ->
                     'kind': 'function',
                     'metadata': None,
                     'timeout': None,
+                    'durable': None,
+                    'ui_visibility': None,
                     'defer_loading': False,
                     'unless_native': None,
                     'with_native': None,
@@ -892,6 +919,7 @@ def test_model_request_context_projection_payload_golden() -> None:
             'revealed_tool_names': [],
             'introduced_tool_names': [],
             'deferred_capability_ids': [],
+            'deferred_capabilities': [],
             'output_mode': 'text',
             'output_object': None,
             'output_tools': [],
@@ -933,6 +961,9 @@ def test_model_request_context_projection_is_exhaustive() -> None:
         # The live wrapper a capability's `get_wrapper_model` built around `model`, with the model it wraps; the
         # durable unit re-applies the hook to the model it rebuilds, so it's never carried across.
         '_serving_wrapper',
+        # The request's messages as the hooks left them, set caller-side after every hook has run, for readers of
+        # the request (such as `TrajectoryJudge`) in `after_model_request`; a durable hook never sees it.
+        '_hooked_messages',
     }
     projected = {field.name for field in fields(ModelRequestContextProjection)}
     context_fields = {field.name for field in fields(ModelRequestContext)}
@@ -979,6 +1010,11 @@ class GoldenCheckpointEvent(CapabilityEvent, namespace='golden', name='checkpoin
     label: str
 
 
+@dataclass(kw_only=True)
+class GoldenReportPart(DataCapabilityPart, namespace='golden', name='report', tag='report', attributes=('label',)):
+    label: str
+
+
 def test_event_payload_goldens() -> None:
     """Pin the wire shape of both event families, tag included.
 
@@ -1004,17 +1040,6 @@ def test_event_payload_goldens() -> None:
     }
 
 
-def _union_members(union: object) -> set[type]:
-    """The classes a union admits, with nested unions flattened and `Annotated` wrappers removed."""
-    members: set[type] = set()
-    for member in get_union_args(union):
-        if get_union_args(member):
-            members |= _union_members(member)
-        else:
-            members.add(member)
-    return members
-
-
 def test_every_stream_event_and_message_part_round_trips_through_the_json_codec() -> None:
     """Every member of the event and part unions must survive the codec a durable boundary uses.
 
@@ -1023,7 +1048,8 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
     request context projection, the returned `ModelResponse`). A new union member with a field the
     codec can't serialize or rebuild breaks every durable run that produces it. The coverage asserts
     fail until a new member has an instance below, so it is round-tripped too. Not a VCR test: the
-    round trip happens between engine and worker, never on a provider request.
+    round trip happens between engine and worker, never on a provider request. Each capability part's source,
+    authority and frame through every engine's serializer is checked in `test_capability_part_serializers.py`.
     """
     request_parts: list[ModelRequestPart] = [
         SystemPromptPart('system'),
@@ -1039,6 +1065,7 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
         InstructionDeltaPart(id=None, content='delta'),
         InstructionBaselinePart(instructions=[InstructionPart('baseline')]),
         CompactionPart(content='summary'),
+        GoldenReportPart(content='report', source=OperatorSource(), label='l'),
     ]
     response_parts: list[ModelResponsePart] = [
         TextPart('text'),
@@ -1091,26 +1118,28 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
     # `RetryPromptPart` stays in the union for type checking and the published JSON schema: the
     # discriminator translates a legacy payload into one of its replacements, so it never
     # round-trips as itself. Parts and deltas match by exact type, since several members subclass
-    # another member; events match by `isinstance`, as `CustomEvent` and `CapabilityEvent` are
-    # covered by registered subclasses.
+    # another member, except `CapabilityPart`, which is covered by a registered subclass; events match
+    # by `isinstance`, as `CustomEvent` and `CapabilityEvent` are covered by registered subclasses.
     assert {
         member.__name__
-        for member in _union_members(ModelRequestPart)
-        if not any(type(part) is member for part in request_parts)
+        for member in union_members(ModelRequestPart)
+        if not any(
+            isinstance(part, member) if member is CapabilityPart else type(part) is member for part in request_parts
+        )
     } == {'RetryPromptPart'}
     assert [
         member.__name__
-        for member in _union_members(ModelResponsePart)
+        for member in union_members(ModelResponsePart)
         if not any(type(part) is member for part in response_parts)
     ] == []
     assert [
         member.__name__
-        for member in _union_members(ModelResponsePartDelta)
+        for member in union_members(ModelResponsePartDelta)
         if not any(type(delta) is member for delta in deltas)
     ] == []
     assert [
         member.__name__
-        for member in _union_members(AgentStreamEvent)
+        for member in union_members(AgentStreamEvent)
         if not any(isinstance(event, member) for event in events)
     ] == []
 

@@ -13,7 +13,25 @@ Runtime capability creation lets an agent write, validate, and persist Pydantic 
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![In one run the model calls author_capability with a name and Python source. CapabilityCreation writes it to <directory>/<name>.py, imports it, checks that it holds exactly one AbstractCapability subclass that constructs with no arguments, calls its static getters, and records it in manifest.json. The capability is not live in that run. Your loop calls creation.store.load_active() and passes the result to the next agent.run as capabilities, so its tools, hooks and instructions take effect there. The authored code runs in the agent process, so a run requires a writable LocalWorkspace.](../img/harness/capability-creation.svg)
+```mermaid
+flowchart TB
+    accTitle: Capability Creation: the agent writes capabilities for its next run
+    accDescr: In this run, the model calls author_capability(name, code) on CapabilityCreation(directory=...) and gets a result. The capability writes, imports and checks the capability's .py file in the directory and writes manifest.json. Your loop calls creation.load_active(workspace) and passes the active capabilities as capabilities= to the next agent.run, where their tools, hooks and instructions are live.
+    subgraph thisrun["This run"]
+        model(["model"])
+        creation["CapabilityCreation(directory=...)<br/>author_capability(name, code)"]:::capability
+    end
+    files["&lt;directory&gt;/&lt;name&gt;.py<br/>manifest.json"]
+    subgraph nextrun["Your loop, then the next run"]
+        load["creation.load_active(workspace)"]
+        run["next agent.run<br/>its tools, hooks and<br/>instructions are live"]
+    end
+    model <-->|"tool call, result"| creation
+    creation -->|"writes, imports, checks"| files
+    files -->|"active capabilities"| load
+    load -->|"capabilities="| run
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 ## The problem
 
@@ -31,7 +49,7 @@ A "hook" is not a standalone object in pydantic-ai -- it is a method on a capabi
 
 ## Usage
 
-Construct `CapabilityCreation` with a `directory` for the authored files, then add it to the agent's `capabilities`. `directory` is a path on the machine running the agent, relative to the process's current directory, not a workspace path.
+Construct `CapabilityCreation` with a `directory` for the authored files, then add it to the agent's `capabilities`. `directory` is a path on the machine running the agent, relative to the process's current directory, not a workspace path, and it must have `'operator'` authority in the run's workspace (see [Trust boundary](#trust-boundary)).
 
 ```python
 from pathlib import Path
@@ -54,33 +72,34 @@ Writing and validation happen in the current run; activation happens on the next
 
 The successful `author_capability` result tells the model the capability does not take effect in the current run. Writing and validating a capability does not schedule or inject it automatically.
 
-Pass `creation.store.load_active()` as `capabilities=` on each run; an authored capability is then active from the next run, without a process restart:
+Pass `await creation.load_active(workspace)` as `capabilities=` on each run; an authored capability is then active from the next run, without a process restart:
 
 ```python
 from pathlib import Path
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import CapabilityCreation
 
+workspace = LocalWorkspaceBackend('.')
 creation = CapabilityCreation(directory=Path('.authored'))
-agent = Agent('{{ anthropic:medium }}', capabilities=[LocalWorkspace('.'), creation])
+agent = Agent('{{ anthropic:medium }}', capabilities=[creation])
 
 history = None
 done = False
 next_prompt = 'Start the task.'
 while not done:
-    extra = creation.store.load_active()
-    result = await agent.run(next_prompt, message_history=history, capabilities=extra)
+    extra = await creation.load_active(workspace)
+    result = await agent.run(next_prompt, message_history=history, capabilities=extra, workspace=workspace)
     history = result.all_messages()
     # ... decide `next_prompt` and `done` from `result` ...
 ```
 
-`creation.store` is the disk-backed `CapabilityStore` over the same `directory`. `store.load_active()` re-imports every active authored capability and runs the same checks as `author_capability` before returning it for injection into the next run. An entry that fails (corrupt source, construction error, a getter with a wrong return type) is skipped rather than raised, and its error is recorded in the manifest, so one bad capability does not block the others. Each version of a capability that `load_active()` loads stays imported for the life of the process, so an instance from an earlier run keeps working after the model re-authors it.
+`load_active()` refuses a `workspace` that a run would refuse (see [Trust boundary](#trust-boundary)) before it runs any authored code. It then calls `load_active()` on `creation.store`, the disk-backed `CapabilityStore` over the same `directory`, which re-imports every active authored capability and runs the same checks as `author_capability` before returning it for injection into the next run. An entry that fails (corrupt source, construction error, a getter with a wrong return type) is skipped rather than raised, and its error is recorded in the manifest, so one bad capability does not block the others. Each version of a capability that `load_active()` loads stays imported for the life of the process, so an instance from an earlier run keeps working after the model re-authors it.
 
 ## Persistence
 
-Authored capabilities persist to disk: each is one `<directory>/<name>.py` file, indexed by a sibling `manifest.json`. A fresh process picks them up by constructing a new `CapabilityCreation` over the same `directory` and calling `store.load_active()`.
+Authored capabilities persist to disk: each is one `<directory>/<name>.py` file, indexed by a sibling `manifest.json`. A fresh process picks them up by constructing a new `CapabilityCreation` over the same `directory` and calling `load_active()`.
 
 `manifest.json` records each capability's name, module file, class name, status (`active` or `disabled`), and last validation error. That is the surface a UI can read to show what the agent has authored. The manifest is written atomically (temp file plus `os.replace`), so a crash mid-write does not leave a partial file. A manifest that cannot be read (malformed JSON, or a field value this version does not accept) is read as empty, and `author_capability` and `disable_authored_capability` raise `UserError` instead of replacing it, so its entries are kept until you repair or remove it.
 
@@ -109,9 +128,40 @@ machine. A run therefore refuses to start unless its
 sandbox the model's code would run outside the sandbox, and a read-only workspace promises the
 model that it changes nothing.
 
+`directory` must hold only code the operator wrote or this capability authored, not a cloned repository or a user's upload. A run therefore also refuses to start unless [`authority_of`](https://pydantic.dev/docs/ai/core-concepts/workspace/) gives `directory` `'operator'` authority:
+
+- A workspace with `authority='user'` or `authority='none'` is refused, unless `path_authority` gives `directory` `'operator'`.
+- A lower directory inside an operator workspace, such as one under `path_authority={'vendor': 'none'}`, is refused, including through a symlink.
+- A directory outside the workspace's working directory has `'none'` authority, so name it: `LocalWorkspace('./project', path_authority={'/var/lib/my-app/authored': 'operator'})`.
+
+With `defer_loading=True`, a run starts before the capability loads, so these checks, and the writable `LocalWorkspace` one above, refuse each authoring tool call instead, failing the run.
+
+`creation.load_active(workspace)` makes the same checks against `workspace` before it loads anything. It checks only the workspace it is given, so pass the one the run uses: configure the workspace with `agent.run(..., workspace=...)` rather than a `LocalWorkspace` capability, and pass the same object to both. For a `directory` outside the working directory, name it in an `AuthorityWorkspace`, whose `path_authority` refuses `~` paths:
+
+```python
+from pathlib import Path
+
+from pydantic_ai import Agent
+from pydantic_ai.workspaces import AuthorityWorkspace, LocalWorkspaceBackend, Workspace
+from pydantic_ai_harness import CapabilityCreation
+
+workspace = AuthorityWorkspace(
+    Workspace(LocalWorkspaceBackend('./project')),
+    authority='operator',
+    path_authority={'/var/lib/my-app/authored': 'operator'},
+)
+creation = CapabilityCreation(directory=Path('/var/lib/my-app/authored'))
+agent = Agent('{{ anthropic:medium }}', capabilities=[creation])
+
+extra = await creation.load_active(workspace)
+result = await agent.run('Continue the task.', capabilities=extra, workspace=workspace)
+```
+
+`creation.store.load_active()` has no workspace to ask, so it runs the code it finds: call it only on a directory you would run yourself. The checks also only look at who controls the directory, not what the model has read: to keep text in a lower workspace from steering what gets authored, require approval as shown below.
+
 `CapabilityCreation` executes arbitrary Python in-process at import, construction, and run time. That is the same trust boundary an agent that already runs shell commands and edits files operates under. Do not point it at a directory whose contents you would not run yourself, and treat authored capabilities as code the agent is executing on your host.
 
-Authored code first runs when the model calls `author_capability`, not on the next run: validation executes the module body, the constructor, and the static getters in the current run, with the agent process's environment and permissions, even when validation then rejects the code. If that code blocks, cancelling the run stops waiting for it, but its worker thread runs until the code returns and then finishes the write, so code that passes validation is still saved and loaded by the next `load_active()`; disable it if you did not want it. Other authoring, listing, and disabling calls are not held up by it. `store.load_active()` runs authored code in its calling thread, so an authored module that blocks also blocks that call. Loads of the same source from different threads run one at a time, so it also holds up every other load of that source, such as a `load_active()` call in another thread.
+Authored code first runs when the model calls `author_capability`, not on the next run: validation executes the module body, the constructor, and the static getters in the current run, with the agent process's environment and permissions, even when validation then rejects the code. If that code blocks, cancelling the run stops waiting for it, but its worker thread runs until the code returns and then finishes the write, so code that passes validation is still saved and loaded by the next `load_active()`; disable it if you did not want it. Other authoring, listing, and disabling calls are not held up by it. `store.load_active()` runs authored code in its calling thread, so an authored module that blocks also blocks that call. `creation.load_active()` runs it in a worker thread: cancelling it stops waiting, but the thread runs until the code returns. Loads of the same source from different threads run one at a time, so it also holds up every other load of that source, such as a `load_active()` call in another thread.
 
 To have a person approve authored code before any of it runs, require approval for `author_capability` with a [`ToolGuardrail`](guardrails.md). The run then ends with a `DeferredToolRequests` output for the call, which you approve or deny as described in [Human-in-the-loop tool approval](../deferred-tools.md#human-in-the-loop-tool-approval):
 

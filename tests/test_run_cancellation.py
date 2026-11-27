@@ -39,6 +39,7 @@ from pydantic_ai import (
     Agent,
     AgentRunEvents,
     AgentRunResultEvent,
+    ApprovalRequired,
     CancellationToken,
     RunCancelled,
     UserError,
@@ -53,10 +54,12 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     PartStartEvent,
     TextPart,
     ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -67,18 +70,18 @@ from pydantic_ai.run import AgentRun, AgentRunResult
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, WrapperToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from .conftest import IsNow, IsStr, no_leaked_tasks
-
-READINESS_WAIT_TIMEOUT = 300
-"""Seconds a test waits for something that should happen at once: only a hang reaches it, however stalled the runner is."""
 
 
 def _fail_first_tool() -> None:
     raise RuntimeError('first tool failed')
 
 
-def _parallel_sibling_tools_agent(first_tool_action: Callable[[], None]) -> Agent[None, str]:
+def _parallel_sibling_tools_agent(
+    first_tool_action: Callable[[], None], *, end_strategy: Literal['early', 'graceful', 'exhaustive'] = 'graceful'
+) -> Agent[None, str]:
     """An agent whose first-emitted tool waits until its sibling task has completed, then runs `first_tool_action`."""
     fast_finished = asyncio.Event()
 
@@ -96,7 +99,7 @@ def _parallel_sibling_tools_agent(first_tool_action: Callable[[], None]) -> Agen
             1: DeltaToolCall(name='fast_tool', json_args='{}', tool_call_id='call_fast'),
         }
 
-    agent = Agent(FunctionModel(call_tools, stream_function=stream_call_tools))
+    agent = Agent(FunctionModel(call_tools, stream_function=stream_call_tools), end_strategy=end_strategy)
 
     @agent.tool_plain
     async def first_tool() -> str:
@@ -169,6 +172,90 @@ async def test_external_cancellation_keeps_completed_tool_result(
             await run_task
 
     _assert_interrupted_fast_result(messages[-1])
+
+
+async def test_exhaustive_keeps_completed_tool_return_on_cancellation() -> None:
+    """An exhaustive sibling's completed return is recorded when the run is cancelled."""
+
+    def cancel_run() -> None:
+        run_task.cancel()
+
+    agent = _parallel_sibling_tools_agent(cancel_run, end_strategy='exhaustive')
+
+    with capture_run_messages() as messages:
+        run_task = asyncio.create_task(agent.run('go'))
+        with pytest.raises(asyncio.CancelledError):
+            await run_task
+
+    _assert_interrupted_fast_result(messages[-1])
+
+
+def _approval_required() -> str:
+    raise ApprovalRequired
+
+
+@pytest.mark.parametrize(
+    'fast_tool_result,interrupted_parts',
+    [
+        pytest.param(
+            lambda: 'fast result',
+            [ToolReturnPart('fast_tool', 'fast result', tool_call_id='call_fast', timestamp=IsNow(tz=UTC))],
+            id='return',
+        ),
+        pytest.param(
+            lambda: ToolReturn(return_value='fast result', content='extra context'),
+            [
+                ToolReturnPart('fast_tool', 'fast result', tool_call_id='call_fast', timestamp=IsNow(tz=UTC)),
+                UserPromptPart('extra context', timestamp=IsNow(tz=UTC)),
+            ],
+            id='tool-return-with-content',
+        ),
+        # A deferral isn't recorded in the interrupted request, as under the other strategies.
+        pytest.param(_approval_required, [], id='deferred'),
+    ],
+)
+@pytest.mark.parametrize('mode', ['parallel', 'parallel_ordered_events'])
+async def test_exhaustive_sibling_exception_keeps_tool_result_finished_in_same_iteration(
+    mode: Literal['parallel', 'parallel_ordered_events'],
+    fast_tool_result: Callable[[], str | ToolReturn],
+    interrupted_parts: list[ModelRequestPart],
+) -> None:
+    """Under `'exhaustive'`, a return that finished in the same loop iteration as an earlier-emitted sibling that
+    raised survives in the interrupted request."""
+    sibling_may_finish = asyncio.Event()
+
+    def call_tools(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart('first_tool', {}, tool_call_id='call_first'),
+                ToolCallPart('fast_tool', {}, tool_call_id='call_fast'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(call_tools), end_strategy='exhaustive')
+
+    @agent.tool_plain
+    async def first_tool() -> str:
+        sibling_may_finish.set()
+        # `fast_tool` finishes in the next iteration, ahead of this tool, so the run sees both tasks done
+        # at once and takes this one first, in emission order.
+        await asyncio.sleep(0)
+        _fail_first_tool()
+        return 'never reached'  # pragma: no cover
+
+    @agent.tool_plain
+    async def fast_tool() -> str | ToolReturn:
+        await sibling_may_finish.wait()
+        return fast_tool_result()
+
+    with capture_run_messages() as messages, agent.parallel_tool_call_execution_mode(mode):
+        with pytest.raises(RuntimeError, match='first tool failed'):
+            await agent.run('go')
+
+    interrupted = messages[-1]
+    assert isinstance(interrupted, ModelRequest)
+    assert interrupted.state == 'interrupted'
+    assert interrupted.parts == interrupted_parts
 
 
 @pytest.mark.parametrize('message', [None, '', 'stop tools'])
@@ -421,9 +508,17 @@ async def test_run_sync_token_cancel_from_another_thread():
         raise AssertionError  # pragma: no cover
 
     token = CancellationToken()
-    run_thread = asyncio.create_task(
-        asyncio.to_thread(Agent(FunctionModel(model_function)).run_sync, 'hello', cancellation_token=token)
-    )
+
+    def run_sync_and_close_its_loop() -> None:
+        try:
+            Agent(FunctionModel(model_function)).run_sync('hello', cancellation_token=token)
+        finally:
+            # `run_sync` sets a new event loop on this worker thread that nothing else closes. Left open, the teardown
+            # collection can finalize its self-pipe socket first, and closing the loop then raises
+            # `ValueError: Invalid file descriptor: -1`.
+            asyncio.get_event_loop().close()
+
+    run_thread = asyncio.create_task(asyncio.to_thread(run_sync_and_close_its_loop))
     await asyncio.to_thread(started.wait)
     token.cancel()
 
@@ -973,6 +1068,28 @@ async def test_threadsafe_cancel_delivery_after_finish_is_noop():
 
     assert _task_cancelling(task) == baseline
     assert controller.cancel_requested  # the request itself was recorded, just never delivered
+
+
+def test_token_cancels_reachable_runs_when_another_run_is_unreachable():
+    """A token shared by several runs still cancels every reachable run when one run's loop can't be
+    reached, and stays uncancelled so it can be fired again for the run it missed — a controller unit
+    test because only a Temporal workflow loop is unreachable, and it hosts a single run."""
+
+    class UnreachableRunCancellation(RunCancellation):
+        def cancel(self) -> None:
+            raise UserError("This run's event loop can't be reached from another thread or loop.")
+
+    reachable_runs = [RunCancellation(), RunCancellation()]
+    token = CancellationToken()
+    reachable_runs[0].attach_token(token)
+    UnreachableRunCancellation().attach_token(token)
+    reachable_runs[1].attach_token(token)
+
+    with pytest.raises(UserError, match="can't be reached"):
+        token.cancel()
+
+    assert [run.cancel_requested for run in reachable_runs] == [True, True]
+    assert not token.cancelled
 
 
 async def test_release_issued_on_finished_task_is_noop():
@@ -1988,9 +2105,8 @@ async def test_nested_run_stream_events_binding_isolated_under_outer_cancellatio
         except RunCancelled:  # pragma: no cover - the inner handle must not claim the outer cancel
             inner_outcome.append('inner run cancelled')
             raise
-        # Never executed (the inner run blocks until cancelled), but coverage's exception-table
-        # attribution counts this exit arc as covered, so it must not carry a `no cover` pragma.
-        return 'never reached'
+        # The inner run blocks until cancelled.
+        return 'never reached'  # pragma: no cover
 
     async with outer_agent.run_stream_events('outer') as outer_events:
         consumer = asyncio.create_task(_consume_events(outer_events))

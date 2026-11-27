@@ -18,8 +18,8 @@ name: Latest Versions Canary
 # temporary upper cap `<N` to the affected extra so users are protected while the
 # migration happens. Suppressing the signal is not one of them.
 #
-# On `v*` tag pushes `ci.yml` calls this workflow as an advisory check: `check` waits for it but
-# lists it in `allowed-failures`, so a red run does not stop `publish to PyPI` or `deploy-docs`.
+# On `v*` tag pushes `ci.yml` calls this workflow as an advisory check. No job there needs it, so
+# a red run turns the tag run red without delaying or stopping `publish to PyPI` or `deploy-docs`.
 # That run is time-dependent: an SDK published to PyPI minutes before the tag can turn it red.
 #
 # Scope, and its accepted limitation: only the dependencies our published packages declare
@@ -35,8 +35,8 @@ name: Latest Versions Canary
 # invisible to a single-interpreter run, because `uv sync` and `pytest` only ever exercise the
 # marker branches the running interpreter selects — resolving every branch in `uv lock` does
 # not run them. The interior versions are left to `ci.yml`, which covers all five at the
-# bottom of the range; two here is the compromise between that coverage and a job every
-# release waits for.
+# bottom of the range; two here is the compromise between that coverage and the runner time
+# every tag spends on it.
 #
 # Each leg uploads a report: its step outcomes, its JUnit results and the dependencies that moved.
 # The daily run comes from `latest-versions-canary-nightly.yml`, whose report job files new
@@ -73,7 +73,7 @@ env:
 jobs:
   latest-versions:
     name: resolve and test at latest versions (${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 45
     strategy:
       # Both ends are wanted whichever one breaks, so neither cancels the other.
@@ -89,6 +89,8 @@ jobs:
       # `TEMPORAL_DEBUG` as on `ci.yml`'s `test-durable-exec` job, for the reasons documented there.
       BLOCKBUSTER_ENABLED: false
       TEMPORAL_DEBUG: '1'
+      # The leg's artifact name, and the directory its report is written under: see "Upload the report".
+      REPORT_NAME: latest-versions-canary-${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -96,7 +98,7 @@ jobs:
 
       # No `enable-cache`: the cache key is derived from the committed `uv.lock`, which this
       # job replaces before installing anything, so the cache would hold the wrong wheels.
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: false
@@ -188,7 +190,7 @@ jobs:
       # for pyright: nothing here typechecks.
       - name: Install
         id: install
-        run: uv sync --all-extras --no-extra mcp-tasks --all-packages
+        run: uv sync --all-extras --all-packages
 
       # So a red run's log answers "which upgrade did this" without a bisect. The package list
       # is read off the installed metadata for `pydantic-ai-slim`, base requirements and extras
@@ -196,7 +198,7 @@ jobs:
       - name: Report which dependencies moved
         env:
           LOCKED_BEFORE: ${{ runner.temp }}/uv.lock.committed
-          MOVED_REPORT: ${{ runner.temp }}/canary-report/moved.txt
+          MOVED_REPORT: ${{ runner.temp }}/canary-report/${{ env.REPORT_NAME }}/moved.txt
         run: |
           python3 - <<'PY'
           import os
@@ -295,7 +297,7 @@ jobs:
         run: |
           status=0
           uv run --no-sync pytest --durations=100 -n logical --dist=loadgroup \
-            --junit-xml="${RUNNER_TEMP}/canary-report/junit.xml" -o junit_family=xunit1 || status=$?
+            --junit-xml="${RUNNER_TEMP}/canary-report/${REPORT_NAME}/junit.xml" -o junit_family=xunit1 || status=$?
           echo "exit=$status" >> "$GITHUB_OUTPUT"
           exit "$status"
         env:
@@ -313,14 +315,16 @@ jobs:
           LEGS: ${{ strategy.job-total }}
           PYTEST_EXIT: ${{ steps.test.outputs.exit }}
         run: |
-          mkdir -p "${RUNNER_TEMP}/canary-report"
+          mkdir -p "${RUNNER_TEMP}/canary-report/${REPORT_NAME}"
           printf '{"resolve": "%s", "install": "%s", "test": "%s", "legs": %s, "pytest_exit": %s}\n' \
-            "$RESOLVE" "$INSTALL" "$TEST" "$LEGS" "${PYTEST_EXIT:-null}" > "${RUNNER_TEMP}/canary-report/outcome.json"
+            "$RESOLVE" "$INSTALL" "$TEST" "$LEGS" "${PYTEST_EXIT:-null}" > "${RUNNER_TEMP}/canary-report/${REPORT_NAME}/outcome.json"
 
+      # The report sits under a directory named like the artifact, so the report job in
+      # `latest-versions-canary-nightly.yml` reads a lone artifact the way it reads several.
       - name: Upload the report
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: latest-versions-canary-${{ matrix.python-version }}
+          name: ${{ env.REPORT_NAME }}
           path: ${{ runner.temp }}/canary-report/
           retention-days: 7

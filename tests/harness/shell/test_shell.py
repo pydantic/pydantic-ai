@@ -9,24 +9,32 @@ import posixpath
 import shlex
 import shutil
 import signal
+import subprocess
 import sys
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, Literal, NoReturn
 from unittest.mock import patch
 
 import anyio
 import anyio.to_thread
 import pytest
 import sniffio
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -38,15 +46,20 @@ from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceCommand,
     WorkspaceError,
+    WorkspaceReadOnlyError,
+    WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness import BackgroundTools
 from pydantic_ai_harness._workspace import READ_ONLY_FAILURE
+from pydantic_ai_harness.background_tools import BackgroundToolResultPart
 from pydantic_ai_harness.code_mode import CodeMode
 from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS, Shell
 from pydantic_ai_harness.shell._jobs import Job
 from pydantic_ai_harness.shell._policy import is_interactive_command
 from pydantic_ai_harness.shell._toolset import ShellToolset
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from .._tool_calls import call_tool
 
@@ -572,6 +585,31 @@ class TestDurableJob:
         ):
             await toolset.start_command(ctx, command)
         assert (shell_dir / 'side-effects.txt').read_text().splitlines() == ['one']
+
+    async def test_launcher_the_shell_cannot_start_is_not_a_pending_launch(self, shell_dir: Path) -> None:
+        """A shell exits 126 when it cannot start the launcher, as an SSH host's does for an argument over 128 KiB."""
+        toolset = _shell_toolset(shell_dir)
+        ctx = _run_context(Workspace(_LauncherNotStarted(shell_dir)))
+        ctx.run_id = 'durable-run'
+        ctx.tool_call_id = 'launch-1'
+        with pytest.raises(
+            ModelRetry, match=r'^Shell supervisor exited with 126: sh: 1: exec: sh: Argument list too long$'
+        ):
+            await toolset.start_command(ctx, 'echo one')
+
+
+class _LauncherNotStarted(LocalWorkspaceBackend):
+    """A backend whose shell cannot start the launcher, the one command the test runs."""
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        return CommandResult(exit_code=126, stdout='', stderr='sh: 1: exec: sh: Argument list too long\n')
 
 
 class TestDurableCwd:
@@ -1712,7 +1750,10 @@ _KILL_SCRIPT = 'true 2> /dev/null > "$3"; kill -s "$1" -- "$2"'
 
 
 class _RecordingKill(LocalWorkspaceBackend):
-    """A local backend that records every argv command and can answer the signal command itself."""
+    """A local backend that records every argv command and can answer the signal command itself.
+
+    With an answer for the signal command, the check `Job` runs after a refused group signal runs as on macOS on any OS.
+    """
 
     def __init__(self, working_dir: str | Path, *, kill_result: CommandResult | None = None) -> None:
         super().__init__(working_dir)
@@ -1731,6 +1772,8 @@ class _RecordingKill(LocalWorkspaceBackend):
             self.argv.append(list(command))
             if self.kill_result is not None and command[:3] == ['sh', '-c', _KILL_SCRIPT]:
                 return self.kill_result
+            if self.kill_result is not None and command[:2] == ['sh', '-c']:
+                command = [*command[:2], command[2].replace('"$(uname -s 2> /dev/null)"', 'Darwin'), *command[3:]]
         return await super().run(command, shell=shell, env=env, timeout=timeout)
 
 
@@ -1888,6 +1931,47 @@ class TestSignalling:
             backend.kill_result = None
             await job.kill()
             await job.cleanup()
+
+    async def test_a_refused_signal_to_a_lone_wrapper_raises(self, shell_dir: Path) -> None:
+        # A lone zombie takes a signal, so only a refused group signal is checked for zombies.
+        backend = _RecordingKill(
+            shell_dir, kill_result=CommandResult(exit_code=1, stdout='', stderr='kill: Operation not permitted')
+        )
+        job = Job(
+            workspace=Workspace(backend), directory=str(shell_dir / 'job'), pid=os.getpid(), pgid=None, combined=True
+        )
+        with pytest.raises(WorkspaceError, match='Operation not permitted'):
+            await job.kill()
+        assert [argv[:3] for argv in backend.argv] == [['sh', '-c', _KILL_SCRIPT]]
+
+    async def test_a_group_left_with_only_zombies_is_stopped(self, shell_dir: Path) -> None:
+        # Between a wrapper's exit and its reap, the job's process group holds only zombies, and macOS refuses
+        # a signal to such a group with EPERM, where Linux answers 0. The test holds that state open with a
+        # zombie of its own, and answers each signal as macOS does.
+        backend = _RecordingKill(
+            shell_dir, kill_result=CommandResult(exit_code=1, stdout='', stderr='kill: Operation not permitted')
+        )
+        ts = _shell_toolset(shell_dir)
+        ctx = _run_context(Workspace(backend))
+        command_id = _parse_command_id(await ts.start_command(ctx, 'echo done'))
+        job = await _job(ts, ctx, command_id)
+        with anyio.fail_after(10):
+            while (await job.status())[0]:
+                await anyio.sleep(0.01)  # pragma: lax no cover
+        zombie = subprocess.Popen(['true'], start_new_session=True)
+        try:
+            with anyio.fail_after(10):
+                while (
+                    not (await anyio.run_process(['ps', '-o', 'stat=', '-p', str(zombie.pid)]))
+                    .stdout.strip()
+                    .startswith(b'Z')
+                ):
+                    await anyio.sleep(0.01)  # pragma: lax no cover
+            (Path(job.directory) / 'handle').write_text(f'{job.pid} {zombie.pid}\n')
+            assert await ts.stop_command(ctx, command_id) == '[stdout]\ndone\n\n[stopped]\n[exit code: 0]'
+        finally:
+            zombie.wait()
+        assert not Path(job.directory).exists()
 
 
 async def _wait_for_exit(pid: int) -> None:
@@ -2109,6 +2193,47 @@ class TestStopCommandAlreadyFinished:
         assert result.splitlines()[-2:] == ['[stopped]', '[exit code: 3]']
 
 
+@pytest.fixture
+def writable_after(shell_dir: Path) -> Iterator[Path]:
+    """`shell_dir` for a command that takes write permission away, given back afterwards so it can be removed."""
+    if os.geteuid() == 0:  # pragma: no cover
+        pytest.skip('root writes regardless of mode bits')
+    yield shell_dir
+    for path in (shell_dir, *shell_dir.rglob('*')):
+        path.chmod(path.stat().st_mode | 0o200)
+
+
+class TestReadOnlyJobDirectory:
+    @pytest.mark.parametrize(
+        'command',
+        [
+            pytest.param('chmod 500 .pydantic-ai-harness/shell/*', id='job-directory'),
+            pytest.param('chmod -R a-w .', id='workspace'),
+        ],
+    )
+    async def test_the_exit_code_is_published(self, writable_after: Path, command: str) -> None:
+        ts = _shell_toolset(writable_after)
+        command_id = _parse_command_id(await ts.start_command(_ctx(writable_after), command))
+        await _wait_for_exit((await _job(ts, _ctx(writable_after), command_id)).pid)
+        result = await ts.check_command(_ctx(writable_after), command_id)
+        assert result.splitlines()[-2:] == ['[status: finished]', '[exit code: 0]']
+
+    async def test_stop_reports_a_job_directory_it_cannot_remove(self, writable_after: Path) -> None:
+        ts = _shell_toolset(writable_after)
+        command_id = _parse_command_id(await ts.start_command(_ctx(writable_after), 'chmod -R a-w .'))
+        job = await _job(ts, _ctx(writable_after), command_id)
+        await _wait_for_exit(job.pid)
+        result = await ts.stop_command(_ctx(writable_after), command_id)
+        assert result.splitlines()[-3:] == [
+            '[stopped]',
+            '[exit code: 0]',
+            '[job directory not removed: permission denied]',
+        ]
+        # The job directory is writable again, so its files go; the read-only jobs directory keeps it.
+        assert list(Path(job.directory).iterdir()) == []
+        assert 'unknown command ID' in await ts.check_command(_ctx(writable_after), command_id)
+
+
 class TestResolveEnv:
     """Unit coverage for the env-resolution branches."""
 
@@ -2234,6 +2359,180 @@ class TestEnvControlPropagation:
         assert toolset._resolve_env() == {'PATH': '/usr/bin'}  # pyright: ignore[reportPrivateUsage]
 
 
+_SECRET = 'sk-secret-123abc'
+
+
+def _secret_toolset(
+    *,
+    env: Mapping[str, str] | None = None,
+    denied_env_patterns: Sequence[str] = (),
+    max_output_chars: int = 50_000,
+    secret_env: Mapping[str, str] | None = None,
+) -> ShellToolset[None]:
+    return ShellToolset(
+        allowed_commands=[],
+        denied_commands=[],
+        denied_operators=[],
+        default_timeout=10.0,
+        max_output_chars=max_output_chars,
+        persist_cwd=False,
+        allow_interactive=False,
+        env=env,
+        denied_env_patterns=denied_env_patterns,
+        secret_env={'TMP_TOKEN': _SECRET, 'EMPTY': ''} if secret_env is None else secret_env,
+    )
+
+
+class TestShellSecretEnv:
+    """`secret_env` reaches commands and is masked in what the tools return to the model."""
+
+    async def test_run_command_output_is_masked(self, tmp_path: Path) -> None:
+        output = await call_tool(
+            [Shell(secret_env={'TMP_TOKEN': _SECRET}), LocalWorkspace(tmp_path)],
+            'run_command',
+            {'command': 'printf "token=%s" "$TMP_TOKEN"'},
+        )
+        assert output == '[stdout]\ntoken=[REDACTED:TMP_TOKEN]'
+
+    async def test_background_output_is_masked(self, shell_dir: Path) -> None:
+        ts = _secret_toolset()
+        command_id = _parse_command_id(
+            await _call_shell_tool(ts, shell_dir, 'start_command', command='printf "%s" "$TMP_TOKEN"')
+        )
+        await _check_until(ts, shell_dir, command_id, '[status: finished]')
+        stopped = await _call_shell_tool(ts, shell_dir, 'stop_command', command_id=command_id)
+        assert stopped.startswith('[stdout]\n[REDACTED:TMP_TOKEN]\n')
+
+    async def test_persistent_output_is_masked(self, tmp_path: Path) -> None:
+        output = await call_tool(
+            [Shell(tools=['shell'], secret_env={'TMP_TOKEN': _SECRET}), LocalWorkspace(tmp_path)],
+            'shell',
+            {'command': 'printf "%s\\n" "$TMP_TOKEN"'},
+        )
+        assert output.startswith('[REDACTED:TMP_TOKEN]\n')
+        assert _SECRET not in output
+
+    async def test_masked_before_output_cap(self, shell_dir: Path) -> None:
+        ts = _secret_toolset(max_output_chars=30)
+        output = await _call_shell_tool(ts, shell_dir, 'run_command', command=f'printf "%s{"y" * 20}" "$TMP_TOKEN"')
+        assert output.endswith('y' * 20)
+        assert '123abc' not in output
+
+    async def test_masking_reads_only_the_end_of_long_output(self, shell_dir: Path) -> None:
+        ts = _secret_toolset(secret_env={'Q': 'q'}, max_output_chars=200)
+        output = await _call_shell_tool(ts, shell_dir, 'run_command', command='printf "%10000s" | tr " " q')
+        assert output.startswith('[... output truncated, showing last ')
+        assert output.endswith('[REDACTED:Q]')
+        assert 'q' not in output
+
+    async def test_capped_output_masks_a_chain_of_overlapping_secrets_whole(self, shell_dir: Path) -> None:
+        ts = _secret_toolset(secret_env={'TOKEN': _SECRET, 'JOIN': 'abcsk-'}, max_output_chars=100)
+        command = 'printf "hello "; for i in $(seq 1000); do printf %s "$TOKEN"; done; echo'
+        output = await _call_shell_tool(ts, shell_dir, 'run_command', command=command)
+        assert output == '[stdout]\nhello [REDACTED:TOKEN]\n'
+
+    async def test_persistent_tail_does_not_split_a_secret(self, tmp_path: Path) -> None:
+        # One line, so the tail keeps the line it cuts: 16,003 bytes after the secret's first three.
+        output = await call_tool(
+            [Shell(tools=['shell'], secret_env={'TMP_TOKEN': _SECRET}), LocalWorkspace(tmp_path)],
+            'shell',
+            {'command': f'printf "%s%s" "$TMP_TOKEN" "$(printf "%{16_003 - len(_SECRET) + 3}s")"'},
+        )
+        assert output.startswith('[... output truncated, ')
+        assert '123abc' not in output
+
+    async def test_persistent_tail_does_not_split_overlapping_secrets(self, tmp_path: Path) -> None:
+        # The cut lands after `X`; moving it past `SHORT` lands inside `LONG`, which also starts before it.
+        secret_env = {'LONG': 'abcdefghijk', 'SHORT': 'XYZabc'}
+        output = await call_tool(
+            [Shell(tools=['shell'], secret_env=secret_env), LocalWorkspace(tmp_path)],
+            'shell',
+            {'command': 'printf "XYZabcdefghijk%15976sabcdefghijk"'},
+        )
+        assert output.startswith('[... output truncated, 14 earlier bytes omitted]\n')
+        assert 'defghijk' not in output
+        assert output.count('[REDACTED:LONG]') == 1
+
+    async def test_persistent_tail_line_start_does_not_split_a_secret(self, tmp_path: Path) -> None:
+        # The byte cut lands where the secret starts; the line it then drops ends inside the secret.
+        output = await call_tool(
+            [Shell(tools=['shell'], secret_env={'KEY': 'AAAA\nBBBB'}), LocalWorkspace(tmp_path)],
+            'shell',
+            {'command': 'printf "%100s" | tr " " z; printf "pre%s\\n" "$KEY"; printf "%15990s" | tr " " w'},
+        )
+        assert output.startswith('[... output truncated, 112 earlier bytes omitted]\n\nwww')
+        assert 'BBBB' not in output
+
+    def test_repr_hides_secret_env(self) -> None:
+        assert _SECRET not in repr(Shell(secret_env={'TMP_TOKEN': _SECRET}))
+
+    async def test_longer_secret_is_masked_whole(self, shell_dir: Path) -> None:
+        ts = _secret_toolset(secret_env={'SHORT': 'abc', 'LONG': 'abcdef'})
+        output = await _call_shell_tool(ts, shell_dir, 'run_command', command='echo abcdef abc')
+        assert output == '[stdout]\n[REDACTED:LONG] [REDACTED:SHORT]\n'
+
+    async def test_overlapping_secrets_are_masked_as_one(self, shell_dir: Path) -> None:
+        ts = _secret_toolset(secret_env={'LONG': 'abcdefghijk', 'SHORT': 'XYZabc'})
+        output = await _call_shell_tool(ts, shell_dir, 'run_command', command='echo XYZabcdefghijk XYZabc')
+        assert output == '[stdout]\n[REDACTED:SHORT] [REDACTED:SHORT]\n'
+
+    async def test_retry_message_is_masked(self, shell_dir: Path) -> None:
+        with pytest.raises(ModelRetry) as exc_info:
+            await _call_shell_tool(_secret_toolset(), shell_dir, 'run_command', command=f'vi {_SECRET}')
+        assert exc_info.value.message == "Interactive commands are not allowed. Command: 'vi [REDACTED:TMP_TOKEN]'"
+        assert exc_info.value.__suppress_context__
+
+    async def test_failure_message_is_masked(self, shell_dir: Path) -> None:
+        ts = _secret_toolset()
+        with patch.object(ShellToolset, '_job', side_effect=WorkspaceError(f'refused {_SECRET}')):
+            with pytest.raises(ToolFailed) as exc_info:
+                await _call_shell_tool(ts, shell_dir, 'check_command', command_id='0' * 32)
+        assert exc_info.value.message == 'refused [REDACTED:TMP_TOKEN]'
+
+    async def test_retry_message_without_a_secret_is_unchanged(self, shell_dir: Path) -> None:
+        with pytest.raises(ModelRetry, match='Interactive commands are not allowed') as exc_info:
+            await _call_shell_tool(_secret_toolset(), shell_dir, 'run_command', command='vi x')
+        assert isinstance(exc_info.value.__cause__, PermissionError)
+
+    def test_secret_env_is_added_unfiltered(self, shell_dir: Path) -> None:
+        ts = _secret_toolset(env={'FOO': 'bar', 'TMP_X': 'drop'}, denied_env_patterns=['TMP_*'])
+        assert ts._resolve_env() == {'FOO': 'bar', 'TMP_TOKEN': _SECRET, 'EMPTY': ''}  # pyright: ignore[reportPrivateUsage]
+
+    async def test_for_run_and_capability_carry_secret_env(self, shell_dir: Path) -> None:
+        toolset = Shell(secret_env={'TMP_TOKEN': _SECRET}, persist_cwd=True).get_toolset()
+        run_ts = await toolset.for_run(_ctx(shell_dir))
+        assert isinstance(run_ts, ShellToolset)
+        assert run_ts._resolve_env() == {'TMP_TOKEN': _SECRET}  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_background_tools_push_run_command_output(tmp_path: Path) -> None:
+    """With `BackgroundTools`, a `run_command` result reaches the model when the command ends, without polling."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('run_command', {'command': 'echo built'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[LocalWorkspace(tmp_path), Shell(), BackgroundTools(tools=['run_command'])],
+    )
+    result = await agent.run('build')
+    pushed = [
+        part.content
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, BackgroundToolResultPart)
+    ]
+    assert pushed == ['[stdout]\nbuilt\n']
+
+
+class _RefusesRemove(LocalWorkspaceBackend):
+    async def remove(self, path: str) -> None:
+        raise WorkspaceReadOnlyError('read-only')
+
+
 class TestReadOnlyWorkspace:
     """A read-only workspace refuses `run`, so the shell offers no tools and reports a refusal as a failure."""
 
@@ -2269,15 +2568,24 @@ class TestReadOnlyWorkspace:
             await ts.call_tool('run_command', {'command': 'echo hi'}, read_only, tools['run_command'])
         assert exc_info.value.message == READ_ONLY_FAILURE
 
+    async def test_a_read_only_workspace_still_fails_the_stop(self, shell_dir: Path) -> None:
+        ts = _shell_toolset(shell_dir)
+        command_id = _parse_command_id(await ts.start_command(_ctx(shell_dir), 'true'))
+        await _wait_for_exit((await _job(ts, _ctx(shell_dir), command_id)).pid)
+        with pytest.raises(ToolFailed) as failed:
+            await ts.stop_command(_run_context(Workspace(_RefusesRemove(shell_dir))), command_id)
+        assert failed.value.message == READ_ONLY_FAILURE
+
 
 class TestDetachedJobRoundTrip:
     async def test_start_check_stop(self, tmp_path: Path) -> None:
         ts = _shell_toolset(tmp_path)
         command_id = _parse_command_id(
-            await ts.start_command(_ctx(tmp_path), 'echo started; echo warn >&2; echo made > made.txt; exec sleep 300')
+            # `started` comes last, so once it shows, the stderr line and `made.txt` are already written.
+            await ts.start_command(_ctx(tmp_path), 'echo made > made.txt; echo warn >&2; echo started; exec sleep 300')
         )
         job_dir = Path((await _job(ts, _ctx(tmp_path), command_id)).directory)
-        with anyio.fail_after(10):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             while 'started' not in (checked := await ts.check_command(_ctx(tmp_path), command_id)):
                 await anyio.sleep(0.05)  # pragma: lax no cover
         assert checked.endswith('[status: running]')
@@ -2377,3 +2685,128 @@ class TestWorkspaceFailures:
         tools = await ts.get_tools(ctx)
         with pytest.raises(WorkspaceUnavailableError, match='sandbox expired'):
             await ts.call_tool('run_command', {'command': 'true'}, ctx, tools['run_command'])
+
+
+_ALL_TOOLS = ['run_command', 'shell', 'start_command', 'check_command', 'stop_command']
+
+
+class _WindowsCommandsBackend:
+    """A `'windows'` workspace that runs nothing, for the tools offered on one."""
+
+    ref = WorkspaceRef(provider='windows', id='C:\\project')
+    workspace_platform = 'windows'
+
+    async def working_dir(self) -> str:
+        return 'C:\\project'
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        raise NotImplementedError
+
+
+class TestShellOnWindowsWorkspace:
+    async def test_tools_name_powershell_and_leave_out_run_command(self) -> None:
+        """`run_command` wraps commands in `sh`, and the `shell` description would otherwise teach `tail` and `kill`."""
+        offered: dict[str, str | None] = {}
+
+        def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            offered.update({tool.name: tool.description for tool in info.function_tools})
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent: Agent[None, str] = Agent(FunctionModel(capture), capabilities=[Shell[object](tools=_ALL_TOOLS)])
+        await agent.run('go', workspace=_WindowsCommandsBackend())
+        assert sorted(offered) == snapshot(['check_command', 'shell', 'start_command', 'stop_command'])
+        # Fails, rather than only changing the snapshot, if rewording `shell`'s docstring breaks the replacement.
+        assert offered['shell'] is not None and '`kill`' not in offered['shell'] and 'PowerShell' in offered['shell']
+        assert offered['shell'] == snapshot("""\
+Run a shell command and return its output.
+
+Foreground (the default) waits up to `timeout` seconds (at most 270) and
+returns the command's combined stdout/stderr inline (the last ~16 KB; any
+earlier output is marked as truncated), then the PID, log path, status file
+and exit status. A command that finished in the foreground needs no further
+reads: do not open its log or status file. Chain related commands in one
+call (e.g. `cmd1; cmd2`); read files with `read_file`, not `cat`, since long
+output is truncated. Background mode returns the handles
+immediately; only for background jobs, a foreground command still running
+at its timeout, or truncated long output, read the log or status file (e.g.
+`Get-Content -Tail` in a later shell call) and stop the process tree with the
+stop command the result names. Commands run in PowerShell, not `sh`. No notification arrives when a background job finishes.\
+""")
+
+
+class _RefusedReads(_WindowsCommandsBackend):
+    """A workspace that refuses its first `refusals` reads with `error`, as Windows refuses an open that does not
+    share delete while a publish holds `status.json` open for `DELETE`."""
+
+    def __init__(self, error: OSError, refusals: int, platform: Literal['posix', 'windows'] = 'windows') -> None:
+        self.error = error
+        self.refusals = refusals
+        self.workspace_platform = platform
+        self.reads = 0
+
+    async def read_bytes(self, path: str) -> bytes:
+        self.reads += 1
+        if self.reads <= self.refusals:
+            raise self.error
+        return b'{"pid": 1, "exit_code": 0}'
+
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        raise NotImplementedError
+
+    async def stat(self, path: str) -> FileEntry:
+        raise NotImplementedError
+
+    async def list_dir(self, path: str) -> Sequence[FileEntry]:
+        raise NotImplementedError
+
+    async def make_dir(self, path: str) -> None:
+        raise NotImplementedError
+
+    async def remove(self, path: str) -> None:
+        raise NotImplementedError
+
+    async def exists(self, path: str) -> bool:
+        raise NotImplementedError
+
+
+class TestJobStatusReads:
+    @pytest.fixture(autouse=True)
+    def few_attempts(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr('pydantic_ai_harness.shell._jobs._STATUS_READ_ATTEMPTS', 3)
+        monkeypatch.setattr('pydantic_ai_harness.shell._jobs._STATUS_READ_DELAY', 0)
+
+    @staticmethod
+    def _job_on(backend: _RefusedReads) -> Job:
+        directory = 'C:\\project\\job' if backend.workspace_platform == 'windows' else '/project/job'
+        return Job(workspace=Workspace(backend), directory=directory, pid=1, pgid=None, combined=True)
+
+    async def test_a_windows_refusal_is_read_again(self) -> None:
+        backend = _RefusedReads(PermissionError(errno.EACCES, 'Permission denied'), refusals=2)
+        assert await self._job_on(backend).status() == (False, 0)
+        assert backend.reads == 3
+
+    @pytest.mark.parametrize(
+        ('error', 'refusals', 'platform', 'reads'),
+        [
+            pytest.param(
+                PermissionError(errno.EACCES, 'Permission denied'), 3, 'windows', 3, id='windows-past-attempts'
+            ),
+            pytest.param(PermissionError(errno.EACCES, 'Permission denied'), 1, 'posix', 1, id='posix'),
+            pytest.param(WorkspaceReadOnlyError('read-only'), 1, 'windows', 1, id='workspace-error'),
+        ],
+    )
+    async def test_a_refusal_is_raised(
+        self, error: OSError, refusals: int, platform: Literal['posix', 'windows'], reads: int
+    ) -> None:
+        """A refusal that outlasts the attempts is raised, as is one on POSIX, where `mv` replaces the file at once."""
+        backend = _RefusedReads(error, refusals, platform)
+        with pytest.raises(type(error)) as exc_info:
+            await self._job_on(backend).status()
+        assert (exc_info.value, backend.reads) == (error, reads)

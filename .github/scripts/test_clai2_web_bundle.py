@@ -14,8 +14,8 @@ from typing_extensions import TypedDict
 
 WORKFLOWS = Path(__file__).parents[1] / 'workflows'
 BUILD_ACTION = './.github/actions/build-clai2-web-ui'
-STATIC = 'src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static'
-SOURCE = 'src/pydantic_clai2/web-ui/src/App.tsx'
+STATIC = 'src/pydantic_ai_pax/pydantic_ai_pax/builtin_plugins/web/static'
+SOURCE = 'src/pydantic_ai_pax/web-ui/src/App.tsx'
 ARTIFACT = 'clai2-web-static'
 
 
@@ -162,7 +162,7 @@ def _provides_the_build(step: dict[str, object]) -> bool:
     [
         ('ci.yml', 'release-build', 'uv build --all-packages'),
         ('clai2-bleeding.yml', 'publish', 'build_bleeding.sh'),
-        ('clai2-web.yml', 'web-ui', 'uv build --no-sources --package pydantic-clai2'),
+        ('clai2-web.yml', 'web-ui', 'uv build --no-sources --package pydantic-ai-pax'),
     ],
 )
 def test_packages_ship_a_bundle_built_from_source(workflow: str, job: str, packaging: str):
@@ -244,7 +244,7 @@ def test_the_bundle_is_rebuilt_after_each_web_ui_change_on_main():
     workflow = _workflow('clai2-web-bundle.yml')
     push = STEP_ADAPTER.validate_python(workflow['on']['push'])
     assert push['branches'] == ['main']
-    assert 'src/pydantic_clai2/web-ui/**' in TypeAdapter(list[str]).validate_python(push['paths'])
+    assert 'src/pydantic_ai_pax/web-ui/**' in TypeAdapter(list[str]).validate_python(push['paths'])
     for job in ('build', 'pull-request'):
         assert _job('clai2-web-bundle.yml', job).get('env', {})['STATIC'] == STATIC
 

@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "132"
+      - "136"
       content-type:
       - application/json
       host:
@@ -25,14 +25,17 @@ interactions:
         - role: user
           content: "Reply with exactly: OK"
         reasoning:
-          effort: low
+          effort: minimal
   response:
     status: 200
     headers:
       access-control-allow-origin:
       - "*"
       access-control-expose-headers:
-      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      - >-
+        X-Generation-Id,x-openrouter-error-origin,x-openrouter-error-tool,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-type:
@@ -48,11 +51,11 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1793032233-tMjbvYPkNDRxuAtKrGZ3
+        id: gen-1794001747-WGUsRAgDIEwlCEC7O7bq
         object: chat.completion
-        created: 1793032233
+        created: 1794001747
         model: z-ai/glm-5.3
-        provider: Wafer
+        provider: CoreWeave
         system_fingerprint: null
         service_tier: null
         choices:
@@ -69,7 +72,7 @@ interactions:
           prompt_tokens: 17
           completion_tokens: 3
           total_tokens: 20
-          cost: 7.243e-6
+          cost: 0.00002175
           is_byok: false
           prompt_tokens_details:
             cached_tokens: 0
@@ -77,11 +80,11 @@ interactions:
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 7.243e-6
-            upstream_inference_prompt_cost: 3.043e-6
-            upstream_inference_completions_cost: 4.2e-6
+            upstream_inference_cost: 0.00002175
+            upstream_inference_prompt_cost: 0.00001275
+            upstream_inference_completions_cost: 9.0e-6
           completion_tokens_details:
             reasoning_tokens: 0
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-26T16:30:33.987180+00:00
+  recorded_at: 2026-11-06T21:49:07.790286+00:00

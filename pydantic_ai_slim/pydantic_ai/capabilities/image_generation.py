@@ -4,12 +4,12 @@ import warnings
 from collections.abc import Awaitable, Callable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Literal, get_args
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, get_args
 
 from typing_extensions import deprecated
 
 from pydantic_ai._utils import replace_no_init
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai._warnings import PydanticAIDeprecationWarning, suppress_provider_field_warnings
 from pydantic_ai.exceptions import ContentFilterError, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.images import (
     ImageDimensions,
@@ -25,9 +25,11 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
+    AbstractNativeTool,
     ImageAspectRatio,
     ImageGenerationModelName,
     ImageGenerationTool,
+    ImageQuality,
     ImageSize,
 )
 from pydantic_ai.profiles import ModelProfile
@@ -41,6 +43,8 @@ from .native_or_local import NativeOrLocalTool
 
 if TYPE_CHECKING:
     from pydantic_ai.common_tools.image_generation import ImageGenerationFallbackModel, ImageGenerationNativeTool
+
+_NativeToolT = TypeVar('_NativeToolT', bound=AbstractNativeTool)
 
 # Derived from the native tool's own aliases so widening either can't silently start dropping values.
 _NATIVE_IMAGE_SIZES = frozenset(get_args(ImageSize))
@@ -274,10 +278,10 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     The direct generator ignores it; set the provider-prefixed equivalent on the generator instead.
     """
 
-    quality: Literal['low', 'medium', 'high', 'auto'] | None
+    quality: ImageQuality | None
     """Quality of the generated image.
 
-    Supported by: OpenAI Responses.
+    Supported by: OpenAI Responses. `gpt-image-2` and earlier models reject `xhigh` and `max`.
 
     The direct generator ignores it; set the provider-prefixed equivalent on the generator instead.
     """
@@ -349,7 +353,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         image_model: ImageGenerationModelName | None = None,
         output_compression: int | None = None,
         output_format: Literal['png', 'webp', 'jpeg'] | None = None,
-        quality: Literal['low', 'medium', 'high', 'auto'] | None = None,
+        quality: ImageQuality | None = None,
         size: ImageSize | None = None,
         dimensions: ImageDimensions | None = None,
         aspect_ratio: ImageGenerationAspectRatio | None = None,
@@ -397,6 +401,61 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         # merge is held to it too: `combine` can pair one instance's `fallback_subagent_model` with
         # another's `local`, which no constructor accepts. Runs before the base resolves `local`, so
         # it reads what was declared rather than what was materialized.
+        self._reject_invalid_fallbacks()
+
+        if self._has_direct_generator:
+            self._reject_direct_generator_settings()
+
+        # The native tool's kwargs are collected once for the default native tool and again for the
+        # `fallback_subagent_model` subagent's copy, so the notice lives here to fire exactly once.
+        ignored: list[str] = []
+        unapplied: list[str] = []
+        if self.native is not False or (self.local is None and self.fallback_subagent_model is not None):
+            _, ignored = self._native_geometry()
+        elif not self._has_direct_generator:
+            # `native=False` with a local tool of the user's own: no native tool is built and the
+            # tool the capability didn't build carries no settings, so every setting goes unapplied
+            # for that one reason, whichever path could otherwise have applied it, and one notice
+            # names them all.
+            unapplied = [
+                *self._native_only_settings(),
+                *(
+                    name
+                    for name, value in (
+                        ('action', self.action),
+                        ('image_model', self.image_model),
+                        ('dimensions', self.dimensions),
+                        ('aspect_ratio', self.aspect_ratio),
+                    )
+                    if value is not None
+                ),
+            ]
+        # The notices follow the base's validation, which is what rejects a `local` that is no tool.
+        super().__post_init__()
+        # Built here only so a subagent this configuration can't run -- an image-only model, a
+        # `native` of the wrong type -- fails at construction; `get_toolset` builds the tool it uses.
+        self._fallback_subagent_tool()
+        if unapplied:
+            # user → `__init__` → here → `warn`; `from_spec` adds a frame and so lands one short.
+            warnings.warn(
+                f'`ImageGeneration` ignored setting(s): {", ".join(f"`{name}`" for name in unapplied)}. '
+                'With `native=False` the `local` tool you supplied is the only implementation, and the '
+                'capability passes it no settings; configure that tool instead.',
+                UserWarning,
+                stacklevel=3,
+            )
+        if ignored:
+            # user → `__init__` → here → `warn`; `from_spec` adds a frame and so lands one short.
+            warnings.warn(
+                f'`ImageGeneration` ignored direct-only setting(s): {", ".join(f"`{name}`" for name in ignored)}. '
+                'Only a direct generator applies them: use `native=False` with '
+                "`fallback_image_model='provider:image-model'` or `local=ImageGenerator(...)`.",
+                UserWarning,
+                stacklevel=3,
+            )
+
+    def _reject_invalid_fallbacks(self) -> None:
+        """Raise for fallbacks stated together, missing with `native=False`, or given to the wrong field."""
         stated = [
             name
             for name, value in (
@@ -448,84 +507,35 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
                 "image model. Name it as `'provider:model'`."
             )
 
-        if self._has_direct_generator:
-            # Reject at construction what only the direct generator could have served.
-            #
-            # The direct model rejects the geometry pair on every `generate` call, but a pair the
-            # user set on the capability himself is already decided here, so it fails at construction
-            # rather than at the first `generate_image` call. Ungated by `native`: whichever path a
-            # request takes, the settings the generator would carry are contradictory.
-            if self.dimensions is not None and self.aspect_ratio is not None:
-                raise UserError(DIMENSIONS_ASPECT_RATIO_CONFLICT)
-            # `native=False` is the one configuration whose routing is settled here: the direct
-            # generator is the only implementation, so an `action='edit'` it cannot serve and the
-            # native-only settings it cannot apply are both decidable now. Everywhere else the native
-            # tool is built too, carries every one of those settings, and supersedes the generator per
-            # request in `models.resolve_request_tools` — reporting them as dropped would be wrong for
-            # exactly the configurations that apply them. The request that does drop them warns
-            # instead, from the prepare function `get_toolset` installs.
-            # `_DirectImageGenerationTool.__call__` still rejects the edit action, at the point where
-            # the direct tool is provably the one running.
-            if self.native is False:
-                if self.action == 'edit':
-                    raise UserError(_EDIT_ACTION_UNSUPPORTED)
-                if native_only := self._native_only_settings():
-                    # user → `__init__` → here → `warn`; `from_spec` adds a frame and so lands one short.
-                    warnings.warn(
-                        _NATIVE_ONLY_SETTINGS_DROPPED.format(
-                            on='', settings=', '.join(f'`{name}`' for name in native_only)
-                        ),
-                        UserWarning,
-                        stacklevel=3,
-                    )
-
-        # The native tool's kwargs are collected once for the default native tool and again for the
-        # `fallback_subagent_model` subagent's copy, so the notice lives here to fire exactly once.
-        ignored: list[str] = []
-        unapplied: list[str] = []
-        if self.native is not False or (self.local is None and self.fallback_subagent_model is not None):
-            _, ignored = self._native_geometry()
-        elif not self._has_direct_generator:
-            # `native=False` with a local tool of the user's own: no native tool is built and the
-            # tool the capability didn't build carries no settings, so every setting goes unapplied
-            # for that one reason, whichever path could otherwise have applied it, and one notice
-            # names them all.
-            unapplied = [
-                *self._native_only_settings(),
-                *(
-                    name
-                    for name, value in (
-                        ('action', self.action),
-                        ('image_model', self.image_model),
-                        ('dimensions', self.dimensions),
-                        ('aspect_ratio', self.aspect_ratio),
-                    )
-                    if value is not None
-                ),
-            ]
-        # The notices follow the base's validation, which is what rejects a `local` that is no tool.
-        super().__post_init__()
-        # Built here only so a subagent this configuration can't run -- an image-only model, a
-        # `native` of the wrong type -- fails at construction; `get_toolset` builds the tool it uses.
-        self._fallback_subagent_tool()
-        if unapplied:
-            # user → `__init__` → here → `warn`; `from_spec` adds a frame and so lands one short.
-            warnings.warn(
-                f'`ImageGeneration` ignored setting(s): {", ".join(f"`{name}`" for name in unapplied)}. '
-                'With `native=False` the `local` tool you supplied is the only implementation, and the '
-                'capability passes it no settings; configure that tool instead.',
-                UserWarning,
-                stacklevel=3,
-            )
-        if ignored:
-            # user → `__init__` → here → `warn`; `from_spec` adds a frame and so lands one short.
-            warnings.warn(
-                f'`ImageGeneration` ignored direct-only setting(s): {", ".join(f"`{name}`" for name in ignored)}. '
-                'Only a direct generator applies them: use `native=False` with '
-                "`fallback_image_model='provider:image-model'` or `local=ImageGenerator(...)`.",
-                UserWarning,
-                stacklevel=3,
-            )
+    def _reject_direct_generator_settings(self) -> None:
+        """Reject at construction what only the direct generator could have served."""
+        # The direct model rejects the geometry pair on every `generate` call, but a pair the
+        # user set on the capability himself is already decided here, so it fails at construction
+        # rather than at the first `generate_image` call. Ungated by `native`: whichever path a
+        # request takes, the settings the generator would carry are contradictory.
+        if self.dimensions is not None and self.aspect_ratio is not None:
+            raise UserError(DIMENSIONS_ASPECT_RATIO_CONFLICT)
+        # `native=False` is the one configuration whose routing is settled here: the direct
+        # generator is the only implementation, so an `action='edit'` it cannot serve and the
+        # native-only settings it cannot apply are both decidable now. Everywhere else the native
+        # tool is built too, carries every one of those settings, and supersedes the generator per
+        # request in `models.resolve_request_tools` — reporting them as dropped would be wrong for
+        # exactly the configurations that apply them. The request that does drop them warns
+        # instead, from the prepare function `get_toolset` installs.
+        # `_DirectImageGenerationTool.__call__` still rejects the edit action, at the point where
+        # the direct tool is provably the one running.
+        if self.native is False:
+            if self.action == 'edit':
+                raise UserError(_EDIT_ACTION_UNSUPPORTED)
+            if native_only := self._native_only_settings():
+                # user → `__init__` → `__post_init__` → here → `warn`; `from_spec` adds a frame and so lands one short.
+                warnings.warn(
+                    _NATIVE_ONLY_SETTINGS_DROPPED.format(
+                        on='', settings=', '.join(f'`{name}`' for name in native_only)
+                    ),
+                    UserWarning,
+                    stacklevel=4,
+                )
 
     # TODO(v3): remove the `fallback_model` property, the deprecated spelling of `fallback_subagent_model`.
     # The message is spelled out rather than shared with the helper that warns at construction:
@@ -622,7 +632,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         image_model: ImageGenerationModelName | None = None,
         output_compression: int | None = None,
         output_format: Literal['png', 'webp', 'jpeg'] | None = None,
-        quality: Literal['low', 'medium', 'high', 'auto'] | None = None,
+        quality: ImageQuality | None = None,
         size: ImageSize | None = None,
         dimensions: ImageDimensions | None = None,
         aspect_ratio: ImageGenerationAspectRatio | None = None,
@@ -753,7 +763,11 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         return kwargs
 
     def _default_native(self) -> ImageGenerationTool:
-        return ImageGenerationTool(**self._image_gen_kwargs())
+        # TODO(v3): when the deprecated `ImageGenerationTool` fields are removed, build the tool through
+        # `provider_settings['openai']` instead. Doing it before v3 would change what those fields read on
+        # the tool, which code reading `tool.quality` and similar still relies on.
+        with suppress_provider_field_warnings():
+            return ImageGenerationTool(**self._image_gen_kwargs())
 
     def _resolve_local_strategy(self, name: str | bool) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
         # Every string and `local=True` land here: the capability has no named local strategy, and
@@ -798,6 +812,18 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
 
     def _native_unique_id(self) -> str:
         return ImageGenerationTool.kind
+
+    def _apply_native_overrides(self, tool: _NativeToolT, overrides: dict[str, Any]) -> _NativeToolT:
+        """Also drop overridden options from the tool's `provider_settings`, which would otherwise conflict with them."""
+        if (
+            overrides
+            and isinstance(tool, ImageGenerationTool)
+            and tool.provider_settings
+            and (openai := tool.provider_settings.get('openai'))
+        ):
+            kept = {option: value for option, value in openai.items() if option not in overrides}
+            overrides = {**overrides, 'provider_settings': {**tool.provider_settings, 'openai': kept}}
+        return super()._apply_native_overrides(tool, overrides)
 
     def _resolved_native(self) -> ImageGenerationNativeTool[AgentDepsT]:
         """Get the ImageGenerationTool for the fallback, with capability-level overrides applied."""

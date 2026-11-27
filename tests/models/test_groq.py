@@ -23,6 +23,7 @@ from pydantic_ai import (
     ImageUrl,
     ModelAPIError,
     ModelConnectionError,
+    ModelEmptyResponseError,
     ModelHTTPError,
     ModelOverloadedError,
     ModelRequest,
@@ -51,7 +52,7 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, WebSearch
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.native_tools import WebSearchTool
-from pydantic_ai.output import NativeOutput, PromptedOutput
+from pydantic_ai.output import NativeOutput, PromptedOutput, ToolOutput
 from pydantic_ai.profiles.groq import GroqModelProfile
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -141,9 +142,7 @@ class MockGroq:
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], Sequence):
-                response = MockAsyncStream(  # pragma: no cover
-                    iter(cast(list[MockChatCompletionChunk], self.stream[self.index]))
-                )
+                response = MockAsyncStream(iter(cast(list[MockChatCompletionChunk], self.stream[self.index])))
             else:
                 response = MockAsyncStream(iter(cast(list[MockChatCompletionChunk], self.stream)))
         else:
@@ -608,6 +607,154 @@ async def test_structured_content_input(allow_model_requests: None, groq_api_key
     assert result.output == snapshot('Your cart contains 2 items.')
 
 
+class _ClaimAddress(BaseModel):
+    street: str
+    city: str
+    country: str
+
+
+class _ClaimPerson(BaseModel):
+    full_name: str
+    phone: str | None
+    address: _ClaimAddress
+
+
+class _Vehicle(BaseModel):
+    make: str
+    model: str
+    license_plate: str
+
+
+class _Claim(BaseModel):
+    """A car insurance claim."""
+
+    claimant: _ClaimPerson
+    other_driver: _ClaimPerson | None
+    vehicle: _Vehicle
+    other_vehicle: _Vehicle | None
+
+
+async def test_gpt_oss_tool_output_inlines_defs(allow_model_requests: None, groq_api_key: str):
+    """gpt-oss gets output tool schemas with their `$defs` inlined.
+
+    gpt-oss doesn't see a tool schema's `$defs`, so with them it guesses the shape of each field that refers to one:
+    a live probe of a schema like this, with about 60 fields, was valid on the first try in 1 of 10 runs, and in 10
+    of 10 with `$defs` inlined. The body is read off the wire with a request hook, as in
+    `test_structured_content_input`, because the cassette matchers ignore the body.
+    """
+    sent: list[httpx.Request] = []
+
+    async def record(request: httpx.Request) -> None:
+        sent.append(request)
+
+    http_client = httpx.AsyncClient(event_hooks={'request': [record]})
+    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key=groq_api_key, http_client=http_client))
+    agent = Agent(m, output_type=ToolOutput(_Claim))
+
+    result = await agent.run(
+        'Ana Silva (no phone, Rua Augusta 10, Lisbon, Portugal) drove her Ford Focus, plate AB-123-C, into a '
+        'Kia Niro, plate XY-987-Z, driven by Jun Sato (phone +81 90 1234 5678, Mill Lane 4, Leeds, United Kingdom).'
+    )
+
+    [request] = sent
+    [tool] = json.loads(request.content)['tools']
+    assert tool['function']['parameters'] == snapshot(
+        {
+            'properties': {
+                'claimant': {
+                    'properties': {
+                        'full_name': {'type': 'string'},
+                        'phone': {'anyOf': [{'type': 'string'}, {'type': 'null'}]},
+                        'address': {
+                            'properties': {
+                                'street': {'type': 'string'},
+                                'city': {'type': 'string'},
+                                'country': {'type': 'string'},
+                            },
+                            'required': ['street', 'city', 'country'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        },
+                    },
+                    'required': ['full_name', 'phone', 'address'],
+                    'type': 'object',
+                    'additionalProperties': False,
+                },
+                'other_driver': {
+                    'anyOf': [
+                        {
+                            'properties': {
+                                'full_name': {'type': 'string'},
+                                'phone': {'anyOf': [{'type': 'string'}, {'type': 'null'}]},
+                                'address': {
+                                    'properties': {
+                                        'street': {'type': 'string'},
+                                        'city': {'type': 'string'},
+                                        'country': {'type': 'string'},
+                                    },
+                                    'required': ['street', 'city', 'country'],
+                                    'type': 'object',
+                                    'additionalProperties': False,
+                                },
+                            },
+                            'required': ['full_name', 'phone', 'address'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        },
+                        {'type': 'null'},
+                    ]
+                },
+                'vehicle': {
+                    'properties': {
+                        'make': {'type': 'string'},
+                        'model': {'type': 'string'},
+                        'license_plate': {'type': 'string'},
+                    },
+                    'required': ['make', 'model', 'license_plate'],
+                    'type': 'object',
+                    'additionalProperties': False,
+                },
+                'other_vehicle': {
+                    'anyOf': [
+                        {
+                            'properties': {
+                                'make': {'type': 'string'},
+                                'model': {'type': 'string'},
+                                'license_plate': {'type': 'string'},
+                            },
+                            'required': ['make', 'model', 'license_plate'],
+                            'type': 'object',
+                            'additionalProperties': False,
+                        },
+                        {'type': 'null'},
+                    ]
+                },
+            },
+            'required': ['claimant', 'other_driver', 'vehicle', 'other_vehicle'],
+            'type': 'object',
+            'additionalProperties': False,
+        }
+    )
+    assert result.output == snapshot(
+        _Claim(
+            claimant=_ClaimPerson(
+                full_name='Ana Silva',
+                phone=None,
+                address=_ClaimAddress(street='Rua Augusta 10', city='Lisbon', country='Portugal'),
+            ),
+            other_driver=_ClaimPerson(
+                full_name='Jun Sato',
+                phone='+81 90 1234 5678',
+                address=_ClaimAddress(street='Mill Lane 4', city='Leeds', country='United Kingdom'),
+            ),
+            vehicle=_Vehicle(make='Ford', model='Focus', license_plate='AB-123-C'),
+            other_vehicle=_Vehicle(make='Kia', model='Niro', license_plate='XY-987-Z'),
+        )
+    )
+    # The request, the output tool call, and its return: the first call was valid.
+    assert len(result.all_messages()) == 3
+
+
 async def test_image_url_input(allow_model_requests: None, groq_api_key: str):
     m = GroqModel('meta-llama/llama-4-scout-17b-16e-instruct', provider=GroqProvider(api_key=groq_api_key))
     agent = Agent(m)
@@ -659,7 +806,11 @@ async def test_image_as_binary_content_tool_response(
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
-                provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
+                provider_details={
+                    'finish_reason': 'tool_calls',
+                    'timestamp': IsDatetime(),
+                    'service_tier': 'on_demand',
+                },
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -686,7 +837,7 @@ async def test_image_as_binary_content_tool_response(
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
-                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime(), 'service_tier': 'on_demand'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1180,6 +1331,7 @@ It's worth noting that the weather in San Francisco can be quite variable, and t
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 9, 17, 21, 14, 13, tzinfo=UTC),
+                    'service_tier': 'on_demand',
                 },
                 provider_response_id='stub',
                 finish_reason='stop',
@@ -5489,7 +5641,11 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
-                provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
+                provider_details={
+                    'finish_reason': 'tool_calls',
+                    'timestamp': IsDatetime(),
+                    'service_tier': 'on_demand',
+                },
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -5531,7 +5687,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
-                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime(), 'service_tier': 'on_demand'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -5779,7 +5935,11 @@ The user wants me to fix the errors. They attempted to get plain "maybe" but sys
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
-                provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
+                provider_details={
+                    'finish_reason': 'tool_calls',
+                    'timestamp': IsDatetime(),
+                    'service_tier': 'on_demand',
+                },
                 provider_response_id='chatcmpl-9fc28492-a04d-4b0f-b9a0-a9149d048b37',
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -5975,6 +6135,7 @@ async def test_groq_native_output(allow_model_requests: None, groq_api_key: str)
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 9, 2, 20, 1, 5, tzinfo=UTC),
+                    'service_tier': 'on_demand',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -6026,6 +6187,7 @@ async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: st
                 provider_details={
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 9, 2, 20, 1, 6, tzinfo=UTC),
+                    'service_tier': 'on_demand',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -6269,3 +6431,29 @@ async def test_text_plain_response_body_raises_model_api_error(allow_model_reque
 
     assert type(exc_info.value) is ModelAPIError
     assert exc_info.value.message == snapshot("Expected a JSON response, got: 'upstream connect error'")
+
+
+async def test_empty_choices_raise_model_empty_response_error(allow_model_requests: None):
+    """A completion without choices is a model error rather than an `IndexError`.
+
+    Mocked because no provider returns a completion without choices on demand.
+    """
+    response = completion_message(ChatCompletionMessage(content='unused', role='assistant'))
+    response.choices = []
+    model = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=MockGroq.create_mock(response)))
+
+    with pytest.raises(ModelEmptyResponseError, match='Empty response from groq: no choices') as exc_info:
+        await Agent(model).run('hello')
+    assert exc_info.value.model_name == 'llama-3.3-70b-versatile'
+    # `ChatCompletion` gains fields across the supported `groq` versions, so compare with its own dump.
+    assert exc_info.value.body == response.model_dump()
+
+
+async def test_empty_stream_raises_model_empty_response_error(allow_model_requests: None):
+    """Mocked because no provider sends an empty stream on demand."""
+    mock_client = MockGroq.create_mock_stream([[]])
+    model = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
+
+    with pytest.raises(ModelEmptyResponseError, match='Streamed response ended without content or tool calls'):
+        async with Agent(model).run_stream('hello'):
+            pass

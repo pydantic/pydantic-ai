@@ -31,11 +31,13 @@ from pydantic_ai._instrumentation import (
 )
 
 from .. import _otel_messages
+from .._capability_parts import effective_authority
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
 from ..messages import (
     BaseToolReturnPart,
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
@@ -124,7 +126,8 @@ class InstrumentationSettings:
                 its output function receives, and run and tool deferral metadata. The media type is
                 recorded either way. Binary content is found inside dictionaries, lists and
                 `ToolReturn`s, but not inside your own types: a `BinaryContent` held as a field of a
-                model or dataclass you define is still recorded in full.
+                model or dataclass you define is still recorded in full. The agent's
+                `DeferredToolRequests` output is recorded without its `validated_args`.
             include_content: Whether to include prompts, completions, and tool call arguments and responses
                 in the instrumentation events.
             include_model_request_parameters: Whether to emit the `model_request_parameters` span attribute on
@@ -474,7 +477,7 @@ class InstrumentedModel(WrapperModel):
 
     def __init__(
         self,
-        wrapped: Model | KnownModelName,
+        wrapped: Model | KnownModelName | str,
         options: InstrumentationSettings | None = None,
     ) -> None:
         super().__init__(wrapped)
@@ -585,14 +588,14 @@ def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.R
     OpenAI Responses, a tool-search exchange where schemas are withheld. `tool` is the one role that would actively
     mislead, being paired with `tool_call_response`.
     """
-    if isinstance(
-        part,
-        SystemPromptPart
-        | ToolAvailabilityDeltaPart
-        | CapabilityLoadDeltaPart
-        | InstructionDeltaPart
-        | ModelSettingsDeltaPart,
-    ) or (version >= 6 and isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part)):
+    if (
+        isinstance(
+            part,
+            SystemPromptPart | ToolAvailabilityDeltaPart | CapabilityLoadDeltaPart | ModelSettingsDeltaPart,
+        )
+        or (version >= 6 and isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part))
+        or (isinstance(part, CapabilityPart | InstructionDeltaPart) and effective_authority(part) == 'operator')
+    ):
         return 'system'
     # TODO(v3): remove `RetryPromptPart`, still reachable here because `pydantic_ai.all_messages`
     # records the stored history rather than the prepared one.

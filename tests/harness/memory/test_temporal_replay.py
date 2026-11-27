@@ -35,14 +35,14 @@ from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxR
 
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
 from pydantic_ai_harness.compaction import SlidingWindowCompaction
-from pydantic_ai_harness.memory import InMemoryStore, Memory, MemoryFile
+from pydantic_ai_harness.memory import InMemoryMemoryStore, Memory, MemoryFile
 from tests.harness._temporal import skip_temporal_sandbox_on_314
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
 pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), skip_temporal_sandbox_on_314]
 
 
-class _CountingStore(InMemoryStore):
+class _CountingStore(InMemoryMemoryStore):
     """Counts reads, so a replay that read the store again shows."""
 
     reads = 0
@@ -58,14 +58,16 @@ _snapshots_sent: list[list[str]] = []
 
 
 def _snapshots(messages: list[ModelMessage]) -> list[str]:
+    """The memory snapshots in the messages a model was sent, each a `<memory>` frame."""
     return [
-        item.content
+        ''.join(item.content for item in part.content if isinstance(item, TextContent))
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
-        for item in part.content
-        if isinstance(item, TextContent) and item.content.startswith('<memory>\n')
+        if isinstance(part, UserPromptPart)
+        and not isinstance(part.content, str)
+        and isinstance(first := part.content[0], TextContent)
+        and first.content.startswith('<memory>')
     ]
 
 

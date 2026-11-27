@@ -7,9 +7,12 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from itertools import product
+from pathlib import Path
+from typing import NotRequired
 
 import pytest
 from pydantic import BaseModel, TypeAdapter
+from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
@@ -22,11 +25,18 @@ from pydantic_ai import (
     ToolApproved,
     ToolDenied,
 )
-from pydantic_ai.capabilities import AbstractCapability, BatchModelRequests, Instrumentation, durable_operation
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    BatchModelRequests,
+    Instrumentation,
+    LocalWorkspace,
+    SetToolMetadata,
+    durable_operation,
+)
 from pydantic_ai.durable_exec import (
     conversation_id_from_run_id,
 )
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     FunctionToolCallEvent,
@@ -39,20 +49,26 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, FunctionToolset, ToolsetTool
+from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 from ...batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
 from ...conftest import try_import
 from ...workspace_fakes import InMemoryProvider
+from .._tool_calls import WORKSPACE_TOOL_CALLS, scripted_model
 
 with try_import() as imports_successful:
     from durabletask import task
     from durabletask.client import OrchestrationFailedError
 
     from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability, run_durable
+    from pydantic_ai_harness.file_system import FileChangeRequestedEvent, FileSystem
+    from pydantic_ai_harness.shell import Shell
 
     from .worker import (
         InMemoryWorker,
@@ -64,6 +80,16 @@ with try_import() as imports_successful:
     )
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='durabletask not installed')
+
+
+class _RetryPolicyOptions(TypedDict):
+    """The `durabletask.task.RetryPolicy` arguments a test builds its policy from."""
+
+    first_retry_interval: timedelta
+    max_number_of_attempts: int
+    backoff_coefficient: NotRequired[float]
+    max_retry_interval: NotRequired[timedelta]
+    retry_timeout: NotRequired[timedelta]
 
 
 @dataclass
@@ -199,6 +225,62 @@ class TestAzureDurableTaskDurability:
             result = run_agent(durable_worker, agent, 'Hi', instance_id='hello', deps=None)
         assert result.output == 'hello'
         assert durable_worker.activity_calls == ['support__model.request']
+
+    @pytest.mark.parametrize('veto', [False, True])
+    def test_file_system_and_shell_tools(self, durable_worker: InMemoryWorker, tmp_path: Path, veto: bool) -> None:
+        agent = Agent(
+            scripted_model(WORKSPACE_TOOL_CALLS),
+            name='coder',
+            capabilities=[LocalWorkspace(tmp_path), FileSystem(), Shell(tools=['shell']), AzureDurableTaskDurability()],
+        )
+        requests: list[str] = []
+
+        @agent.on_event(FileChangeRequestedEvent)
+        async def record(ctx: RunContext[None], event: FileChangeRequestedEvent) -> None:
+            requests.append(event.operation)
+            if veto and event.operation == 'edit':
+                event.cancel('denied')
+
+        with registered_agent(durable_worker, agent):
+            result = run_agent(durable_worker, agent, deps=None)
+        content = 'one' if veto else 'two'
+        assert f'shell-{content}' in result.output
+        assert ("'note.txt' was not edited: denied" in result.output) is veto
+        # The orchestrator, and so its listeners, re-run on every replay.
+        assert set(requests) == {'write', 'edit', 'create_directory'}
+        assert (tmp_path / 'note.txt').read_text() == content
+        assert (tmp_path / 'sub').is_dir()
+
+    @pytest.mark.parametrize(
+        'tool_name,args',
+        [
+            ('write_file', {'path': 'note.txt', 'content': 'changed'}),
+            ('edit_file', {'path': 'note.txt', 'old_text': 'original', 'new_text': 'changed'}),
+            ('create_directory', {'path': 'sub'}),
+        ],
+    )
+    def test_file_change_in_an_activity_fails_closed(
+        self, durable_worker: InMemoryWorker, tmp_path: Path, tool_name: str, args: dict[str, object]
+    ) -> None:
+        (tmp_path / 'note.txt').write_text('original')
+        agent = Agent(
+            scripted_model([(tool_name, args)]),
+            name='coder',
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                FileSystem(),
+                SetToolMetadata(tools=[tool_name], azure_durable_task=None),
+                AzureDurableTaskDurability(),
+            ],
+        )
+        with registered_agent(durable_worker, agent):
+            with pytest.raises(
+                OrchestrationFailedError,
+                match=re.escape(f"FileSystem's {tool_name!r} tool cannot ask listeners about a change"),
+            ):
+                run_agent(durable_worker, agent, deps=None)
+        assert (tmp_path / 'note.txt').read_text() == 'original'
+        assert not (tmp_path / 'sub').exists()
 
     @pytest.mark.parametrize('same_agent', [False, True])
     def test_multiple_runs_have_distinct_replay_stable_ids(
@@ -451,6 +533,7 @@ class TestAzureDurableTaskDurability:
             'compat__model.request',
             'compat__model.request_stream',
             'compat__model.compact_messages',
+            'compat__model.count_tokens',
             'compat__model.cancel_suspended_response',
             'compat__capability__compat.operation',
             'compat__capability__workspace.call',
@@ -508,6 +591,7 @@ class TestAzureDurableTaskDurability:
                 '8b6d0ca92d02859d',
                 '688888820165bdcf',
                 '4a56fe7a73fcb1b6',
+                'd579555674f2835a',
             ]
         }
         assert all(len(name) == 100 for name in names)
@@ -938,6 +1022,39 @@ class TestAzureDurableTaskDurability:
             'capability__model.request',
         ]
 
+    def test_count_tokens_is_an_activity(self, durable_worker: InMemoryWorker) -> None:
+        """The count ahead of a request is an activity, and the key it wrote on its decoded request reaches the run."""
+
+        class CountingModel(FunctionModel):
+            async def count_tokens(
+                self,
+                messages: list[ModelMessage],
+                model_settings: ModelSettings | None,
+                model_request_parameters: ModelRequestParameters,
+            ) -> RequestUsage:
+                request = next(message for message in reversed(messages) if isinstance(message, ModelRequest))
+                request.metadata = {'__pydantic_ai__': {'counted': True}}
+                return RequestUsage(input_tokens=5)
+
+        agent = Agent(
+            CountingModel(lambda messages, info: ModelResponse(parts=[TextPart('ok')])),
+            name='count',
+            capabilities=[AzureDurableTaskDurability()],
+        )
+        limits = UsageLimits(input_tokens_limit=100, count_tokens_before_request=True)
+
+        def orchestrator(
+            context: task.OrchestrationContext, payload: object
+        ) -> Generator[task.Task[object], object, list[dict[str, object] | None]]:
+            result = yield from run_durable(context, lambda: agent.run('Hi', usage_limits=limits))
+            return [message.metadata for message in result.all_messages() if isinstance(message, ModelRequest)]
+
+        durable_worker.add_orchestrator(orchestrator)
+        with registered_agent(durable_worker, agent):
+            metadata = completed(durable_worker, durable_worker.schedule(orchestrator))
+        assert metadata == [{'__pydantic_ai__': {'counted': True}}]
+        assert durable_worker.activity_calls == ['count__model.count_tokens', 'count__model.request']
+
     def test_streamed_model_and_event_handler(self, durable_worker: InMemoryWorker) -> None:
         observed: list[AgentStreamEvent] = []
 
@@ -1024,6 +1141,151 @@ class TestAzureDurableTaskDurability:
             state = durable_worker.wait(instance_id)
         state.raise_if_failed()
         assert state.get_output() == [1, 10]
+
+    @pytest.mark.parametrize(
+        ('retry_after', 'policy', 'answer_on', 'waits', 'output'),
+        [
+            # The policy's own backoff would wait 30 seconds.
+            pytest.param(
+                5,
+                {'first_retry_interval': timedelta(seconds=30), 'max_number_of_attempts': 3},
+                2,
+                [5.0],
+                'recovered',
+                id='retry-after',
+            ),
+            pytest.param(
+                5,
+                {
+                    'first_retry_interval': timedelta(seconds=1),
+                    'max_number_of_attempts': 3,
+                    'max_retry_interval': timedelta(seconds=2),
+                },
+                2,
+                [2.0],
+                'recovered',
+                id='capped-at-max-retry-interval',
+            ),
+            # A backoff too long for a `timedelta` is capped at `max_retry_interval` before it's built.
+            pytest.param(
+                5,
+                {
+                    'first_retry_interval': timedelta(seconds=1),
+                    'max_number_of_attempts': 3,
+                    'backoff_coefficient': 1e14,
+                    'max_retry_interval': timedelta(seconds=2),
+                },
+                2,
+                [2.0],
+                'recovered',
+                id='long-backoff-capped-at-max-retry-interval',
+            ),
+            pytest.param(
+                5,
+                {'first_retry_interval': timedelta(seconds=30), 'max_number_of_attempts': 2},
+                None,
+                [5.0],
+                'failed',
+                id='attempts-exhausted',
+            ),
+            pytest.param(
+                5,
+                {
+                    'first_retry_interval': timedelta(seconds=30),
+                    'max_number_of_attempts': 3,
+                    'retry_timeout': timedelta(seconds=3),
+                },
+                None,
+                [5.0],
+                'failed',
+                id='retry-timeout-elapsed',
+            ),
+            # Without `max_retry_interval`, the policy's own backoff caps the wait once it's longer than a minute.
+            pytest.param(
+                300,
+                {'first_retry_interval': timedelta(seconds=90), 'max_number_of_attempts': 3},
+                2,
+                [90.0],
+                'recovered',
+                id='capped-at-the-policys-backoff',
+            ),
+            pytest.param(
+                300,
+                {'first_retry_interval': timedelta(seconds=30), 'max_number_of_attempts': 3},
+                2,
+                [60.0],
+                'recovered',
+                id='capped-at-a-minute',
+            ),
+            # Without a retry policy that allows another attempt, the model activity fails natively.
+            pytest.param(5, None, None, [], 'failed', id='no-retry-policy'),
+            pytest.param(
+                5,
+                {'first_retry_interval': timedelta(seconds=30), 'max_number_of_attempts': 1},
+                None,
+                [],
+                'failed',
+                id='single-attempt',
+            ),
+        ],
+    )
+    def test_model_retry_after_waits_on_a_durable_timer(
+        self,
+        durable_worker: InMemoryWorker,
+        retry_after: int,
+        policy: _RetryPolicyOptions | None,
+        answer_on: int | None,
+        waits: list[float],
+        output: str,
+    ) -> None:
+        """A model error's `retry_after` is waited on a durable timer before the model activity's next attempt, within
+        its retry policy; once the policy allows no more attempts, the orchestration gets the activity's failure."""
+        calls: list[str] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            calls.append('request')
+            if len(calls) == answer_on:
+                return ModelResponse(parts=[TextPart('recovered')])
+            raise ModelHTTPError(429, 'test-model', headers={'Retry-After': str(retry_after)})
+
+        agent = Agent(
+            FunctionModel(model),
+            name='retry-after',
+            capabilities=[
+                AzureDurableTaskDurability(model_options=task.RetryPolicy(**policy) if policy is not None else None)
+            ],
+        )
+
+        def orchestrator(
+            context: task.OrchestrationContext, payload: object
+        ) -> Generator[task.Task[object], object, str]:
+            async def body() -> str:
+                try:
+                    return (await agent.run('Hi')).output
+                except task.TaskFailedError as error:
+                    assert error.details.is_caused_by(ModelHTTPError)
+                    return 'failed'
+
+            return (yield from run_durable(context, body))
+
+        observed: list[float] = []
+        with registered_agent(durable_worker, agent):
+            durable_worker.add_orchestrator(orchestrator)
+            instance_id = durable_worker.schedule(orchestrator)
+            durable_worker.run_until_idle()
+            while durable_worker.timers:
+                [(_, _, timer)] = durable_worker.timers
+                observed.append(round((timer.fireAt.ToDatetime() - durable_worker.now).total_seconds(), 3))
+                durable_worker.fire_timers()
+                durable_worker.run_until_idle()
+            state = durable_worker.wait(instance_id)
+        state.raise_if_failed()
+        assert state.get_output() == output
+        assert observed == waits
+        assert len(calls) == len(waits) + 1
+        # A model activity that waited a `retry_after` completes with it, so only one that couldn't fails natively.
+        history = durable_worker.instances[instance_id].history
+        assert any(event.HasField('taskFailed') for event in history) == (output == 'failed' and not waits)
 
     def test_user_error_is_terminal_under_native_retries(self, durable_worker: InMemoryWorker) -> None:
         effects: list[str] = []

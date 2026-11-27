@@ -29,8 +29,11 @@ Inside a function, a name gets its classes from a parameter or variable annotati
 a `for` loop or comprehension over an iterable whose annotation or return annotation is known, or
 `isinstance` narrowing, and a module-level type alias stands for the type it names. A name bound any
 other way, such as a `with ... as` target, a tuple-unpacked loop variable or a module-level loop
-variable, has no class, so a member read through it records nothing. An access on a typed name that
-the walk cannot resolve to a member, such as `getattr(obj, name)` or `obj.__dict__[name]`, falls back
+variable, has no class, so a member read through it records nothing. A `.get(key)` call on a mapping
+whose annotation or return annotation is known, a mapping type named in `_Index._MAPPINGS` such as
+`dict[K, V]` or `Mapping[K, V]`, is a `V`; a subscript `mapping[key]` and the other mapping methods,
+such as `.values()`, `.pop()` and `.setdefault()`, have no class. An access on a typed name that the
+walk cannot resolve to a member, such as `getattr(obj, name)` or `obj.__dict__[name]`, falls back
 to the class, unless the class has a base outside the walked packages (`BaseModel`, `Exception`),
 which may define the member: those accesses record nothing. Reflection over a whole instance is read
 only through `fields()` and `__dataclass_fields__`; `vars(obj)` and iterating `obj.__dict__` record
@@ -57,16 +60,28 @@ pull request through `gh api` and only parsing what it reads (`touched_entries` 
 Review. Both run this file and the manifest as the base branch has them, never the pull request's
 copies.
 
+A durable-exec reviewer signs off by commenting on the pull request with the line `--signoff-marker`
+prints, `<!-- durable-exec-signoff fingerprint=<sha256> head=<commit> -->`, and removing the label.
+The fingerprint (`fingerprint` has the rules) covers the pull request's own added and removed lines
+in the core files whose gating entries it touches, and not the hunk headers and context lines that
+merging the base branch in shifts. While the label is off, the label job runs `--signed-off`, and
+leaves the label off when the newest marker comment by a user with write access to the repository
+carries the current fingerprint.
+
 Usage:
     uv run python scripts/durable_exec_contract.py          # exit 1 if the manifest is stale
     uv run python scripts/durable_exec_contract.py --write  # regenerate it
     uv run python scripts/durable_exec_contract.py --touched REPO PR BASE_SHA HEAD_SHA
+    uv run python scripts/durable_exec_contract.py --fingerprint REPO PR BASE_SHA HEAD_SHA
+    uv run python scripts/durable_exec_contract.py --signoff-marker REPO PR BASE_SHA HEAD_SHA
+    uv run python scripts/durable_exec_contract.py --signed-off REPO PR BASE_SHA HEAD_SHA
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import importlib.util
 import io
 import json
@@ -74,6 +89,7 @@ import re
 import subprocess
 import sys
 import tokenize
+from collections import ChainMap
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -111,6 +127,13 @@ _REPOSITORY = re.compile(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+')
 _PULL_REQUEST = re.compile(r'[1-9][0-9]*')
 _COMMIT = re.compile(r'[0-9a-f]{40}')
 _CORE_FILE = re.compile(r'(?:[A-Za-z0-9_]+/)+[A-Za-z0-9_]+\.py')
+# A comment author's login, before it reaches a request URL.
+_LOGIN = re.compile(r'[A-Za-z0-9-]{1,39}')
+# The permissions `collaborators/{login}/permission` reports that let a user sign off.
+_WRITE_PERMISSIONS = frozenset({'admin', 'maintain', 'write'})
+
+# A sign-off is a comment line that is exactly this marker, so a quote of one (`> <!-- ...`) is not.
+_SIGNOFF_MARKER = re.compile(r'<!-- durable-exec-signoff fingerprint=([0-9a-f]{64}) head=([0-9a-f]{40}) -->')
 
 _HUNK_HEADER = re.compile(r'@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@')
 
@@ -193,6 +216,9 @@ Symbol = _Module | _ClassInfo | _ModuleValue
 
 class _Index:
     """Lazily parsed modules under `SOURCE_ROOTS`, and name resolution across them."""
+
+    # Mapping types, annotated `[K, V]`, whose `.get(key)` yields a `V`.
+    _MAPPINGS = frozenset({'Dict', 'Mapping', 'MutableMapping', 'OrderedDict', 'defaultdict', 'dict'})
 
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -361,6 +387,29 @@ class _Index:
             case _:
                 return frozenset()
 
+    def value_classes(self, module: _Module, annotation: ast.expr | None) -> frozenset[_ClassInfo]:
+        """The classes the values of a mapping with this annotation, written in `module`, are instances of."""
+        match annotation:
+            case ast.Constant(value=str(source)):
+                return self.value_classes(module, _parse_annotation(source))
+            case ast.BinOp(left=left, op=ast.BitOr(), right=right):
+                return self.value_classes(module, left) | self.value_classes(module, right)
+            case ast.Subscript(value=value, slice=ast.Tuple(elts=[_, item])) if _last_name(value) in self._MAPPINGS:
+                return self.annotation_classes(module, item)
+            case ast.Subscript(value=value, slice=index) if _last_name(value) in _TYPE_WRAPPERS:
+                arguments = index.elts if isinstance(index, ast.Tuple) else [index]
+                if _last_name(value) == 'Annotated':
+                    arguments = arguments[:1]
+                return frozenset[_ClassInfo]().union(*(self.value_classes(module, argument) for argument in arguments))
+            case ast.Name() | ast.Attribute():
+                match self.symbol(module, annotation):
+                    case _ModuleValue(module=alias_module, value=ast.expr() as value):
+                        return self.value_classes(alias_module, value)
+                    case _:
+                        return frozenset()
+            case _:
+                return frozenset()
+
     def bases(self, info: _ClassInfo) -> _Ancestry:
         """The class's resolved direct bases, and whether every base resolved."""
         resolved: list[_ClassInfo] = []
@@ -522,6 +571,8 @@ class _Scope:
     locals: dict[str, frozenset[_ClassInfo]] = field(default_factory=dict[str, frozenset[_ClassInfo]])
     owner: _ClassInfo | None = None
     """The class whose body this scope is, or whose method this scope is."""
+    annotated: dict[str, ast.expr | None] = field(default_factory=dict[str, ast.expr | None])
+    """The annotations of a function scope's parameters and annotated local variables, by name."""
 
 
 class _EngineWalker(ast.NodeVisitor):
@@ -619,7 +670,16 @@ class _EngineWalker(ast.NodeVisitor):
             case ast.Call(func=ast.Attribute(value=value, attr=attr)) if not isinstance(
                 self.index.symbol(self.module, value), _Module
             ):
-                return self.attribute_types(value, attr, returns=True)
+                result = self.attribute_types(value, attr, returns=True)
+                if attr == 'get':
+                    # No walked class defines a mapping's `get`: what it yields comes from the mapping's annotation,
+                    # which an enclosing function holds when the mapping is a name it binds.
+                    annotated = ChainMap(*(scope.annotated for scope in reversed(self.scopes)))
+                    annotations = self.annotations(value, annotated)
+                    result |= frozenset[_ClassInfo]().union(
+                        *(self.index.value_classes(module, annotation) for module, annotation in annotations)
+                    )
+                return result
             case ast.Call(func=func):
                 symbol = self.index.symbol(self.module, func)
                 if isinstance(symbol, _ModuleValue):
@@ -651,25 +711,32 @@ class _EngineWalker(ast.NodeVisitor):
             if (found := self.index.lookup(info, attr)) is not None:
                 yield found
 
-    def element_types(self, iterable: ast.expr, annotated: Mapping[str, ast.expr | None]) -> frozenset[_ClassInfo]:
-        """The classes the items of `iterable` are instances of, from the annotation of what it reads or calls."""
-        match iterable:
+    def annotations(
+        self, expr: ast.expr, annotated: Mapping[str, ast.expr | None]
+    ) -> Iterator[tuple[_Module, ast.expr | None]]:
+        """The annotation or return annotation of what `expr` reads or calls, each with the module it is written in."""
+        match expr:
             case ast.Name(id=name) if name in annotated:
-                return self.index.element_classes(self.module, annotated[name])
+                yield self.module, annotated[name]
             case ast.Name() | ast.Attribute() | ast.Call() if isinstance(
-                symbol := self.index.symbol(self.module, iterable.func if isinstance(iterable, ast.Call) else iterable),
+                symbol := self.index.symbol(self.module, expr.func if isinstance(expr, ast.Call) else expr),
                 _ModuleValue,
             ):
-                annotation = symbol.returns if isinstance(iterable, ast.Call) else symbol.annotation
-                return self.index.element_classes(symbol.module, annotation)
+                yield symbol.module, symbol.returns if isinstance(expr, ast.Call) else symbol.annotation
             case ast.Attribute(value=value, attr=attr) | ast.Call(func=ast.Attribute(value=value, attr=attr)):
-                result: frozenset[_ClassInfo] = frozenset()
                 for definer, member in self.member_hits(value, attr):
-                    annotation = member.returns if isinstance(iterable, ast.Call) else member.annotation
-                    result |= self.index.element_classes(definer.module, annotation)
-                return result
+                    yield definer.module, member.returns if isinstance(expr, ast.Call) else member.annotation
             case _:
-                return frozenset()
+                pass
+
+    def element_types(self, iterable: ast.expr, annotated: Mapping[str, ast.expr | None]) -> frozenset[_ClassInfo]:
+        """The classes the items of `iterable` are instances of, from the annotation of what it reads or calls."""
+        return frozenset[_ClassInfo]().union(
+            *(
+                self.index.element_classes(module, annotation)
+                for module, annotation in self.annotations(iterable, annotated)
+            )
+        )
 
     def bind(self, scope: _Scope, name: str, classes: frozenset[_ClassInfo]) -> None:
         if classes:
@@ -743,15 +810,18 @@ class _EngineWalker(ast.NodeVisitor):
             if default is not None:
                 self.visit(default)
         enclosing = self.scopes[-1]
-        scope = _Scope(self.qualname(node.name), owner=enclosing.owner)
         arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+        scope = _Scope(
+            self.qualname(node.name),
+            owner=enclosing.owner,
+            annotated={argument.arg: argument.annotation for argument in arguments},
+        )
         self.bind_parameters(scope, enclosing, node, arguments)
         self.scopes.append(scope)
-        annotated = {argument.arg: argument.annotation for argument in arguments}
         if (vararg := node.args.vararg) is not None and vararg.annotation is not None:
             # `*items: T` makes `items` a tuple of `T`.
-            annotated[vararg.arg] = ast.Subscript(value=ast.Name(id='tuple'), slice=vararg.annotation)
-        self.bind_locals(scope, node, annotated)
+            scope.annotated[vararg.arg] = ast.Subscript(value=ast.Name(id='tuple'), slice=vararg.annotation)
+        self.bind_locals(scope, node)
         for argument in [*arguments, node.args.vararg, node.args.kwarg]:
             if argument is not None and argument.annotation is not None:
                 self.visit(argument.annotation)
@@ -772,9 +842,9 @@ class _EngineWalker(ast.NodeVisitor):
             else:
                 self.bind(scope, argument.arg, self.index.annotation_classes(self.module, argument.annotation))
 
-    def bind_locals(self, scope: _Scope, node: FunctionNode, annotated: dict[str, ast.expr | None]) -> None:
+    def bind_locals(self, scope: _Scope, node: FunctionNode) -> None:
         """Flow-insensitively, the classes each local name of the function is bound to anywhere in it."""
-        annotated.update(
+        scope.annotated.update(
             {
                 statement.target.id: statement.annotation
                 for statement in ast.walk(node)
@@ -797,7 +867,7 @@ class _EngineWalker(ast.NodeVisitor):
                     | ast.AsyncFor(target=ast.Name(id=name), iter=iterable)
                     | ast.comprehension(target=ast.Name(id=name), iter=iterable)
                 ):
-                    self.bind(scope, name, self.element_types(iterable, annotated))
+                    self.bind(scope, name, self.element_types(iterable, scope.annotated))
                 case _:
                     pass
 
@@ -1047,6 +1117,84 @@ class _Spans:
         }
 
 
+def fingerprint(files: Iterable[ChangedFile], touched: Mapping[str, object]) -> str:
+    """The sha256 of a pull request's own changes to the core files whose gating entries it touches.
+
+    `touched` is what `touched_entries` returns for `files`. The fingerprint covers each listed file whose path, or
+    previous path, is a key of `touched`: its paths, its status, and the lines its patch adds and removes, in order.
+    It leaves out hunk headers and context lines. GitHub diffs a pull request against its merge base, so merging the
+    base branch in moves only those, and the fingerprint stays the same until the pull request's own lines change.
+    Which files it covers follows `touched`, and so the manifest: a base branch change that gives a changed core file
+    its first touched gating entry, or takes away its last, changes the fingerprint too.
+
+    Raises `ValueError` for such a file whose patch GitHub left out, since its changed lines are unknown.
+    """
+    records: list[tuple[str, str | None, str, list[str]]] = []
+    for file in files:
+        if not {file.filename, file.previous_filename} & touched.keys():
+            continue
+        if file.patch is None:
+            raise ValueError(f'GitHub left out the patch of {file.filename!r}')
+        records.append((file.filename, file.previous_filename, file.status, _patch_lines(file.patch)))
+    records.sort(key=lambda record: record[0])
+    return hashlib.sha256(json.dumps(records).encode()).hexdigest()
+
+
+def _patch_lines(patch: str) -> list[str]:
+    """A patch's added and removed lines, in order: no file header before its first hunk, hunk header or context."""
+    lines = patch.split('\n')
+    start = next((number for number, line in enumerate(lines) if _HUNK_HEADER.match(line)), len(lines))
+    return [line for line in lines[start:] if line.startswith(('+', '-'))]
+
+
+def signoff_marker(digest: str, head: str) -> str:
+    """The comment line that signs off the durable-exec review of the changes with fingerprint `digest` at `head`."""
+    return f'<!-- durable-exec-signoff fingerprint={digest} head={head} -->'
+
+
+class Signoff(NamedTuple):
+    """A sign-off marker in a pull request comment, and who wrote it."""
+
+    fingerprint: str
+    head: str
+    login: str
+
+
+def parse_signoff(body: str, login: str) -> Signoff | None:
+    """The last line of a comment `body` that is exactly a sign-off marker, or `None` if no line is."""
+    found: Signoff | None = None
+    # Only `\n` ends a line: `splitlines` also splits on `\u2028` and the like, which leave a quoted marker unquoted.
+    # Leading spaces stay, so a marker quoted as an indented code block does not count either.
+    for line in body.split('\n'):
+        if marker := _SIGNOFF_MARKER.fullmatch(line.rstrip()):
+            found = Signoff(marker[1], marker[2], login)
+    return found
+
+
+def latest_signoff(repository: str, pull_request: str, gh: Callable[..., str]) -> Signoff | None:
+    """The sign-off in the newest of the pull request's comments that has one and whose author can write to the repo.
+
+    Only a `User` counts, never a bot, whose comments can carry text someone else wrote. Write access is the
+    author's current permission on the repository, not their association with the pull request.
+    """
+    pages = json.loads(gh('--paginate', '--slurp', f'repos/{repository}/issues/{pull_request}/comments?per_page=100'))
+    comments = sorted((comment for page in pages for comment in page), key=lambda comment: comment['id'])
+    can_write: dict[str, bool] = {}
+    for comment in reversed(comments):
+        user: dict[str, object] = comment.get('user') or {}
+        login, body = user.get('login'), comment.get('body')
+        if user.get('type') != 'User' or not isinstance(login, str) or not _LOGIN.fullmatch(login):
+            continue
+        if not isinstance(body, str) or (signoff := parse_signoff(body, login)) is None:
+            continue
+        if login not in can_write:
+            permission = gh(f'repos/{repository}/collaborators/{login}/permission', '--jq', '.permission')
+            can_write[login] = permission.strip() in _WRITE_PERMISSIONS
+        if can_write[login]:
+            return signoff
+    return None
+
+
 # Runs `gh`; the tests pass a fake.
 def _gh(*arguments: str) -> str:  # pragma: no cover
     """What `gh api` prints for `arguments`."""
@@ -1058,45 +1206,97 @@ def render_manifest(manifest: Manifest) -> str:
     return json.dumps(manifest, indent=2, sort_keys=True) + '\n'
 
 
+def _classify(
+    parser: argparse.ArgumentParser, arguments: Sequence[str], root: Path, gh: Callable[..., str], *, pin_head: bool
+) -> tuple[list[ChangedFile], Manifest] | None:
+    """The files pull request `arguments` lists and the gating entries they touch, or `None` if it cannot tell.
+
+    The files listing is always the pull request's live head. With `pin_head`, it also returns `None` unless the live
+    head is `HEAD_SHA` both before and after the listing, so a fingerprint is never computed for an unnamed head.
+    """
+    repository, pull_request, base, head = arguments
+    manifest: Manifest = json.loads((root / MANIFEST_PATH).read_text(encoding='utf-8'))
+    shapes = [(repository, _REPOSITORY), (pull_request, _PULL_REQUEST), (base, _COMMIT), (head, _COMMIT)]
+    shapes += [(core_file, _CORE_FILE) for core_file in manifest]
+    if invalid := [value for value, pattern in shapes if not pattern.fullmatch(value)]:
+        parser.error(f'refusing to request anything for {", ".join(map(repr, invalid))}')
+    merge_base = gh(f'repos/{repository}/compare/{base}...{head}', '--jq', '.merge_base_commit.sha').strip()
+    live_head = (f'repos/{repository}/pulls/{pull_request}', '--jq', '.head.sha')
+    heads = [gh(*live_head).strip()] if pin_head else []
+    pages = json.loads(gh('--paginate', '--slurp', f'repos/{repository}/pulls/{pull_request}/files?per_page=100'))
+    if pin_head:
+        heads.append(gh(*live_head).strip())
+    if any(live != head for live in heads):
+        print(f'cannot fingerprint: the pull request head is {heads}, not {head}', file=sys.stderr)
+        return None
+    files = [
+        ChangedFile(item['filename'], item['status'], item.get('previous_filename'), item.get('patch'))
+        for page in pages
+        for item in page
+    ]
+    if not _COMMIT.fullmatch(merge_base) or len(files) >= 3000:
+        # GitHub lists at most 3000 files, so a pull request at the cap may change core files it leaves out.
+        print(f'cannot classify: merge base {merge_base!r}, {len(files)} files listed', file=sys.stderr)
+        return None
+    raw = ('-H', 'Accept: application/vnd.github.raw+json')
+    touched = touched_entries(
+        manifest,
+        files,
+        lambda path: gh(*raw, f'repos/{repository}/contents/{path}?ref={merge_base}'),
+        lambda path: gh(*raw, f'repos/{repository}/contents/{path}?ref={head}'),
+    )
+    return files, touched
+
+
+def _pull_request_command(
+    parser: argparse.ArgumentParser, command: str, arguments: Sequence[str], root: Path, gh: Callable[..., str]
+) -> int:
+    """Run `--touched`, `--fingerprint`, `--signoff-marker` or `--signed-off` for pull request `arguments`."""
+    if (classified := _classify(parser, arguments, root, gh, pin_head=command != 'touched')) is None:
+        return 1
+    files, touched = classified
+    if command == 'touched':
+        print(render_manifest(touched), end='')
+        return 0
+    try:
+        digest = fingerprint(files, touched)
+    except ValueError as error:
+        print(f'cannot fingerprint: {error}', file=sys.stderr)
+        return 1
+    repository, pull_request, _, head = arguments
+    if command == 'fingerprint':
+        print(digest)
+    elif command == 'signoff_marker':
+        print(signoff_marker(digest, head))
+    elif (signoff := latest_signoff(repository, pull_request, gh)) is None or signoff.fingerprint != digest:
+        print(f'no sign-off covers fingerprint {digest}; the latest sign-off is {signoff}', file=sys.stderr)
+        return 1
+    else:
+        print(f'The durable-exec sign-off by {signoff.login} at {signoff.head} still covers fingerprint {digest}.')
+    return 0
+
+
+_PULL_REQUEST_COMMANDS = {
+    'touched': 'print the entries pull request PR touches that gate review; BASE_SHA is the base branch commit',
+    'fingerprint': "print the fingerprint of the pull request's own changes to the core files it touches entries of",
+    'signoff_marker': 'print the comment line that signs off the durable-exec review of those changes',
+    'signed_off': "exit 0 only if the latest sign-off by a user with write access has the pull request's fingerprint",
+}
+
+
 def main(argv: Sequence[str] | None = None, *, root: Path = REPO_ROOT, gh: Callable[..., str] = _gh) -> int:
-    """Check the committed manifest is current, rewrite it with `--write`, or print what `--touched` names."""
+    """Check the committed manifest is current, rewrite it with `--write`, or run a pull request command."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--write', action='store_true', help='regenerate the manifest instead of checking it')
-    mode.add_argument(
-        '--touched',
-        nargs=4,
-        metavar=('REPO', 'PR', 'BASE_SHA', 'HEAD_SHA'),
-        help='print the entries pull request PR touches that gate review; BASE_SHA is the base branch commit',
-    )
-    args = parser.parse_args(argv)
-    if args.touched:
-        repository, pull_request, base, head = args.touched
-        manifest: Manifest = json.loads((root / MANIFEST_PATH).read_text(encoding='utf-8'))
-        shapes = [(repository, _REPOSITORY), (pull_request, _PULL_REQUEST), (base, _COMMIT), (head, _COMMIT)]
-        shapes += [(core_file, _CORE_FILE) for core_file in manifest]
-        if invalid := [value for value, pattern in shapes if not pattern.fullmatch(value)]:
-            parser.error(f'refusing to request anything for {", ".join(map(repr, invalid))}')
-        merge_base = gh(f'repos/{repository}/compare/{base}...{head}', '--jq', '.merge_base_commit.sha').strip()
-        pages = json.loads(gh('--paginate', '--slurp', f'repos/{repository}/pulls/{pull_request}/files?per_page=100'))
-        files = [
-            ChangedFile(item['filename'], item['status'], item.get('previous_filename'), item.get('patch'))
-            for page in pages
-            for item in page
-        ]
-        if not _COMMIT.fullmatch(merge_base) or len(files) >= 3000:
-            # GitHub lists at most 3000 files, so a pull request at the cap may change core files it leaves out.
-            print(f'cannot classify: merge base {merge_base!r}, {len(files)} files listed', file=sys.stderr)
-            return 1
-        raw = ('-H', 'Accept: application/vnd.github.raw+json')
-        touched = touched_entries(
-            manifest,
-            files,
-            lambda path: gh(*raw, f'repos/{repository}/contents/{path}?ref={merge_base}'),
-            lambda path: gh(*raw, f'repos/{repository}/contents/{path}?ref={head}'),
+    for command, description in _PULL_REQUEST_COMMANDS.items():
+        mode.add_argument(
+            f'--{command.replace("_", "-")}', nargs=4, metavar=('REPO', 'PR', 'BASE_SHA', 'HEAD_SHA'), help=description
         )
-        print(render_manifest(touched), end='')
-        return 0
+    args = parser.parse_args(argv)
+    for command in _PULL_REQUEST_COMMANDS:
+        if arguments := getattr(args, command):
+            return _pull_request_command(parser, command, arguments, root, gh)
     expected = render_manifest(build_manifest(root))
     manifest_path = root / MANIFEST_PATH
     if args.write:

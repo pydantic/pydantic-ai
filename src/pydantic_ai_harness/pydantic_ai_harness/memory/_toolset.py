@@ -6,7 +6,7 @@ import hashlib
 import json
 import posixpath
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Generic, Literal, NoReturn, TypeVar
@@ -15,7 +15,6 @@ from opentelemetry.trace import Span
 from typing_extensions import TypedDict
 
 from pydantic_ai import ModelRetry
-from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.messages import InstructionChangePolicy, InstructionPart
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
@@ -27,11 +26,12 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness._durable import RetryRequest, raise_retry, retry_as_result
+from pydantic_ai_harness._run_capability import find_run_capability
 from pydantic_ai_harness._workspace import in_working_dir, raise_tool_failure
 from pydantic_ai_harness.artifact_scanning._scanner import ArtifactScanResult, record_flagged
-from pydantic_ai_harness.filesystem import READ_FILE_KIND
-from pydantic_ai_harness.filesystem._tool_kinds import step_aside_for_read_file
-from pydantic_ai_harness.memory._file import FileStore
+from pydantic_ai_harness.file_system import READ_FILE_KIND
+from pydantic_ai_harness.file_system._tool_kinds import step_aside_for_read_file
+from pydantic_ai_harness.memory._file import FileMemoryStore
 from pydantic_ai_harness.memory._store import (
     MemoryConflictError,
     MemoryMutation,
@@ -43,6 +43,7 @@ from pydantic_ai_harness.memory._store import (
     MetadataMemoryStore,
     SearchableMemoryStore,
     lexical_search,
+    list_scope_paths,
 )
 
 if TYPE_CHECKING:
@@ -54,6 +55,7 @@ MAIN_FILENAME = 'MEMORY.md'
 """The main notebook file injected as bounded user-role context."""
 
 _FILENAME_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,79}')
+_CRLF_OR_LF_RE = re.compile(r'\r?\n')
 _MAX_CAS_ATTEMPTS = 16
 _MAX_SEARCH_QUERY_CHARS = 1_000
 _MAX_SEARCH_TERMS = 32
@@ -95,7 +97,7 @@ def empty_snapshot_body(heading: str, location: str | None) -> str:
 def directory_instruction(capability: Memory[AgentDepsT], store: MemoryStore, scope: str) -> str | None:
     """The instruction that says where the run's memory files are, when `read_memory` steps aside for `read_file`.
 
-    That needs a `FileStore` in the run's workspace, injection, and room in `max_tokens` for this text on top of
+    That needs a `FileMemoryStore` in the run's workspace, injection, and room in `max_tokens` for this text on top of
     the guidance, with some left for a snapshot; otherwise `read_memory` stays and nothing is said.
     """
     directory = run_workspace_directory(store, scope)
@@ -115,10 +117,10 @@ def snapshot_content_budget(max_tokens: int, guidance: str | None) -> int:
 def run_workspace_directory(store: MemoryStore, scope: str) -> str | None:
     """Where this scope's files are in the run's workspace, or `None` when the run's file tools cannot see them.
 
-    Known from configuration: a `FileStore` without a `workspace` of its own, whose `directory` is
+    Known from configuration: a `FileMemoryStore` without a `workspace` of its own, whose `directory` is
     inside the working directory, which `FileSystem`'s root contains.
     """
-    if not isinstance(store, FileStore) or store.workspace is not None:
+    if not isinstance(store, FileMemoryStore) or store.workspace is not None:
         return None
     if not in_working_dir(store.directory):
         return None
@@ -220,6 +222,9 @@ def _apply_write(
         return f'{content.rstrip()}\n', 'created'
     if existing is None:
         raise ModelRetry(f'There is no memory file named {name!r} to edit -- omit `old_text` to create it.')
+    if old_text and old_text not in existing and '\r\n' in existing:
+        # The injected snapshot shows the file's lines joined with `\n`, so match its `\r\n` line endings.
+        old_text, content = (_CRLF_OR_LF_RE.sub('\r\n', text) for text in (old_text, content))
     occurrences = existing.count(old_text) if old_text else 0
     if occurrences == 0:
         raise ModelRetry(f'`old_text` was not found in {name!r} -- call `{read_current}` to see its current content.')
@@ -269,7 +274,7 @@ def require_metadata_store(store: MemoryStore) -> MetadataMemoryStore:
     if not isinstance(store, MetadataMemoryStore):
         raise UserError(
             '`Memory(write_metadata=...)` needs a store that records write metadata, and '
-            f'`{type(store).__name__}` does not. Use `InMemoryStore`, `SqliteMemoryStore` or '
+            f'`{type(store).__name__}` does not. Use `InMemoryMemoryStore`, `SqliteMemoryStore` or '
             '`PostgresMemoryStore`, or implement `MetadataMemoryStore.write_with_metadata` in a custom store.'
         )
     return store
@@ -315,20 +320,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
         The copy holds the scope `for_run` resolved once for the run. A durable worker's tree holds
         the construction-time capability instead, which resolves the scope from `ctx`.
         """
-        from pydantic_ai_harness.memory._capability import Memory
-
-        run_capability = self._capability
-
-        def select(capability: AbstractCapability[AgentDepsT]) -> None:
-            nonlocal run_capability
-            # A wrapper such as `prefix_tools()` may be visited in place of the `Memory` it wraps.
-            while isinstance(capability, WrapperCapability):
-                capability = capability.wrapped
-            if isinstance(capability, Memory) and capability.get_toolset() is self:
-                run_capability = capability
-
-        if ctx.root_capability is not None:
-            ctx.root_capability.apply(select)
+        run_capability = find_run_capability(ctx, self._capability, self) or self._capability
         return run_capability.resolve_scope(ctx)
 
     async def _prepare_read_memory(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition:
@@ -367,7 +359,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
         tools = await super().get_tools(ctx)
         store, _ = self._resolve_scope(ctx)
         # A store with its own workspace need not inherit the run's read-only policy.
-        if isinstance(store, FileStore) and store.workspace is None and ctx.workspace.read_only:
+        if isinstance(store, FileMemoryStore) and store.workspace is None and ctx.workspace.read_only:
             return {name: tool for name, tool in tools.items() if name not in {'write_memory', 'delete_memory'}}
         return tools
 
@@ -405,6 +397,11 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                 )
         if self._operations is not None and not _IN_OPERATION.get():
             return raise_retry(await self._operations.write_memory(ctx, content, file, old_text))
+        return await self._write_memory(ctx, content, file, old_text)
+
+    async def _write_memory(
+        self, ctx: RunContext[AgentDepsT], content: str, file: str, old_text: str | None
+    ) -> MemoryWriteResult:
         capability = self._capability
         name = normalize_filename(file)
         if old_text is None and not content.strip():
@@ -428,34 +425,19 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                 write_metadata = capability.write_metadata
                 metadata = write_metadata(ctx) if callable(write_metadata) else write_metadata
                 for attempt in range(_MAX_CAS_ATTEMPTS):
-                    current = await store.read(path, max_chars=capability.max_memory_size)
-                    if current is not None and current.truncated:
-                        raise ModelRetry(
-                            f'{name!r} exceeds max_memory_size and cannot be changed from partial content; '
-                            'edit or replace it through the backing store first.'
-                        )
-                    updated, status = _apply_write(
-                        None if current is None else current.content,
-                        content,
-                        old_text,
-                        name,
-                        read_call(file_reader(ctx, store, scope), name),
+                    updated, status, expected_version = await self._apply_to_current(
+                        ctx, store, scope, path, name, content, old_text
                     )
-                    if len(updated) > capability.max_memory_size:
-                        raise ModelRetry(
-                            f'{name!r} would grow to {len(updated)} characters; the limit is '
-                            f'{capability.max_memory_size}. Split the content into separate memory files.'
-                        )
-                    expected_version = None if current is None else current.version
                     try:
-                        if metadata_store is None:
-                            mutation = await store.write(
-                                path, updated, expected_version=expected_version, operation=operation
-                            )
-                        else:
-                            mutation = await metadata_store.write_with_metadata(
-                                path, updated, expected_version=expected_version, operation=operation, metadata=metadata
-                            )
+                        mutation = await _write_mutation(
+                            store,
+                            metadata_store,
+                            path,
+                            updated,
+                            expected_version=expected_version,
+                            operation=operation,
+                            metadata=metadata,
+                        )
                     except MemoryConflictError:
                         if attempt + 1 == _MAX_CAS_ATTEMPTS:
                             raise ModelRetry('Memory changed repeatedly while writing; retry the operation.')
@@ -473,6 +455,38 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
             except Exception as exc:
                 _set_span_error(span, exc)
                 raise
+
+    async def _apply_to_current(
+        self,
+        ctx: RunContext[AgentDepsT],
+        store: MemoryStore,
+        scope: str,
+        path: str,
+        name: str,
+        content: str,
+        old_text: str | None,
+    ) -> tuple[str, _WriteStatus, str | None]:
+        """The file's content with the write applied, the write's status, and the version the write replaces."""
+        capability = self._capability
+        current = await store.read(path, max_chars=capability.max_memory_size)
+        if current is not None and current.truncated:
+            raise ModelRetry(
+                f'{name!r} exceeds max_memory_size and cannot be changed from partial content; '
+                'edit or replace it through the backing store first.'
+            )
+        updated, status = _apply_write(
+            None if current is None else current.content,
+            content,
+            old_text,
+            name,
+            read_call(file_reader(ctx, store, scope), name),
+        )
+        if len(updated) > capability.max_memory_size:
+            raise ModelRetry(
+                f'{name!r} would grow to {len(updated)} characters; the limit is '
+                f'{capability.max_memory_size}. Split the content into separate memory files.'
+            )
+        return updated, status, None if current is None else current.version
 
     async def read_memory(self, ctx: RunContext[AgentDepsT], file: str) -> str:
         """Read a bounded prefix of one memory file.
@@ -691,6 +705,23 @@ def _write_result(
     return {'file': name, 'version': mutation.version, 'replayed': mutation.replayed, 'status': status}
 
 
+async def _write_mutation(
+    store: MemoryStore,
+    metadata_store: MetadataMemoryStore | None,
+    path: str,
+    content: str,
+    *,
+    expected_version: str | None,
+    operation: MemoryOperation,
+    metadata: Mapping[str, str] | None,
+) -> MemoryMutation:
+    if metadata_store is None:
+        return await store.write(path, content, expected_version=expected_version, operation=operation)
+    return await metadata_store.write_with_metadata(
+        path, content, expected_version=expected_version, operation=operation, metadata=metadata
+    )
+
+
 def _delete_result(name: str, mutation: MemoryMutation) -> MemoryDeleteResult:
     status: Literal['deleted', 'not_found'] = 'deleted' if mutation.existed else 'not_found'
     return {'file': name, 'version': mutation.version, 'replayed': mutation.replayed, 'status': status}
@@ -711,7 +742,7 @@ async def _fallback_search(
     max_chars: int,
     max_file_chars: int,
 ) -> MemorySearchResult:
-    paths = await store.list_paths(prefix, limit=max_files + 1)
+    paths = await list_scope_paths(store, prefix, limit=max_files + 1)
     files: list[tuple[str, str]] = []
     scanned = 0
     content_truncated = False

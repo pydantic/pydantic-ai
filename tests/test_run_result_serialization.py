@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from collections.abc import AsyncIterator
+from typing import Any, Literal
 from uuid import UUID
 
 import pytest
@@ -17,15 +18,25 @@ from pydantic_ai import (
     DeferredToolRequests,
     ModelMessage,
     ModelResponse,
+    ModelRetry,
     RequestUsage,
+    RunCancelled,
+    RunContext,
     RunUsage,
     ToolCallPart,
     ToolReturnPart,
+    UnexpectedModelBehavior,
     UserError,
 )
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.conversation import Conversation
+from pydantic_ai.conversation_store import InMemoryConversationStore
+from pydantic_ai.messages import ModelRequest, TextPart, UserPromptPart
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import StreamedRunResult
+
+from .function_model_prefix import COMPACTION_REWRITES_HISTORY
 
 
 class StringResultEnvelope(BaseModel):
@@ -304,6 +315,87 @@ async def test_cancelling_after_the_output_arrived_still_settles() -> None:
         assert streamed.result.output == 'settled'
 
 
+@pytest.mark.parametrize('method', ['stream_text', 'stream_text_delta', 'stream_response'])
+async def test_settling_a_run_whose_final_output_failed_validation_is_refused(
+    method: Literal['stream_text', 'stream_text_delta', 'stream_response'],
+) -> None:
+    """These methods validate the final output as they finish the stream; when it fails, nothing is left to settle."""
+    agent = Agent(TestModel(custom_output_text='rejected'), instructions='Be helpful.')
+
+    @agent.output_validator
+    def reject_the_final_output(ctx: RunContext, output: str) -> str:
+        if ctx.partial_output:
+            return output
+        raise ModelRetry('Not good enough.')
+
+    async with agent.run_stream('Stream this') as streamed:
+        stream = (
+            streamed.stream_response()
+            if method == 'stream_response'
+            else streamed.stream_text(delta=method == 'stream_text_delta')
+        )
+        with pytest.raises(UnexpectedModelBehavior, match='retries are not supported'):
+            async for _ in stream:
+                pass
+
+        assert streamed.is_complete
+        with pytest.raises(UserError, match='stopped before it finished'):
+            streamed.result
+
+        assert isinstance(streamed.all_messages()[-1], ModelResponse)
+
+
+async def stream_text_then_a_tool_call(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    yield 'The answer'
+    yield {0: DeltaToolCall(name='record_answer', json_args='{}', tool_call_id='call_1')}
+
+
+async def test_settling_a_run_whose_tool_call_failed_after_the_output_is_refused() -> None:
+    """With `end_strategy='exhaustive'`, tool calls next to the output run as the stream finishes, after validation."""
+    agent = Agent(
+        FunctionModel(stream_function=stream_text_then_a_tool_call),
+        instructions='Be helpful.',
+        end_strategy='exhaustive',
+    )
+
+    @agent.tool_plain
+    def record_answer() -> str:
+        raise RuntimeError('Storage is down.')
+
+    async with agent.run_stream('Answer') as streamed:
+        with pytest.raises(RuntimeError, match='Storage is down'):
+            await streamed.get_output()
+
+        assert streamed.is_complete
+        with pytest.raises(UserError, match='stopped before it finished'):
+            streamed.result
+
+
+async def test_settling_a_run_cancelled_while_it_finishes_is_refused() -> None:
+    """A run cancelled while the tool calls next to its output run never finished, though its output was validated."""
+    agent = Agent(
+        FunctionModel(stream_function=stream_text_then_a_tool_call),
+        instructions='Be helpful.',
+        end_strategy='exhaustive',
+    )
+
+    @agent.tool
+    async def record_answer(ctx: RunContext) -> str:
+        ctx.cancel()
+        return 'recorded'
+
+    streams: list[StreamedRunResult[object, str]] = []
+    with pytest.raises(RunCancelled):
+        async with agent.run_stream('Answer') as streamed:
+            streams.append(streamed)
+            await streamed.get_output()
+
+    [streamed] = streams
+    assert streamed.is_complete
+    with pytest.raises(UserError, match='stopped before it finished'):
+        streamed.result
+
+
 def test_streamed_result_hands_back_a_run_result_it_already_holds() -> None:
     """`run_stream` yields a pre-built result when a `wrap_run` capability short-circuits the run."""
     held = Agent(TestModel(custom_output_text='short-circuited')).run_sync('Go')
@@ -471,6 +563,24 @@ def test_validation_schema_publishes_the_shape_the_validator_accepts() -> None:
                 },
                 'conversation_unchecked': {'title': 'Conversation Unchecked', 'type': 'boolean'},
                 'conversation_saved': {'title': 'Conversation Saved', 'type': 'boolean'},
+                'conversation_merged_tail': {'$ref': '#/$defs/ModelRequest'},
+                'conversation_messages': {
+                    'items': {
+                        'anyOf': [
+                            {
+                                'discriminator': {
+                                    'mapping': {'request': '#/$defs/ModelRequest', 'response': '#/$defs/ModelResponse'},
+                                    'propertyName': 'kind',
+                                },
+                                'oneOf': [{'$ref': '#/$defs/ModelRequest'}, {'$ref': '#/$defs/ModelResponse'}],
+                            },
+                            {'type': 'integer'},
+                        ]
+                    },
+                    'title': 'Conversation Messages',
+                    'type': 'array',
+                },
+                'conversation_run_start': {'title': 'Conversation Run Start', 'type': 'integer'},
                 'metadata': {
                     'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                     'title': 'Metadata',
@@ -510,3 +620,155 @@ def test_each_output_type_keeps_its_own_validation_schema() -> None:
 
     assert text['properties']['output'] == {'title': 'Output', 'type': 'string'}
     assert city['properties']['output'] == {'$ref': '#/$defs/City'}
+
+
+TYPE_ADAPTER: TypeAdapter[AgentRunResult[str]] = TypeAdapter(AgentRunResult[str])
+
+
+def _trimming_agent() -> Agent[None, str]:
+    """An agent that calls a tool three times while a capability shows the model only the last two messages."""
+    calls: list[int] = []
+
+    def look_up_three_times(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(calls) == 3:
+            return ModelResponse(parts=[TextPart('done')])
+        calls.append(len(calls))
+        return ModelResponse(parts=[ToolCallPart('lookup', {'n': len(calls)}, tool_call_id=f'call-{len(calls)}')])
+
+    agent = Agent(FunctionModel(look_up_three_times), capabilities=[ProcessHistory(lambda messages: messages[-2:])])
+
+    @agent.tool_plain
+    def lookup(n: int) -> str:
+        return f'fact {n}'
+
+    return agent
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_trimmed_run_result_keeps_its_whole_conversation_across_serialization() -> None:
+    store = InMemoryConversationStore()
+    stored = (await Agent(TestModel()).run('hello')).conversation
+    await store.save(stored)
+    loaded = await store.load(stored.conversation_id)
+    assert loaded is not None
+    result = await _trimming_agent().run('look it up', conversation=loaded)
+    assert len(result.all_messages()) < len(result.conversation.messages)
+
+    dumped = TYPE_ADAPTER.dump_python(result)
+    # The messages the trimmed history still holds are referred to by their index in it.
+    assert [item for item in dumped['conversation_messages'] if isinstance(item, int)] == list(
+        range(len(result.all_messages()))
+    )
+    restored = TYPE_ADAPTER.validate_json(TYPE_ADAPTER.dump_json(result))
+
+    assert restored.all_messages() == result.all_messages()
+    assert restored.conversation.messages == result.conversation.messages
+    assert restored.conversation.new_message_index == result.conversation.new_message_index == len(stored.messages)
+    await store.save(restored)
+    reloaded = await store.load(stored.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages == result.conversation.messages
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_trimmed_run_result_dumped_without_its_messages_leaves_out_its_whole_conversation_too() -> None:
+    result = await _trimming_agent().run('look it up')
+    assert 'conversation_messages' in TYPE_ADAPTER.dump_python(result)
+
+    for exclude in ({'messages'}, {'messages': {0}}):
+        dumped = TYPE_ADAPTER.dump_python(result, exclude=exclude)
+        assert 'conversation_messages' not in dumped
+        assert 'conversation_run_start' not in dumped
+        TYPE_ADAPTER.validate_json(TYPE_ADAPTER.dump_json(result, exclude=exclude))
+
+
+class _Answer(BaseModel):
+    text: str
+
+
+async def test_a_run_result_whose_prompt_merged_into_a_stored_request_dumped_without_its_messages_leaves_that_out_too() -> (
+    None
+):
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel(), output_type=_Answer)
+    await store.save(await agent.run('one', conversation=Conversation(conversation_id='c')))
+    loaded = await store.load('c')
+    assert loaded is not None
+    loaded.messages.append(ModelRequest(parts=[UserPromptPart('two')]))
+    result = await agent.run(conversation=loaded)
+    adapter: TypeAdapter[AgentRunResult[_Answer]] = TypeAdapter(AgentRunResult[_Answer])
+    assert 'conversation_merged_tail' in adapter.dump_python(result)
+
+    for exclude in ({'messages'}, {'messages': {0}}):
+        assert 'conversation_merged_tail' not in adapter.dump_python(result, exclude=exclude)
+        revived = adapter.validate_json(adapter.dump_json(result, exclude=exclude))
+        assert revived.conversation.new_message_index is None
+
+
+def test_a_run_result_whose_merged_tail_is_past_its_messages_leaves_its_conversation_unsplit() -> None:
+    tail = ModelRequest(parts=[UserPromptPart('stored')])
+    revived = TYPE_ADAPTER.validate_python(
+        {
+            'output': 'done',
+            'messages': [],
+            'new_message_index': 2,
+            'conversation_unsaved': [ModelRequest(parts=[UserPromptPart('appended')])],
+            'conversation_merged_tail': tail,
+        }
+    )
+
+    conversation = revived.conversation
+
+    assert conversation.messages == []
+    assert conversation.new_message_index is None
+
+
+def test_a_run_result_whose_whole_conversation_refers_past_its_messages_fails_validation() -> None:
+    with pytest.raises(ValidationError, match='`conversation_messages` refers to message 1, but `messages` holds 1'):
+        TYPE_ADAPTER.validate_python(
+            {
+                'output': 'done',
+                'messages': [{'kind': 'request', 'parts': []}],
+                'conversation_messages': [0, 1],
+                'conversation_run_start': 1,
+            }
+        )
+
+
+@pytest.mark.parametrize('run_start', [-1, 2, 2.0])
+def test_a_run_result_whose_whole_conversation_starts_outside_it_fails_validation(run_start: float) -> None:
+    with pytest.raises(
+        ValidationError, match=f'`conversation_run_start` is {run_start}, but `conversation_messages` holds 1'
+    ):
+        TYPE_ADAPTER.validate_python(
+            {
+                'output': 'done',
+                'messages': [{'kind': 'request', 'parts': []}],
+                'conversation_messages': [0],
+                'conversation_run_start': run_start,
+            }
+        )
+
+
+def test_a_run_result_whose_whole_conversation_holds_a_bool_does_not_read_it_as_an_index() -> None:
+    with pytest.raises(ValidationError):
+        TYPE_ADAPTER.validate_python(
+            {
+                'output': 'done',
+                'messages': [{'kind': 'request', 'parts': []}, {'kind': 'request', 'parts': []}],
+                'conversation_messages': [True],
+                'conversation_run_start': 0,
+            }
+        )
+
+
+def test_a_run_result_whose_whole_conversation_is_not_a_list_fails_validation() -> None:
+    with pytest.raises(ValidationError, match='`conversation_messages` must be a list'):
+        TYPE_ADAPTER.validate_python(
+            {
+                'output': 'done',
+                'messages': [{'kind': 'request', 'parts': []}],
+                'conversation_messages': {'0': 0},
+                'conversation_run_start': 0,
+            }
+        )

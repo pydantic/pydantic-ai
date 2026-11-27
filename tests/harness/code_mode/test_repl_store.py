@@ -6,7 +6,6 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
-from dataclasses import dataclass, field
 from typing import Any
 
 import anyio
@@ -29,41 +28,10 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.code_mode import CodeMode, CodeModeReplStore, CodeModeToolset
+from tests._timeouts import READINESS_WAIT_TIMEOUT
+from tests.harness.code_mode.repl_store import MemoryReplStore
 
 from .._recording_durability import RecordingDurability
-
-READINESS_WAIT_TIMEOUT = 10
-"""Seconds to wait for a background tool to reach a step; generous so loaded xdist workers do not flake."""
-
-
-@dataclass
-class MemoryReplStore:
-    """REPL states keyed by conversation, recording every load and save."""
-
-    states: dict[str, bytes] = field(default_factory=dict[str, bytes])
-    loads: list[str] = field(default_factory=list[str])
-    saves: list[tuple[str, bool]] = field(default_factory=list[tuple[str, bool]])
-    load_error: Exception | None = None
-    """Raised by `load` while set, as a store whose storage cannot be read."""
-    save_error: Exception | None = None
-    """Raised by `save` while set, as a store whose storage cannot be written."""
-
-    async def load(self, ctx: RunContext[None]) -> bytes | None:
-        assert ctx.conversation_id is not None
-        self.loads.append(ctx.conversation_id)
-        if self.load_error is not None:
-            raise self.load_error
-        return self.states.get(ctx.conversation_id)
-
-    async def save(self, ctx: RunContext[None], state: bytes | None) -> None:
-        assert ctx.conversation_id is not None
-        if self.save_error is not None:
-            raise self.save_error
-        self.saves.append((ctx.conversation_id, state is not None))
-        if state is None:
-            self.states.pop(ctx.conversation_id, None)
-        else:
-            self.states[ctx.conversation_id] = state
 
 
 def add(a: int, b: int) -> int:
@@ -344,9 +312,12 @@ class TestCodeModeReplStore:
     async def test_a_save_past_the_timeout_is_abandoned(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """A timeout already spent stops the save before it reaches the store, as a hung dump or store would be."""
+        """A save still running when the timeout passes is abandoned, so a store that stops responding keeps nothing.
+
+        The store hangs because the dump alone may finish before the cancellation reaches it.
+        """
         monkeypatch.setattr('pydantic_ai_harness.code_mode._repl_store.SAVE_TIMEOUT_SECONDS', 0)
-        store = MemoryReplStore()
+        store = MemoryReplStore(save_hangs=True)
         agent = agent_with(store)
 
         with caplog.at_level(logging.WARNING):

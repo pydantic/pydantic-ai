@@ -20,6 +20,7 @@ import anyio
 from pydantic_ai.usage import RequestUsage
 
 from . import agent, messages, models, settings
+from ._special_tokens import break_special_tokens_in_messages
 from ._sync_stream import SyncStreamBridge
 from ._utils import run_until_complete as _run_until_complete
 from .exceptions import ModelAPIError, UserError
@@ -73,6 +74,7 @@ def _ensure_instruction_parts(
 def _prepare_messages_carrying_a_retry(
     model: models.Model,
     msgs: Sequence[messages.ModelMessage],
+    model_settings: settings.ModelSettings | None,
     model_request_parameters: models.ModelRequestParameters,
 ) -> list[messages.ModelMessage]:
     """Run the model's message preparation, for the one history shape that cannot go out without it.
@@ -93,7 +95,8 @@ def _prepare_messages_carrying_a_retry(
     synthesizes tool-search exchanges, announces tool-availability deltas, converts realtime speech
     parts — and these helpers are documented as thin wrappers around
     [`Model.request`][pydantic_ai.models.Model.request], sending the history they are handed. Scoping
-    preparation to histories holding a retry leaves every other caller's request exactly as it was.
+    preparation to histories holding a retry leaves every other caller's request as it was, except for
+    the special-token break, which isn't optional on the routes that need it.
     """
     msgs = models._without_model_settings_deltas(list(msgs))  # pyright: ignore[reportPrivateUsage]
     # TODO(v3): remove `RetryPromptPart`
@@ -103,8 +106,26 @@ def _prepare_messages_carrying_a_retry(
         if isinstance(message, messages.ModelRequest)
         for part in message.parts
     ):
-        return model.prepare_messages(msgs, model_request_parameters)
-    return msgs
+        return model.prepare_messages(
+            msgs,
+            models._with_framing_announcement(model_request_parameters, model_settings),  # pyright: ignore[reportPrivateUsage]
+        )
+    return _break_special_tokens(model, msgs)
+
+
+def _break_special_tokens(model: models.Model, msgs: list[messages.ModelMessage]) -> list[messages.ModelMessage]:
+    """The one other preparation step these helpers run: breaking chat-template tokens where the profile asks for it.
+
+    The model's response loses the joiner again in `request` itself, so a caller of these helpers gets the same
+    protection, and the same values back, as an agent run. See
+    [`may_tokenize_special_tokens_in_content`][pydantic_ai.profiles.ModelProfile.may_tokenize_special_tokens_in_content].
+    """
+    try:
+        profile = model.profile
+    except NotImplementedError:
+        # A router like `FallbackModel` prepares the messages for each model it sends them to.
+        return msgs
+    return break_special_tokens_in_messages(msgs, profile, model.accepts_stateless_artifacts)
 
 
 async def model_request(
@@ -157,7 +178,7 @@ async def model_request(
     deadline = start_request_deadline(model_instance, model_settings, stream=False)
     with enforce_request_deadline(deadline):
         return await model_instance.request(
-            _prepare_messages_carrying_a_retry(model_instance, messages, mrp),
+            _prepare_messages_carrying_a_retry(model_instance, messages, model_settings, mrp),
             model_settings,
             mrp,
         )
@@ -254,6 +275,7 @@ async def model_request_batch(
     requests = [
         dataclasses.replace(
             request,
+            messages=_break_special_tokens(model_instance, list(request.messages)),
             model_request_parameters=_ensure_instruction_parts(request.messages, request.model_request_parameters),
         )
         for request in requests
@@ -549,7 +571,7 @@ def model_request_stream(
     mrp = _ensure_instruction_parts(messages, model_request_parameters or models.ModelRequestParameters())
     return open_request_stream(
         model_instance,
-        _prepare_messages_carrying_a_retry(model_instance, messages, mrp),
+        _prepare_messages_carrying_a_retry(model_instance, messages, model_settings, mrp),
         model_settings,
         mrp,
     )

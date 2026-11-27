@@ -111,8 +111,13 @@ class LiveServer:
         """The client's last frame was a tool result, which its content can follow as a message item (a typed turn
         starts with the note telling the model what was typed, or the request to run the backend comes first)."""
         self.queued_texts: list[tuple[list[str], str | None]] = []
-        """Text turns whose `response.create` came while a backend response ran: Live runs each once that one ends."""
+        """Text turns whose `response.create` came while a delegation was open: Live runs each once none is.
+
+        Live works on one delegation at a time, even when the open one is only waiting for a tool's result (see
+        `decide()`); while a backend response runs, that is seen live for typed text too."""
         self.delegations: dict[str, _Delegation] = {}
+        self.held_delegations = 0
+        """Delegations the model decided on while another was open, which Live opens once none is (see `decide()`)."""
         self.seconds = 0.0
         self.backend_terminals_read = 0
         self.backends_failed = 0
@@ -207,8 +212,8 @@ class LiveServer:
                 self._start_backend(delegation)
             elif self.typed:  # pragma: no branch
                 texts, self.typed = self.typed, []
-                if self.running_delegation() is not None:
-                    # Live runs it once the backend response under way ends (seen live).
+                if self.delegations:
+                    # Live works on one delegation at a time: it runs the text once the open one settles.
                     self.queued_texts.append((texts, frame.get('event_id')))
                 else:
                     self._take_up(texts, frame.get('event_id'))
@@ -325,6 +330,17 @@ class LiveServer:
             self.triggers.extend(texts)
             self._spoken_response()
         self.delegate(client_event_id=client_event_id)
+
+    def decide(self) -> None:
+        """The model decides on its own to hand a request to its Responses backend.
+
+        Live works on one delegation at a time: one it decides on while another is open (waiting for a tool's result,
+        say) opens only once that one settles (seen live).
+        """
+        if self.delegations:
+            self.held_delegations += 1
+        else:
+            self.delegate()
 
     def delegate(self, client_event_id: str | None = None) -> str:
         """The model hands the request to its Responses backend."""
@@ -483,8 +499,11 @@ class LiveServer:
             del self.delegations[delegation.id]
             # A settled delegation restarts the turn clock, as the model's voice does.
             self.last_voice = self._now()
+            if self.held_delegations and not self.delegations:
+                self.held_delegations -= 1
+                self.delegate()
         # Otherwise the backend waits for the results and the client's `response.create` to continue it.
-        if self.queued_texts and self.running_delegation() is None:
+        if self.queued_texts and not self.delegations:
             texts, client_event_id = self.queued_texts.pop(0)
             self._take_up(texts, client_event_id)
 
@@ -577,7 +596,7 @@ class LiveSimulation(Simulation):
 
     @step
     def delegate(self, deliver: bool = True, ticks: int | None = None) -> None:
-        self.server.delegate()
+        self.server.decide()
         self._after_server(deliver, ticks)
 
     @step

@@ -22,10 +22,11 @@ from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
     DurableToolsetBase,
     resolve_tool_durable_config,
+    revalidate_function_args,
     unwrap_tool_call_result,
     wrap_tool_call_result,
 )
-from pydantic_ai.exceptions import FallbackExceptionGroup, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import FallbackExceptionGroup, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.workspaces import (
@@ -168,6 +169,8 @@ NON_RETRYABLE_ERRORS: tuple[type[Exception], ...] = (
     PydanticUserError,
     UnexpectedModelBehavior,
     FallbackExceptionGroup,
+    # Every attempt of an activity or tool child workflow checks the limit against the usage it was started with.
+    UsageLimitExceeded,
     # A retry cannot fix a workspace timeout, output flood, read-only refusal, or lost environment;
     # restarting a command could repeat its already-completed side effects.
     WorkspaceTimeoutError,
@@ -353,8 +356,8 @@ def resolve_tool_activity_config(
 ) -> ActivityConfig | Literal[False]:
     """Resolve per-tool Temporal activity config.
 
-    Reads `tool.tool_def.metadata['temporal']` first, then falls back to the explicit
-    `tool_activity_config` dict keyed by tool name. Returns an `ActivityConfig` dict
+    Reads `tool.tool_def.metadata['temporal']` first, then `tool.tool_def.durable`, then falls back to the
+    explicit `tool_activity_config` dict keyed by tool name. Returns an `ActivityConfig` dict
     (possibly empty), or `False` to skip activity wrapping.
 
     The config is validated back into Temporal's own types: a `DynamicToolset`'s tools are
@@ -395,13 +398,13 @@ def toolset_temporal_activities(toolset: AbstractToolset[Any]) -> list[Callable[
 
 
 async def call_tool_in_activity(
-    toolset: AbstractToolset[AgentDepsT],
+    toolset: FunctionToolset[AgentDepsT],
     name: str,
     tool_args: dict[str, Any],
     ctx: RunContext[AgentDepsT],
     tool: ToolsetTool[AgentDepsT],
 ) -> CallToolResult:
-    args = tool.args_validator.validate_python(tool_args)
+    args = revalidate_function_args(toolset, tool, tool_args)
     return await wrap_tool_call_result(toolset.call_tool(name, args, ctx, tool))
 
 

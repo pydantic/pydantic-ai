@@ -33,7 +33,7 @@ from typing import IO, TYPE_CHECKING, Any, Literal, Protocol
 import anyio
 import anyio.lowlevel
 import e2b
-from e2b import CommandExitException, CommandResult, FileType, WriteInfo
+from e2b import CommandExitException, CommandResult, FileType, SandboxNetworkOpts, WriteInfo
 from e2b.exceptions import (
     AuthenticationException,
     FileNotFoundException,
@@ -84,6 +84,7 @@ class FakeCreateCall:
     secure: bool
     allow_internet_access: bool
     lifecycle: dict[str, str] | None
+    network: SandboxNetworkOpts | None = None
 
 
 @dataclass(frozen=True)
@@ -671,6 +672,12 @@ class FakeSandbox:
             raise self._control.is_running_error
         return self._control.sandbox_is_running and not self.killed
 
+    async def set_timeout(self, timeout: int) -> None:
+        await anyio.lowlevel.checkpoint()
+        if self._control.set_timeout_error is not None:
+            raise self._control.set_timeout_error
+        self._control.set_timeout_calls.append((self.sandbox_id, timeout))
+
 
 class FakeAsyncSandboxFactory:
     """Mirrors the `AsyncSandbox.create` / `AsyncSandbox.connect` class methods."""
@@ -687,10 +694,11 @@ class FakeAsyncSandboxFactory:
         secure: bool = True,
         allow_internet_access: bool = True,
         lifecycle: dict[str, str] | None = None,
+        network: SandboxNetworkOpts | None = None,
     ) -> FakeSandbox:
         self._control.clients.append(self._client)
         self._control.create_calls.append(
-            FakeCreateCall(template, timeout, envs, secure, allow_internet_access, lifecycle)
+            FakeCreateCall(template, timeout, envs, secure, allow_internet_access, lifecycle, network)
         )
         if self._control.create_hangs:
             await anyio.sleep_forever()
@@ -750,6 +758,8 @@ class FakeE2B:
     read_error: Exception | None = None
     is_running_error: Exception | None = None
     sandbox_is_running: bool = True
+    set_timeout_calls: list[tuple[str, int]] = field(default_factory=list[tuple[str, int]])
+    set_timeout_error: Exception | None = None
     # When set, sandboxes run commands and file operations on the host under this directory.
     host_root: Path | None = None
 

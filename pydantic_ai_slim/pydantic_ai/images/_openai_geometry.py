@@ -16,8 +16,8 @@ _LEGACY_ASPECT_RATIO_TO_SIZE = {
     '3:2': '1536x1024',
 }
 
-# Canonical approximately-one-megapixel outputs for GPT Image 2. Each value has
-# an exact requested aspect ratio and satisfies the model's documented limits.
+# Canonical approximately-one-megapixel outputs for GPT Image 2 and 2.6. Each value has
+# an exact requested aspect ratio and satisfies the models' documented limits.
 _GPT_IMAGE_2_ASPECT_RATIO_TO_SIZE = {
     '1:1': '1024x1024',
     '1:2': '704x1408',
@@ -53,8 +53,18 @@ def is_gpt_image_1(model_name: str | None) -> bool:
     )
 
 
+_GPT_IMAGE_2_MODELS = ('gpt-image-2', 'gpt-image-2.6-flare', 'gpt-image-2.6-sunburst')
+"""GPT Image 2 and 2.6 models, whose geometry is free-form within the same documented limits.
+
+The live Images API rejects the same out-of-bounds sizes with the same messages for GPT Image 2.6 as for
+GPT Image 2. Dated snapshots are matched through the dash suffix.
+"""
+
+
 def is_gpt_image_2(model_name: str | None) -> bool:
-    return model_name == 'gpt-image-2' or (model_name is not None and model_name.startswith('gpt-image-2-'))
+    return model_name is not None and any(
+        model_name == name or model_name.startswith(f'{name}-') for name in _GPT_IMAGE_2_MODELS
+    )
 
 
 @dataclass

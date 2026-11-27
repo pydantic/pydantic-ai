@@ -24,8 +24,6 @@ pytestmark = [
 @pytest.mark.parametrize(
     'model_name',
     [
-        'mistral-large-4',
-        'mistral-large-4-0',
         'mistral-small-latest',
         'mistral-small-2603',
         'mistral-medium-latest',
@@ -41,6 +39,16 @@ def test_adjustable_reasoning_models(model_name: str):
     profile = MistralProvider.model_profile(model_name)
     assert profile.get('supports_thinking') is True
     assert profile.get('thinking_always_enabled') is False
+    assert 'mistral_reasoning_efforts' not in profile
+
+
+@pytest.mark.parametrize('model_name', ['mistral-large-4', 'mistral-large-4-0'])
+def test_large_4_models(model_name: str):
+    """Large 4 accepts `'low'`/`'medium'`/`'high'` and rejects `'none'`, so it can't turn reasoning off."""
+    profile = MistralProvider.model_profile(model_name)
+    assert profile.get('supports_thinking') is True
+    assert profile.get('thinking_always_enabled') is True
+    assert profile.get('mistral_reasoning_efforts') == frozenset({'low', 'medium', 'high'})
 
 
 def test_adjustable_reasoning_not_on_shared_profile():

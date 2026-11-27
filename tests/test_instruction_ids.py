@@ -597,10 +597,10 @@ async def test_mcp_server_instructions_are_identified():
         assert await run_and_capture(agent) == [
             InstructionPart(
                 content="""\
-<context id="toolset:test-server">
+<pyai:context id="toolset:test-server">
 You are an MCP test server.
-</context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
                 on_change='append',
                 id=toolset_instruction_id('test-server'),
@@ -1331,6 +1331,25 @@ def test_resolved_id_serialization_round_trip(id: InstructionId, serialized: str
     assert instruction_part_ta.validate_python(payload) == part
 
 
+@pytest.mark.parametrize(
+    'id',
+    [
+        agent_instruction_id(),
+        agent_instruction_id('persona'),
+        InstructionId(RunInstructionSource(), name='task'),
+        toolset_instruction_id('weather'),
+        capability_instruction_id('weather'),
+        capability_instruction_id('weather', 'limits'),
+    ],
+)
+def test_id_python_mode_round_trip_keeps_its_source(id: InstructionId):
+    # Outside JSON mode an id is dumped as an object, so the source's `kind` is what tells sources with the same
+    # fields apart: a capability from a toolset, a run from the agent.
+    ta = TypeAdapter(InstructionId)
+    assert ta.validate_python(ta.dump_python(id)) == id
+    assert ta.validate_python(id) == id
+
+
 def test_unresolved_and_missing_id_serialization_round_trip():
     # A name whose source has no identity of its own travels as a name, with no key beside it.
     unresolved = InstructionPart(content='Instructions.', name='limits')
@@ -1377,11 +1396,11 @@ async def test_deferred_capability_instructions_stay_hidden():
         InstructionPart(content='Agent instructions.', id=agent_instruction_id()),
         InstructionPart(
             content="""\
-<context id="capability:deferred_capabilities">
+<pyai:context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
 - deferred
-</context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
             dynamic=True,
             on_change='append',
