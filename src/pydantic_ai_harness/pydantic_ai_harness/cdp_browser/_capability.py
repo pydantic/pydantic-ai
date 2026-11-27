@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.durable_exec import BaseDurabilityCapability
@@ -53,8 +53,11 @@ class CDPBrowser(AbstractCapability[AgentDepsT]):
     WebSocket connections go through a local proxy that applies the same policy.
 
     Durable execution (e.g. `TemporalDurability`) is not supported: a live browser cannot survive activity replay
-    or worker restart, so combining both on one agent raises `UserError` at agent construction.
+    or worker restart, so combining both on one agent, or wrapping the agent in a deprecated wrapper agent such as
+    `TemporalAgent`, raises `UserError` at construction.
     """
+
+    _durable_unsupported_reason: ClassVar[str | None] = 'a live Chrome cannot survive activity replay or worker restart'
 
     _: KW_ONLY
 
@@ -133,14 +136,15 @@ class CDPBrowser(AbstractCapability[AgentDepsT]):
         Durable execution replays tool calls as activities, and a live Chrome cannot be checkpointed across activity
         boundaries or worker restarts; without this guard the composition fails inside the first tool call instead.
         Detection matches `BaseDurabilityCapability`, the shared base of the bundled Temporal, DBOS and Prefect
-        integrations, as `PlaywrightBrowser.for_agent` does.
+        integrations, as `PlaywrightBrowser.for_agent` does. The deprecated wrapper agents add no durability
+        capability, so they refuse the browser themselves, from `_durable_unsupported_reason`.
         """
         siblings: list[AbstractCapability[AgentDepsT]] = []
         agent.root_capability.apply(siblings.append)
         if any(isinstance(sibling, BaseDurabilityCapability) for sibling in siblings):
             raise UserError(
                 'CDPBrowser does not support durable execution (e.g. TemporalDurability): '
-                'a live Chrome cannot survive activity replay or worker restart. '
+                f'{self._durable_unsupported_reason}. '
                 'Run the browser agent outside the durable agent, or remove the durability capability.'
             )
         return self

@@ -65,6 +65,7 @@ from pydantic_ai_harness.compaction._receipts import (
     is_receipt_message,
     is_receipt_part,
     make_receipt_part,
+    receipt_capability_id,
     record_receipt,
 )
 from pydantic_ai_harness.compaction._shared import (
@@ -279,7 +280,8 @@ def _request_part_element(
     part: ModelRequestPart, skip_previous_summary: bool, tool_return_max_chars: int | None
 ) -> str | None:
     """The transcript element for a request part, or `None` for a part the transcript leaves out."""
-    if is_load_part(part):
+    # A receipt is replaced by the new compaction's own, so the summary never absorbs one.
+    if is_load_part(part) or is_receipt_part(part):
         return None
     match part:
         case UserPromptPart() if (origin := harness_data_origin(part)) is not None:
@@ -1057,7 +1059,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             handle=handle,
             has_summary=True,
         )
-        receipt_message = ModelRequest(parts=[make_receipt_part(text)])
+        receipt_message = ModelRequest(parts=[make_receipt_part(text, capability_id=receipt_capability_id(ctx, self))])
         anchor = deduped.index(summary_message)
         return [*deduped[: anchor + 1], receipt_message, *deduped[anchor + 1 :]]
 

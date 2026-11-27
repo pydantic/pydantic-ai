@@ -617,8 +617,8 @@ def _header_wait(headers: Mapping[str, str], max_wait: float) -> float | None:
         wait_seconds = int(retry_after)
         if wait_seconds >= 0:
             return float(min(wait_seconds, max_wait))
-    except ValueError:
-        # Try parsing as HTTP date
+    except (ValueError, OverflowError):
+        # Not an integer, or one too large for a float: try parsing as HTTP date, which rejects the latter
         try:
             retry_time = parsedate_to_datetime(retry_after)
             assert isinstance(retry_time, datetime)

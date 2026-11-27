@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Literal, assert_never
 
 from pydantic_core import ErrorDetails
 
-from pydantic_ai import RunContext
+from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.messages import (
     CapabilityLoadDeltaPart,
     CapabilityPart,
@@ -105,6 +105,20 @@ _EXCERPT_CHARS = 500
 _SHORT_EXCERPT_CHARS = 200
 """Display cap for system text and tool-call arguments."""
 
+_MAX_QUERY_CHARS = 1_000
+_MAX_QUERY_TERMS = 32
+"""Query bounds, the same as `Memory`'s `search_memory`: ranking costs unique terms times scanned messages."""
+
+_ECHOED_QUERY_CHARS = 200
+"""How much of the query the result header repeats back."""
+
+DEFAULT_MAX_SCANNED_MESSAGES = 2_000
+"""How many of the newest indexed messages one search scores by default.
+
+Scoring runs synchronously on the event loop, so this bounds how long one search holds it:
+a 32-term query over 2,000 short messages takes tens of milliseconds.
+"""
+
 
 @dataclass(frozen=True)
 class _Bm25Params:
@@ -116,6 +130,19 @@ class _Bm25Params:
 
 def _tokenize(text: str) -> list[str]:
     return [match.group().lower() for match in _TOKENIZE_RE.finditer(text)]
+
+
+def _check_query(query: str) -> None:
+    """Reject a query whose ranking would hold the event loop, so the model can retry with a shorter one."""
+    if len(query) > _MAX_QUERY_CHARS:
+        raise ModelRetry(f'Search queries must be at most {_MAX_QUERY_CHARS} characters.')
+    if len(set(_tokenize(query))) > _MAX_QUERY_TERMS:
+        raise ModelRetry(f'Search queries must contain at most {_MAX_QUERY_TERMS} unique terms.')
+
+
+def _echo_query(query: str) -> str:
+    """The query as the result header repeats it, cut to `_ECHOED_QUERY_CHARS`."""
+    return query if len(query) <= _ECHOED_QUERY_CHARS else query[:_ECHOED_QUERY_CHARS] + '...'
 
 
 def _compute_idf(term: str, term_counts: list[Counter[str]]) -> float:
@@ -351,6 +378,32 @@ def _inherited_prefix(messages: list[ModelMessage], hashes: list[str], seen: dic
     return inherited
 
 
+def _newest_sections(loaded: list[tuple[str, list[ModelMessage], int]], limit: int) -> tuple[list[_RunSection], int]:
+    """Sections holding the newest `limit` of the `(label, messages, first_index)` runs, and the total message count.
+
+    Runs arrive oldest first, so this walks them backwards and cuts the oldest run that crosses
+    `limit`, keeping its numbering. Only kept messages are rendered for the index.
+    """
+    total = sum(len(messages) for _, messages, _ in loaded)
+    sections: list[_RunSection] = []
+    for label, messages, first_index in reversed(loaded):
+        if limit == 0:
+            break
+        skipped = max(0, len(messages) - limit)
+        kept = messages[skipped:]
+        limit -= len(kept)
+        sections.append(
+            _RunSection(
+                label=label,
+                messages=kept,
+                index_lines=[_format_message(message, terms=None) for message in kept],
+                first_index=first_index + skipped,
+            )
+        )
+    sections.reverse()
+    return sections, total
+
+
 def _construction_stacklevel() -> int:
     """The `warn_default_changed` stacklevel that reaches the code constructing the toolset.
 
@@ -382,6 +435,7 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
         bm25_k1: float,
         bm25_b: float,
         scope: SearchScope | None = None,
+        max_scanned_messages: int = DEFAULT_MAX_SCANNED_MESSAGES,
     ) -> None:
         # `None` means the caller did not choose. It resolves to `conversation` and warns once
         # here, for the same reason `ConversationSearch` does: this default was `all`, and the
@@ -410,7 +464,10 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
             raise ValueError(f'bm25_k1 must be a non-negative finite number, got {bm25_k1!r}.')
         if not 0.0 <= bm25_b <= 1.0:
             raise ValueError(f'bm25_b must be between 0.0 and 1.0, got {bm25_b!r}.')
+        if max_scanned_messages < 1:
+            raise ValueError(f'max_scanned_messages must be positive, got {max_scanned_messages!r}.')
         self._source = source
+        self._max_scanned_messages = max_scanned_messages
         self._max_matches = max_matches
         self._context_lines = context_lines
         self._params = _Bm25Params(k1=bm25_k1, b=bm25_b)
@@ -436,9 +493,11 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
             ctx: The active run context.
             query: Text to search for. Multi-word queries search each word
                 independently -- rare terms score higher than common ones.
+                At most 1,000 characters and 32 unique terms.
             run_id: Search only this run's history. Use it to resolve a run
                 another tool or a compaction receipt referenced.
         """
+        _check_query(query)
         return await self._search(ctx, query, run_id)
 
     async def _search(self, ctx: RunContext[AgentDepsT], query: str, run_id: str | None) -> str:
@@ -455,12 +514,11 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
                 )
             conversation_id = ctx.conversation_id
 
-        sections = await self._load_sections(run_id, conversation_id)
+        sections, total_messages = await self._load_sections(run_id, conversation_id)
         if run_id is not None and not sections:
             # Same answer whether the run is absent or out of scope: a distinct
             # message would tell the model which run ids exist in other conversations.
             return f"No persisted history for run '{run_id}'."
-        total_messages = sum(len(section.messages) for section in sections)
         if total_messages == 0:
             if conversation_id is not None:
                 # Naming the scope keeps the "pair with `StepPersistence`" advice below from
@@ -493,8 +551,16 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
                 locations.append((section_index, line_index))
 
         ranked = _bm25_rank(query, flat_index_lines, self._params)
+        echoed = _echo_query(query)
+        searched = f'{total_messages} persisted messages'
+        if len(flat_index_lines) < total_messages:
+            # Say the corpus was cut, so the model never reads "no matches" as "never said".
+            searched = (
+                f'the newest {len(flat_index_lines)} of {total_messages} persisted messages; '
+                'older messages were not searched'
+            )
         if not ranked:
-            return f"No matches for '{query}' in {total_messages} persisted messages."
+            return f"No matches for '{echoed}' in {searched}."
 
         terms = frozenset(_tokenize(query))
         results: list[str] = []
@@ -514,16 +580,17 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
             excerpt = '\n'.join(section.display_line(index, terms) for index in range(start, end))
             results.append(f'[score: {score:.1f} | {section.label}]\n{excerpt}')
 
-        header = f"Found {len(results)} match(es) for '{query}' in {total_messages} persisted messages:\n\n"
+        header = f"Found {len(results)} match(es) for '{echoed}' in {searched}:\n\n"
         return header + '\n\n---\n\n'.join(results)
 
-    async def _load_sections(self, run_id: str | None, conversation_id: str | None) -> list[_RunSection]:
+    async def _load_sections(self, run_id: str | None, conversation_id: str | None) -> tuple[list[_RunSection], int]:
+        """The sections to score, newest `max_scanned_messages` only, and how many messages are in scope in total."""
         runs = await self._source.list_runs()
         if conversation_id is not None:
             runs = [run for run in runs if run.conversation_id == conversation_id]
         if run_id is not None:
             runs = [run for run in runs if run.run_id == run_id]
-        sections: list[_RunSection] = []
+        loaded: list[tuple[str, list[ModelMessage], int]] = []
         # A run started with `message_history` persists that history again as the head of its
         # own record, so without this each inherited message would be indexed once per later
         # run, crowding `max_matches` with copies. Runs arrive in `started_at` order, so only
@@ -545,12 +612,5 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
             label = f'run: {run.run_id}'
             if run.conversation_id is not None:
                 label += f' | conversation: {run.conversation_id}'
-            sections.append(
-                _RunSection(
-                    label=label,
-                    messages=messages,
-                    index_lines=[_format_message(message, terms=None) for message in messages],
-                    first_index=inherited,
-                )
-            )
-        return sections
+            loaded.append((label, messages, inherited))
+        return _newest_sections(loaded, self._max_scanned_messages)
