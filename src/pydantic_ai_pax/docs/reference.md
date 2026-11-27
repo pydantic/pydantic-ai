@@ -42,6 +42,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/plugins [...]` | Manage plugins; no arguments opens the menu |
 | `/mcp [...]` | Manage MCP servers (from the built-in `mcp` plugin) |
 | `/compact [FOCUS]` | Summarise older messages now (from the built-in `compaction` plugin) |
+| `/auto-compact [TOKENS\|PERCENT\|reset]` | Show or set when compaction runs automatically, such as `150k` or `70%` (from the built-in `compaction` plugin) |
 | `/refine [FOCUS]` | Have the model review and revise its last answer (from the built-in `refinement` plugin) |
 | `/usage` | Tokens and cost per turn |
 | `/cost` | The retained history's total cost and tokens |
@@ -621,7 +622,7 @@ repository symlinks can select any readable file beneath it. See
 for symlink loading, scope, and backend requirements.
 
 Interactive commands: `/login`, `/set` (alias `/settings`), `/system_prompt`, `/theme`, `/model`, `/model add`, `/model settings`, `/model chains`, `/help`, `/clear` (alias `/new`), `/resume`, `/exit`, `/config`,
-`/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, `/compact` from the built-in `compaction` plugin, and `/refine` from the built-in `refinement` plugin.
+`/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, `/compact` and `/auto-compact` from the built-in `compaction` plugin, and `/refine` from the built-in `refinement` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Suggestions match any substring, case-sensitively. While
 you type a command name, the best match comes first and is highlighted without
@@ -2319,11 +2320,18 @@ back to truncation; other exceptions propagate. The summary request is billed
 to the current model unless `summarization_model` selects another.
 
 The chain runs automatically before requests above `threshold` (85% of the context
-window by default). To compact at a fixed size instead, set `threshold_tokens` in the
-**Threshold tokens** row of `/plugins configure compaction`, or declare it, as in
-`/plugins add compaction pydantic_ai_pax.builtin_plugins.compaction '{"threshold_tokens": 150000}'`:
-the chain then runs once a request passes that many tokens, whatever the model's window, and
-`threshold` is ignored. Keep it below the model's window: above it, the provider rejects the
+window by default). `/auto-compact` shows when it runs and changes it for the next turn:
+
+```text
+/auto-compact 150k     # once a request passes 150,000 tokens (also 150000, 150,000, 1.5m)
+/auto-compact 70%      # once a request passes 70% of the window
+/auto-compact reset    # back to 85% of the window
+```
+
+A token count saves `threshold_tokens` and a share saves `threshold`, the same settings as the
+**Threshold tokens** and **Threshold** rows of `/plugins configure compaction`. With
+`threshold_tokens` set, the chain runs once a request passes that many tokens, whatever the
+model's window, and `threshold` is ignored. Keep it below the model's window: above it, the provider rejects the
 request before compaction runs. `/compact` runs the same chain between turns regardless of that
 threshold, but it caps the protected tokens at half the conversation, so it usually has older
 messages to summarise; the protected tail can exceed that cap by the whole message that crosses it. Add free text to say what the summary must keep, for example

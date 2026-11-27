@@ -630,6 +630,81 @@ async def test_configured_settings_rebuild_the_chain_for_the_next_turn(
         await plugins.close('exit')
 
 
+async def test_auto_compact_sets_the_trigger_for_the_next_turn(tmp_path: Path) -> None:
+    """`/auto-compact` saves a token count or a share and reloads the plugin, so the next run uses it."""
+    store = SettingsStore(tmp_path / 'settings.db')
+    compaction = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'compaction')
+    commands = Commands()
+    plugins = PluginLoader[None](
+        store=store,
+        console=Console(file=io.StringIO()),
+        commands=commands,
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+        builtin=(compaction,),
+    )
+
+    def chain() -> FallbackCompaction[None]:
+        loaded = plugins.entries()[0].loaded
+        assert loaded is not None and isinstance(loaded.plugin, CompactionPlugin)
+        return loaded.plugin.chain
+
+    try:
+        await plugins.load_all()
+        assert await commands.execute_async('/auto-compact') == (
+            'Auto-compaction runs above 85% of the context window. Set it with /auto-compact 150k, 70%, or reset.'
+        )
+        assert await commands.execute_async('/auto-compact 150k') == 'Auto-compaction now runs above 150,000 tokens.'
+        assert (chain().max_tokens, chain().max_fraction) == (150_000, None)
+        assert store.plugins()[0].settings == {'threshold_tokens': 150_000}
+        assert await commands.execute_async('/auto-compact') == (
+            'Auto-compaction runs above 150,000 tokens. Set it with /auto-compact 150k, 70%, or reset.'
+        )
+        assert await commands.execute_async('/auto-compact 1.5m') == 'Auto-compaction now runs above 1,500,000 tokens.'
+        assert await commands.execute_async('/auto-compact 120,000') == 'Auto-compaction now runs above 120,000 tokens.'
+        assert await commands.execute_async('/auto-compact 70%') == (
+            'Auto-compaction now runs above 70% of the context window.'
+        )
+        assert (chain().max_tokens, chain().max_fraction) == (None, 0.7)
+        assert store.plugins()[0].settings == {'threshold': 0.7}
+        assert await commands.execute_async('/auto-compact reset') == (
+            'Auto-compaction now runs above 85% of the context window.'
+        )
+        assert (chain().max_tokens, chain().max_fraction) == (None, 0.85)
+        assert store.plugins()[0].settings == {}
+    finally:
+        await plugins.close('exit')
+
+
+@pytest.mark.parametrize(
+    ('arguments', 'error'),
+    [
+        ('lots', "'lots' is not a token count such as 150k or a share such as 70%."),
+        ('1.5', "'1.5' is not a whole number of tokens."),
+        ('0', '/auto-compact 0: Input should be greater than 0'),
+        ('half%', "'half%' is not a share of the window such as 70%."),
+        ('150%', '/auto-compact 150%: Input should be less than or equal to 1'),
+        ('150k 70%', 'Give one value: /auto-compact 150k, /auto-compact 70%, or /auto-compact reset.'),
+    ],
+)
+async def test_auto_compact_rejects_what_is_not_a_trigger(arguments: str, error: str) -> None:
+    plugin = make_plugin()
+    with pytest.raises(ValueError) as caught:
+        await plugin.commands.execute_async(f'/auto-compact {arguments}')
+    assert str(caught.value) == error
+
+
+async def test_auto_compact_needs_a_session_to_save() -> None:
+    with pytest.raises(ValueError, match='needs a Pax session'):
+        await make_plugin().commands.execute_async('/auto-compact 150k')
+
+
+def test_auto_compact_completes_its_forms() -> None:
+    command = make_plugin().commands.get('auto-compact')
+    assert command is not None
+    assert list(command.complete([''])) == ['150k', '70%', 'reset']
+    assert list(command.complete(['150k', ''])) == []
+
+
 @pytest.mark.parametrize(
     ('settings', 'background_start'),
     [

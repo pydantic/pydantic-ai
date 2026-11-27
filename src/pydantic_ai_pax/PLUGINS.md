@@ -1176,7 +1176,7 @@ settings using the former import paths are redirected to the new modules.
 | `ask_user` | `pydantic_ai_pax.builtin_plugins.ask_user_menu` | `{}` | the `ask_user_question` tool: multiple-choice questions answered from the terminal |
 | `repo_context` | `pydantic_ai_pax.builtin_plugins.repo_context` | `{}` | reads the instruction files (`AGENTS.md`, else `CLAUDE.md`) of the launch directory and its ancestors into the instructions, and a subdirectory's as the agent works there |
 | `persistence` | `pydantic_ai_pax.runtime.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
-| `compaction` | `pydantic_ai_pax.builtin_plugins.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
+| `compaction` | `pydantic_ai_pax.builtin_plugins.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, `/auto-compact`, and the context warning |
 | `refinement` | `pydantic_ai_pax.builtin_plugins.refinement` | `{}` | `/refine`: the model reviews and revises its last answer |
 | `hooks` | `pydantic_ai_pax.builtin_plugins.hooks` | `{}` | runs your commands before and after tool calls and turns; see [lifecycle hooks](#lifecycle-hooks-commands-from-settings) |
 | `sandbox` | `pydantic_ai_pax.builtin_plugins.sandbox` | `{}` | `/sandbox`: runs a new conversation in a sandbox, a VM on this machine (`local smol` or `local boxlite`) or a cloud one, signed in to GitHub as your `gh` login; `/computer-use` lets the model use its desktop; see [Sandboxes](docs/reference.md#sandboxes-sandbox) and [Computer use](docs/reference.md#computer-use-computer-use) |
@@ -1428,7 +1428,9 @@ propagate. With the experimental `background_compaction` on, the chain also gets
 `background_start`: it writes the summary in the background ahead of the threshold and swaps it in
 when compaction is due; `/compact` without a focus uses a held summary, with a focus drops it, and
 unloading the plugin cancels one still running. `/plugins disable compaction` turns automatic compaction,
-`/compact`, and its context warning off. `/plugins configure compaction` edits its
+`/compact`, and its context warning off. `/auto-compact 150k` saves `threshold_tokens` and
+`/auto-compact 70%` saves `threshold` and clears `threshold_tokens`, through `host.plugins.save_settings`, so the
+plugin reloads for the next turn. `/plugins configure compaction` edits its
 settings (`strategy`, `threshold`, `threshold_tokens`, `protected_tokens`, `context_window`,
 `summarization_model`, and the experimental `background_compaction` and `background_start`; see the
 [reference](docs/reference.md#compacting-the-conversation)) and reloads it for the next turn. A

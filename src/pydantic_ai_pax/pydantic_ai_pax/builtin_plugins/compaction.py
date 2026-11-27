@@ -176,6 +176,38 @@ class CompactionSource:
         return f'Reset {row.label}.'
 
 
+_SUFFIXES = {'k': 1_000, 'm': 1_000_000}
+
+
+def _token_count(text: str) -> int:
+    """`150000`, `150,000`, `150k` or `1.5m` as a token count; `ValueError` otherwise."""
+    number = text.lower().replace(',', '').replace('_', '')
+    scale = _SUFFIXES.get(number[-1:], 1)
+    if scale != 1:
+        number = number[:-1]
+    try:
+        count = float(number) * scale
+    except ValueError:
+        raise ValueError(f'{text!r} is not a token count such as 150k or a share such as 70%.') from None
+    if not count.is_integer():
+        raise ValueError(f'{text!r} is not a whole number of tokens.')
+    return int(count)
+
+
+def _trigger(settings: CompactionSettings) -> str:
+    if (tokens := settings.threshold_tokens) is not None:
+        return f'above {tokens:,} tokens'
+    return f'above {settings.threshold * 100:g}% of the context window'
+
+
+def _percent(text: str) -> float:
+    """`70%` as `0.7`; `ValueError` otherwise."""
+    try:
+        return float(text[:-1]) / 100
+    except ValueError:
+        raise ValueError(f'{text!r} is not a share of the window such as 70%.') from None
+
+
 def build_chain(config: CompactionSettings) -> FallbackCompaction[None]:
     """Code Puppy's chain: summarise, and truncate when the summary fails or blows the usage limit.
 
@@ -267,7 +299,36 @@ class CompactionPlugin(Plugin[CompactionSettings]):
                 raw=True,
                 live=True,
             ),
+            Command(
+                name='auto-compact',
+                description='Show or set when compaction runs: a token count (150k) or a share of the window (70%)',
+                handler=self._auto_compact,
+                complete=lambda args: ('150k', '70%', 'reset') if len(args) <= 1 else (),
+            ),
         )
+
+    async def _auto_compact(self, args: list[str]) -> str:
+        if not args:
+            return f'Auto-compaction runs {_trigger(self.settings)}. Set it with /auto-compact 150k, 70%, or reset.'
+        if len(args) > 1:
+            raise ValueError('Give one value: /auto-compact 150k, /auto-compact 70%, or /auto-compact reset.')
+        data: dict[str, JsonValue] = self.settings.model_dump(mode='json')
+        data.pop('threshold_tokens', None)
+        if args[0] == 'reset':
+            data.pop('threshold', None)
+        elif args[0].endswith('%'):
+            data['threshold'] = _percent(args[0])
+        else:
+            data['threshold_tokens'] = _token_count(args[0])
+        try:
+            settings = CompactionSettings.model_validate(data)
+        except ValueError as exc:
+            raise ValueError(f'/auto-compact {args[0]}: {first_error(exc)}') from None
+        if (plugins := self.host.plugins) is None:
+            raise ValueError('/auto-compact needs a Pax session; use /plugins configure compaction.')
+        # Loads the plugin again, so the next turn runs the new chain; this instance is unloaded.
+        await plugins.save_settings(self.host.name, settings)
+        return f'Auto-compaction now runs {_trigger(settings)}.'
 
     def settings_menu(self) -> SettingsMenu:
         return SettingsMenu(source=CompactionSource(self.host))
