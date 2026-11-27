@@ -78,8 +78,8 @@ async def _run_code(
     @agent.tool_plain
     def probe() -> str:
         """Report the portal threads open while the snippet waits on this call."""
-        if portals is not None:
-            portals.append(_portal_threads())
+        assert portals is not None, 'only a snippet run with `portals` calls `probe()`'
+        portals.append(_portal_threads())
         return 'probed'
 
     result = await agent.run('go')
