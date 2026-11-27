@@ -12,6 +12,27 @@ Follow the general [documentation guidance](../agent_docs/documentation.md). The
 - Keep provider-specific configuration and behavior in `docs/models/{provider}.md` and `docs/api/models/{provider}.md`. General guides use a minimal provider-agnostic example and link to the provider page.
 - In provider feature tables, use a `Notes` or `Provider Support Notes` column for variations, limitations, and special values. Use the standard labels `Full feature support` and `Limited parameter support`, and put unsupported variants in the `Unsupported` column.
 
+## Security claims
+
+- **Do not describe a mechanism as containment unless the page it links to says so.** Authority,
+  approvals, allowlists, read-only modes and sandboxes each do something specific and narrower than
+  "safe". Name the exact mechanism and link the page that defines it, rather than reaching for a
+  word that promises more.
+- Words that promise containment, and what they usually get wrong here:
+  - "and nothing else" or "only" about an allowlist. `Shell(allowed_commands=...)` validates the
+    first token, and its own docstring calls the check "best-effort and not a security boundary".
+  - "trust" where the mechanism is `authority`. `workspace-custom.md` says plainly that "Authority
+    doesn't limit what the agent can do. Use tool approval or a sandbox for that."
+  - "sandbox" or "isolated" for a workspace. `BubblewrappedWorkspace` states on its own page that it
+    is "**not a security boundary** and **not a sandbox for untrusted code or untrusted agents**".
+  - "provisioned" or "set up for you" about a capability only some providers give. Check which.
+- **Everything, every, all, always, never**: check the page you are linking before writing one. A
+  capability's ceiling usually covers less than everything it touches, so "everything a capability
+  adds" was wrong where "what a capability tells the model mid-conversation" was right.
+- A sentence that implies a security rule gets human review before it ships. These are the claims a
+  reader makes a deployment decision on, and the cost of being generous with them is that someone
+  skips a control we told them they did not need.
+
 ## Examples
 
 - Keep code examples executable unless they require external services, credentials, or non-deterministic behavior. Use mocks or fixtures when they keep the example representative.
