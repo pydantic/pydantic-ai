@@ -583,6 +583,7 @@ def create_shell(
     # Only a page has no terminal to watch uv in; elsewhere uv keeps drawing its progress there.
     updates.capture = lambda: web_serving(loader) is not None
     updates.serving = lambda: web_serving(loader)
+    updates.resume = lambda: _saved_id(shell.session)
     models.plugins = loader.model_providers
     models.logins = loader.logins
     context.plugin_models = loader.model_names
@@ -696,6 +697,11 @@ def _show_in_terminal(
     # Mutate retained state only after the rebuild has succeeded, so reload failures can roll back.
     if transcript is not None:
         TranscriptBuffer.rebind(transcript)
+
+
+def _saved_id(session: Session[DepsT, OutputT]) -> str | None:
+    """The conversation's ID once it is saved: only then can `--resume` open it, as `relaunch` resumes it."""
+    return session.summary.id if session.summary.revision else None
 
 
 def web_serving(loader: SessionPlugins[DepsT]) -> WebHandoff | None:

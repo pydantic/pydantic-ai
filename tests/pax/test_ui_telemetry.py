@@ -300,10 +300,12 @@ async def test_unexpected_command_errors_are_recorded_under_the_command(content_
     def main_channel() -> UpdateChannel:
         return 'main'
 
+    current = Installed(version='1.0.0', tool=True)
     updates = Updates(
         channel=main_channel,
-        current=Installed(version='1.0.0', tool=True),
+        current=current,
         fetch=partial(latest, transport=httpx.MockTransport(rate_limited)),
+        on_disk=lambda: current,
     )
 
     def sign_in(args: list[str]) -> str:

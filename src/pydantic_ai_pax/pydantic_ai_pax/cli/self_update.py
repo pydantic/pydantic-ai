@@ -445,6 +445,10 @@ class Updates:
     """Finds the installed `pax` from the uv executable."""
     others: Callable[[str], Awaitable[list[str]]] = sibling_processes
     """Finds the other `pax` processes the install would break, from the uv executable."""
+    on_disk: Callable[[], Installed] = installed
+    """Reads the install again: another process's `uv tool install` can replace it under this one."""
+    resume: Callable[[], str | None] = lambda: None
+    """The saved conversation to resume once Pax starts again, for a refusal that asks for a restart."""
     restart_required: bool = False
     """Set after a successful install: the running environment was replaced, so the shell exits."""
     relaunch: str | None = None
@@ -466,6 +470,26 @@ class Updates:
         return (
             f'Not updating to {update.label}: other {command_name()} processes run from the install it would replace, '
             f'and would break (PID {", ".join(others)}). Quit them, then update again.'
+        )
+
+    def _refusal(self, args: list[str]) -> str | None:
+        """Why this process cannot update at all: another one replaced its `uv tool` install since it started.
+
+        The new files are not the code it runs, so `/update` would import modules it does not match.
+        Raises `ValueError` for arguments `/update` does not take.
+        """
+        if args not in ([], ['now']):
+            raise ValueError(
+                'Usage: /update opens the update menu; /update now installs the newest Pax. '
+                'Pick the channel with /set updates.channel stable|main.'
+            )
+        if not self.current.tool or (now := self.on_disk()) == self.current:
+            return None
+        self.failed = True
+        again = f'{command_name()} --resume {session}' if (session := self.resume()) else command_name()
+        return (
+            f'Not updating: another process installed Pax {now.label} in place of the {self.current.label} this '
+            f'one runs, so this one cannot update or restart itself. Quit, then run {again} to use it.'
         )
 
     def segment(self) -> str:
@@ -516,11 +540,8 @@ class Updates:
 
         `/update now` in a session, where bare `/update` opens the menu; `pax --update` passes no arguments.
         """
-        if args not in ([], ['now']):
-            raise ValueError(
-                'Usage: /update opens the update menu; /update now installs the newest Pax. '
-                'Pick the channel with /set updates.channel stable|main.'
-            )
+        if (refusal := self._refusal(args)) is not None:
+            return refusal
         channel = self.channel()
         update = find_update(channel, self.current, await to_thread.run_sync(self.fetch, channel))
         if update is None:
