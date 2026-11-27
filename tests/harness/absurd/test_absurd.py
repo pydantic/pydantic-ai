@@ -8,8 +8,7 @@ disambiguation and checkpoint storage are Absurd's own.
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, AsyncIterator
-from dataclasses import replace
-from typing import Any, cast
+from typing import Any
 
 import anyio
 import pytest
@@ -528,7 +527,9 @@ class TestToolResults:
         def lookup() -> ToolReturn:
             tool_calls['calls'] += 1
             return ToolReturn(
-                return_value='value', content=[cast(Any, {'kind': 'image-url', 'url': 'https://example.com/a.png'})]
+                return_value='value',
+                # Deliberately not `UserContent`: this is the content whose call isn't checkpointed.
+                content=[{'kind': 'image-url', 'url': 'https://example.com/a.png'}],  # pyright: ignore[reportArgumentType]
             )
 
         class RepairContent(AbstractCapability[object]):
@@ -538,11 +539,11 @@ class TestToolResults:
                 *,
                 call: ToolCallPart,
                 tool_def: ToolDefinition,
-                args: Any,
-                result: Any,
-            ) -> Any:
+                args: object,
+                result: object,
+            ) -> object:
                 assert isinstance(result, ToolReturn)
-                return replace(result, content=['repaired'])
+                return ToolReturn(return_value='value', content=['repaired'])
 
         model = _tool_calling_model(ToolCallPart('lookup'), counter=model_calls)
         agent = Agent(model, name='raw', toolsets=[toolset], capabilities=[RepairContent(), AbsurdDurability()])
