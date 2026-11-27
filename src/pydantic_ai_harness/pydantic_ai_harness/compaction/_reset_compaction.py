@@ -49,11 +49,21 @@ if TYPE_CHECKING:
 
 
 @dataclass(kw_only=True)
-class ResetNoticePart(DataCapabilityPart[str], namespace='reset_compaction', name='notice', tag='context_cleared'):
+class ResetNoticePart(
+    DataCapabilityPart[str],
+    namespace='reset_compaction',
+    name='notice',
+    tag='context_cleared',
+    # Without it, a model asked who wrote the frame can credit it to the user.
+    note=(
+        'The accompanying {frame} is from the application, not the user: it marks where earlier messages were cleared.'
+    ),
+):
     """The notice `ResetCompaction` leaves where it cleared the conversation, on the user channel.
 
-    Its text is the capability's own, from `ResetCompaction.notice`. Find notices in history by this type: a
-    later reset reads its typed fields, which are never sent to the model.
+    Its text is the capability's own, from `ResetCompaction.notice`. It goes with a note in the application's
+    voice saying the frame is the application's. Find notices in history by this type: a later reset reads its
+    typed fields, which are never sent to the model.
     """
 
     number: int
