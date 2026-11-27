@@ -25,6 +25,23 @@ their initialization contributes to startup time.
 `/login` offers both Codex and GitHub Copilot without loading their integrations for
 completion. Copilot requests use your saved login through the lazy provider resolver.
 
+Once enabled plugins have loaded, the terminal prints a line for each loaded
+plugin Pax doesn't ship (a drop-in, installed, or project plugin; a declaration of
+a built-in's factory counts as shipped), naming the function tools its capabilities give the model:
+`Plugin scanner: tools port_scan, whois`. Pax reads the names without running
+anything, so when it can't tell them before a run it prints the plugin's `/plugins`
+summary instead, such as `1 capability`: when a capability or toolset is a function
+built per run, a toolset sits under a wrapper toolset that can rename its tools
+(`prefixed()`, `renamed()`), a capability's `get_toolset` raises before `for_agent`
+binds it, or the plugin declares no function tools (an MCP server's tools aren't
+known until a run). A `get_toolset` that raises never fails the launch.
+
+`pax --minimal`, or `chat(only_plugins=...)`, loads only the plugins it names for
+that launch. Every other plugin counts as disabled until the process ends, so yours
+may be held off although it is enabled; nothing is saved for it. `/plugins enable
+NAME` loads it for the rest of the launch, saving nothing when only the launch held
+it off, and `/plugins add` loads a new one.
+
 ## Connect MCP servers
 
 `/mcp` is the front door for MCP servers, modelled on Code Puppy's `/mcp`. The

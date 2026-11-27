@@ -829,9 +829,14 @@ class SessionPlugins(Generic[DepsT]):
         entry = self._entry(name)
         _check_not_included(entry)
         _requested('enable', name)
+        self._process.allow(name)
+        if not entry.declaration.enabled and self._entry(name).declaration.enabled:
+            # Only a launch limited to `only` held it off, so its own declaration loads and nothing is saved:
+            # a saved copy would outrank a built-in or drop-in declaration from then on.
+            await self._load_enabled(entry)
+            return
         declaration = entry.declaration.model_copy(update={'enabled': True})
         self._process.approve(name, declaration)
-        self._process.allow(name)
         self._process.store.save_plugin(declaration, requires=self._requirements(entry))
         await self._load_enabled(entry)
 

@@ -138,6 +138,21 @@ class TestMinimal:
         assert 'scanner: tests.pax.own_plugin_fixture:Scanner (enabled, loaded)' in after
         assert [saved.enabled for saved in store.plugins()] == [True]
 
+    async def test_enabling_a_held_off_built_in_saves_nothing(self, tmp_path: Path) -> None:
+        store = SettingsStore(tmp_path / 'config.db')
+        text = await _start(store, keys='/plugins enable ask_user\r/plugins list\r', only_plugins=frozenset())
+        _, _, after = text.partition('Enabled ask_user.')
+        assert 'ask_user: pydantic_ai_pax.builtin_plugins.ask_user_menu (built-in) (enabled, loaded)' in after
+        assert store.plugins() == [], 'a saved copy would outrank the built-in declaration from then on'
+
+    async def test_enabling_a_disabled_plugin_during_a_limited_launch_saves_it(self, tmp_path: Path) -> None:
+        store = SettingsStore(tmp_path / 'config.db')
+        store.save_plugin(SCANNER.model_copy(update={'enabled': False}))
+        text = await _start(store, keys='/plugins enable scanner\r/plugins list\r', only_plugins=frozenset())
+        _, _, after = text.partition('Enabled scanner.')
+        assert 'scanner: tests.pax.own_plugin_fixture:Scanner (enabled, loaded)' in after
+        assert [saved.enabled for saved in store.plugins()] == [True]
+
     async def test_a_plugin_enabled_meanwhile_stays_loaded_after_reload(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
