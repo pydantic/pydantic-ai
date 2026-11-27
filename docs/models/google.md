@@ -282,7 +282,7 @@ this stateless adapter's scope. URI-only output raises an error.
 Interactions has no token-counting endpoint, batch support, or explicit prompt caching. Implicit caching is
 provider-managed. The SDK continues a [long decode](#long-decode) in further requests: the response holds every
 request's steps and their summed usage, context-window checks read the first request's input, and a later request that
-fails raises the error its own failure maps to. [`timeout`][pydantic_ai.settings.ModelSettings.timeout] applies to each
+fails raises the same error the first request would. [`timeout`][pydantic_ai.settings.ModelSettings.timeout] applies to each
 of those requests.
 Sampling settings absent from this API are ignored; its settings class describes them. Finish reasons are derived from
 interaction status, which has less detail than GenerateContent's finish reasons. Raw status and usage remain available
@@ -763,8 +763,8 @@ decode is one model request:
   already billed. A streamed run keeps what it streamed as a response with
   [`state='interrupted'`][pydantic_ai.messages.ModelResponse.state] that carries the finished requests' usage, which
   [`capture_run_messages()`][pydantic_ai.capture_run_messages] returns.
-- With `google-genai` 2.31.0 and later, a streamed run sends a later request that fails before it streams any output
-  3 more times from the same continuation token, with no wait. If they all fail, the model request fails as above.
+- A streamed run sends a later request that fails before it streams any output 3 more times from the same
+  continuation token, with no wait. If they all fail, the model request fails as above.
   This applies to errors the HTTP client raises: a connection that can't be opened or that drops, a timeout, or the
   `HTTPStatusError` of a [retrying transport](../retries.md#transport-retries) that gave up. It doesn't apply to an
   error status the SDK reads itself. `retry_options` and
