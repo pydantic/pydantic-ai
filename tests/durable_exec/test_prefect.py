@@ -2509,6 +2509,21 @@ def test_cache_policy_keys_for_unset_ui_visibility_are_pinned():
     assert key_for(stamped_history) != key_for(history)
 
 
+def test_cache_policy_keeps_a_set_pricing_provider_in_the_key():
+    """An unset `pricing_provider` stays out of the key, as an unset `ui_visibility` does; a set one stays in.
+
+    The cached model response carries it, so a response priced as one provider must not be reused for another.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(value: Any) -> str | None:
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'value': value}, flow_parameters={})
+
+    response = ModelResponse(parts=[TextPart('Paris.')])
+    assert key_for(replace(response, pricing_provider='doubleword')) != key_for(response)
+
+
 def test_cache_policy_normalizes_only_framework_tool_call_ids():
     cache_policy = PrefectAgentInputs()
     mock_task_ctx = MagicMock()

@@ -21,11 +21,13 @@ from pydantic_ai import (
     ModelResponse,
     RequestUsage,
     RunContext,
+    UsageLimitExceeded,
     UserError,
 )
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability, CompactionRequest, CompactionResult, Instrumentation
 from pydantic_ai.models import ModelRequestContext, infer_model
+from pydantic_ai.usage import UsageLimits
 
 from .._inline_snapshot import raises, snapshot
 from ..conftest import TestEnv, try_import
@@ -239,6 +241,8 @@ def _sse(events: list[dict[str, Any]], *, done: bool = False) -> httpx2.Response
 
 def _chat_completion(request: httpx2.Request) -> httpx2.Response:
     """A Chat Completions or Responses reply with usage and no Gateway-reported cost, so the cost is estimated locally."""
+    if request.url.path.endswith('/responses/input_tokens'):
+        return httpx2.Response(200, json={'object': 'response.input_tokens', 'input_tokens': 100})
     body = json.loads(request.content)
     if request.url.path.endswith('/responses'):
         message: dict[str, Any] = {
@@ -400,6 +404,30 @@ class _CompactsOnce(AbstractCapability[Any]):
         return CompactionResult(
             messages=[ModelRequest(parts=[part]), request.messages[-1]], part=part, handler='h', usage=self.usage
         )
+
+
+@pytest.mark.vcr(ignore_hosts=['*'])
+async def test_gateway_route_prices_counted_input_tokens_as_that_provider(allow_model_requests: None):
+    """Tokens counted before a request are priced as Doubleword too, so a `cost_limit` stops the request in time.
+
+    Priced as OpenAI, the counted tokens would have no price, and the request would be sent. Not a cassette test, for
+    the same reason as the tests above.
+    """
+    paths: list[str] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        paths.append(request.url.path)
+        return _chat_completion(request)
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond)) as http_client:
+        provider = gateway_provider('doubleword', http_client=http_client, api_key='gw-key', base_url=GATEWAY_BASE_URL)
+        agent = Agent(OpenAIResponsesModel('deepseek-ai/DeepSeek-V4.1-Flash', provider=provider))
+        with pytest.raises(UsageLimitExceeded):
+            await agent.run(
+                'Hi', usage_limits=UsageLimits(cost_limit=Decimal('0.000000001'), count_tokens_before_request=True)
+            )
+
+    assert [path.rsplit('/', 2)[-2:] for path in paths] == [['responses', 'input_tokens']]
 
 
 @pytest.mark.vcr(ignore_hosts=['*'])
