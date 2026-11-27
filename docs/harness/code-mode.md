@@ -839,7 +839,7 @@ Calls into a module behave like this:
 - **Values** cross as Monty converts them, so tuples, sets, `bytes` and dates arrive unchanged. A value it can't convert fails the snippet with a `TypeError`. Return plain data.
 - **Not tool calls**: module calls don't count toward `max_tool_calls` (each one counts toward `max_suspensions`, as every sandbox pause does), and they don't appear in the message history or in the `run_code` metadata. They emit no spans of their own; instrument your functions if you want them traced.
 
-Under durable execution, module functions run in workflow code, as `os_access` does, so they run again when a [Temporal](#temporal-durability) workflow replays or a DBOS or Prefect workflow recovers. Keep them to reads that return the same result each time. Put side effects in a tool the engine records as an activity, step or task (under DBOS, one decorated with `@DBOS.step`; see [Tools with side effects](../durable_execution/dbos.md#tools-with-side-effects)), and make it idempotent, since a recorded call can still run again if it fails before its result is saved.
+Under durable execution, module functions run in workflow code, as `os_access` does, so they run again when a [Temporal](#temporal-durability) workflow or an [Azure Durable Task](#azure-durable-task-durability) orchestration replays, or a DBOS or Prefect workflow recovers. Keep them to reads that return the same result each time. Put side effects in a tool the engine records as an activity, step or task (under DBOS, one decorated with `@DBOS.step`; see [Tools with side effects](../durable_execution/dbos.md#tools-with-side-effects)), and make it idempotent, since a recorded call can still run again if it fails before its result is saved.
 
 ## Sandbox restrictions
 

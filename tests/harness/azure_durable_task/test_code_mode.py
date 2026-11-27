@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -135,19 +135,21 @@ def test_turn_activity_stops_a_snippet_that_computes_forever(durable_worker: InM
 
 
 @pytest.mark.parametrize(
-    'code_mode,change',
+    'make_code_mode,change',
     [
-        pytest.param(CodeMode(), 'set `monty_sandbox` to a Monty server that stores sessions', id='local'),
+        pytest.param(lambda: CodeMode(), 'set `monty_sandbox` to a Monty server that stores sessions', id='local'),
         pytest.param(
-            CodeMode(monty_sandbox=stored_session_pool, os_access=OSAccess()), 'remove `os_access`', id='os_access'
+            lambda: CodeMode(monty_sandbox=stored_session_pool, os_access=OSAccess()),
+            'remove `os_access`',
+            id='os_access',
         ),
         pytest.param(
-            CodeMode(monty_sandbox=stored_session_pool, mount=MountDir(virtual_path='/data', host_path=_HERE)),
+            lambda: CodeMode(monty_sandbox=stored_session_pool, mount=MountDir(virtual_path='/data', host_path=_HERE)),
             "use only mounts without `mode='overlay'` or `write_bytes_limit`",
             id='overlay',
         ),
         pytest.param(
-            CodeMode(
+            lambda: CodeMode(
                 monty_sandbox=stored_session_pool,
                 mount=[MountDir(virtual_path='/data', host_path=_HERE, mode='read-write', write_bytes_limit=6)],
             ),
@@ -155,23 +157,23 @@ def test_turn_activity_stops_a_snippet_that_computes_forever(durable_worker: InM
             id='write_bytes_limit',
         ),
         pytest.param(
-            CodeMode(id=None, monty_sandbox=stored_session_pool),
+            lambda: CodeMode(id=None, monty_sandbox=stored_session_pool),
             'give `CodeMode` an `id` and add it to the agent directly, not from a `DynamicCapability`',
             id='no_id',
         ),
         pytest.param(
-            DynamicCapability(lambda ctx: CodeMode(monty_sandbox=stored_session_pool), id='dynamic_code'),
+            lambda: DynamicCapability(lambda ctx: CodeMode(monty_sandbox=stored_session_pool), id='dynamic_code'),
             'give `CodeMode` an `id` and add it to the agent directly, not from a `DynamicCapability`',
             id='dynamic',
         ),
     ],
 )
 def test_configs_whose_turns_cannot_be_activities_are_refused(
-    durable_worker: InMemoryWorker, code_mode: AbstractCapability[None], change: str
+    durable_worker: InMemoryWorker, make_code_mode: Callable[[], AbstractCapability[None]], change: str
 ) -> None:
     """A snippet that would run in orchestrator code fails the run before it starts, saying what to change."""
     calls: list[tuple[int, int]] = []
-    message = _refusal(durable_worker, _make_agent(calls, code_mode))
+    message = _refusal(durable_worker, _make_agent(calls, make_code_mode()))
     assert _REFUSED in message
     assert change in message
     assert calls == []

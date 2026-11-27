@@ -1084,7 +1084,8 @@ Calls into a module behave like this:
   them traced.
 
 Under durable execution, module functions run in workflow code, as `os_access` does, so they run
-again when a [Temporal](#temporal-durability) workflow replays or a DBOS or Prefect workflow
+again when a [Temporal](#temporal-durability) workflow or an [Azure Durable
+Task](#azure-durable-task-durability) orchestration replays, or a DBOS or Prefect workflow
 recovers. Keep them to reads that return the same result each time. Put side effects in a tool the
 engine records as an activity, step or task (under DBOS, one decorated with `@DBOS.step`), and make
 it idempotent, since a recorded call can still run again if it fails before its result is saved.
