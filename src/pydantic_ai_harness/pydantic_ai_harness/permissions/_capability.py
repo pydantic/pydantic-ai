@@ -44,6 +44,9 @@ PermissionMode = Literal['full', 'auto', 'read-only']
 - `'read-only'`: every file write and every command asks first.
 """
 
+_STRICTNESS: dict[PermissionMode, int] = {'full': 0, 'auto': 1, 'read-only': 2}
+
+
 PermissionAction = Literal['command', 'write']
 """What a call that asks would do: run a shell command, or write a file."""
 
@@ -75,6 +78,16 @@ class _Asked(BaseModel):
     subject: str
     reason: str
     person_only: bool = False
+
+
+class _PersonOnly(BaseModel):
+    person_only: bool = False
+
+
+class _PersonOnlyMetadata(BaseModel):
+    """The `person_only` flag of a call `Permissions` holds, whether as a `PermissionRequest` or a plain approval."""
+
+    permissions: _PersonOnly
 
 
 class _AskedMetadata(BaseModel):
@@ -192,6 +205,12 @@ class Permissions(AbstractCapability[AgentDepsT]):
 
     Outside `'full'`, a call that changes one of `protected_paths`, or runs one of `protected_commands`, always
     asks, whatever the rules allow, and an `ApprovalReviewer` leaves it to the person.
+
+    `max_mode` and `managed_rules` are limits set by whoever configures the agent for the people who run it,
+    such as an organization's managed settings: `mode` and `rules`, which the person running it may choose,
+    can't loosen them. Every `'deny'`, managed or not, is checked before any `'ask'`, so approving a call
+    never runs one a rule denies. A call held by a managed rule or by `max_mode` is `person_only`, like a
+    protected change.
     """
 
     mode: PermissionMode | Callable[[RunContext[AgentDepsT]], PermissionMode] = 'full'
@@ -201,6 +220,24 @@ class Permissions(AbstractCapability[AgentDepsT]):
 
     rules: Sequence[PermissionRule[AgentDepsT]] = ()
     """Rules that allow, ask about, or deny matching calls, checked before the mode."""
+
+    max_mode: PermissionMode | Callable[[RunContext[AgentDepsT]], PermissionMode] = 'full'
+    """The widest mode `mode` may take, or a function returning it for a run: a wider `mode` acts as this one.
+
+    It is checked on its own, before the `'ask'` rules in `rules` and before `mode`: only an `'allow'` in
+    `managed_rules` skips the blanket ask of a `'read-only'` `max_mode`, so an `'allow'` in `rules` doesn't lift
+    a call over it. What it asks about is `person_only`.
+    """
+
+    managed_rules: Sequence[PermissionRule[AgentDepsT]] = ()
+    """Rules checked before `rules`, which `rules`, approvals and the mode can't loosen.
+
+    A managed `'deny'` refuses a call even when it was approved. A managed `'ask'` holds a call even when a rule
+    allows it, and only a person may approve it (`person_only`). A managed `'allow'` skips the blanket ask of a
+    `'read-only'` `max_mode`, but not a `'deny'` or `'ask'` in `rules`, a stricter `mode`, or `protected_paths`.
+    A command longer than `COMMAND_LIMIT` is refused while any managed `'deny'` applies to commands, since it is
+    too long to check against one.
+    """
 
     ask_commands: Sequence[str] = DEFAULT_ASK_COMMANDS
     """Regular expressions for the commands `'auto'` asks about, searched for anywhere in the command."""
@@ -259,6 +296,8 @@ class Permissions(AbstractCapability[AgentDepsT]):
         mode: PermissionMode = 'full',
         *,
         rules: Sequence[PermissionRuleSpec] = (),
+        max_mode: PermissionMode = 'full',
+        managed_rules: Sequence[PermissionRuleSpec] = (),
         ask_commands: Sequence[str] = DEFAULT_ASK_COMMANDS,
         protected_paths: Sequence[str] = (),
         protected_commands: Sequence[str] = (),
@@ -266,10 +305,12 @@ class Permissions(AbstractCapability[AgentDepsT]):
         description: str | None = None,
         defer_loading: bool = False,
     ) -> Permissions[AgentDepsT]:
-        """Build the serializable configuration: a fixed mode, and rules as mappings of `PermissionRule` fields."""
+        """Build the serializable configuration: fixed modes, and rules as mappings of `PermissionRule` fields."""
         return cls(
             mode,
             rules=[PermissionRule[AgentDepsT](**rule) for rule in rules],
+            max_mode=max_mode,
+            managed_rules=[PermissionRule[AgentDepsT](**rule) for rule in managed_rules],
             ask_commands=ask_commands,
             protected_paths=protected_paths,
             protected_commands=protected_commands,
@@ -279,8 +320,8 @@ class Permissions(AbstractCapability[AgentDepsT]):
         )
 
     def mode_for(self, ctx: RunContext[AgentDepsT]) -> PermissionMode:
-        """The permission mode for `ctx`'s run, as it stands now."""
-        return self.mode(ctx) if callable(self.mode) else self.mode
+        """The permission mode for `ctx`'s run, as it stands now: `mode`, held to `max_mode`."""
+        return max(_read(self.mode, ctx), _read(self.max_mode, ctx), key=_STRICTNESS.__getitem__)
 
     async def after_tool_validate(
         self,
@@ -290,16 +331,25 @@ class Permissions(AbstractCapability[AgentDepsT]):
         tool_def: ToolDefinition,
         args: ValidatedToolArgs,
     ) -> ValidatedToolArgs:
-        """Hold a protected call for a person as soon as its arguments are valid.
+        """Hold a call for a person as soon as its arguments are valid, when only a person may approve it.
 
         This is before core defers a tool registered with `requires_approval=True`, and before any
         `before_tool_execute` hook asks, so whichever mechanism defers the call, its request says that only
-        a person may approve it.
+        a person may approve it: a protected change, a managed `'ask'`, or a hold of `max_mode`.
         """
-        if ctx.tool_call_approved:
+        if ctx.tool_call_approved or not _holds_for_a_person(self):
             return args
-        asked = await self._protected_asks(ctx, tool_def=tool_def, args=args)
-        if asked is not None:
+        try:
+            asked = await self._asks(ctx, tool_def=tool_def, args=args)
+        except SkipToolExecution:
+            # Left to `before_tool_execute`, which refuses it.
+            return args
+        except ApprovalRequired as held:
+            # A managed ask on a tool that neither runs a command nor writes a file.
+            if person_only_request(held.metadata):
+                raise
+            return args
+        if asked is not None and asked.person_only:
             raise ApprovalRequired(metadata=_AskedMetadata(permissions=asked).model_dump())
         return args
 
@@ -363,33 +413,34 @@ class Permissions(AbstractCapability[AgentDepsT]):
     ) -> _Asked | None:
         """What to ask about this call, or `None` to run it; raises `SkipToolExecution` when a rule denies it."""
         command = shell_command(tool_def, args)
-        rules = [rule for rule in self.rules if await matches_tool_selector(rule.tools, ctx, tool_def)]
         posix = ctx.workspace.platform != 'windows'
-        rule = decide(rules, command=command, command_arg=shell_command_arg(tool_def), args=args, posix=posix)
+        # A managed deny inside quotes stays a deny: the person it restricts mustn't approve their way past it.
+        managed = await _decided(
+            ctx, self.managed_rules, tool_def=tool_def, args=args, command=command, posix=posix, strict=True
+        )
+        rule = await _decided(ctx, self.rules, tool_def=tool_def, args=args, command=command, posix=posix)
         subject = _subject(tool_def, args, command)
+        # Every deny before any ask: a person approving a managed ask must not run a call a rule denies.
+        if managed is not None and managed.verdict == 'deny':
+            return _rule_asks(ctx, managed, subject, managed=True)
         if rule is not None and rule.verdict == 'deny':
             return _rule_asks(ctx, rule, subject)
-        mode = self.mode_for(ctx)
+        if managed is not None and managed.verdict == 'ask':
+            return _rule_asks(ctx, managed, subject, managed=True)
+        person, ceiling = _read(self.mode, ctx), _read(self.max_mode, ctx)
+        mode = max(person, ceiling, key=_STRICTNESS.__getitem__)
         if mode != 'full' and (protected := await self._protected(ctx, subject, posix=posix)) is not None:
             return protected
-        if rule is not None and rule.verdict != 'allow':
+        # The ceiling before the person's own ask rules, so one of theirs can't drop its hold for a person only. Each
+        # layer's own allow skips only its own mode's blanket ask.
+        held = self._mode_asks(
+            ceiling, tool_def=tool_def, args=args, command=command, allowed=managed is not None, ceiling=True
+        )
+        if held is not None:
+            return held
+        if rule is not None and rule.verdict == 'ask':
             return _rule_asks(ctx, rule, subject)
-        return self._mode_asks(mode, tool_def=tool_def, args=args, command=command, allowed=rule is not None)
-
-    async def _protected_asks(
-        self, ctx: RunContext[AgentDepsT], *, tool_def: ToolDefinition, args: dict[str, Any]
-    ) -> _Asked | None:
-        """What to ask a person about a call that changes a protected path, unless a rule denies the call."""
-        if not (self.protected_paths or self.protected_commands) or self.mode_for(ctx) == 'full':
-            return None
-        command = shell_command(tool_def, args)
-        rules = [rule for rule in self.rules if await matches_tool_selector(rule.tools, ctx, tool_def)]
-        posix = ctx.workspace.platform != 'windows'
-        rule = decide(rules, command=command, command_arg=shell_command_arg(tool_def), args=args, posix=posix)
-        if rule is not None and rule.verdict == 'deny':
-            # Left to `before_tool_execute`, which refuses it.
-            return None
-        return await self._protected(ctx, _subject(tool_def, args, command), posix=posix)
+        return self._mode_asks(person, tool_def=tool_def, args=args, command=command, allowed=rule is not None)
 
     async def _protected(
         self, ctx: RunContext[AgentDepsT], subject: tuple[PermissionAction, str] | None, *, posix: bool
@@ -433,28 +484,54 @@ class Permissions(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
         command: str | None,
         allowed: bool,
+        ceiling: bool = False,
     ) -> _Asked | None:
-        """What the mode asks about a call; a rule's allow skips read-only's blanket ask, not `ask_commands`."""
+        """What the mode asks about a call; a rule's allow skips read-only's blanket ask, not `ask_commands`.
+
+        With `ceiling`, `mode` is `max_mode`, so what it asks about is for a person only.
+        """
         if mode == 'full':
             return None
+        label = f'The maximum permission mode, {mode!r},' if ceiling else f'{mode.capitalize()} mode'
         if tool_def.tool_kind in _WRITE_KINDS:
             # The file tools only reach files inside their root, so `'auto'` lets them write.
             path = args.get('path')
             if mode == 'read-only' and not allowed and isinstance(path, str):
-                return _Asked(action='write', subject=path, reason='Read-only mode asks before every file write.')
+                reason = f'{label} asks before every file write.'
+                return _Asked(action='write', subject=path, reason=reason, person_only=ceiling)
             return None
         if command is None:
             return None
         if mode == 'read-only' and not allowed:
-            return _Asked(action='command', subject=command, reason='Read-only mode asks before every command.')
+            reason = f'{label} asks before every command.'
+            return _Asked(action='command', subject=command, reason=reason, person_only=ceiling)
         if any(pattern.search(command) for pattern in self._patterns):
-            label = 'Auto' if mode == 'auto' else 'Read-only'
-            return _Asked(
-                action='command',
-                subject=command,
-                reason=f'{label} mode asks before commands that delete, push, install, or reach the network.',
-            )
+            reason = f'{label} asks before commands that delete, push, install, or reach the network.'
+            return _Asked(action='command', subject=command, reason=reason, person_only=ceiling)
         return None
+
+
+def _read(
+    mode: PermissionMode | Callable[[RunContext[AgentDepsT]], PermissionMode], ctx: RunContext[AgentDepsT]
+) -> PermissionMode:
+    return mode(ctx) if callable(mode) else mode
+
+
+async def _decided(
+    ctx: RunContext[AgentDepsT],
+    rules: Sequence[PermissionRule[AgentDepsT]],
+    *,
+    tool_def: ToolDefinition,
+    args: dict[str, Any],
+    command: str | None,
+    posix: bool,
+    strict: bool = False,
+) -> PermissionRule[AgentDepsT] | None:
+    """The rule among `rules` deciding a call, or `None` when none applies; see `decide` for `strict`."""
+    applying = [rule for rule in rules if await matches_tool_selector(rule.tools, ctx, tool_def)]
+    return decide(
+        applying, command=command, command_arg=shell_command_arg(tool_def), args=args, posix=posix, strict=strict
+    )
 
 
 def _subject(
@@ -470,20 +547,31 @@ def _subject(
 
 
 def _rule_asks(
-    ctx: RunContext[AgentDepsT], rule: PermissionRule[Any], subject: tuple[PermissionAction, str] | None
+    ctx: RunContext[AgentDepsT],
+    rule: PermissionRule[Any],
+    subject: tuple[PermissionAction, str] | None,
+    *,
+    managed: bool = False,
 ) -> _Asked | None:
-    """What an `'ask'` rule asks about a call; raises `SkipToolExecution` for a `'deny'` rule."""
+    """What an `'ask'` rule asks about a call; raises `SkipToolExecution` for a `'deny'` rule.
+
+    A managed rule's ask is for a person only.
+    """
     what = 'tool call' if subject is None else _WHAT[subject[0]]
+    source = 'A managed permission rule' if managed else 'A permission rule'
     if rule.verdict == 'deny':
-        message = f'A permission rule denied this {what}, so it did not run. Do not retry it.'
+        message = f'{source} denied this {what}, so it did not run. Do not retry it.'
         raise SkipToolExecution(ToolDenied(f'{message} Reason: {rule.reason}' if rule.reason else message))
     if subject is None:
         # Not a command or file write, so it takes the plain approval flow, like `requires_approval=True`.
-        if ctx.tool_call_approved:
+        if ctx.tool_call_approved and not (managed and _reviewed(ctx.tool_call_metadata)):
             return None
-        raise ApprovalRequired(metadata={'reason': rule.reason} if rule.reason else None)
-    reason = rule.reason or f'A permission rule asks before this {what}.'
-    return _Asked(action=subject[0], subject=subject[1], reason=reason)
+        metadata: dict[str, Any] = {'reason': rule.reason} if rule.reason else {}
+        if managed:
+            metadata |= _PersonOnlyMetadata(permissions=_PersonOnly(person_only=True)).model_dump()
+        raise ApprovalRequired(metadata=metadata or None)
+    reason = rule.reason or f'{source} asks before this {what}.'
+    return _Asked(action=subject[0], subject=subject[1], reason=reason, person_only=managed)
 
 
 def _nests_tool_return(result: object) -> bool:
@@ -506,7 +594,7 @@ def _remembered_in(messages: Sequence[ModelMessage], remembered: _Remembered, to
 def person_only_request(metadata: object) -> bool:
     """Whether a deferred call's metadata says `Permissions` holds it for a person only to approve."""
     try:
-        return _AskedMetadata.model_validate(metadata).permissions.person_only
+        return _PersonOnlyMetadata.model_validate(metadata).permissions.person_only
     except ValidationError:
         return False
 
@@ -533,8 +621,14 @@ def marks_reviewer_approvals(ctx: RunContext[Any]) -> bool:
 
 
 def _holds_for_a_person(permissions: Permissions[Any]) -> bool:
-    """Whether `permissions` can hold a call that only a person may approve."""
-    return bool(permissions.protected_paths or permissions.protected_commands)
+    """Whether `permissions` can hold a call that only a person may approve.
+
+    Protected paths and commands, managed rules, and a `max_mode` other than `'full'` can; a `max_mode` function
+    counts too, since what it returns isn't known until a call.
+    """
+    return bool(permissions.protected_paths or permissions.protected_commands or permissions.managed_rules) or (
+        permissions.max_mode != 'full'
+    )
 
 
 def reviewed_approval_metadata() -> dict[str, Any]:

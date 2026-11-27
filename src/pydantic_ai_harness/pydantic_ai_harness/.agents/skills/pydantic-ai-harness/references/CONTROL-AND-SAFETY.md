@@ -438,6 +438,13 @@ and the request is `person_only`: `ApprovalReviewer` never reviews it and `remem
 A deny rule still refuses it. It is checked best effort, by the command's
 text.
 
+`max_mode` and `managed_rules` are limits from whoever configures the agent for the people who run it, such as an
+organization's managed settings. `mode_for()` is the stricter of `mode` and `max_mode`. Managed rules are checked
+before `rules`, and every deny (managed or not) before any ask, so a managed deny refuses even an approved call and a
+managed ask holds what `rules` allows. Only a managed allow skips a `'read-only'` `max_mode`'s blanket ask, and it
+never loosens the person's own `rules` or `mode`. What a managed rule or `max_mode` holds is `person_only`. A
+sub-agent is held to them only when the `Permissions` reaches it through `SubAgents(shared_capabilities=[...])`.
+
 ```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import HandleDeferredToolCalls, LocalWorkspace

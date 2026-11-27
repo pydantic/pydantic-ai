@@ -30,7 +30,7 @@ the guidance says so only to runs whose state is kept.
 from collections import deque
 from collections.abc import AsyncIterable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Literal, TypeAlias, TypeGuard
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard
 
 from pydantic_monty import MountDir, OSAccess
 
@@ -44,7 +44,7 @@ from pydantic_ai.capabilities import (
     WrapToolExecuteHandler,
 )
 from pydantic_ai.messages import AgentStreamEvent, ToolCallPart, ToolReturnPart
-from pydantic_ai.tools import AgentDepsT, ToolDefinition
+from pydantic_ai.tools import AgentDepsT, ToolDefinition, ToolSelector
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness.code_mode import (
@@ -303,7 +303,7 @@ def _mount_mode(leaves: Sequence[AbstractCapability[AgentDepsT]] | None) -> _Mou
     return 'read-write' if writable else 'read-only'
 
 
-_WRITING_TOOLS = frozenset({'write_file', 'edit_file', 'shell', 'run_code'})
+_WRITING_TOOLS = frozenset({'write_file', 'edit_file', 'create_directory', 'shell', 'run_code'})
 """Tools whose guard a writable mount would bypass; eager `pathlib` writes run before `run_code`'s."""
 
 
@@ -327,7 +327,11 @@ def _checks(leaf: AbstractCapability[AgentDepsT], names: frozenset[str]) -> bool
         return True
     if not isinstance(leaf, ToolCallJudge):
         return False
-    tools = leaf.tools
+    return _selects(leaf.tools, names)
+
+
+def _selects(tools: ToolSelector[Any], names: frozenset[str]) -> bool:
+    """Whether a tool selector may select a tool in `names`: one other than a list of names may select any."""
     if isinstance(tools, str | dict) or callable(tools):
         return True
     return not names.isdisjoint(tools)
@@ -350,12 +354,16 @@ def _permitted(
     permissions: _RunPermissions[AgentDepsT],
     ctx: RunContext[AgentDepsT],
 ) -> _MountMode | None:
-    """`mode`, read-only while any of `permissions` asks before file writes it would make.
+    """`mode`, limited so that `pathlib` can't read or write what any of `permissions` would hold.
 
-    That is one in `read-only` mode, whose file writes all ask first, or one with `protected_paths` outside
-    `full`, as `pathlib` could write one of them without asking.
+    A write is asked about in `read-only` mode, with `protected_paths` outside `full`, or under a managed ask or
+    deny rule that isn't only about commands and may select a tool that writes. `pathlib` would bypass each.
+    A managed ask or deny that may select `read_file` leaves nothing mounted, as a `ToolGuardrail` that may check
+    it does: `pathlib` could read what the rule holds.
     """
     bound = (permissions,) if isinstance(permissions, Permissions) else permissions or ()
+    if any(_managed_selects(permission, _READING_TOOLS) for permission in bound):
+        return None
     if mode == 'read-write' and any(_asks_before_writes(permission, ctx) for permission in bound):
         return 'read-only'
     return mode
@@ -363,7 +371,20 @@ def _permitted(
 
 def _asks_before_writes(permissions: Permissions[AgentDepsT], ctx: RunContext[AgentDepsT]) -> bool:
     mode = permissions.mode_for(ctx)
-    return mode == 'read-only' or (mode != 'full' and bool(permissions.protected_paths))
+    if mode == 'read-only' or (mode != 'full' and bool(permissions.protected_paths)):
+        return True
+    return _managed_selects(permissions, _WRITING_TOOLS)
+
+
+_READING_TOOLS = frozenset({'read_file'})
+
+
+def _managed_selects(permissions: Permissions[AgentDepsT], names: frozenset[str]) -> bool:
+    """Whether a managed ask or deny of `permissions` that isn't only about commands may select a tool in `names`."""
+    return any(
+        rule.verdict != 'allow' and rule.command is None and _selects(rule.tools, names)
+        for rule in permissions.managed_rules
+    )
 
 
 @dataclass
