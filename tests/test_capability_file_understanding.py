@@ -572,14 +572,17 @@ def _text_document_agent(seen: list[list[ModelMessage]]) -> Agent[None, str]:
 
 
 async def test_text_documents_by_url_are_downloaded_one_at_a_time(monkeypatch: pytest.MonkeyPatch):
-    if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
-        pytest.skip('Agent.run() requires asyncio')
     """Text documents share the request's download total, and are downloaded one after another.
 
     Each download in flight reserves up to the per-file limit of the total, so 11 at once would leave the last one
     nothing, however small the files are. One at a time, only the bytes actually downloaded count. The limits are
     scaled down: 1 KiB per file and 10 KiB in total.
+
+    Not a VCR test: the files are served locally to count the downloads in flight, and the model's reply plays no
+    part.
     """
+    if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
+        pytest.skip('Agent.run() requires asyncio')
     sizes = {f'small{i}': 5 for i in range(11)}
     in_flight = serve_text_files(monkeypatch, sizes)
     seen: list[list[ModelMessage]] = []
@@ -594,13 +597,15 @@ async def test_text_documents_by_url_are_downloaded_one_at_a_time(monkeypatch: p
 
 
 async def test_text_documents_by_url_are_downloaded_while_the_total_has_room(monkeypatch: pytest.MonkeyPatch):
-    if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
-        pytest.skip('Agent.run() requires asyncio')
     """With most of the total already downloaded, each small document still gets what is left of it.
 
     A cap of downloads in flight would not do: with 9 KiB of the 10 KiB total held, ten small documents in flight at
     once can't each reserve the 1 KiB per-file limit.
+
+    Not a VCR test: the files are served locally at sizes set against the total, and the model's reply plays no part.
     """
+    if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
+        pytest.skip('Agent.run() requires asyncio')
     sizes = {**{f'big{i}': 1000 for i in range(9)}, **{f'small{i}': 5 for i in range(10)}}
     serve_text_files(monkeypatch, sizes)
     seen: list[list[ModelMessage]] = []
@@ -628,9 +633,12 @@ async def test_text_documents_by_url_are_downloaded_while_the_total_has_room(mon
 async def test_text_documents_by_url_are_refused_past_the_download_limits(
     sizes: dict[str, int], error: str, monkeypatch: pytest.MonkeyPatch
 ):
+    """The text documents one request downloads are refused past the per-request total and the per-file limit.
+
+    Not a VCR test: the request is refused before any model request is sent.
+    """
     if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
         pytest.skip('Agent.run() requires asyncio')
-    """The text documents one request downloads are refused past the per-request total and the per-file limit."""
     serve_text_files(monkeypatch, sizes)
     agent = _text_document_agent([])
 
