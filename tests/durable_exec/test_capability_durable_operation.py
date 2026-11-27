@@ -97,6 +97,7 @@ if TYPE_CHECKING:
 
     from pydantic_ai.durable_exec.dbos import DBOSDurability
     from pydantic_ai.durable_exec.prefect import PrefectDurability
+    from pydantic_ai.durable_exec.prefect._types import default_task_config
     from pydantic_ai.durable_exec.temporal import TemporalDurability
     from pydantic_ai.durable_exec.temporal._transports import _CapabilityOperationParams, _CapabilityOperationTransport
 
@@ -116,10 +117,11 @@ else:
         from prefect import flow
 
         from pydantic_ai.durable_exec.prefect import PrefectDurability
+        from pydantic_ai.durable_exec.prefect._types import default_task_config
 
         prefect_available = True
     except ImportError:  # pragma: lax no cover
-        flow = PrefectDurability = cast(Any, None)
+        flow = PrefectDurability = default_task_config = cast(Any, None)
         prefect_available = False
 
     try:
@@ -2848,8 +2850,6 @@ async def test_prefect_file_understanding_text_downloads_share_one_total(
 
     The limits are scaled down: 1 KiB per file and 10 KiB in total.
     """
-    from pydantic_ai.durable_exec.prefect._types import default_task_config
-
     in_flight = serve_text_files(monkeypatch, sizes)
     # A refused download cancels the request's other `describe` tasks, and Prefect leaves a task's result file open
     # when the task is cancelled while writing it, which fails this test's teardown. The total doesn't depend on
