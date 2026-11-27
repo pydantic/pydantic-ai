@@ -270,6 +270,21 @@ that default for subsequent turns; `N` must be a non-negative integer, with `0`
 disabling retries. Explicit retry limits on a tool or toolset take precedence.
 Output-validation and HTTP transport retry budgets are unchanged.
 
+## Tool errors
+
+An exception that a plugin's tool or an MCP tool raises does not end the turn. Pax's
+agent sends the model a failed tool result that names the tool and the exception type,
+such as "`crash` raised RuntimeError", and the model decides whether to call it again
+or try another way. The exception's message is left out, since it can carry file paths,
+hostnames, or connection strings. To tell the model something, raise `ModelRetry` (try
+again, within the tool's retries) or `ToolFailed` (this call failed for good) with the
+message. `CallDeferred`, `ApprovalRequired`, `SkipToolExecution`, `UsageLimitExceeded`,
+`UserError`, and cancelling the turn keep their usual meaning. A `tool_execute_error` hook
+no longer sees the exceptions reported this way. This is harness
+[Report Tool Errors](../../docs/harness/report-tool-errors.md), bound to the agent `pax`
+builds. An agent you bring with `--agent` or `chat(agent)`, and `open_stock_agent`, leave
+it out, so an exception ends the run there.
+
 ## Credentials
 
 Pax's `/login openai-codex`, `/login github-copilot`, and the vllm and openrouter connections store tokens
@@ -2840,7 +2855,7 @@ The ones people reach for:
 | `before_model_request` | just before the model is called; you can edit the request |
 | `before_tool_execute` | a tool is about to run; raise to stop it |
 | `after_tool_execute` | a tool has returned |
-| `tool_execute_error` | a tool raised |
+| `tool_execute_error` | a tool raised something Pax does not [report to the model](#tool-errors) |
 | `event` | every stream event, or only the classes you name |
 
 The full list and every signature are in the
