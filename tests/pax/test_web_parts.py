@@ -883,9 +883,11 @@ async def test_run_web_serves_an_agent_of_your_own(tmp_path: Path, monkeypatch: 
     opened: list[str] = []
     monkeypatch.setattr('pydantic_ai_pax.builtin_plugins.web.open_browser', opened.append)
     offered: list[list[str]] = []
+    instructions: list[str] = []
 
     async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         offered.append(sorted(tool.name for tool in info.function_tools))
+        instructions.append(info.instructions or '')
         if len(offered) == 1:
             yield {0: DeltaToolCall(name='shout', json_args='{"text": "hello"}')}
         else:
@@ -940,6 +942,8 @@ async def test_run_web_serves_an_agent_of_your_own(tmp_path: Path, monkeypatch: 
             group.cancel_scope.cancel()
     # Only its own tool: the web UI adds no question tool to an agent of your own, nor any stock plugin's tools.
     assert offered == [['shout']] * 2
+    # Nor the guidance that tells the model to call it.
+    assert not any('ask_user_question' in text for text in instructions)
     assert len(await SqliteConversationStore(database=store.path.with_name('sessions.db')).listing(limit=10)) == 1
 
 

@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from rich.console import RenderableType
 
 from pydantic_ai import AgentStreamEvent
+from pydantic_ai.agent.abstract import AgentInstructions
 from pydantic_ai.capabilities import AgentCapability, WrapperCapability
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness.ask_user import AskUser
@@ -231,9 +232,13 @@ def _launch_page(url: str) -> Path:
 
 @dataclass
 class _OfferedQuestions(WrapperCapability[None]):
-    """`AskUser`, whose `ask_user_question` tool the agent gets only while `offered()` says so, checked each run."""
+    """`AskUser`, whose `ask_user_question` tool and its instructions the agent gets only while `offered()` says so."""
 
     offered: Callable[[], bool] = lambda: True
 
     def get_toolset(self) -> AgentToolset[None] | None:
         return super().get_toolset() if self.offered() else None
+
+    def get_instructions(self) -> AgentInstructions[None] | None:
+        # Its guidance names the tool, so it goes wherever the tool does.
+        return super().get_instructions() if self.offered() else None

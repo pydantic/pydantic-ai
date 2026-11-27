@@ -3828,9 +3828,9 @@ starts off, whatever is saved; `/set run.code_mode true` turns it on. `-p`, `--r
 `--web`, and `--worktree` still apply; `config` and `plugins` subcommands reject `--agent`.
 With `--web`, every session of the [web UI](#several-sessions-in-the-web-ui) runs the agent,
 including the ones the sidebar opens, and the model picker switches its model as `/model`
-does. The `web` plugin is the one plugin that loads, with its saved settings, so the agent
-can also ask you questions in the browser through `ask_user_question`; set the `web`
-plugin's `ask_user` setting off to give the agent only its own tools.
+does. The `web` plugin is the one plugin that loads, with its saved settings. It answers
+the agent's `requires_approval` tools in the browser but adds no tool or instructions of
+its own, so the model sees only the tools the agent defines.
 To pass deps or plugins, write a launcher that calls `chat` (see
 `customization.md`).
 
