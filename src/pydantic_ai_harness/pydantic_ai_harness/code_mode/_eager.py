@@ -350,11 +350,11 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
 
         if tool_args.get('restart', False):
             await self.execution.discard(call)
-            if call.execution.usage_limit_exceeded is not None:
-                # No failure is stored alongside a usage limit, so this records only the budget. Otherwise
+            if call.execution.run_ending_error is not None:
+                # No failure is stored alongside a run-ending error, so this records only the budget. Otherwise
                 # the restarted run records its own outcome, and a discarded statement's failure is moot.
                 call.execution.record_outcome(ctx)
-                raise call.execution.usage_limit_exceeded
+                raise call.execution.run_ending_error
             async with self.execution.feed_lock:
                 return await super().call_tool(name, tool_args, ctx, tool)
 
@@ -367,8 +367,8 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
             # The streamed code was discarded, so a statement of it that failed early is not this call's outcome.
             call.execution.failure = None
             call.execution.record_outcome(ctx)
-            if call.execution.usage_limit_exceeded is not None:
-                raise call.execution.usage_limit_exceeded
+            if call.execution.run_ending_error is not None:
+                raise call.execution.run_ending_error
             raise ModelRetry(
                 'The submitted code no longer matches the prefix eager execution already ran, '
                 'so the session was restarted. Send the snippet again.'

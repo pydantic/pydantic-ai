@@ -502,7 +502,7 @@ async def _run_turn(
     mount: MountDir | list[MountDir] | None,
     capture: CollectString,
 ) -> MontyTurn:
-    if await _session_id(session) is None:
+    if await session.get_session_id() is None:
         # Before anything ran, CodeMode falls back to workflow code. Later, this checkout reached a
         # server that cannot have the run's record, so CodeMode reports it as a dropped session.
         if request.state is None:
@@ -692,21 +692,6 @@ async def _load(
         await session.load_session(state)
         return None
     return await session.load_snapshot(state, mount=mount, print_callback=capture)
-
-
-async def _session_id(session: AsyncMontySession) -> bytes | None:
-    """The ID a storing server gave `session`, or `None` from a server that stores nothing.
-
-    Monty 1.6 opens a remote session on its first request, so its `session_id` property reads `None`
-    until then; `get_session_id()` opens the session to answer. Monty 1.5 has only the property, set
-    on checkout.
-    """
-    get_session_id = getattr(session, 'get_session_id', None)
-    # Monty 1.5; the tests' storing server models 1.6.
-    if get_session_id is None:  # pragma: no cover
-        return session.session_id
-    session_id: bytes | None = await get_session_id()
-    return session_id
 
 
 async def _dump(session: AsyncMontySession) -> str:

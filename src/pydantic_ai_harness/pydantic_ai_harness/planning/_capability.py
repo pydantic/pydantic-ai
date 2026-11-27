@@ -251,7 +251,9 @@ class Planning(AbstractCapability[AgentDepsT]):
         conversation and nothing is added. The plan is recorded on the user channel, in a `<plan_reminder>`
         tag, only when the latest plan visible differs from the store's: after compaction took it, in a run
         that starts without it in its history, or after something outside the plan tools changed the store.
-        Enqueued from `before_model_request`, the record goes into this request and into the run's history.
+        Enqueued from `before_model_request`, the record goes into this request and into the run's history:
+        before the user's prompt when the request holds one, as at the start of a run, so the question comes
+        last, and at its end otherwise, after the tool results in a tool loop.
         """
         if not self.inject:
             return request_context
@@ -268,7 +270,7 @@ class Planning(AbstractCapability[AgentDepsT]):
         # A plan emptied outside the plan tools after the model was shown one is recorded too, so it doesn't read as current.
         plan = framed_plan(items)
         if plan != latest:
-            ctx.enqueue(PlanReminderPart(content=render_plan(items), source=_PLAN_SOURCE))
+            ctx.enqueue(PlanReminderPart(content=render_plan(items), source=_PLAN_SOURCE), placement='before_prompt')
         return request_context
 
     # Each plan store call is a durable operation, so recovering a durable run reuses the recorded
