@@ -106,13 +106,15 @@ def dump_tool_result_attachments(attachments: Sequence[ToolResultAttachment]) ->
     """Dump a tool return's [`attachments`][pydantic_ai.messages.ToolReturnPart.attachments] for a client, or `None` without any.
 
     They ride the tool result's metadata channel, never a user message, so a client-held history keeps them as the tool
-    result's data. The reserved `__pydantic_ai__` namespace of `TextContent` metadata stays server-side.
+    result's data. The reserved `__pydantic_ai__` namespace of `TextContent` metadata stays server-side, and so does
+    `capability_id`: for an `MCP(url=...)` without an explicit `id` it's derived from the server's URL.
     """
     if not attachments:
         return None
     return _tool_result_attachments_ta.dump_python(
         [replace(attachment, content=without_internal_text_metadata(attachment.content)) for attachment in attachments],
         mode='json',
+        exclude={'__all__': {'capability_id'}},
     )
 
 
@@ -120,14 +122,16 @@ def load_tool_result_attachments(data: object) -> Sequence[ToolResultAttachment]
     """Load the attachments a client sent back on a tool result, or none if absent or malformed.
 
     Client-supplied and untrusted, like any claim in the metadata channel: they render as the tool result's data
-    whatever they say, and `sanitize_messages` checks their files like any other the client sends.
+    whatever they say, and `sanitize_messages` checks their files like any other the client sends. A `capability_id`
+    is ignored, as the client is never sent one, so the note names the tool rather than a capability the client chose.
     """
     if data is None:
         return ()
     try:
-        return _tool_result_attachments_ta.validate_python(data)
+        attachments = _tool_result_attachments_ta.validate_python(data)
     except ValidationError:
         return ()
+    return [replace(attachment, capability_id=None) for attachment in attachments]
 
 
 def client_error_text(part: BaseToolReturnPart[Any]) -> str:

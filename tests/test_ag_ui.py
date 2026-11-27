@@ -12722,3 +12722,52 @@ def test_an_uploaded_file_attachment_reaches_the_client_only_with_preserve_file_
     assert [attachment.content for attachment in tool_return.attachments] == (
         [uploaded, 'A note.'] if preserve_file_data else ['A note.']
     )
+
+
+@requires_ag_ui('0.1.11')
+def test_tool_result_attachments_keep_their_capability_id_server_side() -> None:
+    """The client isn't sent an attachment's `capability_id`, which for an `MCP(url=...)` is the server's host, and one it sends back is ignored."""
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Look.')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='look', tool_call_id='c1', args={})]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='look',
+                    content='ok',
+                    tool_call_id='c1',
+                    attachments=[
+                        ToolResultAttachment(
+                            content='A note.', tool_call_id='c1', tool_name='look', capability_id='mcp.internal.example'
+                        )
+                    ],
+                )
+            ]
+        ),
+    ]
+    ag_ui_messages = AGUIAdapter.dump_messages(history)
+    tool_message = next(message for message in ag_ui_messages if isinstance(message, ToolMessage))
+    assert tool_message.encrypted_value is not None
+    assert json.loads(tool_message.encrypted_value) == snapshot(
+        {'pydantic_ai': {'attachments': [{'content': 'A note.', 'tool_call_id': 'c1', 'tool_name': 'look'}]}}
+    )
+
+    forged = {
+        'pydantic_ai': {
+            'attachments': [
+                {'content': 'A note.', 'tool_call_id': 'c1', 'tool_name': 'look', 'capability_id': 'operator_tools'}
+            ]
+        }
+    }
+    ag_ui_messages = [
+        message.model_copy(update={'encrypted_value': json.dumps(forged)})
+        if isinstance(message, ToolMessage)
+        else message
+        for message in ag_ui_messages
+    ]
+    reloaded = AGUIAdapter.load_messages(ag_ui_messages)
+    tool_return = reloaded[2].parts[0]
+    assert isinstance(tool_return, ToolReturnPart)
+    assert tool_return.attachments == snapshot(
+        [ToolResultAttachment(content='A note.', tool_call_id='c1', tool_name='look')]
+    )
