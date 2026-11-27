@@ -12,8 +12,8 @@ import asyncio
 import logging
 import re
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Callable, Generator, Mapping, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias
@@ -21,15 +21,14 @@ from uuid import uuid4
 
 import anyio
 import anyio.abc
-from opentelemetry import propagate
+from opentelemetry import context as otel_context, propagate
 from opentelemetry.util.types import AttributeValue
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.agent import AbstractAgent
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, record_decision
 from pydantic_ai.exceptions import RunCancelled
 from pydantic_ai.models import ModelRequestContext
-from pydantic_ai.telemetry import record_decision
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AgentToolset, FunctionToolset
 from pydantic_ai.usage import RunUsage
@@ -75,6 +74,30 @@ RUN_OWNER: ContextVar[tuple[str, DelegationTasks] | None] = ContextVar(
     'pydantic_ai_harness.sub_agents.run_owner', default=None
 )
 """The run ID and owner of the run that opened a `DelegationTasks` of its own, for its task-control `SubAgents`."""
+
+RUN_TRACE_CONTEXT: ContextVar[otel_context.Context | None] = ContextVar(
+    'pydantic_ai_harness.sub_agents.run_trace_context', default=None
+)
+"""The OpenTelemetry context of the delegating run's body, inside its run span, set by `SubAgents.wrap_run`.
+
+A task in the background inherits it from the tool call that started it.
+"""
+
+
+@contextmanager
+def in_run_trace_context() -> Generator[None]:
+    """Make the delegating run's span current, for a decision made after the tool call that led to it ended.
+
+    A task in the background settles after its `execute_tool` span ended, while the run that started it, which
+    waits for its tasks, still has its span open.
+    """
+    run_context = RUN_TRACE_CONTEXT.get()
+    assert run_context is not None, 'A task starts from a tool call inside `SubAgents.wrap_run`.'
+    token = otel_context.attach(run_context)
+    try:
+        yield
+    finally:
+        otel_context.detach(token)
 
 
 @dataclass(frozen=True, kw_only=True)

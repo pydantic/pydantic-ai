@@ -2127,9 +2127,10 @@ def traced(include_content: bool, *processors: SpanProcessor) -> tuple[Instrumen
 
 
 def decisions(exporter: InMemorySpanExporter) -> list[tuple[str, dict[str, object]]]:
-    """Task control's spans, with their attributes but the task ID, which every test makes anew."""
+    """Task control's spans, with their attributes but the task and tool call IDs, which every test makes anew."""
+    fresh = {'sub_agents.task_id', 'gen_ai.tool.call.id'}
     return [
-        (span.name, {key: value for key, value in (span.attributes or {}).items() if key != 'sub_agents.task_id'})
+        (span.name, {key: value for key, value in (span.attributes or {}).items() if key not in fresh})
         for span in exporter.get_finished_spans()
         if span.name.startswith('sub_agents ')
     ]
@@ -2189,6 +2190,38 @@ class TestTaskControlTelemetry:
             ),
             ('sub_agents wait for tasks', {'sub_agents.running_tasks': 1}),
         ]
+
+    async def test_a_settled_task_is_recorded_under_the_run_that_waits_for_it(self) -> None:
+        """The task settles after its `execute_tool` span ended, so the decision goes under the still-open run span."""
+        gate = Gate()
+        slow = Agent(scripted(call('pause'), text('slow result')), tools=[gate.pause])
+        settings, exporter = traced(False, OpensOnWait(gate))
+        parent = Agent(
+            scripted(
+                call('delegate_task', agent_name='researcher', task='Slow.', background=True),
+                text('Waiting.'),
+                text('Done.'),
+            ),
+            capabilities=[controlled(researcher(slow))],
+        )
+        parent.instrument = settings
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            await parent.run('Go.')
+        spans = exporter.get_finished_spans()
+        [settled] = [span for span in spans if span.name == 'sub_agents task settled']
+        [delegate] = [span for span in spans if span.name == 'execute_tool delegate_task']
+        parent_span = settled.parent
+        assert parent_span is not None
+        [run] = [span for span in spans if span.context is not None and span.context.span_id == parent_span.span_id]
+        assert run.parent is None
+        assert (run.attributes or {})['gen_ai.operation.name'] == 'invoke_agent'
+        assert run.start_time is not None and run.end_time is not None and settled.start_time is not None
+        assert delegate.end_time is not None
+        assert delegate.end_time < settled.start_time
+        assert run.start_time <= settled.start_time <= run.end_time
+        attributes = settled.attributes or {}
+        assert attributes['gen_ai.tool.call.id'] == (delegate.attributes or {})['gen_ai.tool.call.id']
+        assert isinstance(attributes['sub_agents.task_id'], str)
 
     @pytest.mark.parametrize('include_content', [False, True])
     async def test_a_listener_answer_is_a_span(self, include_content: bool) -> None:

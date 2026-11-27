@@ -18,7 +18,7 @@ import anyio
 
 from pydantic_ai import AgentStreamEvent, CapabilityEvent, capture_run_messages
 from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler
-from pydantic_ai.capabilities import AbstractCapability, AgentCapability, HookTimeoutError
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, HookTimeoutError, tool_call_span
 from pydantic_ai.durable_exec import BaseDurabilityCapability, DurableRunContext
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -43,7 +43,6 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.telemetry import current_span, set_content_attribute
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolRequests,
@@ -78,6 +77,7 @@ from pydantic_ai_harness.sub_agents._control import (
     TaskControl,
     TaskTelemetry,
     default_factory,
+    in_run_trace_context,
     reporting_settlement,
     run_owned,
     run_remote,
@@ -1915,29 +1915,29 @@ def _record_delegation_ended(
 ) -> None:
     """Record how a delegation ended, and on which model.
 
-    A task in the background settles after its tool call returned the receipt, so its end is the decision
-    `sub_agents task settled`. Any other delegation ends within its tool call, so its end goes on that call's
-    `execute_tool` span.
+    A task in the background settles after its tool call returned the receipt and its `execute_tool` span
+    ended, so its end is the decision `sub_agents task settled`, recorded under the delegating run's span with
+    the delegating call's `gen_ai.tool.call.id`. Any other delegation ends within its tool call, so its end goes
+    on that call's `execute_tool` span.
     """
     attributes: dict[str, str] = {'sub_agents.outcome': outcome}
     if model is not None:
         attributes['sub_agents.model'] = model
     if record is not None and record.background:
-        telemetry.decision(
-            'task settled',
-            agent_name=agent_name,
-            task_id=record.id,
-            attributes=attributes,
-        )
+        call_id = telemetry.ctx.tool_call_id
+        with in_run_trace_context():
+            telemetry.decision(
+                'task settled',
+                agent_name=agent_name,
+                task_id=record.id,
+                attributes={**attributes, **({} if call_id is None else {'gen_ai.tool.call.id': call_id})},
+            )
         return
     name_attributes, name_content = telemetry.agent_name_attributes(agent_name)
-    span = current_span(telemetry.ctx)
-    # The SDK warns about, and drops, an attribute set on a span that has already ended.
-    if not span.is_recording():
-        return
+    span = tool_call_span(telemetry.ctx)
     span.set_attributes({**name_attributes, **attributes})
-    for key, value in name_content.items():
-        set_content_attribute(telemetry.ctx, span, key, value)
+    if telemetry.ctx.trace_include_content:
+        span.set_attributes(name_content)
 
 
 def _start_child(

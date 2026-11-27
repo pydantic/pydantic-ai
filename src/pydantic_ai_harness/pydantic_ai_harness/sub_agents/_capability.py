@@ -10,17 +10,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import anyio
+from opentelemetry import context as otel_context
 
 from pydantic_ai._instructions import SourcedInstruction, append_on_change_by_default
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.agent import Agent, AgentRunResult, EventStreamHandler
-from pydantic_ai.capabilities import AbstractCapability, AgentCapability, WrapRunHandler, durable_operation
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, WrapRunHandler, durable_operation, open_span
 from pydantic_ai.durable_exec import BaseDurabilityCapability, DurabilityEngineSpec
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputContext
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.telemetry import open_span
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, RunContext
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend
@@ -28,6 +28,7 @@ from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness._workspace import require_workspace, secondary_workspace, workspace_path
 from pydantic_ai_harness.sub_agents._control import (
     RUN_OWNER,
+    RUN_TRACE_CONTEXT,
     DynamicAgents,
     DynamicAgentSpec,
     RemoteSubAgent,
@@ -571,6 +572,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         """
         if self.include_self:
             self._require_bound_to(ctx.agent)
+        # Inside `Instrumentation`'s run span, which stays open while the run waits for its tasks.
+        trace_token = RUN_TRACE_CONTEXT.set(otel_context.get_current())
         try:
             owner = DelegationTasks.current()
             if ctx.in_durable_context:
@@ -590,6 +593,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             # Any other run, including one that a tool starts, gets an owner of its own.
             return await self._run_owned(ctx, handler)
         finally:
+            RUN_TRACE_CONTEXT.reset(trace_token)
             self._call_counts.pop(ctx.run_id or '', None)
             self._created.pop(ctx.run_id or '', None)
 
