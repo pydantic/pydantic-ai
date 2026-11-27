@@ -520,9 +520,10 @@ redacted whichever tool returned them.
 - CSS selectors cannot reach content inside iframes; reading and acting there
   goes through `snapshot` refs (see
   [Embedded content](#embedded-content-iframes)).
-- Durable execution (e.g. `TemporalDurability`) is rejected at agent
-  construction: a live Chromium page cannot survive activity replay or worker
-  restart.
+- Durable execution is rejected at construction, whether through a durability
+  capability (e.g. `TemporalDurability`) or a deprecated wrapper agent (e.g.
+  `TemporalAgent`): a live Chromium page cannot survive activity replay or
+  worker restart.
 - The model targets elements by `aria-ref=` handle (from `snapshot`), CSS
   selector, or pixel coordinates.
 

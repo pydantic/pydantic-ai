@@ -8,7 +8,7 @@ GitHub Agentic Workflows resolves the imported definition at compile time and ve
 frontmatter into the workflow it generates, so those fields are a published contract rather
 than repo-local config: `engine.id` keys the entry in gh-aw's engine catalog, and
 `engine.version` is the release the generated workflow installs for both `pydantic-ai-harness`
-and `pydantic-clai2` from PyPI at run time. A renamed field breaks the catalog entry, and a
+and `pydantic-ai-pax` from PyPI at run time. A renamed field breaks the catalog entry, and a
 version missing from either package breaks every run of it at install time.
 
 Consumers import the file from `main`, so a merge reaches them on their next compile and
@@ -52,7 +52,7 @@ class _Engine(BaseModel):
     @field_validator('version')
     @classmethod
     def _pep_440(cls, value: str) -> str:
-        # gh-aw installs `pydantic-ai-harness==<version>` and `pydantic-clai2==<version>`,
+        # gh-aw installs `pydantic-ai-harness==<version>` and `pydantic-ai-pax==<version>`,
         # and the publication check below interpolates it into a PyPI URL. Anything that is
         # not a version is a broken install for consumers, and a value carrying `/` or `?`
         # reaches a different PyPI endpoint than the one the check means to ask about.
@@ -94,7 +94,7 @@ def engine_version() -> str:
 
 def unpublished_reason(version: str) -> str | None:
     """Return why PyPI does not serve a pinned release, or `None` when both do."""
-    for package in ('pydantic-ai-harness', 'pydantic-clai2'):
+    for package in ('pydantic-ai-harness', 'pydantic-ai-pax'):
         url = f'https://pypi.org/pypi/{package}/{version}/json'
         try:
             with urllib.request.urlopen(url, timeout=PYPI_TIMEOUT_SECONDS) as response:

@@ -2474,6 +2474,10 @@ the standard read-only wrapper is also accepted. Sandbox and custom policy wrapp
 rebinding the directory would discard their restrictions.
 Relative paths resolve from the session directory; absolute paths and `~/` paths are accepted.
 The selected directory must exist. The parent stays in its original directory.
+The model chooses the directory, so a directory outside the session directory carries no
+[authority](../../../docs/workspace-custom.md#workspace-authority): Review gets its `AGENTS.md` and other
+repository instructions as data, not as instructions. Inside the session directory, Review gets the
+session's own level.
 
 For example, ask the parent to review a diff saved in another checkout:
 
@@ -3401,9 +3405,7 @@ many sessions run at once.
 
 ### Plugins
 
-Plugins import from `pydantic_ai_pax`. One that imports `pydantic_clai2`, the
-package's former name, loads only while the `pydantic-clai2` package is installed;
-under `pydantic-ai-pax` alone, change its imports to `pydantic_ai_pax`.
+Plugins import from `pydantic_ai_pax`.
 
 Everything beyond the prompt loop is a plugin, including the default coding
 tools. Any Pydantic AI capability is a plugin as it is; give the agent web
