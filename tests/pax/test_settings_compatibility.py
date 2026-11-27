@@ -364,6 +364,7 @@ def test_footer_layout_survives_a_build_without_it(
     defaults: list[str] = [
         'model',
         'workspace',
+        'permissions',
         'context',
         'output',
         'cost',

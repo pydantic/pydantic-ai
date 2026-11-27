@@ -99,7 +99,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `display.task_models` | `true` | Name the model each subagent runs on in its start row, which waits for the child to report it. Off, the row prints at once without it. |
 | `display.theme` | `default` | Keep Pax colours, readable on light and dark terminals, or select a bundled Termflow palette with /theme. |
 | `display.spinner` | `working` | Working animation; /spinner previews the choices. An unknown name shows working. |
-| `display.footer_fields` | `["model", "workspace", "context", "output", "cost", "activity", "plugins", "updates", "live", "queued"]` | Visible main-footer fields in display order, as a JSON list. An empty list hides the footer figures. Use /set to configure the layout or reset it. assistant_age is off by default. |
+| `display.footer_fields` | `["model", "workspace", "permissions", "context", "output", "cost", "activity", "plugins", "updates", "live", "queued"]` | Visible main-footer fields in display order, as a JSON list. An empty list hides the footer figures. Use /set to configure the layout or reset it. assistant_age is off by default. |
 | `display.splash` | `true` | Animate the startup splash. Takes effect next start. |
 | `display.full_screen` | `false` | Take the whole terminal height from the start, instead of starting compact below the shell and growing as the session needs room. Takes effect next start. |
 | `display.tool_calls` | `detailed` | How tool calls print: detailed gives each call its own line with arguments; grouped counts consecutive calls by tool on one live line. Grouped ignores display.tool_output and display.tool_arg_chars; file diffs still print. |
@@ -1873,7 +1873,7 @@ fields are hidden; `[]` hides the footer figures, not the prompt or task panel.
 The default order is:
 
 ```json
-["model", "workspace", "context", "output", "cost", "activity", "plugins", "updates", "live", "queued"]
+["model", "workspace", "permissions", "context", "output", "cost", "activity", "plugins", "updates", "live", "queued"]
 ```
 
 Every field is independently selectable and reorderable:
@@ -1882,6 +1882,7 @@ Every field is independently selectable and reorderable:
 |---|---|
 | `model` | Selected model, including the focused subagent's name and short task ID when its figures are shown |
 | `workspace` | Working directory, abbreviated to its tail, with its `trusted` / `untrusted` state when folder trust applies; hidden when empty |
+| `permissions` | The `/permissions` mode: `full access` (in the warning colour), `auto mode`, or `read-only` |
 | `context` | Used and maximum context tokens, with `?` for unknown figures |
 | `output` | Streamed output estimate, then reported output tokens |
 | `cost` | Retained-history cost; hidden until priced usage exists |
@@ -1898,7 +1899,7 @@ fragments move and hide together through `plugins`, not as individual fields.
 When the row is wider than the terminal, `workspace` shortens to its last folder
 (`…/jsonrc`), then fields are hidden, least important first, until it fits:
 `assistant_age`, `output`, `cost`, `queued`, `updates`, `live`, `workspace`,
-`plugins`, the `context` labels, then `model`. `activity` and the context figure
+`plugins`, `permissions`, the `context` labels, then `model`. `activity` and the context figure
 always stay. The row is cut at the edge rather than wrapped if it still does not fit.
 
 To set the list directly, keep the JSON in one quoted argument:

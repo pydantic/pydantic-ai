@@ -25,7 +25,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolCallPartDelta,
 )
-from pydantic_ai_pax.config import DEFAULT_FOOTER_FIELDS, FooterField, TrustLevel
+from pydantic_ai_pax.config import DEFAULT_FOOTER_FIELDS, FooterField, PermissionMode, TrustLevel
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.duration import format_duration
 from pydantic_ai_pax.ui.rendering.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER, Spinner
@@ -82,6 +82,8 @@ class Status:
     """The session's working directory; hidden while empty."""
     trust: Callable[[], TrustLevel | None] = lambda: None
     """Whether you trust the session's directory, painted after it; hidden for `None`, as for a host that decides."""
+    permissions: Callable[[], PermissionMode | None] = lambda: None
+    """The session's `/permissions` mode, read on each paint; hidden for `None`, as for a host without one."""
     context_tokens: int | None = None
     context_estimated: bool = False
     """`context_tokens` is a character estimate, made before any response reported usage; painted with `~`."""
@@ -115,6 +117,7 @@ class Status:
         ('hide', 'live'),
         ('hide', 'workspace'),
         ('hide', 'plugins'),
+        ('hide', 'permissions'),
         ('shorten', 'context'),
         ('hide', 'model'),
     )
@@ -260,6 +263,7 @@ class Status:
             'live': [(theme.MUTED, self.live())],
             'queued': [(theme.MUTED, f'queued: {queued}' if queued else '')],
             'assistant_age': [(theme.MUTED, age)],
+            'permissions': _permission_fragments(self.permissions()),
         }, shorter
 
     def _plugin_fragments(self) -> list[tuple[str, str]]:
@@ -399,6 +403,16 @@ class StatusLine:
             # Refresh live counts at least ten times a second, whatever the spinner's speed.
             self._draw()
             await anyio.sleep(max(0, min(0.1, self.spinner().interval)))
+
+
+_PERMISSION_LABELS: dict[PermissionMode, str] = {'full': 'full access', 'auto': 'auto mode', 'read-only': 'read-only'}
+
+
+def _permission_fragments(mode: PermissionMode | None) -> list[tuple[str, str]]:
+    """The mode's label; `full access`, which runs everything without asking, in the warning colour."""
+    if mode is None:
+        return []
+    return [(theme.WARNING if mode == 'full' else theme.MUTED, _PERMISSION_LABELS[mode])]
 
 
 def _workspace_with_trust(path: str, trust: list[tuple[str, str]]) -> list[tuple[str, str]]:

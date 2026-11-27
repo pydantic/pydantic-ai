@@ -573,7 +573,7 @@ def create_shell(
         )
     )
     screen = Screen()
-    status = Status(fields=lambda: context.settings.footer_fields)
+    status = Status(fields=lambda: context.settings.footer_fields, permissions=lambda: context.settings.permissions)
     _attach_trust(session, trust, process=process, status=status, commands=commands)
     status.restore_text_age(session.messages)
     loader = SessionPlugins[DepsT](
