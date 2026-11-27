@@ -252,11 +252,16 @@ def _data_frame_attributes(part: CapabilityPart) -> dict[str, str | None]:
 
     User content a capability without authority enqueued is named by the capability, `capability="<id>"`, when its id
     is a plain identifier; every other data part by its `kind="<namespace>.<name>"`, then the attributes its kind
-    declares. The kind's own `tag` isn't rendered.
+    declares. The kind's own `tag` isn't rendered. A part saved before `kind` and `capability` were reserved can still
+    declare one: the framework's identity wins, so it's left off.
     """
     if isinstance(part, _CapabilityContentPart):
         return {'capability': _capability_attribute(part)}
-    return {'kind': part.kind, **part._rendered_attributes()}  # pyright: ignore[reportPrivateUsage]
+    declared = part._rendered_attributes()  # pyright: ignore[reportPrivateUsage]
+    return {
+        'kind': part.kind,
+        **{name: value for name, value in declared.items() if name not in FRAME_IDENTITY_ATTRIBUTES},
+    }
 
 
 def _capability_attribute(part: CapabilityPart) -> str | None:

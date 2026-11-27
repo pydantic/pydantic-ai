@@ -74,6 +74,7 @@ from ._framing import (
     FrameworkTag,
     FramingTag,
     check_capability_frame,
+    check_declared_capability_attributes,
     frame,
     frame_tags,
     model_visible_name_error,
@@ -5469,6 +5470,7 @@ def _class_rendering(
         attributes=tuple(attributes) if attributes is not None else inherited.attributes,
     )
     _check_capability_rendering(f'Capability part {cls.__qualname__}', rendering)
+    check_declared_capability_attributes(rendering.attributes)
     # A kind's own typed fields: `content` and the other fields every part has can't be attributes, which an unknown
     # part would then have nowhere to read from.
     declared = {

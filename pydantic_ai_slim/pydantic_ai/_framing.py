@@ -353,17 +353,24 @@ def check_capability_frame(tag: str | None, attribute_names: Iterable[str]) -> N
     """
     if tag is not None:
         _check_capability_tag(tag)
-    attribute_names = list(attribute_names)
+    _check_attribute_names(attribute_names, legacy_stacklevel=None)
+
+
+def check_declared_capability_attributes(attribute_names: Iterable[str]) -> None:
+    """Raise if a kind being defined declares one of the `<pyai:data>` attributes the framework fills.
+
+    Only a class definition is refused: a part saved before the names were reserved still loads, and its frame takes
+    the framework's values for them (`_data_frame_attributes`).
+    """
     if reserved := [name for name in attribute_names if name in FRAME_IDENTITY_ATTRIBUTES]:
         raise UserError(
             f'{", ".join(map(repr, reserved))} cannot be a capability part attribute: `<pyai:data>` uses '
             f'`kind` and `capability` to say what is inside it.'
         )
-    _check_attribute_names(attribute_names, legacy_stacklevel=None)
 
 
 FRAME_IDENTITY_ATTRIBUTES: Final = frozenset({'kind', 'capability'})
-"""The `<pyai:data>` attributes the framework fills to say what's inside it, which no kind can declare."""
+"""The `<pyai:data>` attributes the framework fills to say what's inside it, which no kind being defined can declare."""
 
 
 def _check_capability_tag(tag: str) -> None:
