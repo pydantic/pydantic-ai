@@ -6,11 +6,12 @@ import copy
 import html
 import re
 import warnings
+from bisect import bisect_left, bisect_right
 from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import UTC, datetime
 from string import Formatter
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias, TypeGuard, cast
 
 # `EventStreamHandler` holds the forward reference `'AsyncIterable[_messages.AgentStreamEvent]'`, which the
 # `AgentSpec` schema resolves against this module's globals.
@@ -28,6 +29,7 @@ from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import (
     FallbackExceptionGroup,
     ModelAPIError,
+    ModelContextWindowExceededError,
     ModelRetry,
     UnexpectedModelBehavior,
     UserError,
@@ -50,13 +52,13 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import TextOutput
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._message_text import capability_part_text, tool_return_text, user_prompt_text, with_text
 from pydantic_ai_harness._provenance import harness_origin
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
-from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
+from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW, resolve_context_window
 from pydantic_ai_harness.compaction._pinning import is_pinned, reinject_pinned
 from pydantic_ai_harness.compaction._receipts import (
     ReceiptInfo,
@@ -72,6 +74,7 @@ from pydantic_ai_harness.compaction._shared import (
     compact_if_smaller,
     compact_with_span,
     context_for_request,
+    estimate_text_tokens,
     estimate_token_count,
     exceeds,
     find_safe_cutoff,
@@ -80,9 +83,11 @@ from pydantic_ai_harness.compaction._shared import (
     is_harness_data,
     is_realtime_model,
     record_compaction_reclaim,
+    record_span_attributes,
     require_trigger,
     resolve_token_trigger,
     split_legacy_memory,
+    tool_pair_boundaries,
     validate_token_trigger,
 )
 from pydantic_ai_harness.compaction._summary import (
@@ -264,16 +269,22 @@ def format_transcript(
     returns, and the deltas a load leaves) are left out: which capabilities are loaded is carried by those
     records, which a compaction records again after the summary, never by the summary.
     """
-    elements: list[str] = []
-    for message in messages:
-        if isinstance(message, ModelRequest):
-            rendered = [
-                _request_part_element(part, skip_previous_summary, tool_return_max_chars) for part in message.parts
-            ]
-        else:
-            rendered = [_response_part_element(part) for part in message.parts]
-        elements.extend(element for element in rendered if element is not None)
-    return '\n'.join(elements)
+    return '\n'.join(
+        element
+        for message in messages
+        for element in _message_elements(message, skip_previous_summary, tool_return_max_chars)
+    )
+
+
+def _message_elements(
+    message: ModelMessage, skip_previous_summary: bool, tool_return_max_chars: int | None
+) -> list[str]:
+    """The transcript elements of *message*, one per part the transcript shows."""
+    if isinstance(message, ModelRequest):
+        rendered = [_request_part_element(part, skip_previous_summary, tool_return_max_chars) for part in message.parts]
+    else:
+        rendered = [_response_part_element(part) for part in message.parts]
+    return [element for element in rendered if element is not None]
 
 
 def _request_part_element(
@@ -898,6 +909,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
 
         previous_summary = extract_previous_summary(messages) if self.incremental else None
         written = await self._summarize(to_summarize, ctx, previous_summary=previous_summary)
+        record_summary_calls(written)
         # A durable engine replays the time with the text, so the summary's metadata, which later requests
         # and tools are keyed on, is the same on a retry. A result recorded before the time was kept is a `str`.
         summary, created_at = (written, None) if isinstance(written, str) else (written.text, written.created_at)
@@ -1132,9 +1144,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
 
         The return type keeps the `str` an earlier version recorded, so a durable run started before it replays.
         """
-        return WrittenSummary(
-            await write_summary(self, messages, ctx, previous_summary=previous_summary), datetime.now(UTC)
-        )
+        return await write_summary(self, messages, ctx, previous_summary=previous_summary)
 
 
 async def write_summary(
@@ -1143,30 +1153,17 @@ async def write_summary(
     ctx: RunContext[AgentDepsT],
     *,
     previous_summary: str | None = None,
-) -> str:
+) -> WrittenSummary:
     """Write *summarizer*'s summary of *messages* with its model, prompts and settings, inline.
 
     `SummarizingCompaction._summarize` wraps this in its durable operation; another strategy that
     reuses a summarizer's settings calls it inside an operation of its own.
+
+    When the request doesn't fit the summarizer model's context window, *messages* are summarized in chunks,
+    oldest first, each next request updating the summary so far (see `_SummaryRequests`). The number of
+    requests comes back with the summary, for the caller to record with `record_summary_calls`.
     """
     from pydantic_ai import Agent
-
-    formatted = format_transcript(
-        messages,
-        skip_previous_summary=previous_summary is not None,
-        tool_return_max_chars=summarizer.tool_return_max_chars,
-    )
-    prompt = summarizer.summary_prompt.format(messages=formatted)
-    if any(
-        _is_transcript_data(part) for message in messages if isinstance(message, ModelRequest) for part in message.parts
-    ):
-        prompt = f'{prompt}\n\n{_HARNESS_DATA_INSTRUCTION}'
-
-    if previous_summary is not None:
-        prompt = (
-            f'{prompt}\n\n{_INCREMENTAL_UPDATE_INSTRUCTION}\n\n'
-            f'<previous-summary>\n{_neutralize_transcript_tags(previous_summary)}\n</previous-summary>'
-        )
 
     model = summarizer.model if summarizer.model is not None else ctx.model
     # `ctx.model` is an `AbstractModel`; summarization needs a request-response model. A
@@ -1199,12 +1196,215 @@ async def write_summary(
         capabilities=list(summarizer.summarization_capabilities),
         retries=summarizer.retries,
     )
-    with second_model_prompt():
-        result = await agent.run(
-            prompt,
-            conversation_id=ctx.conversation_id,
-            usage=ctx.usage,
-            usage_limits=reserved_usage_limits(ctx.usage_limits),
-            event_stream_handler=summarizer.event_stream_handler,
+    requests = _SummaryRequests(
+        summarizer,
+        _summary_input_budget(summarizer, model),
+        messages,
+        skip_previous_summary=previous_summary is not None,
+    )
+    # The most requests a summary is written in. A history that needs more raises, as a request over the window
+    # would: before any request when the estimate alone needs more, otherwise once the rest can't fit those left.
+    max_requests = 32
+    summary = previous_summary
+    start = 0
+    calls = 0
+    while True:
+        if requests.needs_more_requests_than(start, summary, max_requests - calls):
+            raise ModelContextWindowExceededError(
+                model_name=_model_name(model) or 'summarizer',
+                message=(
+                    f'The history to summarize needs more than {max_requests} summary requests to fit '
+                    "the summarizer model's context window. Summarize with a model with a larger window."
+                ),
+            )
+        prompt, start = requests.next(start, summary)
+        with second_model_prompt():
+            result = await agent.run(
+                prompt,
+                conversation_id=ctx.conversation_id,
+                usage=ctx.usage,
+                usage_limits=reserved_usage_limits(ctx.usage_limits),
+                event_stream_handler=summarizer.event_stream_handler,
+            )
+        summary = result.output
+        calls += 1
+        if start == len(messages):
+            break
+    return WrittenSummary(summary, datetime.now(UTC), calls)
+
+
+def record_summary_calls(written: WrittenSummary | str) -> None:
+    """Record on the enclosing `compact_messages` span how many requests *written* took, when it took more than one.
+
+    Called outside the durable operation that wrote it, so a replay that returns the recorded summary records it too.
+    """
+    if isinstance(written, WrittenSummary) and written.summary_calls > 1:
+        record_span_attributes({'compaction.summary_calls': written.summary_calls})
+
+
+def _summary_input_budget(
+    summarizer: SummarizingCompaction[AgentDepsT], model: Model | AbstractModel | str
+) -> int | None:
+    """The tokens a summary request's prompt can take in the summarizer's context window, or `None` when it isn't known.
+
+    The window is the summarizer model's own (its profile's, else the pricing registry's). What's left for the
+    summary is the summarizer's `max_tokens` setting, else 8,192 tokens or a quarter of the window, whichever is
+    smaller. The instructions are sent with every request, so they're taken off too.
+    """
+    default_reserve = 8_192
+    window = resolve_context_window(model)
+    if window is None:
+        return None
+    settings = merge_model_settings(model.settings if isinstance(model, Model) else None, summarizer.model_settings)
+    reserve = (settings or {}).get('max_tokens') or min(default_reserve, window // 4)
+    return window - reserve - estimate_text_tokens(summarizer.instructions, summarizer.tokenizer)
+
+
+@dataclass
+class _SummaryRequests(Generic[AgentDepsT]):
+    """Splits a summary of *messages* into requests that each fit the summarizer's context window.
+
+    The oldest messages that fit go first, and each next request updates the summary so far through the
+    incremental `<previous-summary>` path, until the rest fits in one request. Chunks end on message
+    boundaries that keep each tool call with its replies, so no message goes unsummarized.
+
+    Each message is rendered and estimated once, so a chunk is sized from running token totals and only its own
+    candidates are rendered, never the rest of the history.
+    """
+
+    _PROBE_SLACK: ClassVar[int] = 2
+    """How many times the budget a chunk can take by the per-message estimate and still be measured exactly.
+
+    The estimate adds up each message's tokens, which is close to the rendered prompt's count but not equal to it, so
+    a chunk is measured on its rendered prompt within this margin and taken not to fit beyond it. That bounds the text
+    each request renders to about twice the budget, however long the history.
+    """
+
+    summarizer: SummarizingCompaction[AgentDepsT]
+    budget: int | None
+    """The tokens a request's prompt can take; `None` sends everything in one request."""
+    messages: list[ModelMessage]
+    skip_previous_summary: bool
+    """Whether the transcript leaves out earlier summaries, as the caller's anchor already carries the newest one."""
+    _elements: list[str] = field(init=False, default_factory=list[str])
+    """The transcript elements of every message, in order."""
+    _offsets: list[int] = field(init=False, default_factory=lambda: [0])
+    """The index in `_elements` where each message's elements start, then their total."""
+    _tokens: list[int] = field(init=False, default_factory=lambda: [0])
+    """The estimated transcript tokens before each message, then their total."""
+    _data: list[int] = field(init=False, default_factory=lambda: [0])
+    """The number of messages holding `<harness_data>` before each message, then their total."""
+    _boundaries: list[int] = field(init=False, default_factory=list[int])
+    """The ends a chunk can have: `tool_pair_boundaries` of `messages`."""
+    _sent: list[int] = field(init=False, default_factory=lambda: [0])
+    """The tokens sent for the messages before each boundary, then their total: what `next` sends of each.
+
+    Between two boundaries is the smallest span a chunk can hold. A span over the budget is sent in a request of
+    its own with its tool output cut until it fits (see `_truncated`), so it counts as the budget, not its size.
+    """
+
+    def __post_init__(self) -> None:
+        for message in self.messages:
+            elements = _message_elements(message, self.skip_previous_summary, self.summarizer.tool_return_max_chars)
+            self._elements.extend(elements)
+            self._offsets.append(len(self._elements))
+            # Each element is followed by the newline joining it to the next.
+            text = ''.join(f'{element}\n' for element in elements)
+            self._tokens.append(self._tokens[-1] + estimate_text_tokens(text, self.summarizer.tokenizer))
+            has_data = isinstance(message, ModelRequest) and any(_is_transcript_data(part) for part in message.parts)
+            self._data.append(self._data[-1] + has_data)
+        self._boundaries = tool_pair_boundaries(self.messages)
+        if self.budget is not None:
+            for begin, end in zip([0, *self._boundaries], self._boundaries):
+                self._sent.append(self._sent[-1] + min(self._estimate(begin, end), self.budget))
+
+    def needs_more_requests_than(self, start: int, summary: str | None, available: int) -> bool:
+        """Whether summarizing the messages from *start*, updating *summary*, takes more than *available* requests.
+
+        A request holds at most `budget` tokens of transcript, so a rest whose sent tokens (`_sent`) are above
+        `available` times that needs more. A summary that goes out in one request whatever its size, without a known
+        window or when the fixed part alone doesn't fit, never does.
+        """
+        if self.budget is None or not self._fits(self._render(start, start, summary)):
+            return False
+        sent = self._sent[-1] - self._sent[bisect_right(self._boundaries, start)]
+        return available <= 0 or sent > available * self.budget
+
+    def next(self, start: int, summary: str | None) -> tuple[str, int]:
+        """The prompt of the next request, summarizing the messages from *start* and updating *summary*, and its end.
+
+        Everything goes in one request when it fits, when the window isn't known, or when the request's fixed
+        part (prompt template, instructions and *summary*) alone doesn't fit, for the provider to decide.
+        """
+        count = len(self.messages)
+        if self.budget is None or not self._fits(self._render(start, start, summary)):
+            return self._render(start, count, summary), count
+        limit = self.budget * self._PROBE_SLACK
+        if self._estimate(start, count) <= limit and self._fits(whole := self._render(start, count, summary)):
+            return whole, count
+        lo = bisect_right(self._boundaries, start)
+        hi = bisect_right(self._boundaries, limit, lo=lo, key=lambda end: self._estimate(start, end))
+        # A longer chunk never renders shorter, so the chunks that fit come first.
+        fitting = bisect_left(
+            self._boundaries,
+            True,
+            lo=lo,
+            hi=hi,
+            key=lambda end: not self._fits(self._render(start, end, summary)),
         )
-    return result.output
+        if fitting > lo:
+            end = self._boundaries[fitting - 1]
+            return self._render(start, end, summary), end
+        end = self._boundaries[lo]
+        return self._truncated(self.messages[start:end], summary), end
+
+    def _truncated(self, messages: list[ModelMessage], summary: str | None) -> str:
+        """The prompt for *messages*, too large for one request, with its tool output cut until it fits.
+
+        Only tool output and harness data are cut, so a request whose other content alone doesn't fit is sent
+        with them at one character, for the provider to decide.
+        """
+        longest = self.summarizer.tool_return_max_chars or len(self._prompt(messages, summary, None))
+        fitting = bisect_left(
+            range(1, longest + 1),
+            True,
+            key=lambda max_chars: not self._fits(self._prompt(messages, summary, max_chars)),
+        )
+        return self._prompt(messages, summary, max(fitting, 1))
+
+    def _estimate(self, start: int, end: int) -> int:
+        return self._tokens[end] - self._tokens[start]
+
+    def _fits(self, prompt: str) -> bool:
+        assert self.budget is not None
+        return estimate_text_tokens(prompt, self.summarizer.tokenizer) <= self.budget
+
+    def _render(self, start: int, end: int, summary: str | None) -> str:
+        """The summary request's prompt for the messages from *start* to *end*, from their rendered elements."""
+        formatted = '\n'.join(self._elements[self._offsets[start] : self._offsets[end]])
+        return self._wrap(formatted, self._data[end] > self._data[start], summary)
+
+    def _prompt(self, messages: list[ModelMessage], summary: str | None, tool_return_max_chars: int | None) -> str:
+        """The summary request's prompt for *messages*, rendered with *tool_return_max_chars*."""
+        formatted = format_transcript(
+            messages, skip_previous_summary=self.skip_previous_summary, tool_return_max_chars=tool_return_max_chars
+        )
+        has_data = any(
+            _is_transcript_data(part)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        return self._wrap(formatted, has_data, summary)
+
+    def _wrap(self, formatted: str, has_data: bool, summary: str | None) -> str:
+        """The summary request's prompt for the *formatted* transcript, updating *summary* when there is one."""
+        prompt = self.summarizer.summary_prompt.format(messages=formatted)
+        if has_data:
+            prompt = f'{prompt}\n\n{_HARNESS_DATA_INSTRUCTION}'
+        if summary is not None:
+            prompt = (
+                f'{prompt}\n\n{_INCREMENTAL_UPDATE_INSTRUCTION}\n\n'
+                f'<previous-summary>\n{_neutralize_transcript_tags(summary)}\n</previous-summary>'
+            )
+        return prompt

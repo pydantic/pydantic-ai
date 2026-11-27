@@ -1,0 +1,368 @@
+"""`SummarizingCompaction` fitting its summary requests into a summarizer model's smaller context window."""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Callable
+
+import pytest
+from inline_snapshot import snapshot
+
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import ModelContextWindowExceededError
+from pydantic_ai.messages import (
+    CompactionPart,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai_harness.compaction import SummarizingCompaction, estimate_token_count
+
+try:
+    from logfire.testing import CaptureLogfire
+
+    logfire_installed = True
+except ImportError:  # pragma: no cover
+    logfire_installed = False
+
+
+_WINDOW = 2_000
+"""The summarizer's context window in these tests, far smaller than the histories they summarize."""
+
+
+class _Summarizer:
+    """A summarizer with a *window*-token context window that rejects a request over it, as a provider does.
+
+    Its profile states the window unless *known* is false, so the capability has none to fit. Each request's
+    prompt is recorded, and its summary names the request, so a test can see which summary the next request
+    was asked to update.
+    """
+
+    def __init__(self, *, window: int = _WINDOW, known: bool = True, settings: ModelSettings | None = None) -> None:
+        self.window = window
+        self.prompts: list[str] = []
+        self.request_tokens: list[int] = []
+        profile = ModelProfile(context_window=window) if known else None
+        self.model = FunctionModel(self._summarize, profile=profile, settings=settings)
+
+    def _summarize(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tokens = estimate_token_count(messages)
+        if tokens > self.window:
+            raise ModelContextWindowExceededError(model_name='small-summarizer', message='prompt is too long')
+        self.request_tokens.append(tokens)
+        self.prompts.append(
+            '\n'.join(
+                part.content
+                for message in messages
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+                if isinstance(part, UserPromptPart) and isinstance(part.content, str)
+            )
+        )
+        return ModelResponse(parts=[TextPart(f'summary {len(self.prompts)}')])
+
+
+def _reply(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('done')])
+
+
+def _agent(compaction: SummarizingCompaction[None]) -> Agent[None, str]:
+    return Agent(FunctionModel(_reply), deps_type=type(None), capabilities=[compaction])
+
+
+def _turns(count: int, size: int = 1_200) -> list[ModelMessage]:
+    """*count* question-and-answer turns, each answer *size* characters, each turn numbered."""
+    history: list[ModelMessage] = []
+    for index in range(count):
+        history += [
+            ModelRequest(parts=[UserPromptPart(f'question {index}')]),
+            ModelResponse(parts=[TextPart(f'answer {index} ' + 'x' * size)]),
+        ]
+    return history
+
+
+def _tool_turns(count: int, size: int = 400) -> list[ModelMessage]:
+    """*count* tool calls, each to its own tool and answered by a *size*-character return, after one question."""
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('question')])]
+    for index in range(count):
+        history += [
+            ModelResponse(parts=[ToolCallPart(f'tool_{index}', {}, tool_call_id=f'call_{index}')]),
+            ModelRequest(parts=[ToolReturnPart(f'tool_{index}', 'y' * size, tool_call_id=f'call_{index}')]),
+        ]
+    return [*history, ModelResponse(parts=[TextPart('all tools ran')])]
+
+
+def _compaction(
+    summarizer: _Summarizer,
+    *,
+    tool_return_max_chars: int | None = 500,
+    model_settings: ModelSettings | None = None,
+    instructions: str = SummarizingCompaction.instructions,
+    tokenizer: Callable[[str], int] | None = None,
+    summary_prompt: str = SummarizingCompaction.summary_prompt,
+) -> SummarizingCompaction[None]:
+    """A compaction that summarizes all of a history with *summarizer* when the next prompt is added."""
+    return SummarizingCompaction(
+        summarizer.model,
+        max_messages=2,
+        keep_messages=1,
+        preserve_first_user_message=False,
+        tool_return_max_chars=tool_return_max_chars,
+        model_settings=model_settings,
+        instructions=instructions,
+        tokenizer=tokenizer,
+        summary_prompt=summary_prompt,
+    )
+
+
+_TINY_WINDOW = 200
+"""A window that a handful of short turns overflows many times over, so the request bound is reached cheaply."""
+
+
+def _tiny_compaction(
+    summarizer: _Summarizer,
+    *,
+    tool_return_max_chars: int | None = 500,
+    tokenizer: Callable[[str], int] | None = None,
+) -> SummarizingCompaction[None]:
+    """A compaction with a bare prompt and instructions, leaving most of `_TINY_WINDOW` to the transcript."""
+    return _compaction(
+        summarizer,
+        tool_return_max_chars=tool_return_max_chars,
+        tokenizer=tokenizer,
+        summary_prompt='{messages}',
+        instructions='Summarize.',
+    )
+
+
+def _summary(messages: list[ModelMessage]) -> str:
+    [summary] = [part.content for message in messages for part in message.parts if isinstance(part, CompactionPart)]
+    assert summary is not None
+    return summary
+
+
+class TestSummarizingCompaction:
+    async def test_a_history_over_the_summarizer_window_is_summarized_in_chunks(self) -> None:
+        """The #12115 repro: the history doesn't fit the summarizer's window, and the run still gets its summary."""
+        summarizer = _Summarizer()
+        history = _turns(12)
+        assert estimate_token_count(history) > _WINDOW
+        agent = _agent(_compaction(summarizer))
+
+        result = await agent.run('next', message_history=history)
+
+        assert len(summarizer.prompts) == snapshot(4)
+        assert _summary(result.all_messages()) == f'summary {len(summarizer.prompts)}'
+        assert all(tokens <= _WINDOW for tokens in summarizer.request_tokens)
+
+    async def test_one_request_overflows_without_a_known_window(self) -> None:
+        """Without a window to fit, the request goes out whole, as before, and the provider rejects it."""
+        summarizer = _Summarizer(known=False)
+        history = _turns(12)
+        agent = _agent(_compaction(summarizer))
+
+        with pytest.raises(ModelContextWindowExceededError):
+            await agent.run('next', message_history=history)
+
+    async def test_each_chunk_updates_the_summary_of_the_chunks_before_it(self) -> None:
+        summarizer = _Summarizer()
+        history = _turns(12)
+        agent = _agent(_compaction(summarizer))
+
+        await agent.run('next', message_history=history)
+
+        anchors = [
+            re.findall(r'<previous-summary>\n(.*?)\n</previous-summary>', prompt) for prompt in summarizer.prompts
+        ]
+        assert anchors == snapshot([[], ['summary 1'], ['summary 2'], ['summary 3']])
+        # Every turn is summarized exactly once, oldest first.
+        questions = [re.findall(r'question (\d+)', prompt) for prompt in summarizer.prompts]
+        assert [int(index) for chunk in questions for index in chunk] == list(range(12))
+
+    async def test_the_caller_anchor_starts_the_chain(self) -> None:
+        """An earlier compaction's summary is what the first chunk updates."""
+        summarizer = _Summarizer()
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[CompactionPart(content='earlier summary', metadata=_ours_metadata())]),
+            *_turns(12),
+        ]
+        agent = _agent(_compaction(summarizer))
+
+        result = await agent.run('next', message_history=history)
+
+        anchors = [
+            re.findall(r'<previous-summary>\n(.*?)\n</previous-summary>', prompt) for prompt in summarizer.prompts
+        ]
+        assert anchors == snapshot([['earlier summary'], ['summary 1'], ['summary 2'], ['summary 3']])
+        assert _summary(result.all_messages()) == f'summary {len(summarizer.prompts)}'
+
+    async def test_a_chunk_keeps_each_tool_call_with_its_return(self) -> None:
+        summarizer = _Summarizer()
+        history = _tool_turns(40)
+        agent = _agent(_compaction(summarizer, tool_return_max_chars=None))
+
+        await agent.run('next', message_history=history)
+
+        assert len(summarizer.prompts) == snapshot(5)
+        for index in range(40):
+            [prompt] = [prompt for prompt in summarizer.prompts if f'name="tool_{index}"' in prompt]
+            assert prompt.count(f'name="tool_{index}"') == 2
+            assert f'<message role="tool_call" name="tool_{index}">' in prompt
+            assert f'<message role="tool_return" name="tool_{index}">' in prompt
+
+    async def test_the_summary_budget_is_left_free_in_every_request(self) -> None:
+        """The summarizer's `max_tokens` is reserved for the summary, so a larger one makes smaller chunks."""
+        history = _turns(12)
+        default = _Summarizer()
+        reserved = _Summarizer(settings=ModelSettings(max_tokens=1_200))
+
+        for summarizer in (default, reserved):
+            agent = _agent(_compaction(summarizer))
+            await agent.run('next', message_history=history)
+
+        # The default reserve is a quarter of the window, at most 8,192 tokens.
+        assert all(tokens <= _WINDOW - _WINDOW // 4 for tokens in default.request_tokens)
+        assert all(tokens <= _WINDOW - 1_200 for tokens in reserved.request_tokens)
+        assert (len(default.prompts), len(reserved.prompts)) == snapshot((4, 12))
+
+    async def test_a_summarizer_setting_reserve_on_the_capability_counts(self) -> None:
+        history = _turns(12)
+        summarizer = _Summarizer()
+        compaction = _compaction(summarizer, model_settings=ModelSettings(max_tokens=1_200))
+        agent = _agent(compaction)
+
+        await agent.run('next', message_history=history)
+
+        assert all(tokens <= _WINDOW - 1_200 for tokens in summarizer.request_tokens)
+        assert len(summarizer.prompts) == snapshot(12)
+
+    async def test_a_message_larger_than_a_chunk_has_its_tool_output_cut_to_fit(self) -> None:
+        summarizer = _Summarizer()
+        history = _tool_turns(3, size=20_000)
+        agent = _agent(_compaction(summarizer, tool_return_max_chars=None))
+
+        result = await agent.run('next', message_history=history)
+
+        assert len(summarizer.prompts) == snapshot(5)
+        assert all(tokens <= _WINDOW for tokens in summarizer.request_tokens)
+        for index in range(3):
+            # Each return is summarized, cut with the truncation marker rather than dropped.
+            [prompt] = [prompt for prompt in summarizer.prompts if f'name="tool_{index}"' in prompt]
+            assert re.search(rf'<message role="tool_return" name="tool_{index}">\ny+\[\.\.\.\]\n</message>', prompt)
+        assert _summary(result.all_messages()) == f'summary {len(summarizer.prompts)}'
+
+    async def test_a_history_that_fits_is_summarized_in_one_unchanged_request(self) -> None:
+        history = _turns(12)
+        small = _Summarizer()
+        large = _Summarizer(window=1_000_000)
+        unknown = _Summarizer(window=1_000_000, known=False)
+
+        for summarizer in (large, unknown, small):
+            agent = _agent(_compaction(summarizer))
+            await agent.run('next', message_history=history)
+
+        # A window the request fits sends the one request a summarizer without a known window gets.
+        assert len(large.prompts) == 1
+        assert large.prompts == unknown.prompts
+        assert all(f'question {index}' in large.prompts[0] for index in range(12))
+        assert '<previous-summary>' not in large.prompts[0]
+        assert len(small.prompts) > 1
+
+    async def test_a_request_whose_fixed_part_alone_overflows_goes_out_whole(self) -> None:
+        """With no room for any transcript, the request isn't chunked: the provider decides, as before."""
+        summarizer = _Summarizer()
+        history = _turns(2, size=10)
+        compaction = _compaction(summarizer, instructions='Summarize. ' * 2_000)
+        agent = _agent(compaction)
+
+        with pytest.raises(ModelContextWindowExceededError):
+            await agent.run('next', message_history=history)
+
+    @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+    async def test_the_span_records_the_summary_calls(self, capfire: CaptureLogfire) -> None:
+        history = _turns(12)
+        for summarizer in (_Summarizer(), _Summarizer(window=1_000_000)):
+            agent = _agent(_compaction(summarizer))
+            agent.instrument = InstrumentationSettings()
+            await agent.run('next', message_history=history)
+
+        spans = [span for span in capfire.exporter.exported_spans_as_dict() if span['name'] == 'compact_messages']
+        assert [span['attributes'].get('compaction.summary_calls') for span in spans] == [4, None]
+
+    async def test_a_history_estimated_over_32_requests_fails_before_any_request(self) -> None:
+        """A history that needs more than 32 requests fails as an overflowing request would, without sending one."""
+        summarizer = _Summarizer(window=_TINY_WINDOW)
+        history = _turns(40, size=600)
+        agent = _agent(_tiny_compaction(summarizer))
+
+        with pytest.raises(ModelContextWindowExceededError, match='more than 32 summary requests'):
+            await agent.run('next', message_history=history)
+
+        assert summarizer.prompts == []
+
+    async def test_a_return_over_32_requests_long_is_cut_rather_than_refused(self) -> None:
+        """The bound counts a return as the request it's cut to fit, not its full length."""
+        summarizer = _Summarizer(window=_TINY_WINDOW)
+        # Uncut, the return alone is more than 32 requests' worth of tokens.
+        history = _tool_turns(1, size=8_000)
+        agent = _agent(_tiny_compaction(summarizer, tool_return_max_chars=None))
+
+        result = await agent.run('next', message_history=history)
+
+        assert len(summarizer.prompts) == snapshot(3)
+        assert all(tokens <= _TINY_WINDOW for tokens in summarizer.request_tokens)
+        [prompt] = [prompt for prompt in summarizer.prompts if 'name="tool_0"' in prompt]
+        assert re.search(r'<message role="tool_return" name="tool_0">\ny+\[\.\.\.\]\n</message>', prompt)
+        assert _summary(result.all_messages()) == f'summary {len(summarizer.prompts)}'
+
+    async def test_a_summary_never_takes_more_than_32_requests(self) -> None:
+        """Chunks that hold less than the budget are caught once the rest can't fit the requests left."""
+        summarizer = _Summarizer(window=_TINY_WINDOW)
+        # Each tool call and its return take over half of what a chunk can hold, so a chunk holds one of the 40.
+        history = _tool_turns(40, size=200)
+        agent = _agent(_tiny_compaction(summarizer, tool_return_max_chars=None))
+
+        with pytest.raises(ModelContextWindowExceededError, match='more than 32 summary requests'):
+            await agent.run('next', message_history=history)
+
+        assert 0 < len(summarizer.prompts) < 32
+        assert all(prompt.count('role="tool_return"') == 1 for prompt in summarizer.prompts)
+
+    async def test_each_message_is_measured_about_once_however_many_chunks(self) -> None:
+        """Choosing a chunk measures only its own candidates, never the rest of the history.
+
+        Measured against the transcript sent, the text tokenized stays the same as the history doubles, where
+        re-measuring the rest of the history for each chunk would double it too.
+        """
+        requests: list[int] = []
+        ratios: list[float] = []
+        for turns in (6, 12, 24):
+            measured: list[int] = []
+
+            def tokenizer(text: str) -> int:
+                measured.append(len(text))
+                return len(text) // 4
+
+            summarizer = _Summarizer(window=_TINY_WINDOW)
+            agent = _agent(_tiny_compaction(summarizer, tokenizer=tokenizer))
+            await agent.run('next', message_history=_turns(turns, size=100))
+
+            requests.append(len(summarizer.prompts))
+            ratios.append(sum(measured) / sum(len(prompt) for prompt in summarizer.prompts))
+
+        assert requests == snapshot([4, 10, 22])
+        assert all(ratio < 12 for ratio in ratios)
+        assert ratios[-1] < 1.5 * ratios[0]
+
+
+def _ours_metadata() -> dict[str, object]:
+    """The metadata marking a `CompactionPart` as a summary `SummarizingCompaction` wrote."""
+    return {'pydantic-ai-harness.compaction.summary.v1': True}

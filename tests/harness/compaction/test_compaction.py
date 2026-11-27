@@ -221,6 +221,7 @@ def _make_request_context(messages: list[ModelMessage], model: Model | None = No
     class _FakeModel:
         model_id: str = 'test-model'
         model_name: str = 'test-model'
+        context_window: int | None = None
 
     return ModelRequestContext(
         model=model if model is not None else _FakeModel(),  # type: ignore[arg-type]

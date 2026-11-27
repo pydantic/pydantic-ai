@@ -970,6 +970,32 @@ def _keeping_workspace(messages: list[ModelMessage], cutoff: int) -> int:
 
 def _include_tool_dependencies(messages: list[ModelMessage], cutoff: int) -> int:
     """Expand a suffix to include all original tool calls required by its results."""
+    dependencies = _tool_dependencies(messages)
+    # Dependencies only point backward, so one reverse pass also covers transitive pairs.
+    for index in range(len(messages) - 1, -1, -1):
+        if index < cutoff:
+            break
+        cutoff = min(cutoff, dependencies[index])
+    return cutoff
+
+
+def tool_pair_boundaries(messages: Sequence[ModelMessage]) -> list[int]:
+    """The indices, ascending and ending with `len(messages)`, at which *messages* can be split in two.
+
+    A split at one of them leaves every tool call on the same side as its replies.
+    """
+    dependencies = _tool_dependencies(messages)
+    boundaries = [len(messages)]
+    earliest = len(messages)
+    for index in range(len(messages) - 1, 0, -1):
+        earliest = min(earliest, dependencies[index])
+        if earliest >= index:
+            boundaries.append(index)
+    return boundaries[::-1]
+
+
+def _tool_dependencies(messages: Sequence[ModelMessage]) -> list[int]:
+    """For each message, the index of the earliest message it must stay with: the call a reply in it answers."""
     calls: dict[str, int] = {}
     dependencies: list[int] = []
     for index, message in enumerate(messages):
@@ -987,13 +1013,7 @@ def _include_tool_dependencies(messages: list[ModelMessage], cutoff: int) -> int
             dependencies.append(
                 min([index, *(calls.get(part.tool_call_id, index) for part in message.parts if _is_tool_reply(part))])
             )
-
-    # Dependencies only point backward, so one reverse pass also covers transitive pairs.
-    for index in range(len(messages) - 1, -1, -1):
-        if index < cutoff:
-            break
-        cutoff = min(cutoff, dependencies[index])
-    return cutoff
+    return dependencies
 
 
 def find_token_cutoff(

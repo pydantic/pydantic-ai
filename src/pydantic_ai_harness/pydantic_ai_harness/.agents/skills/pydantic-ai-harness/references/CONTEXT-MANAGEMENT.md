@@ -161,8 +161,15 @@ answered.
 ### `SummarizingCompaction`
 
 `SummarizingCompaction(model=None, max_messages=None, max_tokens=None, keep_messages=20, keep_tokens=None, ...)`:
-one LLM call per compaction. `model=None` inherits the run's model; a non-text model (for
-example a decision model) needs `model=` set or the first compaction raises `UserError`.
+one LLM call per compaction.
+When the history doesn't fit the summarizer model's own `context_window`, less room for the summary (its
+`max_tokens` setting, else a quarter of the window up to 8,192 tokens), it's summarized in chunks, oldest
+first, each chunk updating the summary so far. Chunks never split a tool call from its returns, and no
+message is dropped: an oversized message has its tool output cut instead. The span records
+`compaction.summary_calls`. More than 32 chunks raises `ModelContextWindowExceededError`, which
+`FallbackCompaction` falls back on.
+`model=None` inherits the run's model; a non-text model (for example a decision model) needs `model=` set
+or the first compaction raises `UserError`.
 Useful keyword options: `model_settings`, `summarization_capabilities` (outer capabilities do not
 run on the summary call), `incremental=True` (update the previous summary rather than
 re-summarize), `keep_user_messages=False`, `tool_return_max_chars=500`, `summary_prompt` (must
