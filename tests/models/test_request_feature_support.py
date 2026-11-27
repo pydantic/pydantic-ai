@@ -7,8 +7,8 @@ request without it, and compares the two payloads.
 
 - **sent:** the payload moved. A fallback that renders the feature as text, such as instructions moved into a user
   message, also moves the payload and counts as sent.
-- **raises:** the request raised before reaching the wire. Any exception counts: which class an adapter should raise is
-  https://github.com/pydantic/pydantic-ai/issues/14027 (F1).
+- **raises:** the request raised before reaching the wire. Any exception counts, except a warning, which counts as
+  dropped: which class an adapter should raise is https://github.com/pydantic/pydantic-ai/issues/14027 (F1).
 - **dropped:** the payload didn't move and nothing was raised: the feature was silently ignored.
 
 A feature with a profile flag is expected to be sent when the flag is on and to raise when it's off, so a class states
@@ -216,7 +216,8 @@ async def _outcome(case: Case, feature: Feature) -> tuple[Outcome, bool | None, 
     if with_feature.payload is None:
         error = with_feature.observed.error
         assert error is not None, f'{case.id} sent nothing for {feature.id} and raised nothing'
-        return 'raises', flag, f'{type(error).__name__}: {error}'
+        # The suite turns warnings into errors, but outside it a warning lets the request go on without the feature.
+        return ('dropped' if isinstance(error, Warning) else 'raises'), flag, f'{type(error).__name__}: {error}'
     return ('dropped' if with_feature.payload == without.payload else 'sent'), flag, ''
 
 
