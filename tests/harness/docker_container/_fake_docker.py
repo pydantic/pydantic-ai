@@ -118,6 +118,8 @@ exec)
     # One file per exec, removed when it finishes, so `rm` only ever sees live commands.
     mkdir -p "$state/$name.pids"
     echo $$ > "$state/$name.pids/$$"
+    # The real client runs outside the container, so a command that signals its own process group can't kill it.
+    trap : HUP INT TERM
     # With `container-path`, the command finds only the programs on it, as in an image that lacks the host's.
     ( [ ! -f "$bin/container-path" ] || PATH=$(cat "$bin/container-path"); "$@" )
     status=$?

@@ -160,6 +160,27 @@ async def test_a_command_cannot_forge_its_exit_status(
     assert result.stderr.count('__pydantic_ai_docker_done__feedface:0') == 2
 
 
+@pytest.mark.parametrize(
+    ('command', 'exit_code'),
+    [
+        ("trap 'kill 0' EXIT; sleep 0.1 & wait; echo done", 143),
+        ('echo done; kill 0', 143),
+        ('echo done; kill -HUP 0', 129),
+        ('echo done; kill -INT 0', 130),
+    ],
+)
+async def test_a_command_that_signals_its_own_process_group_returns_its_exit_code(
+    docker: FakeDocker, container_dir: Path, command: str, exit_code: int
+) -> None:
+    """Not a VCR test: no HTTP is involved, and the fake docker runs the real wrapper in a local process group."""
+    backend = DockerContainerBackend(image='image', working_dir=str(container_dir))
+
+    result = await backend.run(command, shell=True)
+
+    assert (result.exit_code, result.stdout) == (exit_code, 'done\n')
+    assert (await backend.run(['echo', 'still alive'])).stdout == 'still alive\n'
+
+
 async def test_commands_start_in_the_resolved_working_dir(docker: FakeDocker, tmp_path: Path) -> None:
     first, second, link = tmp_path / 'first', tmp_path / 'second', tmp_path / 'link'
     first.mkdir()
