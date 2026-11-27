@@ -5,9 +5,9 @@ conversation from where the last one left it, from `load()` or from `load(limit=
 an agent on it and saves what the run returned. A run can have a new prompt or none, call a tool or two, answer with
 an output tool, pause on a tool that needs approval and resume with `DeferredToolResults`, stream, run with a model
 setting or a dynamic system prompt, trim or summarize its history with `ProcessHistory` or rebuild its tool results
-as new requests, and add a message from a hook with `ctx.enqueue(...)`, `ctx.messages.append(...)` or
-`ctx.messages.insert(0, ...)`. Between the run and the save,
-the result can make a JSON round trip, and the user can edit the conversation on purpose: drop its last turn, or put
+as new requests, with copies of the messages it keeps or not, add a message from a hook with `ctx.enqueue(...)`,
+`ctx.messages.append(...)` or `ctx.messages.insert(0, ...)`, and replace its history before the run with copies.
+Between the run and the save, the result can make a JSON round trip, and the user can edit the conversation on purpose: drop its last turn, or put
 a new message in place of one.
 
 The test only uses the public API, and keeps a reference of what the user meant: the head as it was before each save,
@@ -47,6 +47,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import collections
+import copy
 import dataclasses
 import itertools
 import json
@@ -115,7 +116,10 @@ Hook = Literal[
     'append_before_run',
     'insert_before_run',
     'append_before_model_request',
+    'deepcopy_before_run',
+    'copy_last_before_run',
 ]
+_COPYING_HOOKS = ('deepcopy_before_run', 'copy_last_before_run')
 RoundTrip = Literal['result', 'conversation']
 Edit = Literal['drop_last_turn', 'replace']
 
@@ -138,6 +142,8 @@ class Turn:
     """Trim or summarize the history, or replace each tool result before the last message with a new request."""
     keep: int = 2
     """How many of the last messages the capability keeps."""
+    copy_history: bool = False
+    """The capability returns deep copies of the messages it keeps, as one that redacts them does."""
     hook: Hook | None = None
     system_prompt: bool = False
     """Give the agent a dynamic system prompt, which the run rewrites on the first request each time."""
@@ -172,14 +178,16 @@ def _one_of(kinds: Any, *, optional: bool = False) -> st.SearchStrategy[Any]:
 def turns(draw: st.DrawFn) -> Turn:
     appended: tuple[Appended, ...] = tuple(draw(st.lists(_one_of(Appended), max_size=3)))
     mode: Mode = draw(_one_of(Mode))
+    capability: Trims | None = draw(_one_of(Trims, optional=True))
     return Turn(
         source=draw(_one_of(Source)),
         window=draw(st.integers(0, 6)),
         appended=appended,
         prompt=draw(st.booleans()) if appended and appended[-1] == 'prompt' else True,
         mode=mode,
-        capability=draw(_one_of(Trims, optional=True)),
+        capability=capability,
         keep=draw(st.integers(1, 4)),
+        copy_history=capability is not None and draw(st.booleans()),
         hook=draw(_one_of(Hook, optional=True)),
         system_prompt=draw(st.booleans()),
         settings=draw(st.booleans()),
@@ -299,8 +307,8 @@ class Script:
 
 
 @dataclass
-class AddsAMessage(AbstractCapability[Any]):
-    """Adds a message of its own, with `ctx.enqueue(...)`, `ctx.messages.append(...)` or `ctx.messages.insert(0, ...)`, before the run or its first request."""
+class ChangesTheHistory(AbstractCapability[Any]):
+    """Adds a message of its own, with `ctx.enqueue(...)`, `ctx.messages.append(...)` or `ctx.messages.insert(0, ...)`, before the run or its first request, or replaces the messages before the run with copies: all of them, or the last one."""
 
     how: str
     record: Record
@@ -317,7 +325,11 @@ class AddsAMessage(AbstractCapability[Any]):
             ctx.messages.append(message)
 
     async def before_run(self, ctx: RunContext[Any]) -> None:
-        if self.how.endswith('before_run'):
+        if self.how == 'deepcopy_before_run':
+            ctx.messages[:] = copy.deepcopy(ctx.messages)
+        elif self.how == 'copy_last_before_run':
+            ctx.messages[-1:] = copy.deepcopy(ctx.messages[-1:])
+        elif self.how.endswith('before_run'):
             self._add(ctx)
 
     async def before_model_request(
@@ -329,6 +341,13 @@ class AddsAMessage(AbstractCapability[Any]):
 
 
 def _processor(turn: Turn, record: Record) -> Callable[[list[ModelMessage]], list[ModelMessage]]:
+    process = _processes(turn, record)
+    if turn.copy_history:
+        return lambda messages: copy.deepcopy(process(messages))
+    return process
+
+
+def _processes(turn: Turn, record: Record) -> Callable[[list[ModelMessage]], list[ModelMessage]]:
     def trim(messages: list[ModelMessage]) -> list[ModelMessage]:
         return messages[-turn.keep :]
 
@@ -369,7 +388,7 @@ def _agent(turn: Turn, script: Script, record: Record) -> Agent[None, Output]:
     if turn.capability is not None:
         capabilities.append(ProcessHistory(_processor(turn, record)))
     if turn.hook is not None:
-        capabilities.append(AddsAMessage(turn.hook, record))
+        capabilities.append(ChangesTheHistory(turn.hook, record))
     agent: Agent[None, Output] = Agent(
         FunctionModel(script.respond, stream_function=script.stream),
         output_type=[ToolOutput(Answer, name=_OUTPUT_TOOL), str, DeferredToolRequests],
@@ -757,7 +776,7 @@ def _stores_requests_in_a_row(turn: Turn) -> bool:
     """Whether the turn can store two requests in a row: appended, enqueued or added by a hook, a summary, or an
     output tool's result and the next turn's prompt."""
     return (
-        turn.hook is not None
+        (turn.hook is not None and turn.hook not in _COPYING_HOOKS)
         or turn.capability == 'summarize'
         or turn.mode == 'output_tool'
         or _requests_in_a_row(turn)
@@ -826,7 +845,10 @@ KNOWN_FINDINGS = [
     KnownFinding(
         'rewritten-system-prompt-is-not-saved',
         frozenset({'S1', 'S2', 'S3', 'S4', 'S7'}),
-        lambda turn, earlier: dataclasses.replace(turn, system_prompt=False) if earlier else turn,
+        # It rewrites the first stored request, so only a system prompt an earlier turn stored.
+        lambda turn, earlier: (
+            dataclasses.replace(turn, system_prompt=False) if any(t.system_prompt for t in earlier) else turn
+        ),
         (
             (Turn(system_prompt=True), Turn(system_prompt=True)),
             (Turn(system_prompt=True), Turn(system_prompt=True, edit='drop_last_turn')),
@@ -862,34 +884,67 @@ KNOWN_FINDINGS = [
     KnownFinding(
         'conversation-comes-back-cleaned',
         frozenset({'S4', 'S7'}),
-        lambda turn, earlier: _without_requests_in_a_row(
-            turn, source='load' if turn.source == 'window' else turn.source
-        ),
+        lambda turn, earlier: _without_requests_in_a_row(turn),
         (
             (Turn(appended=('prompt',)), Turn()),
             (Turn(hook='enqueue_before_run'), Turn()),
-            (Turn(mode='tool'), Turn(source='window', window=2)),
             (Turn(mode='output_tool'), Turn(mode='deferred')),
             (Turn(mode='output_tool'), Turn(), Turn(capability='trim', keep=4)),
         ),
         'A run returns the stored messages it was given as it cleaned them to send, not as they were stored: two '
         'requests in a row, like an appended prompt and the new one, a prompt and an enqueued message, or a summary '
-        'and a tool result, come back merged, and a window that starts with a tool result comes back without it. '
-        'The store keeps them as they were, so `load()` no longer equals the conversation that was saved.',
+        'and a tool result, come back merged. The store keeps them as they were, so `load()` no longer equals the '
+        'conversation that was saved.',
     ),
     KnownFinding(
-        'merging-unsaved-requests-branches-off-adjacent-stored-ones',
-        frozenset({'S1', 'S3'}),
+        'window-starting-with-a-tool-result-comes-back-without-it',
+        frozenset({'S4', 'S7'}),
+        # Only a turn that stored a tool result can leave a window that starts with one.
         lambda turn, earlier: (
-            dataclasses.replace(turn, appended=(), prompt=True, hook=None) if _requests_in_a_row(turn) else turn
+            dataclasses.replace(turn, source='load')
+            if turn.source == 'window' and any(t.mode != 'plain' for t in earlier)
+            else turn
+        ),
+        ((Turn(mode='tool'), Turn(source='window', window=2)),),
+        'A run given a window of the stored messages that starts with a tool result drops the result, as its call '
+        'is not in the window, so the conversation it returns no longer starts where the window did.',
+    ),
+    KnownFinding(
+        'dropped-turn-leaves-a-tool-result-that-comes-back-merged',
+        frozenset({'S4', 'S7'}),
+        # Only a turn with a tool result can be left ending in one.
+        lambda turn, earlier: (
+            dataclasses.replace(turn, edit=None) if turn.edit == 'drop_last_turn' and turn.mode != 'plain' else turn
+        ),
+        ((Turn(source='window', window=0, mode='deferred', edit='drop_last_turn'), Turn(), Turn()),),
+        'Dropping the last turn of a window that holds no prompt drops only the last reply, so the conversation ends '
+        'in a tool result, and the next run returns it merged with its prompt, as in `conversation-comes-back-cleaned`.',
+    ),
+    KnownFinding(
+        'message-a-hook-appends-is-lost-when-the-history-is-copied',
+        frozenset({'S5'}),
+        lambda turn, earlier: (
+            dataclasses.replace(turn, copy_history=False) if turn.hook == 'append_before_model_request' else turn
+        ),
+        ((Turn(mode='tool', capability='trim', keep=1, copy_history=True, hook='append_before_model_request'),),),
+        'A message a `before_model_request` hook appends with `ctx.messages.append(...)` is kept by object, so when a '
+        'capability puts copies of the messages in the history and trims it later, the copy is not kept.',
+    ),
+    KnownFinding(
+        'merging-a-stored-request-and-unsaved-ones-branches',
+        frozenset({'S1', 'S3'}),
+        # Only when the stored history can end in a request the run merges the first unsaved one into.
+        lambda turn, earlier: (
+            dataclasses.replace(turn, appended=(), prompt=True, hook=None)
+            if _requests_in_a_row(turn) and any(map(_stores_requests_in_a_row, earlier))
+            else turn
         ),
         (
-            (Turn(appended=('prompt',)), Turn(source='load', appended=('prompt', 'prompt'), prompt=False)),
-            (Turn(mode='output_tool'), Turn(), Turn(appended=('prompt',), prompt=False, hook='append_before_run')),
+            (Turn(mode='output_tool'), Turn(appended=('exchange', 'prompt', 'prompt'), prompt=False)),
+            (Turn(mode='output_tool'), Turn(appended=('exchange', 'prompt', 'exchange'))),
         ),
-        'When the stored history has two requests in a row and the run also merges unsaved requests, the save '
-        'compares the whole history, finds the stored requests merged, and branches from there: an unedited save '
-        'replaces the stored messages with merged copies and records a branch.',
+        'When the run merges the last stored request into the first unsaved one, and other unsaved requests into '
+        'each other, the save compares the whole history, finds the stored request merged, and branches from there.',
     ),
     KnownFinding(
         'edit-after-merged-stored-requests-stores-a-prompt-twice',
@@ -925,29 +980,44 @@ def test_known_finding_is_still_present(finding: KnownFinding, reproducer: tuple
     assert [v for v in drive(reproducer) if v[0] in finding.fails] == []
 
 
-FIXED_FINDINGS: dict[str, tuple[tuple[Turn, ...], ...]] = {
+FIXED_FINDINGS: dict[str, tuple[frozenset[Property], tuple[tuple[Turn, ...], ...]]] = {
     # A message a `before_run` hook added with `ctx.messages.append(...)` to a continued conversation was in
     # `result.conversation` but not saved: the save started after it.
-    'message-appended-before-run-is-lost': ((Turn(), Turn(hook='append_before_run')),),
+    'message-appended-before-run-is-lost': (frozenset({'S5'}), ((Turn(), Turn(hook='append_before_run')),)),
     # A message a `before_model_request` hook added with `ctx.messages.append(...)` wasn't in `result.conversation`
     # when a capability trimmed it from the history in a later request.
     'message-appended-in-a-trimmed-run-is-lost': (
-        (Turn(mode='tool', capability='trim', keep=1, hook='append_before_model_request'),),
+        frozenset({'S5'}),
+        ((Turn(mode='tool', capability='trim', keep=1, hook='append_before_model_request'),),),
+    ),
+    # When the run merged unsaved requests to send them, the save compared the whole history: with two stored
+    # requests in a row it found them merged and branched from there, and it stored an output tool's result twice.
+    # The second list of turns only broke once the message a `before_run` hook appends was saved.
+    'merging-unsaved-requests-branches-off-adjacent-stored-ones': (
+        frozenset({'S1', 'S2', 'S3'}),
+        (
+            (Turn(appended=('prompt',)), Turn(source='load', appended=('prompt', 'prompt'), prompt=False)),
+            (Turn(mode='output_tool'), Turn(), Turn(appended=('prompt',), prompt=False, hook='append_before_run')),
+            (Turn(mode='output_tool'), Turn(appended=('prompt',), prompt=False, hook='append_before_run')),
+        ),
     ),
 }
-"""Minimal lists of turns that broke a property on main before a fix, kept as regression tests."""
+"""The properties a finding broke, and minimal lists of turns that broke them before a fix, kept as regression tests.
+
+Some of them still break a property of a known finding, like `conversation-comes-back-cleaned`, so only the
+properties the fixed one broke are checked."""
 
 
 @pytest.mark.parametrize(
-    'reproducer',
+    'fixed,reproducer',
     [
-        pytest.param(reproducer, id=f'{finding}-{index}')
-        for finding, reproducers in FIXED_FINDINGS.items()
+        pytest.param(fixed, reproducer, id=f'{finding}-{index}')
+        for finding, (fixed, reproducers) in FIXED_FINDINGS.items()
         for index, reproducer in enumerate(reproducers)
     ],
 )
-def test_fixed_finding_stays_fixed(reproducer: tuple[Turn, ...]):
-    assert drive(reproducer) == []
+def test_fixed_finding_stays_fixed(fixed: frozenset[Property], reproducer: tuple[Turn, ...]):
+    assert [v for v in drive(reproducer) if v[0] in fixed] == []
 
 
 # --- properties -------------------------------------------------------------------------------------------
