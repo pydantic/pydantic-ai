@@ -202,6 +202,7 @@ def test_public_engine_builder_exports() -> None:
         'ResultCodec',
         'ToolsetCallToolParams',
         'ToolsetGetToolsParams',
+        'raw_tool_args_for_unit',
         'revalidate_function_call',
         'WorkspaceCall',
         'WorkspaceCallParams',

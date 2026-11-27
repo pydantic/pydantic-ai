@@ -6,7 +6,7 @@ This module has to use numerous internal Pydantic APIs and is therefore brittle 
 from __future__ import annotations as _annotations
 
 import warnings
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from functools import cached_property, partial
 from inspect import Parameter, Signature, signature
@@ -18,7 +18,7 @@ from pydantic._internal._config import ConfigWrapper
 from pydantic.errors import PydanticSchemaGenerationError, PydanticUserError
 from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
-from pydantic.plugin._schema_validator import create_schema_validator
+from pydantic.plugin._schema_validator import PluggableSchemaValidator, create_schema_validator
 from pydantic_core import SchemaSerializer, SchemaValidator, core_schema
 from typing_extensions import ParamSpec, TypeIs, TypeVar, get_type_hints
 
@@ -29,6 +29,7 @@ from ._utils import (
     check_object_json_schema,
     is_async_callable,
     is_list,
+    is_list_tuple_or_set,
     is_model_like,
     is_str_dict,
     run_in_executor,
@@ -83,10 +84,28 @@ class FunctionSchema:
     """JSON schema for the function's return type. At minimum `{}` (equivalent to `Any`)."""
     revalidator: SchemaValidator | None = None
     """`validator` reading the top-level arguments by Python name only, set when one of them has an alias."""
+    validation_schema: core_schema.CoreSchema | None = None
+    """The cleaned core schema `validator` was built from, when `function_schema` built it."""
     json_parameter_serializers: dict[str, SchemaSerializer] = field(default_factory=dict[str, SchemaSerializer])
     """A serializer for each parameter whose schema takes a `Json` value, for `dump_json_parameters`."""
     json_kwargs_serializer: SchemaSerializer | None = None
     """A serializer for the arguments `**kwargs` takes, when its schema takes a `Json` value."""
+
+    @cached_property
+    def validation_runs_user_code(self) -> bool:
+        """Whether validating these arguments can call code outside Pydantic and Pydantic AI.
+
+        That code is a validator function, a `default_factory` other than a builtin type, a custom `__init__`,
+        a `model_post_init` or `__post_init__`, an enum's `_missing_`, a callable discriminator, or the
+        `__deepcopy__` of a default Pydantic copies. Without any, validation is a function of its input alone,
+        with no side effects. A schema this can't inspect counts as running user code.
+        """
+        return self.validation_schema is None or _runs_user_code(self.validation_schema, set())
+
+    @cached_property
+    def core_validator(self) -> SchemaValidator:
+        """`validator` without Pydantic's plugin wrapper: no installed Pydantic plugin observes what it validates."""
+        return _core_validator(self.validator)
 
     @cached_property
     def parameter_names(self) -> dict[str, str]:
@@ -111,7 +130,7 @@ class FunctionSchema:
                     parameter_names[alias] = name
         return parameter_names
 
-    def revalidate(self, args_dict: dict[str, Any], *, context: Any = None) -> dict[str, Any]:
+    def revalidate(self, args_dict: dict[str, Any], *, context: Any = None, in_core: bool = False) -> dict[str, Any]:
         """Validate arguments that `validator` already produced, after they crossed a boundary as JSON.
 
         For a single model-like argument they're the `{name: value}` envelope, which `validator` reads as
@@ -120,17 +139,21 @@ class FunctionSchema:
 
         Otherwise they're keyed by Python name, while `validator` reads a parameter's alias. When that reading
         fails, `revalidator` reads them by name.
+
+        With `in_core`, both validate without Pydantic's plugin wrapper, so no installed plugin observes them.
         """
+        validator = self.core_validator if in_core else self.validator
         if self.single_arg_name is not None:
-            return self.validator.validate_python(_Revalidated(args_dict[self.single_arg_name]), context=context)
+            return validator.validate_python(_Revalidated(args_dict[self.single_arg_name]), context=context)
         try:
-            return self.validator.validate_python(args_dict, context=context)
+            return validator.validate_python(args_dict, context=context)
         except ValidationError:
             # Not the `revalidator` up front: where a parameter's alias is another parameter's name, reading
             # by name would change arguments the alias reading accepts.
             if self.revalidator is None:
                 raise
-            return self.revalidator.validate_python(args_dict, context=context)
+            revalidator = _core_validator(self.revalidator) if in_core else self.revalidator
+            return revalidator.validate_python(args_dict, context=context)
 
     def dump_json_parameters(
         self, args_dict: dict[str, Any], *, by_alias: bool | None, round_trip: bool
@@ -326,6 +349,83 @@ def function_schema(
         revalidator=revalidator,
         json_parameter_serializers=json_parameter_serializers,
         json_kwargs_serializer=json_kwargs_serializer,
+        validation_schema=schema,
+    )
+
+
+def _core_validator(validator: SchemaValidator) -> SchemaValidator:
+    """The `SchemaValidator` that `validator` wraps when installed Pydantic plugins observe it."""
+    return validator._schema_validator if isinstance(validator, PluggableSchemaValidator) else validator
+
+
+# Code from these modules runs during validation without user code: Pydantic's own validators, the enum module's
+# default `_missing_`, and `_validate_single_arg`. A public Pydantic predicate for "this schema calls user code"
+# would replace this list.
+_TRUSTED_MODULES = ('pydantic', 'pydantic_core', 'pydantic_ai._function_schema', 'enum')
+_PURE_FACTORIES: frozenset[object] = frozenset({list, dict, set, frozenset, tuple, str, bytes, int, float, bool})
+_NOT_CALLED_KEYS = frozenset(
+    {'serialization', 'metadata', 'config', 'ref', 'schema_ref', 'generic_origin', 'expected', 'members'}
+)
+
+
+def _is_trusted_callable(value: object) -> bool:
+    # Compared by identity: a callable instance can be unhashable.
+    if any(value is factory for factory in _PURE_FACTORIES):
+        return True
+    while isinstance(value, partial):
+        value = value.func
+    module = getattr(value, '__module__', None)
+    return isinstance(module, str) and any(module == m or module.startswith(f'{m}.') for m in _TRUSTED_MODULES)
+
+
+def _is_copied_safely(default: object) -> bool:
+    """Whether Pydantic copies `default` without running a `__deepcopy__`: it deep-copies only unhashable defaults."""
+    try:
+        hash(default)
+        return True
+    except TypeError:
+        return _is_builtin_data(default)
+
+
+def _is_builtin_data(value: object) -> bool:
+    if is_str_dict(value) and type(value) is dict:
+        return all(_is_builtin_data(k) and _is_builtin_data(v) for k, v in value.items())
+    # Exact types: copying a subclass instance can run its own `__deepcopy__` or `__reduce_ex__`.
+    if type(value) in (list, tuple, set, frozenset) and is_list_tuple_or_set(value):
+        return all(_is_builtin_data(item) for item in value)
+    return type(value) in (str, bytes, int, float, bool, type(None))
+
+
+def _runs_user_code(node: object, seen: set[int]) -> bool:
+    if id(node) in seen:
+        return False
+    seen.add(id(node))
+    # Before the container checks: a callable can subclass `list` or `dict`.
+    if callable(node) and not _is_trusted_callable(node):
+        return True
+    if is_list_tuple_or_set(node):
+        return any(_runs_user_code(item, seen) for item in node)
+    return is_str_dict(node) and any(_entry_runs_user_code(node, key, value, seen) for key, value in node.items())
+
+
+def _entry_runs_user_code(schema: Mapping[str, object], key: str, value: object, seen: set[int]) -> bool:
+    if key in _NOT_CALLED_KEYS:
+        return False
+    if key == 'default':
+        return not _is_copied_safely(value)
+    if key != 'cls':
+        return _runs_user_code(value, seen)
+    # Of a schema's class, validation calls only a model's custom `__init__` and `model_post_init`, a dataclass's
+    # `__post_init__`, and an enum's `_missing_`.
+    if schema.get('type') == 'dataclass':
+        return bool(schema.get('post_init'))
+    if schema.get('type') == 'enum':
+        return not _is_trusted_callable(getattr(value, '_missing_', None))
+    if schema.get('type') != 'model':
+        return False
+    post_init = schema.get('post_init')
+    return bool(schema.get('custom_init')) or (
+        isinstance(post_init, str) and not _is_trusted_callable(getattr(value, post_init, None))
     )
 
 

@@ -3118,6 +3118,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
         # input the task's own resolution wouldn't reach, so they must not fork the key.
         '_run_held_toolsets',
         '_dispatched_tool_name',  # only read by `emit` to resolve attribution via the live `tool_manager`
+        '_tool_call_args',  # the call's arguments already reach the key as the task's `tool_args`
     }
     projected_via_derived_key = {
         'workspace',  # projected as `workspace_id`, known without connecting a deferred workspace

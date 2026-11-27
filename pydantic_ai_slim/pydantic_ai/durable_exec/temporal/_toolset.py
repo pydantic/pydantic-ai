@@ -65,6 +65,19 @@ class CallToolParams:
     """The name the toolset holds the tool under, when a `prepare` function renamed it in `tool_def.name`."""
 
 
+@dataclass(kw_only=True)
+@with_config(ConfigDict(arbitrary_types_allowed=True))
+class FunctionCallToolParams(CallToolParams):
+    """The function tool call activity's input type, which a call sends only when it carries `raw_tool_args`.
+
+    Every other call sends `CallToolParams`, so its payload has no `raw_tool_args` key, and the activity
+    loads it with `raw_tool_args=None`.
+    """
+
+    raw_tool_args: str | dict[str, Any] | None = None
+    """A function tool call's arguments as the model sent them, when `tool_args` don't survive the boundary; see `raw_tool_args_for_unit`."""
+
+
 @asynccontextmanager
 async def heartbeating() -> AsyncGenerator[None]:
     """Emit periodic activity heartbeats in the background while the wrapped activity body runs.

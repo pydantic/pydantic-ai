@@ -1,20 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import sys
 import uuid
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Annotated, Any, cast
 from unittest.mock import patch
 
 import pytest
-from pydantic import BaseModel, Field, Json, computed_field
-from pydantic_core import PydanticSerializationError
+from pydantic import BaseModel, ConfigDict, Field, Json, SecretStr, computed_field, model_validator
+from pydantic_core import PydanticSerializationError, to_json
+from typing_extensions import TypedDict
 
 from pydantic_ai import (
     AbstractToolset,
@@ -46,6 +48,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     MCP,
     Capability,
+    Hooks,
     PrefixTools,
     Toolset,
 )
@@ -68,17 +71,21 @@ from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN, TOOLS_CHANG
 
 from ..._inline_snapshot import snapshot
 from ...wrapped_retry_toolsets import call_probe_once, call_while_listed, failing_toolset, snapshot_probe_toolset
+from ..function_tool_arg_shapes import RECEIVED, TOOLS, check_shapes, shapes_hooks, shapes_model
 
 try:
     from temporalio import activity, workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
+    from temporalio.api.common.v1 import Payload
     from temporalio.client import Client, WorkflowHistory
     from temporalio.common import RetryPolicy
     from temporalio.contrib.pydantic import pydantic_data_converter
+    from temporalio.converter import DataConverter, EncodingPayloadConverter
     from temporalio.testing import ActivityEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityCancellationType, ActivityConfig
 
+    from pydantic_ai.durable_exec import ToolsetCallToolParams
     from pydantic_ai.durable_exec._toolset import (
         CallToolResult,
         unwrap_tool_call_result,
@@ -86,6 +93,7 @@ try:
     )
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
+        PydanticAIPayloadConverter,
         PydanticAIPlugin,
         TemporalAgent,  # pyright: ignore[reportDeprecated]
         TemporalDurability,
@@ -1416,6 +1424,145 @@ async def test_aliased_args_reach_the_activity(client: Client, path: str):
     assert _received_bookings == [('Ada', Place(cityName='Paris'), Revision(draftNumber=0, draft=7))]
 
 
+class Venue(TypedDict):
+    room: Annotated[str, Field(alias='roomName')]
+
+
+@dataclass
+class StdPlace:
+    city: Annotated[str, Field(alias='cityName')]
+
+
+class SerializedAs(BaseModel):
+    room: str = Field(serialization_alias='roomOut')
+
+
+class Counted(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    qty: int
+
+    @computed_field
+    @property
+    def doubled(self) -> int:
+        return self.qty * 2
+
+
+_received_model_args: list[object] = []
+"""The arguments the tools below ran with, recorded in the activity."""
+
+
+def reserve(
+    venue: Venue, place: StdPlace, token: SecretStr, nums: Json[list[int]], out: SerializedAs, counted: Counted
+) -> str:
+    """Reserve a venue."""
+    _received_model_args.append((venue, place, token.get_secret_value(), nums, out, counted))
+    return 'Reserved.'
+
+
+def pair(pair: tuple[float, str]) -> str:
+    """Record a pair."""
+    _received_model_args.append(pair)
+    return 'Paired.'
+
+
+def ping() -> str:
+    """Ping."""
+    _received_model_args.append('ping')
+    return 'Pong.'
+
+
+_RESERVE_ARGS = json.dumps(
+    {
+        'venue': {'roomName': 'A1'},
+        'place': {'cityName': 'Paris'},
+        'token': 'hunter2',
+        'nums': '[1, 2]',
+        'out': {'room': 'A1'},
+        'counted': {'qty': 2},
+    }
+)
+
+
+def _model_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) > 1:
+        return ModelResponse(parts=[TextPart('Done.')])
+    return ModelResponse(
+        parts=[
+            ToolCallPart('reserve', _RESERVE_ARGS, tool_call_id='c1'),
+            ToolCallPart('pair', {'pair': [1.5, 'x']}, tool_call_id='c2'),
+            ToolCallPart('ping', tool_call_id='c3'),
+        ]
+    )
+
+
+_model_args_agent = Agent(
+    FunctionModel(_model_args_model),
+    name='model_args_durable',
+    tools=[reserve, pair, ping],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class ModelArgsWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await _model_args_agent.run('Reserve room A1 in Paris.')
+        return result.output
+
+
+async def test_tool_arguments_are_validated_from_the_model_arguments_in_the_activity(client: Client):
+    """The activity validates the arguments the model sent, as the workflow did, rather than a dump of the validated ones.
+
+    The converter's dump writes a `TypedDict` and a stdlib dataclass by field name while their schema reads the alias,
+    masks the `SecretStr`, writes the parsed `Json` value while the schema expects a string, writes a field under the
+    serialization alias its validation doesn't read, and writes a computed field that a model forbidding extra fields
+    rejects.
+    """
+    _received_model_args.clear()
+    async with Worker(
+        client, task_queue=TASK_QUEUE, workflows=[ModelArgsWorkflow], plugins=[AgentPlugin(_model_args_agent)]
+    ):
+        handle = await client.start_workflow(
+            ModelArgsWorkflow.run, id=f'{ModelArgsWorkflow.__name__}-{uuid.uuid4()}', task_queue=TASK_QUEUE
+        )
+        assert await handle.result() == 'Done.'
+
+    assert sorted(_received_model_args, key=repr) == sorted(
+        [
+            ({'room': 'A1'}, StdPlace(city='Paris'), 'hunter2', [1, 2], SerializedAs(room='A1'), Counted(qty=2)),
+            (1.5, 'x'),
+            'ping',
+        ],
+        key=repr,
+    )
+    inputs = _call_tool_activity_inputs(await handle.fetch_history())
+    assert inputs['c1']['raw_tool_args'] == _RESERVE_ARGS
+    # The converter's dump already validates back to `(1.5, 'x')`, so this call's input has no `raw_tool_args`.
+    assert 'raw_tool_args' not in inputs['c2']
+    # No arguments to send: the call's `args` is `None`.
+    assert 'raw_tool_args' not in inputs['c3']
+
+
+def _call_tool_activity_inputs(history: WorkflowHistory) -> dict[str, dict[str, Any]]:
+    """Each `call_tool` activity's input, by tool call ID."""
+    inputs: dict[str, dict[str, Any]] = {}
+    for event in history.events:
+        attributes = event.activity_task_scheduled_event_attributes
+        if attributes.activity_type.name.endswith('__call_tool'):
+            params = json.loads(attributes.input.payloads[0].data)
+            inputs[params['serialized_run_context']['tool_call_id']] = params
+    return inputs
+
+
+_arg_shapes_agent = Agent(
+    shapes_model(),
+    name='arg_shapes_durable',
+    tools=TOOLS,
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG), shapes_hooks()],
+)
+
+
 class Batch(BaseModel):
     nums: Json[list[int]]
 
@@ -1484,6 +1631,448 @@ _json_args_wrapped_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     Agent(FunctionModel(_json_args_model), name='json_args_wrapped', tools=[sum_nums, sum_batch, tally]),
     activity_config=BASE_ACTIVITY_CONFIG,
 )
+
+
+@workflow.defn
+class ArgShapesWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await _arg_shapes_agent.run('go')
+        return result.output
+
+
+async def test_function_tool_argument_shapes_cross_the_activity_input(client: Client):
+    """Each shape in `function_tool_arg_shapes` reaches its tool as `check_shapes` expects.
+
+    An activity input carries the model's arguments only where their dump loses values, the tool's validation runs
+    no user code and no hook changed them; every other activity input has no `raw_tool_args` key.
+    """
+    plain = Agent(shapes_model(), tools=TOOLS, capabilities=[shapes_hooks()])
+    RECEIVED.clear()
+    await plain.run('go')
+    in_process = dict(RECEIVED)
+
+    RECEIVED.clear()
+    async with Worker(
+        client, task_queue=TASK_QUEUE, workflows=[ArgShapesWorkflow], plugins=[AgentPlugin(_arg_shapes_agent)]
+    ):
+        handle = await client.start_workflow(
+            ArgShapesWorkflow.run,
+            id=f'{ArgShapesWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+            # A failing workflow task retries without end; the timeout turns that into a test failure.
+            execution_timeout=timedelta(seconds=30),
+        )
+        assert await handle.result() == 'done'
+
+    inputs = _call_tool_activity_inputs(await handle.fetch_history())
+    check_shapes('temporal', RECEIVED, in_process, {name: 'raw_tool_args' in params for name, params in inputs.items()})
+
+
+class _DictAsCustomJSON(EncodingPayloadConverter):
+    """Writes a dict under an encoding other than `json/plain`, as a custom payload converter can."""
+
+    @property
+    def encoding(self) -> str:
+        return 'json/custom'
+
+    def to_payload(self, value: object) -> Payload | None:
+        if type(value) is not dict:
+            return None
+        return Payload(metadata={'encoding': self.encoding.encode()}, data=to_json(value))
+
+    def from_payload(self, payload: Payload, type_hint: type | None = None) -> object:
+        return json.loads(payload.data)
+
+
+class DictAsCustomJSONPayloadConverter(PydanticAIPayloadConverter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.converters = {b'json/custom': _DictAsCustomJSON(), **self.converters}
+
+
+_custom_dict_tokens: list[str] = []
+
+
+def _custom_dict_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) > 1:
+        return ModelResponse(parts=[TextPart('done')])
+    return ModelResponse(parts=[ToolCallPart('use_token', {'token': 'hunter2'}, tool_call_id='c1')])
+
+
+_custom_dict_agent = Agent(
+    FunctionModel(_custom_dict_model),
+    name='custom_dict_converter',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@_custom_dict_agent.tool_plain
+def use_token(token: SecretStr) -> str:
+    _custom_dict_tokens.append(token.get_secret_value())
+    return 'used'
+
+
+@workflow.defn
+class CustomDictConverterWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await _custom_dict_agent.run('go')
+        return result.output
+
+
+async def test_function_tool_arguments_cross_as_their_dump_under_a_converter_that_does_not_write_json(
+    temporal_target: str,
+):
+    """A payload converter that doesn't write the arguments as `json/plain` keeps every call on its dump.
+
+    Only JSON arguments can be checked against the model's, so the `SecretStr` arrives masked, as on `main`.
+    """
+    client = await Client.connect(
+        temporal_target,
+        data_converter=DataConverter(payload_converter_class=DictAsCustomJSONPayloadConverter),
+        plugins=[PydanticAIPlugin()],
+    )
+    _custom_dict_tokens.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CustomDictConverterWorkflow],
+        plugins=[AgentPlugin(_custom_dict_agent)],
+    ):
+        handle = await client.start_workflow(
+            CustomDictConverterWorkflow.run,
+            id=f'{CustomDictConverterWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+        assert await handle.result() == 'done'
+
+    converter = DictAsCustomJSONPayloadConverter()
+    [payload] = converter.to_payloads([{'token': '**********'}])
+    assert payload.metadata['encoding'] == b'json/custom'
+    assert converter.from_payloads([payload]) == [{'token': '**********'}]
+    assert _custom_dict_tokens == ['**********']
+    assert 'raw_tool_args' not in _call_tool_activity_inputs(await handle.fetch_history())['c1']
+
+
+class Folded(BaseModel):
+    price: int
+    qty: int = 1
+
+    @model_validator(mode='before')
+    @classmethod
+    def fold_quantity(cls, data: dict[str, int]) -> dict[str, int]:
+        # Mutates its input: run twice on one dict, the second run finds no `qty`.
+        data['price'] = data.pop('price') * data.pop('qty')
+        return data
+
+
+class PriceOptions(TypedDict, total=False):
+    max_price: Annotated[float, Field(alias='maxPrice')]
+
+
+class Order(BaseModel):
+    qty: int
+
+
+_received_hook_args: list[object] = []
+"""The arguments the tools below ran with, recorded in the activity."""
+
+
+def order(order: Order, note: str) -> str:
+    """Place an order."""
+    _received_hook_args.append((order, note))
+    return 'Ordered.'
+
+
+def stay(nights: int) -> str:
+    """Book nights."""
+    _received_hook_args.append(nights)
+    return 'Stayed.'
+
+
+_hooks = Hooks[None]()
+
+
+@_hooks.on.before_tool_validate(tools=['stay'])
+async def _repair_nights(
+    ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: str | dict[str, Any]
+) -> dict[str, Any]:
+    return {'nights': 2}
+
+
+@_hooks.on.after_tool_validate(tools=['order'])
+async def _replace_note(
+    ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+) -> dict[str, Any]:
+    return {**args, 'note': 'hook'}
+
+
+@_hooks.on.before_tool_execute(tools=['order'])
+async def _mutate_order(
+    ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+) -> dict[str, Any]:
+    args['order'].qty = 99
+    return args
+
+
+def _hook_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) > 1:
+        return ModelResponse(parts=[TextPart('Done.')])
+    return ModelResponse(
+        parts=[
+            ToolCallPart('order', {'order': {'qty': 1}, 'note': 'model'}, tool_call_id='c1'),
+            ToolCallPart('stay', '{"nights": "two"}', tool_call_id='c2'),
+        ]
+    )
+
+
+_hook_args_agent = Agent(
+    FunctionModel(_hook_args_model),
+    name='hook_args_durable',
+    deps_type=type(None),
+    tools=[order, stay],
+    capabilities=[_hooks, TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class HookArgsWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await _hook_args_agent.run('Order one and stay two nights.')
+        return result.output
+
+
+async def test_arguments_changed_by_hooks_reach_the_activity_as_changed(client: Client):
+    """Arguments a hook replaced, mutated or repaired don't validate back from the model's, so the activity gets them dumped."""
+    _received_hook_args.clear()
+    async with Worker(
+        client, task_queue=TASK_QUEUE, workflows=[HookArgsWorkflow], plugins=[AgentPlugin(_hook_args_agent)]
+    ):
+        output = await client.execute_workflow(
+            HookArgsWorkflow.run, id=f'{HookArgsWorkflow.__name__}-{uuid.uuid4()}', task_queue=TASK_QUEUE
+        )
+
+    assert output == 'Done.'
+    assert sorted(_received_hook_args, key=repr) == sorted([(Order(qty=99), 'hook'), 2], key=repr)
+
+
+@dataclass
+class Account:
+    name: str
+    tenant_id: int = field(compare=False)
+
+
+_received_tenants: list[tuple[int, str]] = []
+"""The tenant and token `act` ran with, recorded in the activity."""
+
+
+def act(account: Account, token: SecretStr) -> str:
+    """Act for an account."""
+    _received_tenants.append((account.tenant_id, token.get_secret_value()))
+    return 'Acted.'
+
+
+_pin_hooks = Hooks[None]()
+
+
+@_pin_hooks.on.after_tool_validate(tools=['act'])
+async def _pin_tenant(
+    ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+) -> dict[str, Any]:
+    return {**args, 'account': replace(args['account'], tenant_id=1)}
+
+
+def _pinned_tenant_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) > 1:
+        return ModelResponse(parts=[TextPart('Done.')])
+    args = {'account': {'name': 'acme', 'tenant_id': 2}, 'token': 'hunter2'}
+    return ModelResponse(parts=[ToolCallPart('act', args, tool_call_id='c1')])
+
+
+_pinned_tenant_agent = Agent(
+    FunctionModel(_pinned_tenant_model),
+    name='pinned_tenant_durable',
+    deps_type=type(None),
+    tools=[act],
+    capabilities=[_pin_hooks, TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class PinnedTenantWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await _pinned_tenant_agent.run('Act for acme.')
+        return result.output
+
+
+async def test_field_a_hook_pinned_reaches_the_activity_as_pinned_where_eq_ignores_it(client: Client):
+    """A field a hook pinned reaches the activity as pinned, even where `==` ignores it.
+
+    `token` makes the dump lossy, so the model's arguments would be sent if they validated to the hook's; they do
+    under `==`, which skips `tenant_id`. Their JSON form doesn't, so the call keeps the dump, as on main, and the
+    `SecretStr` arrives masked.
+    """
+    _received_tenants.clear()
+    async with Worker(
+        client, task_queue=TASK_QUEUE, workflows=[PinnedTenantWorkflow], plugins=[AgentPlugin(_pinned_tenant_agent)]
+    ):
+        output = await client.execute_workflow(
+            PinnedTenantWorkflow.run, id=f'{PinnedTenantWorkflow.__name__}-{uuid.uuid4()}', task_queue=TASK_QUEUE
+        )
+
+    assert output == 'Done.'
+    assert _received_tenants == [(1, '**********')]
+
+
+_received_folds: list[object] = []
+"""The arguments the tools below ran with, recorded in the activity."""
+
+
+def fold(filters: Folded) -> str:
+    """Fold a quantity into the price."""
+    _received_folds.append(filters)
+    return 'Folded.'
+
+
+def fold_with_options(filters: Folded, opts: PriceOptions) -> str:
+    """Fold a quantity into the price, with options."""
+    _received_folds.append((filters, opts))
+    return 'Folded.'
+
+
+def _folding_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) > 1:
+        return ModelResponse(parts=[TextPart('Done.')])
+    return ModelResponse(
+        parts=[
+            ToolCallPart('fold', {'filters': {'price': 3, 'qty': 2}}, tool_call_id='c1'),
+            ToolCallPart(
+                'fold_with_options', {'filters': {'price': 3, 'qty': 2}, 'opts': {'maxPrice': 10}}, tool_call_id='c2'
+            ),
+        ]
+    )
+
+
+_folding_agent = Agent(
+    FunctionModel(_folding_model),
+    name='folding_durable',
+    tools=[fold, fold_with_options],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class FoldingWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await _folding_agent.run('Fold three by two.')
+        return result.output
+
+
+async def test_validator_that_mutates_its_input_runs_once_in_the_activity(client: Client):
+    """Checking which arguments to send runs the tool's validators on copies, so the activity validates each input once.
+
+    `fold` crosses as its dump, which the activity validates once. The workflow has already folded
+    `fold_with_options`'s own arguments in place, so validating them again raises there; that call keeps the dump
+    too, whose `PriceOptions` field arrives without its aliased key.
+    """
+    _received_folds.clear()
+    async with Worker(
+        client, task_queue=TASK_QUEUE, workflows=[FoldingWorkflow], plugins=[AgentPlugin(_folding_agent)]
+    ):
+        output = await client.execute_workflow(
+            FoldingWorkflow.run, id=f'{FoldingWorkflow.__name__}-{uuid.uuid4()}', task_queue=TASK_QUEUE
+        )
+
+    assert output == 'Done.'
+    # The model's arguments were folded in place, so this call keeps the dump and loses `opts` as on main (#13440).
+    options_lost_as_on_main: PriceOptions = {}
+    assert sorted(_received_folds, key=repr) == sorted(
+        [Folded(price=6, qty=1), (Folded(price=6, qty=1), options_lost_as_on_main)], key=repr
+    )
+
+
+_received_filters: list[PriceOptions] = []
+"""The arguments `search` ran with, recorded in the activity."""
+
+
+def search(filters: PriceOptions) -> str:
+    """Search with filters."""
+    _received_filters.append(filters)
+    return 'Found.'
+
+
+def _search_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) > 1:
+        return ModelResponse(parts=[TextPart('Done.')])
+    return ModelResponse(parts=[ToolCallPart('search', {'filters': {'maxPrice': 10}}, tool_call_id='c1')])
+
+
+_search_agent = Agent(
+    FunctionModel(_search_model),
+    name='search_durable',
+    tools=[search],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class SearchWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await _search_agent.run('Search under 10.')
+        return result.output
+
+
+async def test_history_recorded_without_model_arguments_replays(client: Client, monkeypatch: pytest.MonkeyPatch):
+    """A history whose `call_tool` input carries only the validated arguments, as before, replays with code that sends both.
+
+    The converter's dump writes the `TypedDict` field by name while its schema reads `maxPrice`, so without the model's
+    arguments the optional field arrives missing. Unsandboxed, so the patch reaches the workflow's transport.
+    """
+    _received_filters.clear()
+
+    def without_model_args(
+        toolset: FunctionToolset[Any], params: ToolsetCallToolParams, *, loaded_tool_args: dict[str, Any]
+    ) -> None:
+        return None
+
+    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._transports.raw_tool_args_for_unit', without_model_args)
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SearchWorkflow],
+        plugins=[AgentPlugin(_search_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            SearchWorkflow.run, id=f'{SearchWorkflow.__name__}-{uuid.uuid4()}', task_queue=TASK_QUEUE
+        )
+        assert await handle.result() == 'Done.'
+    monkeypatch.undo()
+    assert _received_filters == [{}]
+
+    history = await handle.fetch_history()
+    assert 'raw_tool_args' not in _call_tool_activity_inputs(history)['c1']
+    replay = await Replayer(
+        workflows=[SearchWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=UnsandboxedWorkflowRunner()
+    ).replay_workflow(history)
+    assert replay.replay_failure is None
+
+    _received_filters.clear()
+    async with Worker(client, task_queue=TASK_QUEUE, workflows=[SearchWorkflow], plugins=[AgentPlugin(_search_agent)]):
+        handle = await client.start_workflow(
+            SearchWorkflow.run, id=f'{SearchWorkflow.__name__}-{uuid.uuid4()}', task_queue=TASK_QUEUE
+        )
+        assert await handle.result() == 'Done.'
+    assert _received_filters == [{'max_price': 10.0}]
+    assert _call_tool_activity_inputs(await handle.fetch_history())['c1']['raw_tool_args'] == {
+        'filters': {'maxPrice': 10}
+    }
 
 
 @workflow.defn

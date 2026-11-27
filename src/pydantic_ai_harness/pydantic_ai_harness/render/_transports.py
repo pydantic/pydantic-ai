@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from typing import Annotated, Any, Generic, TypeVar
 
-from pydantic import TypeAdapter
+from pydantic import Field, TypeAdapter
 
 from pydantic_ai.durable_exec import DurabilityEngineSpec, ParameterTransports
 from pydantic_ai.exceptions import UserError
@@ -44,6 +44,7 @@ from ._compat import (
     model_settings_from_json,
     model_settings_to_json,
     prepare_function_call_params,
+    raw_tool_args_for_unit,
     resolve_mcp_tool_for_definition,
     to_json_object,
 )
@@ -83,6 +84,8 @@ class _CallToolPayload:
     run_context: JSONObject
     tool_def: ToolDefinition | None = None
     original_name: str | None = None
+    # Left out when `None`, so a call that doesn't need it crosses with the bytes it had before the field existed.
+    raw_tool_args: Annotated[str | JSONObject | None, Field(exclude_if=lambda value: value is None)] = None
 
 
 @dataclass(kw_only=True)
@@ -137,13 +140,16 @@ class RenderFunctionCallTransport(Generic[AgentDepsT], RenderJSONTransport[Tools
         tool = params.tool
         if tool is None:  # pragma: no cover - core resolves tools before dispatch
             raise ValueError(f'Function tool {params.name!r} has no resolved definition.')
-        tool_args = dump_json_function_args(self._toolset, tool, params.tool_args, by_alias=True)
+        json_args = dump_json_function_args(self._toolset, tool, params.tool_args, by_alias=True)
+        tool_args = to_json_object(_FUNCTION_TOOL_ARGS.dump_python(json_args, mode='json', by_alias=True))
         payload = _CallToolPayload(
             name=params.name,
-            tool_args=to_json_object(_FUNCTION_TOOL_ARGS.dump_python(tool_args, mode='json', by_alias=True)),
+            tool_args=tool_args,
             run_context=self._context_codec.dump(params.ctx),
             tool_def=tool.tool_def,
             original_name=function_tool_original_name(tool),
+            # `tool_args` holds the JSON values the task loads.
+            raw_tool_args=raw_tool_args_for_unit(self._toolset, params, loaded_tool_args=tool_args),
         )
         return dump_json_object(_CallToolPayload, payload)
 
@@ -167,6 +173,7 @@ class RenderFunctionCallTransport(Generic[AgentDepsT], RenderJSONTransport[Tools
             tool_args=load_json_object(decoded.tool_args),
             ctx=ctx,
             tool=tool,
+            raw_tool_args=decoded.raw_tool_args,
         )
 
 

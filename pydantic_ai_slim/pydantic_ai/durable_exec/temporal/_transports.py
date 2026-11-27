@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ConfigDict, with_config
+from pydantic_core import from_json
+from temporalio import workflow
 
 from pydantic_ai import messages as _messages
 from pydantic_ai._instrumentation import (
@@ -34,6 +36,7 @@ from pydantic_ai.durable_exec._toolset import (
     DynamicToolsResult,
     Instructions,
     dump_json_function_args,
+    raw_tool_args_for_unit,
     revalidate_function_call,
 )
 from pydantic_ai.durable_exec._workspace import WorkspaceCall, WorkspaceCallParams, WorkspaceCallResult
@@ -50,7 +53,7 @@ from pydantic_ai.workspaces import WorkspaceRef
 
 from ._operation_backend import TemporalParameterTransport
 from ._spec import TEMPORAL_ENGINE_SPEC
-from ._toolset import CallToolParams, GetToolsParams
+from ._toolset import CallToolParams, FunctionCallToolParams, GetToolsParams
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
@@ -81,7 +84,7 @@ __all__ = (
 
 
 class _FunctionCallTransport(TemporalParameterTransport[ToolsetCallToolParams, tuple[CallToolParams, Any]]):
-    wire_type = CallToolParams
+    wire_type = FunctionCallToolParams
     result_type = CallToolResult
 
     def __init__(self, durability: TemporalDurability[Any], toolset: FunctionToolset[Any]) -> None:
@@ -91,17 +94,36 @@ class _FunctionCallTransport(TemporalParameterTransport[ToolsetCallToolParams, t
     def dump(self, params: ToolsetCallToolParams) -> tuple[CallToolParams, Any]:
         assert params.tool is not None
         tool = params.tool
-        return (
-            CallToolParams(
+        # `PydanticAIPayloadConverter` dumps with `to_json`'s defaults.
+        tool_args = dump_json_function_args(self._toolset, tool, params.tool_args, by_alias=None)
+        raw_tool_args = None
+        # Serialized here, by the workflow's converter, so the activity input carries the JSON values the activity
+        # loads. The converter writes them again unchanged: serializers run once, and the payload's bytes are the
+        # ones `tool_args` gave before. `from_json` reads them back without an adapter, which a plugin would observe.
+        [payload] = workflow.payload_converter().to_payloads([tool_args])
+        if payload.metadata.get('encoding') == b'json/plain':
+            tool_args = from_json(payload.data)
+            raw_tool_args = raw_tool_args_for_unit(self._toolset, params, loaded_tool_args=tool_args)
+        serialized_run_context = self._durability.run_context_type.serialize_run_context(params.ctx)
+        original_name = tool.original_name if isinstance(tool, FunctionToolsetTool) else None
+        if raw_tool_args is None:
+            wire = CallToolParams(
                 name=params.name,
-                # `PydanticAIPayloadConverter` dumps with `to_json`'s defaults.
-                tool_args=dump_json_function_args(self._toolset, tool, params.tool_args, by_alias=None),
-                serialized_run_context=self._durability.run_context_type.serialize_run_context(params.ctx),
+                tool_args=tool_args,
+                serialized_run_context=serialized_run_context,
                 tool_def=tool.tool_def,
-                original_name=tool.original_name if isinstance(tool, FunctionToolsetTool) else None,
-            ),
-            params.ctx.deps,
-        )
+                original_name=original_name,
+            )
+        else:
+            wire = FunctionCallToolParams(
+                name=params.name,
+                tool_args=tool_args,
+                serialized_run_context=serialized_run_context,
+                tool_def=tool.tool_def,
+                original_name=original_name,
+                raw_tool_args=raw_tool_args,
+            )
+        return wire, params.ctx.deps
 
     def load(self, payload: tuple[CallToolParams, Any], *, runtime: object) -> ToolsetCallToolParams:
         params, deps = payload
@@ -117,7 +139,13 @@ class _FunctionCallTransport(TemporalParameterTransport[ToolsetCallToolParams, t
                 f'Tool {params.name!r} not found in toolset {self._toolset.id!r}. '
                 'Removing or renaming tools during an agent run is not supported with Temporal.'
             ) from exc
-        return ToolsetCallToolParams(params.name, tool_args=params.tool_args, ctx=ctx, tool=tool)
+        return ToolsetCallToolParams(
+            params.name,
+            tool_args=params.tool_args,
+            ctx=ctx,
+            tool=tool,
+            raw_tool_args=params.raw_tool_args if isinstance(params, FunctionCallToolParams) else None,
+        )
 
 
 class _GetToolsTransport(TemporalParameterTransport[ToolsetGetToolsParams, tuple[GetToolsParams, Any]]):

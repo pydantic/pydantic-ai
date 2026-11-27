@@ -573,6 +573,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
     tool its own name. `emit` resolves the tool's owning capability by this name.
     """
 
+    _tool_call_args: str | dict[str, Any] | None = field(default=None, repr=False, compare=False)
+    """Private implementation detail — not part of the public API; do not read or write.
+
+    The `args` of the tool call being executed, set when the `ToolManager` builds the call's context.
+    A durable engine that runs the tool in another process validates them there, when they validate
+    to the arguments the tool is called with, instead of validating a dump of those arguments.
+    """
+
     _tool_name_path: ToolNamePath = field(default=(), repr=False, compare=False)
     """Private implementation detail — not part of the public API; do not read or write.
 

@@ -1214,6 +1214,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         # Live toolsets the run holds entered; an activity may run in another process, so it enters its own
         '_run_held_toolsets',
         '_dispatched_tool_name',  # names a tool in the workflow-side `tool_manager`, which an activity doesn't have
+        '_tool_call_args',  # crosses as the function call's `raw_tool_args` when the activity can validate it
     }
     carried_only_when_set = {
         '_tool_name_path',  # set while a name-changing wrapper lists a toolset; defaults to `()` otherwise

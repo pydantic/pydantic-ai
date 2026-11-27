@@ -71,6 +71,7 @@ _REHYDRATORS: tuple[tuple[str, type[Any], TypeAdapter[Any]], ...] = (
 # already makes `None` mean "not available here". `_run_held_toolsets` is the same: a unit may run
 # in another process, so it enters its own toolset instead of reusing the one the run holds.
 # `_dispatched_tool_name` names a tool in `tool_manager`, so it has nothing to name inside a unit.
+# `_tool_call_args` crosses on `ToolsetCallToolParams.raw_tool_args` when it crosses at all.
 _NONE_UNLESS_ATTACHED = (
     'agent',
     'root_capability',
@@ -82,6 +83,7 @@ _NONE_UNLESS_ATTACHED = (
     '_run_capabilities_by_id',
     '_run_held_toolsets',
     '_dispatched_tool_name',
+    '_tool_call_args',
 )
 
 # Reading any other omitted field raises instead of returning the `RunContext` dataclass default,

@@ -7,13 +7,13 @@ from datetime import date
 from typing import Annotated
 
 import pytest
-from pydantic import BaseModel, ConfigDict, Field, Json, computed_field, with_config
+from pydantic import BaseModel, ConfigDict, Field, Json, SecretStr, computed_field, model_validator, with_config
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from render.workflows import TaskContext, Workflows
+from render.workflows import TaskContext, TaskDefinition, Workflows
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, RunContext, Tool
-from pydantic_ai.capabilities import Hooks
+from pydantic_ai.capabilities import Hooks, RawToolArgs, ValidatedToolArgs
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ImageUrl,
@@ -26,11 +26,13 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness import RenderWorkflows
 
-from .conftest import RecordingTaskContext, run_agent_in_task
+from ...durable_exec.function_tool_arg_shapes import RECEIVED, TOOLS, check_shapes, shapes_hooks, shapes_model
+from .conftest import P, R, RecordingTaskContext, is_envelope, run_agent_in_task
 
 
 @dataclass
@@ -205,56 +207,6 @@ async def test_aliased_function_arguments_are_revalidated_after_the_json_boundar
     assert 'aliased-arguments__function_toolset__<agent>.call_tool' in context.task_names
 
 
-class Room(BaseModel):
-    name: str = Field(alias='roomName')
-    max_price: float | None = Field(None, alias='maxPrice')
-
-
-@pydantic_dataclass
-class Guest:
-    name: Annotated[str, Field(alias='guestName')]
-
-
-def nested_aliased_argument_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    del info
-    if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
-        return ModelResponse(parts=[TextPart('nested aliased arguments arrived')])
-    args = {'room': {'roomName': 'A1', 'maxPrice': 10}, 'guest': {'guestName': 'Ada'}}
-    return ModelResponse(parts=[ToolCallPart('book', args, tool_call_id='book')])
-
-
-async def test_nested_aliased_function_arguments_cross_the_json_boundary_by_alias() -> None:
-    """By Python name, the required `roomName` would fail revalidation and `maxPrice` would revalidate to its default.
-
-    Not a VCR test: the claim is about the arguments crossing into the chained task run, and no provider request
-    is involved.
-    """
-    seen: list[tuple[str, float | None, str]] = []
-    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
-    agent = Agent[None, str](
-        FunctionModel(nested_aliased_argument_model),
-        name='nested-aliased-arguments',
-        deps_type=type(None),
-        capabilities=[runtime],
-    )
-
-    @agent.tool_plain
-    async def book(room: Room, guest: Guest) -> str:
-        seen.append((room.name, room.max_price, guest.name))
-        return 'ok'
-
-    async def run_agent_impl(ctx: TaskContext) -> str:
-        del ctx
-        return (await agent.run('book A1 for Ada')).output
-
-    run_agent = runtime.task(run_agent_impl)
-    pending = run_agent.func(RecordingTaskContext())
-    assert inspect.isawaitable(pending)
-
-    assert await pending == 'nested aliased arguments arrived'
-    assert seen == [('A1', 10.0, 'Ada')]
-
-
 class Batch(BaseModel):
     nums: Json[list[int]]
 
@@ -354,64 +306,181 @@ class Venue(TypedDict):
     room: Annotated[str, Field(alias='roomName')]
 
 
-@with_config(ConfigDict(validate_by_name=True))
-class NamedVenue(TypedDict):
-    room: Annotated[str, Field(alias='roomName')]
+@dataclass
+class Place:
+    city: Annotated[str, Field(alias='cityName')]
 
 
-def typed_dict_aliased_argument_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+class SerializedAs(BaseModel):
+    room: str = Field(serialization_alias='roomOut')
+
+
+class Counted(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    qty: int
+
+    @computed_field
+    @property
+    def doubled(self) -> int:
+        return self.qty * 2
+
+
+def model_sent_arguments_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     del info
-    returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
-    if returns:
-        return ModelResponse(parts=[TextPart(', '.join(f'{part.tool_name}: {part.outcome}' for part in returns))])
-    args = {'venue': {'roomName': 'A1'}, 'guests': 2}
+    if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+        return ModelResponse(parts=[TextPart('done')])
+    args = {
+        'venue': {'roomName': 'A1'},
+        'place': {'cityName': 'Paris'},
+        'token': 'hunter2',
+        'nums': '[1, 2]',
+        'out': {'room': 'A1'},
+        'counted': {'qty': 2},
+    }
+    return ModelResponse(parts=[ToolCallPart('book', args, tool_call_id='book')])
+
+
+async def test_function_arguments_are_validated_from_the_model_arguments_in_the_task() -> None:
+    """The task validates the arguments the model sent, as the run did, rather than a JSON dump of the validated ones.
+
+    The dump writes a `TypedDict` and a stdlib dataclass by field name while their schema reads the alias, masks
+    the `SecretStr`, writes the parsed `Json` value while the schema expects a string, and writes a computed field
+    that a model forbidding extra fields rejects.
+    """
+    seen: list[tuple[Venue, Place, str, list[int], SerializedAs, Counted]] = []
+    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
+    agent = Agent[None, str](
+        FunctionModel(model_sent_arguments_model), name='model-arguments', deps_type=type(None), capabilities=[runtime]
+    )
+
+    @agent.tool_plain
+    async def book(
+        venue: Venue, place: Place, token: SecretStr, nums: Json[list[int]], out: SerializedAs, counted: Counted
+    ) -> str:
+        seen.append((venue, place, token.get_secret_value(), nums, out, counted))
+        return 'ok'
+
+    assert await run_agent_in_task(agent, runtime, RecordingTaskContext()) == 'done'
+    assert seen == [({'room': 'A1'}, Place(city='Paris'), 'hunter2', [1, 2], SerializedAs(room='A1'), Counted(qty=2))]
+
+
+class Folded(BaseModel):
+    price: int
+    qty: int = 1
+
+    @model_validator(mode='before')
+    @classmethod
+    def fold_quantity(cls, data: dict[str, int]) -> dict[str, int]:
+        # Mutates its input: run twice on one dict, the second run finds no `qty`.
+        data['price'] = data.pop('price') * data.pop('qty')
+        return data
+
+
+class PriceOptions(TypedDict, total=False):
+    max_price: Annotated[float, Field(alias='maxPrice')]
+
+
+class Order(BaseModel):
+    qty: int
+
+
+def hook_arguments_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    del info
+    if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+        return ModelResponse(parts=[TextPart('done')])
     return ModelResponse(
         parts=[
-            ToolCallPart('book_venue', args, tool_call_id='venue'),
-            ToolCallPart('book_named_venue', args, tool_call_id='named-venue'),
+            ToolCallPart('order', {'order': {'qty': 1}, 'note': 'model'}, tool_call_id='order'),
+            ToolCallPart('stay', '{"nights": "two"}', tool_call_id='stay'),
         ]
     )
 
 
-async def test_typed_dict_aliased_fields_need_validate_by_name_to_cross_the_json_boundary() -> None:
-    """A validated `TypedDict` parameter is a plain dict keyed by Python name, so it crosses the boundary that way.
+async def test_arguments_changed_by_hooks_reach_the_task_as_changed() -> None:
+    """Arguments a hook replaced, mutated or repaired don't validate back from the model's, so the task gets them dumped."""
+    seen: list[object] = []
+    hooks = Hooks[None]()
 
-    The serializer for the arguments sees no field types, so it can't write the `TypedDict`'s aliases. After the
-    boundary, the tool's schema reads `roomName`, so the argument revalidates only when the `TypedDict` also
-    validates by name.
+    @hooks.on.before_tool_validate(tools=['stay'])
+    async def repair(
+        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs
+    ) -> RawToolArgs:
+        return {'nights': 2}
 
-    Not a VCR test: the claim is about the arguments crossing into the chained task run, and no provider request
-    is involved.
-    """
-    seen: list[str] = []
+    @hooks.on.after_tool_validate(tools=['order'])
+    async def replace_note(
+        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
+        return {**args, 'note': 'hook'}
+
+    @hooks.on.before_tool_execute(tools=['order'])
+    async def mutate_order(
+        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
+        args['order'].qty = 99
+        return args
+
     runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
     agent = Agent[None, str](
-        FunctionModel(typed_dict_aliased_argument_model),
-        name='typed-dict-aliased-arguments',
-        deps_type=type(None),
-        capabilities=[runtime],
+        FunctionModel(hook_arguments_model), name='hook-arguments', deps_type=type(None), capabilities=[hooks, runtime]
     )
 
-    # Revalidation rejects the by-name `venue`, so this tool never runs.
     @agent.tool_plain
-    async def book_venue(venue: Venue, guests: int) -> str:  # pragma: no cover
-        return venue['room']
-
-    @agent.tool_plain
-    async def book_named_venue(venue: NamedVenue, guests: int) -> str:
-        seen.append(venue['room'])
+    async def order(order: Order, note: str) -> str:
+        seen.append((order, note))
         return 'ok'
 
-    async def run_agent_impl(ctx: TaskContext) -> str:
-        del ctx
-        return (await agent.run('book A1')).output
+    @agent.tool_plain
+    async def stay(nights: int) -> str:
+        seen.append(nights)
+        return 'ok'
 
-    run_agent = runtime.task(run_agent_impl)
-    pending = run_agent.func(RecordingTaskContext())
-    assert inspect.isawaitable(pending)
+    assert await run_agent_in_task(agent, runtime, RecordingTaskContext()) == 'done'
+    assert seen == [(Order(qty=99), 'hook'), 2]
 
-    assert await pending == 'book_venue: retried, book_named_venue: success'
-    assert seen == ['A1']
+
+@dataclass
+class Account:
+    name: str
+    tenant_id: int = dataclasses.field(compare=False)
+
+
+def pinned_tenant_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    del info
+    if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+        return ModelResponse(parts=[TextPart('done')])
+    args = {'account': {'name': 'acme', 'tenant_id': 2}, 'token': 'hunter2'}
+    return ModelResponse(parts=[ToolCallPart('act', args, tool_call_id='act')])
+
+
+async def test_field_a_hook_pinned_reaches_the_task_as_pinned_where_eq_ignores_it() -> None:
+    """A field a hook pinned reaches the task as pinned, even where `==` ignores it.
+
+    `token` makes the dump lossy, so the model's arguments would be sent if they validated to the hook's; they do
+    under `==`, which skips `tenant_id`. Their JSON form doesn't, so the call keeps the dump, as on main, and the
+    `SecretStr` arrives masked.
+    """
+    seen: list[tuple[int, str]] = []
+    hooks = Hooks[None]()
+
+    @hooks.on.after_tool_validate(tools=['act'])
+    async def pin_tenant(
+        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
+        return {**args, 'account': dataclasses.replace(args['account'], tenant_id=1)}
+
+    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
+    agent = Agent[None, str](
+        FunctionModel(pinned_tenant_model), name='pinned-tenant', deps_type=type(None), capabilities=[hooks, runtime]
+    )
+
+    @agent.tool_plain
+    async def act(account: Account, token: SecretStr) -> str:
+        seen.append((account.tenant_id, token.get_secret_value()))
+        return 'ok'
+
+    assert await run_agent_in_task(agent, runtime, RecordingTaskContext()) == 'done'
+    assert seen == [(1, '**********')]
 
 
 async def test_invalid_typed_arguments_follow_normal_model_retry_control_flow() -> None:
@@ -668,6 +737,199 @@ async def test_worker_context_names_tools_by_kind_on_copies() -> None:
 
     context = RecordingTaskContext()
     assert 'kinds checked' in await run_agent_in_task(agent, runtime, context)
+
+
+def folding_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    del info
+    if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+        return ModelResponse(parts=[TextPart('done')])
+    return ModelResponse(
+        parts=[
+            ToolCallPart('fold', {'filters': {'price': 3, 'qty': 2}}, tool_call_id='fold'),
+            ToolCallPart(
+                'fold_with_options', {'filters': {'price': 3, 'qty': 2}, 'opts': {'maxPrice': 10}}, tool_call_id='both'
+            ),
+        ]
+    )
+
+
+async def test_validator_that_mutates_its_input_runs_once_in_the_task() -> None:
+    """Checking which arguments to send runs the tool's validators on copies, so the task validates each input once.
+
+    `fold` crosses as its dump, which the task validates once. The run has already folded `fold_with_options`'s own
+    arguments in place, so validating them again raises in the run; that call keeps the dump too, whose
+    `PriceOptions` field arrives without its aliased key.
+    """
+    seen: list[object] = []
+    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
+    agent = Agent[None, str](
+        FunctionModel(folding_model), name='folding-arguments', deps_type=type(None), capabilities=[runtime]
+    )
+
+    @agent.tool_plain
+    async def fold(filters: Folded) -> str:
+        seen.append(filters)
+        return 'ok'
+
+    @agent.tool_plain
+    async def fold_with_options(filters: Folded, opts: PriceOptions) -> str:
+        seen.append((filters, opts))
+        return 'ok'
+
+    assert await run_agent_in_task(agent, runtime, RecordingTaskContext()) == 'done'
+    # The model's arguments were folded in place, so this call keeps the dump and loses `opts` as on main (#13440).
+    assert seen == [Folded(price=6, qty=1), (Folded(price=6, qty=1), {})]
+
+
+class Room(BaseModel):
+    name: str = Field(alias='roomName')
+    max_price: float | None = Field(None, alias='maxPrice')
+
+
+@pydantic_dataclass
+class Guest:
+    name: Annotated[str, Field(alias='guestName')]
+
+
+def nested_aliased_argument_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    del info
+    if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+        return ModelResponse(parts=[TextPart('nested aliased arguments arrived')])
+    args = {'room': {'roomName': 'A1', 'maxPrice': 10}, 'guest': {'guestName': 'Ada'}}
+    return ModelResponse(parts=[ToolCallPart('book', args, tool_call_id='book')])
+
+
+async def test_nested_aliased_function_arguments_cross_the_json_boundary_by_alias() -> None:
+    """By Python name, the required `roomName` would fail revalidation and `maxPrice` would revalidate to its default.
+
+    Not a VCR test: the claim is about the arguments crossing into the chained task run, and no provider request
+    is involved.
+    """
+    seen: list[tuple[str, float | None, str]] = []
+    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
+    agent = Agent[None, str](
+        FunctionModel(nested_aliased_argument_model),
+        name='nested-aliased-arguments',
+        deps_type=type(None),
+        capabilities=[runtime],
+    )
+
+    @agent.tool_plain
+    async def book(room: Room, guest: Guest) -> str:
+        seen.append((room.name, room.max_price, guest.name))
+        return 'ok'
+
+    async def run_agent_impl(ctx: TaskContext) -> str:
+        del ctx
+        return (await agent.run('book A1 for Ada')).output
+
+    run_agent = runtime.task(run_agent_impl)
+    pending = run_agent.func(RecordingTaskContext())
+    assert inspect.isawaitable(pending)
+
+    assert await pending == 'nested aliased arguments arrived'
+    assert seen == [('A1', 10.0, 'Ada')]
+
+
+@with_config(ConfigDict(validate_by_name=True))
+class NamedVenue(TypedDict):
+    room: Annotated[str, Field(alias='roomName')]
+
+
+def typed_dict_aliased_argument_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    del info
+    returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+    if returns:
+        return ModelResponse(parts=[TextPart(', '.join(f'{part.tool_name}: {part.outcome}' for part in returns))])
+    args = {'venue': {'roomName': 'A1'}, 'guests': 2}
+    return ModelResponse(
+        parts=[
+            ToolCallPart('book_venue', args, tool_call_id='venue'),
+            ToolCallPart('book_named_venue', args, tool_call_id='named-venue'),
+        ]
+    )
+
+
+async def test_typed_dict_aliased_fields_cross_the_json_boundary() -> None:
+    """A `TypedDict` field read by its alias reaches the tool, whether or not the `TypedDict` also validates by name.
+
+    A validated `TypedDict` is a plain dict keyed by Python name, so its dump writes `room`, which the tool's schema
+    doesn't read. The schema runs no user code, so the task validates the model's arguments instead, as the run did.
+
+    Not a VCR test: the claim is about the arguments crossing into the chained task run, and no provider request
+    is involved.
+    """
+    seen: list[str] = []
+    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
+    agent = Agent[None, str](
+        FunctionModel(typed_dict_aliased_argument_model),
+        name='typed-dict-aliased-arguments',
+        deps_type=type(None),
+        capabilities=[runtime],
+    )
+
+    @agent.tool_plain
+    async def book_venue(venue: Venue, guests: int) -> str:
+        seen.append(venue['room'])
+        return 'ok'
+
+    @agent.tool_plain
+    async def book_named_venue(venue: NamedVenue, guests: int) -> str:
+        seen.append(venue['room'])
+        return 'ok'
+
+    async def run_agent_impl(ctx: TaskContext) -> str:
+        del ctx
+        return (await agent.run('book A1')).output
+
+    run_agent = runtime.task(run_agent_impl)
+    pending = run_agent.func(RecordingTaskContext())
+    assert inspect.isawaitable(pending)
+
+    assert await pending == 'book_venue: success, book_named_venue: success'
+    assert seen == ['A1', 'A1']
+
+
+class CallToolRecordingTaskContext(RecordingTaskContext):
+    """Also record the payload of each `call_tool` task, by tool name, as it crosses into the task."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.call_tool_payloads: dict[str, dict[str, object]] = {}
+
+    async def run(self, task: TaskDefinition[P, R], *args: P.args, **kwargs: P.kwargs) -> R:
+        if task.name.endswith('.call_tool'):
+            [request] = args
+            assert is_envelope(request)
+            payload = request['payload']
+            assert is_envelope(payload)
+            self.call_tool_payloads[str(payload['name'])] = payload
+        return await super().run(task, *args, **kwargs)
+
+
+async def test_function_tool_argument_shapes_cross_the_json_boundary() -> None:
+    """Each shape in `function_tool_arg_shapes` reaches its tool as `check_shapes` expects.
+
+    A task input carries the model's arguments only where their dump loses values, the tool's validation runs no
+    user code and no hook changed them; every other task input has no `raw_tool_args` key.
+
+    Not a VCR test: the claim is about what crosses into the chained task runs, and no provider request is involved.
+    """
+    plain = Agent[None, str](shapes_model(), deps_type=type(None), tools=TOOLS, capabilities=[shapes_hooks()])
+    RECEIVED.clear()
+    await plain.run('go')
+    in_process = dict(RECEIVED)
+
+    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
+    agent = Agent[None, str](
+        shapes_model(), name='arg-shapes', deps_type=type(None), tools=TOOLS, capabilities=[runtime, shapes_hooks()]
+    )
+    context = CallToolRecordingTaskContext()
+    RECEIVED.clear()
+    assert await run_agent_in_task(agent, runtime, context) == 'done'
+
+    carried_raw = {name: 'raw_tool_args' in payload for name, payload in context.call_tool_payloads.items()}
+    check_shapes('render', RECEIVED, in_process, carried_raw)
 
 
 def test_model_request_transport_carries_the_attempt() -> None:

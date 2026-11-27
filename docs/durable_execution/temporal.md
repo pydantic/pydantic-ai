@@ -224,7 +224,9 @@ A tool's [`args_validator`](../tools-advanced.md#args-validator) runs in a `vali
 
 Each activity derives its typed arguments independently, so schema validators must be idempotent. A Pydantic validation context is rebuilt from the `validation_context` configured on [`Agent`][pydantic_ai.agent.Agent]; a callable context builder runs again with the activity's own run context.
 
-Function tool arguments cross into the activity as JSON, and the activity validates them again with the tool's schema, which reads each field's alias. Pydantic models and Pydantic dataclasses, and the values nested in them, cross by alias. A `TypedDict` or standard-library dataclass outside one crosses by Python name, so the second validation reads none of its aliased fields: a required one fails, and an optional one is left out or takes its default. Let such a type validate by name as well; the same decorator works on a standard-library dataclass:
+Function tool arguments cross into the activity as JSON, and the activity validates them again with the tool's schema. That JSON doesn't always validate back to the values the workflow validated: a `TypedDict` or standard-library dataclass field crosses by Python name while the schema reads its alias, a field crosses under a serialization alias it isn't validated by, a `SecretStr` crosses masked, and a computed field crosses in its serialized form. For such a call, the activity input also carries the arguments the model sent, and the activity validates those, as the workflow did, so the tool gets the values it would get outside Temporal.
+
+A call crosses as its JSON alone when validating the tool's arguments can run your own code, such as a validator function, a `default_factory` other than a builtin type, or a `model_post_init`, or when a hook or wrapper toolset changed the arguments. The tool then gets those losses: a field that crosses under a name the schema doesn't read fails when it's required and takes its default otherwise, and a `SecretStr` arrives masked. Pydantic models and Pydantic dataclasses, and the values nested in them, cross by alias. For such a tool, let a `TypedDict` or standard-library dataclass validate by name as well; the same decorator works on a standard-library dataclass:
 
 ```python
 from typing import Annotated
@@ -392,6 +394,7 @@ Temporal stores every payload it records in the workflow execution event history
 
 - **Binary content**, such as an image a tool returns or a model puts on its response. Binary data is base64-encoded on its way into the payload, so the usable budget for raw bytes is about three quarters of the cap — roughly 1.5MB. An image whose size reads as comfortably under 2MB can still be rejected.
 - **A large [dependencies object](../dependencies.md)**, which is copied into history every time Pydantic AI schedules a model, tool, MCP, or event-handler activity — so a wide tool fan-out can both bloat history permanently and breach the per-payload limit.
+- **Large function tool arguments** whose JSON doesn't validate back to the workflow's values. The activity input then carries them twice: as the model sent them, for the activity to [validate](#tool-argument-validation), and as the workflow validated them, for a worker running an earlier Pydantic AI version.
 
 #### When a tool return or model response is too large
 

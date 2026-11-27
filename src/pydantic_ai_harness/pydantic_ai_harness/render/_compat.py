@@ -43,6 +43,7 @@ from pydantic_ai.durable_exec import (
     WorkspaceCallParams,
     WorkspaceCallResult,
     capability_operation_result_type,
+    raw_tool_args_for_unit,
     revalidate_function_call,
 )
 from pydantic_ai.durable_exec._toolset import dump_json_function_args, opts_out_of_durable_unit
@@ -97,6 +98,7 @@ __all__ = (
     'opts_out_of_durable_unit',
     'operation_run_context',
     'prepare_function_call_params',
+    'raw_tool_args_for_unit',
     'resolve_mcp_tool_for_definition',
     'to_json_object',
 )

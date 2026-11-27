@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
+import datetime
 import functools
 import inspect
+import math
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import AbstractContextManager, asynccontextmanager, contextmanager, nullcontext
 from dataclasses import KW_ONLY, dataclass, field, replace
+from decimal import Decimal
+from enum import Enum
+from fractions import Fraction
+from pathlib import PosixPath, PurePosixPath, PureWindowsPath, WindowsPath
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -19,10 +26,11 @@ from typing import (
     assert_never,
     cast,
 )
+from uuid import UUID
 
 import anyio
-from pydantic import Discriminator, Field, Tag, ValidationError
-from pydantic_core import PydanticCustomError, PydanticSerializationError, to_jsonable_python
+from pydantic import BaseModel, Discriminator, Field, SecretBytes, SecretStr, Tag, ValidationError
+from pydantic_core import PydanticCustomError, PydanticSerializationError, SchemaValidator, to_jsonable_python
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai._agent_graph import build_validation_context
@@ -30,7 +38,7 @@ from pydantic_ai._cancel import RunCancellation
 from pydantic_ai._compaction_requests import CompactionRequests, RequestedCompaction
 from pydantic_ai._enqueue import EnqueueGuard
 from pydantic_ai._run_context import ToolNamePath, with_tool_name_path, without_tool_name_path
-from pydantic_ai._utils import is_str_dict
+from pydantic_ai._utils import is_list, is_list_tuple_or_set, is_str_dict
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -48,6 +56,7 @@ from pydantic_ai.tools import (
     _without_toolset_sequential_defer_loading,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets.abstract import SchemaValidatorProt
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
@@ -560,7 +569,8 @@ async def revalidate_function_call(
 
     Looks the tool up in `toolset` when it wasn't transported, then validates the arguments
     against its schema with the context's validation context, so the tool receives the same
-    Python values it would in-process.
+    Python values it would in-process. It validates `params.raw_tool_args` when the transport
+    carried them, and `params.tool_args` otherwise.
     """
     tool = params.tool
     if tool is None:
@@ -571,8 +581,161 @@ async def revalidate_function_call(
                 f'Tool {params.name!r} not found in toolset {toolset.id!r}. '
                 f'Removing or renaming tools during an agent run is not supported with {engine_spec.engine_name}.'
             ) from exc
-    args = revalidate_function_args(toolset, tool, params.tool_args, context=unit_validation_context(params.ctx))
+    context = unit_validation_context(params.ctx)
+    if params.raw_tool_args is not None:
+        args = _validate_raw_tool_args(tool.args_validator, params.raw_tool_args, context=context)
+    else:
+        args = revalidate_function_args(toolset, tool, params.tool_args, context=context)
     return ToolsetCallToolParams(params.name, tool_args=args, ctx=params.ctx, tool=tool)
+
+
+def raw_tool_args_for_unit(
+    toolset: FunctionToolset[Any], params: ToolsetCallToolParams, *, loaded_tool_args: dict[str, Any]
+) -> str | dict[str, Any] | None:
+    """The function tool call's arguments as the model sent them, when the durable unit needs them.
+
+    The unit validates `params.tool_args` again after they crossed the boundary as JSON, which
+    doesn't always give back the values the workflow validated: the dump writes serialization
+    aliases, masks secrets and runs serializers. The model's own arguments are what the workflow
+    validated, so validating them in the unit instead reproduces those values.
+
+    This returns them only when all of these hold, and `None` otherwise:
+    - Validating the tool's arguments runs no user code, so validating them again is a
+      function of the input alone. A tool with a validator function, a custom `default_factory` or a
+      post-init hook always crosses as its dump.
+    - `loaded_tool_args`, which is `params.tool_args` as the unit will load them after the transport's
+      JSON round trip, doesn't validate back to `params.tool_args`.
+    - The model's arguments do validate to `params.tool_args`. A hook or a wrapper toolset that changed
+      the arguments, in place or not, keeps the call on its dump.
+
+    Both checks validate with pydantic-core alone: no Pydantic plugin observes them and they don't
+    read the run's validation context. They compare values by exact type and every field, extra and
+    private attribute, not with `==`. They leave out a model's `model_fields_set`, which a dump always
+    fills.
+
+    Call this workflow-side in a function-call transport's `dump`, and set the loaded value on
+    [`ToolsetCallToolParams.raw_tool_args`][pydantic_ai.durable_exec.ToolsetCallToolParams.raw_tool_args]
+    worker-side.
+    """
+    tool = params.tool
+    raw_args = params.ctx._tool_call_args  # pyright: ignore[reportPrivateUsage]
+    if (
+        raw_args is None
+        or not isinstance(tool, FunctionToolsetTool)
+        or not _is_json_value(raw_args)
+        # The unit validates with the tool it rebuilds from `toolset`.
+        or (source := toolset.tools.get(tool.original_name or tool.tool_def.name)) is None
+        or tool.args_validator is not source.function_schema.validator
+        # Both checks below validate again in the workflow. Without user code in the schema, that runs
+        # pydantic-core alone: no user validator, plugin or validation context sees the extra pass.
+        or source.function_schema.validation_runs_user_code
+    ):
+        return None
+    schema = source.function_schema
+    try:
+        if _same_value(schema.revalidate(loaded_tool_args, in_core=True), params.tool_args):
+            return None
+    except (ValidationError, KeyError):
+        pass  # The unit can't validate the dump at all: the case the model's arguments are for.
+    try:
+        reproduced = _validate_raw_tool_args(schema.core_validator, raw_args, context=None)
+    except ValidationError:
+        return None
+    # A hook or wrapper toolset that changed the arguments, in place or not, makes them differ.
+    return raw_args if _same_value(reproduced, params.tool_args) else None
+
+
+_LEAF_TYPES: frozenset[type] = frozenset(
+    {
+        str,
+        bytes,
+        bytearray,
+        int,
+        bool,
+        type(None),
+        complex,
+        UUID,
+        Fraction,
+        PurePosixPath,
+        PureWindowsPath,
+        PosixPath,
+        WindowsPath,
+    }
+)
+
+
+def _same_value(a: object, b: object) -> bool:
+    """Whether a tool can't tell `a` from `b`.
+
+    Not `==`: the values are user types, whose `__eq__` can ignore state a hook changed, such as a
+    `compare=False` field, and `1 == 1.0`. This compares exact types and every field, extra and private
+    attribute of a model or dataclass instead, except `model_fields_set`. A type it doesn't know counts
+    as different.
+    """
+    if type(a) is not type(b):
+        return False
+    if isinstance(a, Enum):
+        return a is b
+    if type(a) in _LEAF_TYPES:
+        return a == b
+    if (exact := _exact_leaf(a)) is not None:
+        return exact == _exact_leaf(b)
+    parts_a, parts_b = _parts(a), _parts(b)
+    if parts_a is None or parts_b is None:
+        return False
+    return len(parts_a) == len(parts_b) and all(_same_value(x, y) for x, y in zip(parts_a, parts_b))
+
+
+def _exact_leaf(value: object) -> object:
+    """A leaf whose `==` hides a difference, as a value whose `==` doesn't; `None` for anything else."""
+    if isinstance(value, float):
+        return value.hex()
+    if isinstance(value, Decimal):
+        return value.as_tuple()
+    if isinstance(value, datetime.date | datetime.time | datetime.timedelta):
+        return repr(value)
+    if isinstance(value, SecretStr | SecretBytes):
+        secret: str | bytes = value.get_secret_value()
+        return (type(secret), secret)
+    return None
+
+
+def _parts(value: object) -> list[object] | None:
+    """What a container holds, in order; `None` for a type `_same_value` doesn't know."""
+    if is_str_dict(value) and type(value) is dict:
+        return [part for item in value.items() for part in item]
+    # Exact types: a subclass instance can hold state its items don't show.
+    if type(value) in (list, tuple, set, frozenset) and is_list_tuple_or_set(value):
+        return sorted(value, key=repr) if isinstance(value, set | frozenset) else list(value)
+    if isinstance(value, BaseModel):
+        # Not `model_fields_set`: a dump writes every field, so comparing it would send the model's arguments for
+        # every call that leaves out a defaulted field, although the dump gives back every value.
+        return [value.__dict__, value.__pydantic_extra__, value.__pydantic_private__]
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return [*(getattr(value, f.name) for f in dataclasses.fields(value)), getattr(value, '__dict__', {})]
+    return None
+
+
+def _validate_raw_tool_args(
+    validator: SchemaValidator | SchemaValidatorProt, raw_args: str | dict[str, Any], *, context: Any
+) -> dict[str, Any]:
+    """Validate a tool call's arguments the way `ToolManager` does."""
+    if isinstance(raw_args, str):
+        return validator.validate_json(raw_args or '{}', context=context)
+    return validator.validate_python(raw_args or {}, context=context)
+
+
+def _is_json_value(value: object) -> bool:
+    """Whether `value` crosses a JSON boundary unchanged."""
+    if isinstance(value, str | int | None):
+        return True
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if is_list(value):
+        return all(_is_json_value(item) for item in value)
+    if is_str_dict(value):
+        return all(isinstance(key, str) and _is_json_value(item) for key, item in value.items())
+    return False
 
 
 def revalidate_function_args(

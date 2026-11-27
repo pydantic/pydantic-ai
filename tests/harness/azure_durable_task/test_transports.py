@@ -2,7 +2,7 @@ import asyncio
 import json
 import sys
 from collections.abc import Generator
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import partial
 from importlib import import_module
@@ -10,8 +10,9 @@ from typing import Annotated, Any, Self
 from uuid import UUID
 
 import pytest
-from pydantic import BaseModel, ConfigDict, Field, Json, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, Json, JsonValue, SecretStr, model_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
+from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
@@ -19,7 +20,7 @@ from pydantic_ai import (
     Choices,
     RunContext,
 )
-from pydantic_ai.capabilities import AbstractCapability, durable_operation
+from pydantic_ai.capabilities import AbstractCapability, Hooks, RawToolArgs, ValidatedToolArgs, durable_operation
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -30,11 +31,13 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 from ...conftest import try_import
+from ...durable_exec.function_tool_arg_shapes import RECEIVED, TOOLS, check_shapes, shapes_hooks, shapes_model
 from ...workspace_fakes import InMemoryProvider
 
 with try_import() as imports_successful:
@@ -161,37 +164,209 @@ def test_aliased_tool_arguments_are_restored_from_json(durable_worker: 'InMemory
     assert observed == [('Ada', 2)]
 
 
-def test_nested_aliased_tool_arguments_cross_the_activity_input_by_alias(durable_worker: 'InMemoryWorker') -> None:
-    """By Python name, the required `roomName` would fail revalidation and `maxPrice` would revalidate to its default.
+class Venue(TypedDict):
+    room: Annotated[str, Field(alias='roomName')]
 
-    Not a VCR test: the claim is about the arguments crossing into the activity input, and no provider request is
-    involved.
+
+@dataclass
+class Place:
+    city: Annotated[str, Field(alias='cityName')]
+
+
+class SerializedAs(BaseModel):
+    room: str = Field(serialization_alias='roomOut')
+
+
+def test_tool_arguments_are_validated_from_the_model_arguments_in_the_activity(
+    durable_worker: 'InMemoryWorker',
+) -> None:
+    """The activity validates the arguments the model sent, as the orchestrator did, rather than a JSON dump of the validated ones.
+
+    The dump writes a `TypedDict` and a stdlib dataclass by field name while their schema reads the alias, masks
+    the `SecretStr`, and writes the parsed `Json` value while the schema expects a string.
     """
-
-    class Room(BaseModel):
-        name: str = Field(alias='roomName')
-        max_price: float | None = Field(None, alias='maxPrice')
-
-    @pydantic_dataclass
-    class Guest:
-        name: Annotated[str, Field(alias='guestName')]
-
-    observed: list[tuple[str, float | None, str]] = []
+    observed: list[tuple[Venue, Place, str, list[int], SerializedAs]] = []
 
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        args = {'room': {'roomName': 'A1', 'maxPrice': 10}, 'guest': {'guestName': 'Ada'}}
+        args = {
+            'venue': {'roomName': 'A1'},
+            'place': {'cityName': 'Paris'},
+            'token': 'hunter2',
+            'nums': '[1, 2]',
+            'out': {'room': 'A1'},
+        }
         return ModelResponse(parts=[ToolCallPart('book', args)] if len(messages) == 1 else [TextPart('done')])
 
-    agent = Agent(FunctionModel(model), name='nested-aliased-args', capabilities=[AzureDurableTaskDurability()])
+    agent = Agent(FunctionModel(model), name='model-args', capabilities=[AzureDurableTaskDurability()])
 
     @agent.tool_plain
-    def book(room: Room, guest: Guest) -> str:
-        observed.append((room.name, room.max_price, guest.name))
+    def book(venue: Venue, place: Place, token: SecretStr, nums: Json[list[int]], out: SerializedAs) -> str:
+        observed.append((venue, place, token.get_secret_value(), nums, out))
         return 'booked'
 
     with registered_agent(durable_worker, agent):
         assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
-    assert observed == [('A1', 10.0, 'Ada')]
+    assert observed == [({'room': 'A1'}, Place(city='Paris'), 'hunter2', [1, 2], SerializedAs(room='A1'))]
+
+
+class Folded(BaseModel):
+    price: int
+    qty: int = 1
+
+    @model_validator(mode='before')
+    @classmethod
+    def fold_quantity(cls, data: dict[str, int]) -> dict[str, int]:
+        # Mutates its input: run twice on one dict, the second run finds no `qty`.
+        data['price'] = data.pop('price') * data.pop('qty')
+        return data
+
+
+class PriceOptions(TypedDict, total=False):
+    max_price: Annotated[float, Field(alias='maxPrice')]
+
+
+class Order(BaseModel):
+    qty: int
+
+
+def test_arguments_changed_by_hooks_reach_the_activity_as_changed(durable_worker: 'InMemoryWorker') -> None:
+    """Arguments a hook replaced, mutated or repaired don't validate back from the model's, so the activity gets them dumped."""
+    observed: list[object] = []
+    hooks = Hooks[None]()
+
+    @hooks.on.before_tool_validate(tools=['stay'])
+    async def repair(
+        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs
+    ) -> RawToolArgs:
+        return {'nights': 2}
+
+    @hooks.on.after_tool_validate(tools=['order'])
+    async def replace_note(
+        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
+        return {**args, 'note': 'hook'}
+
+    @hooks.on.before_tool_execute(tools=['order'])
+    async def mutate_order(
+        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
+        args['order'].qty = 99
+        return args
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(
+            parts=[
+                ToolCallPart('order', {'order': {'qty': 1}, 'note': 'model'}),
+                ToolCallPart('stay', '{"nights": "two"}'),
+            ]
+        )
+
+    agent = Agent(
+        FunctionModel(model), name='hook-args', deps_type=type(None), capabilities=[hooks, AzureDurableTaskDurability()]
+    )
+
+    @agent.tool_plain
+    def order(order: Order, note: str) -> str:
+        observed.append((order, note))
+        return 'ordered'
+
+    @agent.tool_plain
+    def stay(nights: int) -> str:
+        observed.append(nights)
+        return 'stayed'
+
+    with registered_agent(durable_worker, agent):
+        assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
+    assert observed == [(Order(qty=99), 'hook'), 2]
+
+
+@dataclass
+class Account:
+    name: str
+    tenant_id: int = field(compare=False)
+
+
+def test_field_a_hook_pinned_reaches_the_activity_as_pinned_where_eq_ignores_it(
+    durable_worker: 'InMemoryWorker',
+) -> None:
+    """A field a hook pinned reaches the activity as pinned, even where `==` ignores it.
+
+    `token` makes the dump lossy, so the model's arguments would be sent if they validated to the hook's; they do
+    under `==`, which skips `tenant_id`. Their JSON form doesn't, so the call keeps the dump, as on main, and the
+    `SecretStr` arrives masked.
+    """
+    observed: list[tuple[int, str]] = []
+    hooks = Hooks[None]()
+
+    @hooks.on.after_tool_validate(tools=['act'])
+    async def pin_tenant(
+        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
+        return {**args, 'account': replace(args['account'], tenant_id=1)}
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(
+            parts=[ToolCallPart('act', {'account': {'name': 'acme', 'tenant_id': 2}, 'token': 'hunter2'})]
+        )
+
+    agent = Agent(
+        FunctionModel(model),
+        name='pinned-tenant',
+        deps_type=type(None),
+        capabilities=[hooks, AzureDurableTaskDurability()],
+    )
+
+    @agent.tool_plain
+    def act(account: Account, token: SecretStr) -> str:
+        observed.append((account.tenant_id, token.get_secret_value()))
+        return 'acted'
+
+    with registered_agent(durable_worker, agent):
+        assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
+    assert observed == [(1, '**********')]
+
+
+def test_validator_that_mutates_its_input_runs_once_in_the_activity(
+    durable_worker: 'InMemoryWorker',
+) -> None:
+    """Checking which arguments to send runs the tool's validators on copies, so the activity validates each input once.
+
+    `fold` crosses as its dump, which the activity validates once. The orchestrator has already folded
+    `fold_with_options`'s own arguments in place, so validating them again raises there; that call keeps the dump
+    too, whose `PriceOptions` field arrives without its aliased key.
+    """
+    observed: list[object] = []
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(
+            parts=[
+                ToolCallPart('fold', {'filters': {'price': 3, 'qty': 2}}),
+                ToolCallPart('fold_with_options', {'filters': {'price': 3, 'qty': 2}, 'opts': {'maxPrice': 10}}),
+            ]
+        )
+
+    agent = Agent(FunctionModel(model), name='folding-args', capabilities=[AzureDurableTaskDurability()])
+
+    @agent.tool_plain
+    def fold(filters: Folded) -> str:
+        observed.append(filters)
+        return 'folded'
+
+    @agent.tool_plain
+    def fold_with_options(filters: Folded, opts: PriceOptions) -> str:
+        observed.append((filters, opts))
+        return 'folded'
+
+    with registered_agent(durable_worker, agent):
+        assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
+    # The model's arguments were folded in place, so this call keeps the dump and loses `opts` as on main (#13440).
+    assert observed == [Folded(price=6, qty=1), (Folded(price=6, qty=1), {})]
 
 
 def test_json_tool_arguments_cross_the_activity_input_as_json_strings(durable_worker: 'InMemoryWorker') -> None:
@@ -605,6 +780,80 @@ def test_mcp_discovery_instructions_and_calls(durable_worker: 'InMemoryWorker') 
         'mcp__mcp_server__calc.get_instructions',
         'mcp__model.request',
     ]
+
+
+def test_nested_aliased_tool_arguments_cross_the_activity_input_by_alias(durable_worker: 'InMemoryWorker') -> None:
+    """By Python name, the required `roomName` would fail revalidation and `maxPrice` would revalidate to its default.
+
+    Not a VCR test: the claim is about the arguments crossing into the activity input, and no provider request is
+    involved.
+    """
+
+    class Room(BaseModel):
+        name: str = Field(alias='roomName')
+        max_price: float | None = Field(None, alias='maxPrice')
+
+    @pydantic_dataclass
+    class Guest:
+        name: Annotated[str, Field(alias='guestName')]
+
+    observed: list[tuple[str, float | None, str]] = []
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        args = {'room': {'roomName': 'A1', 'maxPrice': 10}, 'guest': {'guestName': 'Ada'}}
+        return ModelResponse(parts=[ToolCallPart('book', args)] if len(messages) == 1 else [TextPart('done')])
+
+    agent = Agent(FunctionModel(model), name='nested-aliased-args', capabilities=[AzureDurableTaskDurability()])
+
+    @agent.tool_plain
+    def book(room: Room, guest: Guest) -> str:
+        observed.append((room.name, room.max_price, guest.name))
+        return 'booked'
+
+    with registered_agent(durable_worker, agent):
+        assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
+    assert observed == [('A1', 10.0, 'Ada')]
+
+
+def test_function_tool_argument_shapes_cross_the_activity_input() -> None:
+    """Each shape in `function_tool_arg_shapes` reaches its tool as `check_shapes` expects.
+
+    An activity input carries the model's arguments only where their dump loses values, the tool's validation runs
+    no user code and no hook changed them; every other activity input has no `raw_tool_args` key.
+
+    Not a VCR test: the claim is about what crosses into the activities, and no provider request is involved.
+    """
+
+    # Defined here: `InMemoryWorker` exists only when `durabletask` is installed.
+    class CallToolRecordingWorker(InMemoryWorker):
+        """Also record the parameters of each `call_tool` activity, by tool name, as they cross into the activity."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.call_tool_parameters: dict[str, dict[str, object]] = {}
+
+        def activity_turn(self, instance_id: str, name: str, task_id: int, encoded: str | None) -> None:
+            if name.endswith('.call_tool'):
+                assert encoded is not None
+                parameters = json.loads(encoded)['parameters']
+                self.call_tool_parameters[parameters['name']] = parameters
+            super().activity_turn(instance_id, name, task_id, encoded)
+
+    plain = Agent(shapes_model(), tools=TOOLS, capabilities=[shapes_hooks()])
+    RECEIVED.clear()
+    plain.run_sync('go')
+    in_process = dict(RECEIVED)
+
+    worker = CallToolRecordingWorker()
+    agent = Agent(
+        shapes_model(), name='arg-shapes', tools=TOOLS, capabilities=[AzureDurableTaskDurability(), shapes_hooks()]
+    )
+    RECEIVED.clear()
+    with registered_agent(worker, agent):
+        assert run_agent(worker, agent, 'go', deps=None).output == 'done'
+
+    carried_raw = {name: 'raw_tool_args' in parameters for name, parameters in worker.call_tool_parameters.items()}
+    check_shapes('azure', RECEIVED, in_process, carried_raw)
 
 
 async def test_model_request_transport_carries_the_attempt() -> None:
