@@ -169,10 +169,14 @@ def count_requests(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[
 
     original_log_read = InMemoryWorkLogStore.read
 
-    # Keyed by the range read: a search reads the whole log, and a read one entry.
-    async def counted_log_read(self: InMemoryWorkLogStore, log_id: str, start: int = 1, stop: int | None = None) -> Any:
-        REQUESTS[f'work_log.read[{start}:{stop}]'] += 1
-        return await original_log_read(self, log_id, start, stop)
+    # Each read is its own request: a read of an unknown entry reads the log again to name the valid range.
+    log_reads = 0
+
+    async def counted_log_read(self: InMemoryWorkLogStore, *args: Any, **kwargs: Any) -> Any:
+        nonlocal log_reads
+        log_reads += 1
+        REQUESTS[f'work_log.read.{log_reads}'] += 1
+        return await original_log_read(self, *args, **kwargs)
 
     monkeypatch.setattr(InMemoryWorkLogStore, 'read', counted_log_read)
 

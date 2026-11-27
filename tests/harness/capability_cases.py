@@ -1097,9 +1097,12 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(), cls(record_thinking=True)),
         ),
         calls=Calls(
-            # The `echo` call is the log's first entry, which the search finds and the read reads.
-            (*ECHO, ('search_work_log', {'query': 'hi'}), ('read_work_log', {'seq': 1})),
-            with_echo(lambda: WorkLog[None](InMemoryWorkLogStore())),
+            (
+                ('search_work_log', {'query': 'tabs'}),
+                # An unknown entry asks the model to retry, which the operation records as data.
+                ('read_work_log', {'seq': 1}),
+            ),
+            lambda _: WorkLog[None](InMemoryWorkLogStore()),
             durable_steps=('work_log.search', 'work_log.read'),
         ),
     ),
