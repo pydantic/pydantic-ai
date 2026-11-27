@@ -12590,11 +12590,11 @@ def _attachments_agent() -> Agent[None, str]:
     return agent
 
 
-def _sent_after_tool(model_inputs: list[list[ModelMessage]]) -> list[tuple[str, Any]]:
+def _sent_after_tool(model_inputs: list[list[ModelMessage]]) -> list[tuple[str, object]]:
     """Each part the model was sent in the tool result's request, as its channel and content."""
     request = model_inputs[-1][2]
     assert isinstance(request, ModelRequest)
-    sent: list[tuple[str, Any]] = []
+    sent: list[tuple[str, object]] = []
     for part in request.parts:
         assert isinstance(part, ToolReturnPart | UserPromptPart)
         sent.append(('tool' if isinstance(part, ToolReturnPart) else 'user', part.content))

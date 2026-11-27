@@ -65,19 +65,19 @@ def tool_return_text(part: ToolReturnPart) -> str:
     (`ToolReturnPart.model_response_str_and_user_content`).
     """
     if not part.files:
-        text = str(part.content)
+        texts = [str(part.content)]
     else:
-        text = ' '.join(
+        texts = [
             f'See file {item.identifier}.' if is_multi_modal_content(item) else str(item)
             for item in part.content_items()
-        )
+        ]
     for attachment in part.attachments:
         item = attachment.content
         if isinstance(item, str | TextContent):
-            text = f'{text} {item if isinstance(item, str) else item.content}'
+            texts.append(item if isinstance(item, str) else item.content)
         elif is_multi_modal_content(item):
-            text = f'{text} See file {item.identifier}.'
-    return text
+            texts.append(f'See file {item.identifier}.')
+    return ' '.join(texts)
 
 
 def capability_part_text(part: CapabilityPart) -> str:
