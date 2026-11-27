@@ -302,13 +302,13 @@ async def download(ref: WorkspaceRef, path: str) -> BinaryContent:
 - Serve only paths your app chose, such as the file name you asked the agent to write. `read_file` doesn't
   keep a path inside the working directory: an absolute path or `..` can name any file the environment can
   read, and with [`LocalWorkspace`][pydantic_ai.capabilities.LocalWorkspace] that is the host. A path from the
-  client or from a model response (which the prompt or fetched content can steer) needs
-  [`in_working_dir`][pydantic_ai.workspaces.Workspace.in_working_dir] to be true before you read it.
+  client needs [`in_working_dir`][pydantic_ai.workspaces.Workspace.in_working_dir] to be true before you
+  read it.
 
 ### Files the model links to
 
-To let the model choose which files the user gets, ask it to link them, and find the links with
-[`file_links`][pydantic_ai.workspaces.file_links]:
+To let the model choose which files the user gets, ask it to link them, and turn the links into citations
+with [`file_links`][pydantic_ai.workspaces.file_links]:
 
 ```python {requires="workspace_agent.py"}
 from pydantic_ai import FileCitationSource, TextPart
@@ -325,30 +325,35 @@ async def main() -> None:
     for part in result.response.parts:
         if isinstance(part, TextPart):
             part.citations = [*(part.citations or []), *file_links(part.content)]
+    # Save `result.all_messages()` as usual.
 
-    # Save `result.all_messages()` as usual. When the user clicks the first link:
-    [part] = result.response.parts
-    assert isinstance(part, TextPart) and part.citations
-    source = part.citations[0].sources[0]
-    assert isinstance(source, FileCitationSource)
+    # When the user clicks a link, find its source in the saved history:
+    sources = [
+        source
+        for part in result.response.parts
+        if isinstance(part, TextPart)
+        for citation in part.citations or []
+        for source in citation.sources
+        if isinstance(source, FileCitationSource)
+    ]
     workspace = result.workspace  # or reattach with `backend(ref)`, as above
-    if await workspace.in_working_dir(source.location.path):
-        file = await workspace.read_file(source.location.path)
-        print(file.media_type)
-        #> text/x-python
+    file = await workspace.read_file(sources[0])
+    print(file.media_type)
+    #> text/x-python
 ```
 
-- Without the instruction, most models only name the file, or say they can't send it.
-- Each [`Citation`][pydantic_ai.messages.Citation] holds the absolute path, in the workspace of
-  `result.response.workspace_ref`, and its `anchor` is where the link is in the text, so a UI can replace the
-  link with your own download link. `file_links` reads only the text, so the file may not exist, and it skips
-  links inside code.
-- On the part, the citations are saved with the message history and sent to the client by the
-  [UI adapters](ui/overview.md), like web search citations. A client can send history back with any path, so
-  check every path with `in_working_dir` before you read it, and read from the workspace you keep on the server.
+- Without the instruction, most models only name the file, or say they can't send it. Add it only where you
+  serve the files: elsewhere the user gets a link that opens nothing.
+- Each citation's `anchor` is where the link is in the text, so a UI can show your own download link there.
+  On the part, the citations are saved with the history and sent by the [UI adapters](ui/overview.md), like web
+  search citations. They're attached after the run, so a streamed reply shows the raw `sandbox:` link until
+  the history is loaded again.
+- `file_links` reads only the text, so the file may not exist, and it skips links inside code.
+- The path comes from the model, and history a client sends back can hold any path. `read_file` reads a
+  citation's file only inside the working directory, and raises `PermissionError` otherwise. Read it from the
+  workspace of `result.response.workspace_ref`, which you keep on the server.
 - The file is read from the live workspace, so the link stops working once the sandbox is gone. To keep
   it, read the file when you save the reply and store the bytes yourself.
-- Add the instruction only where you serve the files. Elsewhere the user gets a link that opens nothing.
 
 ## Cleaning up
 
