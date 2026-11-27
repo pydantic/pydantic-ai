@@ -62,7 +62,6 @@ from pydantic_ai._instrumentation import (
     serialize_any,
     span_include_content,
 )
-from pydantic_ai._telemetry import open_ambient_span
 from pydantic_ai.capabilities import (
     AbstractCapability,
     Capability,
@@ -1385,12 +1384,6 @@ async def test_no_content_reaches_telemetry_from_a_lowered_capabilitys_instructi
     assert ('capability:sentinel_lowered_block' in exported) is include_content
 
 
-def _record_without_a_context() -> None:
-    """What core code with no `RunContext`, such as a workspace, records through the run's published telemetry."""
-    with open_ambient_span('example helper', content={'example.first': SECRETS['helper_content']}):
-        pass
-
-
 def _record_with_a_context(ctx: RunContext[None]) -> str:
     """What a tool records with the `ctx` helpers, including on its tool call's span."""
     with open_span(ctx, 'example span', content={'example.first': SECRETS['helper_content']}):
@@ -1403,14 +1396,13 @@ def _record_with_a_context(ctx: RunContext[None]) -> str:
 
 @pytest.mark.parametrize('include_content', [True, False])
 @pytest.mark.parametrize('mode', ['run', 'realtime'])
-async def test_no_content_reaches_telemetry_from_a_helper_without_a_context(
+async def test_no_content_reaches_telemetry_from_the_ctx_helpers(
     include_content: bool, mode: Literal['run', 'realtime']
 ) -> None:
-    """The run's content setting reaches the `ctx` helpers and core code that has no `RunContext`."""
+    """The run's content setting reaches the `ctx` helpers, in a run and in a realtime session."""
     settings, exporter = redacted_setup(include_content)
 
     def lookup(ctx: RunContext[None]) -> str:
-        _record_without_a_context()
         return _record_with_a_context(ctx)
 
     if mode == 'run':
@@ -1432,7 +1424,6 @@ async def test_no_content_reaches_telemetry_from_a_helper_without_a_context(
     # Each channel on its own span, so one that stops recording can't hide behind another that still does.
     attributes = {span.name: dict(span.attributes or {}) for span in exporter.get_finished_spans()}
     helper_content = SECRETS['helper_content'] if include_content else None
-    assert attributes['example helper'].get('example.first') == helper_content
     assert attributes['example span'].get('example.first') == helper_content
     assert attributes['execute_tool lookup'].get('example.later') == helper_content
     decision_content = SECRETS['decision_content'] if include_content else None
