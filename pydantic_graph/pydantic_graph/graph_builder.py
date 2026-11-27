@@ -22,7 +22,6 @@ from contextlib import (
     contextmanager,
 )
 from dataclasses import dataclass, field, replace
-from enum import Enum, auto
 from types import NoneType
 from typing import (
     TYPE_CHECKING,
@@ -661,15 +660,9 @@ class _GraphTaskResult:
     error: BaseException | None = None
 
 
-class _TaskResultOutcome(Enum):
-    """How `_GraphIterator.iter_graph` goes on after applying a task result."""
-
-    CONTINUE = auto()
-    """Tasks are still running: wait for the next result."""
-    IDLE = auto()
-    """No task is running: finalize the joins that are ready."""
-    END = auto()
-    """The result is an `EndMarker`: end the run."""
+_TaskResultOutcome = Literal['continue', 'idle', 'end']
+"""How `_GraphIterator.iter_graph` goes on after applying a task result: wait for the next result while tasks run,
+finalize the ready joins once none runs, or end the run on an `EndMarker`."""
 
 
 @dataclass
@@ -709,22 +702,22 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                     while self._has_pending_work():
                         async for task_result in self.iter_stream_receiver:  # pragma: no branch
                             maybe_overridden_result = task_result.result
-                            if (caller_view := _caller_view(task_result)) is not None:
+                            if (caller_view := self._caller_view(task_result)) is not None:
                                 # An error is yielded as an ErrorMarker instead of raised, so the caller can
                                 # recover via on_node_run_error by sending new tasks.
                                 maybe_overridden_result = yield caller_view
-                                _raise_if_echoed(task_result, maybe_overridden_result)
+                                self._raise_if_echoed(task_result, maybe_overridden_result)
                             match await self._apply_task_result(task_result, maybe_overridden_result):
-                                case _TaskResultOutcome.END:
+                                case 'end':
                                     # If we got an end marker, this task is definitely done, and we're ready to
                                     # start cleaning everything up
                                     await self._finish_task(task_result.source.task_id)
                                     self._cancel_remaining_tasks()
                                     return
-                                case _TaskResultOutcome.IDLE:
+                                case 'idle':
                                     # if there are no active tasks, we'll be waiting forever for the next result..
                                     break
-                                case _TaskResultOutcome.CONTINUE:
+                                case 'continue':
                                     pass
 
                         # In this case, there are no pending tasks. We can therefore finalize all active reducers
@@ -737,7 +730,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                             if isinstance(maybe_overridden_result, EndMarker):  # pragma: no cover
                                 # This is theoretically reachable but it would be awkward.
                                 # Probably a better way to get coverage here would be to unify the code path
-                                # with the `_TaskResultOutcome.END` case above.
+                                # with the `'end'` case above.
                                 self.task_group.cancel_scope.cancel()
                                 return
                             assert not isinstance(maybe_overridden_result, ErrorMarker)
@@ -750,6 +743,23 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         raise RuntimeError(  # pragma: lax no cover
             'Graph run completed, but no result was produced. This is either a bug in the graph or a bug in the graph runner.'
         )
+
+    @staticmethod
+    def _caller_view(task_result: _GraphTaskResult) -> EndMarker[Any] | ErrorMarker | Sequence[GraphTask] | None:
+        """What `iter_graph` yields for a task result, or `None` for a join item, which it reduces itself."""
+        if task_result.error is not None:
+            return ErrorMarker(task_result.error)
+        if isinstance(task_result.result, JoinItem):
+            return None
+        return task_result.result
+
+    @staticmethod
+    def _raise_if_echoed(
+        task_result: _GraphTaskResult, sent: EndMarker[Any] | ErrorMarker | Sequence[GraphTask]
+    ) -> None:
+        """Raise a task's error when the caller sent its `ErrorMarker` back instead of recovering."""
+        if task_result.error is not None and isinstance(sent, ErrorMarker):
+            raise task_result.error
 
     def _has_pending_work(self) -> bool:
         return bool(self.active_tasks or self.active_reducers)
@@ -764,7 +774,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         An `EndMarker` is left untouched for `iter_graph`, which ends the run.
         """
         if isinstance(maybe_overridden_result, EndMarker):
-            return _TaskResultOutcome.END
+            return 'end'
         elif isinstance(maybe_overridden_result, JoinItem):
             await self._reduce_join_item(maybe_overridden_result)
         else:
@@ -786,7 +796,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         if task_result.source_is_finished:
             await self._finish_task(task_result.source.task_id)
 
-        return _TaskResultOutcome.CONTINUE if self.active_tasks else _TaskResultOutcome.IDLE
+        return 'continue' if self.active_tasks else 'idle'
 
     async def _reduce_join_item(self, result: JoinItem) -> None:
         parent_fork_id = self.graph.get_parent_fork(result.join_id).fork_id
@@ -835,12 +845,12 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
     def _waits_on_intermediate_join(self, join_id: JoinID, join_state: JoinState) -> bool:
         """Whether an intermediate join of `join_id` is still an active reducer in the same run of its parent fork."""
         parent_fork_id = self.graph.get_parent_fork(join_id).fork_id
-        join_parent_fork_run_id = _fork_run_id(join_state.downstream_fork_stack, parent_fork_id)
+        join_parent_fork_run_id = self._fork_run_id(join_state.downstream_fork_stack, parent_fork_id)
         for intermediate_join_id in self.graph.intermediate_join_nodes.get(join_id, set()):
             for (other_join_id, _), other_join_state in self.active_reducers.items():
                 if other_join_id != intermediate_join_id:
                     continue
-                other_parent_fork_run_id = _fork_run_id(other_join_state.downstream_fork_stack, parent_fork_id)
+                other_parent_fork_run_id = self._fork_run_id(other_join_state.downstream_fork_stack, parent_fork_id)
                 if (
                     join_parent_fork_run_id
                     and other_parent_fork_run_id
@@ -848,6 +858,10 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                 ):  # pragma: no branch
                     return True
         return False
+
+    @staticmethod
+    def _fork_run_id(fork_stack: ForkStack, fork_id: ForkID) -> NodeRunID | None:
+        return next((item.node_run_id for item in fork_stack if item.fork_id == fork_id), None)
 
     async def _finish_task(self, task_id: TaskID) -> None:
         # node_id is just included for debugging right now
@@ -1111,25 +1125,6 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                     pass
         for task_id in task_ids_to_cancel:
             await self._finish_task(task_id)
-
-
-def _caller_view(task_result: _GraphTaskResult) -> EndMarker[Any] | ErrorMarker | Sequence[GraphTask] | None:
-    """What `_GraphIterator.iter_graph` yields for a task result, or `None` for a join item, which it reduces itself."""
-    if task_result.error is not None:
-        return ErrorMarker(task_result.error)
-    if isinstance(task_result.result, JoinItem):
-        return None
-    return task_result.result
-
-
-def _raise_if_echoed(task_result: _GraphTaskResult, sent: EndMarker[Any] | ErrorMarker | Sequence[GraphTask]) -> None:
-    """Raise a task's error when the caller sent its `ErrorMarker` back instead of recovering."""
-    if task_result.error is not None and isinstance(sent, ErrorMarker):
-        raise task_result.error
-
-
-def _fork_run_id(fork_stack: ForkStack, fork_id: ForkID) -> NodeRunID | None:
-    return next((item.node_run_id for item in fork_stack if item.fork_id == fork_id), None)
 
 
 def _decision_branch_matches(branch: DecisionBranch[Any], inputs: Any) -> bool:
