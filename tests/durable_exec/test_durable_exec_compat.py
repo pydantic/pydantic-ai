@@ -82,11 +82,13 @@ from pydantic_ai.messages import (
     DataCapabilityPart,
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
+    DocumentUrl,
     EnqueuedMessagesEvent,
     FilePart,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ImageUrl,
     InstructionBaselinePart,
     InstructionDeltaPart,
     InstructionPart,
@@ -130,9 +132,11 @@ from pydantic_ai.messages import (
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolReturn,
     ToolReturnPart,
     ToolSearchCallPart,
     ToolSearchReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
@@ -1242,3 +1246,121 @@ async def test_run_cancelled_crosses_call_tool_result_boundary(exc_type: type[Ru
     with pytest.raises(exc_type, match='the sub-agent stopped') as exc_info:
         unwrap_recorded_tool_call_result(payload)
     assert type(exc_info.value) is exc_type
+
+
+_NON_USER_CONTENT_ITEMS = [
+    pytest.param({'kind': 'image-url', 'url': 'https://example.com/a.png'}, id='image-url'),
+    pytest.param(
+        {'kind': 'image-url', 'url': 'https://example.com/a.png', 'force_download': True}, id='image-url-download'
+    ),
+    pytest.param(
+        {'kind': 'image-url', 'url': 'https://example.com/a.png', 'force_download': False}, id='image-url-no-download'
+    ),
+    pytest.param({'kind': 'document-url', 'url': 'https://example.com/a.pdf'}, id='document-url'),
+    pytest.param({'kind': 'uploaded-file', 'file_id': 'file-abc', 'provider_name': 'openai'}, id='uploaded-file'),
+]
+
+
+@pytest.mark.parametrize('item', _NON_USER_CONTENT_ITEMS)
+async def test_durable_run_rejects_non_user_content_tool_return_content_like_plain_run(item: dict[str, Any]) -> None:
+    """A durable run rejects a `ToolReturn.content` item that isn't `UserContent` the same way a plain run does.
+
+    Loading the recorded result validates `content` as `UserContent`, which would rebuild the dict as a file
+    part, so the check runs on the tool's result before it is recorded.
+    """
+
+    def tool() -> ToolReturn:
+        return ToolReturn('ok', content=[cast(Any, item)])
+
+    with pytest.raises(ValueError) as plain:
+        await Agent(TestModel(), name='compat', toolsets=[FunctionToolset([tool], id='functions')]).run('go')
+
+    durability = JournalDurability()
+    with pytest.raises(ValueError) as durable:
+        await Agent(
+            TestModel(), name='compat', toolsets=[FunctionToolset([tool], id='functions')], capabilities=[durability]
+        ).run('go')
+
+    assert type(durable.value) is type(plain.value) is ValueError
+    assert str(durable.value) == str(plain.value)
+    assert str(plain.value).startswith('`UserPromptPart.content[0]` must be a `UserContent` item, got `dict`.')
+    assert durability.recorded_names[-1] == 'compat__function_toolset__functions.call_tool:tool'
+
+
+async def test_valid_tool_return_content_payload_is_unchanged() -> None:
+    async def tool() -> ToolReturn:
+        return ToolReturn(
+            'ok',
+            content=[
+                'text',
+                ImageUrl('https://example.com/a.png', force_download=True),
+                DocumentUrl('https://example.com/a.pdf'),
+                UploadedFile(file_id='file-abc', provider_name='openai'),
+            ],
+        )
+
+    payload = JSON_CODEC.dump(CallToolResult, await wrap_tool_call_result(tool()))
+
+    assert payload == {
+        'result': {
+            'return_value': 'ok',
+            'content': [
+                'text',
+                {
+                    'url': 'https://example.com/a.png',
+                    'force_download': True,
+                    'vendor_metadata': None,
+                    'kind': 'image-url',
+                    'media_type': 'image/png',
+                    'identifier': 'b86daf',
+                },
+                {
+                    'url': 'https://example.com/a.pdf',
+                    'force_download': False,
+                    'vendor_metadata': None,
+                    'kind': 'document-url',
+                    'media_type': 'application/pdf',
+                    'identifier': '390e3c',
+                },
+                {
+                    'file_id': 'file-abc',
+                    'provider_name': 'openai',
+                    'vendor_metadata': None,
+                    'kind': 'uploaded-file',
+                    'media_type': 'application/octet-stream',
+                    'identifier': 'a40aeb',
+                },
+            ],
+            'metadata': None,
+            'tools': None,
+            'kind': 'tool-return',
+        },
+        'kind': 'tool_return',
+        'content_file_digests': [
+            '2291a684072cc7df0374fd268a33c1bbd709bb1baa9dfcc7c2ed0549ef081190',
+            'cf02548c20cb09be0ba635500d901345ee3216a54282a4a945acd7d625272639',
+            'd3de7927d7c91630bdc6c64d48402fe9425e5286a16af0c6af005984b50759ad',
+        ],
+    }
+    assert unwrap_tool_call_result(JSON_CODEC.load(CallToolResult, payload)) == await tool()
+
+
+def test_recorded_tool_return_content_loads_unchanged() -> None:
+    """A result recorded before durable runs checked `ToolReturn.content` still loads as it did, without the check."""
+    recorded = {
+        'result': {
+            'return_value': 'ok',
+            'content': [{'kind': 'image-url', 'url': 'https://example.com/a.png', 'force_download': True}],
+            'metadata': None,
+            'tools': None,
+            'kind': 'tool-return',
+        },
+        'kind': 'tool_return',
+        'content_file_digests': [],
+    }
+
+    loaded = JSON_CODEC.load(CallToolResult, recorded)
+
+    expected = ToolReturn('ok', content=[ImageUrl('https://example.com/a.png', force_download=True)])
+    assert unwrap_tool_call_result(loaded) == expected
+    assert unwrap_recorded_tool_call_result(loaded) == expected

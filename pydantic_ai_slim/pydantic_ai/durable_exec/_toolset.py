@@ -39,7 +39,13 @@ from pydantic_ai.exceptions import (
     ToolFailed,
     UserError,
 )
-from pydantic_ai.messages import InstructionPart, ToolReturn, ToolReturnContent, _RecordsContentFiles  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.messages import (
+    InstructionPart,
+    ToolReturn,
+    ToolReturnContent,
+    UserPromptPart,
+    _RecordsContentFiles,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.tools import (
     AgentDepsT,
     RunContext,
@@ -489,6 +495,12 @@ private. Payloads journaled by earlier versions stay loadable.
 async def wrap_tool_call_result(coro: Awaitable[Any]) -> CallToolResult:
     try:
         result = await coro
+        if isinstance(result, ToolReturn) and (content := cast(ToolReturn[Any], result).content):
+            # The run turns `content` into a `UserPromptPart`, whose check rejects items that aren't `UserContent`.
+            # Run that check here, before the result is recorded: loading the recorded result validates `content`
+            # as `UserContent`, which would rebuild such an item instead, so the durable run would accept what
+            # the plain run rejects. Replaying a recorded result doesn't come through here.
+            UserPromptPart(content=content)
         if is_str_dict(result) and result.get('kind') == 'tool-return':
             return _ToolContentResult(result=result)
         return _ToolReturn(result=result)

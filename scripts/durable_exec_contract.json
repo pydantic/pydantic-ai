@@ -4770,7 +4770,19 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::_result_discriminator"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::_result_discriminator",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::wrap_tool_call_result"
+      ]
+    },
+    "ToolReturn.content": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::wrap_tool_call_result"
       ]
     },
     "ToolReturnContent": {
@@ -4822,6 +4834,28 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.run_stream",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.run_stream_events",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.run_sync"
+      ]
+    },
+    "UserPromptPart": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>"
+      ]
+    },
+    "UserPromptPart.content": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::wrap_tool_call_result"
       ]
     },
     "WorkspaceRef": {

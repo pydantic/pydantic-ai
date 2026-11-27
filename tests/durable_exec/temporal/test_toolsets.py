@@ -24,6 +24,7 @@ from pydantic_ai import (
     DocumentUrl,
     ExternalToolset,
     FunctionToolset,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -1863,6 +1864,31 @@ async def test_legacy_structured_tool_return_payload_decodes() -> None:
     )
     decoded = await pydantic_data_converter.decode(payloads, [CallToolResult])  # pyright: ignore[reportArgumentType]
     assert unwrap_tool_call_result(decoded[0]) == ToolReturn('legacy')
+
+
+async def test_tool_return_content_is_checked_before_it_is_recorded() -> None:
+    """The activity rejects a `ToolReturn.content` item that isn't `UserContent`, as a plain run does.
+
+    A result recorded before the check still decodes as it did: the check runs only on the tool's own result.
+    """
+    item: Any = {'kind': 'image-url', 'url': 'https://example.com/a.png', 'force_download': True}
+
+    async def return_content() -> ToolReturn:
+        return ToolReturn('ok', content=[item])
+
+    with pytest.raises(ValueError) as plain:
+        UserPromptPart(content=[item])
+    with pytest.raises(ValueError) as durable:
+        await wrap_tool_call_result(return_content())
+    assert str(durable.value) == str(plain.value)
+
+    payloads = await pydantic_data_converter.encode(
+        [{'result': {'return_value': 'ok', 'content': [item], 'kind': 'tool-return'}, 'kind': 'tool_return'}]
+    )
+    decoded = await pydantic_data_converter.decode(payloads, [CallToolResult])  # pyright: ignore[reportArgumentType]
+    assert unwrap_tool_call_result(decoded[0]) == ToolReturn(
+        'ok', content=[ImageUrl('https://example.com/a.png', force_download=True)]
+    )
 
 
 # --- Heartbeat supervision ---
