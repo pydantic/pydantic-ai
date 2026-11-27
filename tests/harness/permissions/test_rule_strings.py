@@ -24,6 +24,7 @@ from pydantic_ai_harness.permissions import (
     parse_permission_rule,
     parse_permission_rules,
 )
+from pydantic_ai_harness.permissions._rules import decide
 from pydantic_ai_harness.shell import Shell
 
 
@@ -166,6 +167,21 @@ class TestParsePermissionRule:
             'deny', tools=['mcp__github__create_issue']
         )
 
+    @pytest.mark.parametrize(
+        ('rule', 'glob'), [('read_file(**/.env)', '.env'), ('read_file(**/**/secrets/*)', 'secrets/*')]
+    )
+    def test_a_leading_double_star_is_dropped_for_ask_and_deny(self, rule: str, glob: str) -> None:
+        assert parse_permission_rule(rule, 'deny').args == {'path': glob}
+        assert parse_permission_rule(rule, 'ask').args == {'path': glob}
+
+    def test_an_allow_keeps_its_leading_double_star(self) -> None:
+        """Kept, it allows less, not more: a call at the top isn't allowed, so it asks."""
+        assert parse_permission_rule('read_file(**/.env)', 'allow').args == {'path': '**/.env'}
+
+    def test_an_unknown_verdict_raises(self) -> None:
+        with pytest.raises(UserError, match="has the verdict 'denny'"):
+            parse_permission_rule('read_file', 'denny')  # pyright: ignore[reportArgumentType]
+
     def test_an_empty_command_raises(self) -> None:
         with pytest.raises(UserError, match='must be a shell command'):
             parse_permission_rule('Bash(:*)', 'allow')
@@ -185,6 +201,19 @@ class TestParsePermissionRules:
             PermissionRule('ask', command='git push'),
             PermissionRule('deny', command='rm -rf'),
         ]
+
+    def test_an_unknown_key_raises(self) -> None:
+        with pytest.raises(UserError, match="has the verdict 'denny'"):
+            parse_permission_rules({'denny': ['read_file']})  # pyright: ignore[reportArgumentType]
+
+    def test_a_single_string_raises(self) -> None:
+        with pytest.raises(UserError, match="for 'deny' must be a list of strings"):
+            parse_permission_rules({'deny': 'read_file'})
+
+    def test_a_recursive_deny_refuses_a_file_at_the_top(self) -> None:
+        [rule] = parse_permission_rules({'deny': ['read_file(**/.env)']})
+        for path in ('.env', 'app/.env', '/home/me/project/.env'):
+            assert decide([rule], command=None, command_arg=None, args={'path': path}, posix=True) == rule
 
     async def test_rules_decide_real_shell_and_file_calls(self, tmp_path: Path) -> None:
         (tmp_path / 'docs').mkdir()

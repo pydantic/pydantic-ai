@@ -427,9 +427,11 @@ def parse_permission_rule(rule: str, verdict: PermissionVerdict, *, reason: str 
       `UserError`, since Claude Code reads it as one exact command and a command rule's allow matches every
       command that starts with its words.
     - `'write_file'`: every call to the tool of that name.
-    - `'write_file(docs/**)'`: calls whose `path` argument matches the glob. A leading `./` is dropped, and a
-      path starting with `/` or `~` raises `UserError`: Claude Code reads those against the project or home
-      folder, while a glob here is matched as written, and a relative one also against the end of a longer path.
+    - `'write_file(docs/**)'`: calls whose `path` argument matches the glob. A `*` matches across `/` here, so
+      `docs/*` and `docs/**` mean the same thing. A leading `./` is dropped, and so is a leading `**/` for `'ask'`
+      and `'deny'`, which match the end of a longer path anyway. A path starting with `/` or `~` raises
+      `UserError`: Claude Code reads those against the project or home folder, while a glob here is matched as
+      written.
     - `'web_fetch(url=https://example.com/*)'`: calls whose `url` argument matches the glob.
 
     A pattern ending in `:*` on any other name, such as a lowercase `'shell(rm -rf:*)'`, raises `UserError`, and so
@@ -440,6 +442,9 @@ def parse_permission_rule(rule: str, verdict: PermissionVerdict, *, reason: str 
     own tool names, such as `Read` or `Edit`, raise `UserError` naming the tool to use: no tool here has them, so
     a rule naming one would match nothing.
     """
+    if verdict not in _SEVERITY:
+        # A typo such as `'denny'` would otherwise build a rule that neither allows nor denies, so it would ask.
+        raise UserError(f'Permission rule {rule!r} has the verdict {verdict!r}: use `allow`, `ask` or `deny`.')
     name, inner = _split_rule(rule)
     if (instead := _CLAUDE_CODE_TOOLS.get(name)) is not None:
         raise UserError(f'Permission rule {rule!r} uses the Claude Code tool name {name!r}: name {instead} instead.')
@@ -462,7 +467,7 @@ def parse_permission_rule(rule: str, verdict: PermissionVerdict, *, reason: str 
     arg, equals, glob = inner.partition('=')
     arg, glob = (arg, glob.strip()) if equals and arg.isidentifier() and glob else ('path', inner)
     return PermissionRule(
-        verdict, tools=[name], args={arg: _path_glob(rule, glob) if arg == 'path' else glob}, reason=reason
+        verdict, tools=[name], args={arg: _path_glob(rule, glob, verdict) if arg == 'path' else glob}, reason=reason
     )
 
 
@@ -485,15 +490,19 @@ def _shell_rule(
     return PermissionRule(verdict, command=command, reason=reason)
 
 
-def _path_glob(rule: str, glob: str) -> str:
-    """A rule string's `path` glob as a `PermissionRule` matches it: without a leading `./`."""
+def _path_glob(rule: str, glob: str, verdict: PermissionVerdict) -> str:
+    """A rule string's `path` glob as a `PermissionRule` matches it: without a leading `./`.
+
+    An ask or deny glob also matches the end of a longer path, so a leading `**/` is dropped there: kept, it would
+    miss a match at the top, such as `**/.env` missing `.env`.
+    """
     if glob.startswith(('/', '~')):
         raise UserError(
             f'Permission rule {rule!r} starts its path with {glob[0]!r}: write it relative, such as `secrets/**`, '
             'which also matches the end of a longer path.'
         )
-    while glob.startswith('./'):
-        glob = glob[2:]
+    while glob.startswith('./') or (verdict != 'allow' and glob.startswith('**/')):
+        glob = glob.removeprefix('./').removeprefix('**/')
     return glob
 
 
@@ -501,6 +510,10 @@ def parse_permission_rules(rules: Mapping[PermissionVerdict, Sequence[str]]) -> 
     """`PermissionRule`s from rule strings by verdict, such as `{'allow': ['Bash(git status:*)'], 'deny': [...]}`.
 
     Each string is parsed by `parse_permission_rule`. The order doesn't matter: `'deny'` beats `'ask'`, which beats
-    `'allow'`, whatever the order.
+    `'allow'`, whatever the order. A key other than a verdict, or a single string instead of a list of them, raises
+    `UserError`, since settings files that people write by hand aren't type-checked.
     """
+    for verdict, strings in rules.items():
+        if isinstance(strings, str):
+            raise UserError(f'Permission rules for {verdict!r} must be a list of strings, not one string: {strings!r}.')
     return [parse_permission_rule(rule, verdict) for verdict, strings in rules.items() for rule in strings]
