@@ -176,7 +176,7 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
                 [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] and
                 [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout]; `()` retries them all.
             event_stream: `True`, or a [`HatchetEventStream`][pydantic_ai.durable_exec.hatchet.HatchetEventStream],
-                to publish the run's events to a Hatchet durable stream topic, by default one per run, so a
+                to publish the run's events to a Hatchet durable stream topic, by default one per durable task and agent, so a
                 consumer outside the durable task can observe them as they happen with
                 [`stream_agent_events()`][pydantic_ai.durable_exec.hatchet.HatchetDurability.stream_agent_events].
                 Model events are published live from the model request task, so tokens stream through.
@@ -219,6 +219,7 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
         # the tasks of every agent it's attached to.
         self._registered_tasks: list[Standalone[TaskInput, TaskOutput]] = []
         self._bound_agent_names: list[str] = []
+        self._retry_on_model_errors = False
         self._event_stream = (
             HatchetEventStream() if event_stream is True else event_stream if event_stream is not False else None
         )
@@ -247,7 +248,8 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
             self._deps_type = cast('type[AgentDepsT]', agent.deps_type)
         self._deps_adapter = TypeAdapter(self._deps_type)
         non_retryable_model_errors = self._non_retryable_model_errors
-        if has_retry_on_model_errors(agent.root_capability):
+        self._retry_on_model_errors = has_retry_on_model_errors(agent.root_capability)
+        if self._retry_on_model_errors:
             # `RetryOnModelErrors` retries model errors in the durable task, so the model task doesn't retry them too:
             # its `retries` are left to crashes and timeouts, which never reach a hook.
             if non_retryable_model_errors != _DEFAULT_NON_RETRYABLE_MODEL_ERRORS:
@@ -390,6 +392,17 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
         """
         if not self.in_durable_context:
             return await handler()
+        if (
+            not self._retry_on_model_errors
+            and ctx.root_capability is not None
+            and has_retry_on_model_errors(ctx.root_capability)
+        ):
+            # The model task's retries are set when the agent is bound, so it would retry model errors too.
+            raise UserError(
+                'In a Hatchet durable task, `RetryOnModelErrors` must be one of the capabilities the agent is built '
+                'with, so the model request task leaves retrying model errors to it. Add it to the agent directly '
+                'rather than through a `DynamicCapability`.'
+            )
         durable_ctx = self._durable_context()
 
         async def durable_sleep(seconds: float) -> None:

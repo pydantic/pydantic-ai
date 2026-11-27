@@ -1172,6 +1172,7 @@
       "engines": [
         "dbos",
         "durable_exec",
+        "hatchet",
         "temporal"
       ],
       "kinds": [
@@ -1187,6 +1188,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.restore",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::DurableWorkspace._ensure",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability.prepare_tools",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/hatchet/_durability.py::HatchetDurability.wrap_run",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability.wrap_run"
       ]
     },

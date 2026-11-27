@@ -48,7 +48,7 @@ class HatchetEventStream:
     topic: Callable[[str, str], str] = _default_topic
     """The topic for a run, from the agent name and the workflow run ID of the durable task running it.
 
-    Defaults to `pydantic-ai.<agent name>.<workflow run ID>`, a topic per run.
+    Defaults to `pydantic-ai.<agent name>.<workflow run ID>`, a topic per durable task and agent.
     """
 
     namespace: str = ''
