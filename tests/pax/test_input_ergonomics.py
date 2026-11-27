@@ -698,9 +698,13 @@ async def test_calibration_preserves_paste_after_incomplete_escape_and_hides_uns
 
 
 @pytest.mark.parametrize(
-    'keyboard, enter, alt', [('mac', 'Return', 'Option'), ('pc', 'Enter', 'Alt'), ('neutral', 'Enter', 'Alt')]
+    'keyboard, enter, alt, logo',
+    [('mac', 'Return', 'Option', 'Cmd'), ('pc', 'Enter', 'Alt', 'Win'), ('neutral', 'Enter', 'Alt', 'Super')],
 )
-async def test_physical_enter_labels_follow_effective_bindings(keyboard: KeyboardLabels, enter: str, alt: str) -> None:
+async def test_physical_enter_labels_follow_effective_bindings(
+    keyboard: KeyboardLabels, enter: str, alt: str, logo: str
+) -> None:
+    assert InputBindings(steer='super-enter').label('steer', keyboard=keyboard) == f'{logo}+{enter}'
     async with editor() as (live, _, _):
         live.keyboard_labels = lambda: keyboard
         assert live.bindings().label('send', keyboard=live.keyboard_labels()) == enter

@@ -1287,6 +1287,7 @@ newline, including in custom question answers, except on
 key you bind to **Steer**.
 
 Mac labels use Return, Option, and Cmd, including modified Return bindings.
+PC labels name the Super key Win; neutral labels call it Super.
 Keyboard labels describe your keyboard, not the remote server's OS. Choosing Mac
 cannot recover a modifier lost by your terminal, SSH client, or multiplexer.
 Choose **Test a key**, or run `/input test`, to see the actual decoded key and its

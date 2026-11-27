@@ -90,7 +90,7 @@ class InputBindings(BaseModel):
         parts = canonical_key(self.key(action)).split('-')
         labels = {
             'alt': 'Option' if keyboard == 'mac' else 'Alt',
-            'super': 'Cmd' if keyboard == 'mac' else 'Super',
+            'super': 'Cmd' if keyboard == 'mac' else 'Win' if keyboard == 'pc' else 'Super',
             'enter': 'Return' if keyboard == 'mac' else 'Enter',
         }
         return '+'.join(labels.get(part, part.capitalize()) for part in parts)
