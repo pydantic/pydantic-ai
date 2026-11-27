@@ -151,7 +151,10 @@ async def test_stream_without_required_finish_reason_is_retried(allow_model_requ
 
 
 async def test_stream_without_required_finish_reason_falls_back(allow_model_requests: None):
-    """`ModelFallback` falls back by default on a stream cut off before its finish reason."""
+    """`ModelFallback` falls back by default on a stream cut off before its finish reason.
+
+    A mock transport stands in for a cassette because no provider cuts a stream off on demand.
+    """
     agent = Agent(_sse_model(_CUT_OFF_STREAM), capabilities=[ModelFallback(TestModel(custom_output_text='Paris.'))])
 
     async with agent.run_stream('What is the capital of France?') as result:
