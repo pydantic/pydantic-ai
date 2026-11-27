@@ -140,7 +140,7 @@ Reach for these features when the user needs more than a simple function tool:
 
 - `ToolReturn` for rich return values, separate content/metadata, and `tools` names that reveal deferred tools
 - `prepare=` for dynamic tool definitions
-- `timeout=` for tool execution limits
+- `timeout=` for tool execution limits, or `Agent(tool_timeout=...)` for a default on every tool registered on the agent
 - `sequential=True` to make a tool a barrier — it runs alone (tools emitted before it finish first, tools after it start once it finishes) while other tools parallelize around it; works on function tools and on output tools via `ToolOutput(sequential=True)`
 
 Example with `ToolReturn`:
@@ -214,7 +214,9 @@ See [Submitting output from a tool](https://pydantic.dev/docs/ai/core-concepts/o
 
 For tool-call retries, use `ModelRetry` and tool `retries=...`.
 
-For HTTP request retries at the transport layer, use the library's retry configuration separately: pass a retrying transport such as `AsyncHTTPX2TenacityTransport` to `create_async_httpx2_client(transport=...)` (from `pydantic_ai.models`), which keeps Pydantic AI's client timeouts and user agent, and give the client to the provider as `http_client`. Do not assume `ModelRetry` alone solves provider transport failures. The provider SDK client retries too, on top of the transport; set `model_settings={'max_retries': 0}` to leave retrying to the transport alone, or another count to change the SDK's.
+To retry the agent's model requests on rate limits, overloaded or unavailable models, 5xx and connection errors, add the `RetryOnModelErrors` capability (see [Handle Provider Failures](./AGENTS-CORE.md#handle-provider-failures)). It honors `retry_after`, backs off with jitter, and turns off the provider SDK's own retries for its requests. Do not assume `ModelRetry` alone solves provider failures: it asks the model to try again, it doesn't resend a failed request.
+
+For model requests made outside an agent (direct model requests or a standalone `Model`), use a retrying transport instead: pass a retrying transport such as `AsyncHTTPX2TenacityTransport` to `create_async_httpx2_client(transport=...)` (from `pydantic_ai.models`), which keeps Pydantic AI's client timeouts and user agent, and give the client to the provider as `http_client`. The provider SDK client retries too, on top of the transport; set `model_settings={'max_retries': 0}` to leave retrying to the transport alone, or another count to change the SDK's.
 
 ## Recognize Tools by Kind, Not Name
 

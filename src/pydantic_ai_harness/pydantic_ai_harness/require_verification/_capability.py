@@ -42,7 +42,9 @@ DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS = (
 DEFAULT_VERIFICATION_COMMANDS: tuple[str, ...] = (
     # `ruff format`, `black` and `isort` count only with `--check` or `--diff` later in the step. `_verifies` matches
     # only steps without `;`, `&`, `|` or a newline, so the first place one of them appears decides, and the atomic
-    # group commits to it.
+    # group commits to it, so the lookahead runs once per match attempt. Folded into one alternative with the other
+    # tools, the lookahead would re-read the rest of the step for each way `(?:\S*/)?` and `(?:\s+-\S+)*` can split
+    # it at a `/` or a flag, which takes quadratic time on a long step such as `black/black/.../black x`.
     r'\A(?<!\S)(?:'
     r'(?:(?:uv|poetry|pipenv|hatch|pdm)\s+run(?:\s+-\S+)*\s+)?(?:(?<!\S)(?:\S*/)?python3?\s+-m\s+)?(?<!\S)(?:\S*/)?'
     r'(?:pytest|py\.test|unittest|tox|nox|mypy|pyright|basedpyright|ty\s+check|ruff\s+check)\b'
