@@ -206,7 +206,7 @@ def load_from_registry(
     spec: NamedSpec,
     *,
     label: str,
-    custom_types_param: str,
+    custom_types_param: str | tuple[str, ...],
     context: str | None = None,
     instantiate: Callable[[type[T], tuple[Any, ...], dict[str, Any]], T] | None = None,
 ) -> T:
@@ -216,7 +216,8 @@ def load_from_registry(
         registry: Mapping from names to classes.
         spec: Specification of the object to load.
         label: Human-readable label for error messages.
-        custom_types_param: Name of the parameter for custom types, used in error messages.
+        custom_types_param: Name of the parameter for custom types, or the names of several parameters
+            that can each provide them, used in error messages.
         context: Optional context for error messages.
         instantiate: Optional callback to instantiate the class. Default: `cls(*args, **kwargs)`.
 
@@ -226,9 +227,11 @@ def load_from_registry(
     name = spec.name
     cls = registry.get(name)
     if cls is None:
+        params = (custom_types_param,) if isinstance(custom_types_param, str) else custom_types_param
+        param_names = ' or '.join(f'`{param}`' for param in params)
         raise ValueError(
-            f'{label.capitalize()} {name!r} is not in the provided `{custom_types_param}`. Valid choices: {list(registry.keys())}.'
-            f' If you are trying to use a custom {label}, you must include it in the `{custom_types_param}` argument.'
+            f'{label.capitalize()} {name!r} is not in the provided {param_names}. Valid choices: {list(registry.keys())}.'
+            f' If you are trying to use a custom {label}, you must include it in the {param_names} argument.'
         )
     try:
         if instantiate is not None:

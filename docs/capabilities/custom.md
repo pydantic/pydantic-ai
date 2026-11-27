@@ -1745,7 +1745,16 @@ agent = Agent.from_spec(
 )
 ```
 
-Users register custom capability types via the `custom_capability_types` parameter on [`Agent.from_spec`][pydantic_ai.agent.Agent.from_spec] or [`Agent.from_file`][pydantic_ai.agent.Agent.from_file].
+Users register custom capability types via the `custom_capability_types` parameter on [`Agent.from_spec`][pydantic_ai.agent.Agent.from_spec] or [`Agent.from_file`][pydantic_ai.agent.Agent.from_file], or point a [`CapabilityNamespace`](../agent-spec.md#custom-capabilities-in-specs) at their `module:attribute` target, their module, or an entry point group that lists them.
+
+To let users load your capabilities by name without importing them, register each one in the `pydantic_ai.capabilities` [entry point](https://packaging.python.org/en/latest/specifications/entry-points/) group, under the name a spec uses for it:
+
+```toml {title="pyproject.toml"}
+[project.entry-points."pydantic_ai.capabilities"]
+RateLimit = "my_package.capabilities:RateLimit"
+```
+
+`CapabilityNamespace(entry_points='pydantic_ai.capabilities')` then resolves `- RateLimit: {rpm: 30}` in any spec, importing `my_package.capabilities` only when a spec uses it.
 
 Override [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] when the constructor takes types that can't be represented in YAML/JSON. The spec fields should mirror the dataclass fields, but with serializable types:
 

@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+import importlib
+import importlib.metadata
+import pkgutil
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextvars import ContextVar
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
@@ -22,7 +26,7 @@ from pydantic_ai.template import TemplateStr
 if TYPE_CHECKING:
     from pydantic_ai.capabilities.abstract import AbstractCapability
 
-__all__ = ['CapabilitySpec']  # re-exported from _spec
+__all__ = ['CapabilityNamespace', 'CapabilitySpec']  # `CapabilitySpec` is re-exported from _spec
 
 DEFAULT_SCHEMA_PATH_TEMPLATE = './{stem}_schema.json'
 """Default template for schema file paths, where {stem} is replaced with the spec filename stem."""
@@ -117,6 +121,7 @@ class AgentSpec(BaseModel):
         fmt: Literal['yaml', 'json'] | None = None,
         schema_path: Path | str | None = DEFAULT_SCHEMA_PATH_TEMPLATE,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        capability_namespace: CapabilityNamespace | None = None,
     ) -> None:
         """Save the agent spec to a YAML or JSON file.
 
@@ -126,6 +131,8 @@ class AgentSpec(BaseModel):
             schema_path: Path to save the JSON schema to. If None, no schema will be saved.
                 Can be a string template with {stem} which will be replaced with the spec filename stem.
             custom_capability_types: Custom capability classes to include in the schema.
+            capability_namespace: A namespace whose capabilities to include in the schema, which
+                imports every class it names.
         """
         path = Path(path)
         fmt = _infer_fmt(path, fmt)
@@ -142,7 +149,7 @@ class AgentSpec(BaseModel):
                 schema_ref = str(schema_path.relative_to(path.parent))
             else:
                 schema_ref = str(schema_path)
-            self._save_schema(schema_path, custom_capability_types)
+            self._save_schema(schema_path, custom_capability_types, capability_namespace)
 
         context: dict[str, Any] = {'use_short_form': True}
         if fmt == 'yaml':
@@ -175,6 +182,7 @@ class AgentSpec(BaseModel):
     def model_json_schema_with_capabilities(
         cls,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        capability_namespace: CapabilityNamespace | None = None,
     ) -> dict[str, Any]:
         """Generate a JSON schema for this agent spec type, including capability details.
 
@@ -182,11 +190,15 @@ class AgentSpec(BaseModel):
 
         Args:
             custom_capability_types: Custom capability classes to include in the schema.
+            capability_namespace: A namespace whose capabilities to include in the schema, which
+                imports every class it names.
 
         Returns:
             A dictionary representing the JSON schema.
         """
-        capability_schema_types = _build_capability_schema_types(get_capability_registry(custom_capability_types))
+        capability_schema_types = _build_capability_schema_types(
+            get_capability_registry(custom_capability_types, capability_namespace)
+        )
 
         # Build a schema-only model with the resolved capability union.
         # NOTE: This duplicates the field list from AgentSpec above. We can't inherit from
@@ -233,15 +245,17 @@ class AgentSpec(BaseModel):
         cls,
         path: Path | str,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        capability_namespace: CapabilityNamespace | None = None,
     ) -> None:
         """Save the JSON schema for this agent spec type to a file.
 
         Args:
             path: Path to save the schema to.
             custom_capability_types: Custom capability classes to include in the schema.
+            capability_namespace: A namespace whose capabilities to include in the schema.
         """
         path = Path(path)
-        json_schema = cls.model_json_schema_with_capabilities(custom_capability_types)
+        json_schema = cls.model_json_schema_with_capabilities(custom_capability_types, capability_namespace)
         schema_content = to_json(json_schema, indent=2).decode() + '\n'
         if not path.exists() or path.read_text(encoding='utf-8') != schema_content:
             path.write_text(schema_content, encoding='utf-8')
@@ -261,28 +275,196 @@ def _infer_fmt(path: Path, fmt: Literal['yaml', 'json'] | None) -> Literal['yaml
     )
 
 
-def get_capability_registry(
-    custom_types: Sequence[type[AbstractCapability[Any]]] = (),
-) -> Mapping[str, type[AbstractCapability[Any]]]:
-    """Create a registry of capability types from default and custom types."""
-    from pydantic_ai.capabilities import CAPABILITY_TYPES
+@dataclass(frozen=True, kw_only=True)
+class CapabilityNamespace:
+    """Where the capability names in an agent spec resolve to classes.
+
+    A spec names a capability by its bare class name, such as `- Coder: {}`, and never by an import
+    path, so the caller decides which class each name means. A name resolves in the first of these
+    tiers that has it, in this order: `types`, `names`, `entry_points`, `modules`, then the built-in
+    capabilities. A higher tier therefore deliberately overrides a lower one, including a built-in,
+    while two different classes for one name within a single tier raise an error: for
+    `entry_points`, which installed packages fill, only when a spec uses that name.
+
+    `names` and `entry_points` only point at a `module:attribute` target, and nothing is imported
+    until a spec actually uses that name. `modules` are imported when the namespace is used, since
+    finding the capabilities in a module means importing it.
+    """
+
+    types: Sequence[type[AbstractCapability[Any]]] = ()
+    """Capability classes, as passed to `custom_capability_types`."""
+
+    names: Mapping[str, str] = field(default_factory=dict[str, str])
+    """Capability names mapped to the `module:attribute` target of their class, for example
+    `{'Coder': 'pydantic_ai_harness.coder:Coder'}`."""
+
+    entry_points: str | None = None
+    """An [entry point](https://packaging.python.org/en/latest/specifications/entry-points/) group
+    whose entries map capability names to `module:attribute` targets, so every installed package can
+    contribute to it. Packages that publish capabilities register them in `'pydantic_ai.capabilities'`."""
+
+    modules: Sequence[str] = ()
+    """Modules whose capability classes are all made available: those listed in the module's
+    `__all__`, or else the public ones it defines itself."""
+
+
+@dataclass(frozen=True)
+class _Clash:
+    """Two different installed capabilities under one name: an error only for a spec that uses the name."""
+
+    message: str
+
+
+_Target = Union['type[AbstractCapability[Any]]', str, _Clash]
+"""A registry entry: a class, the `module:attribute` target it is imported from on first use, or a clash."""
+
+
+class _CapabilityRegistry(Mapping[str, 'type[AbstractCapability[Any]]']):
+    """A capability registry whose `module:attribute` entries are imported on first lookup.
+
+    A clashing name is left out of iteration, so the JSON schema and the "Valid choices" of an error
+    skip it, but looking it up raises the clash.
+    """
+
+    def __init__(self, entries: dict[str, _Target]) -> None:
+        self._entries = entries
+
+    def __getitem__(self, name: str) -> type[AbstractCapability[Any]]:
+        entry = self._entries[name]
+        if isinstance(entry, _Clash):
+            raise ValueError(entry.message)
+        if isinstance(entry, str):
+            entry = _resolve_capability_target(name, entry)
+            self._entries[name] = entry
+        return entry
+
+    def __contains__(self, name: object) -> bool:
+        # `Mapping.__contains__` would look the name up, importing its target.
+        return name in self._entries and not isinstance(self._entries[name], _Clash)
+
+    def __iter__(self) -> Iterator[str]:
+        return (name for name, entry in self._entries.items() if not isinstance(entry, _Clash))
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+
+def _validate_capability_type(cls: object) -> type[AbstractCapability[Any]]:
     from pydantic_ai.capabilities.abstract import AbstractCapability
 
-    def _validate_capability(cls: type[AbstractCapability[Any]]) -> None:
-        if not issubclass(cls, AbstractCapability):
-            raise ValueError(
-                f'All custom capability classes must be subclasses of AbstractCapability, but {cls} is not'
-            )
-        if '__dataclass_fields__' not in cls.__dict__:
-            raise ValueError(f'All custom capability classes must be decorated with `@dataclass`, but {cls} is not')
+    if not (isinstance(cls, type) and issubclass(cls, AbstractCapability)):
+        raise ValueError(f'All custom capability classes must be subclasses of AbstractCapability, but {cls} is not')
+    if '__dataclass_fields__' not in cls.__dict__:
+        raise ValueError(f'All custom capability classes must be decorated with `@dataclass`, but {cls} is not')
+    return cast('type[AbstractCapability[Any]]', cls)
 
-    return build_registry(
-        custom_types=custom_types,
-        defaults=tuple(CAPABILITY_TYPES.values()),
+
+def _resolve_capability_target(name: str, target: str) -> type[AbstractCapability[Any]]:
+    try:
+        cls = _validate_capability_type(pkgutil.resolve_name(target))
+    except (ImportError, AttributeError, ValueError) as e:
+        raise ValueError(f'Capability {name!r} could not be loaded from `{target}`: {e}') from e
+    if cls.get_serialization_name() != name:
+        raise ValueError(
+            f'Capability {name!r} points at `{target}`, whose serialization name is'
+            f' {cls.get_serialization_name()!r}, not {name!r}'
+        )
+    return cls
+
+
+def _module_capability_types(module_name: str) -> list[type[AbstractCapability[Any]]]:
+    from pydantic_ai.capabilities.abstract import AbstractCapability
+
+    try:
+        module = importlib.import_module(module_name)
+    except ImportError as e:
+        raise ValueError(f'Capability module `{module_name}` could not be imported: {e}') from e
+    exported: Sequence[str] | None = getattr(module, '__all__', None)
+    # An empty `__all__` exports nothing. Without one, only the public classes the module defines count:
+    # one it imports, like a built-in it wraps, is another module's to offer.
+    attribute_names: list[str] = list(
+        exported
+        if exported is not None
+        else (
+            n
+            for n, value in vars(module).items()
+            if not n.startswith('_') and getattr(value, '__module__', None) == module.__name__
+        )
+    )
+    found: dict[type[AbstractCapability[Any]], None] = {}
+    for attribute_name in attribute_names:
+        value = getattr(module, attribute_name, None)
+        if (
+            isinstance(value, type)
+            and issubclass(value, AbstractCapability)
+            and '__dataclass_fields__' in value.__dict__
+            and value.get_serialization_name() is not None
+        ):
+            found[value] = None
+    return list(found)
+
+
+def _named_tier(items: Sequence[tuple[str, _Target]], label: str, *, lazy: bool = False) -> dict[str, _Target]:
+    """One tier's entries by name. Two different ones under a name raise, or with `lazy`, raise on lookup."""
+    tier: dict[str, _Target] = {}
+    for name, entry in items:
+        existing = tier.get(name)
+        if existing is None or existing == entry or isinstance(existing, _Clash):
+            tier.setdefault(name, entry)
+            continue
+        message = f'Two different capabilities are named {name!r} in {label}: `{existing}` and `{entry}`'
+        if not lazy:
+            raise ValueError(message)
+        tier[name] = _Clash(message)
+    return tier
+
+
+def get_capability_registry(
+    custom_types: Sequence[type[AbstractCapability[Any]]] = (),
+    namespace: CapabilityNamespace | None = None,
+) -> Mapping[str, type[AbstractCapability[Any]]]:
+    """Create a registry of capability types from the built-ins, `custom_types` and a `namespace`."""
+    from pydantic_ai.capabilities import CAPABILITY_TYPES
+
+    namespace = namespace or CapabilityNamespace()
+    types = build_registry(
+        # The same class passed through both doors is one capability, as in the other tiers.
+        custom_types=[_validate_capability_type(cls) for cls in dict.fromkeys((*custom_types, *namespace.types))],
+        defaults=(),
         get_name=lambda cls: cls.get_serialization_name(),
         label='capability',
-        validate=_validate_capability,
     )
+    built_ins = {name: cls for cls in CAPABILITY_TYPES.values() if (name := cls.get_serialization_name()) is not None}
+
+    entries: dict[str, _Target] = dict(built_ins)
+    entries.update(
+        _named_tier(
+            [
+                (name, cls)
+                for module_name in namespace.modules
+                for cls in _module_capability_types(module_name)
+                if (name := cls.get_serialization_name()) is not None
+            ],
+            '`modules`',
+        )
+    )
+    if namespace.entry_points is not None:
+        entries.update(
+            _named_tier(
+                # `module:attr` without any `[extras]` suffix, which `EntryPoint.load()` ignores too.
+                [
+                    # An entry point can name a bare module, which then fails as "not a capability".
+                    (ep.name, ep.module if ep.attr is None else f'{ep.module}:{ep.attr}')
+                    for ep in importlib.metadata.entry_points(group=namespace.entry_points)
+                ],
+                f'the `{namespace.entry_points}` entry points',
+                # Installed packages fill this tier, not the caller, so a clash breaks only specs that use the name.
+                lazy=True,
+            )
+        )
+    entries.update(namespace.names)
+    entries.update(types)
+    return _CapabilityRegistry(entries)
 
 
 class CapabilitySpecContext:
@@ -324,7 +506,7 @@ def load_capability_from_nested_spec(spec: CapabilitySpec | dict[str, Any] | str
             ctx.registry,
             cap_spec,
             label='capability',
-            custom_types_param='custom_capability_types',
+            custom_types_param=('custom_capability_types', 'capability_namespace'),
             instantiate=ctx.instantiate,
         )
     else:
@@ -332,7 +514,7 @@ def load_capability_from_nested_spec(spec: CapabilitySpec | dict[str, Any] | str
             get_capability_registry(),
             cap_spec,
             label='capability',
-            custom_types_param='custom_capability_types',
+            custom_types_param=('custom_capability_types', 'capability_namespace'),
             instantiate=lambda cap_cls, args, kwargs: cap_cls.from_spec(*args, **kwargs),
         )
 

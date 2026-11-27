@@ -128,6 +128,32 @@ These built-in capabilities can be declared in specs: [`Thinking`][pydantic_ai.c
 
 ## Custom capabilities in specs
 
+A spec names a capability by its bare class name, such as `- Planning: {}`, and never by an import path, so the code that loads the spec decides which class each name means. Beyond the built-ins above, pass the classes themselves in `custom_capability_types`, or describe where to find them with a [`CapabilityNamespace`][pydantic_ai.agent.CapabilityNamespace] in `capability_namespace`:
+
+```python {title="capability_namespace.py"}
+from pydantic_ai import Agent, CapabilityNamespace
+
+namespace = CapabilityNamespace(names={'Planning': 'pydantic_ai_harness.planning:Planning'})
+
+agent = Agent.from_spec(
+    {'model': '{{ openai:medium }}', 'capabilities': ['Planning']},
+    capability_namespace=namespace,
+)
+```
+
+A namespace has four tiers. A name resolves in the first one that has it, in this order, before the built-ins:
+
+| Field | Holds | Imported |
+|---|---|---|
+| `types` | Capability classes, as in `custom_capability_types` | Already, by you |
+| `names` | Names mapped to `module:attribute` targets | When a spec uses the name |
+| `entry_points` | An [entry point](https://packaging.python.org/en/latest/specifications/entry-points/) group whose entries map names to targets, so any installed package can add to it. Packages that publish capabilities use `pydantic_ai.capabilities` | When a spec uses the name |
+| `modules` | Modules whose capability classes are all made available | When the spec is loaded |
+
+A higher tier overrides a lower one, including a built-in of the same name, while two different classes for one name within one tier raise an error. Installed packages fill the entry point tier, so a clash there raises only when a spec uses that name and is left out of the generated JSON schema, and a `names` or `types` entry for it settles it. A `names` or entry point target must be a capability whose own name matches the name it is listed under. Pass the same namespace to [`AgentSpec.to_file`][pydantic_ai.agent.AgentSpec.to_file] or [`model_json_schema_with_capabilities`][pydantic_ai.agent.AgentSpec.model_json_schema_with_capabilities] to include its capabilities in the generated JSON schema; that imports every class the namespace names.
+
+A namespace decides which classes a spec can name, not which arguments it can give them. [Where specs come from](#where-specs-come-from) still applies to every capability it makes available.
+
 See [Publishing capabilities](capabilities/custom.md#publishing-capabilities) for how to make custom capabilities work with agent specs.
 
 ## `AgentSpec` reference
