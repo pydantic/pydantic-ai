@@ -51,7 +51,7 @@ from pydantic_ai_harness.code_mode import (
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.guardrails import GuardrailResult, ToolGuardrail
-from pydantic_ai_harness.permissions import PermissionMode, Permissions
+from pydantic_ai_harness.permissions import PermissionMode, PermissionRule, Permissions
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 from pydantic_ai_pax import Session, StreamRenderer
 from pydantic_ai_pax.app import create_stock_agent
@@ -694,6 +694,43 @@ class TestWorkspaceMount:
         )
         assert returned == [seen]
         assert settings.read_text() == ('original' if mode == 'auto' else 'overwritten')
+
+    @pytest.mark.parametrize(
+        ('rule', 'seen'),
+        [
+            (PermissionRule('deny', args={'path': '*/.pax/*'}), 'original PermissionError'),
+            (PermissionRule('ask', tools=['write_file']), 'original PermissionError'),
+            (PermissionRule('deny', command='curl'), 'original'),
+        ],
+        ids=['deny_path', 'ask_tool', 'command_only'],
+    )
+    async def test_a_managed_rule_about_files_mounts_read_only(
+        self, tmp_path: Path, rule: PermissionRule[object], seen: str
+    ) -> None:
+        """`pathlib` would write a file a managed rule denies or holds; a rule only about commands keeps the mount."""
+        settings = tmp_path.resolve() / '.pax' / 'settings.json'
+        settings.parent.mkdir()
+        settings.write_text('original')
+        calls = iter([ToolCallPart('run_code', {'code': PATHLIB_SNIPPET.format(path=str(settings))})])
+        returned: list[object] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            returned.extend(
+                part.content
+                for message in messages
+                for part in message.parts
+                if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+            )
+            return ModelResponse(parts=[next(calls, TextPart('done'))])
+
+        file_system = FileSystem[object](read_only_patterns=[])
+        permissions = Permissions[object]('full', managed_rules=[rule])
+        sandbox = speculative_capabilities(SpeculationCounters(), (file_system, permissions))
+        await Agent(streamed(respond), capabilities=[file_system, permissions, *sandbox, LocalWorkspace(tmp_path)]).run(
+            'go'
+        )
+        assert returned == [seen]
+        assert settings.read_text() == ('overwritten' if seen == 'original' else 'original')
 
     @pytest.mark.parametrize(
         ('table', 'expected'),

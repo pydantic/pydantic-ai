@@ -352,8 +352,9 @@ def _permitted(
 ) -> _MountMode | None:
     """`mode`, read-only while any of `permissions` asks before file writes it would make.
 
-    That is one in `read-only` mode, whose file writes all ask first, or one with `protected_paths` outside
-    `full`, as `pathlib` could write one of them without asking.
+    That is one in `read-only` mode, whose file writes all ask first, one with `protected_paths` outside
+    `full`, or one with a managed ask or deny rule that isn't only about commands, as `pathlib` could write a
+    file they cover without asking.
     """
     bound = (permissions,) if isinstance(permissions, Permissions) else permissions or ()
     if mode == 'read-write' and any(_asks_before_writes(permission, ctx) for permission in bound):
@@ -363,7 +364,9 @@ def _permitted(
 
 def _asks_before_writes(permissions: Permissions[AgentDepsT], ctx: RunContext[AgentDepsT]) -> bool:
     mode = permissions.mode_for(ctx)
-    return mode == 'read-only' or (mode != 'full' and bool(permissions.protected_paths))
+    if mode == 'read-only' or (mode != 'full' and bool(permissions.protected_paths)):
+        return True
+    return any(rule.verdict != 'allow' and rule.command is None for rule in permissions.managed_rules)
 
 
 @dataclass

@@ -1813,6 +1813,18 @@ class TestMaxMode:
         await agent.run('go', capabilities=[permissions])
         assert seen == ['auto', 'read-only', 'full']
 
+    async def test_mode_for_keeps_a_mode_stricter_than_max_mode(self) -> None:
+        permissions = Permissions[None]('read-only', max_mode='auto')
+        seen: list[PermissionMode] = []
+
+        def mode(ctx: RunContext[None]) -> str:
+            seen.append(permissions.mode_for(ctx))
+            return 'ok'
+
+        agent = Agent[None, str](_calls(('mode', {})), deps_type=type(None), tools=[Tool(mode, takes_ctx=True)])
+        await agent.run('go', capabilities=[permissions])
+        assert seen == ['read-only']
+
     async def test_a_rules_ask_under_it_is_still_for_a_person_only(self, tmp_path: Path) -> None:
         """The person's own ask rule doesn't turn the ceiling's hold into one a reviewer or memory may answer."""
         agent = Agent[None, 'str | DeferredToolRequests'](
@@ -1929,6 +1941,21 @@ class TestManagedRules:
         await _run(
             tmp_path,
             ('run_command', {'command': command}),
+            permissions=Permissions(managed_rules=[PermissionRule('deny', command='touch')]),
+            person=person,
+        )
+        assert person.asked == []
+        assert not (tmp_path / 'made').exists()
+
+    async def test_a_managed_deny_refuses_a_command_too_long_to_split(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A person's ask about an unsplit command could be approved without seeing the denied program in it."""
+        monkeypatch.setattr('pydantic_ai_harness.permissions._rules.COMMAND_LIMIT', 8)
+        person = _Person(PermissionDecision(approved=True))
+        await _run(
+            tmp_path,
+            ('run_command', {'command': 'echo hi; touch made'}),
             permissions=Permissions(managed_rules=[PermissionRule('deny', command='touch')]),
             person=person,
         )

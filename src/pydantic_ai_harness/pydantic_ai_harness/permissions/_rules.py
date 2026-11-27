@@ -324,6 +324,17 @@ def _unsplittable_rule(
     return found or (_UNSPLITTABLE_RULE if expands else None)
 
 
+def _oversized_rule(rules: Sequence[PermissionRule[Any]], *, strict: bool) -> PermissionRule[Any] | None:
+    """The rule deciding a command too long to split: it asks under ask or deny rules, and a `strict` deny refuses.
+
+    A person asked about it might not see the denied program, so no approval can run what a `strict` deny names.
+    """
+    if not _restricts(rules):
+        return None
+    denied = _strictest(rule for rule in rules if rule.verdict == 'deny') if strict else None
+    return denied or _UNSPLITTABLE_RULE
+
+
 def _command_rule(
     rules: Sequence[PermissionRule[Any]], command: str, *, posix: bool, strict: bool = False
 ) -> PermissionRule[Any] | None:
@@ -332,7 +343,7 @@ def _command_rule(
     With `strict`, a deny matched only inside quoted text stays a deny instead of asking.
     """
     if len(command) > COMMAND_LIMIT:
-        return _UNSPLITTABLE_RULE if _restricts(rules) else None
+        return _oversized_rule(rules, strict=strict)
     segments = _segments(command) if posix else None
     if segments is None:
         return _unsplittable_rule(rules, command, expands=_expands(command), strict=strict, posix=posix)
