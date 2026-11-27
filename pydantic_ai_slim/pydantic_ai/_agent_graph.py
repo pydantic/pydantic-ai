@@ -2369,8 +2369,13 @@ def _keep_default_output_mode(
             # models other than Claude, and Gemini before 3 rejects them alongside a native tool added mid-run.
             return params
         return kept
-    with suppress_unsupported_setting_warnings():
-        _, prepared = model.prepare_request(model_settings, params)
+    try:
+        with suppress_unsupported_setting_warnings():
+            _, prepared = model.prepare_request(model_settings, params)
+    except exceptions.ModelFeatureUnsupportedError:
+        # The model can't serve the mode it resolves to. The request raises this again when it's attempted, where an
+        # `on_model_request_error` hook like `ModelFallback`'s can move it to another model.
+        return params
     # `FallbackModel` leaves it to whichever model ends up answering.
     if (mode := prepared.output_mode) in ('tool', 'native', 'prompted'):
         state.default_output_modes[model_id] = mode

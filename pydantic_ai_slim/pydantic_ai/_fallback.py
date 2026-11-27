@@ -128,6 +128,7 @@ SpecModelError = Literal[
     'ModelAuthenticationError',
     'ModelNotFoundError',
     'ModelSchemaTooComplexError',
+    'ModelFeatureUnsupportedError',
     'ModelRequestTimeout',
     'ModelEmptyResponseError',
     'ModelInvalidResponseError',

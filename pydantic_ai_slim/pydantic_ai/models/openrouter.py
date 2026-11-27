@@ -1326,8 +1326,6 @@ class OpenRouterModel(OpenAIChatModel):
             model_settings,
             tool_forcing_unavailable_reason(profile, thinking=forcing_thinking, thinking_remedy=thinking_remedy),
             disables_thinking=thinking and disables_thinking,
-            # Outside Anthropic routes, a route that can't force while thinking returns a 400 for it.
-            api_rejects=not disables_thinking and profile.get('supports_forced_tool_choice', True),
         )
 
     @override

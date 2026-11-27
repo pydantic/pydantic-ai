@@ -127,7 +127,7 @@ from .._unsupported_settings import (
 )
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
 from ..computer_use import COMPUTER_KIND
-from ..exceptions import DeprecatedModelWarning, ModelAPIError, UserError
+from ..exceptions import DeprecatedModelWarning, ModelAPIError, ModelFeatureUnsupportedError, UserError
 from ..messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     STANDING_PROMPT_PLANTED_KEY,
@@ -1957,16 +1957,24 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         # Check if output mode is supported
         if params.output_mode == 'native' and not self.profile.get('supports_json_schema_output', False):
-            raise UserError('Native structured output is not supported by this model.')
+            raise ModelFeatureUnsupportedError(
+                self.model_name, 'native_output', 'Native structured output is not supported by this model.'
+            )
         if params.output_mode == 'tool' and not self.profile.get('supports_tools', True):
-            raise UserError('Tool output is not supported by this model.')
+            raise ModelFeatureUnsupportedError(
+                self.model_name, 'tool_output', 'Tool output is not supported by this model.'
+            )
         if params.allow_text_output and not self.profile.get('supports_text_output', True):
-            raise UserError(
+            raise ModelFeatureUnsupportedError(
+                self.model_name,
+                'text_output',
                 'Text output is not supported by this model. Give the agent one structured `output_type`, '
-                'such as a `BaseModel`, without `str`, `NativeOutput` or `PromptedOutput`.'
+                'such as a `BaseModel`, without `str`, `NativeOutput` or `PromptedOutput`.',
             )
         if params.allow_image_output and not self.profile.get('supports_image_output', False):
-            raise UserError('Image output is not supported by this model.')
+            raise ModelFeatureUnsupportedError(
+                self.model_name, 'image_output', 'Image output is not supported by this model.'
+            )
 
         # Check native tools, handle fallback swap, and resolve deferred-tool visibility. A deferred
         # tool has to get here on its own account: one gated by an on-demand capability belongs to no

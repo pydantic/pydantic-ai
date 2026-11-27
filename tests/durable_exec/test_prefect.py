@@ -107,6 +107,7 @@ from pydantic_ai.durable_exec._toolset import (
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
+    ModelFeatureUnsupportedError,
     ModelHTTPError,
     ModelRequestTimeout,
     ModelRetry,
@@ -6017,6 +6018,9 @@ async def test_prefect_with_non_retryable_errors_condition() -> None:
     condition = condition_of(TaskConfig())
     # The same types Temporal marks non-retryable on every activity config.
     assert await condition(None, None, _State(UserError('bad config'))) is False
+    # A model that can't serve the request refuses it again on every attempt; the model task's config has this condition.
+    unsupported = ModelFeatureUnsupportedError('m', 'tool_output', 'Tool output is not supported by this model.')
+    assert await condition(None, None, _State(unsupported)) is False
     assert await condition(None, None, _State(PydanticUserError('bad schema', code=None))) is False
     assert await condition(None, None, _State(UnexpectedModelBehavior('bad response'))) is False
     assert await condition(None, None, _State(UsageLimitExceeded('over the limit'))) is False

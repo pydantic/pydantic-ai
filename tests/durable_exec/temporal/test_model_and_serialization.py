@@ -65,6 +65,7 @@ from pydantic_ai.exceptions import (
     ModelAuthenticationError,
     ModelContextWindowExceededError,
     ModelEmptyResponseError,
+    ModelFeatureUnsupportedError,
     ModelHTTPError,
     ModelInvalidResponseError,
     ModelNotFoundError,
@@ -164,6 +165,7 @@ try:
     )
     from pydantic_ai.durable_exec.temporal._replay_safe_tracer_provider import ReplaySafeSDKTracerProvider
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
+    from pydantic_ai.durable_exec.temporal._toolset import with_non_retryable_errors
     from pydantic_ai.durable_exec.temporal._transports import (
         _CompactMessagesParams,  # pyright: ignore[reportPrivateUsage]
         _CompactMessagesTransport,
@@ -4112,6 +4114,33 @@ def test_a_categorized_http_error_is_rebuilt_as_itself_not_its_category():
     assert (rebuilt.status_code, rebuilt.retry_after) == (429, 3.0)
 
     assert type(_crossed(ModelRateLimitError('gpt-test', 'slow down'))) is ModelRateLimitError
+
+
+@pytest.mark.parametrize('non_retryable', [(), (ModelRequestRejectedError,)], ids=['none_listed', 'default'])
+def test_a_model_feature_unsupported_error_crosses_as_itself_and_is_never_retried(
+    non_retryable: tuple[type[ModelAPIError], ...],
+):
+    """The error crosses with its feature, and reports `UserError` to the retry policy, as it did as a plain `UserError`.
+
+    Every retry policy lists `UserError` as non-retryable, so an activity raising it isn't retried even when
+    `non_retryable_model_errors` lists none. The workflow-level fallback past such a model is tested in
+    `test_durability.py`; this pins the failure the activity raises.
+    """
+    error = ModelFeatureUnsupportedError('gpt-test', 'native_output', 'Native structured output is not supported.')
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors(non_retryable):
+            raise error
+    assert raised.value.type == 'UserError'
+    assert raised.value.non_retryable == bool(non_retryable)
+    assert 'UserError' in (with_non_retryable_errors(None).non_retryable_error_types or [])
+
+    rebuilt = _crossed(error)
+    assert type(rebuilt) is ModelFeatureUnsupportedError
+    assert (rebuilt.model_name, rebuilt.feature, rebuilt.message) == (
+        'gpt-test',
+        'native_output',
+        'Native structured output is not supported.',
+    )
 
 
 def test_a_category_subclass_defined_elsewhere_keeps_its_own_type():
