@@ -312,18 +312,18 @@ def _agent(turn: Turn, script: Script, record: Record) -> Agent[None, str | Defe
         capabilities=capabilities,
     )
 
-    @agent.tool
     def lookup(ctx: RunContext[Any], n: int) -> str:
         content = f'fact {n}'
         record.made.append(Made('part', ('return', 'lookup', ctx.tool_call_id, content)))
         return content
 
-    @agent.tool(requires_approval=True)
     def approve(ctx: RunContext[Any], n: int) -> str:
         content = f'approved {n}'
         record.made.append(Made('part', ('return', 'approve', ctx.tool_call_id, content)))
         return content
 
+    agent.tool(lookup)
+    agent.tool(requires_approval=True)(approve)
     return agent
 
 
