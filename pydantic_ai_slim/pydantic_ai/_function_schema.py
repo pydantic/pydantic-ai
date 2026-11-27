@@ -97,24 +97,10 @@ class FunctionSchema:
         """
         return self.validation_schema is None or _runs_user_code(self.validation_schema, set())
 
-    def validate_in_core(self, raw_args: str | dict[str, Any]) -> dict[str, Any]:
-        """Validate a call's arguments as `ToolManager` does, but with no plugin observing and no validation context."""
-        validator = _core_validator(self.validator)
-        if isinstance(raw_args, str):
-            return validator.validate_json(raw_args or '{}')
-        return validator.validate_python(raw_args or {})
-
-    def revalidate_in_core(self, args_dict: dict[str, Any]) -> dict[str, Any]:
-        """`revalidate`, but with no plugin observing and no validation context."""
-        validator = _core_validator(self.validator)
-        if self.single_arg_name is not None:
-            return validator.validate_python(_Revalidated(args_dict[self.single_arg_name]))
-        try:
-            return validator.validate_python(args_dict)
-        except ValidationError:
-            if self.revalidator is None:
-                raise
-            return _core_validator(self.revalidator).validate_python(args_dict)
+    @cached_property
+    def core_validator(self) -> SchemaValidator:
+        """`validator` without Pydantic's plugin wrapper: no installed Pydantic plugin observes what it validates."""
+        return _core_validator(self.validator)
 
     @cached_property
     def parameter_names(self) -> dict[str, str]:
@@ -139,7 +125,7 @@ class FunctionSchema:
                     parameter_names[alias] = name
         return parameter_names
 
-    def revalidate(self, args_dict: dict[str, Any], *, context: Any = None) -> dict[str, Any]:
+    def revalidate(self, args_dict: dict[str, Any], *, context: Any = None, in_core: bool = False) -> dict[str, Any]:
         """Validate arguments that `validator` already produced, after they crossed a boundary as JSON.
 
         For a single model-like argument they're the `{name: value}` envelope, which `validator` reads as
@@ -148,17 +134,21 @@ class FunctionSchema:
 
         Otherwise they're keyed by Python name, while `validator` reads a parameter's alias. When that reading
         fails, `revalidator` reads them by name.
+
+        With `in_core`, both validate without Pydantic's plugin wrapper, so no installed plugin observes them.
         """
+        validator = self.core_validator if in_core else self.validator
         if self.single_arg_name is not None:
-            return self.validator.validate_python(_Revalidated(args_dict[self.single_arg_name]), context=context)
+            return validator.validate_python(_Revalidated(args_dict[self.single_arg_name]), context=context)
         try:
-            return self.validator.validate_python(args_dict, context=context)
+            return validator.validate_python(args_dict, context=context)
         except ValidationError:
             # Not the `revalidator` up front: where a parameter's alias is another parameter's name, reading
             # by name would change arguments the alias reading accepts.
             if self.revalidator is None:
                 raise
-            return self.revalidator.validate_python(args_dict, context=context)
+            revalidator = _core_validator(self.revalidator) if in_core else self.revalidator
+            return revalidator.validate_python(args_dict, context=context)
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)

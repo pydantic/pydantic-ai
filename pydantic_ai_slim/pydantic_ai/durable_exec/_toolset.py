@@ -631,12 +631,12 @@ def raw_tool_args_for_unit(
         return None
     schema = source.function_schema
     try:
-        if _same_value(schema.revalidate_in_core(loaded_tool_args), params.tool_args):
+        if _same_value(schema.revalidate(loaded_tool_args, in_core=True), params.tool_args):
             return None
     except (ValidationError, KeyError):
         pass  # The unit can't validate the dump at all: the case the model's arguments are for.
     try:
-        reproduced = schema.validate_in_core(raw_args)
+        reproduced = _validate_raw_tool_args(schema.core_validator, raw_args, context=None)
     except ValidationError:
         return None
     # A hook or wrapper toolset that changed the arguments, in place or not, makes them differ.
@@ -720,7 +720,7 @@ def _validate_raw_tool_args(
     """Validate a tool call's arguments the way `ToolManager` does."""
     if isinstance(raw_args, str):
         return validator.validate_json(raw_args or '{}', context=context)
-    return validator.validate_python(raw_args, context=context)
+    return validator.validate_python(raw_args or {}, context=context)
 
 
 def _is_json_value(value: object) -> bool:
