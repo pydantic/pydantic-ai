@@ -90,6 +90,10 @@ def bedrock_mantle_model_profile(model_name: str) -> ModelProfile:
         # ["auto"]", verified live on gpt-oss-120b), while the Chat Completions endpoint accepts it for GPT-OSS
         # Safeguard. So `ToolOutput`, which forces a tool call by default, falls back to `'auto'` here.
         mantle_profile['supports_forced_tool_choice'] = False
+        # The endpoint ignores the top-level `instructions` for `gpt-oss-120b` and follows only one leading system
+        # input item, dropping the other when there are two (verified live), so the system prompts, the framing
+        # announcement and the instructions go out as that one item. See #14451.
+        mantle_profile['honors_only_first_system_message'] = True
     return merge_profile(openai_model_profile(base_model_name), mantle_profile)
 
 

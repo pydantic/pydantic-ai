@@ -380,6 +380,19 @@ def test_bedrock_mantle_profiles() -> None:
         infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get('supports_inline_system_prompts', False) is False
     )
     assert infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get('supported_native_tools') == frozenset()
+    # `/v1/responses` ignores `gpt-oss-120b`'s top-level `instructions` and follows only one leading system item
+    # (#14451), so the instructions join that one item there. GPT-5.x and GPT-OSS Safeguard's Chat route don't need it.
+    assert infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get('honors_only_first_system_message') is True
+    assert (
+        infer_model_profile('bedrock-mantle:openai.gpt-5.6-luna').get('honors_only_first_system_message', False)
+        is False
+    )
+    assert (
+        infer_model_profile('bedrock-mantle:openai.gpt-oss-safeguard-20b').get(
+            'honors_only_first_system_message', False
+        )
+        is False
+    )
     # GPT-5.2 is on the Responses interface but OpenAI doesn't offer it the computer tool.
     assert infer_model_profile('bedrock-mantle:openai.gpt-5.2').get('supported_native_tools') == frozenset()
     assert infer_model_profile('bedrock-mantle:openai.gpt-oss-safeguard-20b').get('bedrock_mantle_interface') == 'chat'

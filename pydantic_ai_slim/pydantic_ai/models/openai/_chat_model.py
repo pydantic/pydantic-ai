@@ -1309,8 +1309,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 target['content'] = content_parts
         if merges_leading_system_messages:
             openai_messages = merge_leading_system_messages(openai_messages, system_prompt_role, text_type='text')
-        # After instructions are inserted and system messages merged: the breakpoint may land on a system
-        # message, whose string content it turns into a list, and the merge only joins strings.
+        # Last, on the list as sent: the breakpoint goes on the item just before the leading `CachePoint`, which may
+        # be an inserted instruction or the merged system message.
         move_leading_cache_breakpoints(openai_messages, text_type='text')
         return openai_messages
 

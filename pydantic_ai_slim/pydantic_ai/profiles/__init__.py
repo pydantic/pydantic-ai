@@ -232,22 +232,23 @@ class ModelProfile(TypedDict, total=False):
 
     When `True`, the request starts with exactly one system message holding the standing system prompts, the
     framing announcement and the instructions, in that order and joined with two newlines. On the Responses API, that
-    means the instructions go in that message instead of the top-level `instructions` field, except on a request that
-    continues a stored response (`openai_previous_response_id`, including an `'auto'` chain after its first request),
-    adds to a conversation (`openai_conversation_id`) or continues a compacted history, whose stored input already
-    starts with its system messages. With the `'user'`
+    means the instructions go in that message instead of the top-level `instructions` field. A request that continues
+    an `openai_previous_response_id='auto'` chain leaves them out, since the chain's stored input already starts with
+    them, and the chain only continues while they're unchanged. A request that continues a given
+    `openai_previous_response_id`, adds to a conversation (`openai_conversation_id`) or continues a compacted history
+    sends them in the top-level field, since its stored input may already start with system messages. With the `'user'`
     [`openai_system_prompt_role`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_system_prompt_role],
     nothing is merged, as a system prompt sent as a user message can't be told apart from a real one.
 
-    Set for gpt-oss, whose reference chat template keeps only the first system message as the developer message and
-    drops the rest. Some of its hosts drop the `instructions` field too: Bedrock Mantle's Responses endpoint ignored
-    `gpt-oss-120b`'s instructions there, and followed them as one leading system message.
+    Set by [`BedrockMantleProvider`][pydantic_ai.providers.bedrock_mantle.BedrockMantleProvider] for gpt-oss on its
+    Responses endpoint, which ignores the top-level `instructions` field for `gpt-oss-120b` and follows only one
+    leading system message.
 
-    Use this key when the model only follows its first system message, on either API. When it's the backend's Chat
-    Completions endpoint that rejects more than one leading system message, whatever the model, and Responses
-    requests should stay as they are, set
+    Use this key when the host's Responses endpoint follows only the first system message or ignores the top-level
+    `instructions` field. When only Chat Completions requests need the merge, set
     [`openai_chat_supports_multiple_system_messages=False`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_supports_multiple_system_messages]
-    instead, as `VLLMProvider` does for every model, since some vLLM chat templates reject more than one.
+    instead, as `VLLMProvider` does for every model, since some vLLM chat templates reject more than one, and as the
+    gpt-oss family profile does, since gpt-oss's reference chat template keeps only the first system message.
 
     Supported by [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] and
     [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].

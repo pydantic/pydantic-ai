@@ -1,9 +1,10 @@
 """One leading system message for models whose profile sets `honors_only_first_system_message`.
 
-gpt-oss's reference chat template keeps only the first system message, and Bedrock Mantle's Responses endpoint also
-ignores the top-level `instructions` for `gpt-oss-120b` (https://github.com/pydantic/pydantic-ai/issues/14451). So on
-Chat Completions and on Responses, the standing system prompt, the framing announcement and the instructions go out
-as exactly one leading system message, and every other model's request is unchanged.
+Bedrock Mantle's Responses endpoint ignores the top-level `instructions` for `gpt-oss-120b` and follows only one
+leading system item (https://github.com/pydantic/pydantic-ai/issues/14451), so `BedrockMantleProvider` sets the flag
+for gpt-oss there: the standing system prompt, the framing announcement and the instructions go out as exactly one
+leading system message. On Chat Completions, gpt-oss's family profile merges the leading system messages already, and
+every other request is unchanged, including gpt-oss on other Responses hosts.
 
 The tests before the last use a mock transport rather than recordings: their claim is the exact request body, which
 cassette matching doesn't check, across a route and profile matrix that has no recordings. The last test records the
@@ -104,13 +105,19 @@ def mantle_provider(client: httpx2.AsyncClient) -> BedrockMantleProvider:
 
 GPT_OSS_ROUTES: dict[str, Callable[[httpx2.AsyncClient], Model]] = {
     'compatible-chat': lambda client: OpenAIChatModel('openai/gpt-oss-120b', provider=compatible_provider(client)),
-    'compatible-responses': lambda client: OpenAIResponsesModel(
-        'openai/gpt-oss-120b', provider=compatible_provider(client)
-    ),
     'mantle-responses': lambda client: infer_model(
         'bedrock-mantle:openai.gpt-oss-120b', lambda _: mantle_provider(client)
     ),
 }
+
+
+def flagged_compatible_responses(profile: OpenAIModelProfile) -> Callable[[httpx2.AsyncClient], Model]:
+    """gpt-oss on a compatible Responses route with the flag set in `profile`, to combine it with other profile keys."""
+    return lambda client: OpenAIResponsesModel(
+        'openai/gpt-oss-120b',
+        provider=compatible_provider(client),
+        profile=OpenAIModelProfile(honors_only_first_system_message=True, **profile),
+    )
 
 
 async def run_and_capture(
@@ -324,6 +331,35 @@ async def test_an_auto_chain_starts_with_the_one_system_message():
     ]
     assert continued['previous_response_id'] == 'resp_1'
     assert continued['input'] == [{'role': 'user', 'content': 'And at night?'}]
+    # The stored input holds them, and the host may ignore the top-level field anyway.
+    assert 'instructions' not in continued
+
+
+async def test_changed_instructions_restart_an_auto_chain():
+    """An `'auto'` chain only continues while the instructions its stored input starts with are unchanged.
+
+    Otherwise the whole history goes out again, led by the one system message with the new instructions. Not a VCR
+    test: the claim is the request body, which cassette matching doesn't check.
+    """
+    bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        return chat_or_responses(request)
+
+    new_instructions = 'End every answer with the code word YAK.'
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        model = GPT_OSS_ROUTES['mantle-responses'](client)
+        first = await Agent(model, instructions=INSTRUCTIONS, model_settings=settings).run('What color is the sky?')
+        await Agent(model, instructions=new_instructions, model_settings=settings).run(
+            'And at night?', message_history=first.all_messages()
+        )
+
+    _, restarted = bodies
+    assert 'instructions' not in restarted and 'previous_response_id' not in restarted
+    assert restarted['input'][0] == {'role': 'system', 'content': f'{ANNOUNCEMENT}\n\n{new_instructions}'}
+    assert [item.get('role') for item in restarted['input']] == ['system', 'user', 'assistant', 'user']
 
 
 @pytest.mark.parametrize(
@@ -349,9 +385,7 @@ async def test_instruction_caching_leaves_the_one_system_message_whole(
     Not a VCR test: the claim is the request body, which cassette matching doesn't check.
     """
     body = await run_and_capture(
-        lambda client: OpenAIResponsesModel(
-            'openai/gpt-oss-120b', provider=compatible_provider(client), profile=profile
-        ),
+        flagged_compatible_responses(profile),
         system_prompt=SYSTEM_PROMPT,
         instructions=INSTRUCTIONS,
         model_settings=settings,
@@ -364,19 +398,24 @@ async def test_instruction_caching_leaves_the_one_system_message_whole(
     ]
 
 
-async def test_the_user_system_prompt_role_merges_nothing():
+@pytest.mark.parametrize(
+    'settings',
+    [
+        pytest.param(None, id='no-chain'),
+        pytest.param(OpenAIResponsesModelSettings(openai_previous_response_id='auto'), id='auto-chain'),
+    ],
+)
+async def test_the_user_system_prompt_role_merges_nothing(settings: OpenAIResponsesModelSettings | None):
     """A system prompt sent as a user message can't be told apart from a real one, so nothing is merged.
 
-    Not a VCR test: the claim is the request body, which cassette matching doesn't check.
+    Nor does an `'auto'` chain start with the instructions in the input. Not a VCR test: the claim is the request
+    body, which cassette matching doesn't check.
     """
     body = await run_and_capture(
-        lambda client: OpenAIResponsesModel(
-            'openai/gpt-oss-120b',
-            provider=compatible_provider(client),
-            profile=OpenAIModelProfile(openai_system_prompt_role='user'),
-        ),
+        flagged_compatible_responses(OpenAIModelProfile(openai_system_prompt_role='user')),
         system_prompt=SYSTEM_PROMPT,
         instructions=INSTRUCTIONS,
+        model_settings=settings,
     )
 
     assert body['instructions'] == INSTRUCTIONS
@@ -399,11 +438,7 @@ async def test_a_leading_cache_point_keeps_its_breakpoint_on_the_merged_message(
         return chat_or_responses(request)
 
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
-        model = OpenAIResponsesModel(
-            'openai/gpt-oss-120b',
-            provider=compatible_provider(client),
-            profile=OpenAIModelProfile(openai_supports_prompt_cache_breakpoints=True),
-        )
+        model = flagged_compatible_responses(OpenAIModelProfile(openai_supports_prompt_cache_breakpoints=True))(client)
         agent = Agent(model, system_prompt=SYSTEM_PROMPT, instructions=INSTRUCTIONS)
         await agent.run([CachePoint(), 'What color is the sky?'])
 
@@ -432,6 +467,9 @@ UNFLAGGED_ROUTES: dict[str, Callable[[httpx2.AsyncClient], Model]] = {
     ),
     'mantle-responses': lambda client: infer_model(
         'bedrock-mantle:openai.gpt-5.6-luna', lambda _: mantle_provider(client)
+    ),
+    'gpt-oss-compatible-responses': lambda client: OpenAIResponsesModel(
+        'openai/gpt-oss-120b', provider=compatible_provider(client)
     ),
 }
 
@@ -472,6 +510,17 @@ UNFLAGGED_BODIES: dict[str, dict[str, Any]] = {
             'reasoning': {'context': 'all_turns'},
         }
     ),
+    # gpt-oss's family profile merges on Chat Completions only, so its Responses request elsewhere is unchanged.
+    'gpt-oss-compatible-responses': {
+        'model': 'openai/gpt-oss-120b',
+        'stream': False,
+        'input': [
+            {'role': 'system', 'content': ANNOUNCEMENT},
+            {'role': 'system', 'content': SYSTEM_PROMPT},
+            {'role': 'user', 'content': 'What color is the sky?'},
+        ],
+        'instructions': INSTRUCTIONS,
+    },
 }
 
 
@@ -479,7 +528,8 @@ UNFLAGGED_BODIES: dict[str, dict[str, Any]] = {
 async def test_other_models_send_the_same_request(route: str):
     """Models without `honors_only_first_system_message` send what they sent before it existed.
 
-    The system prompt and the instructions stay separate, and on Responses the instructions stay in the top-level field.
+    The system prompt and the instructions stay separate, and on Responses the instructions stay in the top-level field,
+    including gpt-oss's on a Responses host other than Bedrock Mantle.
     Not a VCR test: the claim is the request body, which cassette matching doesn't check.
     """
     body = await run_and_capture(UNFLAGGED_ROUTES[route], system_prompt=SYSTEM_PROMPT, instructions=INSTRUCTIONS)
@@ -527,9 +577,8 @@ End every answer with the code word ZEBRA.\
 async def test_vllm_merges_other_models_on_chat_only(api: str):
     """`VLLMProvider` merges the leading system messages on Chat Completions for every model, as before.
 
-    On Responses, a model other than gpt-oss keeps its instructions in the top-level field: the one leading system
-    message there is gpt-oss's alone. Not a VCR test: the claim is the request body, which cassette matching doesn't
-    check.
+    On Responses, the instructions stay in the top-level field. Not a VCR test: the claim is the request body, which
+    cassette matching doesn't check.
     """
     model_class = OpenAIChatModel if api == 'chat' else OpenAIResponsesModel
     body = await run_and_capture(
