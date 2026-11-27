@@ -18,7 +18,7 @@ import re
 import subprocess
 import sys
 import warnings
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
@@ -68,6 +68,7 @@ from pydantic_ai.toolsets._instruction_collection import (
     make_contribution,
 )
 from pydantic_ai.usage import RunUsage
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
 
 from .conftest import IsStr, try_import
@@ -91,6 +92,7 @@ with try_import() as imports_successful:
     from fastmcp.prompts import Message
     from fastmcp.server.dependencies import get_http_request
     from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
+    from fastmcp.tools import Tool as FastMCPTool
 
     # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
     from mcp import types as mcp_types
@@ -791,110 +793,50 @@ class TestMCPToolsetIntegration:
             # Second call should hit the cache (covers the cached-return branch).
             assert tools_first['echo'].tool_def.description == tools_second['echo'].tool_def.description
 
-    async def test_list_changed_overtaking_in_flight_tools_list_does_not_repopulate_cache(
-        self, fastmcp_server: FastMCP[None]
-    ):
-        """A `list_changed` notification that arrives while `tools/list` is in flight leaves the cache empty."""
-        server = fastmcp_server
-        release_first_list = asyncio.Event()
-        first_held = False
+    async def test_tools_list_changed_during_list_tools_is_not_lost(self):
+        """A tools `list_changed` notification that arrives while `tools/list` is in flight isn't lost.
 
-        class HoldFirstToolsList(Middleware):
-            """Serve the first `tools/list` response only after the test has invalidated the cache."""
+        The response was produced before the change, so caching it would keep the old tool list until the
+        next notification. The in-flight caller still gets that response, and the next `list_tools()` fetches
+        the changed list.
+        """
+        server: FastMCP[None] = FastMCP('list_changed_server')
+        list_produced = asyncio.Event()
+        release_list = asyncio.Event()
 
-            async def on_list_tools(self, context: MiddlewareContext[mcp_types.ListToolsRequest], call_next: CallNext):
-                nonlocal first_held
-                if release_first_list.is_set():
-                    return await call_next(context)
-                first_held = True
-                await release_first_list.wait()
-                return await call_next(context)
+        class HoldListTools(Middleware):
+            async def on_list_tools(
+                self,
+                context: MiddlewareContext[mcp_types.ListToolsRequest],
+                call_next: CallNext[mcp_types.ListToolsRequest, Sequence[FastMCPTool]],
+            ) -> Sequence[FastMCPTool]:
+                tools = await call_next(context)
+                # Hold only the first listing: the server also lists its tools to handle the tool call below.
+                if not list_produced.is_set():
+                    list_produced.set()
+                    await release_list.wait()
+                return tools
 
-        server.add_middleware(HoldFirstToolsList())
+        server.add_middleware(HoldListTools())
+
+        async def added_tool() -> None:
+            """Added while the first listing is in flight."""
+
+        @server.tool()
+        async def add_tool(ctx: Context) -> str:
+            server.add_tool(added_tool)
+            await ctx.send_notification(mcp_types.ToolListChangedNotification())
+            return 'done'
+
         toolset = MCPToolset(server)
-        from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
-
-        handler = _build_message_handler(toolset, user_handler=None)
-        notification = wrap_server_notification(
-            mcp_types.ToolListChangedNotification(method='notifications/tools/list_changed')
-        )
-
         async with toolset:
+            in_flight = asyncio.create_task(toolset.list_tools())
+            await asyncio.wait_for(list_produced.wait(), timeout=READINESS_WAIT_TIMEOUT)
+            assert await toolset.direct_call_tool('add_tool', {}) == 'done'
+            release_list.set()
+            assert [tool.name for tool in await in_flight] == ['add_tool']
 
-            async def list_tools() -> list[mcp_types.Tool]:
-                return await toolset.list_tools()
-
-            list_task = asyncio.create_task(list_tools())
-            while not first_held:
-                await asyncio.sleep(0)
-
-            @server.tool()
-            async def late_tool() -> None:
-                """A tool added while the first listing is in flight."""
-
-            await handler(notification)
-            assert toolset._cached_tools is None  # pyright: ignore[reportPrivateUsage]
-
-            release_first_list.set()
-            first_listing = await list_task
-            assert {tool.name for tool in first_listing} >= {'echo', 'late_tool'}
-            # The stale response was handed to the caller but did not repopulate the cache...
-            assert toolset._cached_tools is None  # pyright: ignore[reportPrivateUsage]
-
-            # ...so the next listing is fresh and refills it.
-            fresh_listing = await toolset.list_tools()
-            assert 'late_tool' in {tool.name for tool in fresh_listing}
-            assert toolset._cached_tools is not None  # pyright: ignore[reportPrivateUsage]
-
-    async def test_get_tools_sees_tool_added_while_tools_list_in_flight(
-        self, fastmcp_server: FastMCP[None], run_context: RunContext[None]
-    ):
-        """A concurrent `get_tools()` after a `list_changed` notification is not served the stale cache."""
-        server = fastmcp_server
-        release_first_list = asyncio.Event()
-        first_held = False
-
-        class HoldFirstToolsList(Middleware):
-            """Serve the first `tools/list` response only after the test has invalidated the cache."""
-
-            async def on_list_tools(self, context: MiddlewareContext[mcp_types.ListToolsRequest], call_next: CallNext):
-                nonlocal first_held
-                if release_first_list.is_set():
-                    return await call_next(context)
-                first_held = True
-                await release_first_list.wait()
-                return await call_next(context)
-
-        server.add_middleware(HoldFirstToolsList())
-        toolset = MCPToolset[None](server)
-        from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
-
-        handler = _build_message_handler(toolset, user_handler=None)
-        notification = wrap_server_notification(
-            mcp_types.ToolListChangedNotification(method='notifications/tools/list_changed')
-        )
-
-        async with toolset:
-
-            async def get_tools() -> dict[str, ToolsetTool[None]]:
-                return await toolset.get_tools(run_context)
-
-            first_get = asyncio.create_task(get_tools())
-            while not first_held:
-                await asyncio.sleep(0)
-
-            @server.tool()
-            async def late_tool() -> None:
-                """A tool added while the first listing is in flight."""
-
-            await handler(notification)
-
-            second_get = asyncio.create_task(get_tools())
-            # The concurrent listing is answered by the same held middleware gate.
-            release_first_list.set()
-            first, second = await asyncio.gather(first_get, second_get)
-            assert set(first) >= {'echo'}
-            assert 'late_tool' in second
+            assert [tool.name for tool in await toolset.list_tools()] == ['add_tool', 'added_tool']
 
     async def test_get_tools_hides_app_only_tools(self, run_context: RunContext):
         """MCP Apps (SEP-1865) tools whose `_meta.ui.visibility` leaves out `"model"` are hidden from the model."""

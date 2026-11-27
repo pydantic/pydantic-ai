@@ -930,10 +930,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     _server_capabilities: ServerCapabilities | None
     _instructions: str | None
     _cached_tools: list[mcp_types.Tool] | None
-    # Bumped by `_invalidate_tools_cache` on `notifications/tools/list_changed`: an in-flight
-    # `list_tools()` snapshots it before awaiting the server, so a response that was already stale
-    # on arrival can't repopulate the cache. An int assignment is atomic under the event loop.
-    _tools_cache_generation: int
     _cached_resources: list[Resource] | None
     _cached_prompts: list[Prompt] | None
     _running_count: int
@@ -949,6 +945,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     _headers_func: MCPHeadersFunc[AgentDepsT] | None = None
     _static_auth: HTTPAuth | Literal['oauth'] | str | None = None
     _static_headers: dict[str, str] | None = None
+    # Bumped by each tools `list_changed` notification, so a `tools/list` response that was in flight
+    # when it arrived isn't cached.
+    _tools_cache_generation: int = 0
 
     @functools.cached_property
     def _enter_lock(self) -> anyio.Lock:
@@ -1157,7 +1156,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self._server_capabilities = None
         self._instructions = None
         self._cached_tools = None
-        self._tools_cache_generation = 0
         self._cached_resources = None
         self._cached_prompts = None
         self._running_count = 0
@@ -1359,8 +1357,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         return self._server_capabilities is not None
 
     def _invalidate_tools_cache(self) -> None:
-        # Bumping the generation keeps an in-flight `list_tools()` response that was already
-        # stale on arrival from repopulating the cache after this invalidation.
         self._tools_cache_generation += 1
         self._cached_tools = None
 
@@ -1494,8 +1490,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         async with self._connected():
             generation = self._tools_cache_generation
             tools = await self.client.list_tools()
-            # A `list_changed` notification while the request was in flight bumped the generation:
-            # this response is stale, so hand it to the caller without letting it refill the cache.
+            # A `list_changed` notification that arrived while the request was in flight makes this list stale.
             if self.cache_tools and generation == self._tools_cache_generation:
                 self._cached_tools = tools
             return tools
