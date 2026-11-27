@@ -1300,7 +1300,8 @@ If Shift+Enter or Option+Enter reports Enter, it is indistinguishable from Enter
 on that connection. Test Ctrl+J for newline or another offered binding before
 remapping. Ctrl+M, Ctrl+Enter and Ctrl+Shift+Enter act as Enter (Ctrl+Enter
 steers on Windows), so they cannot be bound separately; `/set` rejects bindings that collide. In `/input`, choosing a
-key another action holds swaps the two, so Enter can become the newline and Alt+Enter send. Unsupported shortcuts are refused
+key another action holds swaps the two, so Enter can become the newline and Alt+Enter send; resetting one action
+swaps the same way when another action holds its default. Unsupported shortcuts are refused
 rather than silently taking over editing keys. The hint row below the composer follows effective
 bindings. It appears once you change an `input.*` setting, and while a question waits in the composer.
 

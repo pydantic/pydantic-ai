@@ -1160,17 +1160,16 @@ async def test_removing_edit_predecessors_preserves_reserved_order(finish: str, 
         assert third.text == ('edited third' if finish == 'enter' else 'third')
 
 
-def test_binding_reset_collision_is_recoverable_and_preserves_settings(tmp_path: Path) -> None:
+def test_binding_reset_swaps_with_the_action_holding_the_default(tmp_path: Path) -> None:
+    """A reset after `/input` swapped two keys hands the default's holder the key being replaced."""
     store = SettingsStore(tmp_path / 'settings.db')
     store.set('input.bindings', {'send': 'ctrl-s', 'newline': 'enter'})
     context = CommandContext(settings=store.load(), store=store, apply_setting=lambda key, settings: None)
     menu = input_menu(context, start_test=lambda: None)
     row = next(row for row in menu.source.rows() if row.key == 'send')
-    saved = store.overrides()
-    assert 'collide' in menu.source.reset(row)
-    assert store.overrides() == saved
-    assert context.settings.input_bindings.send == 'ctrl-s'
-    assert context.settings.input_bindings.newline == 'enter'
+    assert menu.source.reset(row).endswith('Send is now enter; Newline moved to ctrl-s.')
+    assert store.load().input_bindings == InputBindings(send='enter', steer='alt-enter', newline='ctrl-s')
+    assert context.settings.input_bindings == store.load().input_bindings
 
 
 @pytest.mark.parametrize('boundary', ['route', 'question'])

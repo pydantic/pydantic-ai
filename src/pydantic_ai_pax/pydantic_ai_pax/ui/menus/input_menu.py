@@ -47,33 +47,19 @@ class InputSource(SettingsSource):
 
     def reset(self, row: FieldRow) -> str:
         if row.key in _ACTIONS:
-            bindings = self.context.settings.input_bindings
-            values: dict[InputAction, str] = {action: bindings.key(action) for action in _ACTIONS}
-            values[row.key] = InputBindings().key(row.key)
-            try:
-                return self.context.set_setting(['input.bindings', json.dumps(values)])
-            except ValueError as exc:
-                return str(exc)
+            return ' '.join(_rebind(self.context, row.key, InputBindings().key(row.key)))
         return 'No captured key is saved.' if row.key == 'test' else super().reset(row)
 
 
-async def choose_binding(dialogs: Dialogs, *, context: CommandContext, action: InputAction) -> Sequence[str]:
-    """Save through the same validation as `/set`; a key another action holds swaps the two actions' keys."""
-    chosen = await dialogs.choose(
-        title=f'Key for {action}',
-        options=tuple(Option(value=key, label=key) for key in BINDABLE_KEYS),
-        current=context.settings.input_bindings.key(action),
-        description='Test your client with /input test. Mac labels cannot recover modifiers lost over SSH. Ctrl+J inserts a newline, or steers on Windows.',
-    )
-    if chosen is None:
-        return ()
+def _rebind(context: CommandContext, action: InputAction, key: str) -> tuple[str, ...]:
+    """Save `key` for `action` through the same validation as `/set`; an action holding `key` takes the old one."""
     bindings = context.settings.input_bindings
     values: dict[InputAction, str] = {other: bindings.key(other) for other in _ACTIONS}
     replaced = values[action]
     holder: InputAction | None = next(
-        (other for other in _ACTIONS if other != action and canonical_key(values[other]) == chosen), None
+        (other for other in _ACTIONS if other != action and canonical_key(values[other]) == key), None
     )
-    values[action] = chosen
+    values[action] = key
     if holder is not None:
         values[holder] = replaced
     try:
@@ -82,7 +68,20 @@ async def choose_binding(dialogs: Dialogs, *, context: CommandContext, action: I
         return (str(exc),)
     if holder is None:
         return (saved,)
-    return (saved, f'{action.capitalize()} is now {chosen}; {holder.capitalize()} moved to {replaced}.')
+    return (saved, f'{action.capitalize()} is now {key}; {holder.capitalize()} moved to {replaced}.')
+
+
+async def choose_binding(dialogs: Dialogs, *, context: CommandContext, action: InputAction) -> Sequence[str]:
+    """Save the chosen key; a key another action holds swaps the two actions' keys."""
+    chosen = await dialogs.choose(
+        title=f'Key for {action}',
+        options=tuple(Option(value=key, label=key) for key in BINDABLE_KEYS),
+        current=context.settings.input_bindings.key(action),
+        description='Test your client with /input test. Mac labels cannot recover modifiers lost over SSH. Ctrl+J inserts a newline, or steers on Windows.',
+    )
+    if chosen is None:
+        return ()
+    return _rebind(context, action, chosen)
 
 
 async def test_key(dialogs: Dialogs, *, start: Callable[[], None]) -> Sequence[str]:
