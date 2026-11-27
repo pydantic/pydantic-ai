@@ -102,7 +102,7 @@ nothing more.
 
 All three matter because `workflow_run` puts the workflow in base-repository context
 with full access to repository secrets, and the agent job checks out contributor-authored
-code and runs workspace scripts over it. Weaken any one of them and that checkout starts
+code and runs default-branch scripts over it. Weaken any one of them and that checkout starts
 accepting code the remaining gates do not cover. gh-aw will not backstop you: its
 "Restore agent config folders from base branch" step is gated on gh-aw's *own* PR
 checkout succeeding, which never happens under `workflow_run`. Under an approval or
@@ -146,8 +146,9 @@ what a same-repository run may trust:
   with the `workflows` permission, such as Dependabot. That author can already run any workflow
   with the repository's secrets through a `push` trigger.
 - `pydanty[bot]` lacks the `workflows` permission, so it cannot change a workflow file.
-- `pydanty[bot]` can push `.github/scripts/` and `.github/actions/`. So every job that runs a
-  script or a local action checks out the default branch, or fetches the script from it.
+- `pydanty[bot]` can push `.github/scripts/`, `.github/actions/` and the root `scripts/`. So every
+  job that runs a script or a local action checks out the default branch, or fetches the script
+  from it.
 
 Give every `actions/checkout` step `ref: ${{ github.event.repository.default_branch }}`, except one
 that checks out the head as data. Without `ref:`, the checkout is the PR's merge commit. Never use
@@ -273,11 +274,11 @@ GitHub matches required checks by job name, even across workflows and event type
 
 `Gate: .github changes by a maintainer` fails a PR that changes a file under `.github/`, or renames
 one out of it, unless its author is a `User` with `write` or `admin` permission, or `dependabot[bot]`.
-It applies at every size. The review status requires a clean douwebot approval for M/L/XL.
+It applies at every size. `Gate: clean douwebot approval` requires a clean douwebot approval for M/L/XL.
 The status fails until exactly one size label matches the shared PR Bots calculation; changing a label cannot
 lower the computed bar. PR Bots recalculates on open, push and PR edits, including base-branch changes.
 PR Bots labels only a trusted pull request; see
-[`trusted:ci-run`](#trustedci-run-activates-an-apps-pull-request). Size S remains a manual policy judgment. Merge groups receive success without reevaluating queue
+[`trusted:ci-run`](#trustedci-run-activates-an-apps-pull-request). On size S the douwebot approval remains a manual policy judgment. Merge groups receive success without reevaluating queue
 members because the review requirements are enforced before admission.
 
 A clean douwebot approval is the latest non-dismissed completed verdict on the current head, with no inline or
@@ -292,11 +293,32 @@ A clean OpenCode fallback approval satisfies the same gate as a Claude approval.
 An `engine=opencode-zai` review from before the Coding Plan moved to `glm-5.4` names `glm-5.3-flash` in its attribution.
 The gate and the `prior-findings` job read both attributions; `EARLIER_REVIEW_ATTRIBUTIONS` in `publish_douwebot_review.py` lists the earlier ones.
 
+`Gate: review findings dispositioned` applies at every size and counts findings on every head. Each inline
+thread a review bot starts needs a reply from a `User`: the pull request's author or a user with write access.
+The reply's first line that starts with one of these forms answers the finding:
+
+- `Fixed in <sha>`: a commit of this pull request.
+- `Tracked in #<n>`: another issue or pull request in this repository. Without write access, the replier must cite
+  one opened at or after the finding.
+- `Declined: <reason>`: counts from a user with write access, and from the author on a douwebot `Optional:` finding.
+
+The `PR Review Gates` run that the status links to lists each unanswered thread, and why each reply in one of these
+forms does not count. Rewriting the pull request's history drops earlier commits from it, so post `Fixed in` again
+with the new commits.
+
+Resolving a thread does not answer it, except that a thread started before 2026-11-27 02:00 UTC needs no reply
+once resolved. `REVIEWER_LOGINS` in `review_gates.py` names the review bots, and receipts tell douwebot,
+`PR Review Checks` and `CI Review` apart on `github-actions[bot]`. On a thread from an unregistered bot, or a
+`github-actions[bot]` thread without one of those receipts, only a reply from a user with write access counts, and the
+`PR Review Gates` run still lists the thread as unregistered. Threads a person starts and
+review-body findings are not checked. `CI Review` findings do not wake the gate yet (#13971), so the status
+reflects them only from the next wake-up.
+
 `pr-review-gates-events.yml` observes PR opens, pushes, reopening, edits, label changes, reviews
 and inline-comment changes with a read-only token, including on forks. GitHub Actions has no
 review-thread trigger, so resolving an optional finding's thread updates the status on the next wake-up. Its completion wakes
-`PR Review Gates`, which also runs on PR Bots completion. The latter covers writes by `GITHUB_TOKEN`,
-which cannot trigger the observer. Do not add a `pull_request_target` trigger to `PR Review Gates`:
+`PR Review Gates`, which also runs on PR Bots and `PR Review Checks` completion, outside merge groups. These
+cover writes by `GITHUB_TOKEN`, which cannot trigger the observer. Do not add a `pull_request_target` trigger to `PR Review Gates`:
 GitHub blocks that event by default in public repositories (#12961). The publisher binds each
 wake-up to the unique open PR GitHub reports for its exact head SHA and repository. A review or
 inline-comment run reports the base repository as its head repository, even for a fork PR, so that
@@ -306,7 +328,7 @@ observers may need contributor approval.
 
 The `Gate: …` commit statuses carry the review verdict. The publisher job succeeds after publishing
 those statuses, including a failing verdict for an unmet requirement. The job fails on publisher errors.
-Publication is serialized per PR and marks both `Gate:` statuses pending before setup. API errors or
+Publication is serialized per PR and marks the `Gate:` statuses pending before setup. API errors or
 incomplete data fail closed. After the requirements are met, a new evaluation replaces the previous
 failure through GitHub's latest-per-context commit statuses. Rerun an existing current-head,
 default-branch `PR Review Gates` run to recover from an API failure or delayed observer; do not add
@@ -342,7 +364,8 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   and the gathered PR context, so the model can trace callers. The job validates the model's answer
   against its schema. As in douwebot, the job unwraps a Markdown code fence that ends the answer, then
   validates the JSON object that ends the answer, so prose before the object passes; text after the
-  object or the fence still fails. The check's `max_steps` and
+  object or the fence still fails. A rejected answer reruns the review on the next link of its chain, from scratch;
+  on the last link it fails the review. The check's `max_steps` and
   `max_minutes` end a review as `INCOMPLETE`; the defaults are permissive starting values, to be
   tuned down from recorded runs. Token totals are recorded and never capped. With `LOGFIRE_TOKEN`
   set, OpenCode exports its own spans and logs over OTLP, and the runner exports one span per review
@@ -352,7 +375,8 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   tokens, its input, output and cache-read tokens, and its duration. A validated answer adds the
   outcome, the number of findings, and how many findings the review dropped as outside its files or
   changed lines. A review that
-  raised has the outcome `FAILED`, the exception's class name and an error status. When the last
+  raised has the outcome `FAILED`, the exception's class name, such as `AnswerRejected` for a rejected answer, and an
+  error status. When the last
   run's process failed, the span adds the type, status and provider code of its stream's last
   `error` event, and whether the stream holds a `step_finish`. As each OpenCode run of the review
   ends, a run the chain moved past included, it exports a child
@@ -451,9 +475,21 @@ A run moves to the next provider when OpenCode exited non-zero, the next account
   its last `error` event is a `provider.rate-limit`. The job log says that account rate-limited the run after it took
   steps, and names the account that restarts it.
 
-The next provider runs the whole run again from scratch, as its own `Attempt`. Each provider runs a run at most once,
-so a run restarts at most once. Go never restarts a run. A `provider.quota` after a step fails the job. The chain
-leaves out a Z.AI account without a key.
+`PR Review Checks` hands a review on in two more cases, which no other caller does:
+
+- An OpenCode Go link failed the run with `provider.transport`, `provider.internal` or `provider.invalid-output`, before
+  or after the run took steps. OpenCode 2.2.5 retries a failed step up to 10 times when `isRetryable` in
+  [`provider-error.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/provider-error.ts) accepts
+  its error; see [`step.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/runner/step.ts)
+  and [`model-retry.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/model-retry.ts). So such an
+  error in the stream either outlasted those retries or was one OpenCode does not retry, and another provider can still
+  serve the review. The job log says that model failed the run with that type, and names the link that restarts it.
+- A link other than the last served an answer the review rejects. The job log names the reason and the link that
+  restarts the review. The last link's rejected answer fails the review.
+
+The next provider runs the whole run again from scratch, as its own `Attempt`. Each provider runs a run at most once.
+Outside `PR Review Checks`, a run therefore restarts at most once, and Go never restarts one. A `provider.quota` after a
+step fails the job. The chain leaves out a Z.AI account without a key.
 
 OpenCode 2.2.5 types any HTTP 402, and a Z.AI HTTP 429 whose message names a plan, quota or balance limit,
 `provider.quota`. Those 429s include the 5-hour, weekly and monthly windows (`1308`, `1310`, `1316` to `1321`), an
@@ -464,8 +500,8 @@ request-rate limits and `1305` overload; see `classify` in
 limit that outlasts those retries hands the run to the other account too, before or after the run took steps.
 
 Every other failure fails the job, including a rejected key, a provider outage, a time-budget stop, a timeout and an
-invalid answer. A run the other account also refuses or rate-limits fails the job. A fallback run, a restart
-included, gets only the rest of the time budget. OpenCode 2.2.5 reads the Coding Plan key from `ZHIPU_API_KEY` only,
+invalid answer that no case above hands on. A run the other account also refuses or rate-limits fails the job. A
+fallback run, a restart included, gets only the rest of the time budget. OpenCode 2.2.5 reads the Coding Plan key from `ZHIPU_API_KEY` only,
 so each Z.AI run sets that variable to its account's key. Each run's config allows only its provider and pins the `title`,
 `compaction` and `summary` agents to its model. Its environment holds no provider key but that account's. The job log names the
 model and the plan that served the run. When a run's process fails, the job log names that run's model, its plan, and the
@@ -490,7 +526,8 @@ run's resource attributes name the repository, `github.run_id`, `github.run_atte
 caller's attributes. They end with the run's plan as `opencode_fallback.plan`, and its place in the chain, counting
 from 1, as `opencode_fallback.attempt`. OpenCode's own spans carry no model or plan attribute, and both Coding Plan
 accounts call the same endpoint, so only `opencode_fallback.plan` tells their runs apart. A restart is its own
-attempt. The `PR Review Checks` review span adds `pr_review_checks.restarted` when the review's chain restarted a run.
+attempt. The `PR Review Checks` review span adds `pr_review_checks.restarted` when the review's chain moved past a run
+that took a step or served a rejected answer.
 
 As each run ends, `run_with_fallback` also exports an `OpenCode run` span for it, under the service
 `opencode-fallback`, so a later run's failure cannot drop it. Each span carries its run's resource attributes above,
@@ -498,7 +535,8 @@ As each run ends, `run_with_fallback` also exports an `OpenCode run` span for it
 provider that run different models, such as two OpenCode Go links of a configured chain. Each span also counts the
 `step_finish` events in the run's stream and the tokens they report,
 every kind summed as in `pr_review_checks.tokens`, as `opencode_fallback.steps` and `opencode_fallback.tokens`, a failed
-or handed-over run's included. A run that did not serve has an error status. When the run's process failed, the span
+or handed-over run's included. A run that did not serve has an error status. A run whose answer `PR Review Checks`
+rejected before it handed the review on adds `opencode_fallback.rejected`. When the run's process failed, the span
 adds the error type, status, provider code, Go usage window and retry-after the job log names, as
 `opencode_fallback.error_type`, `opencode_fallback.error_status`, `opencode_fallback.error_code`,
 `opencode_fallback.limit_name` and `opencode_fallback.retry_after_ms`, and whether the stream holds a `step_finish`, as
@@ -546,7 +584,8 @@ and cannot reach any other secret. Nothing in a pull request reaches the variabl
 code, and only users with write access set repository variables. To add a provider or a secret, open a pull request
 that adds its `Provider` to `CHAIN_LINKS`, its row to the table above, and its secret to the review step's `env`.
 
-An entry changes only its link's model. Each link keeps its provider's hand-over errors and restart rule from above:
+An entry changes only its link's model. Each link keeps its provider's hand-over errors and restart rules from above,
+the `PR Review Checks` cases included:
 
 - A link whose secret is empty is left out.
 - Consecutive entries on one model rotate by the run number plus the check's place in the matrix, as the two Coding
@@ -558,7 +597,7 @@ An entry changes only its link's model. Each link keeps its provider's hand-over
   Zen model, such as `opencode/gemini-3.1-pro`, fails with `provider.no-route` and fails the review. Zen's free usage
   is limited. Zen reports a spent allowance as `FreeUsageLimitError`, which OpenCode 2.2.5 types `provider.free-limit`.
   Zen hands a run on after `provider.free-limit`, `provider.quota` or `provider.rate-limit` before the run's first
-  step, and never restarts a run.
+  step, and restarts a run only after the review rejects its answer.
 - A Zen run sends Zen the same content a Go run sends Go. Zen offers free models
   for a limited time. Before you add one, check its data retention on
   [Zen's model list](https://opencode.ai/v2/docs/console/models/).
