@@ -307,3 +307,60 @@ def test_parent_fork_ancestor_fork_with_cycle():
     # and return F2 (hitting the early return path with assert False)
     assert parent_fork is not None
     assert parent_fork.fork_id == 'F2'
+
+
+def test_parent_fork_unreachable_join_two_node_cycle():
+    """Unreachable two-node cycle must return None rather than looping in dominator lookup."""
+    finder = ParentForkFinder(
+        nodes={'start', 'a', 'b', 'j', 'end'},
+        start_ids={'start'},
+        fork_ids={'start'},
+        edges={'start': ['a'], 'a': ['end'], 'b': ['j'], 'j': ['b']},
+    )
+    assert finder.find_parent_fork('j') is None
+
+
+def test_parent_fork_unreachable_join_orphan_predecessor():
+    """Unreachable orphan chain leading to join must return None."""
+    finder = ParentForkFinder(
+        nodes={'start', 'a', 'b', 'j', 'end'},
+        start_ids={'start'},
+        fork_ids={'start'},
+        edges={'start': ['a'], 'a': ['end'], 'b': ['j'], 'j': ['end']},
+    )
+    assert finder.find_parent_fork('j') is None
+
+
+def test_parent_fork_unreachable_fork_to_join():
+    """Unreachable fork leading to join must not dominate or loop."""
+    finder = ParentForkFinder(
+        nodes={'start', 'f', 'j', 'end'},
+        start_ids={'start'},
+        fork_ids={'start', 'f'},
+        edges={'start': ['end'], 'f': ['j']},
+    )
+    assert finder.find_parent_fork('j') is None
+
+
+@pytest.mark.parametrize('cycle_back', [True, False])
+def test_build_without_validation_unreachable_join_raises_graph_building_error(cycle_back: bool):
+    """GraphBuilder.build(validate_graph_structure=False) should raise GraphBuildingError, not AssertionError or hang."""
+    from pydantic_graph import GraphBuilder, StepContext
+    from pydantic_graph.join import reduce_list_append
+
+    g = GraphBuilder(input_type=int, output_type=int)
+
+    @g.step
+    async def a(ctx: StepContext[None, None, int]) -> int:
+        return ctx.inputs  # pragma: no cover
+
+    @g.step
+    async def b(ctx: StepContext[None, None, object]) -> int:
+        return 1  # pragma: no cover
+
+    j = g.join(reduce_list_append, initial_factory=list[int], node_id='j')
+    second_edge = g.edge_from(j).to(b) if cycle_back else g.edge_from(j).to(g.end_node)
+    g.add(g.edge_from(g.start_node).to(a), g.edge_from(a).to(g.end_node), g.edge_from(b).to(j), second_edge)
+
+    with pytest.raises(GraphBuildingError, match='missing a dominating fork'):
+        g.build(validate_graph_structure=False)

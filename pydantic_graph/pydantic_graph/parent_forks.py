@@ -103,7 +103,7 @@ class ParentForkFinder(Generic[T]):
                 )
             return ParentFork[T](parent_fork_id, upstream_nodes)
 
-        visited: set[str] = set()
+        visited: set[T] = set()
         cur = join_id  # start at J and walk up the immediate dominator chain
 
         parent_fork: ParentFork[T] | None = None
@@ -147,29 +147,40 @@ class ParentForkFinder(Generic[T]):
         return predecessors
 
     @cached_property
+    def _reachable(self) -> set[T]:
+        """Return all node identifiers reachable from start_ids."""
+        reachable: set[T] = set(self.start_ids & self.nodes)
+        stack = list(reachable)
+        while stack:
+            node_id = stack.pop()
+            for destination_id in self.edges.get(node_id, []):
+                if destination_id in self.nodes and destination_id not in reachable:
+                    reachable.add(destination_id)
+                    stack.append(destination_id)
+        return reachable
+
+    @cached_property
     def _dominators(self) -> dict[T, set[T]]:
-        """Compute the dominator sets for all nodes using iterative dataflow analysis.
+        """Compute the dominator sets for reachable nodes using iterative dataflow analysis.
 
         A node D dominates node N if every path from a start node to N must pass through D.
         This is computed using a fixed-point iteration algorithm.
 
         Returns:
-            A dictionary mapping each node to its set of dominators.
+            A dictionary mapping each reachable node to its set of dominators.
         """
-        node_ids = set(self.nodes)
-        start_ids = self.start_ids
+        reachable = self._reachable
+        start_ids = self.start_ids & reachable
 
-        dom: dict[T, set[T]] = {n: set(node_ids) for n in node_ids}
+        dom: dict[T, set[T]] = {n: set(reachable) for n in reachable}
         for s in start_ids:
             dom[s] = {s}
 
         changed = True
         while changed:
             changed = False
-            for n in node_ids - start_ids:
-                preds = self._predecessors[n]
-                if not preds:  # unreachable from any start
-                    continue
+            for n in reachable - start_ids:
+                preds = [p for p in self._predecessors[n] if p in reachable]
                 intersection = set[T].intersection(*(dom[p] for p in preds)) if preds else set[T]()
                 new_dom = {n} | intersection
                 if new_dom != dom[n]:
@@ -190,7 +201,10 @@ class ParentForkFinder(Generic[T]):
             The immediate dominator's ID if one exists, None otherwise.
         """
         dom = self._dominators
-        candidates = dom[node_id] - {node_id}
+        node_dom = dom.get(node_id)
+        if node_dom is None:
+            return None
+        candidates = node_dom - {node_id}
         for c in candidates:
             if all((c == d) or (c not in dom[d]) for d in candidates):
                 return c
