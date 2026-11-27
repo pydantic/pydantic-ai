@@ -680,6 +680,10 @@ def structured_judge_model(
 
     A `confidence` is reported the way a decision model such as Jev reports it, keyed by the name each
     question was asked under.
+
+    The `StructuredJudge` tests below use it instead of a cassette: they pin the prompt, instructions and output
+    schema each shape sends, and how each answer becomes a measure, which a recording matched on method and URL would
+    not catch. `tests/evals/test_typesafe_judges.py` records the round trip with a real judge.
     """
 
     async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
