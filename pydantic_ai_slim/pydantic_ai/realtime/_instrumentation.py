@@ -180,7 +180,9 @@ class SessionInstrumentation:
 
         Attaches the session's own usage, run context, and the conversation to the span, mirroring the
         classic agent-run span's end-of-run contract. No-op (returning `None`) when instrumentation
-        is disabled or no span was started.
+        is disabled or no span was started. `new_message_index` is in `ModelMessage` units — the
+        realtime run result's unit — and is converted to converted-entry units to match
+        `pydantic_ai.all_messages`.
         """
         settings = self.settings
         span = self.session_span
@@ -215,13 +217,18 @@ class SessionInstrumentation:
                 if self.model_request_parameters is not None
                 else frozenset[str]()
             )
-            attributes['pydantic_ai.all_messages'] = safe_to_json(
-                settings.messages_to_otel_messages(
-                    messages, mcp_url_ids=mcp_telemetry_history_ids(messages, mcp_url_ids)
-                )
-            ).decode()
+            otel_messages = settings.messages_to_otel_messages(
+                messages, mcp_url_ids=mcp_telemetry_history_ids(messages, mcp_url_ids)
+            )
+            attributes['pydantic_ai.all_messages'] = safe_to_json(otel_messages).decode()
+            # `new_message_index` arrives in `ModelMessage` units (the realtime run result's unit),
+            # but `pydantic_ai.all_messages` is in converted OTEL entries: one entry per role group,
+            # so a seeded request with several role groups becomes several entries. Convert the same
+            # seeded prefix with the same settings so the index marks this session's first entry.
             if new_message_index is not None:
-                attributes['pydantic_ai.new_message_index'] = new_message_index
+                attributes['pydantic_ai.new_message_index'] = len(
+                    settings.messages_to_otel_messages(messages[:new_message_index])
+                )
             schema_properties['pydantic_ai.all_messages'] = {'type': 'array'}
         if self.metadata is not None:
             # Redact binary payloads under `include_binary_content=False`, matching the classic
