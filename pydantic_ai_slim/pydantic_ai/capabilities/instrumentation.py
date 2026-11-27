@@ -39,7 +39,7 @@ from pydantic_ai._instrumentation import (
     track_top_level_conversation,
 )
 from pydantic_ai._output import build_retried_tool_return
-from pydantic_ai._telemetry import bind_tool_call_span, run_telemetry_scope
+from pydantic_ai._telemetry import bind_tool_call_span
 from pydantic_ai._utils import UNSET, Unset
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -332,9 +332,6 @@ class Instrumentation(AbstractCapability[Any]):
             # Entered with the span and exited with it, so `_run_usage` ends up holding exactly
             # the usage this run recorded — nested runs report their own on their own spans.
             _usage_attribution.accumulate(self._run_usage),
-            # Code without a `RunContext` traces to this run only while its span is open, and this run's
-            # value is gone for an outer `wrap_run` once this one returns.
-            run_telemetry_scope(ctx, span),
         ):
             token = _otel_attach(_agent_run_baggage(agent_name, ctx))
             result: AgentRunResult[Any] | None = None
@@ -664,7 +661,7 @@ class Instrumentation(AbstractCapability[Any]):
         *,
         span_name: str,
         attributes: dict[str, Any],
-        action: Callable[[], Awaitable[Any]],
+        action: Callable[[Span], Awaitable[Any]],
         serialize_result: Callable[[Any], str],
         run_context: RunContext[Any],
         handle_tool_control_flow: bool = False,
@@ -697,7 +694,7 @@ class Instrumentation(AbstractCapability[Any]):
             set_status_on_exception=False,
         ) as span:
             try:
-                result = await action()
+                result = await action(span)
             except (CallDeferred, ApprovalRequired) as exc:
                 if not handle_tool_control_flow:
                     _record_exception(span, exc, include_content=include_content)
@@ -776,9 +773,10 @@ class Instrumentation(AbstractCapability[Any]):
             # which stay unmarked.
             attributes['pydantic_ai.realtime'] = True
 
-        async def call_with_bound_span() -> Any:
-            # Runs inside the span `_run_tool_span` opened, so the current span is this call's `execute_tool`.
-            with bind_tool_call_span(get_current_span(), run_id=ctx.run_id):
+        async def call_with_bound_span(span: Span) -> Any:
+            # The span `_run_tool_span` opened, not the current span: a no-op tracer on some
+            # `opentelemetry-api` versions leaves an enclosing run's span current.
+            with bind_tool_call_span(span, run_id=ctx.run_id):
                 return await handler(args)
 
         return await self._run_tool_span(
@@ -855,7 +853,7 @@ class Instrumentation(AbstractCapability[Any]):
         return await self._run_tool_span(
             span_name=names.get_output_tool_span_name(span_target),
             attributes=attributes,
-            action=lambda: handler(output),
+            action=lambda _span: handler(output),
             serialize_result=lambda value: safe_to_json(
                 serialize_any(redact_binary_content(value, self.settings))
             ).decode(),

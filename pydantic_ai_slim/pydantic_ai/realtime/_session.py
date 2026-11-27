@@ -49,7 +49,6 @@ from .._run_context import (
     RealtimeEventBuffer,
     context_window_fraction,
 )
-from .._telemetry import publish_run_telemetry
 from .._tool_execution import (
     _reject_unloaded_capability_reveals,  # pyright: ignore[reportPrivateUsage]
     build_tool_return_part,
@@ -3365,23 +3364,9 @@ class RealtimeSession:
             self._queue_put(out)
         return False
 
-    def _publish_session_telemetry(self) -> None:
-        """Publish the session for code without a `RunContext`, in the pump task its tool tasks inherit.
-
-        Only once the session span exists, so that code traces under the session, never its caller.
-        """
-        instrumentation = self._session_instrumentation
-        settings = instrumentation.settings
-        publish_run_telemetry(
-            settings.tracer if settings is not None else None,
-            settings is not None and settings.include_content,
-            instrumentation.session_span,
-        )
-
     async def _pump(self, context: Context | None) -> None:
         """Drain the connection into the session queue under the explicit session-span context."""
         token = otel_context.attach(context) if context is not None else None
-        self._publish_session_telemetry()
         core_events = self._core_events(self._core)
         try:
             response_done = response_closed = False
