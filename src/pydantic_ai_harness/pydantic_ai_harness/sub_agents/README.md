@@ -66,7 +66,7 @@ A delegate's name, used by the parent model and in the prompt listing, is the ag
 - **The workspace is inherited**, unless `workspace_resolver` selects another directory. Parent read-only restrictions still apply.
 - **Usage is shared by default.** Each sub-agent run gets the parent's `usage`, so token usage aggregates and a parent `usage_limits` applies across the whole agent tree. Set `forward_usage=False` to give each sub-agent run its own accounting.
 - **The parent's tools are not passed on.** A sub-agent runs with its own tools. To delegate to an agent with all of the parent's tools and capabilities, use `include_self=True` (see below).
-- **Capabilities can be shared.** `shared_capabilities` apply to every sub-agent run, for example a common guardrail, memory, or planning capability, without rebuilding each `Agent`. The managed layer of the parent run's [`Permissions`](https://pydantic.dev/docs/ai/harness/permissions/#limits-from-outside-the-run), its `max_mode` and `managed_rules`, reaches every sub-agent run without being shared.
+- **Capabilities can be shared.** `shared_capabilities` apply to every sub-agent run, for example a common guardrail, memory, or planning capability, without rebuilding each `Agent`. The managed layer of the parent run's [`Permissions`](https://pydantic.dev/docs/ai/harness/permissions/#limits-from-outside-the-run), its `max_mode` and `managed_rules`, reaches every sub-agent run in this process without being shared, and a delegation to a remote sub-agent is refused while it applies.
 - **Sub-agent events can be streamed.** An `event_stream_handler` is forwarded to each sub-agent run, so its model-streaming and tool events reach the caller. The handler receives the sub-agent's own `RunContext`.
 
 `inherit_tools=True` is deprecated and emits a `HarnessDeprecationWarning`. It adds the parent agent's own tools (from `tools=` or `toolsets=`, minus the delegate tool) to each sub-agent run, but not the tools from the parent's capabilities. Instead, bind the tools an explicit sub-agent needs to its `Agent`, use `include_self=True`, or give disk-loaded agents tools with a `tool_resolver`.
@@ -435,6 +435,8 @@ orchestrator = Agent(
     ],
 )
 ```
+
+A remote sub-agent runs its own agent on its worker, so the parent run's `Permissions` can't hold it. While that `Permissions` sets `max_mode` or `managed_rules`, a delegation to a remote sub-agent raises `UserError` instead of running without them.
 
 - **A transport is a set of mailboxes.** Implement `send`, `receive`, and optionally `release` over a WebSocket, a Redis list, or anything else that moves bytes, with `serialize_message` and `deserialize_message` at the boundary. Every message is one of the `SubAgentMessageEvent`s above. `InMemoryTransport` serves a worker in the same process.
 - **The transport is the trust boundary.** Anyone who can send to it can run the served agents, with their tools and `deps`, and read what they return. Put authentication, authorization, and network binding in your transport. A worker's output and errors reach the delegating model like a local delegate's: as tool results in the foreground, as framed reports in the background.

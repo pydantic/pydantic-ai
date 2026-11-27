@@ -536,6 +536,30 @@ class TestInheritedBySubAgents:
         assert prompts and set(prompts) == {'go'}
 
 
+class TestRemoteDelegates:
+    async def test_a_remote_delegate_is_refused_under_a_managed_layer(self) -> None:
+        """Its worker runs its own agent in another process, so the parent couldn't hold it to the limits."""
+        from pydantic_ai_harness.sub_agents import InMemoryTransport, RemoteSubAgent, TaskControl
+
+        def delegate(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart('delegate_task', {'agent_name': 'remote', 'task': 'clean up'})])
+
+        agent = Agent[None, str](
+            FunctionModel(delegate),
+            deps_type=type(None),
+            capabilities=[
+                Permissions[None](managed_rules=[PermissionRule('deny', command='rm')]),
+                SubAgents[None](
+                    task_control=TaskControl(
+                        remote_agents=[RemoteSubAgent(name='remote')], transport=InMemoryTransport()
+                    )
+                ),
+            ],
+        )
+        with pytest.raises(UserError, match="Remote sub-agent 'remote' would run without"):
+            await agent.run('go')
+
+
 class TestInheritedInDurableUnits:
     """A durable unit's context carries the agent but not the run's capabilities."""
 

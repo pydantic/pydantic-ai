@@ -202,7 +202,7 @@ class Permissions(AbstractCapability[AgentDepsT]):
     `code_arg_language='shell'` and a `code_arg_name`, as the `Shell` tools that take a command do. Sub-agents'
     runs this capability does not reach are not checked by `mode` and `rules`: pass it in
     `SubAgents(shared_capabilities=[...])`. Its `max_mode` and `managed_rules` reach every `SubAgents` delegate
-    on their own.
+    that runs in this process on their own, and a remote delegate is refused while they apply.
 
     `mode` can be a function of the run context. It is read on every call, so a mode changed during a run
     applies from the run's next call.

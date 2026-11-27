@@ -1036,8 +1036,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         sub_agent: SubAgent[AgentDepsT] | None = None
         key: str | None = None
         if remote is not None:
-            if model is not None:
-                raise ModelRetry(f"Sub-agent {agent_name!r} runs on its worker's model; omit `model`.")
+            _check_remote(ctx, agent_name, model)
             resumable, can_ask = remote.resumable, remote.can_ask_questions
         else:
             sub_agent = self._resolve_agent(ctx, agent_name)
@@ -1952,3 +1951,15 @@ def _managed_limits(usage: RunUsage, *, parent: UsageLimits | None, child: Usage
         cost_limit=cost,
         count_tokens_before_request=parent.count_tokens_before_request or child.count_tokens_before_request,
     )
+
+
+def _check_remote(ctx: RunContext[Any], agent_name: str, model: str | None) -> None:
+    """Refuse a delegation to a remote sub-agent that can't honor this run: see `_delegate_controlled`."""
+    if inherited_managed_permissions(ctx):
+        # The worker runs its own agent in another process, where the parent can't hold it to the layer.
+        raise UserError(
+            f'Remote sub-agent {agent_name!r} would run without the `max_mode` and `managed_rules` of this '
+            "run's `Permissions`: its worker runs its own agent, which they can't reach."
+        )
+    if model is not None:
+        raise ModelRetry(f"Sub-agent {agent_name!r} runs on its worker's model; omit `model`.")
