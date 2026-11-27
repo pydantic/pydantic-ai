@@ -413,18 +413,19 @@ Content:
 
 - Content is anything that could quote user content, a prompt, tool arguments, a path, or a tenant or
   user id. It goes only through `content=`, which records it only when the run captures content, or
-  onto a span only `if ctx.trace_include_content`. A trace has a wider audience than the application that produced it.
+  onto a span only `if ctx.trace_include_content`. A trace has a wider audience than the application
+  that produced it.
 - Never put content in a span's name or in `logfire.msg`. Logfire does not scrub `logfire.msg`.
-- `open_span` sets `error.type` on an uncaught error. It records the error's message only when the
-  run captures content, because an exception message can quote content. A cancellation is not an error and leaves the status unset. For
-  an exception that is an expected answer, such as a `FileNotFoundError` from an existence check, catch
-  it inside the span and record the outcome as an attribute.
+- `open_span` sets `error.type` on an uncaught error. It records the error's message only when the run
+  captures content, because an exception message can quote content. A cancellation is not an error and
+  leaves the status unset. For an exception that is an expected answer, such as a `FileNotFoundError`
+  from an existence check, catch it inside the span and record the outcome as an attribute.
 - `content=` and `attributes=` are built even when nothing is recorded, so pass plain values. When
   building a content value costs something or can raise, such as `str()` of an object a guard returned
   or a serialized message, build it only `if ctx.trace_include_content` and pass `None` otherwise:
   `content={'guardrail.replacement': str(replacement)} if ctx.trace_include_content else None`. Don't
-  test `span.is_recording()` for this: `record_decision` gives you no span, and a span records when the run
-  is traced without content too.
+  test `span.is_recording()` for this: `record_decision` gives you no span, and a span records when the
+  run is traced without content too.
 
 Names:
 
@@ -437,16 +438,17 @@ Names:
 - Prefix attributes with the telemetry name of whoever sets them, which is chosen once and need not
   match the package (`guardrail.action` for `guardrails`, `artifact_scan.threats` for
   `artifact_scanning`). A capability adding an attribute to core's `execute_tool` span still uses its
-  own prefix; `pydantic_ai.*` is for attributes core sets. Reuse an OpenTelemetry semantic-convention attribute where
-  one fits (`gen_ai.conversation.compacted`, `process.exit.code`) instead of coining a new name.
+  own prefix; `pydantic_ai.*` is for attributes core sets. Reuse an OpenTelemetry semantic-convention
+  attribute where one fits (`gen_ai.conversation.compacted`, `process.exit.code`) instead of coining a
+  new name.
 
 Outcome words mirror the capability's own public types. An attribute value or span name that says
 what happened uses the words the capability's API already uses for it, such as the
 `GuardrailResult` actions (`block`, `replace`, `approve`) or `SubAgents`' `DelegationOutcome`, so an
 operator reading a trace and a developer reading the code name the same outcome the same way.
 
-Code that still calls `ctx.tracer.start_span` or `start_as_current_span` predates these functions and moves onto
-them in follow-ups; don't copy it.
+Code that still calls `ctx.tracer.start_span` or `start_as_current_span` predates these functions and
+moves onto them in follow-ups; don't copy it.
 
 Document the spans and their attributes in both the capability README and the docs page, and cover
 them in tests like any other public behavior.
