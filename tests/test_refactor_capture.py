@@ -872,6 +872,224 @@ def test_warnings():
         warnings.warn('filtered out')
 """
 
+AGENT_RUNS = """
+import asyncio
+
+import pytest
+from mcp.types import CreateMessageResult, TextContent
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from pydantic import BaseModel, model_serializer
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability, Instrumentation, ProcessEventStream
+from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.messages import ModelResponse, PartEndEvent, PartStartEvent, TextPart, ToolCallPart
+from pydantic_ai.models.function import DeltaToolCall, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai.models.mcp_sampling import MCPSamplingModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
+
+
+async def call_then_answer(messages, info):
+    if len(messages) == 1:
+        yield {{0: DeltaToolCall('echo', '{{}}', tool_call_id='echo')}}
+    else:
+        yield {text!r}[:2]
+        yield {text!r}[2:]
+
+
+async def drop_part_ends(ctx, stream):
+    async for event in stream:
+        if event.event_kind != 'part_end':
+            yield event
+
+
+async def fail_after_the_first(ctx, stream):
+    async for event in stream:
+        yield event
+        raise RuntimeError('processor failed')
+
+
+def test_run_event_streams():
+    agent = Agent(FunctionModel(stream_function=call_then_answer), capabilities=[ProcessEventStream(drop_part_ends)])
+    agent.tool_plain(lambda: 'echoed', name='echo')
+
+    async def run():
+        async with agent.run_stream_events('echo') as events:
+            async for _ in events:
+                pass
+
+    asyncio.run(run())
+
+
+def test_enqueued_message():
+    agent = Agent(FunctionModel(stream_function=call_then_answer))
+
+    @agent.tool(name='echo')
+    def echo(ctx: RunContext) -> str:
+        ctx.enqueue('follow up')
+        return 'echoed'
+
+    async def run():
+        async with agent.run_stream_events('echo') as events:
+            async for _ in events:
+                pass
+
+    asyncio.run(run())
+
+
+def test_run_event_stream_fails():
+    agent = Agent(FunctionModel(stream_function=call_then_answer), capabilities=[ProcessEventStream(fail_after_the_first)])
+    with pytest.raises(RuntimeError):
+        agent.run_sync('echo')
+
+
+class Passthrough(AbstractCapability[None]):
+    def wrap_run_event_stream(self, ctx, *, stream):
+        return stream
+
+
+class Events:
+    def __init__(self, *events):
+        self.events = iter(events)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self.events)
+        except StopIteration:
+            raise StopAsyncIteration
+
+
+def test_run_event_stream_called_directly():
+    async def events():
+        yield PartStartEvent(index=0, part=TextPart({text!r}))
+        yield PartEndEvent(index=0, part=TextPart({text!r}))
+
+    async def run():
+        ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+        [event async for event in ProcessEventStream(drop_part_ends).wrap_run_event_stream(ctx, stream=events())]
+        # A stream that isn't a generator has nothing to close.
+        stream = Events(PartStartEvent(index=0, part=TextPart({text!r})))
+        [event async for event in Passthrough().wrap_run_event_stream(ctx, stream=stream)]
+
+    asyncio.run(run())
+
+
+class Answer(BaseModel):
+    value: int
+
+
+async def stream_answer(messages, info):
+    name = info.output_tools[0].name
+    yield {{0: DeltaToolCall(name, '{{"value": ', tool_call_id='out')}}
+    yield {{0: DeltaToolCall(json_args='4')}}
+    yield {{0: DeltaToolCall(json_args='2}}')}}
+
+
+async def fail_mid_stream(messages, info):
+    yield {text!r}[:2]
+    raise RuntimeError('stream failed')
+
+
+async def stream_no_answer(messages, info):
+    yield {{0: DeltaToolCall(info.output_tools[0].name, '{{"value": "x"}}', tool_call_id='out')}}
+
+
+def test_agent_stream_calls():
+    async def run():
+        text_agent = Agent(FunctionModel(stream_function=call_then_answer))
+        async with text_agent.run_stream('hi', message_history=[]) as result:
+            [text async for text in result.stream_text(debounce_by=None)]
+            await result.get_output()
+        async with text_agent.run_stream('hi') as result:
+            [text async for text in result.stream_text(delta=True, debounce_by=None)]
+        async with Agent(FunctionModel(stream_function=stream_answer), output_type=Answer).run_stream('hi') as result:
+            [output async for output in result.stream_output(debounce_by=None)]
+        async with Agent(FunctionModel(stream_function=stream_no_answer), output_type=Answer).run_stream('hi') as result:
+            with pytest.raises(UnexpectedModelBehavior):
+                await result.get_output()
+        with pytest.raises(RuntimeError):
+            async with Agent(FunctionModel(stream_function=fail_mid_stream)).run_stream('hi') as result:
+                [text async for text in result.stream_text(debounce_by=None)]
+
+    asyncio.run(run())
+
+
+def call_and_fail(messages, info):
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('fail', tool_call_id='fail')])
+    return ModelResponse(parts=[TextPart({text!r})])
+
+
+def test_spans():
+    settings = InstrumentationSettings(tracer_provider=TracerProvider(shutdown_on_exit=False))
+    agent = Agent(FunctionModel(call_and_fail), capabilities=[Instrumentation(settings=settings)])
+
+    @agent.tool_plain
+    def fail() -> str:
+        raise LookupError('tool failed')
+
+    with pytest.raises(LookupError):
+        agent.run_sync('fail')
+
+
+def test_spans_of_a_tracer():
+    tracer = TracerProvider(shutdown_on_exit=False).get_tracer('test')
+    sampled = trace.TraceFlags(trace.TraceFlags.SAMPLED)
+    remote = trace.NonRecordingSpan(trace.SpanContext(trace_id=1, span_id=2, is_remote=True, trace_flags=sampled))
+    with tracer.start_as_current_span('outer', context=trace.set_span_in_context(remote)) as outer:
+        with tracer.start_as_current_span('inner', attributes={{'answer': 42}}):
+            pass
+    outer.end()
+
+
+class Unformattable(Exception):
+    def __str__(self):
+        raise RuntimeError('formatting blew up')
+
+
+async def fail_unformattably(ctx, stream):
+    async for event in stream:
+        yield event
+        raise Unformattable()
+
+
+def test_unformattable_error():
+    agent = Agent(FunctionModel(stream_function=call_then_answer), capabilities=[ProcessEventStream(fail_unformattably)])
+    with pytest.raises(Unformattable):
+        agent.run_sync('echo')
+
+
+class ScriptedSession:
+    async def create_message(self, messages, **kwargs):
+        return CreateMessageResult(role='assistant', content=TextContent(type='text', text={text!r}), model='scripted')
+
+
+@pytest.mark.parametrize('model', [TestModel(), MCPSamplingModel(ScriptedSession())], ids=['test', 'sampling'])
+def test_tool_metadata(model):
+    serializations = []
+
+    class Tracked(BaseModel):
+        @model_serializer
+        def serialize(self) -> str:
+            serializations.append('tracked')
+            return 'tracked'
+
+    agent = Agent(model)
+
+    @agent.tool_plain(metadata={{'tracked': Tracked(), 'plain': {{'kind': 'lookup', 'tags': ['a']}}}})
+    def lookup(key: str) -> str:
+        return key
+
+    agent.run_sync('hello')
+    assert serializations == []
+"""
+
 DURABLE = """
 import asyncio
 import base64
@@ -1033,12 +1251,16 @@ def test_cache_keys():
 @pytest.fixture
 def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCapture:
     """Capture an in-process pytest session over `STREAMS` and `REQUESTS`, `UI`, `REALTIME`, `SESSION`,
-    `TOOL_PLUMBING` or `DURABLE`, carrying `text`, into `capture_dir`.
+    `TOOL_PLUMBING`, `AGENT_RUNS` or `DURABLE`, carrying `text`, into `capture_dir`.
 
     It runs as `main` runs each side.
     """
     monkeypatch.setenv('PYTEST_DISABLE_PLUGIN_AUTOLOAD', '1')
     monkeypatch.delenv('PYTEST_XDIST_WORKER', raising=False)
+    # The Anthropic SDK traces each request through the global tracer provider, which an earlier test in this worker
+    # may have set, like one that calls `logfire.configure()`, so the inner sessions would record its spans or not
+    # depending on what ran before them.
+    monkeypatch.setenv('ANTHROPIC_OPEN_TELEMETRY', 'false')
     # The inner sessions share this worker's `random` with every thread an earlier test left running, and such a
     # thread can draw from it between the capture's seed and an inner test's draw: Prefect's events client keeps a
     # `websockets` connection open whose pings draw `random.getrandbits(32)`. So the capture's seed also seeds `rng`,
@@ -1058,6 +1280,7 @@ def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCaptur
         realtime: bool = False,
         session: bool = False,
         tool_plumbing: bool = False,
+        agent_runs: bool = False,
         durable: bool = False,
     ) -> pytest.RunResult:
         pytester.makeconftest(CONFTEST)
@@ -1071,6 +1294,8 @@ def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCaptur
             pytester.makepyfile(test_session=SESSION.format(text=text))
         elif tool_plumbing:
             pytester.makepyfile(test_tool_plumbing=TOOL_PLUMBING.format(text=text))
+        elif agent_runs:
+            pytester.makepyfile(test_agent_runs=AGENT_RUNS.format(text=text))
         else:
             pytester.makepyfile(test_streams=STREAMS.format(text=text), test_requests=REQUESTS.format(text=text))
         return pytester.runpytest_inprocess(
@@ -2381,6 +2606,365 @@ n
     )
 
 
+def test_capture_records_run_event_streams_agent_stream_calls_and_spans(run: RunCapture, tmp_path: Path):
+    """Each event stream a run's root capability hands its consumer, or a capability called directly does, each call
+    on an `AgentStream` method that `AGENT_STREAM_ITERATORS` or `AGENT_STREAM_CALLS` lists, and each span the
+    OpenTelemetry SDK ends.
+
+    The events are the ones `ProcessEventStream` passes on, without the `PartEndEvent`s it drops, in one record per
+    node stream: the stream of the capability it is, inside the root's, isn't recorded again. A processor that fails
+    leaves the error in its stream's record. A message a tool enqueues adds the `EnqueuedMessagesEvent` its delivery
+    emits. A call on a capability with a run context that has no root capability, as a test makes to call it directly,
+    is recorded too. A call's record has its arguments, defaults filled in, and what it yields, returns or raises:
+    `stream_output` validates each partial output, and swallows the error of one that's invalid. The spans are in the
+    order they started, each parent named by its number, or as `external` when no span started for it; an exception
+    event leaves out its stack trace, and a span ended twice is recorded once.
+    """
+    run(tmp_path, agent_runs=True).assert_outcomes(passed=10)
+
+    records = [json.loads(line) for line in (tmp_path / 'main.jsonl').read_text().splitlines()]
+    assert [
+        (record['node'].split('::')[1], [event['event_kind'] for event in record['events']], record.get('error'))
+        for record in records
+        if record['kind'] == 'run_event_stream'
+    ] == snapshot(
+        [
+            ('test_run_event_streams', ['part_start'], None),
+            ('test_run_event_streams', ['function_tool_call', 'function_tool_result'], None),
+            ('test_run_event_streams', ['part_start', 'final_result', 'part_delta'], None),
+            ('test_run_event_streams', [], None),
+            ('test_enqueued_message', ['part_start', 'part_end'], None),
+            ('test_enqueued_message', ['function_tool_call', 'function_tool_result'], None),
+            (
+                'test_enqueued_message',
+                ['enqueued_messages', 'part_start', 'final_result', 'part_delta', 'part_end'],
+                None,
+            ),
+            ('test_enqueued_message', [], None),
+            ('test_run_event_stream_fails', ['part_start'], 'RuntimeError: processor failed'),
+            ('test_run_event_stream_called_directly', ['part_start'], None),
+            ('test_run_event_stream_called_directly', ['part_start'], None),
+            ('test_agent_stream_calls', ['part_start', 'part_end'], None),
+            ('test_agent_stream_calls', ['function_tool_call', 'function_tool_result'], None),
+            ('test_agent_stream_calls', ['part_start', 'final_result', 'part_delta', 'part_end'], None),
+            ('test_agent_stream_calls', ['part_start', 'part_end'], None),
+            ('test_agent_stream_calls', ['function_tool_call', 'function_tool_result'], None),
+            ('test_agent_stream_calls', ['part_start', 'final_result', 'part_delta', 'part_end'], None),
+            ('test_agent_stream_calls', ['part_start', 'final_result', 'part_delta', 'part_delta', 'part_end'], None),
+            ('test_agent_stream_calls', ['part_start', 'final_result', 'part_end'], None),
+            ('test_agent_stream_calls', ['part_start', 'final_result'], 'RuntimeError: stream failed'),
+            ('test_spans', ['function_tool_call'], 'LookupError: tool failed'),
+            ('test_unformattable_error', ['part_start'], {'unrecorded': 'Unformattable: `str()` raised RuntimeError'}),
+            ('test_tool_metadata[test]', ['function_tool_call', 'function_tool_result'], None),
+            ('test_tool_metadata[test]', [], None),
+            ('test_tool_metadata[sampling]', [], None),
+        ]
+    )
+    assert [
+        (
+            record['node'].split('::')[1],
+            record['target'].rsplit('.', 1)[1],
+            record['arguments'],
+            record.get('yields'),
+            record.get('result'),
+            record.get('error'),
+        )
+        for record in records
+        if record['kind'] == 'agent_stream'
+    ] == snapshot(
+        [
+            (
+                'test_agent_stream_calls',
+                'stream_text',
+                {'delta': False, 'debounce_by': None},
+                ['he', 'hello'],
+                None,
+                None,
+            ),
+            ('test_agent_stream_calls', 'get_output', {}, None, 'hello', None),
+            ('test_agent_stream_calls', 'validate_response_output', {'allow_partial': False}, None, 'hello', None),
+            ('test_agent_stream_calls', 'get_output', {}, None, 'hello', None),
+            ('test_agent_stream_calls', 'stream_text', {'delta': True, 'debounce_by': None}, ['he', 'llo'], None, None),
+            ('test_agent_stream_calls', 'get_output', {}, None, 'hello', None),
+            ('test_agent_stream_calls', 'validate_response_output', {'allow_partial': False}, None, 'hello', None),
+            (
+                'test_agent_stream_calls',
+                'stream_output',
+                {'debounce_by': None},
+                [{'value': 4}, {'value': 42}, {'value': 42}],
+                None,
+                None,
+            ),
+            (
+                'test_agent_stream_calls',
+                'validate_response_output',
+                {'allow_partial': True},
+                None,
+                None,
+                """\
+ValidationError: 1 validation error for Answer
+value
+  Field required [type=missing, input_value={}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.14/v/missing\
+""",
+            ),
+            ('test_agent_stream_calls', 'validate_response_output', {'allow_partial': True}, None, {'value': 4}, None),
+            ('test_agent_stream_calls', 'validate_response_output', {'allow_partial': True}, None, {'value': 42}, None),
+            (
+                'test_agent_stream_calls',
+                'validate_response_output',
+                {'allow_partial': False},
+                None,
+                {'value': 42},
+                None,
+            ),
+            ('test_agent_stream_calls', 'get_output', {}, None, {'value': 42}, None),
+            (
+                'test_agent_stream_calls',
+                'get_output',
+                {},
+                None,
+                None,
+                'UnexpectedModelBehavior: Output validation failed during streaming, and retries are not supported in `run_stream()`',
+            ),
+            (
+                'test_agent_stream_calls',
+                'validate_response_output',
+                {'allow_partial': False},
+                None,
+                None,
+                'UnexpectedModelBehavior: Output validation failed during streaming, and retries are not supported in `run_stream()`',
+            ),
+            (
+                'test_agent_stream_calls',
+                'stream_text',
+                {'delta': False, 'debounce_by': None},
+                ['he'],
+                None,
+                'RuntimeError: stream failed',
+            ),
+        ]
+    )
+    spans = [record for record in records if record['kind'] == 'span']
+    assert [
+        (
+            record['node'].split('::')[1],
+            record['number'],
+            record['parent'],
+            record['name'],
+            record['span_kind'],
+            record['scope'],
+            record['status'],
+            record['events'],
+        )
+        for record in spans
+    ] == snapshot(
+        [
+            (
+                'test_spans',
+                0,
+                None,
+                'invoke_agent agent',
+                'INTERNAL',
+                'pydantic-ai',
+                {'code': 'ERROR', 'description': 'LookupError: tool failed'},
+                [
+                    {
+                        'name': 'exception',
+                        'attributes': {
+                            'exception.type': 'LookupError',
+                            'exception.message': 'tool failed',
+                            'exception.escaped': 'False',
+                        },
+                    }
+                ],
+            ),
+            (
+                'test_spans',
+                1,
+                0,
+                'chat function:call_and_fail:',
+                'CLIENT',
+                'pydantic-ai',
+                {'code': 'UNSET', 'description': None},
+                [],
+            ),
+            (
+                'test_spans',
+                2,
+                0,
+                'execute_tool fail',
+                'INTERNAL',
+                'pydantic-ai',
+                {'code': 'ERROR', 'description': None},
+                [
+                    {
+                        'name': 'exception',
+                        'attributes': {
+                            'exception.type': 'LookupError',
+                            'exception.message': 'tool failed',
+                            'exception.escaped': 'True',
+                        },
+                    }
+                ],
+            ),
+            (
+                'test_spans_of_a_tracer',
+                0,
+                'external',
+                'outer',
+                'INTERNAL',
+                'test',
+                {'code': 'UNSET', 'description': None},
+                [],
+            ),
+            ('test_spans_of_a_tracer', 1, 0, 'inner', 'INTERNAL', 'test', {'code': 'UNSET', 'description': None}, []),
+        ]
+    )
+    assert next(record['attributes'] for record in spans if record['name'] == 'execute_tool fail') == snapshot(
+        {
+            'gen_ai.operation.name': 'execute_tool',
+            'gen_ai.tool.name': 'fail',
+            'gen_ai.tool.call.id': 'fail',
+            'gen_ai.tool.call.arguments': '{}',
+            'gen_ai.agent.name': 'agent',
+            'gen_ai.agent.call.id': 'UUID',
+            'gen_ai.conversation.id': 'UUID',
+            'logfire.msg': 'running tool: fail',
+            'logfire.json_schema': '{"type":"object","properties":{"gen_ai.tool.call.arguments":{"type":"object"},"gen_ai.tool.call.result":{"type":"object"},"gen_ai.tool.name":{},"gen_ai.tool.call.id":{}}}',
+        }
+    )
+
+
+def test_capture_records_an_unreadable_error_message_as_unrecorded(run: RunCapture, tmp_path: Path):
+    """An exception whose `__str__` raises, which a run event stream raises and a `pytest.raises` block catches, has its
+    message recorded as `unrecorded`, with the class of the error `__str__` raised, instead of the capture raising that
+    error into the test.
+    """
+    run(tmp_path, agent_runs=True).assert_outcomes(passed=10)
+
+    records = [json.loads(line) for line in (tmp_path / 'main.jsonl').read_text().splitlines()]
+    assert [
+        {key: value for key, value in record.items() if key in ('kind', 'error', 'exception')}
+        for record in records
+        if record['node'].endswith('::test_unformattable_error') and record['kind'] in ('run_event_stream', 'exception')
+    ] == snapshot(
+        [
+            {'kind': 'run_event_stream', 'error': {'unrecorded': 'Unformattable: `str()` raised RuntimeError'}},
+            {
+                'kind': 'exception',
+                'exception': {
+                    'type': 'test_agent_runs.Unformattable',
+                    'message': {'unrecorded': '`str()` raised RuntimeError'},
+                    'suppress_context': True,
+                },
+            },
+        ]
+    )
+
+
+def test_capture_records_only_the_tool_metadata_json_can_write(run: RunCapture, tmp_path: Path):
+    """A request record of an in-process model or an `MCPSamplingModel`, and a hook record's tool definition, keep each
+    tool metadata value `json` can write, and record a model as `unrecorded`, with its class, without serializing it:
+    the test that counts its serializer's calls passes.
+    """
+    run(tmp_path, agent_runs=True).assert_outcomes(passed=10)
+
+    records = [json.loads(line) for line in (tmp_path / 'main.jsonl').read_text().splitlines()]
+    assert [
+        (
+            record['node'].split('::')[1],
+            record['target'].rsplit('.', 2)[1:],
+            [tool['metadata'] for tool in record['model_request_parameters']['function_tools']]
+            if record['kind'] == 'request'
+            else record['kwargs']['tool_def']['metadata'],
+        )
+        for record in records
+        if '::test_tool_metadata[' in record['node'] and record['kind'] in ('request', 'hook')
+    ] == snapshot(
+        [
+            (
+                'test_tool_metadata[test]',
+                ['TestModel', 'request'],
+                [
+                    {
+                        'tracked': {'unrecorded': 'test_agent_runs.test_tool_metadata.<locals>.Tracked'},
+                        'plain': {'kind': 'lookup', 'tags': ['a']},
+                    }
+                ],
+            ),
+            (
+                'test_tool_metadata[test]',
+                ['CombinedCapability', 'wrap_tool_validate'],
+                {
+                    'tracked': {'unrecorded': 'test_agent_runs.test_tool_metadata.<locals>.Tracked'},
+                    'plain': {'kind': 'lookup', 'tags': ['a']},
+                },
+            ),
+            (
+                'test_tool_metadata[test]',
+                ['CombinedCapability', 'before_tool_validate'],
+                {
+                    'tracked': {'unrecorded': 'test_agent_runs.test_tool_metadata.<locals>.Tracked'},
+                    'plain': {'kind': 'lookup', 'tags': ['a']},
+                },
+            ),
+            (
+                'test_tool_metadata[test]',
+                ['CombinedCapability', 'after_tool_validate'],
+                {
+                    'tracked': {'unrecorded': 'test_agent_runs.test_tool_metadata.<locals>.Tracked'},
+                    'plain': {'kind': 'lookup', 'tags': ['a']},
+                },
+            ),
+            (
+                'test_tool_metadata[test]',
+                ['CombinedCapability', 'wrap_tool_execute'],
+                {
+                    'tracked': {'unrecorded': 'test_agent_runs.test_tool_metadata.<locals>.Tracked'},
+                    'plain': {'kind': 'lookup', 'tags': ['a']},
+                },
+            ),
+            (
+                'test_tool_metadata[test]',
+                ['CombinedCapability', 'before_tool_execute'],
+                {
+                    'tracked': {'unrecorded': 'test_agent_runs.test_tool_metadata.<locals>.Tracked'},
+                    'plain': {'kind': 'lookup', 'tags': ['a']},
+                },
+            ),
+            (
+                'test_tool_metadata[test]',
+                ['CombinedCapability', 'after_tool_execute'],
+                {
+                    'tracked': {'unrecorded': 'test_agent_runs.test_tool_metadata.<locals>.Tracked'},
+                    'plain': {'kind': 'lookup', 'tags': ['a']},
+                },
+            ),
+            (
+                'test_tool_metadata[test]',
+                ['TestModel', 'request'],
+                [
+                    {
+                        'tracked': {'unrecorded': 'test_agent_runs.test_tool_metadata.<locals>.Tracked'},
+                        'plain': {'kind': 'lookup', 'tags': ['a']},
+                    }
+                ],
+            ),
+            (
+                'test_tool_metadata[sampling]',
+                ['MCPSamplingModel', 'request'],
+                [
+                    {
+                        'tracked': {'unrecorded': 'test_agent_runs.test_tool_metadata.<locals>.Tracked'},
+                        'plain': {'kind': 'lookup', 'tags': ['a']},
+                    }
+                ],
+            ),
+        ]
+    )
+
+
 @pytest.mark.skipif(
     any(importlib.util.find_spec(name) is None for name in ('temporalio', 'dbos', 'prefect')),
     reason='`temporalio`, `dbos` or `prefect` not installed',
@@ -2629,6 +3213,9 @@ ui records: head 0
 realtime records: head 0
 session records: head 0
 hook records: head 0
+run event stream records: head 0
+agent stream records: head 0
+span records: head 0
 exception records: head 1
 warning records: head 0
 temporal workflow run records: head 2
@@ -2641,6 +3228,9 @@ nodes per ui target, head:
 nodes per realtime target, head:
 nodes per session target, head:
 nodes per hook target, head:
+nodes per run event kind, head:
+nodes per agent stream target, head:
+nodes per span name, head:
 nodes per temporal workflow run target, head:
   First: 1
   Second: 1
@@ -2904,13 +3494,18 @@ def test_capture_needs_the_plugin_and_its_directory(pytester: pytest.Pytester, m
 
 
 def test_capture_stops_the_run_when_it_misses_the_canary_stream(tmp_path: Path):
-    """A canary stream the capture doesn't see fails the run instead of the capture recording nothing.
+    """A canary stream, run event stream, `AgentStream` call or span the capture doesn't see fails the run instead of
+    the capture recording nothing.
 
-    The capture's `__aiter__` wrappers aren't installed, standing in for streams iterated some way they don't reach.
+    The capture's wrappers aren't installed, standing in for streams iterated, and spans ended, some way they don't
+    reach.
     """
     unwrapped = StreamedResponse.__aiter__
-    with pytest.raises(pytest.UsageError, match='was not recorded'):
+    with pytest.raises(pytest.UsageError) as exc_info:
         RefactorCapture(tmp_path).check_stream_hook()
+    assert str(exc_info.value) == snapshot(
+        'The stream events and run event stream and `AgentStream` calls and spans of a canary agent run were not recorded, so the capture would miss them. Update `tests/refactor_capture.py` to the way they are made now.'
+    )
     assert StreamedResponse.__aiter__ is unwrapped
 
 
@@ -3194,13 +3789,16 @@ def test_compare_flags_a_changed_event_or_request(run: RunCapture, tmp_path: Pat
     assert compare(base, changed) == 1
     assert capsys.readouterr().out == snapshot("""\
 nodes: base 10, head 10
-records: base 22, head 22
+records: base 26, head 26
 stream events: head 11
 requests: head 10
 ui records: head 0
 realtime records: head 0
 session records: head 0
 hook records: head 6
+run event stream records: head 4
+agent stream records: head 0
+span records: head 0
 exception records: head 1
 warning records: head 1
 temporal workflow run records: head 0
@@ -3227,6 +3825,11 @@ nodes per hook target, head:
   pydantic_ai.capabilities.combined.CombinedCapability.before_tool_validate: 1
   pydantic_ai.capabilities.combined.CombinedCapability.wrap_tool_execute: 1
   pydantic_ai.capabilities.combined.CombinedCapability.wrap_tool_validate: 1
+nodes per run event kind, head:
+  function_tool_call: 1
+  function_tool_result: 1
+nodes per agent stream target, head:
+nodes per span name, head:
 nodes per temporal workflow run target, head:
 nodes per dbos workflow target, head:
 nodes per durable name target, head:
@@ -3236,13 +3839,16 @@ nodes that recorded no request, realtime or session record, head: 2
   test_streams.py::test_subclass_defined_after_the_capture_started
 only in base: 0, only in head: 0, differing: 0
 nodes: base 10, head 9
-records: base 22, head 19
+records: base 26, head 23
 stream events: head 9
 requests: head 9
 ui records: head 0
 realtime records: head 0
 session records: head 0
 hook records: head 6
+run event stream records: head 4
+agent stream records: head 0
+span records: head 0
 exception records: head 0
 warning records: head 1
 temporal workflow run records: head 0
@@ -3269,6 +3875,11 @@ nodes per hook target, head:
   pydantic_ai.capabilities.combined.CombinedCapability.before_tool_validate: 1
   pydantic_ai.capabilities.combined.CombinedCapability.wrap_tool_execute: 1
   pydantic_ai.capabilities.combined.CombinedCapability.wrap_tool_validate: 1
+nodes per run event kind, head:
+  function_tool_call: 1
+  function_tool_result: 1
+nodes per agent stream target, head:
+nodes per span name, head:
 nodes per temporal workflow run target, head:
 nodes per dbos workflow target, head:
 nodes per durable name target, head:
@@ -3426,6 +4037,9 @@ ui records: head 1
 realtime records: head 0
 session records: head 0
 hook records: head 0
+run event stream records: head 0
+agent stream records: head 0
+span records: head 0
 exception records: head 0
 warning records: head 0
 temporal workflow run records: head 0
@@ -3439,6 +4053,9 @@ nodes per ui target, head:
 nodes per realtime target, head:
 nodes per session target, head:
 nodes per hook target, head:
+nodes per run event kind, head:
+nodes per agent stream target, head:
+nodes per span name, head:
 nodes per temporal workflow run target, head:
 nodes per dbos workflow target, head:
 nodes per durable name target, head:
@@ -3555,6 +4172,7 @@ def test_normalized_replaces_values_that_change_between_runs():
             'other_hex': '0123456789abcdef0123456789abcdef',
             'capability_key': '<thinking:0a1b2c>',
             'latency_ms': 12.5,
+            'gen_ai.client.operation.time_to_first_chunk': 0.000741666997782886,
             'plan': 'Current plan:\n1. [ ] [0a1b2c3d] a\n2. [x] [4e5f6a7b] b',
             'added_step': "Added step 'a' with id: 0a1b2c3d",
             'echoed_step_id': {'task_id': '0a1b2c3d'},
@@ -3589,6 +4207,8 @@ def test_normalized_replaces_values_that_change_between_runs():
                 'tiny': {'duration': 9.5367431640625e-07},
             },
             'set_duration': {'action': 'wait', 'duration': 2.5},
+            'delegation_finished': {'outcome': 'ok', 'duration_ms': 16.999249997752486},
+            'task_question': {'question_id': 'cb05e2415528', 'question': 'a'},
             'timers': [{'start_to_fire_timeout': '0.099999624s'}, {'start_to_fire_timeout': '0.100s'}],
             'workflow_result': '[{"history_digest":"35a4e6e45d1d07a2fc4e901f819028c8915756b6e7dfae805874a8fa012d69b7"}]',
             'sorted_ticket': {
@@ -3646,6 +4266,7 @@ def test_normalized_replaces_values_that_change_between_runs():
             'other_hex': '0123456789abcdef0123456789abcdef',
             'capability_key': '<thinking:ID>',
             'latency_ms': 'LATENCY',
+            'gen_ai.client.operation.time_to_first_chunk': 'DURATION',
             'plan': 'Current plan:\n1. [ ] [STEP_ID] a\n2. [x] [STEP_ID] b',
             'added_step': "Added step 'a' with id: STEP_ID",
             'echoed_step_id': {'task_id': '0a1b2c3d'},
@@ -3678,6 +4299,8 @@ def test_normalized_replaces_values_that_change_between_runs():
                 'tiny': {'duration': 'DURATION'},
             },
             'set_duration': {'action': 'wait', 'duration': 2.5},
+            'delegation_finished': {'outcome': 'ok', 'duration_ms': 'DURATION'},
+            'task_question': {'question_id': 'QUESTION_ID', 'question': 'a'},
             'timers': [{'start_to_fire_timeout': 'DURATION'}, {'start_to_fire_timeout': '0.100s'}],
             'workflow_result': '[{"history_digest":"DIGEST"}]',
             'sorted_ticket': {

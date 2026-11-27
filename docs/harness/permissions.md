@@ -137,6 +137,31 @@ An allow rule trusts everything after its words, so allowing `find` also allows 
 
 In an agent spec, `rules` is a list of mappings of these fields (`PermissionRuleSpec`), with `tools` limited to the serializable forms.
 
+## Protected paths
+
+`protected_paths` names paths only a person may approve a change to, such as the agent's own settings, as globs. `protected_commands` names commands that change them, such as the agent's own settings command, as words like an ask rule's `command`. Outside `'full'`, a call that changes one always asks:
+
+```python
+from pydantic_ai_harness.permissions import Permissions
+
+permissions = Permissions(
+    'auto',
+    protected_paths=['/home/me/.config/my-agent', '/home/me/.config/my-agent/*', '.git/hooks/*'],
+    protected_commands=['my-agent config set'],
+)
+```
+
+- A **file write** to a matching path asks. The path is matched as resolved against the working directory and, where the workspace can follow symlinks, as where it leads. A relative glob also matches the end of a path, so `.git/hooks/*` covers every repository's hooks. A glob for a folder matches only the folder itself, so list `dir/*` too for what is in it, as above. Case is ignored, as macOS and Windows file systems do by default.
+- A **command** asks when one of its words names a matching path, or when it matches one of `protected_commands`, by the same word matching as an ask rule's `command`. Words are split as the shell would, so quotes and, on POSIX, backslash escapes keep a space in a path, and on Windows backslashes are separators.
+    - **Every word counts**: redirection targets, `--option=value` values, a value attached to a short option, as in `-o.pax/x` or `-vt.git/hooks`, a PowerShell parameter's `-Path:value`, and the parts of an interpreter's one-liner, as in `python -c "open('.pax/x', 'w')"`. So do the words of a script a shell runs with `-c`, as in `sh -c '...'`, or one `eval` runs. `~` and environment variables are expanded as in this process.
+    - **Wildcards and braces**: a word with wildcards, such as `.git/hook?/pre-commit` or `.pa[x]/x`, asks when a path it could expand to matches, and on POSIX braces are expanded, as in `.pa{x,y}/x`. As in POSIX shells by default, a wildcard doesn't match a name's leading `.`, so `cp dist/* out/` runs while `cp dist/.* out/` asks, but a pattern's group, such as bash's `@(...)` or zsh's `*(D)`, may match one. On Windows, PowerShell's wildcards match a leading `.`, so any wildcard may.
+    - **A command that can't be checked asks**: one too long, one nesting scripts too deep, one with a word holding too many short options or braces that expand to too many words, one with a wildcard that could expand to `.` or `..`, such as `.*`, as it changes where the rest of the path leads, and one that mentions an option letting wildcards match a leading `.`, such as `dotglob`, `GLOBIGNORE` or zsh's `globdots`, as a persistent shell keeps it for the commands after. Inside a durable run, where a replay may run in a process with another environment, nothing is expanded, so a command with a word that would need it asks too.
+    - **Reading commands run**: a command made only of programs that read the files they name (`cat`, `grep`, `head`, `ls`, and a few more), run by name rather than by a path such as `./cat` and without redirection.
+    - **Not seen**: a path a command builds at run time, as with `cd .git && ...`, a `$(...)` substitution, a variable the command sets itself, or a script the agent wrote, and an option letting wildcards match a leading `.` that was set some other way, as by a shell's rc file or an earlier command a person approved.
+- A rule's allow does not let such a call run, and a rule's deny still refuses it. The call is held as soon as its arguments are valid, before a tool registered with `requires_approval=True` or another capability defers it. The held request's `PermissionRequest.person_only` is `True`, and an [`ApprovalReviewer`](approval-reviewer.md) never reviews it. A `PermissionDecision(remember=True)` doesn't cover later calls either, so a person approves each one.
+
+The check is best effort, by the command's text. It keeps an agent from changing these paths without a person noticing, and is not a sandbox: use [one](../workspace.md) when the agent must not reach a path.
+
 ## Changing the mode during a run
 
 `mode` can be a function of the run context. It is read on every call, so an application can switch modes while a run is going, and the run's next call follows the new mode:

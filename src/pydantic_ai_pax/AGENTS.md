@@ -255,7 +255,9 @@ Plugins load and unload while Pax runs. The rules that make that safe:
   cannot widen anything. `update_channel` is user-only, rejected in a project file.
   Approval is a `/command` only, never a `pax` subcommand, because the agent
   can run `pax` from its shell. For the same reason `pax config` refuses a
-  change `widens` (`refuse_widening`), and `pax plugins` only lists. Unapproved `instructions` go to the model as
+  change `widens` (`refuse_widening`), and `pax plugins` only lists. Outside `full`,
+  `runtime/permissions.py`'s `protected_paths` and `PROTECTED_COMMANDS` make every change to
+  Pax's own settings ask; extend them when Pax keeps settings somewhere new. Unapproved `instructions` go to the model as
   `ProjectInstructions` user-channel data, never as `Session.instructions`.
   Default-on CLI `.env` loading is a deliberate exception to this repository-content
   trust rule: it assumes trusted launch and parent directories, without plugin

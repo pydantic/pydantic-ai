@@ -28,6 +28,7 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Let a second model approve low-risk calls that need approval, and ask a person about the rest | `ApprovalReviewer(model, question=..., tools=...)` |
 | Ask a person before file writes and commands, by permission mode (full, auto, read-only) | `Permissions(mode)` with core `HandleDeferredToolCalls(approval_ask(approver))` |
 | Allow, ask about, or deny tool calls and shell commands by rule | `Permissions(rules=[PermissionRule(...)])` |
+| Always ask a person before changes to the agent's own settings | `Permissions(protected_paths=[...], protected_commands=[...])` |
 | Cap USD or tokens per day/month/run, per tenant, across workers | `SpendLimits(budgets=[Budget(...)])` |
 | Cap tokens/cost for one run only | core `UsageLimits` (no harness capability needed) |
 | Tell the model how much of its usage limits and spend budgets is left, every request | `ReportRemainingBudget(spend_limits=...)` |
@@ -430,6 +431,13 @@ whatever the order. A compound command runs by rule only if an allow rule matche
 an ask or deny rule matching any one decides it. An allow skips `'read-only'`'s blanket ask but not `ask_commands`.
 A denied call returns a `ToolReturnPart` with `outcome='denied'`, even when it was approved.
 
+`protected_paths` (globs) and `protected_commands` (command words) mark what only a person may approve a change to,
+such as the agent's own settings: outside `'full'`, a file write to a matching path, a command naming one in a word
+(unless it only runs reading programs such as `cat`), or a matching command always asks, whatever the rules allow,
+and the request is `person_only`: `ApprovalReviewer` never reviews it and `remember=True` doesn't cover later calls.
+A deny rule still refuses it. It is checked best effort, by the command's
+text.
+
 ```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import HandleDeferredToolCalls, LocalWorkspace
@@ -651,8 +659,8 @@ print(agent.run_sync('Set up storage').output)
   `DeferredToolResults(calls={call.tool_call_id: ask_user_result(request, response)})`.
 - Observe with `AskUserRequestedEvent` / `AskUserAnsweredEvent`. An answerer that raises still
   emits the answered event, with `failed=True`, before its error propagates. Two `AskUser` on one agent
-  collide on the tool name. It has a spec name, but a spec cannot supply the `answerer` callable,
-  so pass it with `capabilities=` on `Agent.from_spec`/`Agent.from_file`.
+  collide on the tool name. A spec can set `answerer` only to `null`, which defers every call as above;
+  pass an `AskUser` with an answerer callable with `capabilities=` on `Agent.from_spec`/`Agent.from_file`.
 
 ## Deny Unanswered
 

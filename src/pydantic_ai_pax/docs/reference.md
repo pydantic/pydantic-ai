@@ -110,7 +110,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `run.tool_retries` | `3` | Default retries per tool call. Explicit tool retry limits take precedence. |
 | `run.code_mode` | `true` | Fold tools into a sandboxed run_code that runs each statement while the model writes. Off, every tool is called natively. |
 | `run.speculative_code_mode` | `false` | Also start read-only calls in run_code before the model reaches them. Turns on code mode for its runs. Ctrl+X Ctrl+S toggles it. |
-| `run.permissions` | `"full"` | What runs without asking: full runs everything; auto asks before commands that delete, push, install, or reach the network; read-only asks before every file write and command. /permissions sets it. |
+| `run.permissions` | `"full"` | What runs without asking: full runs everything; auto asks before commands that delete, push, install, or reach the network, always asks before changes to Pax's own settings, and gives run_code the workspace read-only; read-only asks before every file write and command. /permissions sets it. |
 | `run.instructions` | `""` | Your own instructions, sent after Pax's built-in, AGENTS.md, and plugin instructions. /system_prompt edits them. |
 | `accounts.pool` | `true` | A model without @PROFILE runs on every signed-in account of its provider, in /accounts order, as @* does. PROVIDER@default:MODEL runs the default account alone. |
 | `sessions.naming` | `true` | Name saved sessions in the background using a model, at extra cost. By default only sessions held with the current model are named; once saved, even as true, every session from any workspace is. |
@@ -2185,7 +2185,9 @@ not the filesystem the file tools act on there.
   `read_only_patterns` set, or a `ToolGuardrail` or `ToolCallJudge` (a plugin's
   or the agent's own) that checks or hides `write_file`, `edit_file`, `shell`,
   or `run_code`. Any bound `Permissions` in `read-only` mode (the session's,
-  the agent's own, or a plugin's) mounts it read-only for that run.
+  the agent's own, or a plugin's) mounts it read-only for that run, and so does
+  one with protected paths outside `full`, such as the session's under `auto`,
+  since `pathlib` could change Pax's settings without asking.
 - **Not mounted:** no `read_file`, `allowed_patterns` or `denied_patterns`, a
   `ToolGuardrail` or `ToolCallJudge` that may check or hide `read_file`, no
   `FileSystem`, more than one, a supplied agent that does not expose its
@@ -2294,9 +2296,9 @@ that code mode's sandbox keeps the folder as the turn mounted it until the next 
 The mode is the `run.permissions` setting: `/permissions MODE` saves it as the default for new sessions too,
 and Settings, General edits it. It is harness [`Permissions`](../../../docs/harness/permissions.md), which checks
 the coding tools' file writes and commands only; other tools, such as MCP servers', run as before. File tools
-only reach files inside the session's folder, so `auto` lets them write. In `full` and `auto`, where code mode's
+only reach files inside the session's folder, so `auto` lets them write. In `full`, where code mode's
 sandbox mounts the folder read-write, `pathlib` there can also delete and rename files in it without asking; in
-`read-only`, the sandbox gets the folder read-only for the run. The command patterns are a convenience, not a sandbox. A session no one
+`auto` and `read-only`, the sandbox gets the folder read-only for the run. The command patterns are a convenience, not a sandbox. A session no one
 can be asked in, such as `pax -p` or a web session with questions turned off, uses harness
 [`DenyUnanswered`](../../../docs/harness/deny-unanswered.md): it denies the calls `Permissions` held, saying
 `/permissions full` lets them run, denies any other call that needs approval (such as an MCP tool's) with the
@@ -2305,6 +2307,20 @@ the run finishes. A session with the terminal picker or the web UI's approval ca
 sub-agent, or a delegation to `self` from an agent you supply (`pax --agent`), which gets `/permissions`
 per run rather than bound to the agent. The model is told to do the work itself instead. Outside `full` the model also gets no
 [`computer`](#computer-use-computer-use) tool.
+
+Outside `full`, a change to Pax's own settings always asks, and only you can approve it, one call at a time
+(the question offers no **Approve for this session**): a file write to your
+[Pax folder](#files) (its settings database, credential files, and `plugins/`), to the database and `plugins/`
+folder `--database` names, to any `.pax/` or `.clai/` folder, or to a repository's `.git/hooks/` or `.git/config`
+(where `core.hooksPath` can move the hooks); a shell command
+that names one of these in an argument or redirection, unless it only reads them with a program such as `cat` or
+`grep`; `pax config set` or `reset` and `pax plugins add`, `enable`, `disable`, or `remove`; and `git config`,
+which can set `core.hooksPath` (reads such as `git config --get` ask too, as does any `git` command with a later
+`config` word, such as `git add config`). Under `auto`, Code Mode's `run_code`
+mounts the workspace read-only, so `pathlib` can't make such a change unasked. A session no one
+can be asked in denies them. Commands are matched by their words, so one that builds the path as it runs, such as
+`cd .pax && ...` or a script the agent wrote, is not caught: like the command patterns, this is a convenience, not
+a sandbox. `full` lets these run too.
 
 ### Compacting the conversation
 

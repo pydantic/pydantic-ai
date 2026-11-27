@@ -1,16 +1,18 @@
-"""Tests for `Permissions`."""
+"""Tests for `Permissions`, its `protected_paths` and `protected_commands` included."""
 
 from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
 from pydantic_ai import Agent, DeferredToolRequests, Tool
-from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, LocalWorkspace
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, LocalWorkspace, ValidatedToolArgs
+from pydantic_ai.exceptions import ApprovalRequired, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -21,9 +23,10 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.tools import DeferredToolResults, RunContext, ToolApproved
+from pydantic_ai.tools import DeferredToolResults, RunContext, ToolApproved, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai.workspaces import CommandResult, Workspace, WorkspaceCommand, WorkspaceRef
+from pydantic_ai.workspaces import CommandResult, Workspace, WorkspaceBackend, WorkspaceCommand, WorkspaceRef
+from pydantic_ai_harness.approval_reviewer import ApprovalReviewer
 from pydantic_ai_harness.file_system import WRITE_FILE_KIND, FileSystem
 from pydantic_ai_harness.permissions import (
     DEFAULT_ASK_COMMANDS,
@@ -40,6 +43,10 @@ from pydantic_ai_harness.permissions import (
 )
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.sub_agents import SubAgents
+from tests.conftest import try_import
+
+with try_import() as prefect_installed:
+    from pydantic_ai.durable_exec.prefect._cache_policies import PrefectAgentInputs
 
 
 def _calls(*calls: tuple[str, Mapping[str, object]]) -> FunctionModel:
@@ -716,7 +723,7 @@ class TestPermissionRules:
         self, monkeypatch: pytest.MonkeyPatch, verdict: PermissionVerdict, expected: str
     ) -> None:
         """A huge command could block the event loop to parse: ask and deny rules make it ask, else the mode decides."""
-        monkeypatch.setattr('pydantic_ai_harness.permissions._rules._COMMAND_LIMIT', 8)
+        monkeypatch.setattr('pydantic_ai_harness.permissions._rules.COMMAND_LIMIT', 8)
 
         assert await _verdict('echo 123456789', [PermissionRule(verdict, command='curl')], 'full') == expected
 
@@ -857,3 +864,881 @@ class TestPermissionRules:
             'auto',
             [PermissionRule('deny', tools=['run_command'], command='git push')],
         )
+
+
+PROTECTED = ('.pax', '.pax/*', '.git/hooks/*')
+
+
+class _Denier:
+    """Denies every request, and keeps what it was asked."""
+
+    def __init__(self) -> None:
+        self.asked: list[PermissionRequest] = []
+
+    async def __call__(self, request: PermissionRequest) -> PermissionDecision:
+        self.asked.append(request)
+        return PermissionDecision(approved=False)
+
+
+def _safe_reviewer() -> FunctionModel:
+    """A reviewer model that says every call is safe, so it approves whatever it reviews."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'response': 'no'})])
+
+    return FunctionModel(respond)
+
+
+async def _protected_run(
+    tmp_path: Path,
+    *calls: tuple[str, Mapping[str, object]],
+    mode: PermissionMode = 'auto',
+    rules: Sequence[PermissionRule[None]] = (),
+    protected_commands: Sequence[str] = (),
+    protected_paths: Sequence[str] = PROTECTED,
+    extra: Sequence[AbstractCapability[None]] = (),
+) -> _Denier:
+    person = _Denier()
+    agent = Agent[None, 'str | DeferredToolRequests'](
+        _calls(*calls),
+        deps_type=type(None),
+        output_type=[str, DeferredToolRequests],
+        capabilities=[
+            LocalWorkspace(tmp_path),
+            FileSystem(),
+            Shell(denied_commands=[]),
+            Permissions(mode, rules=rules, protected_paths=protected_paths, protected_commands=protected_commands),
+            *extra,
+            HandleDeferredToolCalls[None](approval_ask(person)),
+        ],
+    )
+    await agent.run('go')
+    return person
+
+
+class TestProtectedPaths:
+    @pytest.mark.parametrize('path', ['.pax/settings.json', 'sub/../.pax/x', '.git/hooks/pre-commit', '.pax'])
+    async def test_auto_asks_before_a_write_to_a_protected_path(self, tmp_path: Path, path: str) -> None:
+        tool = 'create_directory' if path == '.pax' else 'write_file'
+        person = await _protected_run(
+            tmp_path, (tool, {'path': path, 'content': 'x'} if tool == 'write_file' else {'path': path})
+        )
+        [asked] = person.asked
+        assert asked.person_only and asked.action == 'write' and asked.subject == path
+        assert asked.reason == 'This file write changes a protected path, so only a person can approve it.'
+        assert not (tmp_path / path).exists()
+
+    async def test_a_link_into_a_protected_path_asks(self, tmp_path: Path) -> None:
+        (tmp_path / '.pax').mkdir()
+        (tmp_path / 'link').symlink_to('.pax')
+        person = await _protected_run(tmp_path, ('write_file', {'path': 'link/settings.json', 'content': 'x'}))
+        assert [asked.subject for asked in person.asked] == ['link/settings.json']
+
+    async def test_other_writes_and_reads_run(self, tmp_path: Path) -> None:
+        (tmp_path / '.pax').mkdir()
+        (tmp_path / '.pax' / 'settings.json').write_text('{}')
+        person = await _protected_run(
+            tmp_path,
+            ('write_file', {'path': 'notes.pax', 'content': 'x'}),
+            ('read_file', {'path': '.pax/settings.json'}),
+            ('run_command', {'command': 'cat .pax/settings.json && ls .git/hooks'}),
+        )
+        assert person.asked == []
+        assert (tmp_path / 'notes.pax').read_text() == 'x'
+
+    async def test_full_lets_a_protected_write_run(self, tmp_path: Path) -> None:
+        (tmp_path / '.pax').mkdir()
+        person = await _protected_run(
+            tmp_path, ('write_file', {'path': '.pax/settings.json', 'content': 'x'}), mode='full'
+        )
+        assert person.asked == []
+        assert (tmp_path / '.pax' / 'settings.json').read_text() == 'x'
+
+    async def test_an_allow_rule_does_not_let_a_protected_write_run(self, tmp_path: Path) -> None:
+        person = await _protected_run(
+            tmp_path,
+            ('write_file', {'path': '.pax/settings.json', 'content': 'x'}),
+            mode='read-only',
+            rules=[PermissionRule('allow', tools=['write_file'])],
+        )
+        assert [asked.person_only for asked in person.asked] == [True]
+
+    async def test_a_deny_rule_still_refuses_a_protected_write(self, tmp_path: Path) -> None:
+        (tmp_path / '.pax').mkdir()
+        person = await _protected_run(
+            tmp_path,
+            ('write_file', {'path': '.pax/settings.json', 'content': 'x'}),
+            rules=[PermissionRule('deny', tools=['write_file'])],
+        )
+        assert person.asked == []
+        assert not (tmp_path / '.pax' / 'settings.json').exists()
+
+    @pytest.mark.parametrize(
+        'command',
+        [
+            'echo x > .pax/settings.json',
+            'cat a >> .pax/settings.json',
+            'cp hook .git/hooks/pre-commit',
+            'rm .pax',
+            'sed -i s/a/b/ "./.pax/settings.json"',
+            'tool --out=.pax/settings.json',
+        ],
+    )
+    async def test_auto_asks_before_a_command_naming_a_protected_path(self, tmp_path: Path, command: str) -> None:
+        person = await _protected_run(tmp_path, ('run_command', {'command': command}))
+        [asked] = person.asked
+        assert asked.person_only and asked.action == 'command' and asked.subject == command
+        assert asked.reason == 'This command may change a protected path, so only a person can approve it.'
+        assert not (tmp_path / '.pax').exists()
+
+    async def test_a_protected_command_asks(self, tmp_path: Path) -> None:
+        commands = ['uv run settings set model x', 'echo $PATH', 'settings get model']
+        person = await _protected_run(
+            tmp_path, *(('run_command', {'command': c}) for c in commands), protected_commands=['settings set']
+        )
+        assert [(asked.subject, asked.person_only) for asked in person.asked] == [(commands[0], True)]
+
+    async def test_protected_commands_alone_leave_paths_unchecked(self, tmp_path: Path) -> None:
+        """With no `protected_paths`, only the protected command asks; a write the paths would cover runs."""
+        commands = ['settings set model x', 'mkdir -p .pax && echo x > .pax/settings.json']
+        person = await _protected_run(
+            tmp_path,
+            *(('run_command', {'command': c}) for c in commands),
+            protected_commands=['settings set'],
+            protected_paths=(),
+        )
+        assert [asked.subject for asked in person.asked] == [commands[0]]
+        assert (tmp_path / '.pax' / 'settings.json').exists()
+
+    async def test_a_reviewer_never_approves_a_protected_call(self, tmp_path: Path) -> None:
+        """A reviewer that says every call is safe approves the `git push`, but the protected write goes to the person."""
+        reviewer = ApprovalReviewer[None](_safe_reviewer(), question='Could this call do harm?')
+        (tmp_path / '.pax').mkdir()
+        person = await _protected_run(
+            tmp_path,
+            ('write_file', {'path': '.pax/settings.json', 'content': 'x'}),
+            ('run_command', {'command': 'git push --dry-run nowhere || true'}),
+            extra=[reviewer],
+        )
+        assert [asked.subject for asked in person.asked] == ['.pax/settings.json']
+        assert not (tmp_path / '.pax' / 'settings.json').exists()
+
+    async def test_without_a_handler_the_request_says_it_is_protected(self, tmp_path: Path) -> None:
+        agent = Agent[None, 'str | DeferredToolRequests'](
+            _calls(('write_file', {'path': '.pax/settings.json', 'content': 'x'})),
+            deps_type=type(None),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[LocalWorkspace(tmp_path), FileSystem(), Permissions('auto', protected_paths=PROTECTED)],
+        )
+        result = await agent.run('go')
+        assert isinstance(result.output, DeferredToolRequests)
+        assert [request.person_only for request in permission_requests(result.output)] == [True]
+
+    def test_from_spec_takes_the_protected_fields(self) -> None:
+        permissions = Permissions[None].from_spec('auto', protected_paths=['.pax/*'], protected_commands=['pax config'])
+        assert (permissions.protected_paths, permissions.protected_commands) == (['.pax/*'], ['pax config'])
+
+
+def _approval_required_shell(ran: list[str], *, requires_approval: bool = True) -> Tool[None]:
+    """A shell tool registered with `requires_approval=True`, so core defers it before any `before_tool_execute` hook."""
+
+    def run_command(command: str) -> str:
+        ran.append(command)
+        return 'ran'
+
+    return Tool(
+        run_command,
+        requires_approval=requires_approval,
+        metadata={'code_arg_language': 'shell', 'code_arg_name': 'command'},
+    )
+
+
+@dataclass
+class _KeepingResults(AbstractCapability[None]):
+    """Hands deferred calls to `reviewer`, and keeps what it answered."""
+
+    reviewer: ApprovalReviewer[None]
+    results: list[DeferredToolResults | None] = field(default_factory=list[DeferredToolResults | None])
+
+    async def handle_deferred_tool_calls(
+        self, ctx: RunContext[None], *, requests: DeferredToolRequests
+    ) -> DeferredToolResults | None:
+        result = await self.reviewer.handle_deferred_tool_calls(ctx, requests=requests)
+        self.results.append(result)
+        return result
+
+
+async def _reviewer_approved_call(*capabilities: AbstractCapability[None]) -> RunContext[None]:
+    """Run an unprotected call a reviewer approves, and return the context its tool ran with."""
+    seen: list[RunContext[None]] = []
+
+    def run_command(ctx: RunContext[None], command: str) -> str:
+        seen.append(ctx)
+        return 'ran'
+
+    agent = Agent[None, str](
+        _calls(('run_command', {'command': 'echo x > notes.md'})),
+        deps_type=type(None),
+        tools=[Tool(run_command, requires_approval=True)],
+        capabilities=[*capabilities, ApprovalReviewer[None](_safe_reviewer(), question='Could this call do harm?')],
+    )
+    await agent.run('go')
+    [ctx] = seen
+    return ctx
+
+
+def _prefect_key(ctx: RunContext[None]) -> str | None:
+    """The key Prefect caches a tool call under, from its `RunContext` and arguments."""
+    return PrefectAgentInputs().compute_key(
+        task_ctx=MagicMock(), inputs={'ctx': ctx, 'args': {'command': 'echo x > notes.md'}}, flow_parameters={}
+    )
+
+
+class _DefersFirst(AbstractCapability[None]):
+    """Defers every call from `after_tool_validate`, before `Permissions` sees it, without saying it is protected."""
+
+    async def after_tool_validate(
+        self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return args
+
+
+class TestProtectedCallsDeferredBeforePermissions:
+    """A protected call deferred by `requires_approval=True` is still for a person only."""
+
+    async def test_a_reviewer_leaves_it_to_the_person(self, tmp_path: Path) -> None:
+        ran: list[str] = []
+        person = _Denier()
+        agent = Agent[None, str](
+            _calls(('run_command', {'command': 'echo x > .pax/settings.json'})),
+            deps_type=type(None),
+            tools=[_approval_required_shell(ran)],
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                Permissions('auto', protected_paths=PROTECTED),
+                ApprovalReviewer[None](_safe_reviewer(), question='Could this call do harm?'),
+                HandleDeferredToolCalls[None](approval_ask(person)),
+            ],
+        )
+        await agent.run('go')
+        assert [(asked.subject, asked.person_only) for asked in person.asked] == [('echo x > .pax/settings.json', True)]
+        assert ran == []
+
+    async def test_a_reviewer_approval_of_a_call_another_capability_deferred_first_holds_it_for_a_person(
+        self, tmp_path: Path
+    ) -> None:
+        """That request doesn't say the call is protected, so the reviewer approves it, which doesn't let it run."""
+        ran: list[str] = []
+        command = 'echo x > .pax/settings.json'
+        agent = Agent[None, 'str | DeferredToolRequests'](
+            _calls(('run_command', {'command': command})),
+            deps_type=type(None),
+            output_type=[str, DeferredToolRequests],
+            tools=[_approval_required_shell(ran, requires_approval=False)],
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                Permissions('auto', protected_paths=PROTECTED),
+                _DefersFirst(),
+                ApprovalReviewer[None](_safe_reviewer(), question='Could this call do harm?'),
+            ],
+        )
+        result = await agent.run('go')
+        assert isinstance(result.output, DeferredToolRequests)
+        assert [(r.subject, r.person_only) for r in permission_requests(result.output)] == [(command, True)]
+        assert ran == []
+
+    async def test_an_unprotected_call_still_goes_to_the_reviewer(self, tmp_path: Path) -> None:
+        ran: list[str] = []
+        person = _Denier()
+        agent = Agent[None, str](
+            _calls(('run_command', {'command': 'echo x > notes.md'})),
+            deps_type=type(None),
+            tools=[_approval_required_shell(ran)],
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                Permissions('auto', protected_paths=PROTECTED),
+                ApprovalReviewer[None](_safe_reviewer(), question='Could this call do harm?'),
+                HandleDeferredToolCalls[None](approval_ask(person)),
+            ],
+        )
+        await agent.run('go')
+        assert person.asked == []
+        assert ran == ['echo x > notes.md']
+
+    async def test_a_reviewer_approval_on_resume_still_asks_a_person(self, tmp_path: Path) -> None:
+        """Results a reviewer gave for the call where nothing marked it protected, such as before `.pax` was."""
+        command = 'echo x > .pax/settings.json'
+        reviewer = _KeepingResults(ApprovalReviewer[None](_safe_reviewer(), question='Could this call do harm?'))
+        unprotected = Agent[None, str](
+            _calls(('run_command', {'command': command})),
+            deps_type=type(None),
+            tools=[_approval_required_shell([])],
+            capabilities=[Permissions('auto', protected_paths=['.git/hooks/*']), reviewer],
+        )
+        await unprotected.run('go')
+        [approvals] = reviewer.results
+        assert approvals is not None
+        assert list(approvals.approvals) == ['call0']
+
+        ran: list[str] = []
+        protected = Agent[None, 'str | DeferredToolRequests'](
+            _calls(('run_command', {'command': command})),
+            deps_type=type(None),
+            output_type=[str, DeferredToolRequests],
+            tools=[_approval_required_shell(ran)],
+            capabilities=[LocalWorkspace(tmp_path), Permissions('auto', protected_paths=PROTECTED)],
+        )
+        held = await protected.run('go')
+        resumed = await protected.run(message_history=held.all_messages(), deferred_tool_results=approvals)
+        assert isinstance(resumed.output, DeferredToolRequests)
+        assert [(r.subject, r.person_only) for r in permission_requests(resumed.output)] == [(command, True)]
+        assert ran == []
+
+    @pytest.mark.parametrize(
+        'permissions',
+        [
+            pytest.param([], id='no-permissions'),
+            pytest.param([Permissions[None]('auto')], id='nothing-protected'),
+        ],
+    )
+    async def test_without_protection_a_reviewer_approval_leaves_the_call_as_it_was(
+        self, permissions: list[AbstractCapability[None]]
+    ) -> None:
+        """No marker in its `tool_call_metadata`, so neither the tool nor a durable cache key sees a change."""
+        seen = await _reviewer_approved_call(*permissions)
+        assert seen.tool_call_approved and seen.tool_call_metadata is None
+        if prefect_installed():  # pragma: no branch
+            assert _prefect_key(seen) == _prefect_key(replace(seen, tool_call_metadata=None))
+
+    @pytest.mark.parametrize(
+        'permissions',
+        [
+            pytest.param(Permissions[None]('auto', protected_paths=['.git/hooks/*']), id='protected-paths'),
+            pytest.param(Permissions[None]('auto', protected_commands=['pax config']), id='protected-commands'),
+            pytest.param(Permissions[None]('auto', protected_paths=['.git/hooks/*']).prefix_tools('p'), id='wrapped'),
+        ],
+    )
+    async def test_with_protection_a_reviewer_approval_is_marked(self, permissions: AbstractCapability[None]) -> None:
+        seen = await _reviewer_approved_call(permissions)
+        assert seen.tool_call_metadata == {'approval_reviewer': {'approved': True}}
+
+    async def test_a_person_approval_on_resume_runs_it(self, tmp_path: Path) -> None:
+        ran: list[str] = []
+        command = 'echo x > .pax/settings.json'
+        agent = Agent[None, 'str | DeferredToolRequests'](
+            _calls(('run_command', {'command': command})),
+            deps_type=type(None),
+            output_type=[str, DeferredToolRequests],
+            tools=[_approval_required_shell(ran)],
+            capabilities=[LocalWorkspace(tmp_path), Permissions('auto', protected_paths=PROTECTED)],
+        )
+        held = await agent.run('go')
+        assert isinstance(held.output, DeferredToolRequests)
+        assert [r.person_only for r in permission_requests(held.output)] == [True]
+        resumed = await agent.run(
+            message_history=held.all_messages(), deferred_tool_results=DeferredToolResults(approvals={'call0': True})
+        )
+        assert resumed.output == 'ran'
+        assert ran == [command]
+
+
+class _Remembering:
+    """Approves every request for the rest of the conversation, keeping what it was asked."""
+
+    def __init__(self) -> None:
+        self.asked: list[PermissionRequest] = []
+
+    async def __call__(self, request: PermissionRequest) -> PermissionDecision:
+        self.asked.append(request)
+        return PermissionDecision(approved=True, remember=True)
+
+
+class TestProtectedApprovalsAreNotRemembered:
+    async def test_each_protected_write_asks_again(self, tmp_path: Path) -> None:
+        (tmp_path / '.pax').mkdir()
+        write = ('write_file', {'path': '.pax/settings.json', 'content': 'x'})
+        other = ('write_file', {'path': 'notes.md', 'content': 'x'})
+        person = _Remembering()
+        remembered: set[RememberedApproval] = set()
+        agent = Agent[None, str](
+            _calls(write, write, other, other),
+            deps_type=type(None),
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                FileSystem(),
+                Permissions('read-only', protected_paths=PROTECTED, remembered=remembered),
+                HandleDeferredToolCalls[None](approval_ask(person)),
+            ],
+        )
+        await agent.run('go', conversation_id='c')
+        assert [asked.subject for asked in person.asked] == ['.pax/settings.json', '.pax/settings.json', 'notes.md']
+        assert remembered == {RememberedApproval('c', 'write_file', 'notes.md')}
+
+    async def test_an_approval_remembered_before_does_not_cover_a_protected_write(self, tmp_path: Path) -> None:
+        """Such as one remembered while the path was not protected, in a `remembered` set the caller keeps."""
+        (tmp_path / '.pax').mkdir()
+        person = _Remembering()
+        remembered = {RememberedApproval('c', 'write_file', '.pax/settings.json')}
+        agent = Agent[None, str](
+            _calls(('write_file', {'path': '.pax/settings.json', 'content': 'x'})),
+            deps_type=type(None),
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                FileSystem(),
+                Permissions('auto', protected_paths=PROTECTED, remembered=remembered),
+                HandleDeferredToolCalls[None](approval_ask(person)),
+            ],
+        )
+        await agent.run('go', conversation_id='c')
+        assert [asked.subject for asked in person.asked] == ['.pax/settings.json']
+
+    async def test_inside_durable_execution_no_approval_is_kept_in_history(self) -> None:
+        def run_command(command: str) -> str:
+            return 'ran'
+
+        command = ('run_command', {'command': 'echo x > .pax/settings.json'})
+        person = _Remembering()
+        agent = Agent[None, str](
+            _calls(command, command),
+            deps_type=type(None),
+            tools=[Tool(run_command, metadata={'code_arg_language': 'shell', 'code_arg_name': 'command'})],
+            capabilities=[
+                _DBOSDurability(),
+                Permissions('auto', protected_paths=PROTECTED),
+                HandleDeferredToolCalls[None](handler=lambda ctx, requests: ask_permissions(requests, person)),
+            ],
+        )
+        result = await agent.run('go', conversation_id='c')
+        assert len(person.asked) == 2
+        returns = [
+            part for message in result.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)
+        ]
+        assert [part.metadata for part in returns] == [None, None]
+
+
+def _write_file(path: str, content: str) -> str:
+    return 'wrote'
+
+
+_WRITE_TOOL = Tool(_write_file, name='write_file', tool_kind=WRITE_FILE_KIND)
+
+
+def _command(command: str) -> tuple[str, Mapping[str, object]]:
+    return ('run_command', {'command': command})
+
+
+async def _held(
+    *calls: tuple[str, Mapping[str, object]],
+    workspace: WorkspaceBackend | None = None,
+    paths: Sequence[str] = PROTECTED,
+    commands: Sequence[str] = (),
+    durable: bool = False,
+) -> list[str]:
+    """Make `calls` in `auto` under `protected_paths=paths`, and say which a person was asked about."""
+    person = _Denier()
+    agent = Agent[None, str](
+        _calls(*calls),
+        deps_type=type(None),
+        tools=[_SHELL_TOOL, _WRITE_TOOL],
+        capabilities=[
+            *([_DBOSDurability()] if durable else []),
+            Permissions('auto', protected_paths=paths, protected_commands=commands),
+            HandleDeferredToolCalls[None](handler=lambda ctx, requests: ask_permissions(requests, person)),
+        ],
+    )
+    await agent.run('go', workspace=None if workspace is None else Workspace(workspace))
+    assert all(asked.person_only for asked in person.asked)
+    return [asked.subject for asked in person.asked]
+
+
+class TestDurableRunsDoNotExpandFromTheProcess:
+    """A replay may run on a worker whose environment differs, so a durable run never expands `~` or a variable."""
+
+    CONFIG = ('/home/me/.config/pydantic-ai-pax', '/home/me/.config/pydantic-ai-pax/*')
+
+    @pytest.mark.parametrize(
+        'command',
+        ['echo x > ~/.config/pydantic-ai-pax/config.db', 'cp x $CONFIG_HOME/pydantic-ai-pax/plugins/x.py'],
+    )
+    async def test_the_same_command_asks_whatever_the_environment(
+        self, monkeypatch: pytest.MonkeyPatch, command: str
+    ) -> None:
+        decisions: list[list[str]] = []
+        for home in ('/home/me', '/home/elsewhere'):
+            monkeypatch.setenv('HOME', home)
+            monkeypatch.setenv('CONFIG_HOME', f'{home}/.config')
+            decisions.append(await _held(_command(command), paths=self.CONFIG, durable=True))
+        assert decisions == [[command], [command]]
+
+    async def test_with_only_protected_commands_a_word_to_expand_runs(self) -> None:
+        """No `protected_paths` to match, so a `~` word needs no expanding, even in a durable run."""
+        command = _command('echo x > ~/notes.txt')
+        assert await _held(command, paths=(), commands=['pax config'], durable=True) == []
+
+    async def test_outside_a_durable_run_the_environment_is_expanded(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        command = 'echo x > ~/.config/pydantic-ai-pax/config.db'
+        monkeypatch.setenv('HOME', '/home/me')
+        assert await _held(_command(command), paths=self.CONFIG) == [command]
+        monkeypatch.setenv('HOME', '/home/elsewhere')
+        assert await _held(_command(command), paths=self.CONFIG) == []
+
+    async def test_reading_and_unexpanded_commands_still_run(self) -> None:
+        reading = _command('cat ~/.config/pydantic-ai-pax/config.db')
+        assert await _held(reading, _command('echo x > notes.md'), paths=self.CONFIG, durable=True) == []
+
+    async def test_a_windows_variable_counts_as_needing_expansion(self) -> None:
+        command = 'copy x %APPDATA%\\pax'
+        assert await _held(_command(command), workspace=_WindowsRepo(), durable=True) == [command]
+        assert await _held(_command('copy x 100%'), durable=True) == []
+
+
+class TestProtectedPathMatching:
+    async def test_a_relative_glob_matches_the_end_of_a_path(self) -> None:
+        commands = [
+            'echo x > /repo/.pax/settings.json',
+            'echo x > /repo/notes.pax',
+            'echo x > /home/me/.config/pax/config.db',
+        ]
+        paths = ['.pax', '.pax/*', '/home/me/.config/pax/*']
+        assert await _held(*map(_command, commands), paths=paths) == [commands[0], commands[2]]
+
+    async def test_windows_paths_ignore_case_and_separators(self) -> None:
+        commands = ['Set-Content C:\\Repo\\.PAX\\Settings.json x', 'Set-Content C:\\Users\\me\\pax\\x y']
+        paths = [*PROTECTED, 'c:\\users\\ME\\pax\\*']
+        assert await _held(*map(_command, commands), workspace=_WindowsRepo(), paths=paths) == commands
+
+    async def test_a_very_long_path_counts_as_protected(self) -> None:
+        command = 'echo x > /' + 'x' * 5000
+        path = '/' + 'x' * 5000
+        assert await _held(_command(command), ('write_file', {'path': path, 'content': 'x'})) == [command, path]
+
+    async def test_a_pattern_is_compared_with_a_bracket_glob(self) -> None:
+        commands = ['cp payload .pa?/settings.json', 'cp payload .pb?/settings.json']
+        assert await _held(*map(_command, commands), paths=['.pa[xy]/*']) == commands[:1]
+
+    async def test_without_a_workspace_paths_are_only_normalized(self) -> None:
+        calls = [
+            ('write_file', {'path': 'a/../.pax/x', 'content': 'x'}),
+            ('write_file', {'path': '.pax/../notes.md', 'content': 'x'}),
+            _command('echo x > a/../.pax/x'),
+            _command('echo x > .pax/../notes.md'),
+        ]
+        assert await _held(*calls) == ['a/../.pax/x', 'echo x > a/../.pax/x']
+
+    async def test_a_link_that_cannot_be_followed_counts_as_written(self, tmp_path: Path) -> None:
+        write = ('write_file', {'path': '.pax/x', 'content': 'x'})
+        assert await _held(write, workspace=_NoRealpath(tmp_path)) == ['.pax/x']
+
+    async def test_home_and_variables_are_expanded(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv('HOME', '/home/me')
+        monkeypatch.setenv('PAX_DIR', '/home/me/pax')
+        commands = ['touch ~/.pax/x', 'touch $PAX_DIR/y', 'touch pax/z']
+        paths = ['/home/me/.pax/*', '/home/me/pax/*']
+        assert await _held(*map(_command, commands), paths=paths) == commands[:2]
+
+    async def test_a_command_that_only_reads_names_no_path(self) -> None:
+        commands = ['cat .pax/x | grep a', 'cat .pax/x > out', 'cat $X .pax/x', './cat .pax/x', '/usr/bin/cat .pax/x']
+        assert await _held(*map(_command, commands)) == commands[1:]
+
+    async def test_a_read_only_command_on_windows_is_checked(self) -> None:
+        command = 'cat .pax\\x'
+        assert await _held(_command(command), workspace=_WindowsRepo()) == [command]
+
+
+class TestProtectedCommandWords:
+    """A protected path a command names is seen however the shell spells it."""
+
+    @pytest.mark.parametrize(
+        'command',
+        [
+            'echo x > "/home/u/my dir/.pax/settings.json"',
+            "echo x > '/home/u/my dir/.pax/settings.json'",
+            'echo x > /home/u/my\\ dir/.pax/settings.json',
+            'echo x >"/home/u/my dir/.pax/settings.json";true',
+            'tool --out="/home/u/my dir/.pax/settings.json"',
+            'echo `cat a`>/home/u/my\\ dir/.pax/settings.json',
+            'echo x#y > /home/u/my\\ dir/.pax/settings.json',
+        ],
+        ids=[
+            'double-quotes',
+            'single-quotes',
+            'escaped-space',
+            'operators',
+            'option-value',
+            'backticks',
+            'hash-in-word',
+        ],
+    )
+    async def test_posix_spellings(self, command: str) -> None:
+        assert await _held(_command(command), paths=['/home/u/my dir/.pax/*']) == [command]
+
+    async def test_unbalanced_quotes_count_every_reading(self) -> None:
+        command = 'echo "x > /home/u/my dir/.pax/settings.json'
+        assert await _held(_command(command)) == [command]
+
+    @pytest.mark.parametrize(
+        'command',
+        [
+            'Set-Content .pax\\settings.json x',
+            'Set-Content C:\\Users\\u\\.pax\\settings.json x',
+            'echo x > "C:\\Users\\Alice Smith\\.pax\\settings.json"',
+            "Set-Content 'C:\\Users\\Alice Smith\\.PAX\\Settings.json' x",
+            'copy hook C:\\repo\\.git\\hooks\\pre-commit',
+        ],
+        ids=['relative', 'absolute', 'quoted-space', 'single-quoted-case', 'hooks'],
+    )
+    async def test_windows_spellings(self, command: str) -> None:
+        assert await _held(_command(command), workspace=_WindowsRepo()) == [command]
+
+    async def test_a_script_a_shell_or_eval_runs_is_checked(self) -> None:
+        commands = [
+            "sh -c 'echo x > .pax/settings.json'",
+            'bash -lc "echo x > .pax/settings.json"',
+            'sh -c "sh -c \'echo x > .pax/settings.json\'"',
+            "env /bin/sh -c 'echo x > .pax/settings.json'",
+            "eval 'echo x > .pax/settings.json'",
+            "sh -c 'pax config set model x'",
+            'eval eval eval eval echo hi',
+            "bash -c -- 'echo x > .pax/settings.json'",
+            "sh -e -c 'echo x > .pax/settings.json'",
+            "bash -o pipefail -c 'echo x > .pax/settings.json'",
+            "bash --norc -c 'echo x > .pax/settings.json'",
+            "bash -c -e 'echo x > .pax/settings.json'",
+            "sh -c 'echo hi'",
+            "bash -c -- 'echo hi'",
+            'eval eval eval echo hi',
+            'sh notes.sh',
+        ]
+        assert await _held(*map(_command, commands), commands=['pax config']) == commands[:12]
+
+    async def test_an_eval_after_a_shell_without_a_script_is_checked(self) -> None:
+        commands = [
+            "sh /dev/null; eval 'echo x > .pax/settings.json'",
+            "bash build.sh && sh x; eval 'echo x > .pax/settings.json'",
+        ]
+        assert await _held(*map(_command, commands)) == commands
+
+    @pytest.mark.parametrize(
+        'command',
+        [
+            'cp payload .git/hook?/pre-commit',
+            'cp payload .git/hook*/pre-commit',
+            'echo x > .pa[x]/settings.json',
+            'echo x > .pa[!y]/settings.json',
+            'echo x > .pa[]x]/settings.json',
+            'tee .pa{x,y}/settings.json < payload',
+            'cp payload .p{a{x,y},b}/settings.json',
+            'cp payload .pa{w..z}/settings.json',
+            'cp payload .pa{w..z..2}/settings.json',
+            'cp payload notes/.*/x',
+            'touch x{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}',
+        ],
+        ids=[
+            'question-mark',
+            'star',
+            'bracket',
+            'negated-bracket',
+            'bracket-holding-a-bracket',
+            'braces',
+            'nested-braces',
+            'brace-sequence',
+            'brace-sequence-with-step',
+            'could-be-a-dot',
+            'too-many-braces',
+        ],
+    )
+    async def test_a_pattern_that_could_expand_to_a_protected_path(self, command: str) -> None:
+        assert await _held(_command(command)) == [command]
+
+    @pytest.mark.parametrize(
+        'command',
+        [
+            'cp dist/.* out/',
+            'cp payload .pa?/settings.json',
+            'shopt -s dotglob',
+            'setopt GLOB_DOTS',
+            'setopt glob_dots; cp dist/* out/',
+            "zsh -o globdots -c 'cp dist/* out/'",
+            'GLOBIGNORE=x cp dist/* out/',
+            'shopt -s dot\\glob',
+            'rm build/*(D)',
+            'ls *(D)',
+            'rm -r *(/D)',
+            'cp @(.pax)/settings.json x',
+            'cp @(.p*) x',
+            'cp payload !(foo)/settings.json',
+            'cp payload .pa(x)',
+            'echo "x" "*(D)',
+            'cp payload .pa[[:lower:]]/settings.json',
+            'cp payload .pa[[:lower]/settings.json',
+        ],
+        ids=[
+            'dot-pattern',
+            'dot-then-wildcard',
+            'dotglob',
+            'zsh-globdots',
+            'zsh-glob-dots',
+            'zsh-option',
+            'globignore',
+            'escaped-dotglob',
+            'zsh-qualifier',
+            'zsh-qualifier-alone',
+            'zsh-qualifier-holding-a-slash',
+            'extglob',
+            'extglob-holding-a-pattern',
+            'negated-extglob',
+            'zsh-trailing-group',
+            'group-with-unbalanced-quotes',
+            'character-class',
+            'unclosed-character-class',
+        ],
+    )
+    async def test_a_pattern_that_could_match_a_leading_dot(self, command: str) -> None:
+        assert await _held(_command(command)) == [command]
+
+    @pytest.mark.parametrize(
+        'command',
+        [
+            "python3 -c \"open('.pax/settings.json','w').write('x')\"",
+            "node -e \"require('fs').writeFileSync('.git/hooks/pre-commit','x')\"",
+            "python3 -c 'import os; os.remove( .pax/settings.json )'",
+        ],
+        ids=['python', 'node', 'whitespace'],
+    )
+    async def test_an_interpreter_one_liner_naming_a_protected_path(self, command: str) -> None:
+        assert await _held(_command(command)) == [command]
+
+    async def test_parentheses_that_are_not_a_pattern_s_group_still_run(self) -> None:
+        """A Markdown link or arithmetic names no protected path, though `](` and `*(` look like a group."""
+        commands = [
+            'git commit -m "See [docs](https://example.com/docs)"',
+            'gh pr create --body "Closes [#1](https://github.com/o/r/issues/1)"',
+            'gh pr create --body "[#1](https://github.com/o/r/issues/1)"',
+            'python -c "print(2*(3+4))"',
+            'echo $((2*(3+4)))',
+            'touch notes(1).txt',
+            'git commit -m "(wip)"',
+            "touch '*(draft'",
+        ]
+        assert await _held(*map(_command, commands)) == []
+
+    async def test_a_very_long_option_word_counts_as_protected_quickly(self) -> None:
+        commands = ['echo -' + 'a' * 60_000, 'cp -abcdefghijklmnopq payload out/']
+        assert await _held(*map(_command, commands)) == commands
+
+    async def test_a_windows_wildcard_that_could_name_a_protected_path(self) -> None:
+        """PowerShell's wildcards match a name's leading `.`, so `*` may stand for `.pax`."""
+        commands = [
+            'Set-Content .pa?\\settings.json x',
+            'Set-Content notes\\.*\\x y',
+            'Set-Content -Force *\\settings.json x',
+            'Set-Content *.txt x',
+        ]
+        assert await _held(*map(_command, commands), workspace=_WindowsRepo()) == commands[:3]
+
+    async def test_a_powershell_parameter_value_after_a_colon(self) -> None:
+        commands = ['Set-Content -Path:.pax\\settings.json -Value:x', 'Set-Content -Path:notes.txt -Value:x']
+        assert await _held(*map(_command, commands), workspace=_WindowsRepo()) == commands[:1]
+
+    @pytest.mark.parametrize(
+        'command',
+        [
+            'sort -o.pax/settings.json payload',
+            'cp payload -t.git/hooks',
+            'install -D payload -t.git/hooks',
+            'cp -vt.git/hooks payload',
+        ],
+    )
+    async def test_a_value_attached_to_a_short_option(self, command: str) -> None:
+        assert await _held(_command(command), paths=[*PROTECTED, '.git/hooks']) == [command]
+
+    async def test_ordinary_patterns_options_and_shells_still_run(self) -> None:
+        commands = [
+            'cp *.py dest/',
+            "find . -name '*.py' -delete",
+            'touch f{1..3}.txt',
+            'touch f{1..3..x}.txt f{a..bc}.txt',
+            'mv config{,.bak}',
+            'echo {} a,b} {x',
+            'cp src/[a-z]?.txt .git/hooks-backup/',
+            'echo x > notes/[a/b]',
+            'echo x > notes/[unclosed',
+            'sort -o out.txt in.txt',
+            'cp -vt dest/ a.txt',
+            "python -c 'print([1, 2])'",
+            "git commit -m 'why?'",
+            "sh build.sh; eval 'echo hi'",
+            'cp dist/* out/',
+            'git add *',
+            'pytest tests/*',
+            'cp payload notes/[.]?/x',
+            'cp report[[:digit:]].txt out/',
+            'python -c "print(\'hello, world\')"',
+            'cp -abcdefghijklmnop payload out/',
+        ]
+        assert await _held(*map(_command, commands), paths=[*PROTECTED, '.git/hooks']) == []
+
+    async def test_a_quoted_path_is_one_word(self) -> None:
+        commands = ['echo x > "my dir/.pax/x"', 'echo x > my dir/.pax/x', 'tool --out=my/a']
+        assert await _held(*map(_command, commands), paths=['my dir/.pax/*', 'my/a']) == [commands[0], commands[2]]
+
+    async def test_windows_paths_resolve_against_the_working_directory(self) -> None:
+        command = 'Set-Content ".pax\\my settings.json"'
+        paths = ['C:\\Repo\\.pax\\my settings.json']
+        assert await _held(_command(command), workspace=_WindowsRepo(), paths=paths) == [command]
+
+    async def test_other_commands_name_no_protected_path(self) -> None:
+        assert await _held(_command('echo ".pax is a folder" > notes.md')) == []
+        assert await _held(_command('Set-Content notes.pax x'), workspace=_WindowsRepo()) == []
+
+    async def test_case_is_ignored_on_posix_too(self) -> None:
+        """macOS file systems ignore case by default, so `.PAX` there is `.pax`."""
+        commands = ['cp x .PAX/settings.json', 'cp x /repo/.Git/Hooks/pre-commit']
+        assert await _held(*map(_command, commands)) == commands
+
+    async def test_a_very_long_command_counts_as_protected(self, tmp_path: Path) -> None:
+        """Too long to split in reasonable time, though none of its short words is a protected path."""
+        person = await _protected_run(tmp_path, ('run_command', {'command': 'echo' + ' x' * 40_000}))
+        assert [asked.person_only for asked in person.asked] == [True]
+
+    async def test_a_very_long_command_without_protection_is_not_held(self, tmp_path: Path) -> None:
+        person = _Denier()
+        agent = Agent[None, str](
+            _calls(('run_command', {'command': 'echo' + ' x' * 40_000})),
+            deps_type=type(None),
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                Shell(denied_commands=[]),
+                Permissions('auto'),
+                HandleDeferredToolCalls[None](approval_ask(person)),
+            ],
+        )
+        await agent.run('go')
+        assert person.asked == []
+
+
+class _WindowsRepo:
+    """A Windows backend working in `C:\\Repo`; the test tools never reach it."""
+
+    ref: WorkspaceRef | None = None
+    workspace_platform = 'windows'
+
+    async def working_dir(self) -> str:
+        return 'C:\\Repo'
+
+
+class _NoRealpath:
+    """A local backend whose links cannot be followed."""
+
+    ref: WorkspaceRef | None = None
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+    async def working_dir(self) -> str:
+        return str(self.root)
+
+    async def realpath(self, path: str) -> str:
+        raise OSError('cannot follow')

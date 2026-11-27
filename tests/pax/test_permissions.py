@@ -1,7 +1,8 @@
-"""`/permissions`: the `run.permissions` mode on every run, its approval question, and the denial of last resort."""
+"""`/permissions`: the `run.permissions` mode on every run, its approval question, the denial of last resort, and the
+settings that always ask outside `full`."""
 
 import io
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import get_args
 
@@ -10,15 +11,17 @@ import pytest
 from rich.console import Console
 
 from pydantic_ai import Agent, DeferredToolRequests, RunContext, Tool, ToolDenied
-from pydantic_ai.capabilities import AgentCapability, LocalWorkspace
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, LocalWorkspace
 from pydantic_ai.exceptions import SkipToolExecution
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
-from pydantic_ai.models.function import AgentInfo
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness.approval_reviewer import ApprovalReviewer
 from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserResponse
 from pydantic_ai_harness.deny_unanswered import DEFAULT_MESSAGE, DenyUnanswered
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.permissions import (
     Approver,
     PermissionDecision,
@@ -41,6 +44,7 @@ from pydantic_ai_pax.runtime.permissions import (
     APPROVE_SESSION,
     DENY,
     HEADER,
+    PROTECTED,
     UNANSWERED,
     approval_handler,
     approval_question,
@@ -447,3 +451,190 @@ async def test_delegates_that_carry_the_sessions_permissions_are_not_refused(
 def test_settings_copy_the_harness_permission_mode() -> None:
     """Pax spells `PermissionMode` out so reading settings imports no harness code; the copy must match."""
     assert get_args(PermissionMode) == get_args(HarnessPermissionMode)
+
+
+@pytest.fixture
+def config_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The user's Pax folder, inside the workspace so the file tools can reach it."""
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'xdg'))
+    return tmp_path / 'xdg' / 'pydantic-ai-pax'
+
+
+def calling(*calls: tuple[str, Mapping[str, object]]) -> FunctionModel:
+    """A model that makes `calls` one per step, then repeats the last tool result it got."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        step = sum(isinstance(message, ModelResponse) for message in messages)
+        if step < len(calls):
+            name, args = calls[step]
+            return ModelResponse(parts=[ToolCallPart(name, dict(args), tool_call_id=f'call{step}')])
+        returned = [part for part in messages[-1].parts if isinstance(part, ToolReturnPart)]
+        return ModelResponse(parts=[TextPart(f'Tool said: {returned[0].content}' if returned else 'done')])
+
+    return streamed(respond)
+
+
+class Person:
+    """Denies every call, keeping what it was asked."""
+
+    def __init__(self) -> None:
+        self.asked: list[PermissionRequest] = []
+
+    async def __call__(self, request: PermissionRequest) -> PermissionDecision:
+        self.asked.append(request)
+        return PermissionDecision(approved=False)
+
+
+RAN: list[str] = []
+
+
+def run_command(command: str) -> str:
+    """A shell tool declared as harness `Shell` declares its own, that records the command instead of running it."""
+    RAN.append(command)
+    return f'ran {command}'
+
+
+async def run(
+    workspace: Path,
+    *calls: tuple[str, Mapping[str, object]],
+    mode: PermissionMode = 'auto',
+    store: SettingsStore | None = None,
+    extra: Sequence[AbstractCapability[None]] = (),
+) -> Person:
+    RAN.clear()
+    person = Person()
+    capabilities = [
+        LocalWorkspace(workspace),
+        FileSystem[None](),
+        *session_permissions(lambda: mode, store=store),
+        *extra,
+        approval_handler(person),
+    ]
+    shell = Tool(run_command, metadata={'code_arg_name': 'command', 'code_arg_language': 'shell'})
+    await Agent(calling(*calls), deps_type=type(None), tools=[shell], capabilities=capabilities).run('go')
+    return person
+
+
+def write(path: str) -> tuple[str, Mapping[str, object]]:
+    return ('write_file', {'path': path, 'content': '{}'})
+
+
+@pytest.mark.parametrize(
+    'path',
+    [
+        pytest.param('xdg/pydantic-ai-pax/config.db', id='settings-database'),
+        pytest.param('xdg/pydantic-ai-pax/credentials-default.json', id='credentials'),
+        pytest.param('xdg/pydantic-ai-pax/plugins/mine.py', id='plugins-folder'),
+        pytest.param('xdg/pydantic-clai2/config.db', id='legacy-config-folder'),
+        pytest.param('xdg/pydantic-clai2/plugins/mine.py', id='legacy-plugins-folder'),
+        pytest.param('.PAX/settings.json', id='other-case'),
+        pytest.param('.pax/settings.json', id='project-folder'),
+        pytest.param('sub/.clai/settings.json', id='legacy-project-folder'),
+        pytest.param('.git/hooks/pre-commit', id='git-hooks'),
+        pytest.param('.git/config', id='git-config'),
+        pytest.param('db/config.db-wal', id='database-elsewhere'),
+        pytest.param('db/plugins/mine.py', id='plugins-next-to-database-elsewhere'),
+    ],
+)
+async def test_auto_asks_before_a_write_to_paxs_settings(tmp_path: Path, config_home: Path, path: str) -> None:
+    # The current folder too, as when an older Pax still uses the old one, so it isn't moved and stays protected.
+    config_home.mkdir(parents=True)
+    (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+    person = await run(tmp_path, write(path), store=SettingsStore(tmp_path / 'db' / 'config.db'))
+    [asked] = person.asked
+    assert asked.person_only and asked.subject == path
+    assert approval_question(asked).questions[0].question == f'{PROTECTED} Write {path}?'
+    assert not (tmp_path / path).exists()
+
+
+async def test_a_reviewer_that_says_safe_still_asks(tmp_path: Path, config_home: Path) -> None:
+    # Would approve, but the protected write is held for a person before the reviewer sees it.
+    def safe(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'response': 'no'})])
+
+    (tmp_path / '.pax').mkdir()
+    reviewer = ApprovalReviewer[None](FunctionModel(safe), question='Could this call do harm?')
+    person = await run(tmp_path, write('.pax/settings.json'), extra=[reviewer])
+    assert [asked.subject for asked in person.asked] == ['.pax/settings.json']
+    assert not (tmp_path / '.pax' / 'settings.json').exists()
+
+
+@pytest.mark.parametrize(
+    'command',
+    [
+        'pax config set model openai:gpt-5.5',
+        'uv run pax plugins enable hooks',
+        'pydantic-ai-pax config reset model',
+        'uvx pydantic-clai2 plugins add x',
+        'git config core.hooksPath /tmp/hooks',
+        'echo x > .pax/settings.json',
+        'echo x > "my dir/.pax/settings.json"',
+    ],
+)
+async def test_auto_asks_before_a_command_that_changes_paxs_settings(
+    tmp_path: Path, config_home: Path, command: str
+) -> None:
+    (tmp_path / '.pax').mkdir()
+    person = await run(tmp_path, ('run_command', {'command': command}))
+    [asked] = person.asked
+    assert asked.person_only and asked.subject == command
+    assert approval_question(asked).questions[0].question == f'{PROTECTED} Run this command?\n{command}'
+    assert RAN == []
+
+
+async def test_reads_and_other_writes_run(tmp_path: Path, config_home: Path) -> None:
+    (tmp_path / '.pax').mkdir()
+    (tmp_path / '.pax' / 'settings.json').write_text('{}')
+    person = await run(
+        tmp_path,
+        ('read_file', {'path': '.pax/settings.json'}),
+        ('run_command', {'command': 'cat .pax/settings.json'}),
+        ('run_command', {'command': 'pax config show'}),
+        write('notes.md'),
+    )
+    assert person.asked == []
+    assert RAN == ['cat .pax/settings.json', 'pax config show']
+    assert (tmp_path / 'notes.md').read_text() == '{}'
+
+
+async def test_full_lets_a_change_to_paxs_settings_run(tmp_path: Path, config_home: Path) -> None:
+    """`/permissions full` is the user's choice to let everything run, Pax's own settings included."""
+    (tmp_path / '.pax').mkdir()
+    person = await run(tmp_path, write('.pax/settings.json'), mode='full')
+    assert person.asked == []
+    assert (tmp_path / '.pax' / 'settings.json').read_text() == '{}'
+
+
+async def test_a_session_no_one_can_be_asked_in_denies_a_change_to_paxs_settings(
+    tmp_path: Path, config_home: Path
+) -> None:
+    """Headless, the write to the plugins folder beside the session's settings database is denied."""
+    (tmp_path / 'plugins').mkdir()
+    agent = Agent(calling(write('plugins/mine.py')), deps_type=type(None), capabilities=[FileSystem[None]()])
+    shell, output = runtime(tmp_path, agent)
+    shell.send_input('/permissions auto')
+    shell.send_input('add a plugin')
+    shell.send_input('/exit')
+    assert await shell.run() == 'exit'
+    assert f'Tool said: {UNANSWERED}' in output.getvalue()
+    assert not (tmp_path / 'plugins' / 'mine.py').exists()
+
+
+@pytest.mark.parametrize(('path', 'choices'), [('.pax/settings.json', [APPROVE, DENY]), ('notes.md', None)])
+async def test_a_change_to_paxs_settings_offers_no_approval_for_the_session(
+    tmp_path: Path, config_home: Path, path: str, choices: list[str] | None
+) -> None:
+    """In the terminal question and the web card alike, so a session approval never covers a later change."""
+    (tmp_path / '.pax').mkdir()
+    [held] = (await run(tmp_path, write(path), mode='read-only')).asked
+    choices = choices or [APPROVE, APPROVE_SESSION, DENY]
+    assert [option.label for option in approval_question(held).questions[0].options] == choices
+    answerer = BrowserAnswerer(publish=lambda message, _: None, terminal=None)
+    async with anyio.create_task_group() as group:
+        group.start_soon(answerer.approve, held)
+        await anyio.wait_all_tasks_blocked()
+        [questions] = answerer.questions
+        assert [option.label for option in questions.questions[0].options] == choices
+        assert questions.approval is not None
+        assert (questions.approval.reason == PROTECTED) is held.person_only
+        answerer.reply(questions.id, None)

@@ -28,7 +28,7 @@ from pydantic_ai_pax.builtin_plugins.web.protocol import (
     dump_session,
     questions_info,
 )
-from pydantic_ai_pax.runtime.permissions import approval_question, decision, proposed_diff
+from pydantic_ai_pax.runtime.permissions import approval_question, approval_reason, decision, proposed_diff
 
 QUEUE_LIMIT = 10_000
 """Messages a browser may fall behind by before it is told to reconnect, so a stalled tab cannot hold a whole session."""
@@ -189,7 +189,7 @@ class BrowserAnswerer:
             tool=request.call.tool_name,
             action=request.action,
             subject=request.subject,
-            reason=request.reason,
+            reason=approval_reason(request),
             diff=None if (diff := proposed_diff(request)) is None else Diff(path=request.subject, diff=diff),
         )
         terminal = None if self._terminal_approval is None else partial(self._terminal_approval, request)

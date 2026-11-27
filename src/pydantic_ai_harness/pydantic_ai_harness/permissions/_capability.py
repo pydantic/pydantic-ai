@@ -9,7 +9,7 @@ from typing import Any, Literal, NamedTuple, cast
 
 from pydantic import BaseModel, ValidationError
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs, WrapperCapability
 from pydantic_ai.exceptions import ApprovalRequired, SkipToolExecution, UserError
 from pydantic_ai.messages import ModelMessage, ToolCallPart, ToolReturn, ToolReturnPart
 from pydantic_ai.tools import (
@@ -26,13 +26,21 @@ from pydantic_ai.tools import (
 from pydantic_ai_harness._durable import in_durable_context
 from pydantic_ai_harness._shell_command import shell_command, shell_command_arg
 from pydantic_ai_harness.file_system._tool_kinds import CREATE_DIRECTORY_KIND, EDIT_FILE_KIND, WRITE_FILE_KIND
-from pydantic_ai_harness.permissions._rules import PermissionRule, PermissionRuleSpec, decide
+from pydantic_ai_harness.permissions._protected import command_locations, matches, write_locations
+from pydantic_ai_harness.permissions._rules import (
+    COMMAND_LIMIT,
+    PermissionRule,
+    PermissionRuleSpec,
+    command_matches,
+    decide,
+)
 
 PermissionMode = Literal['full', 'auto', 'read-only']
 """How much the agent may do without asking.
 
 - `'full'`: every call runs without asking.
-- `'auto'`: file writes and commands run, except commands matching `Permissions.ask_commands`.
+- `'auto'`: file writes and commands run, except commands matching `Permissions.ask_commands` and changes to
+  `Permissions.protected_paths`.
 - `'read-only'`: every file write and every command asks first.
 """
 
@@ -56,11 +64,17 @@ history rewrites, `sudo`, network clients, and package installs. Each is searche
 
 _WRITE_KINDS = frozenset({WRITE_FILE_KIND.id, EDIT_FILE_KIND.id, CREATE_DIRECTORY_KIND.id})
 
+_PROTECTED_REASONS: dict[PermissionAction, str] = {
+    'command': 'This command may change a protected path, so only a person can approve it.',
+    'write': 'This file write changes a protected path, so only a person can approve it.',
+}
+
 
 class _Asked(BaseModel):
     action: PermissionAction
     subject: str
     reason: str
+    person_only: bool = False
 
 
 class _AskedMetadata(BaseModel):
@@ -77,6 +91,16 @@ class _AnsweredMetadata(BaseModel):
     """What `ask_permissions` attaches to an approved call, read back by `Permissions`."""
 
     permissions: _Answered
+
+
+class _Reviewed(BaseModel):
+    approved: bool
+
+
+class _ReviewedMetadata(BaseModel):
+    """What an `ApprovalReviewer` attaches to a call it approved, so `Permissions` can tell it from a person's approval."""
+
+    approval_reviewer: _Reviewed
 
 
 class _Remembered(BaseModel):
@@ -119,6 +143,12 @@ class PermissionRequest:
     reason: str
     """Why the current mode or a rule asks about this call, for the person deciding."""
 
+    person_only: bool = False
+    """Only a person may approve this call: an `ApprovalReviewer` skips it and no session approval covers it.
+
+    `Permissions` sets it for a call that changes one of its `protected_paths` or runs one of its `protected_commands`.
+    """
+
 
 @dataclass(frozen=True, kw_only=True)
 class PermissionDecision:
@@ -159,6 +189,9 @@ class Permissions(AbstractCapability[AgentDepsT]):
 
     `mode` can be a function of the run context. It is read on every call, so a mode changed during a run
     applies from the run's next call.
+
+    Outside `'full'`, a call that changes one of `protected_paths`, or runs one of `protected_commands`, always
+    asks, whatever the rules allow, and an `ApprovalReviewer` leaves it to the person.
     """
 
     mode: PermissionMode | Callable[[RunContext[AgentDepsT]], PermissionMode] = 'full'
@@ -172,6 +205,28 @@ class Permissions(AbstractCapability[AgentDepsT]):
     ask_commands: Sequence[str] = DEFAULT_ASK_COMMANDS
     """Regular expressions for the commands `'auto'` asks about, searched for anywhere in the command."""
 
+    protected_paths: Sequence[str] = ()
+    """Globs for paths only a person may approve a change to, such as the agent's own settings.
+
+    Outside `'full'`, a file write to a matching path asks, and so does a command naming one in any word, a
+    redirection target included, unless it only runs programs that read files, such as `cat` or `grep`. A rule's
+    allow does not let either run, a rule's deny still refuses it, and an `ApprovalReviewer` leaves it to the
+    person, who approves each such call on its own: `PermissionDecision(remember=True)` is ignored for it. A glob
+    is matched against the path resolved against the working directory, and a relative glob also
+    against its end, so `'.git/hooks/*'` covers every repository's hooks. A folder's glob covers only the folder,
+    so list `'dir/*'` too for what is in it. Case is ignored. Commands are checked best effort, by their words,
+    split as the shell would: a path a command builds at run time, such as with `cd` first, is not seen.
+
+    A command that can't be checked asks: one over 64 KiB, one nesting `-c` or `eval` scripts more than three deep,
+    or one with a word holding more than 16 short options or whose braces expand to more than 64 words.
+    """
+
+    protected_commands: Sequence[str] = ()
+    """Shell commands, as words like an ask rule's `PermissionRule.command`, held like a change to a protected path.
+
+    Use it for a program that changes what `protected_paths` protects, such as the agent's own settings CLI.
+    """
+
     remembered: MutableSet[RememberedApproval] = field(
         default_factory=set[RememberedApproval], repr=False, compare=False
     )
@@ -183,13 +238,15 @@ class Permissions(AbstractCapability[AgentDepsT]):
     """
 
     _patterns: tuple[re.Pattern[str], ...] = field(init=False, repr=False, compare=False)
+    _protected_rules: tuple[PermissionRule[AgentDepsT], ...] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        """Compile `ask_commands`, so a bad pattern fails when the capability is built."""
+        """Compile `ask_commands` and `protected_commands`, so a bad one fails when the capability is built."""
         try:
             self._patterns = tuple(re.compile(pattern) for pattern in self.ask_commands)
         except re.error as error:
             raise UserError(f'Permissions.ask_commands has an invalid pattern: {error}') from error
+        self._protected_rules = tuple(PermissionRule[AgentDepsT]('ask', command=c) for c in self.protected_commands)
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -203,6 +260,8 @@ class Permissions(AbstractCapability[AgentDepsT]):
         *,
         rules: Sequence[PermissionRuleSpec] = (),
         ask_commands: Sequence[str] = DEFAULT_ASK_COMMANDS,
+        protected_paths: Sequence[str] = (),
+        protected_commands: Sequence[str] = (),
         id: str | None = None,
         description: str | None = None,
         defer_loading: bool = False,
@@ -212,6 +271,8 @@ class Permissions(AbstractCapability[AgentDepsT]):
             mode,
             rules=[PermissionRule[AgentDepsT](**rule) for rule in rules],
             ask_commands=ask_commands,
+            protected_paths=protected_paths,
+            protected_commands=protected_commands,
             id=id,
             description=description,
             defer_loading=defer_loading,
@@ -220,6 +281,27 @@ class Permissions(AbstractCapability[AgentDepsT]):
     def mode_for(self, ctx: RunContext[AgentDepsT]) -> PermissionMode:
         """The permission mode for `ctx`'s run, as it stands now."""
         return self.mode(ctx) if callable(self.mode) else self.mode
+
+    async def after_tool_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+    ) -> ValidatedToolArgs:
+        """Hold a protected call for a person as soon as its arguments are valid.
+
+        This is before core defers a tool registered with `requires_approval=True`, and before any
+        `before_tool_execute` hook asks, so whichever mechanism defers the call, its request says that only
+        a person may approve it.
+        """
+        if ctx.tool_call_approved:
+            return args
+        asked = await self._protected_asks(ctx, tool_def=tool_def, args=args)
+        if asked is not None:
+            raise ApprovalRequired(metadata=_AskedMetadata(permissions=asked).model_dump())
+        return args
 
     async def before_tool_execute(
         self,
@@ -233,19 +315,24 @@ class Permissions(AbstractCapability[AgentDepsT]):
         asked = await self._asks(ctx, tool_def=tool_def, args=args)
         if asked is None:
             return args
+        if ctx.tool_call_approved and asked.person_only and _reviewed(ctx.tool_call_metadata):
+            # An `ApprovalReviewer` approved a protected call whose request did not say so: ask a person.
+            raise ApprovalRequired(metadata=_AskedMetadata(permissions=asked).model_dump())
         if ctx.tool_call_approved:
-            if not in_durable_context(ctx) and _remember(ctx.tool_call_metadata):
+            if not in_durable_context(ctx) and not asked.person_only and _remember(ctx.tool_call_metadata):
                 self.remembered.add(RememberedApproval(ctx.conversation_id, call.tool_name, asked.subject))
             return args
-        if in_durable_context(ctx):
-            # In-process memory would not survive a replay or a move to another worker; history does.
-            if _remembered_in(
-                ctx.messages, _Remembered(conversation_id=ctx.conversation_id, subject=asked.subject), call.tool_name
-            ):
-                return args
-        elif RememberedApproval(ctx.conversation_id, call.tool_name, asked.subject) in self.remembered:
+        # A protected change is approved one call at a time: no remembered approval covers it.
+        if not asked.person_only and self._is_remembered(ctx, call.tool_name, asked.subject):
             return args
         raise ApprovalRequired(metadata=_AskedMetadata(permissions=asked).model_dump())
+
+    def _is_remembered(self, ctx: RunContext[AgentDepsT], tool_name: str, subject: str) -> bool:
+        if in_durable_context(ctx):
+            # In-process memory would not survive a replay or a move to another worker; history does.
+            remembered = _Remembered(conversation_id=ctx.conversation_id, subject=subject)
+            return _remembered_in(ctx.messages, remembered, tool_name)
+        return RememberedApproval(ctx.conversation_id, tool_name, subject) in self.remembered
 
     async def after_tool_execute(
         self,
@@ -260,7 +347,7 @@ class Permissions(AbstractCapability[AgentDepsT]):
         if not (ctx.tool_call_approved and in_durable_context(ctx) and _remember(ctx.tool_call_metadata)):
             return result
         asked = await self._asks(ctx, tool_def=tool_def, args=args)
-        if asked is None or _nests_tool_return(result):
+        if asked is None or asked.person_only or _nests_tool_return(result):
             return result
         tool_return = cast(ToolReturn[Any], result) if isinstance(result, ToolReturn) else ToolReturn[Any](result)
         existing: object = {} if tool_return.metadata is None else tool_return.metadata
@@ -279,11 +366,64 @@ class Permissions(AbstractCapability[AgentDepsT]):
         rules = [rule for rule in self.rules if await matches_tool_selector(rule.tools, ctx, tool_def)]
         posix = ctx.workspace.platform != 'windows'
         rule = decide(rules, command=command, command_arg=shell_command_arg(tool_def), args=args, posix=posix)
+        subject = _subject(tool_def, args, command)
+        if rule is not None and rule.verdict == 'deny':
+            return _rule_asks(ctx, rule, subject)
+        mode = self.mode_for(ctx)
+        if mode != 'full' and (protected := await self._protected(ctx, subject, posix=posix)) is not None:
+            return protected
         if rule is not None and rule.verdict != 'allow':
-            return _rule_asks(ctx, rule, _subject(tool_def, args, command))
-        return self._mode_asks(
-            self.mode_for(ctx), tool_def=tool_def, args=args, command=command, allowed=rule is not None
-        )
+            return _rule_asks(ctx, rule, subject)
+        return self._mode_asks(mode, tool_def=tool_def, args=args, command=command, allowed=rule is not None)
+
+    async def _protected_asks(
+        self, ctx: RunContext[AgentDepsT], *, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> _Asked | None:
+        """What to ask a person about a call that changes a protected path, unless a rule denies the call."""
+        if not (self.protected_paths or self.protected_commands) or self.mode_for(ctx) == 'full':
+            return None
+        command = shell_command(tool_def, args)
+        rules = [rule for rule in self.rules if await matches_tool_selector(rule.tools, ctx, tool_def)]
+        posix = ctx.workspace.platform != 'windows'
+        rule = decide(rules, command=command, command_arg=shell_command_arg(tool_def), args=args, posix=posix)
+        if rule is not None and rule.verdict == 'deny':
+            # Left to `before_tool_execute`, which refuses it.
+            return None
+        return await self._protected(ctx, _subject(tool_def, args, command), posix=posix)
+
+    async def _protected(
+        self, ctx: RunContext[AgentDepsT], subject: tuple[PermissionAction, str] | None, *, posix: bool
+    ) -> _Asked | None:
+        if subject is None or not await self._protects(ctx, subject, posix=posix):
+            return None
+        action, text = subject
+        return _Asked(action=action, subject=text, reason=_PROTECTED_REASONS[action], person_only=True)
+
+    async def _protects(
+        self, ctx: RunContext[AgentDepsT], subject: tuple[PermissionAction, str], *, posix: bool
+    ) -> bool:
+        """Whether a file write or command changes one of `protected_paths` or runs one of `protected_commands`."""
+        action, text = subject
+        if not (self.protected_paths or self.protected_commands):
+            return False
+        if action == 'command' and (
+            # Too long to check in reasonable time: it counts as protected.
+            len(text) > COMMAND_LIMIT or command_matches(self._protected_rules, text, posix=posix)
+        ):
+            return True
+        if not self.protected_paths:
+            return False
+        if action == 'write':
+            locations = await write_locations(ctx.workspace, text)
+        else:
+            # Inside a durable run, expanding `~` or a variable from this process's environment could decide
+            # differently on replay: such a command counts as protected.
+            found = await command_locations(ctx.workspace, text, posix=posix, expand=not in_durable_context(ctx))
+            if found is None:
+                return True
+            locations = found
+        pattern = action == 'command'
+        return any(matches(location, self.protected_paths, posix=posix, pattern=pattern) for location in locations)
 
     def _mode_asks(
         self,
@@ -363,6 +503,52 @@ def _remembered_in(messages: Sequence[ModelMessage], remembered: _Remembered, to
     return False
 
 
+def person_only_request(metadata: object) -> bool:
+    """Whether a deferred call's metadata says `Permissions` holds it for a person only to approve."""
+    try:
+        return _AskedMetadata.model_validate(metadata).permissions.person_only
+    except ValidationError:
+        return False
+
+
+def marks_reviewer_approvals(ctx: RunContext[Any]) -> bool:
+    """Whether an `ApprovalReviewer` must mark its approvals in this run, as `Permissions` holds calls for a person.
+
+    The run's own capability tree is searched, so a per-run copy, such as one a delegate inherits, counts. A run
+    without such a `Permissions` gets no marker, so its tool calls' metadata stays as it was.
+    """
+    found = False
+
+    def visit(capability: AbstractCapability[Any]) -> None:
+        nonlocal found
+        while isinstance(capability, WrapperCapability):
+            capability = capability.wrapped
+        if isinstance(capability, Permissions):
+            found |= _holds_for_a_person(capability)
+
+    # A run always has one; only a context built by hand, as for calling the reviewer directly, has none.
+    if ctx.root_capability is not None:  # pragma: no branch
+        ctx.root_capability.apply(visit)
+    return found
+
+
+def _holds_for_a_person(permissions: Permissions[Any]) -> bool:
+    """Whether `permissions` can hold a call that only a person may approve."""
+    return bool(permissions.protected_paths or permissions.protected_commands)
+
+
+def reviewed_approval_metadata() -> dict[str, Any]:
+    """The metadata an `ApprovalReviewer` attaches to a call it approves, so `Permissions` won't take it for a person's."""
+    return _ReviewedMetadata(approval_reviewer=_Reviewed(approved=True)).model_dump()
+
+
+def _reviewed(metadata: object) -> bool:
+    try:
+        return _ReviewedMetadata.model_validate(metadata).approval_reviewer.approved
+    except ValidationError:
+        return False
+
+
 def _remember(metadata: object) -> bool:
     try:
         return _AnsweredMetadata.model_validate(metadata).permissions.remember
@@ -378,7 +564,15 @@ def permission_requests(requests: DeferredToolRequests) -> list[PermissionReques
             asked = _AskedMetadata.model_validate(requests.metadata.get(call.tool_call_id)).permissions
         except ValidationError:
             continue
-        found.append(PermissionRequest(call=call, action=asked.action, subject=asked.subject, reason=asked.reason))
+        found.append(
+            PermissionRequest(
+                call=call,
+                action=asked.action,
+                subject=asked.subject,
+                reason=asked.reason,
+                person_only=asked.person_only,
+            )
+        )
     return found
 
 
