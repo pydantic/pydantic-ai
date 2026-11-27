@@ -12,7 +12,7 @@ import anyio
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, RunContext, _utils
+from pydantic_ai import Agent, RunContext, ToolOutput, _utils
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, ReinjectSystemPrompt
@@ -3542,19 +3542,24 @@ async def test_interrupted_closeout_carries_the_output_tool_kind():
             async for e in super().handle_function_tool_result(event):
                 yield e
 
-    stream = RecordingEventStream(DummyUIRunInput(messages=[]))
-    calls: list[tuple[str, Literal['function', 'output'], str]] = [
-        ('call_1', 'output', 'submit_report'),
-        ('call_2', 'function', 'lookup'),
-    ]
-    for tool_call_id, kind, tool_name in calls:
-        [
-            e
-            async for e in stream._interrupted_tool_result(  # pyright: ignore[reportPrivateUsage]
-                tool_call_id, kind, tool_name, cancelled=True
-            )
-        ]
-    assert closeouts == [
-        ('submit_report', 'output', 'interrupted'),
-        ('lookup', None, 'interrupted'),
-    ]
+    class RecordingAdapter(DummyUIAdapter[None, str]):
+        def build_event_stream(self) -> UIEventStream[DummyUIRunInput, str, None, str]:
+            return RecordingEventStream(self.run_input, accept=self.accept)
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {0: DeltaToolCall(name='lookup', json_args='{"query": "a"}', tool_call_id='call_1')}
+        yield {
+            1: DeltaToolCall(name=info.output_tools[0].name, json_args='{"response": "done"}', tool_call_id='call_2')
+        }
+
+    agent = Agent(FunctionModel(stream_function=respond), output_type=ToolOutput(str, name='submit_report'))
+
+    @agent.tool
+    async def lookup(ctx: RunContext, query: str) -> str:
+        ctx.cancel()
+        return 'completed before the cancellation took effect'
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    [_ async for _ in RecordingAdapter(agent, request).run_stream()]
+
+    assert closeouts == snapshot([('lookup', None, 'interrupted'), ('submit_report', 'output', 'interrupted')])
