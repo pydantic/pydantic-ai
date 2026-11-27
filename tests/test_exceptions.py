@@ -26,6 +26,7 @@ from pydantic_ai.exceptions import (
     ModelConnectionError,
     ModelContextWindowExceededError,
     ModelEmptyResponseError,
+    ModelFeatureUnsupportedError,
     ModelHTTPError,
     ModelInvalidResponseError,
     ModelNotFoundError,
@@ -271,6 +272,10 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
             {'model_name': 'gpt-4', 'message': 'Invalid response', 'body': {'choices': None}},
         ),
         (
+            lambda: ModelFeatureUnsupportedError('gpt-4', 'tool_output', 'Tool output is not supported by this model.'),
+            {'model_name': 'gpt-4', 'feature': 'tool_output', 'message': 'Tool output is not supported by this model.'},
+        ),
+        (
             lambda: InlinedSchemaTooLargeError("The JSON schema of tool 'x'", 'Leave it out.'),
             {'subject': "The JSON schema of tool 'x'", 'remedy': 'Leave it out.'},
         ),
@@ -306,6 +311,7 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         'OutputTokenLimitExceeded',
         'ModelEmptyResponseError',
         'ModelInvalidResponseError',
+        'ModelFeatureUnsupportedError',
         'InlinedSchemaTooLargeError',
     ],
 )

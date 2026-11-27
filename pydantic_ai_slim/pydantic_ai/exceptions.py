@@ -63,6 +63,8 @@ __all__ = (
     'ModelAuthenticationError',
     'ModelNotFoundError',
     'ModelSchemaTooComplexError',
+    'ModelFeature',
+    'ModelFeatureUnsupportedError',
     'ModelRequestTimeout',
     'ModelEmptyResponseError',
     'ModelInvalidResponseError',
@@ -948,6 +950,50 @@ class ModelSchemaTooComplexError(ModelRequestRejectedError):
     It's not the [`UserError`][pydantic_ai.exceptions.UserError] Pydantic AI raises before sending a schema whose
     `$ref`s expand too far when inlined: this is the provider rejecting a request that was sent.
     """
+
+
+ModelFeature: TypeAlias = Literal[
+    'function_tools', 'tool_output', 'native_output', 'text_output', 'image_output', 'tool_choice'
+]
+"""A feature a request can ask of a model, which the model may not support; see
+[`ModelFeatureUnsupportedError.feature`][pydantic_ai.exceptions.ModelFeatureUnsupportedError.feature].
+
+- `'function_tools'`: function tools.
+- `'tool_output'`: [Tool Output](../output.md#tool-output).
+- `'native_output'`: [Native Output](../output.md#native-output), which needs JSON schema output.
+- `'text_output'`: plain text output.
+- `'image_output'`: image output.
+- `'tool_choice'`: a `tool_choice` setting that forces tool use.
+"""
+
+
+class ModelFeatureUnsupportedError(ModelRequestRejectedError, UserError):
+    """Raised by Pydantic AI before sending a request that asks for something this model can't do, but another model might.
+
+    The model's profile or class says it doesn't support the
+    [`feature`][pydantic_ai.exceptions.ModelFeatureUnsupportedError.feature] the request asks for, like Native
+    Output on a model without JSON schema output, so the request is never sent. As a
+    [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError],
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] and
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] fall back on it by default, to a model that may
+    support the feature. It's also a [`UserError`][pydantic_ai.exceptions.UserError], as it was before it had a
+    class of its own, so an existing `except UserError` keeps catching it.
+
+    A request no model could serve, like one with an invalid setting, raises a plain `UserError` instead.
+    """
+
+    feature: ModelFeature | str
+    """The feature the request asks for that this model doesn't support.
+
+    One of the [`ModelFeature`][pydantic_ai.exceptions.ModelFeature] values, or one specific to a model class.
+    """
+
+    def __init__(self, model_name: str, feature: ModelFeature | str, message: str):
+        self.feature = feature
+        super().__init__(model_name, message)
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return self.__class__, (self.model_name, self.feature, self.message), self.__getstate__()
 
 
 class ModelRequestTimeout(ModelAPIError):
