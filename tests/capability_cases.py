@@ -142,8 +142,9 @@ class Narrows:
     The access-boundary case in "Deciding What Two Of It Mean"
     (`src/pydantic_ai_harness/agent_docs/capability-authoring.md`), for connections to a provider: merging
     two field by field could send one account's credential to another's server or drop `read_only`. `make`
-    takes the class, like `Collides`, because these live in optional groups that a module-level import would
-    break.
+    takes the discovered class because several of these, such as `Pixeltable` and `PlaywrightBrowser`, live in
+    optional dependency groups, and a module-level import would break the whole file on a lane that installs none
+    of them.
     """
 
     reason: str
@@ -158,7 +159,9 @@ class Conjoins:
     The access-boundary case in "Deciding What Two Of It Mean"
     (`src/pydantic_ai_harness/agent_docs/capability-authoring.md`) for a capability whose restrictions can
     all hold at once, such as `FileSystem` and `Shell`: allowlists intersect, denylists add up, limits take
-    the smaller value, so adding one only ever narrows. `make` takes the class, like `Collides`.
+    the smaller value, so adding one only ever narrows. `make` takes the discovered class, as `Narrows.make` does,
+    so a conjoining capability from an optional dependency group can have a case without a module-level import
+    that would break the whole file on a lane that does not install it.
     """
 
     reason: str
