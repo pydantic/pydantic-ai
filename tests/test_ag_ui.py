@@ -12686,6 +12686,7 @@ def test_tool_result_attachments_below_the_carrier_dump_as_a_user_message() -> N
     )
 
 
+@requires_ag_ui('0.1.11')
 @pytest.mark.parametrize('preserve_file_data', [False, True])
 def test_an_uploaded_file_attachment_reaches_the_client_only_with_preserve_file_data(preserve_file_data: bool) -> None:
     """An `UploadedFile` attachment's provider file reference is dumped only when the application opts in, as for user content."""
