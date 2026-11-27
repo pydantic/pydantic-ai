@@ -270,7 +270,7 @@ url = f'https://{sandbox.get_host(3000)}'
 
 With `idle_timeout`, the sandbox pauses about `idle_timeout` after the run's last use, since serving the preview isn't use. Call `await sandbox.set_timeout(seconds)` to keep it up longer.
 
-The preview is public. Stop it with `stop_command` while the workspace is attached, and kill the sandbox when you're done.
+The preview is public. With `network={'allow_public_traffic': False}`, requests to its URL must carry the sandbox's `traffic_access_token`, as [E2B's docs](https://docs.e2b.dev/sandbox/internet-access) describe. Stop it with `stop_command` while the workspace is attached, and kill the sandbox when you're done.
 
 ## Configuration
 
