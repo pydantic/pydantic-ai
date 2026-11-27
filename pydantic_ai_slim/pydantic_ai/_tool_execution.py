@@ -786,11 +786,13 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         retried, as an output tool call isn't. When the response also has a final result, or an output tool call whose
         arguments are valid, the call is retried as before instead, so a response with a valid output doesn't fail the
         run. (`'exhaustive'` validates function tool calls before it runs any output tool, so the final result isn't
-        known yet then.)
+        known yet then.) The output tool calls are only validated once the call is known to be cut off, so a response
+        that isn't doesn't run the output type's validators an extra time.
         """
         if (
             not validated.args_valid
             and self.final_result is None
+            and self.ctx.state.is_incomplete_tool_call(validated.call)
             and not any(
                 self.tool_manager._output_tool_call_args_valid(self.tool_calls[i])  # pyright: ignore[reportPrivateUsage]
                 for i in self.output_indices

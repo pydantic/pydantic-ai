@@ -5447,6 +5447,49 @@ def test_cut_off_function_tool_call_after_an_invalid_output_tool_call_raises(
     assert requests == 1
 
 
+@pytest.mark.parametrize('end_strategy', ['graceful', 'exhaustive'])
+def test_invalid_function_tool_args_not_cut_off_validate_the_output_as_often_as_before(
+    end_strategy: Literal['graceful', 'exhaustive'],
+):
+    """A function tool call with invalid arguments that the token limit didn't cut off validates the output only as before.
+
+    The cut-off check looks for a valid output tool call only once the call is known to be cut off, so the common
+    "wrong schema" retry doesn't run the output type's validators an extra time.
+
+    Not a VCR test: counting validator runs needs a validator with a side effect, which a recorded response can't add.
+    """
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(info.output_tools[0].name, {'name': 'Paris'}),
+                    ToolCallPart('get_weather', {'town': 'Paris'}),
+                ]
+            )
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'name': 'Lyon'})])
+
+    validated: list[str] = []
+
+    class City(BaseModel):
+        name: str
+
+        @field_validator('name')
+        @classmethod
+        def record(cls, name: str) -> str:
+            validated.append(name)
+            return name
+
+    agent = Agent(FunctionModel(respond), output_type=ToolOutput(City), end_strategy=end_strategy)
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return 'sunny'  # pragma: no cover
+
+    assert agent.run_sync('Hello').output == City(name='Lyon')
+    assert validated == ['Paris', 'Lyon']
+
+
 def test_empty_response_with_finish_reason_length():
     def return_empty_response(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         resp = ModelResponse(parts=[])

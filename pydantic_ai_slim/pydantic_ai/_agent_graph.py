@@ -1030,12 +1030,12 @@ class GraphAgentState:
         # thread-safe list subclass. Pydantic deserialization also runs this hook.
         self.pending_messages = _enqueue.PendingMessageQueue(self.pending_messages)
 
-    def check_incomplete_tool_call(self, call: _messages.ToolCallPart | None = None) -> None:
-        """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call.
+    def is_incomplete_tool_call(self, call: _messages.ToolCallPart | None = None) -> bool:
+        """Whether the last model response was truncated mid-tool-call.
 
-        When `call` is given, only raise if it is the tool call that was truncated.
+        When `call` is given, only whether it is the tool call that was truncated.
         """
-        if (
+        return bool(
             self.message_history
             and isinstance(model_response := self.message_history[-1], _messages.ModelResponse)
             and model_response.finish_reason == 'length'
@@ -1043,7 +1043,14 @@ class GraphAgentState:
             and isinstance(tool_call := model_response.parts[-1], _messages.ToolCallPart)
             and (call is None or call.tool_call_id == tool_call.tool_call_id)
             and _output.are_tool_call_args_cut_off(tool_call)
-        ):
+        )
+
+    def check_incomplete_tool_call(self, call: _messages.ToolCallPart | None = None) -> None:
+        """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call.
+
+        When `call` is given, only raise if it is the tool call that was truncated.
+        """
+        if self.is_incomplete_tool_call(call):
             raise exceptions.IncompleteToolCall(_output.incomplete_tool_call_message(self.last_max_tokens))
 
     def consume_output_retry(
