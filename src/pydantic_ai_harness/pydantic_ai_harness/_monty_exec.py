@@ -46,7 +46,7 @@ try:
         CollectString,
         ExternalException,
         ExternalFuture,
-        ExternalModule,
+        ExternalModule as ExternalModule,  # re-exported for `code_mode._capability`, behind this guard
         ExternalResult,
         ExternalReturnValue,
         ExternalSettledResult,

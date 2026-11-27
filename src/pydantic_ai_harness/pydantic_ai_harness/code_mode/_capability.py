@@ -7,7 +7,6 @@ from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import TypeAdapter, ValidationError
-from pydantic_monty import ExternalModule
 from typing_extensions import TypedDict
 
 from pydantic_ai import AbstractToolset
@@ -31,7 +30,9 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector
 from pydantic_ai_harness._combine import one_per_id
-from pydantic_ai_harness._monty_exec import build_remote_pool, session_os_policy
+
+# From `_monty_exec`, whose guarded import names the `code-mode` extra when `pydantic-monty` is missing.
+from pydantic_ai_harness._monty_exec import ExternalModule, build_remote_pool, session_os_policy
 from pydantic_ai_harness._monty_turns import MontyTurn, TurnRequest, redacted_error_type, run_monty_turn
 from pydantic_ai_harness._warn import renamed_duration_limit
 from pydantic_ai_harness.code_mode._eager import EagerCodeModeToolset
