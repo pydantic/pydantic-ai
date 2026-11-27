@@ -2289,7 +2289,7 @@ async def test_a_requested_compaction_no_capability_can_serve_warns_once_and_sta
     events = RecordEvents()
     agent = Agent(TestModel(), capabilities=[events, RequestOnce()])
 
-    with pytest.warns(UserWarning, match='no capability of this agent has a `compact_history` hook') as caught:
+    with pytest.warns(UserWarning, match='no capability of this run can compact right now') as caught:
         result = await agent.run('hi', compact=True)
 
     assert events.events == []
@@ -2302,14 +2302,14 @@ async def test_a_requested_compaction_no_capability_can_serve_warns_once_and_sta
 async def test_an_unserved_compaction_requested_again_later_in_the_run_doesnt_warn_again():
     """A second request no capability can serve, in a later step of the same run, is dropped without a new warning."""
     events = RecordEvents()
-    agent = Agent(TestModel(), capabilities=[events])
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[events])
 
     @agent.tool
     def compact_conversation(ctx: RunContext[None]) -> str:
         ctx.request_compaction(reason='model_requested')
         return 'requested'
 
-    with pytest.warns(UserWarning, match='no capability of this agent has a `compact_history` hook') as caught:
+    with pytest.warns(UserWarning, match='no capability of this run can compact right now') as caught:
         result = await agent.run('hi', compact=True)
 
     assert events.events == []

@@ -21,7 +21,7 @@ from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import BinaryContent, ModelMessagesTypeAdapter, ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_ai_pax import Session, chat
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.runtime import image_codec
@@ -561,7 +561,7 @@ async def test_line_prompt_error_timer_survives_prompt_restart(
 
 
 async def test_images_persist_and_resume(image_path: Path, tmp_path: Path) -> None:
-    conversations = SqliteConversationStore(database=tmp_path / 'history.db')
+    conversations = SqliteSessionStore(database=tmp_path / 'history.db')
     agent = Agent(TestModel())
     session = Session(agent, deps=None, conversations=conversations, workspace=tmp_path)
     image = read_image(image_path)
@@ -583,7 +583,7 @@ async def test_failed_image_turn_is_durable(image_path: Path, tmp_path: Path) ->
     session = Session(
         Agent(TestModel()),
         deps=None,
-        conversations=SqliteConversationStore(database=tmp_path / 'history.db'),
+        conversations=SqliteSessionStore(database=tmp_path / 'history.db'),
         workspace=tmp_path,
     )
 
@@ -660,7 +660,7 @@ async def test_cancelled_image_turn_is_durable(image_path: Path, tmp_path: Path)
     session = Session(
         Agent(TestModel(), deps_type=type(None), capabilities=[Pause()]),
         deps=None,
-        conversations=SqliteConversationStore(database=tmp_path / 'history.db'),
+        conversations=SqliteSessionStore(database=tmp_path / 'history.db'),
         workspace=tmp_path,
     )
     image = read_image(image_path)

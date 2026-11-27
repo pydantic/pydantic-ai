@@ -74,11 +74,11 @@ class CompactionRequests:
             return
         self.warned_unserved = True
         warnings.warn(
-            f'Compaction was requested (reason {requested.reason!r}), but no capability of this agent has a '
-            '`compact_history` hook, so the request was dropped and the history is unchanged. Add `NativeCompaction` '
-            'or a summarizing compaction capability to compact.',
+            f'Compaction was requested (reason {requested.reason!r}), but no capability of this run can compact '
+            "right now: none has a `compact_history` hook, or the one that does isn't loaded yet. The request was "
+            'dropped and the history is unchanged. Add `NativeCompaction` or a summarizing compaction capability to '
+            'compact.',
             UserWarning,
-            stacklevel=2,
         )
 
 
