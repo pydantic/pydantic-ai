@@ -362,9 +362,10 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         # Stash the streamed part. `_handle_tool_call` (post-validation) takes over emission
         # in the normal flow and pops the stash. If the agent raises before the call event
         # fires (e.g. output-tool `UnexpectedModelBehavior` with no `final_result`, or a
-        # mid-stream error while the call is still streaming), the stash survives and the
-        # `tool-input-available` is backfilled by `_handle_tool_result` or, for an interrupted
-        # run with no result event, flushed by `on_error`.
+        # mid-stream error while the call is still streaming), the stash survives and
+        # `_handle_tool_result` or, for an interrupted run with no result event, `on_error` closes
+        # it: with `tool-input-error` on SDK v6+, so the client doesn't run a discarded call
+        # through `onToolCall`, and with a backfilled `tool-input-available` on v5.
         self._streamed_call_parts[part.tool_call_id] = part
         return
         # Marks this an async generator.
@@ -553,8 +554,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         ):
             input_error_part = streamed_part
 
-        # Backfill `tool-input-available` if `_handle_tool_call` didn't emit it for this
-        # streamed call. Two cases:
+        # On SDK v5, backfill `tool-input-available` if `_handle_tool_call` didn't emit it for
+        # this streamed call (on v6+ only a denied call still gets the backfill; the others close
+        # with `tool-input-error` above). Two cases:
         # - The call was skipped because a final result was already processed: its call
         #   event is unvalidated (`args_valid is None`), so `_handle_tool_call` kept the
         #   stash, and the stub return arrives here.
@@ -562,8 +564,8 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         #   `UnexpectedModelBehavior` with no prior `final_result`). The base class then
         #   synthesizes a `ToolReturnPart(outcome='failed')` for the pending call, which
         #   arrives here.
-        # Without the backfill, v5/v6 frontends would move the call out of `input-streaming`
-        # with no input announcement in between.
+        # Without the backfill, a v5 frontend, or a v6 one for a denied call, would move the call
+        # out of `input-streaming` with no input announcement in between.
         # `input_error_part is not None` means the chunk is deliberately suppressed on v6, for an
         # invalidated or discarded call — don't backfill in that case.
         if streamed_part is not None and input_error_part is None:
