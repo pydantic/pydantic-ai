@@ -9,7 +9,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, WrapToolExecuteHandler
-from pydantic_ai.exceptions import ApprovalRequired, SkipToolExecution
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, SkipToolExecution
 from pydantic_ai.messages import (
     CapabilityPart,
     InstructionDeltaPart,
@@ -121,8 +121,7 @@ class UntrustedContentGate(AbstractCapability[AgentDepsT]):
         result: Any,
     ) -> Any:
         """Record an untrusted tool that ran, for calls that no model response made."""
-        if not await self._trusts(ctx, call.tool_name):
-            self._ran.append(_Source(tool_name=call.tool_name, tool_call_id=call.tool_call_id))
+        await self._record(ctx, call)
         return result
 
     def get_ordering(self) -> CapabilityOrdering:
@@ -204,9 +203,15 @@ class UntrustedContentGate(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
         handler: WrapToolExecuteHandler,
     ) -> Any:
-        """Add the gate's reason to an approval request another capability raised for the same call."""
+        """Add the gate's reason to an approval request another capability raised for the same call.
+
+        Also record an untrusted tool that failed or asked for a retry: its message can carry what it read, and a
+        Code Mode script can catch the error and go on.
+        """
         try:
             return await handler(args)
+        except (CallDeferred, SkipToolExecution):
+            raise
         except ApprovalRequired as error:
             if _has_reason(error.metadata):
                 raise
@@ -217,6 +222,9 @@ class UntrustedContentGate(AbstractCapability[AgentDepsT]):
             if self.on_tainted == 'block':
                 raise SkipToolExecution(ToolDenied(_block_message(call.tool_name))) from error
             raise ApprovalRequired(metadata=_with_reason(error.metadata, asked)) from error
+        except Exception:
+            await self._record(ctx, call)
+            raise
 
     async def _decide(
         self, ctx: RunContext[AgentDepsT], *, call: ToolCallPart, tool_def: ToolDefinition
@@ -279,6 +287,10 @@ class UntrustedContentGate(AbstractCapability[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], tool_name: str, tool_call_id: str | None
     ) -> _Source | None:
         return None if await self._trusts(ctx, tool_name) else _Source(tool_name=tool_name, tool_call_id=tool_call_id)
+
+    async def _record(self, ctx: RunContext[AgentDepsT], call: ToolCallPart) -> None:
+        if not await self._trusts(ctx, call.tool_name):
+            self._ran.append(_Source(tool_name=call.tool_name, tool_call_id=call.tool_call_id))
 
     async def _trusts(self, ctx: RunContext[AgentDepsT], tool_name: str) -> bool:
         """Whether `trusted_tools` selects the tool; a tool the run can no longer resolve is untrusted."""

@@ -88,7 +88,7 @@ A `requires_approval=True` tool, or one with an argument validator (`args_valida
 
 ## Code Mode
 
-Inside a [Code Mode](code-mode.md) script, each nested call is gated on its own, and `run_code` itself is not, unless `gated_tools` selects it. A nested call is judged on the whole history and on every untrusted tool that ran earlier in this run, including earlier calls in the same script. That record is kept in process: a durable run that resumes in the middle of a script rebuilds taint from history only. Approvals inside a script need a [Handle Deferred Tool Calls](../capabilities/handle-deferred-tool-calls.md) handler.
+Inside a [Code Mode](code-mode.md) script, each nested call is gated on its own, and `run_code` itself is not, unless `gated_tools` selects it. A nested call is judged on the whole history and on every untrusted tool that ran earlier in this run, including earlier calls in the same script. A tool that failed or asked for a retry counts as having run, since a script can catch the error and read its message. That record is kept in process: a durable run that resumes in the middle of a script rebuilds taint from history only. Approvals inside a script need a [Handle Deferred Tool Calls](../capabilities/handle-deferred-tool-calls.md) handler.
 
 A script's own file and OS access through Code Mode's `mount` or `os_access` does not go through tool calls, so the gate does not see it. For an agent that reads untrusted content, keep mounts read-only, or select `run_code` in `gated_tools` to hold every script in a tainted run.
 
