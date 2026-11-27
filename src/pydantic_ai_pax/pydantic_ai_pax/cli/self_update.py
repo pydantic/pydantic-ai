@@ -545,9 +545,11 @@ class Updates:
     async def _instead_of_installing(self, uv: str | None, update: Update) -> str | None:
         """What `command` says when it does not install `update` now; `None` to go on and install it.
 
-        A `clai2` restarts into the `pax` another session moved to; other `pax` processes refuse an install.
+        A `clai2` restarts into the `pax` another session moved to, whether or not its own build is the newest;
+        other `pax` processes refuse an install. On Windows the install runs after exit, as every update there does.
         """
-        if update.move and uv is not None and await self._moved_already(uv, update):
+        legacy = tool_distribution() == LEGACY_DISTRIBUTION
+        if legacy and uv is not None and not self.windows and await self._moved_already(uv, update):
             return await self._restart_into_moved(uv, update)
         return await self._in_use(uv, update)
 

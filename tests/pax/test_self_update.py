@@ -877,13 +877,15 @@ async def test_a_pydantic_clai2_session_restarts_into_the_pax_another_one_moved_
     """
     _in_environment(monkeypatch, tmp_path, 'pydantic-clai2')
     stable = Installed(version='0.53.0', tool=True)
-    cases: list[tuple[UpdateChannel, Installed, str, str]] = [
-        ('stable', stable, '0.53.0', '0.53.0'),
-        ('main', TOOL, SHA, SHA[:9]),
+    cases: list[tuple[UpdateChannel, Installed, str, str, Installed]] = [
+        ('stable', stable, '0.53.0', '0.53.0', stable),
+        ('main', TOOL, SHA, SHA[:9], TOOL),
+        # An older `clai2`, to which the `pax` another session moved to is an update too.
+        ('stable', Installed(version='0.52.0', tool=True), '0.53.0', '0.53.0', stable),
     ]
-    for channel, current, target, label in cases:
+    for channel, current, target, label, there in cases:
         moved, ran = _updates([channel], current=current, fetch=lambda _, target=target: target)
-        moved.tool = AsyncMock(return_value=current)
+        moved.tool = AsyncMock(return_value=there)
         moved.others = AsyncMock(return_value=['4545'])
         assert await moved.command([]) == f'pax {label} ({channel}) is installed already. Restarting...'
         assert (ran, moved.restart_required, moved.relaunch) == ([], True, '/tools/pax')
@@ -900,6 +902,13 @@ async def test_a_pydantic_clai2_session_restarts_into_the_pax_another_one_moved_
         f'pax 0.53.0 (stable) is installed already. Exiting; start pax to use it.\n{notice}'
     )
     assert (ran, heard) == ([], [InstallProgress(stage='installed', target='0.53.0')])
+    # On Windows the install is handed off to run after exit, as every update there is, rather than restarting.
+    windows, ran = _updates(['stable'], current=stable, fetch=lambda _: '0.53.0')
+    windows.tool = AsyncMock(return_value=stable)
+    windows.windows = True
+    windows.hand_off = lambda _: None
+    assert (await windows.command([])).startswith('Installing Pax 0.53.0 (stable) in a new window once Pax exits.')
+    assert (ran, windows.relaunch) == ([], None)
     # A `pax` from another build, or from Git on `stable`, is not the one this session would move to.
     for other in (Installed(version='0.52.0', tool=True), Installed(version='0.53.0', commit=SHA, tool=True)):
         replaced, ran = _updates(['stable'], current=stable, fetch=lambda _: '0.53.0')
