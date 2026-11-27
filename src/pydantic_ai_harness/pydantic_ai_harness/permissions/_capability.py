@@ -9,7 +9,7 @@ from typing import Any, Literal, NamedTuple, cast
 
 from pydantic import BaseModel, ValidationError
 
-from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs
+from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs, WrapperCapability
 from pydantic_ai.exceptions import ApprovalRequired, SkipToolExecution, UserError
 from pydantic_ai.messages import ModelMessage, ToolCallPart, ToolReturn, ToolReturnPart
 from pydantic_ai.tools import (
@@ -590,6 +590,32 @@ def person_only_request(metadata: object) -> bool:
         return _PersonOnlyMetadata.model_validate(metadata).permissions.person_only
     except ValidationError:
         return False
+
+
+def marks_reviewer_approvals(ctx: RunContext[Any]) -> bool:
+    """Whether an `ApprovalReviewer` must mark its approvals in this run, as `Permissions` holds calls for a person.
+
+    The run's own capability tree is searched, so a per-run copy, such as one a delegate inherits, counts. A run
+    without such a `Permissions` gets no marker, so its tool calls' metadata stays as it was.
+    """
+    found = False
+
+    def visit(capability: AbstractCapability[Any]) -> None:
+        nonlocal found
+        while isinstance(capability, WrapperCapability):
+            capability = capability.wrapped
+        if isinstance(capability, Permissions):
+            found |= _holds_for_a_person(capability)
+
+    # A run always has one; only a context built by hand, as for calling the reviewer directly, has none.
+    if ctx.root_capability is not None:  # pragma: no branch
+        ctx.root_capability.apply(visit)
+    return found
+
+
+def _holds_for_a_person(permissions: Permissions[Any]) -> bool:
+    """Whether `permissions` can hold a call that only a person may approve."""
+    return bool(permissions.protected_paths or permissions.protected_commands)
 
 
 def reviewed_approval_metadata() -> dict[str, Any]:

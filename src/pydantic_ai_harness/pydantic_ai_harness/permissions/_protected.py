@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import posixpath
 import re
 import shlex
 from collections.abc import Sequence
@@ -83,7 +82,8 @@ async def command_locations(
     Words are split as the shell would: quotes and, on POSIX, backslash escapes keep spaces in a word, and on
     Windows backslashes are separators. `~` and environment variables are expanded as in this process, and every
     word counts, redirection targets and `--option=value` values included. A command made only of programs that
-    read the files they name, such as `cat` or `grep`, without redirection, names none.
+    read the files they name, such as `cat` or `grep`, run by name rather than path and without redirection, names
+    none.
 
     With `expand=False`, as inside a durable run, where this process's environment may differ on replay and is not
     the workspace's, nothing is expanded: `None` when a word would need it, as the paths it names can't be known.
@@ -115,6 +115,9 @@ def _words(command: str, *, posix: bool) -> list[str]:
     try:
         lexer = shlex.shlex(command, posix=posix, punctuation_chars=_OPERATORS)
         lexer.whitespace_split = True
+        # A `#` starts a comment only at the start of a word, and an unquoted one inside a word, as in `x#y`, is
+        # part of it: with no comments, the words after a real one count too, which only asks more.
+        lexer.commenters = ''
         tokens = [token if posix else _QUOTES.sub('', token) for token in lexer]
     except ValueError:
         # Quotes that don't balance: every way of reading the words counts.
@@ -127,8 +130,8 @@ def _words(command: str, *, posix: bool) -> list[str]:
 
 
 def _only_reads(command: str) -> bool:
+    """Whether `command` only runs reading programs by bare name, as a path such as `./cat` may be another program."""
     segments = command_segments(command)
     return bool(segments) and all(
-        not redirected and words and posixpath.basename(words[0]) in _READING_PROGRAMS
-        for words, redirected in segments or ()
+        not redirected and words and words[0] in _READING_PROGRAMS for words, redirected in segments or ()
     )
