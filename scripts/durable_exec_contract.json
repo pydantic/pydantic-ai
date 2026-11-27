@@ -1567,6 +1567,17 @@
     }
   },
   "pydantic_ai_slim/pydantic_ai/_unsupported_settings.py": {
+    "raised_for_fallback": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model_errors.py::<module>"
+      ]
+    },
     "suppress_warnings": {
       "engines": [
         "durable_exec"
@@ -3844,6 +3855,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_toolset.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model_errors.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::<module>"
+      ]
+    },
+    "UnsupportedSettingWarning": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model_errors.py::<module>"
       ]
     },
     "UsageLimitExceeded": {
