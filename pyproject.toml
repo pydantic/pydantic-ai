@@ -563,6 +563,8 @@ executionEnvironments = [
     # root contains a file, so they precede `tests`.
     { root = "tests/durable_exec/test_durable_exec_contract_manifest.py", extraPaths = ["scripts", "examples"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     { root = "tests/durable_exec/test_durable_exec_contract_touched.py", extraPaths = ["scripts", "examples"], reportUnusedFunction = false, reportPrivateImportUsage = false },
+    # Imports `scripts/update_openrouter_input_modalities.py` by name.
+    { root = "tests/models/openrouter/test_update_input_modalities.py", extraPaths = ["scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     { root = "tests", extraPaths = ["examples"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     # `scripts/typecheck_changed.py` reads `tomllib`, which is 3.11+. These two are
     # developer tooling rather than shipped code, and the script falls back to the full

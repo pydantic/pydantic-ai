@@ -1951,7 +1951,7 @@ def test_bedrock_unknown_provider_returns_none():
 
 # =============================================================================
 # OpenRouter — cross-provider routing via the OpenAI-compat surface.
-# Four-layer merge: OpenAI transformer fallback / OpenRouter model list's input modalities / lab upstream /
+# Four-layer merge: OpenAI transformer fallback / lab upstream / OpenRouter model list's input modalities /
 # OpenRouter overrides.
 # =============================================================================
 

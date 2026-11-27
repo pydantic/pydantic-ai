@@ -125,6 +125,8 @@ jobs:
             body=$(printf '%s\n' \
               'Refreshes `pydantic_ai_slim/pydantic_ai/providers/_openrouter_input_modalities.py` from [OpenRouter'"'"'s model list](https://openrouter.ai/api/v1/models).' \
               '' \
-              'Opened by the `OpenRouter input modalities` workflow, which replaces this branch with a new snapshot each week while it differs from `main`. Check the diff for models whose image, audio or video input flipped: the flags decide whether a file is sent to the model or replaced by a note.')
+              'Opened by the `OpenRouter input modalities` workflow, which replaces this branch with a new snapshot each week while it differs from `main`. Check the diff for models whose image, audio or video input flipped: the flags decide whether a file is sent to the model or replaced by a note.' \
+              '' \
+              'If a flag flipped for a model that `tests/profiles/test_resolution_matrix.py` pins, CI fails here until its inline snapshot is updated: `uv run pytest tests/profiles/test_resolution_matrix.py --inline-snapshot=fix`.')
             gh pr create --base main --head "$BRANCH" --title 'Refresh the OpenRouter input modalities snapshot' --body "$body"
           fi

@@ -49,20 +49,26 @@ OPENROUTER_INPUT_MODALITIES: Mapping[str, tuple[InputModality, ...]] = {
 '''
 
 
-class _Architecture(BaseModel):
+class Architecture(BaseModel):
+    """The part of a listed model that says what it takes."""
+
     input_modalities: list[str] | None = None
 
 
-class _ListedModel(BaseModel):
+class ListedModel(BaseModel):
+    """One model in the list, with only the fields the snapshot uses."""
+
     id: str
-    architecture: _Architecture | None = None
+    architecture: Architecture | None = None
 
 
-class _ModelList(BaseModel):
-    data: list[_ListedModel]
+class ModelList(BaseModel):
+    """The response of the model list endpoint."""
+
+    data: list[ListedModel]
 
 
-def input_modalities(model_list: _ModelList) -> dict[str, tuple[str, ...]]:
+def input_modalities(model_list: ModelList) -> dict[str, tuple[str, ...]]:
     """The kinds among `KINDS` each model takes, by model ID, for the models whose list entry has them."""
     listed: dict[str, tuple[str, ...]] = {}
     for model in model_list.data:
@@ -92,7 +98,7 @@ def main() -> int:
     """Fetch the model list and write the snapshot."""
     response = httpx.get(MODEL_LIST_URL, timeout=60, follow_redirects=True)
     response.raise_for_status()
-    modalities = input_modalities(_ModelList.model_validate_json(response.content))
+    modalities = input_modalities(ModelList.model_validate_json(response.content))
     if not modalities:
         print('The OpenRouter model list has no models with input modalities', file=sys.stderr)
         return 1
