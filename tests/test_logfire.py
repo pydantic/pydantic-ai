@@ -5624,14 +5624,6 @@ def a_tool() -> str:
     return 'done'
 
 
-def _keep_last(messages: list[ModelMessage]) -> list[ModelMessage]:
-    return messages[-1:]
-
-
-def _keep_first_two_and_last(messages: list[ModelMessage]) -> list[ModelMessage]:
-    return [*messages[:2], *messages[2:][-1:]]
-
-
 @dataclass(frozen=True)
 class RunSpanIndexCase:
     id: str
@@ -5670,7 +5662,7 @@ RUN_SPAN_INDEX_CASES = [
         # The processor drops the earlier run, so every message recorded is this run's.
         id='history-processor-trims-earlier-runs',
         prompts=('question 1', 'question 2'),
-        capabilities=(ProcessHistory(_keep_last),),
+        capabilities=(ProcessHistory(lambda messages: messages[-1:]),),
         expected_index=None,
         marks=(pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST),),
     ),
@@ -5708,7 +5700,7 @@ RUN_SPAN_INDEX_CASES = [
             ModelRequest(parts=[UserPromptPart('question 1')]),
             ModelResponse(parts=[TextPart('an answer')]),
         ),
-        capabilities=(ProcessHistory(_keep_first_two_and_last),),
+        capabilities=(ProcessHistory(lambda messages: [*messages[:2], *messages[2:][-1:]]),),
         expected_index=2,
         failed_run_tail=[],
         marks=(pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST),),
@@ -5721,7 +5713,11 @@ RUN_SPAN_INDEX_CASES = [
 def test_run_span_new_message_index(
     case: RunSpanIndexCase, capfire: CaptureLogfire, get_logfire_summary: Callable[[], LogfireSummary]
 ) -> None:
-    """`pydantic_ai.new_message_index` is where the run's own messages start in `pydantic_ai.all_messages`."""
+    """`pydantic_ai.new_message_index` is where the run's own messages start in `pydantic_ai.all_messages`.
+
+    This is not a VCR test: it checks which attributes the run span carries, which a recorded provider
+    response wouldn't change.
+    """
     settings = InstrumentationSettings()
     agent = Agent(
         FunctionModel(_answer),
