@@ -402,7 +402,7 @@ def create_shell(
     commands.register(
         Command(
             name='project',
-            description='Review what .clai/settings.json sets: /project [approve NAME...|all | revoke NAME...|all]',
+            description='Review what .pax/settings.json sets: /project [approve NAME...|all | revoke NAME...|all]',
             handler=context.project_command,
             complete=context.project_completions,
         )

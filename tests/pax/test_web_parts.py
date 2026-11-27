@@ -678,7 +678,7 @@ async def test_run_web_reports_an_unknown_session(tmp_path: Path) -> None:
         await run_web(
             settings_for=lambda project: Settings(model='test'),
             store=SettingsStore(tmp_path / 'c.db'),
-            project=ProjectSettings(path=tmp_path / '.clai' / 'settings.json', pending={'run.permissions': 'full'}),
+            project=ProjectSettings(path=tmp_path / '.pax' / 'settings.json', pending={'run.permissions': 'full'}),
             console=Console(file=output, width=200),
             resume='00000000-0000-0000-0000-000000000000',
         )

@@ -125,8 +125,8 @@ class SettingsStore:
             connection.execute(
                 'CREATE TABLE IF NOT EXISTS approved_files (path TEXT PRIMARY KEY, sha256 TEXT NOT NULL)'
             )
-            # The project-file values `/project approve` approved, by the absolute folder holding `.clai` and
-            # `/set` key, sit beside the rest for the same reason: builds that do not ask never read them.
+            # The project-file values `/project approve` approved, by the absolute folder holding `.pax` (or
+            # `.clai`) and `/set` key, sit beside the rest for the same reason: builds that do not ask never read them.
             connection.execute(
                 'CREATE TABLE IF NOT EXISTS approved_project_settings (root TEXT NOT NULL, key TEXT NOT NULL, '
                 'value_json TEXT NOT NULL, PRIMARY KEY (root, key))'

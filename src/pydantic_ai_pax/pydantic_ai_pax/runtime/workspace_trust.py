@@ -25,7 +25,12 @@ from typing import Self
 
 from pydantic_ai.messages import Authority
 from pydantic_ai_pax.config import TrustLevel
-from pydantic_ai_pax.config.project_settings import PROJECT_FILE, repository_directories
+from pydantic_ai_pax.config.project_settings import (
+    PROJECT_DIR,
+    PROJECT_FILE,
+    project_file_in,
+    repository_directories,
+)
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.ui.rendering.tool_output import terminal_text
 
@@ -35,10 +40,10 @@ _SKILL_FOLDERS = (Path('.agents') / 'skills', Path('.claude') / 'skills')
 _AGENT_FOLDERS = (Path('.agents') / 'agents', Path('.claude') / 'agents', Path('.codex') / 'agents')
 _APPROVED_SEPARATELY = (
     (PROJECT_FILE, '/project approve, /plugins enable'),
-    (Path('.clai') / 'mcp_servers.json', '/mcp trust'),
+    (PROJECT_DIR / 'mcp_servers.json', '/mcp trust'),
     (Path('.mcp.json'), '/mcp trust'),
 )
-"""Repository files that wait for their own approval, trusted or not."""
+"""Repository files that wait for their own approval, trusted or not; `project_file_in` also finds the `.pax/` ones."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -239,7 +244,9 @@ def repository_files(directory: Path) -> RepositoryFiles:
         trusted += [*_folders(folder, _SKILL_FOLDERS, start), *found]
         agents += found
         approved += [
-            (_label(folder / sub, start), how) for sub, how in _APPROVED_SEPARATELY if os.path.isfile(folder / sub)
+            (_label(path, start), how)
+            for sub, how in _APPROVED_SEPARATELY
+            if (path := project_file_in(folder, sub)) is not None and os.path.isfile(path)
         ]
     return RepositoryFiles(trusted=tuple(trusted), approved_separately=tuple(approved), agent_folders=bool(agents))
 

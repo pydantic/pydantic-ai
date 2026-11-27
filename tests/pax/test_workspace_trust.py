@@ -111,8 +111,8 @@ async def test_a_folder_is_untrusted_until_you_trust_it(tmp_path: Path) -> None:
 async def test_trust_shows_what_it_covers(repository: Path) -> None:
     (repository / 'AGENTS.md').write_text('Be careful.')
     (repository / '.claude' / 'skills').mkdir(parents=True)
-    (repository / '.clai').mkdir()
-    (repository / '.clai' / 'settings.json').write_text('{}')
+    (repository / '.pax').mkdir()
+    (repository / '.pax' / 'settings.json').write_text('{}')
     store = SettingsStore(repository.parent / 'config.db')
     shell = shell_in(repository / '.claude', store)
     try:
@@ -122,7 +122,7 @@ async def test_trust_shows_what_it_covers(repository: Path) -> None:
             'Found here: ../AGENTS.md, skills.\n'
             'Untrusted, the agent can still read, edit and run code here, '
             "and instruction files and skills reach the model as the repository's, not yours.\n"
-            'Either way, these still wait for their own approval: ../.clai/settings.json (/project approve, /plugins enable).\n'
+            'Either way, these still wait for their own approval: ../.pax/settings.json (/project approve, /plugins enable).\n'
             '/trust yes trusts it; /trust no keeps it untrusted.'
         )
     finally:
@@ -396,8 +396,8 @@ async def test_trust_in_the_home_folder_holds_for_the_session_only(tmp_path: Pat
 
 
 async def test_a_project_file_cannot_trust_its_repository(repository: Path, tmp_path: Path) -> None:
-    (repository / '.clai').mkdir()
-    (repository / '.clai' / 'settings.json').write_text(
+    (repository / '.pax').mkdir()
+    (repository / '.pax' / 'settings.json').write_text(
         json.dumps({'trust': True, 'trusted': True, 'workspace_trust': 'trusted', 'hasTrustDialogAccepted': True})
     )
     store = SettingsStore(tmp_path / 'config.db')
@@ -462,6 +462,33 @@ def test_repository_files_lists_names_only(repository: Path) -> None:
     assert (
         'Found here: CLAUDE.md, .agents/agents (agent folders still reach the model as yours either way, for now).'
         in describe(WorkspaceTrust.saved(store, repository), repository)
+    )
+
+
+@pytest.mark.parametrize('folder', ['.pax', '.clai'])
+def test_project_files_wait_for_approval_under_either_folder_name(repository: Path, folder: str) -> None:
+    """`.clai`, the folder's name before Pax was renamed, is still read, so the trust prompt lists its files the same."""
+    (repository / folder).mkdir()
+    (repository / folder / 'settings.json').write_text('{}')
+    (repository / folder / 'mcp_servers.json').write_text('{}')
+    assert repository_files(repository).approved_separately == (
+        (f'{folder}/settings.json', '/project approve, /plugins enable'),
+        (f'{folder}/mcp_servers.json', '/mcp trust'),
+    )
+    store = SettingsStore(repository.parent / 'config.db')
+    assert (
+        f'Either way, these still wait for their own approval: {folder}/settings.json (/project approve, '
+        f'/plugins enable), {folder}/mcp_servers.json (/mcp trust).'
+    ) in describe(WorkspaceTrust.saved(store, repository), repository)
+
+
+def test_a_clai_file_beside_a_pax_one_is_not_listed(repository: Path) -> None:
+    """Pax reads only the `.pax` file then, so the `.clai` one has nothing to wait for."""
+    for folder in ('.pax', '.clai'):
+        (repository / folder).mkdir()
+        (repository / folder / 'settings.json').write_text('{}')
+    assert repository_files(repository).approved_separately == (
+        ('.pax/settings.json', '/project approve, /plugins enable'),
     )
 
 

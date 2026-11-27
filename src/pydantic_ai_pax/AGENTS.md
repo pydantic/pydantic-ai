@@ -220,7 +220,7 @@ Plugins load and unload while Pax runs. The rules that make that safe:
   user's Pax configuration directory. Hosts rely on a configuration that the user's
   saved settings cannot change.
 - **Project declarations rank just above built-ins and start off.**
-  `.clai/settings.json` (`project_settings.py`) may declare plugins; the loader
+  `.pax/settings.json` (`project_settings.py`) may declare plugins; the loader
   takes them as `project=`, every one `enabled=False`, because a repository
   must not run code as the user on launch. `/plugins enable` is the approval
   and persists the approved declaration in the store. Precedence is store,
@@ -240,7 +240,13 @@ Plugins load and unload while Pax runs. The rules that make that safe:
   contents (read through `host.settings_database`), stopping a `before_tool`
   call on a mismatch. `approve` refuses a file it cannot read, so an empty
   digest never matches.
-- **Project settings beyond display wait for approval.** `.clai/settings.json`
+- **`.pax/` is the project folder; `.clai/` is still read.** A directory
+  without `.pax/settings.json` (or `.pax/mcp_servers.json`) is read for the
+  same file under `.clai/`, the folder's name before the rename; one holding
+  both reads only `.pax/`. `project_file_in` decides this for every caller,
+  including the trust prompt's list of files, so a project file is gated
+  the same under either name. User docs name `.pax/` only.
+- **Project settings beyond display wait for approval.** `.pax/settings.json`
   keys in `SAFE_PROJECT_KEYS` (`display.*`) apply at once; every other key is
   `pending` until `/project approve` stores that exact value for the project
   root in the store's `approved_project_settings` table, so a changed value

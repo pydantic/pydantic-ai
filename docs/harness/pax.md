@@ -508,7 +508,7 @@ Bookkeeping that isn't a preference, such as your workspaces and which Pax proce
 Sign-ins and API keys are encrypted, with the key kept in your system keychain. Without a
 keychain, they are saved unencrypted in a file only you can read. A
 repository can also pin settings for everyone who works in it with a
-`.clai/settings.json` file. See [files](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#files)
+`.pax/settings.json` file. See [files](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#files)
 and [project settings](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#project-settings)
 in the reference.
 

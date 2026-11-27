@@ -584,8 +584,8 @@ async def test_chat_opens_sessions_for_the_browser_beside_the_terminal(tmp_path:
     screen = SurfaceTerminal(width=100, height=30)
     elsewhere = tmp_path / 'elsewhere'
     (elsewhere / '.git').mkdir(parents=True)
-    (elsewhere / '.clai').mkdir()
-    (elsewhere / '.clai' / 'settings.json').write_text('{"instructions": "Work elsewhere."}')
+    (elsewhere / '.pax').mkdir()
+    (elsewhere / '.pax' / 'settings.json').write_text('{"instructions": "Work elsewhere."}')
     seen: list[dict[str, JsonValue]] = []
 
     def settings_for(project: ProjectSettings) -> Settings:

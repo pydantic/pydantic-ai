@@ -1,4 +1,7 @@
-"""Project-local settings: `.clai/settings.json`, found by walking up from the workspace to the git root."""
+"""Project-local settings: `.pax/settings.json`, found by walking up from the workspace to the git root.
+
+A directory without `.pax/settings.json` is read for `.clai/settings.json`, the folder's name before Pax was renamed.
+"""
 
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -18,7 +21,11 @@ from pydantic_ai_pax.config import (
 from pydantic_ai_pax.config.hooks import HOOKS_FACTORY, PROJECT_HOOKS, HookTable
 from pydantic_ai_pax.config.settings_store import SettingsStore, setting_json
 
-PROJECT_FILE = Path('.clai') / 'settings.json'
+PROJECT_DIR = Path('.pax')
+"""The folder holding a repository's Pax files, in any directory between the workspace and the git root."""
+LEGACY_PROJECT_DIR = Path('.clai')
+"""`PROJECT_DIR`'s name before Pax was renamed, still read in a directory whose `PROJECT_DIR` lacks the file."""
+PROJECT_FILE = PROJECT_DIR / 'settings.json'
 """The file name, relative to any directory between the workspace and the git root."""
 
 _FILE: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
@@ -62,7 +69,7 @@ class ProjectSettings:
     plugins: tuple[PluginSettings, ...] = ()
     """Declarations from the file, every one disabled: the user approves each with `/plugins enable`.
 
-    A relative `path` is already made absolute against the project root, the folder holding `.clai`.
+    A relative `path` is already made absolute against the project root, the folder holding `.pax`.
     A `hooks` table is one more, `project_hooks`, which runs it from that root.
     """
     unknown: tuple[str, ...] = ()
@@ -70,7 +77,10 @@ class ProjectSettings:
 
     @property
     def root(self) -> Path | None:
-        """The folder holding `.clai`, which approvals are kept for; `None` without a file."""
+        """The folder holding `.pax` (or `.clai`), which approvals are kept for; `None` without a file.
+
+        Approvals stay with the folder, so they still apply after a `.clai/settings.json` moves to `.pax/`.
+        """
         return None if self.path is None else self.path.parent.parent
 
     @property
@@ -99,17 +109,27 @@ def _present(path: Path) -> bool:
     return True
 
 
+def project_file_in(directory: Path, name: Path) -> Path | None:
+    """`directory / name` when present; for a `name` under `PROJECT_DIR`, else its copy under `LEGACY_PROJECT_DIR`.
+
+    A directory holding both reads only the `PROJECT_DIR` one. `None` when neither is present.
+    """
+    candidates = [name]
+    if name.parts[0] == PROJECT_DIR.name:
+        candidates.append(LEGACY_PROJECT_DIR.joinpath(*name.parts[1:]))
+    return next((directory / candidate for candidate in candidates if _present(directory / candidate)), None)
+
+
 def find_project_file(workspace: Path, name: Path = PROJECT_FILE) -> Path | None:
-    """The nearest `name` at or above `workspace`. The search stops at the first `.git`.
+    """The nearest `name` at or above `workspace`, as `project_file_in` finds it. The search stops at the first `.git`.
 
     An unreadable project file is still returned, so loading it fails loudly rather than silently
     dropping the repository's settings; an unreadable `.git` still ends the walk.
     """
     start = workspace.resolve()
     for directory in (start, *start.parents):
-        candidate = directory / name
-        if _present(candidate):
-            return candidate
+        if (found := project_file_in(directory, name)) is not None:
+            return found
         if _present(directory / '.git'):
             return None
     return None

@@ -32,7 +32,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/accounts` | Add, rename, reorder, and sign out of accounts |
 | `/keys` | Manage saved API keys |
 | `/permissions [full\|auto\|read-only]` | Show or set what runs without asking |
-| `/project [approve NAME...\|all \| revoke NAME...\|all]` | Review what `.clai/settings.json` sets, and approve or revoke its keys for this repository |
+| `/project [approve NAME...\|all \| revoke NAME...\|all]` | Review what `.pax/settings.json` sets, and approve or revoke its keys for this repository |
 | `/trust [yes\|no]` | Show whether you trust this session's folder, or trust it or not; see [Folder trust](#folder-trust) |
 | `/set [KEY [VALUE]]` | Change a setting; no arguments opens the menu (alias `/settings`) |
 | `/config show\|get\|set\|reset` | Read or write saved settings; writes apply on restart |
@@ -154,8 +154,8 @@ preference, such as workspaces, is under `$XDG_STATE_HOME/pydantic-ai-pax/` (def
 | `plugins/` | Drop-in plugins; `plugins/_git/` holds plugins installed from Git |
 | `spinners.json` | Your own spinners and speeds |
 | `logfire/`, `telemetry.log` | Logfire credentials, and export warnings kept off the screen |
-| `.clai/settings.json` in a repository | [Project settings](#project-settings) |
-| `.mcp.json` or `.clai/mcp_servers.json` in a repository | Project MCP servers, loaded after `/mcp trust accept` |
+| `.pax/settings.json` in a repository | [Project settings](#project-settings) |
+| `.mcp.json` or `.pax/mcp_servers.json` in a repository | Project MCP servers, loaded after `/mcp trust accept` |
 
 ## Getting started
 
@@ -238,7 +238,7 @@ applies from the next prompt. What the model has already read stays in the conve
 Where the decision is kept:
 
 - It is kept in `config.db`, in your settings, never in the repository, so a repository cannot
-  trust itself: `.clai/settings.json` has no key for it, and `pax config` cannot set it. Pax reads
+  trust itself: `.pax/settings.json` has no key for it, and `pax config` cannot set it. Pax reads
   nothing the folder holds to decide whether to ask.
 - Inside a Git repository, it covers the whole repository: every subfolder and every linked
   worktree share the main checkout's decision. A repository nested inside it, such as a
@@ -401,7 +401,7 @@ values. Keep `.env` files containing credentials out of version control.
 
 Preferences live in `$XDG_CONFIG_HOME/pydantic-ai-pax/config.db`, falling back to
 `~/.config/pydantic-ai-pax/config.db`. Use `--database PATH` to select another database.
-A repository can add its own layer with a `.clai/settings.json` file; see
+A repository can add its own layer with a `.pax/settings.json` file; see
 [Project settings](#project-settings). Conversation messages and Pax's
 Codex tokens are not written to the settings database. Plugin settings are arbitrary
 JSON stored in plaintext in this database, including secrets if you put them there.
@@ -474,7 +474,7 @@ not change output-validation or HTTP transport retries.
 ### Project settings
 
 A repository can pin settings for everyone who runs Pax inside it. Put a
-`.clai/settings.json` next to the code; Pax looks for one in the launch
+`.pax/settings.json` next to the code; Pax looks for one in the launch
 directory and each parent, stopping at the first directory that contains
 `.git`, and uses the nearest file it finds. Nothing is loaded from above the
 repository.
@@ -517,7 +517,7 @@ session in that repository, and `/project revoke NAME...` (or `all`) removes sav
 approvals and returns to your own settings, including an approval of a key or value
 the file no longer sets, or of a file that is gone, which would otherwise apply
 again if the repository brought it back. An approval is kept in your user settings, for the folder
-that holds `.clai` and for the value you approved: once the file changes that
+that holds `.pax` and for the value you approved: once the file changes that
 value, as after a pull, it waits for your approval again. You approve at the
 prompt; `pax` has no subcommand for it. A headless `pax -p` run or `pax --web`
 launch uses the approvals you saved and prints the keys it leaves out (on stderr
@@ -525,7 +525,7 @@ for `-p`).
 
 The project's `instructions` are still sent while they wait, but as the
 repository's text rather than as your own: framed on the user channel, with a
-note from Pax that they come from `.clai/settings.json` and are not approved,
+note from Pax that they come from `.pax/settings.json` and are not approved,
 never in the system prompt where your own `run.instructions` go. Once approved, they take the place of
 your own instructions, as before.
 
@@ -533,7 +533,7 @@ For instruction-loading settings, see [Repository instructions](#repository-inst
 
 `plugins` takes the module declarations used by `/plugins add NAME module[:Class] [JSON]`: an `id`, a `factory`
 (`module` or `module:attr`), an optional `path`, and optional `settings`. A
-relative `path` is relative to the folder that holds `.clai`, whichever
+relative `path` is relative to the folder that holds `.pax`, whichever
 subdirectory you launch from. A
 repository cannot switch a plugin on for you: plugins are trusted code running
 as your user, so every project-declared plugin starts off, Pax lists the ones
@@ -607,7 +607,7 @@ users can write to, such as `/tmp`. To scan only the workspace, turn the walk of
 it to a JSON list of directories if your instruction files are symlinks into a
 shared directory.
 
-Both settings are user-only, not plugin JSON options; `.clai/settings.json`
+Both settings are user-only, not plugin JSON options; `.pax/settings.json`
 rejects their fields. Use absolute paths, `~`, or `~/...`, not relative paths,
 `~other-user`, or environment-variable interpolation. Single-quote each whole
 JSON list as above, which also keeps paths containing spaces in one argument,
@@ -3140,7 +3140,7 @@ terminal, has no timeout, and can be interrupted with Ctrl+C. A command failure
 does not fall back to Git. If the saved configuration cannot be read or validated
 on exit, Pax warns and offers the existing Git cleanup prompt instead. If Git
 metadata cannot be read to prepare a registered command, Pax keeps the checkout
-and reports the error. `.clai/settings.json` cannot set `worktree_remove_commands`;
+and reports the error. `.pax/settings.json` cannot set `worktree_remove_commands`;
 Pax refuses to start if it does. Automatic removal and
 `/workspaces destroy` continue to use Git.
 
@@ -3320,7 +3320,7 @@ The [web UI](../PLUGINS.md#web-this-session-in-your-browser), from `pax --web` o
 others run turns. Each live session has its own conversation, folder, plugins,
 queued prompts, and running turn, and keeps working while you look at another.
 It works in the folder it was saved in, with that folder's `AGENTS.md`, skills,
-`.clai/settings.json`, and MCP project files. Under `pax --web`, **New session**
+`.pax/settings.json`, and MCP project files. Under `pax --web`, **New session**
 asks which folder. It lists one row per project it has sessions in, which starts
 in the checkout you are in, else the main one; the row's chevron, or → and ←, shows
 and hides every worktree of its repository, to start in one of those instead. It also
@@ -3371,7 +3371,7 @@ many sessions run at once.
   started with never closes this way.
 - **Settings.** `/set` in one session applies to every live session, except `model`
   and the `run.*` settings, which stay with the session that set them, and settings
-  a session's `.clai/settings.json` fixes.
+  a session's `.pax/settings.json` fixes.
 - **Read-only.** A session whose folder is gone, such as a removed worktree,
   opens read-only. With `/web` from a terminal, so does a session saved in another
   folder than the one Pax started in.
@@ -3548,7 +3548,7 @@ Servers are on demand by default: their tools stay out of prompts until the agen
 loads them by the server's description. Switch off **On demand**
 (`"defer_loading": false`) to put a server's tools in every prompt; see
 [Load a server's tools on demand](../PLUGINS.md#load-a-servers-tools-on-demand). A
-repository's Claude Code-style `.mcp.json` (or `.clai/mcp_servers.json`) loads
+repository's Claude Code-style `.mcp.json` (or `.pax/mcp_servers.json`) loads
 once you review it and run `/mcp trust accept`. See
 [Connect MCP servers](../PLUGINS.md#connect-mcp-servers) for storage, secrets, OAuth,
 and project trust. `/plugins disable mcp` removes the command and tools. In the
@@ -3889,7 +3889,7 @@ saved with `/login`. Pax's per-model defaults apply too, such as prompt
 caching. Without `model`, every run must pass one.
 
 Nothing else you saved for `pax` applies: no saved, drop-in, or project plugins, no
-`.clai/settings.json`, no `/model settings`, and no `chain:` fallback chains. `ask_user`
+`.pax/settings.json`, no `/model settings`, and no `chain:` fallback chains. `ask_user`
 and the other terminal plugins stay out, as do `observability` and `mcp`, which read
 your Pax configuration, and the Pax customization guide. Plugins close when the
 `async with` block exits.
