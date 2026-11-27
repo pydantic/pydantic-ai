@@ -24,7 +24,13 @@ from . import (
     messages as _messages,
     usage as _usage,
 )
-from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
+from ._enqueue import (
+    EnqueueContent,
+    PendingMessage,
+    PendingMessagePlacement,
+    PendingMessagePriority,
+    PendingMessageQueue,
+)
 from ._instrumentation import current_otel_traceparent
 from ._run_context import (
     CustomEventT,
@@ -849,6 +855,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         self,
         *content: EnqueueContent,
         priority: PendingMessagePriority = 'asap',
+        placement: PendingMessagePlacement = 'append',
     ) -> str | None:
         """Enqueue content to be injected into the conversation.
 
@@ -872,6 +879,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     content to the history instead, or leaves it queued; see
                     [Injecting messages mid-run](../message-history.md#injecting-messages-mid-run)).
                 `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
+            placement: Where the content lands when it's delivered into a model request, as in
+                [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]: `'append'` (default) after what
+                the history already holds, or `'before_prompt'` right before the user prompt in the request
+                being sent, when it holds one, for data capability parts only.
 
         Returns:
             The `enqueue_id` of the queued message, echoed on the
@@ -879,9 +890,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             delivered, or `None` when there was nothing to enqueue (an empty call).
 
         Raises:
-            UserError: If the run has ended, since there'd be nowhere to deliver the message.
+            UserError: If the run has ended, since there'd be nowhere to deliver the message, or if content
+                placed `'before_prompt'` is anything but data capability parts.
         """
-        pending = PendingMessage.from_content(*content, priority=priority)
+        pending = PendingMessage.from_content(*content, priority=priority, placement=placement)
         if pending is None:
             return None
         self._graph_run.state.pending_messages.append(pending)
