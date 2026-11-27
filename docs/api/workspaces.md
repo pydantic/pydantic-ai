@@ -8,6 +8,7 @@
             - ReadOnlyWorkspace
             - AuthorityWorkspace
             - lowest_authority_under
+            - file_links
             - LocalWorkspaceBackend
             - WindowsWorkspaceBackend
             - UnavailableWorkspace

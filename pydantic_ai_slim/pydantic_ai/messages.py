@@ -4042,7 +4042,50 @@ class DocumentCitationSource:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-CitationSource: TypeAlias = Annotated[WebCitationSource | DocumentCitationSource, pydantic.Discriminator('kind')]
+@dataclass(repr=False)
+class WorkspaceLocation:
+    """A file in the [workspace](../workspace.md) a response ran in.
+
+    That workspace is the response's [`ModelResponse.workspace_ref`][pydantic_ai.messages.ModelResponse.workspace_ref].
+    The location holds no reference to it, so a client that sees or sends it back can't point it at another one.
+    """
+
+    path: str
+    """The file's absolute path inside the workspace, as the model wrote it."""
+
+    _: KW_ONLY
+
+    kind: Literal['workspace'] = 'workspace'
+    """Location type identifier, used as a discriminator for deserialization."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class FileCitationSource:
+    """A file the model linked to, such as one it made in its workspace.
+
+    [`file_links`][pydantic_ai.workspaces.file_links] makes these from `[name](sandbox:/path)` links in the
+    model's text.
+    """
+
+    location: WorkspaceLocation
+    """Where the file is. Files in a model provider's own environment will add more kinds of location."""
+
+    _: KW_ONLY
+
+    title: str | None = None
+    """The link's text, if it had any."""
+
+    kind: Literal['file'] = 'file'
+    """Source type identifier, used as a discriminator for deserialization."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+CitationSource: TypeAlias = Annotated[
+    WebCitationSource | DocumentCitationSource | FileCitationSource, pydantic.Discriminator('kind')
+]
 """Where a citation's information came from."""
 
 

@@ -1791,6 +1791,25 @@ async def model_logic(  # noqa: C901
                     FilePart(content=BinaryImage(data=b'fake', media_type='image/png', identifier='160d47')),
                 ]
             )
+        elif m.content == 'Write fizzbuzz to fizzbuzz.py and send it to me.':
+            # docs/workspace.md: the model writes the file and prints where it is, to link it next
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='execute',
+                        args={
+                            'command': [
+                                'python',
+                                '-c',
+                                "from pathlib import Path; p = Path('fizzbuzz.py'); "
+                                'p.write_text(\'for i in range(1, 16): print("fizz"*(i%3==0) + "buzz"*(i%5==0) or i)\\n\'); '
+                                'print(p.resolve())',
+                            ]
+                        },
+                        tool_call_id='pyd_ai_tool_call_id',
+                    )
+                ]
+            )
         elif m.content == 'Write fizzbuzz to fizzbuzz.py and run it.':
             return ModelResponse(
                 parts=[
@@ -1867,6 +1886,8 @@ async def model_logic(  # noqa: C901
         assert isinstance(m.content, str) and not m.content.startswith('[exit '), m.content
         if 'Write fizzbuzz to fizzbuzz.py and run it.' in prompts:
             return ModelResponse(parts=[TextPart('fizzbuzz.py is written and runs clean.')])
+        if 'Write fizzbuzz to fizzbuzz.py and send it to me.' in prompts:
+            return ModelResponse(parts=[TextPart(f'Here it is: [fizzbuzz.py](sandbox:{m.content.strip()})')])
     if (
         isinstance(m, RetryPromptPart)  # pyright: ignore[reportDeprecated]
         and isinstance(m.content, str)

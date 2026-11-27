@@ -123,6 +123,7 @@ from .messages import (
     DocumentMediaType,
     DocumentUrl,
     EnqueuedMessagesEvent,
+    FileCitationSource,
     FilePart,
     FileUrl,
     FinalResultEvent,
@@ -203,6 +204,7 @@ from .messages import (
     VideoMediaType,
     VideoUrl,
     WebCitationSource,
+    WorkspaceLocation,
     WorkspaceSource,
 )
 from .models import AbstractModel, ModelRequestContext, ModelResolutionContext, ModelSelectionContext
@@ -378,8 +380,10 @@ __all__: tuple[str, ...] = (
     'CitationSource',
     'ContentCitationAnchor',
     'DocumentCitationSource',
+    'FileCitationSource',
     'MarkerCitationAnchor',
     'WebCitationSource',
+    'WorkspaceLocation',
     'CompactionPart',
     'CapabilityEvent',
     'CapabilityPart',

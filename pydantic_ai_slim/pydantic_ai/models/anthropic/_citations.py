@@ -33,6 +33,7 @@ from ...messages import (
     CitationSource,
     ContentCitationAnchor,
     DocumentCitationSource,
+    FileCitationSource,
     ModelMessage,
     ModelResponse,
     NativeToolReturnPart,
@@ -207,10 +208,16 @@ def citations_fit_text(part: TextPart) -> bool:
     """Whether a text part is still the block Anthropic cited, so its citations can be sent back.
 
     Anthropic cites whole blocks, so each citation covers the whole text. One that doesn't, because the text was
-    edited or joined with other text, such as by a UI adapter, would vouch for text it never cited.
+    edited or joined with other text, such as by a UI adapter, would vouch for text it never cited. Links to files,
+    such as those [`file_links`][pydantic_ai.workspaces.file_links] finds, aren't Anthropic's, so they don't count.
     """
-    return bool(part.citations) and all(
-        citation.anchor == ContentCitationAnchor(start=0, end=len(part.content)) for citation in part.citations or []
+    cited = [
+        citation
+        for citation in part.citations or []
+        if not all(isinstance(source, FileCitationSource) for source in citation.sources)
+    ]
+    return bool(cited) and all(
+        citation.anchor == ContentCitationAnchor(start=0, end=len(part.content)) for citation in cited
     )
 
 

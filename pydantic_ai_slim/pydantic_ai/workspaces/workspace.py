@@ -17,6 +17,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     Authority,
     BinaryContent,
+    FileCitationSource,
     _media_type_from_file_name,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -738,7 +739,7 @@ class Workspace(WorkspaceBackend):
         """Read a file as text; undecodable bytes raise `UnicodeDecodeError`."""
         return (await self.read_bytes(path)).decode(encoding)
 
-    async def read_file(self, path: str) -> BinaryContent:
+    async def read_file(self, path: str | FileCitationSource, /) -> BinaryContent:
         """Read a file as [`BinaryContent`][pydantic_ai.messages.BinaryContent], to hand to a user, an app or a model.
 
         The media type comes from the file name's extension, as in
@@ -746,12 +747,48 @@ class Workspace(WorkspaceBackend):
         `application/octet-stream` when the extension is unknown. An image comes back as a
         [`BinaryImage`][pydantic_ai.messages.BinaryImage].
 
+        A path is read as given. A [`FileCitationSource`][pydantic_ai.messages.FileCitationSource], such as one
+        from [`file_links`][pydantic_ai.workspaces.file_links], names a path the model chose, so it is read only
+        inside the working directory, as [`in_working_dir`][pydantic_ai.workspaces.Workspace.in_working_dir]
+        checks: a path outside, or one that isn't absolute on this workspace's platform, raises `PermissionError`.
+
         The whole file is read into memory, with no size limit: check
         [`stat`][pydantic_ai.workspaces.Workspace.stat]`(path).size` first to refuse large files.
         """
-        data = await self.read_bytes(path)
-        media_type = _media_type_from_file_name(self.paths.basename(path))
+        if isinstance(path, FileCitationSource):
+            name = path.location.path
+            if not self._is_absolute(name) or (target := await self._real_path_in_working_dir(name)) is None:
+                raise PermissionError(
+                    f'{name!r} is not inside the working directory, or the backend cannot resolve symlinks to check'
+                )
+        else:
+            name = target = path
+        data = await self.read_bytes(target)
+        media_type = _media_type_from_file_name(self.paths.basename(name))
         return BinaryContent.narrow_type(BinaryContent(data=data, media_type=media_type))
+
+    async def in_working_dir(self, path: str) -> bool:
+        """Whether `path` is inside the working directory, once its symlinks are resolved.
+
+        Check a path you didn't choose, such as one from a client, before you read it: an absolute
+        path, `..` or a symlink can otherwise name any file the environment can read. A backend with neither
+        [`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath] nor commands can't resolve symlinks, so
+        every path is `False`. A symlink made between the check and the read isn't caught.
+        """
+        return await self._real_path_in_working_dir(path) is not None
+
+    async def _real_path_in_working_dir(self, path: str) -> str | None:
+        backend: WorkspaceBackend = self
+        while isinstance(backend, Workspace):
+            backend = backend._backend
+        if '\0' in path or not isinstance(backend, (SupportsRealpath, SupportsCommands)):
+            return None
+        working_dir, resolved = await self.working_dir(), await self.resolve(path)
+        # Checked as text first, so a path such as a Windows UNC share is refused before resolving it touches it.
+        if not is_within(resolved, working_dir, sep=self.paths.sep):
+            return None
+        target = await self.realpath(resolved)
+        return target if is_within(target, working_dir, sep=self.paths.sep) else None
 
     async def write_text(self, path: str, content: str, *, encoding: str = 'utf-8') -> None:
         """Write text to a file."""

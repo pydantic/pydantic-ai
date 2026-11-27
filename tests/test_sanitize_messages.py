@@ -56,6 +56,7 @@ from pydantic_ai.messages import (
     Citation,
     ContentCitationAnchor,
     DocumentCitationSource,
+    FileCitationSource,
     FileUrl,
     ForceDownloadMode,
     InstructionBaselinePart,
@@ -81,6 +82,7 @@ from pydantic_ai.messages import (
     ToolSearchReturnPart,
     UserContent,
     WebCitationSource,
+    WorkspaceLocation,
     sanitize_messages,
 )
 from pydantic_ai.models import ModelRequestParameters
@@ -1182,6 +1184,8 @@ POLICY: dict[type, Fields | Dropped] = {
     DocumentCitationSource: Fields(
         {'document_id': _CONVERSATION, 'title': _CONVERSATION, 'excerpts': _CONVERSATION, 'kind': _KIND}
     ),
+    FileCitationSource: Fields({'location': _CONVERSATION, 'title': _CONVERSATION, 'kind': _KIND}),
+    WorkspaceLocation: Fields({'path': _CONVERSATION, 'kind': _KIND}),
     ContentCitationAnchor: Fields({'start': _CONVERSATION, 'end': _CONVERSATION, 'kind': _KIND}),
     MarkerCitationAnchor: Fields({'start': _CONVERSATION, 'end': _CONVERSATION, 'kind': _KIND}),
     BaseToolCallPart: Fields(
@@ -1368,6 +1372,10 @@ _SURVIVAL_HISTORY: list[ModelMessage] = [
                     Citation(
                         [DocumentCitationSource(document_id='doc-1', title='Doc', excerpts=['Ex.'])],
                         anchor=MarkerCitationAnchor(start=1, end=2),
+                    ),
+                    Citation(
+                        [FileCitationSource(WorkspaceLocation(path='/work/out.csv'), title='out')],
+                        anchor=MarkerCitationAnchor(start=2, end=3),
                     ),
                 ],
             ),

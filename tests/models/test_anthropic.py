@@ -109,6 +109,7 @@ from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RequestUsage, UsageLimits
+from pydantic_ai.workspaces import file_links
 from pydantic_graph import End
 
 from .._inline_snapshot import snapshot
@@ -352,6 +353,40 @@ async def test_anthropic_replays_only_web_search_citations(
 
     [replayed] = cast(list[dict[str, Any]], messages[1]['content'])
     assert replayed.get('citations') == ([_ANTHROPIC_WEB_SEARCH_CITATION] if kept and fits else None)
+
+
+async def test_anthropic_replays_web_search_citations_beside_file_links():
+    """A link to a file the app attached with `file_links` doesn't stop the web search citations going back.
+
+    Unit test: no recording has a text part with both.
+    """
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='mock-api-key'))
+    content = 'See [a](sandbox:/work/a.csv).'
+    web = Citation(
+        sources=[WebCitationSource(url='https://example.com')], anchor=ContentCitationAnchor(start=0, end=29)
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Search the web.')]),
+        ModelResponse(
+            parts=[
+                TextPart(
+                    content,
+                    provider_name='anthropic',
+                    provider_details={'citations': [_ANTHROPIC_WEB_SEARCH_CITATION]},
+                    citations=[web, *file_links(content)],
+                )
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[UserPromptPart('Continue.')]),
+    ]
+
+    _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(history), ModelRequestParameters(), AnthropicModelSettings()
+    )
+
+    [replayed] = cast(list[dict[str, Any]], messages[1]['content'])
+    assert replayed.get('citations') == [_ANTHROPIC_WEB_SEARCH_CITATION]
 
 
 async def test_anthropic_web_search_citations_not_replayed_without_web_search():
