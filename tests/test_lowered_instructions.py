@@ -530,7 +530,7 @@ async def test_a_dynamic_capabilitys_ceiling_lowers_the_instructions_it_returns(
         received.instructions.append(info.instructions)
         return ModelResponse(parts=[TextPart('Done.')])
 
-    def factory(ctx: RunContext[Notes]) -> Capability[Notes]:
+    def factory(ctx: RunContext[Notes]) -> Capability[Notes] | CombinedCapability[Notes]:
         if nested:
             return CombinedCapability([notes_capability()])
         return notes_capability()
