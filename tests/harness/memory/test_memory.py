@@ -2403,14 +2403,14 @@ class TestInjection:
                     'id': 'chatcmpl-1',
                     'object': 'chat.completion',
                     'created': 0,
-                    'model': 'gpt-5.6-sol',
+                    'model': 'gpt-5.2',
                     'choices': [{'index': 0, 'message': message, 'finish_reason': 'stop'}],
                     'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2},
                 },
             )
 
         client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
-        model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(api_key='x', http_client=client))
+        model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(api_key='x', http_client=client))
         await Agent(model, capabilities=[Memory(store=store)]).run('next', message_history=history)
 
         # Chat doesn't honor Anthropic's compaction, so it still sends the old snapshot: the empty one must follow it.

@@ -259,8 +259,10 @@ at connect time:
   deploy-time step — a warm-up connect after a tool change — rather than something a customer's
   first call should pay for: the writes run one after another, and two processes syncing the same
   agent concurrently race on the final `tool_ids` re-point, last writer wins. Synced tools get
-  ElevenLabs' default 20-second response timeout (`response_timeout_secs`); a tool that already has a
-  timeout of its own keeps it when it is updated.
+  ElevenLabs' defaults for the settings Pydantic AI has no counterpart for, such as the 20-second response
+  timeout (`response_timeout_secs`). A tool that is updated keeps the ones set on the ElevenLabs side: its
+  response timeout, pre-tool speech (`pre_tool_speech`), tool call sound, execution mode, interruption and
+  error handling, and dynamic variable assignments.
 - `'off'`: trust the agent's own tool definitions, e.g. for client tools set up on the ElevenLabs side
   with settings Pydantic AI doesn't sync. A call to a tool the session does not define reaches the tool
   manager like any other call and is answered with the standard unknown-tool error, which lands in the

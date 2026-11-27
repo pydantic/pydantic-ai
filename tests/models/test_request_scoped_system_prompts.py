@@ -911,21 +911,21 @@ async def test_sealed_model_keeps_request_scoped_prompts_in_sealed_clear_at_entr
 
 
 @pytest.mark.parametrize(
-    'make_client, expected',
+    'make_client',
     [
-        pytest.param(lambda: AsyncAnthropicBedrock(aws_region='us-east-1'), True, id='bedrock'),
-        pytest.param(lambda: AsyncAnthropicFoundry(api_key='x', base_url='https://example.com'), False, id='foundry'),
+        pytest.param(lambda: AsyncAnthropicBedrock(aws_region='us-east-1'), id='bedrock'),
+        pytest.param(lambda: AsyncAnthropicFoundry(api_key='x', base_url='https://example.com'), id='foundry'),
     ],
 )
 @pytest.mark.parametrize('model_name', ['claude-sonnet-5-5', 'claude-haiku-5-5'])
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-def test_request_scoped_support_follows_the_transport_on_sealed_models(
-    make_client: Callable[[], AsyncAnthropicClient], expected: bool, model_name: str
+def test_request_scoped_support_on_sealed_models_across_transports(
+    make_client: Callable[[], AsyncAnthropicClient], model_name: str
 ):
-    """The entry needs a transport that serves the `system` role, whatever the model's lasting messages use."""
+    """A sealed model's lasting messages are `<system>` blocks, but its request-scoped ones are `system` entries."""
     model = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=make_client()))
     assert model.profile.get('supports_inline_system_prompts') is False
-    assert model.profile.get('supports_request_scoped_system_prompts') is expected
+    assert model.profile.get('supports_request_scoped_system_prompts') is True
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
@@ -944,14 +944,8 @@ async def test_anthropic_request_scoped_opt_out_through_the_profile(
         profile=AnthropicModelProfile(supports_request_scoped_system_prompts=False),
     )
     native = AnthropicModel('claude-opus-5-5', provider=provider)
-    foundry = AnthropicModel(
-        'claude-opus-5-5',
-        provider=AnthropicProvider(anthropic_client=AsyncAnthropicFoundry(api_key='x', base_url='https://example.com')),
-    )
     assert model.profile.get('supports_inline_system_prompts') is True
     assert native.profile.get('supports_request_scoped_system_prompts') is True
-    # Microsoft Foundry serves no `system` role, so it can't serve a request-scoped one either.
-    assert foundry.profile.get('supports_request_scoped_system_prompts') is False
 
     await send(model, tool_loop_history())
 

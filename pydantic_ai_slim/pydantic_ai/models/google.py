@@ -593,6 +593,32 @@ See https://ai.google.dev/gemini-api/docs/thinking#set-budget.
 """
 
 
+def _still_thinking(config: ThinkingConfigDict, thinking_summary: bool | None) -> ThinkingConfigDict:
+    """A `thinking=False` config that leaves the model thinking, with thoughts only when `thinking_summary` asks."""
+    if thinking_summary:
+        config['include_thoughts'] = True
+    return config
+
+
+def _thinking_off_config(profile: GoogleModelProfile, thinking_summary: bool | None) -> ThinkingConfigDict:
+    """The thinking config for unified `thinking=False`."""
+    if not profile.get('google_supports_thinking_level', True):
+        # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget=0, which Gemini 2.5 Pro rejects
+        # ("Budget 0 is invalid. This model only works in thinking mode."), so it gets its minimum budget.
+        if profile.get('thinking_always_enabled', False):
+            return _still_thinking(
+                ThinkingConfigDict(thinking_budget=_GEMINI_2_5_PRO_MIN_THINKING_BUDGET), thinking_summary
+            )
+        return ThinkingConfigDict(thinking_budget=0)
+    if profile.get('google_disables_thinking_with_zero_budget', False):
+        return ThinkingConfigDict(thinking_budget=0)
+    # Default Gemini 3+ behaviour represents `thinking=False` as its lowest supported thinking level.
+    return _still_thinking(
+        ThinkingConfigDict(thinking_level=cast(Any, _google_common.resolve_google_thinking_level('minimal', profile))),
+        thinking_summary,
+    )
+
+
 def _batch_module():
     """The batch module, imported on first use.
 
@@ -1192,6 +1218,10 @@ class GoogleModel(Model[Client]):
         # An explicit thinking config replaces the unified one in `_translate_thinking`.
         return ('google_thinking_config',) if model_settings.get('google_thinking_config') else ()
 
+    def _settings_overriding_thinking_summary(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # An explicit thinking config replaces the unified one in `_translate_thinking`, `include_thoughts` included.
+        return ('google_thinking_config',) if model_settings.get('google_thinking_config') else ()
+
     def _translate_thinking(
         self,
         model_settings: GoogleModelSettings,
@@ -1201,28 +1231,22 @@ class GoogleModel(Model[Client]):
         if config := model_settings.get('google_thinking_config'):
             return config
         thinking = model_request_parameters.thinking
+        thinking_summary = model_settings.get('thinking_summary')
         if thinking is None:
+            # Thoughts are left out unless asked for, so only `True` changes anything, and only on a model that thinks.
+            if thinking_summary and self._request_thinks(model_settings, model_request_parameters):
+                return ThinkingConfigDict(include_thoughts=True)
             return None
+        include_thoughts = thinking_summary is not False
         profile = self.profile
         supports_thinking_level = profile.get('google_supports_thinking_level', True)
         if thinking is False:
-            if not supports_thinking_level:
-                # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget=0, which Gemini 2.5 Pro rejects
-                # ("Budget 0 is invalid. This model only works in thinking mode."), so it gets its minimum budget.
-                if profile.get('thinking_always_enabled', False):
-                    return ThinkingConfigDict(thinking_budget=_GEMINI_2_5_PRO_MIN_THINKING_BUDGET)
-                return ThinkingConfigDict(thinking_budget=0)
-            if profile.get('google_disables_thinking_with_zero_budget', False):
-                return ThinkingConfigDict(thinking_budget=0)
-            # Default Gemini 3+ behaviour represents `thinking=False` as its lowest supported thinking level.
-            return ThinkingConfigDict(
-                thinking_level=cast(Any, _google_common.resolve_google_thinking_level('minimal', profile))
-            )
+            return _thinking_off_config(profile, thinking_summary)
 
         if not supports_thinking_level:
             # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget
             if thinking is True:
-                return ThinkingConfigDict(include_thoughts=True)
+                return ThinkingConfigDict(include_thoughts=include_thoughts)
             budget_map: dict[ThinkingEffort, int] = {
                 'minimal': profile.get('google_minimal_thinking_budget', _GEMINI_2_5_PRO_MIN_THINKING_BUDGET),
                 'low': 2048,
@@ -1231,13 +1255,13 @@ class GoogleModel(Model[Client]):
                 'xhigh': 24576,  # max for Flash; Pro goes to 32768 but we use a safe common max
                 'max': 24576,
             }
-            return ThinkingConfigDict(include_thoughts=True, thinking_budget=budget_map[thinking])
+            return ThinkingConfigDict(include_thoughts=include_thoughts, thinking_budget=budget_map[thinking])
 
         # Default Gemini 3+ behaviour uses thinking_level
         if thinking is True:
-            return ThinkingConfigDict(include_thoughts=True)
+            return ThinkingConfigDict(include_thoughts=include_thoughts)
         return ThinkingConfigDict(
-            include_thoughts=True,
+            include_thoughts=include_thoughts,
             thinking_level=cast(Any, _google_common.resolve_google_thinking_level(thinking, profile)),
         )
 
@@ -1434,7 +1458,7 @@ class GoogleModel(Model[Client]):
         supports_tool_combination = self.profile.get('google_supports_tool_combination', False) and not (
             self._is_google_cloud
         )
-        contents: list[ContentUnionDict] = []
+        contents: list[ContentDict] = []
         system_parts: list[PartDict] = []
         computer = _requested_native_computer(model_request_parameters)
         # Gemini's original computer use calls, by tool call ID, to send back with their results.
@@ -1458,9 +1482,7 @@ class GoogleModel(Model[Client]):
                 case _:
                     assert_never(m)
 
-        # Google GenAI requires at least one user part in the message, and that function call turns
-        # come immediately after a user turn or after a function response turn.
-        if not contents or contents[0].get('role') == 'model':  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        if _needs_leading_user_turn(contents):
             contents.insert(0, {'role': 'user', 'parts': [{'text': ''}]})
 
         if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
@@ -1468,7 +1490,7 @@ class GoogleModel(Model[Client]):
                 system_parts.append({'text': part.content})
         system_instruction = ContentDict(role='user', parts=system_parts) if system_parts else None
 
-        return system_instruction, contents
+        return system_instruction, list[ContentUnionDict](contents)
 
     def _replayed_computer_calls(
         self, m: ModelResponse, computer: _google_computer.NativeComputer | None
@@ -2125,6 +2147,23 @@ def _split_function_responses(message_parts: list[PartDict]) -> list[ContentDict
 
     contents.append({'role': 'user', 'parts': content_parts})
     return contents
+
+
+def _needs_leading_user_turn(contents: list[ContentDict]) -> bool:
+    """Whether `contents` must start with a synthetic user turn for Gemini to accept it.
+
+    Gemini rejects empty `contents` and a function call turn that doesn't come right after a user turn or a function
+    response turn, and some models reject a request whose only turn is a model turn. It accepts `contents` that start
+    with a model turn of only text (and thoughts) when more turns follow. Verified on 2026-11-26 against the Gemini API
+    and Vertex AI with Gemini 2.5 Flash-Lite, 2.5 Flash, 2.5 Pro, 3 Flash Preview, 3.1 Pro Preview and 3.8 Flash, and
+    on 2026-11-27 against the Gemini API with Gemma 4 31B and Gemma 4 26B A4B.
+    """
+    if not contents:
+        return True
+    first = contents[0]
+    if first.get('role') != 'model':
+        return False
+    return len(contents) == 1 or not all('text' in part for part in first.get('parts') or [])
 
 
 def _content_model_response(

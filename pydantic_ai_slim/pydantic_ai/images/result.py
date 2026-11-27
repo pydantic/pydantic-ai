@@ -86,9 +86,11 @@ class ImageGenerationResult:
             A price calculation object with `total_price`, `input_price`, and other cost details.
 
         Raises:
+            ValueError: If `model_name` is empty.
             LookupError: If pricing data is not available for this model/provider.
         """
-        assert self.model_name, 'Model name is required to calculate price'
+        if not self.model_name:
+            raise ValueError('Model name is required to calculate price')
         return calculate_price_for_usage(
             self.usage,
             model_name=self.model_name,

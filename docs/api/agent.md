@@ -7,10 +7,12 @@
             - AbstractAgent
             - WrapperAgent
             - AgentRetries
+            - CompactionOptions
             - AgentRealtime
             - AgentRun
             - AgentRunEvents
             - AgentRunResult
+            - CompactionRunResult
             - EndStrategy
             - RunOutputDataT
             - capture_run_messages

@@ -11,7 +11,7 @@ The API accepts the entry only directly behind a user turn and directly ahead of
 past user turns that ended up behind it, and then, if nothing legal precedes where it landed, gets a
 minimal `.` user turn to follow. These tests pin both, in that order — deciding the anchor first put
 it between a `tool_use` and its `tool_result` — plus both sides of the `supports_inline_system_prompts`
-profile flag, the client-transport gate, and the cache breakpoint that now lands on the new message.
+profile flag, which every client transport now shares, and the cache breakpoint that now lands on the new message.
 
 `tool_addition` / `tool_removal` blocks ride the same entry, so the tests for those live here too.
 """
@@ -59,11 +59,7 @@ with try_import() as imports_successful:
     from anthropic.types.beta import BetaTextBlock, BetaToolUseBlock, BetaUsage
 
     from pydantic_ai.models import ModelRequestParameters
-    from pydantic_ai.models.anthropic import (
-        _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS,  # pyright: ignore[reportPrivateUsage]
-        AnthropicModel,
-        AnthropicModelSettings,
-    )
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.models.anthropic._message_passes import END_OF_TOOL_RESULTS_TEXT
     from pydantic_ai.native_tools._tool_search import ToolSearchTool
     from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -667,69 +663,42 @@ async def test_mid_conversation_system_prompt_anchor_keeps_tool_pair_intact(
     )
 
 
-def test_only_foundry_is_excluded_by_the_transport_gate():
-    """Exactly which transports fall back, asserted as a set rather than left to a comment.
-
-    Anthropic publishes the feature for the Claude API, Amazon Bedrock and Google Cloud, so Microsoft
-    Foundry is the only exclusion. Bedrock is recorded (`..._on_bedrock`) and the direct API is recorded
-    by every other test here, but Vertex rests on the published list — we have no Vertex credentials, and
-    a mocked test can only show what we send, never that the transport serves the role. Pinning the tuple
-    is the honest half of that: it can't confirm Vertex works, but it does stop Vertex being added to or
-    dropped from the exclusions without someone changing this line and thinking about why.
-    """
-    assert _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS == (AsyncAnthropicFoundry,)
-
-
 async def test_mid_conversation_system_prompt_on_foundry(allow_model_requests: None):
-    """Microsoft Foundry doesn't serve the `system` role, so a supported model still gets the wrap.
+    """Microsoft Foundry serves the `system` role, so a supported model gets the native entry there too.
 
-    This is the transport half of the gate on its own: the model name clears
-    `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES`, and the instruction is still `<system>`-tagged because of
-    the client it would be sent through. Bedrock, which used to stand in for this case, turned out to
-    support the role (see `..._on_bedrock`), leaving Foundry as the only transport that falls back.
-
-    Mocked rather than recorded because we have no Foundry credentials, so there is no live shape to
-    capture — and the assertion is about what the adapter sends, which the captured kwargs show
-    directly.
+    Anthropic's availability table for mid-conversation system messages lists Microsoft Foundry alongside the Claude
+    API, Bedrock and Google Cloud, and request-scoped entries (`clear_at`) and `tool_addition` blocks are published for
+    the same platforms. Mocked rather than recorded because we have no Foundry credentials; the assertion is about what
+    the adapter sends, which the captured kwargs show directly.
     """
     completion = completion_message(
         [BetaTextBlock(text='def add(a: int, b: int) -> int: return a + b', type='text')],
         BetaUsage(input_tokens=5, output_tokens=10),
     )
-    # `spec=` is what makes the client-type gate see a Foundry client: it sets `__class__`, so the
-    # `isinstance` check in `AnthropicModel.profile` matches and narrows the flag. The wrap asserted
-    # below is then the shared one from `Model.prepare_messages` that every model without support
-    # gets — the adapter has no `<system>` rendering of its own.
+    # `spec=` sets `__class__`, so every client-type check in `AnthropicModel.profile` sees a Foundry client.
     foundry_client = MagicMock(spec=AsyncAnthropicFoundry)
     foundry_client.timeout = DEFAULT_TIMEOUT
     foundry_client.base_url = 'https://example.services.ai.azure.com/anthropic'
     foundry_client.beta.messages.create = AsyncMock(return_value=completion)
 
     model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=foundry_client))
-    # The two halves of the gate, asserted where each is decided: the provider's profile sees the model
-    # name and says yes, and the model's profile — which is the one that also sees the client — narrows
-    # it back to no. That's what makes this a transport exclusion rather than a model one.
-    provider_profile = AnthropicProvider.model_profile('claude-opus-4-8')
-    assert provider_profile is not None
-    assert provider_profile.get('supports_inline_system_prompts') is True
-    assert model.profile.get('supports_inline_system_prompts') is False
+    assert model.profile.get('supports_inline_system_prompts') is True
+    assert model.profile.get('supports_request_scoped_system_prompts') is True
+    assert model.tool_addition_mode == 'by_reference'
 
     await Agent(model).run('Review it again.', message_history=message_history())
 
     call_kwargs = foundry_client.beta.messages.create.call_args.kwargs
-    assert call_kwargs['system'] == f'{lookalike_note_announcement(system_role=False)}\n\nYou are a code reviewer.'
+    assert call_kwargs['system'] == 'You are a code reviewer.'
     assert call_kwargs['messages'] == snapshot(
         [
             {'role': 'user', 'content': [{'text': 'Review `def add(a, b): return a + b`.', 'type': 'text'}]},
             {'role': 'assistant', 'content': [{'text': 'Looks fine.', 'type': 'text'}]},
+            {'role': 'user', 'content': [{'text': 'Review it again.', 'type': 'text'}]},
             {
-                'role': 'user',
+                'role': 'system',
                 'content': [
-                    {
-                        'text': '<system>From now on, every suggestion must include explicit type annotations.</system>',
-                        'type': 'text',
-                    },
-                    {'text': 'Review it again.', 'type': 'text'},
+                    {'text': 'From now on, every suggestion must include explicit type annotations.', 'type': 'text'}
                 ],
             },
         ]
@@ -744,14 +713,14 @@ async def test_mid_conversation_system_prompt_on_bedrock(
 ):
     """Bedrock serves the `system` role, so a supported model gets the native entry there too.
 
-    Anthropic publishes the feature for the Claude API, Amazon Bedrock and Google Cloud, and this is
-    the Bedrock half of that recorded rather than assumed. It replaced a test that sent
+    Anthropic publishes the feature for the Claude API, Amazon Bedrock, Google Cloud and Microsoft Foundry, and this
+    is the Bedrock part of that recorded rather than assumed. It replaced a test that sent
     `us.anthropic.claude-sonnet-5` and concluded from the `<system>`-tagged result that Bedrock
     doesn't serve the role — but Sonnet 5 ignores the entry on every transport, so that test was
-    measuring the model. Microsoft Foundry is the transport that still falls back.
+    measuring the model.
 
-    The Bedrock provider segment is stripped before the prefix check, so `us.anthropic.` in front of
-    a supported model leaves both halves of the gate open.
+    The Bedrock provider segment is stripped before the model-prefix check, so `us.anthropic.` in front of
+    a supported model still turns the feature on.
     """
     model = AnthropicModel(
         'us.anthropic.claude-opus-4-8', provider=AnthropicProvider(anthropic_client=anthropic_bedrock_client)

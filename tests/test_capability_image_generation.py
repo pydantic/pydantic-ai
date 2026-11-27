@@ -499,8 +499,7 @@ class TestImageGenerationCapability:
         spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
         tool_span = next(span for span in spans if span['name'] == 'execute_tool generate_image')
         tool_result = tool_span['attributes']['gen_ai.tool.call.result']
-        assert tool_result['media_type'] == 'image/png'
-        assert 'data' not in tool_result
+        assert tool_result == {'type': 'blob', 'mime_type': 'image/png', 'modality': 'image'}
 
     def test_image_generation_direct_only_rejects_edit_action_at_construction(self):
         """`native=False` makes the prompt-only direct tool the only path, so the edit is refused up front."""
