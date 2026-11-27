@@ -15,7 +15,7 @@ Some providers expose a built-in compaction API that runs on their side. Pydanti
 | OpenAI Responses API | [`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction] | [OpenAI compaction](../models/openai.md#message-compaction) |
 | Anthropic | [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction] | [Anthropic compaction](../models/anthropic.md#message-compaction) |
 
-Each uses the corresponding provider API, so it's only available on that provider, and compacts when the provider's server-side threshold is crossed. A compaction item is also honored by a provider with the same [canonical system](../message-history.md#sending-history-to-another-provider): an OpenAI compaction item from the Codex backend is sent to the OpenAI API, which continues from it rather than from the full earlier history, and the other way round.
+Each uses the corresponding provider API, so it's only available on that provider, and, by default, compacts when the provider's server-side threshold is crossed ([`OpenAICompaction`'s stateless mode](../models/openai.md#message-compaction) compacts at a trigger of your own). A compaction item is also honored by a provider with the same [canonical system](../message-history.md#sending-history-to-another-provider): an OpenAI compaction item from the Codex backend is sent to the OpenAI API, which continues from it rather than from the full earlier history, and the other way round.
 
 ### Compacting on demand
 
