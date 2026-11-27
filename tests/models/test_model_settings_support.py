@@ -464,7 +464,8 @@ async def claude_agent_probe(settings: ModelSettings) -> ProbeResult:
         recorder.record(
             {
                 'model': options.model,
-                'system_prompt': options.system_prompt,
+                # The prompt file's path is random per session: record what Claude Code read from it.
+                'system_prompt': session.system_prompt,
                 'thinking': options.thinking,
                 'effort': options.effort,
                 'env': options.env,
