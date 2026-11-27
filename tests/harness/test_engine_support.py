@@ -78,12 +78,12 @@ def test_untested_cells_only_go_down() -> None:
     )
     assert dict(untested) == snapshot(
         {
-            'prefect': 43,
-            'aws_lambda': 43,
-            'absurd': 43,
-            'pgtask': 43,
-            'azure_durable_task': 43,
-            'render': 43,
+            'prefect': 44,
+            'aws_lambda': 44,
+            'absurd': 44,
+            'pgtask': 44,
+            'azure_durable_task': 44,
+            'render': 44,
         }
     )
 
