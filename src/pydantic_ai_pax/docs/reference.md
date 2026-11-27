@@ -3305,7 +3305,9 @@ appears once a turn reaches the sandbox, since getting it would start a stopped 
 Everything on the sandbox's screen, secrets included, goes to the model's provider in screenshots,
 and text on the screen can steer the model like any tool output.
 
-### Several sessions in the web UI
+### Several sessions in the web UI (alpha)
+
+The web UI is in alpha: expect rough edges and changes between releases.
 
 ```bash
 pax --web
@@ -3805,6 +3807,7 @@ See [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) for attribution.
 ```bash
 pax --agent pydantic_ai.main:my_cool_agent
 pax -a my_agents:reviewer -p "Review the staged diff"
+pax -a my_agents:reviewer --web
 ```
 
 `--agent MODULE:ATTR` (short form `-a`) chats with an existing Pydantic AI `Agent`
@@ -3820,7 +3823,15 @@ drop-in user plugins, and no project plugins, and `/plugins` reports that they a
 off. Nothing saved changes, so plain `pax` loads plugins as before. The agent
 keeps its own model unless `-m` or `CLAI_MODEL` selects another, and code mode
 starts off, whatever is saved; `/set run.code_mode true` turns it on. `-p`, `--resume`,
-and `--worktree` still apply; `config` and `plugins` subcommands reject `--agent`.
+`--web`, and `--worktree` still apply; `config` and `plugins` subcommands reject `--agent`.
+With `--web`, every session of the [web UI](#several-sessions-in-the-web-ui) runs the agent,
+including the ones the sidebar opens, and the model picker switches its model as `/model`
+does. The `web` plugin is the one plugin that loads, with its saved settings. It adds no
+tool or instructions of its own, so the model sees only the tools the agent defines. It
+asks in the browser about each call that needs approval, such as a call to a
+`requires_approval=True` tool: **Approve** runs it, and **Deny** or a typed reason tells
+the model it was denied. With `web`'s `ask_user` setting off, such calls are denied
+without asking.
 To pass deps or plugins, write a launcher that calls `chat` (see
 `customization.md`).
 

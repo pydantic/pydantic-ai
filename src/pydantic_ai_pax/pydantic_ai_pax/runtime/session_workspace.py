@@ -9,6 +9,7 @@ working directory stays where Pax started, as other live sessions work in other 
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Generic, TypeVar
 
 from anyio import to_thread
 
@@ -20,6 +21,8 @@ from pydantic_ai_pax.plugins.loader import SessionPlugins
 from pydantic_ai_pax.runtime.session import Session
 from pydantic_ai_pax.runtime.sessions import Sessions
 from pydantic_ai_pax.ui.rendering.status import Status
+
+OutputT = TypeVar('OutputT')
 
 
 def workspace_directory(path: str) -> Path:
@@ -34,13 +37,13 @@ def workspace_directory(path: str) -> Path:
 
 
 @dataclass(kw_only=True)
-class SessionWorkspace:
+class SessionWorkspace(Generic[OutputT]):
     """Moves `pax --web`'s live session into another directory, as if Pax had started there.
 
     Never while a turn, a background fork, or a delegated task runs: their tools still use the plugins loaded now.
     """
 
-    session: Session[None, str]
+    session: Session[None, OutputT]
     context: CommandContext
     loader: SessionPlugins[None]
     status: Status
@@ -49,7 +52,7 @@ class SessionWorkspace:
     busy: Callable[[], bool] = lambda: False
     """Whether a background fork or a delegated task runs."""
 
-    def attach(self, *, sessions: Sessions[None, str], commands: Commands) -> None:
+    def attach(self, *, sessions: Sessions[None, OutputT], commands: Commands) -> None:
         """Make `/resume ID` move into the session's directory, and add `/workspace`."""
         sessions.relocate = self.move
         commands.register(

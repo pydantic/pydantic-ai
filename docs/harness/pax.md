@@ -345,9 +345,9 @@ and the session to resume if you want to continue it.
 
 ![The answer of a background fork, printed when it finished](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/fork.png)
 
-### Several sessions at once: `pax --web`
+### Several sessions at once: `pax --web` (alpha)
 
-`pax --web` drives Pax from your browser. Click any session in the sidebar and it
+`pax --web` drives Pax from your browser. The web UI is in alpha: expect rough edges and changes. Click any session in the sidebar and it
 opens live, even while others run: each works in its own folder, with its own queued
 prompts and running turn, and a dot shows which ones are running or waiting for you.
 Esc stops only the session you are looking at. A session left idle for an hour
@@ -456,7 +456,7 @@ that adds a `/standup` command".
 ## Pax in your own code
 
 - `pax -p "Explain this repository"` runs one prompt and prints only the answer.
-- `pax --agent my_module:agent` chats with your own Pydantic AI agent.
+- `pax --agent my_module:agent` chats with your own Pydantic AI agent; add `--web` to chat with it in your browser.
 - `open_stock_agent(...)` gives your Python code Pax's coding agent, without the terminal.
 - `chat(agent, deps=...)` opens the Pax terminal on any agent.
 

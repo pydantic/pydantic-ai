@@ -9,7 +9,8 @@ import ipaddress
 import os
 import secrets
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 
@@ -18,7 +19,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from rich.console import RenderableType
 
 from pydantic_ai import AgentStreamEvent
-from pydantic_ai.capabilities import AgentCapability
+from pydantic_ai.agent.abstract import AgentInstructions
+from pydantic_ai.capabilities import AgentCapability, HandleDeferredToolCalls, WrapperCapability
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, RunContext
+from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness.ask_user import AskUser
 from pydantic_ai_pax.builtin_plugins.ask_user_menu import TerminalAnswerer, render_question
 from pydantic_ai_pax.builtin_plugins.web.app import ASGIApp, create_app
@@ -37,7 +41,7 @@ from pydantic_ai_pax.plugins import (
     TaskProgress,
     TurnEnd,
 )
-from pydantic_ai_pax.runtime.permissions import approval_handler
+from pydantic_ai_pax.runtime.permissions import approval_handler, ask_call_approvals
 from pydantic_ai_pax.ui.browser import open_browser
 
 USAGE = 'Usage: /web [start|stop|status]'
@@ -100,12 +104,18 @@ class WebPlugin(Plugin[WebSettings]):
         self.server: WebServer | None = None
         self.url: str | None = None
         self._launch_page: Path | None = None
+        self.own_agent = False
+        """Whether the sessions run an agent of your own, as `pax --web --agent` sets: it gets no `ask_user_question`,
+        a tool it didn't define, and the browser answers its other approvals, such as `requires_approval=True` tools',
+        as well as the ones `/permissions` holds."""
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         observer = Observer(self.service)
         if not self.settings.ask_user:
             return (observer,)
-        return (observer, AskUser(answerer=self.service.answerer), approval_handler(self.service.answerer.approve))
+        questions = _OfferedQuestions(AskUser(answerer=self.service.answerer), offered=lambda: not self.own_agent)
+        own_approvals = HandleDeferredToolCalls[None](self._own_agent_approvals)
+        return (observer, questions, approval_handler(self.service.answerer.approve), own_approvals)
 
     def get_commands(self) -> Sequence[Command]:
         return (
@@ -208,6 +218,14 @@ class WebPlugin(Plugin[WebSettings]):
     async def on_install_progress(self, event: InstallProgress) -> None:
         self.service.install_progress(event)
 
+    async def _own_agent_approvals(
+        self, ctx: RunContext[None], requests: DeferredToolRequests
+    ) -> DeferredToolResults | None:
+        # The stock agent's sessions leave these calls as they were, for a later handler or the run's output.
+        if not self.own_agent:
+            return None
+        return await ask_call_approvals(requests, self.service.answerer.approve_call)
+
 
 def _launch_page(url: str) -> Path:
     """A new page only you can read that forwards to `url`, so the token never appears in a browser command line.
@@ -221,3 +239,17 @@ def _launch_page(url: str) -> Path:
             f'<a href="{html.escape(url)}">Open Pax</a>'
         )
     return Path(name)
+
+
+@dataclass
+class _OfferedQuestions(WrapperCapability[None]):
+    """`AskUser`, whose `ask_user_question` tool and its instructions the agent gets only while `offered()` says so."""
+
+    offered: Callable[[], bool] = lambda: True
+
+    def get_toolset(self) -> AgentToolset[None] | None:
+        return super().get_toolset() if self.offered() else None
+
+    def get_instructions(self) -> AgentInstructions[None] | None:
+        # Its guidance names the tool, so it goes wherever the tool does.
+        return super().get_instructions() if self.offered() else None

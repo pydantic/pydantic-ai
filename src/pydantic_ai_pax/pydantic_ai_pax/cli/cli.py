@@ -96,7 +96,7 @@ def run(*, splash: Splash | None = None) -> None:
         metavar='MODULE:ATTR',
         help=(
             'Chat with an existing Pydantic AI Agent instance, e.g. pydantic_ai.main:my_cool_agent; '
-            "loads no plugins for this session and keeps the agent's model unless -m is given"
+            "loads no plugins for this session (with --web, only web) and keeps the agent's model unless -m is given"
         ),
     )
     parser.add_argument('-m', '--model', help='Provider-qualified model name')
@@ -106,7 +106,7 @@ def run(*, splash: Splash | None = None) -> None:
     parser.add_argument(
         '--web',
         action='store_true',
-        help='Drive Pax from a local web UI instead of the terminal prompt; prints the address and opens it',
+        help='(alpha) Drive Pax from a local web UI instead of the terminal prompt; prints the address and opens it',
     )
     parser.add_argument(
         '--port',
@@ -220,6 +220,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
                     store=store,
                     project=project,
                     console=Console(force_terminal=False, highlight=False),
+                    agent=agent,
                     resume=args.resume,
                     resume_from=args.resume_from,
                     session_id=args.session_id,
@@ -633,8 +634,8 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
 
 def _validate_web_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     if args.web:
-        if args.command or args.prompt is not None or args.agent is not None:
-            parser.error('--web cannot be combined with config, plugins, sessions, --prompt, or --agent')
+        if args.command or args.prompt is not None:
+            parser.error('--web cannot be combined with config, plugins, sessions, or --prompt')
         if args.resume == '':
             parser.error('--web requires an explicit --resume SESSION-ID')
     elif args.port is not None or args.token_file is not None:

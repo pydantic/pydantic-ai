@@ -12,6 +12,7 @@ from functools import partial
 
 import anyio
 
+from pydantic_ai.messages import ToolCallPart
 from pydantic_ai_harness.ask_user import Answerer, AskUserAnswer, AskUserRequest, AskUserResponse, check_response
 from pydantic_ai_harness.permissions import PermissionDecision, PermissionRequest
 from pydantic_ai_harness.sub_agents import DelegationTasks
@@ -28,7 +29,7 @@ from pydantic_ai_pax.builtin_plugins.web.protocol import (
     dump_session,
     questions_info,
 )
-from pydantic_ai_pax.runtime.permissions import approval_question, decision, proposed_diff
+from pydantic_ai_pax.runtime.permissions import approval_question, call_approval_question, decision, proposed_diff
 
 QUEUE_LIMIT = 10_000
 """Messages a browser may fall behind by before it is told to reconnect, so a stalled tab cannot hold a whole session."""
@@ -194,6 +195,10 @@ class BrowserAnswerer:
         )
         terminal = None if self._terminal_approval is None else partial(self._terminal_approval, request)
         return decision(await self._ask(approval_question(request), approval=approval, terminal=terminal))
+
+    async def approve_call(self, call: ToolCallPart) -> PermissionDecision:
+        """Ask whether a held call `/permissions` does not hold may run, such as a `requires_approval=True` tool's."""
+        return decision(await self(call_approval_question(call)))
 
     async def _ask(
         self,
