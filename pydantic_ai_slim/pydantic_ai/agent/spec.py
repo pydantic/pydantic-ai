@@ -398,7 +398,8 @@ def get_capability_registry(
 
     namespace = namespace or CapabilityNamespace()
     types = build_registry(
-        custom_types=[_validate_capability_type(cls) for cls in (*custom_types, *namespace.types)],
+        # The same class passed through both doors is one capability, as in the other tiers.
+        custom_types=[_validate_capability_type(cls) for cls in dict.fromkeys((*custom_types, *namespace.types))],
         defaults=(),
         get_name=lambda cls: cls.get_serialization_name(),
         label='capability',
@@ -420,7 +421,11 @@ def get_capability_registry(
     if namespace.entry_points is not None:
         entries.update(
             _named_tier(
-                [(ep.name, ep.value) for ep in importlib.metadata.entry_points(group=namespace.entry_points)],
+                # `module:attr` without any `[extras]` suffix, which `EntryPoint.load()` ignores too.
+                [
+                    (ep.name, f'{ep.module}:{ep.attr}')
+                    for ep in importlib.metadata.entry_points(group=namespace.entry_points)
+                ],
                 f'the `{namespace.entry_points}` entry points',
             )
         )
@@ -468,7 +473,7 @@ def load_capability_from_nested_spec(spec: CapabilitySpec | dict[str, Any] | str
             ctx.registry,
             cap_spec,
             label='capability',
-            custom_types_param='custom_capability_types',
+            custom_types_param=('custom_capability_types', 'capability_namespace'),
             instantiate=ctx.instantiate,
         )
     else:
@@ -476,7 +481,7 @@ def load_capability_from_nested_spec(spec: CapabilitySpec | dict[str, Any] | str
             get_capability_registry(),
             cap_spec,
             label='capability',
-            custom_types_param='custom_capability_types',
+            custom_types_param=('custom_capability_types', 'capability_namespace'),
             instantiate=lambda cap_cls, args, kwargs: cap_cls.from_spec(*args, **kwargs),
         )
 

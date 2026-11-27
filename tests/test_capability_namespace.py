@@ -97,6 +97,22 @@ def test_entry_points_resolve_installed_capabilities(write_module: ModuleWriter,
     assert type(capability).__module__ == module
 
 
+def test_entry_points_ignore_extras_like_entry_point_load(write_module: ModuleWriter, tmp_path: Path):
+    module = _capability_module(write_module, 'ns_ep_extras')
+    dist_info = tmp_path / 'ns_extras-0.0.0.dist-info'
+    dist_info.mkdir()
+    (dist_info / 'METADATA').write_text('Metadata-Version: 2.1\nName: ns-extras\nVersion: 0.0.0\n')
+    (dist_info / 'entry_points.txt').write_text(f'[pydantic_ai_tests.extras]\nGreeting = {module}:Greeting [fast]\n')
+    importlib.invalidate_caches()
+
+    agent = Agent.from_spec(
+        _spec('Greeting'), capability_namespace=CapabilityNamespace(entry_points='pydantic_ai_tests.extras')
+    )
+
+    [capability] = _loaded(agent)
+    assert type(capability).__module__ == module
+
+
 def test_entry_points_with_two_targets_for_one_name_raise(write_module: ModuleWriter, tmp_path: Path):
     for dist, module in [('first', 'ns_ep_first'), ('second', 'ns_ep_second')]:
         _capability_module(write_module, module)
@@ -206,8 +222,25 @@ def test_custom_capability_types_and_namespace_types_share_a_tier():
     registry = get_capability_registry([Greeting], CapabilityNamespace(types=[PrefixTools]))
     assert registry['Greeting'] is Greeting
 
+    # The same class through both doors is one capability, as when a namespace adds to a shared default.
+    assert get_capability_registry([Greeting], CapabilityNamespace(types=[Greeting]))['Greeting'] is Greeting
+
+    @dataclass
+    class OtherGreeting(AbstractCapability):
+        @classmethod
+        def get_serialization_name(cls) -> str:
+            return 'Greeting'
+
     with pytest.raises(ValueError, match="Duplicate capability class name: 'Greeting'"):
-        get_capability_registry([Greeting], CapabilityNamespace(types=[Greeting]))
+        get_capability_registry([Greeting], CapabilityNamespace(types=[OtherGreeting]))
+
+
+def test_an_unknown_name_points_at_both_parameters():
+    with pytest.raises(
+        ValueError,
+        match=r"Capability 'Missing' is not in the provided `custom_capability_types` or `capability_namespace`\.",
+    ):
+        Agent.from_spec(_spec('Missing'), capability_namespace=CapabilityNamespace())
 
 
 def test_a_name_must_match_its_class(write_module: ModuleWriter):

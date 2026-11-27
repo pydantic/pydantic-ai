@@ -5899,7 +5899,7 @@ def _capabilities_from_spec(
                 registry,
                 cap_spec,
                 label='capability',
-                custom_types_param='custom_capability_types',
+                custom_types_param=('custom_capability_types', 'capability_namespace'),
                 instantiate=_instantiate_cap,
             )
             capabilities.append(capability)
