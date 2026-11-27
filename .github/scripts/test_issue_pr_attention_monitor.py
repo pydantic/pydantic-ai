@@ -3353,11 +3353,14 @@ def test_priority_sla_records_a_failed_issue_and_keeps_going(monkeypatch: pytest
     assert len(failures) == 1 and failures[0].startswith('#2 priority SLA: HTTPError')
 
 
-def http_error(code: int, **headers: str) -> urllib.error.HTTPError:
+def http_error(
+    code: int, error: str = 'Resource not accessible by integration', **headers: str
+) -> urllib.error.HTTPError:
     message = email.message.Message()
     for name, value in headers.items():
         message[name.replace('_', '-')] = value
-    return urllib.error.HTTPError('u', code, 'refused', message, None)
+    body = io.BytesIO(json.dumps({'message': error}).encode())
+    return urllib.error.HTTPError('u', code, 'refused', message, body)
 
 
 @pytest.mark.parametrize(
@@ -3366,6 +3369,11 @@ def http_error(code: int, **headers: str) -> urllib.error.HTTPError:
         pytest.param(http_error(429), True, id='too-many-requests'),
         pytest.param(http_error(403, x_ratelimit_remaining='0'), True, id='primary-limit'),
         pytest.param(http_error(403, retry_after='60'), True, id='secondary-limit'),
+        pytest.param(
+            http_error(403, 'You have exceeded a secondary rate limit.', x_ratelimit_remaining='12'),
+            True,
+            id='secondary-limit-message',
+        ),
         pytest.param(http_error(403, x_ratelimit_remaining='12'), False, id='forbidden'),
     ],
 )
@@ -3410,7 +3418,7 @@ def test_priority_sla_post_stops_at_a_rate_limit(monkeypatch: pytest.MonkeyPatch
 
     def post(path: str, payload: object) -> Any:
         if path == '/repos/r/issues/1/comments':
-            raise http_error(403, x_ratelimit_remaining='0')
+            raise http_error(403, 'You have exceeded a secondary rate limit.', x_ratelimit_remaining='12')
         return real(path, payload)
 
     monkeypatch.setattr(client, 'post', post)

@@ -2168,10 +2168,19 @@ def _rate_limited(exc: Exception) -> bool:
 
     GitHub answers every further request the same until the limit resets, and warns that
     requests sent meanwhile can get the integration banned, so a sweep stops at the first one.
+    A secondary limit can come as a 403 with requests left and no `retry-after`, named only by
+    its error message, so call this before closing `exc`: a closed error has no body to read.
     """
     return isinstance(exc, urllib.error.HTTPError) and (
         exc.code == 429
-        or (exc.code == 403 and (exc.headers.get('x-ratelimit-remaining') == '0' or 'retry-after' in exc.headers))
+        or (
+            exc.code == 403
+            and (
+                exc.headers.get('x-ratelimit-remaining') == '0'
+                or 'retry-after' in exc.headers
+                or b'rate limit' in exc.read(_RESPONSE_LIMIT).lower()
+            )
+        )
     )
 
 
@@ -2284,10 +2293,11 @@ def priority_sla(
             try:
                 outcome, body = _priority_sla_decision(client, repo, issue, label, now=now)
             except (urllib.error.URLError, RuntimeError, ValueError) as exc:
+                limited = _rate_limited(exc)
                 if isinstance(exc, urllib.error.HTTPError):
                     exc.close()
                 failures.append(f'#{number} priority SLA: {type(exc).__name__}: {exc}')
-                if limited := _rate_limited(exc):
+                if limited:
                     failures.append('priority SLA: rate limited, stopped before the remaining issues')
                     break
                 continue
@@ -2325,10 +2335,11 @@ def post_priority_sla(
             client.post(f'/repos/{repo}/issues/{number}/comments', {'body': body})
             lines.append(f'#{number}: commented')
         except (urllib.error.URLError, RuntimeError, ValueError) as exc:
+            limited = _rate_limited(exc)
             if isinstance(exc, urllib.error.HTTPError):
                 exc.close()
             failures.append(f'#{number} priority SLA comment: {type(exc).__name__}: {exc}')
-            if _rate_limited(exc):
+            if limited:
                 failures.append('priority SLA: rate limited, stopped before the remaining comments')
                 break
     return lines, failures
