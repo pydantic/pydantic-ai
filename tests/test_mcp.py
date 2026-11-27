@@ -801,8 +801,8 @@ class TestMCPToolsetIntegration:
         the changed list.
         """
         server: FastMCP[None] = FastMCP('list_changed_server')
-        list_produced = asyncio.Event()
-        release_list = asyncio.Event()
+        list_produced = anyio.Event()
+        release_list = anyio.Event()
 
         class HoldListTools(Middleware):
             async def on_list_tools(
@@ -829,12 +829,22 @@ class TestMCPToolsetIntegration:
             return 'done'
 
         toolset = MCPToolset(server)
+        in_flight: list[list[str]] = []
+
+        async def list_tools_in_flight() -> None:
+            in_flight.append([tool.name for tool in await toolset.list_tools()])
+
         async with toolset:
-            in_flight = asyncio.create_task(toolset.list_tools())
-            await asyncio.wait_for(list_produced.wait(), timeout=READINESS_WAIT_TIMEOUT)
-            assert await toolset.direct_call_tool('add_tool', {}) == 'done'
-            release_list.set()
-            assert [tool.name for tool in await in_flight] == ['add_tool']
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(list_tools_in_flight)
+                try:
+                    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                        await list_produced.wait()
+                    assert await toolset.direct_call_tool('add_tool', {}) == 'done'
+                finally:
+                    # Unblock the held listing even when the test fails, so the task group can drain.
+                    release_list.set()
+            assert in_flight == [['add_tool']]
 
             assert [tool.name for tool in await toolset.list_tools()] == ['add_tool', 'added_tool']
 
