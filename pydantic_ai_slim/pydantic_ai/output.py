@@ -488,6 +488,7 @@ def StructuredDict(
 def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, Any]], dict[str, Any]]:
     """Build a function that checks a value against `json_schema` and raises a validation error listing what's wrong."""
     try:
+        from jsonschema.exceptions import SchemaError as SchemaValidationError
         from jsonschema.validators import (
             extend,  # pyright: ignore[reportUnknownVariableType]  # `extend` has no annotations
             validator_for,
@@ -500,11 +501,16 @@ def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, 
             'Install it with `pip install "pydantic-ai-slim[jsonschema]"`.'
         ) from e
 
+    base_validator: Any = validator_for(json_schema)
+    try:
+        base_validator.check_schema(json_schema)
+    except SchemaValidationError as e:
+        raise exceptions.UserError(f'`StructuredDict(validate=True)` got an invalid JSON schema: {e.message}') from e
     matchers = _compile_schema_patterns(json_schema)
     # `pattern` checks use pydantic-core's linear-time regex engine rather than Python's backtracking `re`, so
     # crafted model output can't stall the event loop on a pattern like `^(a+)+$`.
     validator_class: Any = cast(Any, extend)(
-        validator_for(json_schema),
+        base_validator,
         {
             'pattern': _pattern_keyword(matchers),
             'patternProperties': _pattern_properties_keyword(matchers),
@@ -551,7 +557,9 @@ def _schema_mismatch(problems: list[str]) -> PydanticCustomError:
 _DATA_KEYWORDS = frozenset({'enum', 'const', 'default', 'examples'})
 """Keywords whose values are data rather than subschemas, so a `pattern` key inside them isn't a pattern."""
 
-_SCHEMA_MAP_KEYWORDS = frozenset({'properties', 'patternProperties', '$defs', 'definitions', 'dependentSchemas'})
+_SCHEMA_MAP_KEYWORDS = frozenset(
+    {'properties', 'patternProperties', '$defs', 'definitions', 'dependentSchemas', 'dependencies'}
+)
 """Keywords whose values map names to subschemas, so their keys are names, not keywords."""
 
 

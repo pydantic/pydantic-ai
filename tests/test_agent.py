@@ -3196,6 +3196,30 @@ def test_structured_dict_validate_refuses_unevaluated_properties_with_patterns()
         )
 
 
+def test_structured_dict_validate_refuses_invalid_schemas():
+    """A schema that isn't valid for its dialect is refused when the `StructuredDict` is created.
+
+    It checks a configuration error raised before any request, so this is a unit test.
+    """
+    with pytest.raises(UserError, match='got an invalid JSON schema'):
+        StructuredDict({'type': 'object', 'properties': {'a': {'type': 'strng'}}}, validate=True)
+
+
+def test_structured_dict_validate_allows_property_dependencies_named_like_keywords():
+    """A Draft 7 `dependencies` entry for a property named `$schema` is a property name, not a nested dialect.
+
+    It checks a configuration that must not raise, before any request, so this is a unit test.
+    """
+    StructuredDict(
+        {
+            '$schema': 'http://json-schema.org/draft-07/schema#',
+            'type': 'object',
+            'dependencies': {'$schema': {'required': ['version']}},
+        },
+        validate=True,
+    )
+
+
 def test_structured_dict_validate_refuses_nested_dialects():
     """A nested `$schema` would switch `jsonschema` back to Python's `re` for its patterns, so it's refused.
 
