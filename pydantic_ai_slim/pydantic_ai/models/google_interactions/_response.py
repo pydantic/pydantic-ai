@@ -13,6 +13,7 @@ from google.genai import interactions as gi
 from pydantic import JsonValue, TypeAdapter
 
 from ... import _utils
+from ..._context_size import mark_context_input_tokens
 from ...exceptions import UnexpectedModelBehavior
 from ...messages import (
     BinaryContent,
@@ -162,7 +163,7 @@ def process_response(
     server_calls = mcp_server_names(response.steps or [])
     for index, step in enumerate(response.steps or []):
         parts.extend(mark_step(map_step(step, provider_name, server_calls=server_calls), index))
-    return build_response(
+    model_response = build_response(
         response,
         parts,
         model_name,
@@ -171,6 +172,15 @@ def process_response(
         canonical_system,
         web_search_billed_per_prompt=web_search_billed_per_prompt,
     )
+    # google-genai merges the requests of a long decode it continued into one interaction, whose `total_input_tokens`
+    # sums every request's input and so re-counts the earlier requests' output; its `initial_input_tokens` is the
+    # first request's. A stream sees each request start (`_streaming.py`); a merged interaction only shows it in its
+    # timestamps. Interactions sent with `store=False` carry no `id`, so `continuation_ids` stays empty, but each
+    # one's `created` equals its `updated`, and the merged one takes `created` from the first request only. On a
+    # single request `initial_input_tokens` can differ from `total_input_tokens`, which then measures the context.
+    if response.created != response.updated and response.usage and response.usage.initial_input_tokens is not None:
+        mark_context_input_tokens(model_response, response.usage.initial_input_tokens)
+    return model_response
 
 
 def build_response(
@@ -207,8 +217,8 @@ def build_response(
         'completed': 'stop',
         'requires_action': 'tool_call',
         # A long decode stopped at the per-request output cap with a continuation token. google-genai continues it
-        # itself from 2.34.0 (https://github.com/googleapis/python-genai/releases/tag/v2.34.0); an earlier SDK
-        # returns the partial output with this status.
+        # in further requests itself, and returns this status only when a further request hands back the token it
+        # was sent.
         'requires_continuation': 'length',
         'incomplete': 'length',
         'budget_exceeded': 'length',
