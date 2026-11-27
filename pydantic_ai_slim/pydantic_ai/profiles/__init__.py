@@ -264,9 +264,9 @@ class ModelProfile(TypedDict, total=False):
     in a request with such a block names it. A `<system>` tag in text from a user, a tool or a file still gets a note
     when it copies the attribute.
 
-    Set for Claude Sonnet 4.6, Claude Sonnet 5.5, Claude Haiku 5.5, Grok 4.3 through 4.7 (not Grok 4.20, which
-    measured worse sealed), and gpt-oss. Sonnet 4.6, with plain `<system>` blocks, ignored two mid-conversation
-    instruction changes, and followed both with a marker and the sentence together (not with either alone). With the blocks
+    Set for Claude Sonnet 4.6, Claude Sonnet 5.5, Claude Haiku 5.5, and Grok 4.3 through 4.7 (not Grok 4.20, which
+    measured worse sealed). Sonnet 4.6, with plain `<system>` blocks, ignored two mid-conversation instruction
+    changes, and followed both with a marker and the sentence together (not with either alone). With the blocks
     after the user's words it also followed steering after a tool result and a change next to a user lookalike,
     where ahead of them it didn't. Haiku 5.5 honors a native mid-conversation system message but did as well or
     better on every cell measured with this rendering, and worse with plain `<system>` blocks, so its Anthropic
@@ -274,9 +274,9 @@ class ModelProfile(TypedDict, total=False):
     said what, and with this rendering it attributed them correctly and followed steering after a tool result more
     reliably, so its profile doesn't use the native role either. Those Grok models followed a genuine change next to
     a user lookalike and steering after a tool result more reliably sealed than with plain blocks.
-    Set for gpt-oss too, on every host that renders the fallback: with plain blocks it often followed a `<system>`
-    tag the user typed over the application's mid-conversation change, and sealed it followed the change as reliably
-    as a rule in its system prompt from the start.
+    Also set for gpt-oss, wherever the fallback renders: in measurements with plain blocks it often followed a
+    `<system>` tag the user typed over the application's mid-conversation change, and sealed it followed the change
+    as reliably as a rule in its system prompt from the start.
     """
 
     default_framing_announcement: FramingAnnouncement

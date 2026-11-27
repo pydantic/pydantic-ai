@@ -609,7 +609,7 @@ async def test_structured_content_input(allow_model_requests: None, groq_api_key
 
 
 async def test_gpt_oss_mid_conversation_system_prompt_is_tagged(allow_model_requests: None, groq_api_key: str):
-    """On gpt-oss, a mid-conversation system prompt goes out as `<system>` text in a user turn, and the model follows it.
+    """On gpt-oss, a mid-conversation system prompt is sent as `<system verified>` after the user's words and followed.
 
     Groq doesn't keep a native mid-conversation `system` message in place on gpt-oss: a request carrying one only read
     the cached prefix up to the instructions and tools, while the tagged rendering read all of it
