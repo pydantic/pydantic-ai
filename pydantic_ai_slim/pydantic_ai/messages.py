@@ -190,7 +190,8 @@ ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'suspended', '
 """Lifecycle state of a model response.
 
 - `'complete'`: the response has been fully received from the model.
-- `'incomplete'`: the response is still being streamed and may receive more parts.
+- `'incomplete'`: the response is still being streamed and may receive more parts, or its stream
+  ended before the provider's terminal event, which Anthropic, Google and OpenAI Responses models detect.
   Yielded by [`AgentStream.response`][pydantic_ai.result.AgentStream.response] and
   [`StreamedRunResult.stream_response`][pydantic_ai.result.StreamedRunResult.stream_response]
   while iteration is in flight.
@@ -6047,7 +6048,8 @@ class ModelResponse:
     """The state of this response, indicating whether it is final or requires further action.
 
     - `'complete'` — The response is done. This is the default.
-    - `'incomplete'` — A streamed response is still in flight or was stopped before completion.
+    - `'incomplete'` — A streamed response is still in flight, was stopped before completion, or ended before
+      the provider's terminal event.
     - `'suspended'` — The model paused mid-turn and expects a continuation request.
       The agent graph will automatically send a continuation request.
       Set by providers that pause mid-turn (e.g. Anthropic `pause_turn`)
