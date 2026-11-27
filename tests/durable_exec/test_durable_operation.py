@@ -345,6 +345,7 @@ async def test_a_backend_that_dispatches_per_event_receives_the_public_single_ev
 
 
 async def test_event_stream_dispatch_batches_ready_burst_and_preserves_handler_calls() -> None:
+    """How events group into durable units is internal and recorded by no cassette, so a journal backend checks it."""
     handled: list[AgentStreamEvent] = []
 
     async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
@@ -371,6 +372,7 @@ async def test_event_stream_dispatch_batches_ready_burst_and_preserves_handler_c
 
 
 async def test_event_stream_dispatch_accumulates_while_dispatch_is_in_flight() -> None:
+    """Call events yielded while a unit is in flight join the next one; only a blocked dispatch can show that."""
     first_dispatch_started = asyncio.Event()
     finish_first_dispatch = asyncio.Event()
     batches: list[list[AgentStreamEvent]] = []
@@ -402,6 +404,7 @@ async def test_event_stream_dispatch_accumulates_while_dispatch_is_in_flight() -
 
 
 async def test_event_stream_dispatch_ignores_spurious_wake(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A wake with nothing ready must not dispatch an empty unit; no real run produces a spurious wake on demand."""
     event_type = asyncio.Event
 
     class SpuriousEvent(event_type):
@@ -431,6 +434,7 @@ async def test_event_stream_dispatch_ignores_spurious_wake(monkeypatch: pytest.M
 
 
 async def test_event_stream_dispatch_propagates_handler_failure_and_closes_stream() -> None:
+    """A handler failure reaches the caller and closes the node stream without leaking the dispatcher task."""
     stream_closed = False
     handler_error = RuntimeError('handler failed')
 
@@ -461,6 +465,7 @@ async def test_event_stream_dispatch_propagates_handler_failure_and_closes_strea
 
 
 async def test_event_stream_dispatch_propagates_producer_failure_and_closes_stream() -> None:
+    """A node stream failure reaches the caller after the events before it, with the stream closed."""
     stream_closed = False
     producer_error = RuntimeError('producer failed')
 
@@ -491,6 +496,8 @@ async def test_event_stream_dispatch_propagates_producer_failure_and_closes_stre
 
 
 async def test_event_stream_batching_preserves_model_delta_backpressure() -> None:
+    """The producer must not run ahead of the consumer on model deltas; that is task scheduling no cassette records."""
+
     async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
         pass
 
@@ -534,6 +541,7 @@ async def test_event_stream_batching_preserves_model_delta_backpressure() -> Non
 
 
 async def test_event_stream_dispatch_does_not_block_embedded_tool_execution() -> None:
+    """Tools run while a call event is being dispatched; the interleaving is only observable with a blocked dispatch."""
     dispatch_started = asyncio.Event()
     finish_dispatch = asyncio.Event()
     ordering: list[str] = []
@@ -705,6 +713,7 @@ async def test_model_request_after_a_failed_dispatch_does_not_start(count: int) 
 
 
 async def test_model_request_wait_propagates_its_own_cancellation() -> None:
+    """Cancelling a model request that waits on a stuck dispatch cancels it rather than letting it resume."""
     dispatch_started = asyncio.Event()
     waiting = asyncio.Event()
     resumed = False
@@ -743,6 +752,7 @@ async def test_model_request_wait_propagates_its_own_cancellation() -> None:
 
 
 async def test_event_stream_handler_operation_preserves_one_handler_call_per_event() -> None:
+    """A burst is one durable unit, but the handler is still called once per event; the unit count is internal."""
     handled: list[AgentStreamEvent] = []
     handler_calls = 0
 
@@ -1609,6 +1619,7 @@ async def test_temporal_backend_labels_validation_activity(
 
 
 def test_temporal_event_transport_keeps_single_event_wire_and_writes_bursts_as_lists() -> None:
+    """Older histories carry single-event payloads, so the transport must still load them; no cassette sees the wire."""
     pytest.importorskip('temporalio')
     from pydantic_ai.durable_exec.temporal import TemporalDurability
     from pydantic_ai.durable_exec.temporal._transports import (

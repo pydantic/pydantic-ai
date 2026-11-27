@@ -315,7 +315,8 @@ class _BatchedEventDispatch:
 
     The producer pulls the stream, which is what runs the node's tools, so tools start while earlier events are
     still being dispatched. The dispatcher sends the tool call events that became ready during the previous dispatch
-    as one durable unit, and every other event in a unit of its own (see `_take_burst`). Events reach the caller in stream order, each dispatched one only once its unit recorded it.
+    as one durable unit, and every other event in a unit of its own (see `_take_burst`). Events reach the caller in
+    stream order, each dispatched one only once its unit recorded it.
     Burst boundaries follow task scheduling: see `BaseDurabilityCapability._batch_event_stream_dispatch`.
     """
 
@@ -1184,8 +1185,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _batch_event_stream_dispatch(self) -> bool:
         """Whether this durable run dispatches workflow-side events in bursts, one durable unit per burst.
 
-        A burst is the events that became ready while the previous burst's unit was in flight, so its boundaries
-        follow task scheduling. Only an engine whose workflow code replays with the same scheduling, such as
+        A burst is the run of `FunctionToolCallEvent`s that became ready while the previous unit was in flight, so
+        its boundaries follow task scheduling; every other event still gets a unit of its own. Only an engine whose workflow code replays with the same scheduling, such as
         Temporal's deterministic workflow event loop, may enable this: on any other engine a replay can form
         different bursts and so a different sequence of durable units. Every other engine dispatches one unit per
         event, in stream order.

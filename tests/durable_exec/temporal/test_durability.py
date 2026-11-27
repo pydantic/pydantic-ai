@@ -5352,6 +5352,16 @@ async def test_durability_complex_agent_logfire_span_tree(
                                         BasicSpan(
                                             content='{"part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "output_tool_call"}'
                                         ),
+                                    ],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='StartActivity:agent__durability_complex_agent_logfire__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__durability_complex_agent_logfire__event_stream_handler',
+                                    children=[
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
                                             content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
