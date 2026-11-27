@@ -58,4 +58,4 @@ See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_
 
 ## API reference
 
-::: pydantic_ai_harness.CurrentTime
+::: pydantic_ai_harness.AnnounceCurrentTime
