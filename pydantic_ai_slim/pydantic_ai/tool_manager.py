@@ -1206,10 +1206,12 @@ class ToolManager(Generic[AgentDepsT]):
         return name, tool, ctx, tool.toolset.processors[name]
 
     def _output_tool_call_args_valid(self, call: ToolCallPart) -> bool:
-        """Whether an output tool call's arguments pass the validation that `validate_output_tool_call` runs on them.
+        """Whether an output tool call's arguments pass the output processor's own validation.
 
-        Only the output processor's `hook_validate` runs: no output hook, output function or output validator, and no
-        retry is counted or failed tool recorded.
+        Only the processor's `hook_validate` runs. The capabilities' output validate hooks (`before_output_validate`,
+        `wrap_output_validate`, `after_output_validate`) that `validate_output_tool_call` wraps around it are skipped,
+        so a hook that repairs or rejects the arguments isn't taken into account. No output function or output
+        validator runs either, and no retry is counted or failed tool recorded.
         """
         try:
             _name, _tool, ctx, processor = self._resolve_output_tool(call, allow_partial=False)

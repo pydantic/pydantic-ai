@@ -5486,8 +5486,9 @@ def test_invalid_function_tool_args_not_cut_off_validate_the_output_as_often_as_
     def get_weather(city: str) -> str:
         return 'sunny'  # pragma: no cover
 
-    assert agent.run_sync('Hello').output == City(name='Lyon')
+    output = agent.run_sync('Hello').output
     assert validated == ['Paris', 'Lyon']
+    assert output.name == 'Lyon'
 
 
 def test_empty_response_with_finish_reason_length():

@@ -787,7 +787,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         arguments are valid, the call is retried as before instead, so a response with a valid output doesn't fail the
         run. (`'exhaustive'` validates function tool calls before it runs any output tool, so the final result isn't
         known yet then.) The output tool calls are only validated once the call is known to be cut off, so a response
-        that isn't doesn't run the output type's validators an extra time.
+        that isn't doesn't run the output type's validators an extra time. Their validity is an approximation: the
+        capabilities' output validate hooks don't run, so an output tool call a hook would have repaired counts as
+        invalid here, and the run raises instead of retrying the cut-off call.
         """
         if (
             not validated.args_valid
