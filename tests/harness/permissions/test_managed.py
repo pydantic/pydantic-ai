@@ -431,7 +431,7 @@ class TestReviewerApprovals:
 
     async def test_a_reviewers_approval_does_not_answer_a_managed_ask_on_a_plain_tool(self) -> None:
         def deploy(env: str) -> str:
-            return f'deployed {env}'
+            raise AssertionError('the held call must not run')  # pragma: no cover
 
         agent = Agent[None, 'str | DeferredToolRequests'](
             _calls(('deploy', {'env': 'prod'})),
