@@ -5462,10 +5462,15 @@ async def test_tool_raises_approval_required():
         assert result.is_complete
 
 
-async def test_run_stream_keeps_call_deferred_while_running_next_to_approval_tool():
-    """A call a tool defers while running joins the `DeferredToolRequests` `run_stream()` ends on."""
+@pytest.mark.parametrize('read', ['get_output', 'stream_output'])
+@pytest.mark.parametrize('deferral', ['call_deferred', 'approval_required'])
+async def test_run_stream_keeps_calls_deferred_while_running_next_to_approval_tool(read: str, deferral: str):
+    """A call a tool defers while running joins the `DeferredToolRequests` `run_stream()` ends on, and resumes."""
 
     async def llm(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) > 1:
+            yield 'Done.'
+            return
         yield {0: DeltaToolCall(name='get_weather', json_args='{"city": "Paris"}', tool_call_id='weather')}
         yield {1: DeltaToolCall(name='delete_file', json_args='{"path": "a.txt"}', tool_call_id='delete')}
 
@@ -5473,23 +5478,39 @@ async def test_run_stream_keeps_call_deferred_while_running_next_to_approval_too
 
     @agent.tool_plain
     def get_weather(city: str) -> str:
-        raise CallDeferred(metadata={'job': 'weather-1'})
+        if deferral == 'call_deferred':
+            raise CallDeferred(metadata={'job': 'weather-1'})
+        raise ApprovalRequired(metadata={'job': 'weather-1'})
 
     @agent.tool_plain(requires_approval=True)
     def delete_file(path: str) -> str:
         return 'deleted'  # pragma: no cover
 
     async with agent.run_stream('Hello') as result:
-        output = await result.get_output()
+        if read == 'get_output':
+            output = await result.get_output()
+        else:
+            outputs = [item async for item in result.stream_output(debounce_by=None)]
+            output = outputs[-1]
+        messages = result.all_messages()
 
-    assert output == snapshot(
-        DeferredToolRequests(
-            calls=[ToolCallPart(tool_name='get_weather', args='{"city": "Paris"}', tool_call_id='weather')],
-            approvals=[ToolCallPart(tool_name='delete_file', args='{"path": "a.txt"}', tool_call_id='delete')],
-            metadata={'weather': {'job': 'weather-1'}},
-            validated_args={'weather': {'city': 'Paris'}},
-        )
-    )
+    weather = ToolCallPart(tool_name='get_weather', args='{"city": "Paris"}', tool_call_id='weather')
+    delete = ToolCallPart(tool_name='delete_file', args='{"path": "a.txt"}', tool_call_id='delete')
+    assert isinstance(output, DeferredToolRequests)
+    if deferral == 'call_deferred':
+        assert (output.calls, output.approvals) == ([weather], [delete])
+    else:
+        assert (output.calls, output.approvals) == ([], [weather, delete])
+    assert output.metadata == {'weather': {'job': 'weather-1'}}
+
+    # Resuming needs a result for every pending call, so it only works if none was dropped.
+    results = DeferredToolResults(approvals={'delete': ToolDenied('No.')})
+    if deferral == 'call_deferred':
+        results.calls['weather'] = 'sunny'
+    else:
+        results.approvals['weather'] = ToolDenied('No.')
+    async with agent.run_stream(message_history=messages, deferred_tool_results=results) as resumed:
+        assert await resumed.get_output() == 'Done.'
 
 
 async def test_deferred_tool_iter():
