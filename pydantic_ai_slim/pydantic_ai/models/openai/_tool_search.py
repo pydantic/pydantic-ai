@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from typing import Any, Literal, cast
 
 from openai.types import responses
+from openai.types.responses.namespace_tool import ToolFunction
 from openai.types.responses.response_tool_search_call import ResponseToolSearchCall
 from openai.types.responses.response_tool_search_output_item_param_param import ResponseToolSearchOutputItemParamParam
 from typing_extensions import Protocol
@@ -251,7 +252,7 @@ def map_client_tool_search_call(item: ResponseToolSearchCall, provider_name: str
     Emits the typed [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart]
     subclass directly — the wire shape is distinct enough that the adapter can identify
     this as a tool-search call without going through the framework's post-hoc
-    `_narrow_tool_call_parts` pass.
+    `_apply_tool_defs_to_call_parts` pass.
     """
     call_id = item.call_id or item.id
     args = normalize_tool_search_args(item.arguments)
@@ -280,13 +281,16 @@ def build_tool_search_return_part(
     stashes the provider item identity and state on `provider_details` for replay.
     """
     matches: list[ToolSearchMatch] = []
-    # `output_item.tools` is a union of OpenAI Responses tool variants; only
-    # function tools carry a stable `name` field. Other variants (file_search,
-    # image generation, etc.) can't appear here in practice but aren't
-    # statically excluded from the union, so we filter by type.
+    # `output_item.tools` is a union of OpenAI Responses tool variants. A match
+    # arrives as a bare function tool, or as a namespace wrapping the deferred
+    # function. Other variants (file_search, image generation, etc.) can't appear
+    # here in practice but aren't statically excluded from the union, so we
+    # filter by type.
     for t in output_item.tools:
         if isinstance(t, responses.FunctionTool):
             matches.append({'name': t.name})
+        elif isinstance(t, responses.NamespaceTool):
+            matches.extend({'name': f.name} for f in t.tools if isinstance(f, ToolFunction))
     return NativeToolSearchReturnPart(
         provider_name=provider_name,
         content={'discovered_tools': matches},

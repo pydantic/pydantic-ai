@@ -7,7 +7,7 @@ import shlex
 import shutil
 import subprocess
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pr_gates
@@ -240,9 +240,20 @@ def test_compatibility_workflow_has_no_privileged_triggers_or_duplicate_check_pr
 def test_review_workflow_uses_only_trusted_code_and_pinned_status_targets():
     workflow = _Workflow.model_validate(yaml.load(REVIEW_WORKFLOW.read_text(), Loader=yaml.BaseLoader))
     assert set(workflow.on) == {'workflow_run', 'merge_group'}
-    assert workflow.on['workflow_run'].workflows == ['PR Bots', 'PR Review Gates Events']
+    assert workflow.on['workflow_run'].workflows == ['PR Bots', 'PR Review Gates Events', 'PR Review Checks']
+    assert workflow.jobs['review-target'].condition == (
+        "github.event_name != 'workflow_run' || (github.event.workflow_run.event != 'merge_group' && "
+        "(github.event.workflow_run.path != '.github/workflows/pr-review-checks.yml' || "
+        "github.event.workflow_run.conclusion != 'skipped'))"
+    )
     publisher = workflow.jobs['review-statuses']
-    assert publisher.permissions['statuses'] == 'write'
+    assert publisher.permissions == {
+        'contents': 'read',
+        'actions': 'read',
+        'issues': 'read',
+        'pull-requests': 'read',
+        'statuses': 'write',
+    }
     assert all(step.condition == "steps.pending.outputs.active == 'true'" for step in publisher.steps[1:])
     for step in (publisher.steps[0], publisher.steps[-1]):
         assert step.env['EXPECTED_HEAD_SHA'] == '${{ needs.review-target.outputs.head }}'
@@ -263,7 +274,6 @@ def test_review_observer_is_read_only_and_schema_matches_the_trusted_publisher()
         'pull_request',
         'pull_request_review',
         'pull_request_review_comment',
-        'pull_request_review_thread',
     }
     assert observer.on['pull_request'].paths is None
     assert set(observer.on['pull_request'].types) == {
@@ -276,7 +286,6 @@ def test_review_observer_is_read_only_and_schema_matches_the_trusted_publisher()
     }
     assert observer.on['pull_request_review'].types == ['submitted', 'edited', 'dismissed']
     assert observer.on['pull_request_review_comment'].types == ['created', 'edited', 'deleted']
-    assert observer.on['pull_request_review_thread'].types == ['resolved', 'unresolved']
     for job in observer.jobs.values():
         assert not job.permissions
         assert all(not step.uses for step in job.steps)
@@ -322,15 +331,16 @@ def test_observer_cannot_choose_the_status_target():
     scenarios: list[tuple[str, str]] = [
         ('forged-title', 'active'),
         ('review-comment', 'active'),
-        ('review-thread', 'active'),
         ('empty-event-prs', 'active'),
         ('pull-request', 'active'),
         ('producer', 'active'),
+        ('checks-producer', 'active'),
         ('group', 'active'),
         ('foreign-pr', 'error'),
         ('wrong-sha', 'error'),
         ('wrong-repository', 'error'),
         ('ambiguous', 'error'),
+        ('crowded-branch', 'error'),
         ('closed-association', 'error'),
         ('wrong-source', 'error'),
         ('wrong-path', 'error'),
@@ -338,6 +348,7 @@ def test_observer_cannot_choose_the_status_target():
         ('native', 'error'),
         ('observer-bot-event', 'error'),
         ('producer-review-event', 'error'),
+        ('checks-producer-review-event', 'error'),
         ('api-error', 'error'),
         ('moved-while-queued', 'stale'),
         ('repository-changed', 'stale'),
@@ -370,7 +381,10 @@ if (data.scenario === 'foreign-pr') {
   associations[0] = {number: 7, state: 'open', head: {sha: data.otherHead, repo: {id: 777}}};
 }
 if (data.scenario === 'wrong-sha') associations[0].head.sha = data.otherHead;
-if (data.scenario === 'wrong-repository') associations[0].head.repo.id = 777;
+if (data.scenario === 'wrong-repository') {
+  associations[0].head.repo.id = 777;
+  serverRun.event = 'pull_request';
+}
 if (data.scenario === 'closed-association') associations[0].state = 'closed';
 if (data.scenario === 'ambiguous') associations.push({...structuredClone(source), number: 9});
 if (data.scenario === 'moved-while-queued') live.head.sha = data.otherHead;
@@ -378,16 +392,23 @@ if (data.scenario === 'repository-changed') live.head.repo.id = 777;
 if (data.scenario === 'closed-while-queued') live.state = 'closed';
 if (data.scenario === 'wrong-source') serverRun.event = 'workflow_dispatch';
 if (data.scenario === 'review-comment') serverRun.event = 'pull_request_review_comment';
-if (data.scenario === 'review-thread') serverRun.event = 'pull_request_review_thread';
 if (data.scenario === 'pull-request') serverRun.event = 'pull_request';
 if (data.scenario === 'wrong-path') serverRun.path = '.github/workflows/untrusted.yml';
 if (data.scenario === 'foreign-workflow-repository') serverRun.repository.full_name = 'attacker/pydantic-ai';
 if (data.scenario === 'observer-bot-event') serverRun.event = 'pull_request_target';
 if (['producer', 'producer-review-event'].includes(data.scenario)) {
   serverRun.name = 'PR Bots'; serverRun.path = '.github/workflows/bots.yml';
-  serverRun.event = 'pull_request_target';
+  serverRun.event = 'pull_request';
 }
 if (data.scenario === 'producer-review-event') serverRun.event = 'pull_request_review';
+if (['checks-producer', 'checks-producer-review-event'].includes(data.scenario)) {
+  serverRun.name = 'PR Review Checks'; serverRun.path = '.github/workflows/pr-review-checks.yml';
+  serverRun.event = data.scenario === 'checks-producer' ? 'pull_request' : 'pull_request_review';
+}
+// GitHub reports the base repository as a review run's head repository, even for a fork PR.
+if (['pull_request_review', 'pull_request_review_comment'].includes(serverRun.event)) {
+  serverRun.head_repository = {id: 1, owner: {login: 'pydantic'}};
+}
 const context = {
   eventName: 'workflow_run', serverUrl: 'https://github.com', runId: 1,
   repo: {owner: 'pydantic', repo: 'pydantic-ai'},
@@ -410,6 +431,15 @@ const github = {
     calls.push(['associations', args]);
     if (data.scenario === 'api-error') throw new Error('GitHub unavailable');
     return associations;
+  },
+  graphql: async (query, variables) => {
+    calls.push(['branch', variables]);
+    if (data.scenario === 'api-error') throw new Error('GitHub unavailable');
+    const nodes = associations.map(pull => ({
+      number: pull.number, state: pull.state.toUpperCase(), headRefOid: pull.head.sha,
+      headRepository: {databaseId: pull.head.repo.id}
+    }));
+    return {repository: {pullRequests: {pageInfo: {hasNextPage: data.scenario === 'crowded-branch'}, nodes}}};
   }
 };
 async function resolve() {
@@ -462,8 +492,8 @@ console.log(JSON.stringify(results));
             if outcome == 'active':
                 expected['active'] = 'true'
             assert output['outputs'] == expected
-            assert output['calls'][:2] == [
-                ['run', {'owner': 'pydantic', 'repo': 'pydantic-ai', 'run_id': 900}],
+            # A review run cannot name a fork's owner, so it looks the branch up across repositories.
+            lookup = (
                 [
                     'associations',
                     {
@@ -473,8 +503,11 @@ console.log(JSON.stringify(results));
                         'head': 'attacker:attacker-branch',
                         'per_page': 100,
                     },
-                ],
-            ]
+                ]
+                if scenario in {'pull-request', 'producer', 'checks-producer'}
+                else ['branch', {'owner': 'pydantic', 'name': 'pydantic-ai', 'branch': 'attacker-branch'}]
+            )
+            assert output['calls'][:2] == [['run', {'owner': 'pydantic', 'repo': 'pydantic-ai', 'run_id': 900}], lookup]
             assert output['calls'][-1] == ['live', {'owner': 'pydantic', 'repo': 'pydantic-ai', 'pull_number': 8}]
         if outcome == 'active':
             assert [(write['sha'], write['context'], write['state']) for write in output['writes']] == [
@@ -488,6 +521,9 @@ HEAD = 'a' * 40
 OLD_HEAD = 'b' * 40
 BOT = review_gates.ReviewUser(id=1, login='github-actions[bot]', type='Bot')
 MAINTAINER = review_gates.ReviewUser(id=3, login='maintainer', type='User')
+CONTRIBUTOR = review_gates.ReviewUser(id=5, login='contributor', type='User')
+STRANGER = review_gates.ReviewUser(id=7, login='stranger', type='User')
+POSTED = datetime(2026, 12, 1, tzinfo=UTC)
 
 
 def review(
@@ -519,9 +555,17 @@ class ReviewGitHub:
     comments: list[review_gates.ReviewComment] = field(default_factory=list[review_gates.ReviewComment])
     resolved: set[int] = field(default_factory=set[int])
     verified: bool = True
+    commits: set[str] = field(default_factory=set[str])
+    issues: dict[int, datetime] = field(default_factory=dict[int, datetime])
+    writers: set[str] = field(default_factory=lambda: {MAINTAINER.login})
     head: str = HEAD
     repository: int = 888
     closed: bool = False
+    author: tuple[str, str] = (CONTRIBUTOR.login, 'User')
+    author_permission: str = 'read'
+    files: list[ChangedFile] = field(
+        default_factory=lambda: [ChangedFile(filename='pydantic_ai_slim/pydantic_ai/agent.py')]
+    )
     statuses: list[tuple[str, review_gates.ReviewGate, review_gates.CommitStatus]] = field(
         default_factory=list[tuple[str, review_gates.ReviewGate, review_gates.CommitStatus]]
     )
@@ -530,14 +574,20 @@ class ReviewGitHub:
         return review_gates.ReviewPullRequest.model_validate(
             {
                 'state': 'closed' if self.closed else 'open',
+                'number': 7,
+                'html_url': 'https://github.com/o/r/pull/7',
+                'user': {'id': 5, 'login': self.author[0], 'type': self.author[1]},
                 'head': {'sha': self.head, 'repo': {'id': self.repository}},
-                'base': {'sha': OLD_HEAD},
+                'base': {'sha': OLD_HEAD, 'repo': {'id': 888}},
                 'changed_files': 1,
                 'labels': [{'name': label} for label in self.labels if label]
                 if self.labels is not None
                 else [{'name': self.size_label}],
             }
         )
+
+    def changed_files(self) -> list[ChangedFile]:
+        return self.files.copy()
 
     def size(self, pull: review_gates.ReviewPullRequest) -> review_gates.Size:
         return self.size_label
@@ -555,6 +605,17 @@ class ReviewGitHub:
         assert (run_id, head) == (20, HEAD)
         return self.verified
 
+    def own_commits(self, base: str, head: str, shas: set[str]) -> set[str]:
+        return {sha for sha in shas if any(commit.startswith(sha) for commit in self.commits)}
+
+    def issue_created_at(self, number: int) -> datetime | None:
+        return self.issues.get(number)
+
+    def permission(self, login: str) -> str:
+        if login == self.author[0]:
+            return self.author_permission
+        return 'write' if login in self.writers else 'read'
+
     def status(
         self, head: str, gate: review_gates.ReviewGate, state: review_gates.CommitStatus, description: str, url: str
     ) -> None:
@@ -562,9 +623,17 @@ class ReviewGitHub:
 
 
 def verdicts(github: ReviewGitHub) -> dict[review_gates.ReviewGate, pr_gates.Verdict]:
-    return review_gates.review_verdicts(
-        github, github.pull_request(), github.reviews(), github.review_comments(), github.resolved_comment_ids()
+    snapshot = (
+        github,
+        github.pull_request(),
+        github.reviews(),
+        github.review_comments(),
+        github.resolved_comment_ids(),
     )
+    return {
+        **review_gates.review_verdicts(*snapshot),
+        'dispositions': review_gates.finding_dispositions(*snapshot),
+    }
 
 
 @pytest.mark.parametrize('size', ['size: S', 'size: M', 'size: L', 'size: XL'])
@@ -572,14 +641,36 @@ def test_review_bar_by_size(size: review_gates.Size):
     github = ReviewGitHub(size_label=size, current_reviews=[])
     result = verdicts(github)
     assert bool(result['douwebot'].failures) is (size != 'size: S')
-    assert set(result) == {'douwebot'}
+    assert set(result) == {'douwebot', 'github-dir', 'dispositions'}
     github.current_reviews = [review()]
     assert all(not item.failures for item in verdicts(github).values())
 
 
+def test_a_missing_size_label_names_the_activation_label():
+    """PR Bots labels only a trusted PR, so an app PR waiting for `trusted:ci-run` has no size label."""
+    failures = verdicts(ReviewGitHub(labels=[]))['douwebot'].failures
+    assert failures == [
+        'No size label (computed `size: M`): PR Bots labels a PR whose author has write access, or with `trusted:ci-run`.'
+    ]
+
+
+@pytest.mark.parametrize('size', ['size: M', 'size: XL'])
+def test_a_fork_pr_without_a_size_label_is_recreated(size: review_gates.Size):
+    """PR Bots never labels a fork PR, and `trusted:ci-run` cannot change that."""
+    failures = verdicts(ReviewGitHub(size_label=size, labels=[], repository=999))['douwebot'].failures
+    assert failures == [
+        f'No size label (computed `{size}`): PR Bots skips fork PRs. A maintainer recreates the change as a same-repository PR.'
+    ]
+    assert len(failures[0]) <= 140
+
+
 @pytest.mark.parametrize('labels', [[], ['size: S'], ['size: M', 'size: L']])
 def test_size_must_match_exactly_one_recomputed_label(labels: list[str]):
-    assert all(item.failures for item in verdicts(ReviewGitHub(labels=labels)).values())
+    result = verdicts(ReviewGitHub(labels=labels))
+    assert result['douwebot'].failures
+    # The `.github/` gate applies at every size, so a size label cannot fail it.
+    assert not result['github-dir'].failures
+    assert not result['dispositions'].failures
 
 
 @pytest.mark.parametrize(
@@ -628,7 +719,12 @@ def test_findings_before_a_clean_retry_still_make_the_head_unclean(state: str, l
     comments = (
         [
             review_gates.ReviewComment(
-                id=30, pull_request_review_id=parent.id, user=BOT, original_commit_id=HEAD, body=finding.body
+                created_at=POSTED,
+                id=30,
+                pull_request_review_id=parent.id,
+                user=BOT,
+                original_commit_id=HEAD,
+                body=finding.body,
             )
         ]
         if location == 'inline'
@@ -664,7 +760,12 @@ def test_only_resolved_optional_findings_on_an_approval_stay_clean(
     payload = json.loads(publication(result, HEAD, run, engine='claude'))
     parent = review(9, state='APPROVED' if state == 'UNVERIFIED' else state, body=payload['body'])
     comment = review_gates.ReviewComment(
-        id=30, pull_request_review_id=parent.id, user=BOT, original_commit_id=HEAD, body=payload['comments'][0]['body']
+        created_at=POSTED,
+        id=30,
+        pull_request_review_id=parent.id,
+        user=BOT,
+        original_commit_id=HEAD,
+        body=payload['comments'][0]['body'],
     )
     # Other parents are followed by a clean verified approval, so only their finding can fail the head.
     reviews = [parent] if state == 'APPROVED' else [parent, review()]
@@ -679,6 +780,7 @@ def test_failed_douwebot_publication_cannot_hide_a_finding_behind_another_receip
 
     parent = review(9, body=f'No blocking findings.\n\n<!-- douwebot:review run=21 head={HEAD} -->')
     comment = review_gates.ReviewComment(
+        created_at=POSTED,
         id=30,
         pull_request_review_id=9,
         user=BOT,
@@ -701,6 +803,7 @@ def test_relocated_comment_uses_its_parent_review_head(current: bool):
             'body': 'Optional: finding',
             'commit_id': HEAD,
             'original_commit_id': OLD_HEAD,
+            'created_at': POSTED,
         }
     )
     github = ReviewGitHub(current_reviews=[parent, review()], comments=[comment])
@@ -711,6 +814,7 @@ def test_relocated_comment_uses_its_parent_review_head(current: bool):
 def test_relocated_comment_under_an_unmarked_review_uses_its_original_head(current: bool):
     parent = review(9, body='Unidentified review')
     comment = review_gates.ReviewComment(
+        created_at=POSTED,
         id=30,
         pull_request_review_id=parent.id,
         user=BOT,
@@ -725,7 +829,7 @@ def test_relocated_comment_under_an_unmarked_review_uses_its_original_head(curre
 def test_other_review_receipt_does_not_count_as_douwebot_finding(workflow: str):
     parent = review(8, body=f'Reviewed at head\n<!-- gh-aw-workflow-call-id: pydantic/pydantic-ai/{workflow} -->')
     comment = review_gates.ReviewComment(
-        id=30, pull_request_review_id=8, user=BOT, original_commit_id=HEAD, body='CI finding'
+        created_at=POSTED, id=30, pull_request_review_id=8, user=BOT, original_commit_id=HEAD, body='CI finding'
     )
     github = ReviewGitHub(current_reviews=[parent, review()], comments=[comment])
     assert not verdicts(github)['douwebot'].failures
@@ -751,7 +855,7 @@ def test_pr_review_checks_receipt_does_not_count_as_douwebot_finding():
     )
     parent = review(8, body=json.loads(pr_review_checks_payload([result], HEAD, 30, inline=True, lines={}))['body'])
     comment = review_gates.ReviewComment(
-        id=30, pull_request_review_id=8, user=BOT, original_commit_id=HEAD, body='Security finding'
+        created_at=POSTED, id=30, pull_request_review_id=8, user=BOT, original_commit_id=HEAD, body='Security finding'
     )
     github = ReviewGitHub(current_reviews=[parent, review()], comments=[comment])
     assert not verdicts(github)['douwebot'].failures
@@ -773,12 +877,34 @@ ENV = {
 def test_reevaluation_replaces_a_failure_with_success_on_the_live_head():
     github = ReviewGitHub(current_reviews=[])
     assert review_gates.reconcile_reviews(github, ENV) == 0
-    assert github.statuses == [(HEAD, 'douwebot', 'failure')]
+    assert github.statuses == [
+        (HEAD, 'douwebot', 'failure'),
+        (HEAD, 'github-dir', 'success'),
+        (HEAD, 'dispositions', 'success'),
+    ]
     github.current_reviews = [review()]
     assert review_gates.reconcile_reviews(github, ENV) == 0
     assert github.statuses == [
         (HEAD, 'douwebot', 'failure'),
+        (HEAD, 'github-dir', 'success'),
+        (HEAD, 'dispositions', 'success'),
         (HEAD, 'douwebot', 'success'),
+        (HEAD, 'github-dir', 'success'),
+        (HEAD, 'dispositions', 'success'),
+    ]
+
+
+def test_a_failed_disposition_lookup_leaves_the_douwebot_status_its_own():
+    class IssuesDown(ReviewGitHub):
+        def issue_created_at(self, number: int) -> datetime | None:
+            raise GateError('Server Error (HTTP 502)')
+
+    github = IssuesDown(comments=[finding(), reply('Tracked in #12')])
+    assert review_gates.reconcile_reviews(github, ENV) == 1
+    assert github.statuses == [
+        (HEAD, 'douwebot', 'success'),
+        (HEAD, 'github-dir', 'success'),
+        (HEAD, 'dispositions', 'failure'),
     ]
 
 
@@ -793,7 +919,11 @@ def test_errors_and_changing_snapshots_fail_closed(error: Exception):
 
     github = Unreachable()
     assert review_gates.reconcile_reviews(github, ENV) == 1
-    assert github.statuses == [(HEAD, 'douwebot', 'failure')]
+    assert github.statuses == [
+        (HEAD, 'douwebot', 'failure'),
+        (HEAD, 'github-dir', 'failure'),
+        (HEAD, 'dispositions', 'failure'),
+    ]
 
     class Moving(ReviewGitHub):
         def pull_request(self) -> review_gates.ReviewPullRequest:
@@ -802,7 +932,11 @@ def test_errors_and_changing_snapshots_fail_closed(error: Exception):
 
     moving = Moving(current_reviews=[])
     assert review_gates.reconcile_reviews(moving, ENV) == 1
-    assert moving.statuses == [(HEAD, 'douwebot', 'failure')]
+    assert moving.statuses == [
+        (HEAD, 'douwebot', 'failure'),
+        (HEAD, 'github-dir', 'failure'),
+        (HEAD, 'dispositions', 'failure'),
+    ]
 
 
 def test_review_status_publication_errors_propagate():
@@ -843,14 +977,359 @@ def test_no_snapshot_cannot_write_to_an_unverified_environment_head():
     assert github.statuses == []
 
 
-def test_merge_group_skips_metadata_and_reports_douwebot_context():
+def test_merge_group_skips_metadata_and_reports_every_gate():
     class NoMetadata(ReviewGitHub):
         def pull_request(self) -> review_gates.ReviewPullRequest:
             raise AssertionError('Merge groups do not inspect queue members')
 
     github = NoMetadata()
     assert review_gates.reconcile_reviews(github, {**ENV, 'MERGE_GROUP_SHA': OLD_HEAD}) == 0
-    assert github.statuses == [(OLD_HEAD, 'douwebot', 'success')]
+    assert github.statuses == [
+        (OLD_HEAD, 'douwebot', 'success'),
+        (OLD_HEAD, 'github-dir', 'success'),
+        (OLD_HEAD, 'dispositions', 'success'),
+    ]
+
+
+VERIA = review_gates.ReviewUser(id=4, login='veria-ai[bot]', type='Bot')
+RECORDINGS = Path(__file__).parent / 'fixtures' / 'review_dispositions'
+
+
+class _Recording(BaseModel):
+    """A merged pull request's review metadata, read from the REST and GraphQL endpoints on 2026-11-19."""
+
+    pull: review_gates.ReviewPullRequest
+    reviews: list[review_gates.Review]
+    comments: list[review_gates.ReviewComment]
+    commits: list[str]
+    resolved: set[int]
+
+
+def finding(
+    user: review_gates.ReviewUser = VERIA,
+    body: str = 'Low: this branch is unreachable',
+    parent: int = 50,
+    posted: datetime = POSTED,
+) -> review_gates.ReviewComment:
+    return review_gates.ReviewComment(
+        id=40, pull_request_review_id=parent, user=user, original_commit_id=OLD_HEAD, created_at=posted, body=body
+    )
+
+
+def reply(body: str, user: review_gates.ReviewUser = CONTRIBUTOR, id: int = 41) -> review_gates.ReviewComment:
+    return review_gates.ReviewComment(
+        id=id,
+        pull_request_review_id=id + 10,
+        in_reply_to_id=40,
+        user=user,
+        original_commit_id=HEAD,
+        created_at=POSTED,
+        body=body,
+    )
+
+
+@pytest.mark.parametrize(
+    ('number', 'reviewers', 'stacked', 'opened'),
+    [
+        (13615, ['Veria', 'PR Review Checks'], 13630, datetime(2026, 11, 16, 20, 29, 41, tzinfo=UTC)),
+        (13617, ['PR Review Checks'], 13659, datetime(2026, 11, 16, 21, 3, 5, tzinfo=UTC)),
+    ],
+)
+def test_merged_prs_with_unanswered_findings_fail(number: int, reviewers: list[str], stacked: int, opened: datetime):
+    """Both PRs merged at size S with bot findings answered only by a pointer to a later stacked PR."""
+    recording = _Recording.model_validate_json((RECORDINGS / f'{number}.json').read_text(encoding='utf-8'))
+    github = ReviewGitHub(
+        size_label='size: S',
+        head=recording.pull.head.sha,
+        commits=set(recording.commits),
+        issues={stacked: opened},
+        writers={'mpfaffenberger'},
+    )
+
+    def evaluate(comments: list[review_gates.ReviewComment]) -> dict[review_gates.ReviewGate, pr_gates.Verdict]:
+        snapshot = (github, recording.pull, recording.reviews, comments, recording.resolved)
+        return {
+            **review_gates.review_verdicts(*snapshot),
+            'dispositions': review_gates.finding_dispositions(*snapshot),
+        }
+
+    result = evaluate(recording.comments)
+    assert result['douwebot'] == pr_gates.Verdict(
+        summary=['Size S: automated review enforcement is skipped; the manual merge bar still applies.']
+    )
+    assert (
+        result['dispositions']
+        .failures[0]
+        .startswith(f'{len(reviewers)} of {len(reviewers)} review bot findings need a reply')
+    )
+    assert [failure.split(': the ')[1] for failure in result['dispositions'].failures[1:]] == [
+        f'{reviewer} finding has no disposition reply.' for reviewer in reviewers
+    ]
+    answered = [
+        comment.model_copy(update={'body': f'Tracked in #{stacked}\n\n{comment.body}'})
+        if comment.in_reply_to_id
+        else comment
+        for comment in recording.comments
+    ]
+    assert not evaluate(answered)['dispositions'].failures
+
+
+@pytest.mark.parametrize(
+    ('body', 'user', 'passes'),
+    [
+        pytest.param('Fixed in 1234abc: the branch now returns early.', CONTRIBUTOR, True, id='fixed'),
+        pytest.param('> Posted by an agent.\n\nFixed in 1234abc', CONTRIBUTOR, True, id='after-attribution'),
+        pytest.param('Fixed in 7777777', CONTRIBUTOR, False, id='fixed-outside-this-pr'),
+        pytest.param('Agreed, fixed in 1234abc', CONTRIBUTOR, False, id='not-line-start'),
+        pytest.param('Fixed in 123abc', CONTRIBUTOR, False, id='sha-too-short'),
+        pytest.param('Fixed in 1234abc', VERIA, False, id='bot-reply'),
+        pytest.param('Tracked in #12', CONTRIBUTOR, True, id='tracked'),
+        pytest.param('Tracked in #13', CONTRIBUTOR, False, id='tracked-missing'),
+        pytest.param('Tracked in #7', CONTRIBUTOR, False, id='tracked-this-pr'),
+        pytest.param('Tracked in #13\nTracked in #12', CONTRIBUTOR, False, id='first-line-decides'),
+        pytest.param('Tracked in #' + '9' * 5000, CONTRIBUTOR, False, id='tracked-number-too-long'),
+        pytest.param('Tracked in #11', CONTRIBUTOR, False, id='tracked-older-issue'),
+        pytest.param('Tracked in #11', MAINTAINER, True, id='tracked-older-issue-writer'),
+        pytest.param('Fixed in 1234abc', STRANGER, False, id='fixed-third-party'),
+        pytest.param('Tracked in #12', STRANGER, False, id='tracked-third-party'),
+        pytest.param('Declined: only reachable from a test double.', MAINTAINER, True, id='declined-writer'),
+        pytest.param('Declined: only reachable from a test double.', CONTRIBUTOR, False, id='declined-reader'),
+        pytest.param('Declined:', MAINTAINER, False, id='declined-without-reason'),
+        pytest.param('Addressed in stacked #12.', MAINTAINER, False, id='prose'),
+    ],
+)
+def test_a_finding_needs_a_disposition_reply(body: str, user: review_gates.ReviewUser, passes: bool):
+    github = ReviewGitHub(
+        comments=[finding(), reply(body, user)],
+        commits={'1234abc' + 'f' * 33},
+        issues={12: POSTED, 7: POSTED, 11: POSTED.replace(day=1, month=11)},
+    )
+    assert not verdicts(github)['douwebot'].failures
+    assert bool(verdicts(github)['dispositions'].failures) is not passes
+
+
+@pytest.mark.parametrize(
+    ('body', 'user', 'reason'),
+    [
+        pytest.param('Fixed in 7777777', CONTRIBUTOR, '`7777777` is not a commit of this PR', id='rewritten-history'),
+        pytest.param('Tracked in #13', CONTRIBUTOR, '#13 is not another issue or PR', id='tracked-missing'),
+        pytest.param('Tracked in #11', CONTRIBUTOR, '#11 was opened before the finding', id='tracked-older-issue'),
+        pytest.param('Declined: noise.', CONTRIBUTOR, '`Declined:` needs write access', id='declined-reader'),
+        pytest.param(
+            'Fixed in 1234abc',
+            STRANGER,
+            '`stranger` is neither the PR author nor a user with write access',
+            id='third-party',
+        ),
+    ],
+)
+def test_a_rejected_reply_names_its_reason(body: str, user: review_gates.ReviewUser, reason: str):
+    """A rebase drops the commits earlier `Fixed in` replies name, so the status says why a reply does not count."""
+    github = ReviewGitHub(
+        comments=[finding(), reply(body, user)],
+        commits={'1234abc' + 'f' * 33},
+        issues={11: POSTED.replace(day=1, month=11)},
+    )
+    assert verdicts(github)['dispositions'].failures[1:] == [
+        f'https://github.com/o/r/pull/7#discussion_r40: the Veria finding has no accepted disposition reply: {reason}.'
+    ]
+
+
+@pytest.mark.parametrize('size', ['size: S', 'size: M', 'size: L', 'size: XL'])
+def test_findings_on_every_head_and_size_need_an_answer(size: review_gates.Size):
+    github = ReviewGitHub(size_label=size, comments=[finding()])
+    failures = verdicts(github)['dispositions'].failures
+    assert failures == [
+        '1 of 1 review bot findings need a reply: `Fixed in <sha>`, `Tracked in #N` or `Declined: <reason>`.',
+        'https://github.com/o/r/pull/7#discussion_r40: the Veria finding has no disposition reply.',
+    ]
+    github.comments.append(reply('Declined: covered by the type checker.', MAINTAINER))
+    assert not verdicts(github)['dispositions'].failures
+
+
+@pytest.mark.parametrize(
+    ('posted', 'resolved', 'passes'),
+    [
+        (review_gates.RESOLVED_THREADS_STARTED_BEFORE + timedelta(hours=1), True, False),
+        (review_gates.RESOLVED_THREADS_STARTED_BEFORE - timedelta(days=1), True, True),
+        (review_gates.RESOLVED_THREADS_STARTED_BEFORE - timedelta(days=1), False, False),
+    ],
+)
+def test_only_threads_resolved_before_the_cutoff_need_no_answer(posted: datetime, resolved: bool, passes: bool):
+    github = ReviewGitHub(comments=[finding(posted=posted)], resolved={40} if resolved else set[int]())
+    assert bool(verdicts(github)['dispositions'].failures) is not passes
+
+
+def test_only_write_access_answers_an_unregistered_bot_thread():
+    """A maintainer can always clear a thread the gate cannot attribute, and the run still names it."""
+    stranger = review_gates.ReviewUser(id=6, login='new-reviewer[bot]', type='Bot')
+    github = ReviewGitHub(
+        comments=[finding(stranger), reply('Fixed in 1234abc', CONTRIBUTOR)], commits={'1234abc' + 'f' * 33}
+    )
+    unregistered = [
+        '1 review bot threads have no registered reviewer, so only a reply from write access answers them. '
+        'Register the bot in `REVIEWER_LOGINS`, or see #14014 for a `github-actions[bot]` thread without a receipt.',
+        'https://github.com/o/r/pull/7#discussion_r40: no registered reviewer started this `new-reviewer[bot]` thread.',
+    ]
+    assert verdicts(github)['dispositions'] == pr_gates.Verdict(
+        summary=['1 review bot findings.', *unregistered],
+        failures=[
+            '1 of 1 review bot findings need a reply: `Fixed in <sha>`, `Tracked in #N` or `Declined: <reason>`.',
+            'https://github.com/o/r/pull/7#discussion_r40: the `new-reviewer[bot]` thread has no accepted disposition '
+            'reply: only write access answers a thread no registered reviewer started, and `contributor` has none.',
+        ],
+    )
+    github.comments.append(reply('Declined: noise.', MAINTAINER, id=42))
+    assert verdicts(github)['dispositions'] == pr_gates.Verdict(summary=['1 review bot findings.', *unregistered])
+    github.comments = [finding(stranger, posted=review_gates.RESOLVED_THREADS_STARTED_BEFORE - timedelta(days=1))]
+    github.resolved = {40}
+    assert not verdicts(github)['dispositions'].failures
+
+
+def test_at_claude_threads_need_a_disposition():
+    """The `@claude` workflow can start inline threads as `claude[bot]`."""
+    claude = review_gates.ReviewUser(id=8, login='claude[bot]', type='Bot')
+    github = ReviewGitHub(comments=[finding(claude)])
+    assert verdicts(github)['dispositions'].failures[1:] == [
+        'https://github.com/o/r/pull/7#discussion_r40: the Claude finding has no disposition reply.'
+    ]
+    github.comments.append(reply('Declined: outside this change.', MAINTAINER))
+    assert not verdicts(github)['dispositions'].failures
+
+
+def test_threads_a_person_starts_are_not_findings():
+    assert not verdicts(ReviewGitHub(comments=[finding(MAINTAINER)]))['dispositions'].failures
+
+
+def _douwebot_finding(body: str) -> tuple[review_gates.Review, review_gates.ReviewComment]:
+    result = ReviewResult(
+        verdict='APPROVE', comments=[Finding(path='a.py', line=3, side='RIGHT', body=body)], discussion=''
+    )
+    payload = json.loads(publication(result, HEAD, 20, engine=None))
+    return review(9, body=payload['body']), finding(BOT, payload['comments'][0]['body'], parent=9)
+
+
+@pytest.mark.parametrize(
+    ('body', 'user', 'passes'),
+    [
+        ('Optional: rename this', CONTRIBUTOR, True),
+        ('Fix this', CONTRIBUTOR, False),
+        ('Optional: rename', STRANGER, False),
+    ],
+)
+def test_the_author_may_decline_an_optional_douwebot_finding(body: str, user: review_gates.ReviewUser, passes: bool):
+    parent, comment = _douwebot_finding(body)
+    github = ReviewGitHub(
+        current_reviews=[parent], comments=[comment, reply('Declined: the name matches the API.', user)]
+    )
+    assert bool(verdicts(github)['dispositions'].failures) is not passes
+
+
+@pytest.mark.parametrize(
+    ('parent_body', 'reviewer'),
+    [
+        (f'<!-- douwebot:review run=20 head={HEAD} -->', 'douwebot'),
+        (f'<!-- pr-review-checks run=30 head={HEAD} -->', 'PR Review Checks'),
+        ('<!-- gh-aw-workflow-call-id: pydantic/pydantic-ai/pydantic-ai-pr-review -->', 'CI Review'),
+        ('Unidentified review', None),
+    ],
+)
+def test_github_actions_findings_are_told_apart_by_receipt(parent_body: str, reviewer: str | None):
+    parent = review(9, body=f'Findings\n\n{parent_body}')
+    assert review_gates.finding_reviewer(finding(BOT, parent=9), parent) == reviewer
+
+
+@pytest.mark.parametrize('listed', [1, 250])
+def test_gh_cli_answers_disposition_lookups(listed: int):
+    """The PR commits endpoint stops at 250; only then does an unmatched SHA cost comparisons."""
+    own = '1234abc' + 'f' * 33
+    later = 'abcdef0' + '0' * 33
+    calls: list[str] = []
+
+    class Metadata(review_gates.ReviewGhCli):
+        def _api(self, *args: str, input: str | None = None) -> str:
+            calls.append(args[-1])
+            match args[-1]:
+                case 'repos/o/r/pulls/7/commits?per_page=100':
+                    commits = [own, *(f'{index:040x}' for index in range(listed - 1))]
+                    return json.dumps(
+                        [[{'sha': sha} for sha in commits[start : start + 100]] for start in (0, 100, 200)]
+                    )
+                case 'repos/o/r/commits/abcdef0':
+                    return json.dumps({'sha': later})
+                case 'repos/o/r/commits/baseba5':
+                    return json.dumps({'sha': 'baseba5' + '0' * 33})
+                case 'repos/o/r/commits/7777777':
+                    raise GateError('No commit found for SHA: 7777777 (HTTP 422)')
+                case path if path == f'repos/o/r/compare/{OLD_HEAD}...{later}?per_page=1':
+                    return '{"status": "ahead"}'
+                case path if path == f'repos/o/r/compare/{later}...{HEAD}?per_page=1':
+                    return '{"status": "ahead"}'
+                case path if path == f'repos/o/r/compare/{OLD_HEAD}...baseba5{"0" * 33}?per_page=1':
+                    return '{"status": "behind"}'
+                case path if path == f'repos/o/r/compare/baseba5{"0" * 33}...{HEAD}?per_page=1':
+                    return '{"status": "ahead"}'
+                case 'repos/o/r/issues/12':
+                    return '{"created_at": "2026-11-19T04:57:52Z"}'
+                case 'repos/o/r/issues/13' | 'repos/o/r/collaborators/stranger/permission':
+                    raise GateError('Not Found (HTTP 404)')
+                case 'repos/o/r/issues/15':
+                    raise GateError('Gone (HTTP 410)')
+                case 'repos/o/r/collaborators/maintainer/permission':
+                    return '{"permission": "write"}'
+                case _:
+                    raise GateError(f'Unexpected {args[-1]} (HTTP 500)')
+
+    github = Metadata('o/r', 7)
+    assert github.own_commits(OLD_HEAD, HEAD, set()) == set()
+    assert calls == []
+    found = github.own_commits(OLD_HEAD, HEAD, {'1234abc', 'abcdef0', 'baseba5', '7777777'})
+    assert found == ({'1234abc', 'abcdef0'} if listed == 250 else {'1234abc'})
+    assert len(calls) == (1 if listed == 1 else 8)
+    assert github.issue_created_at(12) == datetime(2026, 11, 19, 4, 57, 52, tzinfo=UTC)
+    assert github.issue_created_at(13) is None
+    # A deleted issue answers 410 and names no issue, as a missing one does.
+    assert github.issue_created_at(15) is None
+    with pytest.raises(GateError):
+        github.issue_created_at(14)
+    assert github.permission('maintainer') == 'write'
+    assert github.permission('stranger') == 'none'
+    # Fail closed: a permission that cannot be read never grants write access.
+    assert github.permission('unreachable') == 'none'
+
+
+@pytest.mark.parametrize(
+    ('author', 'permission', 'files', 'allowed'),
+    [
+        (('maintainer', 'User'), 'write', ['.github/workflows/ci.yml'], True),
+        (('owner', 'User'), 'admin', ['.github/scripts/pr_gates.py'], True),
+        (('contributor', 'User'), 'read', ['.github/workflows/ci.yml'], False),
+        (('contributor', 'User'), 'none', ['.github/workflows/ci.yml'], False),
+        (('pydanty[bot]', 'Bot'), 'write', ['.github/scripts/pr_gates.py'], False),
+        (('dependabot[bot]', 'Bot'), 'none', ['.github/workflows/ci.yml'], True),
+        (('contributor', 'User'), 'read', ['docs/agents.md', 'pydantic_ai_slim/pydantic_ai/agent.py'], True),
+    ],
+    ids=['write', 'admin', 'read', 'none', 'app', 'dependabot', 'nothing-protected'],
+)
+def test_only_a_maintainer_may_change_the_github_directory(
+    author: tuple[str, str], permission: str, files: list[str], allowed: bool
+) -> None:
+    """A fork can edit its own copy of `protect-github-dir.yml`, so the default-branch gate decides."""
+    github = ReviewGitHub(
+        author=author, author_permission=permission, files=[ChangedFile(filename=name) for name in files]
+    )
+    assert (not verdicts(github)['github-dir'].failures) is allowed
+
+
+def test_a_rename_out_of_the_github_directory_needs_a_maintainer() -> None:
+    github = ReviewGitHub(
+        author=('contributor', 'User'),
+        author_permission='read',
+        files=[ChangedFile(filename='tools/ci.yml', previous_filename='.github/workflows/ci.yml')],
+    )
+    assert verdicts(github)['github-dir'].failures == [
+        'Only a maintainer may change `.github/`; this PR changes .github/workflows/ci.yml.'
+    ]
 
 
 def test_publisher_binds_inline_comments_to_one_marked_review():
@@ -860,6 +1339,7 @@ def test_publisher_binds_inline_comments_to_one_marked_review():
     payload = json.loads(publication(result, HEAD, 20, engine=None))
     parent = review(body=payload['body'])
     comment = review_gates.ReviewComment(
+        created_at=POSTED,
         id=30,
         pull_request_review_id=parent.id,
         user=BOT,
@@ -894,6 +1374,21 @@ def test_publisher_engine_attribution_preserves_the_gate(engine: publish_douwebo
         result.model_copy(update={'discussion': publish_douwebot_review.REVIEW_ENGINES[engine]}), HEAD, 20, engine=None
     )
     assert verdicts(ReviewGitHub(current_reviews=[review(body=json.loads(legacy)['body'])]))['douwebot'].failures
+
+
+@pytest.mark.parametrize(
+    ('engine', 'attribution'),
+    [(engine, text) for engine, texts in publish_douwebot_review.EARLIER_REVIEW_ATTRIBUTIONS.items() for text in texts],
+)
+def test_gate_reads_the_attribution_of_an_engine_earlier_model(
+    engine: publish_douwebot_review.ReviewEngine, attribution: str
+):
+    """A clean approval an engine published on its earlier model stays clean on its head."""
+    result = ReviewResult(verdict='APPROVE', comments=[], discussion='')
+    current = json.loads(publication(result, HEAD, 20, engine=engine))['body']
+    earlier = current.replace(publish_douwebot_review.REVIEW_ENGINES[engine], attribution)
+    assert earlier != current
+    assert not verdicts(ReviewGitHub(current_reviews=[review(body=earlier)]))['douwebot'].failures
 
 
 @pytest.mark.parametrize('state', ['open', 'moved', 'closed'])
@@ -1013,12 +1508,13 @@ def test_review_publication_errors_fail_closed(
 @pytest.mark.parametrize(
     ('path', 'event', 'run_head', 'conclusion', 'job_conclusion', 'valid'),
     [
+        ('.github/workflows/bots.yml', 'pull_request', HEAD, 'success', 'success', True),
+        ('.github/workflows/other.yml', 'pull_request', HEAD, 'success', 'success', False),
         ('.github/workflows/bots.yml', 'pull_request_target', HEAD, 'success', 'success', True),
-        ('.github/workflows/other.yml', 'pull_request_target', HEAD, 'success', 'success', False),
-        ('.github/workflows/bots.yml', 'pull_request', HEAD, 'success', 'success', False),
-        ('.github/workflows/bots.yml', 'pull_request_target', OLD_HEAD, 'success', 'success', False),
-        ('.github/workflows/bots.yml', 'pull_request_target', HEAD, 'failure', 'success', False),
-        ('.github/workflows/bots.yml', 'pull_request_target', HEAD, 'success', 'failure', False),
+        ('.github/workflows/bots.yml', 'workflow_dispatch', HEAD, 'success', 'success', False),
+        ('.github/workflows/bots.yml', 'pull_request', OLD_HEAD, 'success', 'success', False),
+        ('.github/workflows/bots.yml', 'pull_request', HEAD, 'failure', 'success', False),
+        ('.github/workflows/bots.yml', 'pull_request', HEAD, 'success', 'failure', False),
     ],
 )
 def test_gh_cli_verifies_both_jobs_and_originating_run(
@@ -1059,7 +1555,7 @@ def test_gh_cli_reads_all_review_pages_and_posts_exact_context():
                 )
             if args[-1].endswith('/comments?per_page=100'):
                 assert args[:2] == ('--paginate', '--slurp')
-                return '[[{"id":30,"pull_request_review_id":10,"user":{"id":1,"login":"github-actions[bot]","type":"Bot"},"original_commit_id":"old","body":"finding"}]]'
+                return '[[{"id":30,"pull_request_review_id":10,"user":{"id":1,"login":"github-actions[bot]","type":"Bot"},"original_commit_id":"old","created_at":"2026-12-01T00:00:00Z","body":"finding"}]]'
             if args[-1] == 'graphql':
                 assert args[:2] == ('--paginate', '--slurp')
                 assert (

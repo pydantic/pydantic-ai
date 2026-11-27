@@ -48,6 +48,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartDeltaEvent,
@@ -77,9 +78,11 @@ from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
     ModelConnectionError,
+    ModelEmptyResponseError,
     ModelHTTPError,
     ModelRateLimitError,
     ModelRetry,
+    OutputTokenLimitExceeded,
     UnexpectedModelBehavior,
     UserError,
 )
@@ -1032,6 +1035,74 @@ async def test_google_model_multiple_documents_in_history(
     )
 
     assert result.output == snapshot('Both documents contain the text "Dummy PDF file" at the top of the page.')
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_google_gemini_api_drops_penalties(
+    allow_model_requests: None, google_provider: GoogleProvider, vcr: Cassette
+):
+    """The Gemini API rejects `presence_penalty` and `frequency_penalty` for every model, so they're not sent."""
+    agent = Agent(
+        GoogleModel('gemini-2.5-flash-lite', provider=google_provider),
+        model_settings=ModelSettings(presence_penalty=0.5, frequency_penalty=0.5),
+    )
+
+    result = await agent.run('Reply with just: ok')
+
+    assert result.output.strip() == snapshot('ok')
+    assert single_request_body(vcr)['generationConfig'] == snapshot({'responseModalities': ['TEXT']})
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_google_cloud_sends_penalties(allow_model_requests: None, vertex_provider: GoogleProvider, vcr: Cassette):
+    """Google Cloud accepts `presence_penalty` and `frequency_penalty` for Gemini 2.5 Flash-Lite, so they're sent."""
+    agent = Agent(
+        GoogleModel('gemini-2.5-flash-lite', provider=vertex_provider),
+        model_settings=ModelSettings(presence_penalty=0.5, frequency_penalty=0.5),
+    )
+
+    result = await agent.run('Reply with just: ok')
+
+    assert result.output.strip() == snapshot('ok')
+    assert single_request_body(vcr)['generationConfig'] == snapshot(
+        {'presencePenalty': 0.5, 'frequencyPenalty': 0.5, 'responseModalities': ['TEXT']}
+    )
+
+
+@pytest.mark.parametrize(
+    'model_name,supports_penalties',
+    [
+        ('gemini-2.5-flash', True),
+        ('gemini-2.5-flash-image', True),
+        ('gemini-3-flash-preview', True),
+        ('gemini-3.1-flash-lite', True),
+        ('gemini-3.1-pro-preview', True),
+        ('gemini-3.5-flash', True),
+        ('gemini-3.1-flash-lite-image', False),
+        ('gemini-3-pro-image', False),
+        ('gemini-3.5-flash-lite', False),
+        ('gemini-3.8-flash', False),
+        ('gemini-4-argon', False),
+        # An unrecognized name, like a tuned model's endpoint, keeps sending them.
+        ('projects/p/locations/l/endpoints/123', True),
+    ],
+)
+def test_google_cloud_penalty_support_by_model(model_name: str, supports_penalties: bool):
+    """Which models Google Cloud accepts penalties for (verified live); the Gemini API accepts them for none.
+
+    A unit test over the model names, since a recording per name would only repeat the request that
+    `test_google_cloud_sends_penalties` and `test_google_gemini_api_drops_penalties` record.
+    """
+    google_cloud = GoogleModel(
+        model_name, provider=GoogleCloudProvider(client=Client(vertexai=True, project='p', location='global'))
+    )
+    gemini_api = GoogleModel(model_name, provider=GoogleProvider(api_key='key'))
+    penalties = {'frequency_penalty', 'presence_penalty'}
+
+    assert google_cloud.profile.get('google_supports_penalties') is supports_penalties
+    assert (penalties <= google_cloud._unsupported_settings()) is not supports_penalties  # pyright: ignore[reportPrivateUsage]
+    assert gemini_api.profile.get('google_supports_penalties') is False
+    assert penalties <= gemini_api._unsupported_settings()  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_google_model_safety_settings(allow_model_requests: None, google_provider: GoogleProvider):
@@ -4546,6 +4617,18 @@ async def test_google_stream_usage_is_live_mid_stream(allow_model_requests: None
     assert usage_seen == snapshot([(18, 66), (18, 114), (18, 115)])
 
 
+async def test_google_empty_stream_raises_model_empty_response_error(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """Mocked because the API doesn't send an empty stream on demand."""
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=_aiter_chunks([]))
+
+    with pytest.raises(ModelEmptyResponseError, match='Streamed response ended without content or tool calls'):
+        async with Agent(model).run_stream('Hello'):
+            pass
+
+
 async def test_google_stream_usage_retains_dropped_field_mid_stream(
     allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
 ):
@@ -7952,3 +8035,116 @@ async def test_google_non_json_response_body_raises_model_api_error(
     cause = errors.UnknownApiResponseError if call == 'stream' else json.JSONDecodeError
     assert isinstance(exc_info.value.__cause__, cause)
     assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_google_tool_output_cut_off_by_max_tokens(allow_model_requests: None, gemini_api_key: str, stream: bool):
+    """An output tool call the token limit cut off raises right away instead of re-prompting the model with the same limit.
+
+    Gemini drops a function call it cut off: the response has no parts (or only an empty text part carrying a thought
+    signature when streamed), though it used up the output tokens, so it's reported as cut off before any output.
+    """
+    model = GoogleModel('gemini-3.8-flash', provider=GoogleProvider(api_key=gemini_api_key))
+
+    class City(BaseModel):
+        name: str
+        country: str
+
+    class Cities(BaseModel):
+        cities: list[City]
+
+    agent = Agent(
+        model, output_type=ToolOutput(Cities), model_settings=GoogleModelSettings(max_tokens=300, thinking='minimal')
+    )
+    prompt = 'List the 100 largest cities in the world.'
+
+    with capture_run_messages() as messages:
+        with pytest.raises(
+            OutputTokenLimitExceeded,
+            match=r'Model token limit \(300\) exceeded before any response was generated\.',
+        ):
+            if stream:
+                # With no output in the response, `run_stream()` raises as it's entered.
+                async with agent.run_stream(prompt):
+                    pass
+            else:
+                await agent.run(prompt)
+
+    if stream:
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(content='List the 100 largest cities in the world.', timestamp=IsDatetime()),
+                        ModelSettingsDeltaPart(settings={'thinking': 'minimal'}, top_level=True),
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            content='',
+                            provider_name='google',
+                            provider_details={
+                                'thought_signature': 'EqEBCp4BAWkUfRP7ynS1W6zbP4Tp9cpWW3iHvlW+gwxxMPouEuK+44kwIPmeHQgD3QMVR4TF47Pkyo5YnJT2e2LMzwBQV0IEeoUwAf0VgZhXjY2Elj0CY2RTio+viAJAuY9/CSNvVNent6fHRHe7qJ276p6SMv/qwVkcPLRzXVCw2rMAXwU/2OTwJr2Z2RrXtEWO79BNLfJ0rQPWKb7QeY1sCsA='
+                            },
+                        )
+                    ],
+                    usage=RequestUsage(
+                        details={'text_prompt_tokens': 93},
+                        input_tokens=93,
+                        input_text_tokens=93,
+                        output_tokens=296,
+                        cost=Decimal('0.00117975'),
+                    ),
+                    model_name='gemini-3.8-flash',
+                    model_id='google:gemini-3.8-flash',
+                    timestamp=IsDatetime(),
+                    provider_name='google',
+                    provider_url='https://generativelanguage.googleapis.com/',
+                    canonical_system='google',
+                    provider_details={'finish_reason': 'MAX_TOKENS'},
+                    provider_response_id='kv8Fa6fZEbCeqtsPmZODqAo',
+                    finish_reason='length',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        )
+    else:
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(content='List the 100 largest cities in the world.', timestamp=IsDatetime()),
+                        ModelSettingsDeltaPart(settings={'thinking': 'minimal'}, top_level=True),
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[],
+                    usage=RequestUsage(
+                        details={'text_prompt_tokens': 93},
+                        input_tokens=93,
+                        input_text_tokens=93,
+                        output_tokens=296,
+                        cost=Decimal('0.00117975'),
+                    ),
+                    model_name='gemini-3.8-flash',
+                    model_id='google:gemini-3.8-flash',
+                    timestamp=IsDatetime(),
+                    provider_name='google',
+                    provider_url='https://generativelanguage.googleapis.com/',
+                    canonical_system='google',
+                    provider_details={'finish_reason': 'MAX_TOKENS'},
+                    provider_response_id='if8Fa47rLrGnmtkPt7uUmAE',
+                    finish_reason='length',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        )

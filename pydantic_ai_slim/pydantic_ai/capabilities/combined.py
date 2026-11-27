@@ -4,7 +4,7 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequenc
 from copy import copy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 
 from pydantic import ValidationError
 from typing_extensions import TypeIs
@@ -19,7 +19,7 @@ from pydantic_ai._instructions import (
 )
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
 from pydantic_ai.exceptions import ModelRetry, RetryModelRequest
-from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
+from pydantic_ai.messages import AgentStreamEvent, Authority, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -43,6 +43,8 @@ from .abstract import (
     WrapOutputProcessHandler,
     WrapOutputValidateHandler,
     _combination_roots,  # pyright: ignore[reportPrivateUsage]
+    _LoweredInstructionSource,  # pyright: ignore[reportPrivateUsage]
+    _RunIdInputsFactory,  # pyright: ignore[reportPrivateUsage]
 )
 from .wrapper import WrapperCapability
 
@@ -114,7 +116,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         new_capabilities: Sequence[AbstractCapability[AgentDepsT]],
         replacements: Mapping[int, Sequence[AbstractCapability[AgentDepsT] | None]] | None = None,
-    ) -> CombinedCapability[AgentDepsT]:
+    ) -> Self:
         """A shallow copy holding `new_capabilities`, with the composition view carried across.
 
         The only supported way to swap a container's children. `replace()` would re-run
@@ -145,34 +147,38 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         # are built from the same list, and `sort_capabilities` is stable, so neither reorders one
         # occurrence of an object past another.
         pending = {key: list(decisions) for key, decisions in replacements.items()}
-
-        def take(capability: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT] | None:
-            decisions = pending[id(capability)]
-            return decisions.pop(0) if len(decisions) > 1 else decisions[0]
-
-        def rebind(source: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT] | None:
-            if id(source) in replacements:
-                return take(source)
-            # Anything else is a retained container: `_instruction_sources` holds either direct
-            # children, replaced above, or the containers flattening splatted out. Those are not in
-            # `capabilities` and so not in `replacements`, and left alone one would keep answering
-            # from the children it had before the bind, with its leaves absent from the ordering
-            # positions sorting its part last. Its children *are* in `replacements`, having been
-            # flattened into the very list that was just rebound, so rebuild it from those.
-            assert isinstance(source, CombinedCapability)
-            rebound_children = [
-                child if id(child) not in replacements else take(child) for child in source.capabilities
-            ]
-            surviving = [child for child in rebound_children if child is not None]
-            # A retained container that lost every child contributes no instructions any more, so
-            # it drops out of the composition view rather than lingering as an empty source.
-            return source._rebound(surviving, replacements) if surviving else None
-
         new_self._instruction_sources = [
-            rebound for source in new_self._instruction_sources if (rebound := rebind(source)) is not None
+            rebound
+            for source in new_self._instruction_sources
+            if (rebound := self.__rebind_source(source, replacements, pending)) is not None
         ]
         new_self.__normalize_capabilities()
         return new_self
+
+    # Name-mangled for the same reason as `__normalize_capabilities`: it is part of the rebind invariant.
+    def __rebind_source(
+        self,
+        source: AbstractCapability[AgentDepsT],
+        replacements: Mapping[int, Sequence[AbstractCapability[AgentDepsT] | None]],
+        pending: dict[int, list[AbstractCapability[AgentDepsT] | None]],
+    ) -> AbstractCapability[AgentDepsT] | None:
+        """What an instruction source of a rebound container becomes, taking its decisions from `pending`."""
+        if id(source) in replacements:
+            return _take_decision(source, pending)
+        # Anything else is a retained container: `_instruction_sources` holds either direct
+        # children, replaced above, or the containers flattening splatted out. Those are not in
+        # `capabilities` and so not in `replacements`, and left alone one would keep answering
+        # from the children it had before the bind, with its leaves absent from the ordering
+        # positions sorting its part last. Its children *are* in `replacements`, having been
+        # flattened into the very list that was just rebound, so rebuild it from those.
+        assert isinstance(source, CombinedCapability)
+        rebound_children = [
+            child if id(child) not in replacements else _take_decision(child, pending) for child in source.capabilities
+        ]
+        surviving = [child for child in rebound_children if child is not None]
+        # A retained container that lost every child contributes no instructions any more, so
+        # it drops out of the composition view rather than lingering as an empty source.
+        return source._rebound(surviving, replacements) if surviving else None
 
     # Name-mangled deliberately: this upholds a base-class invariant on rebinds, so a
     # subclass attribute of the same name must not be able to override it.
@@ -294,14 +300,23 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             or any(c.listens_to(event) for c in self._dispatch)
         )
 
+    def with_authority(self, authority: Authority) -> Self:
+        """Return a copy whose children, and so what each of them enqueues, carry no more than `authority`.
+
+        Composition merges a container's children into the enclosing one and dispatches each on its own, so the ceiling
+        is set on every child as well as on the container.
+        """
+        lowered = super().with_authority(authority)
+        return lowered._rebound([child.with_authority(authority) for child in self.capabilities])
+
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> CombinedCapability[AgentDepsT]:
-        new_caps = [capability.for_agent(agent) for capability in self.capabilities]
+        new_caps = [capability._keep_authority(capability.for_agent(agent)) for capability in self.capabilities]
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
         return self._rebound(new_caps)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        new_caps = await gather(*(c.for_run(ctx) for c in self.capabilities))
+        new_caps = await gather(*(c._for_run_keeping_authority(ctx) for c in self.capabilities))
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
         return self._rebound(new_caps)
@@ -311,6 +326,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> None:
         for capability in self._dispatch:
             capability._validate_runtime_capabilities(ctx, capabilities)
+
+    def _validate_override_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
+        for capability in self._dispatch:
+            capability._validate_override_capabilities(capabilities)
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         # The children's contributions, not `_collect_instructions`: that asks whether a subclass
@@ -361,10 +380,25 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         is answered by its children rather than routed back into its own override.
         """
         instructions: list[SourcedInstruction[AgentDepsT]] = []
+        lowered = {id(source.capability) for source in self._lowered_instruction_sources()}
         for capability in self._ordered_instruction_sources():
-            if capability.defer_loading is not True:
+            # A capability below operator authority states its instructions in history instead.
+            if capability.defer_loading is not True and id(capability) not in lowered:
                 instructions.extend(capability._collect_instructions())
         return instructions
+
+    def _lowered_instruction_sources(self) -> list[_LoweredInstructionSource[AgentDepsT]]:
+        # Each source is judged on its own: `with_authority` lowers a container's children too. A container whose
+        # subclass took `get_instructions` over decides what it says instead of its lowered children, whose toolsets'
+        # instructions are still stated; below operator authority, what it says is a block of its own.
+        children = [
+            source
+            for capability in self._ordered_instruction_sources()
+            for source in capability._lowered_instruction_sources()
+        ]
+        if type(self).get_instructions is CombinedCapability.get_instructions:
+            return children
+        return [*super()._lowered_instruction_sources(), *self._replace_lowered_instructions(children)]
 
     def get_model_settings(self) -> ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings] | None:
         # Collect settings in order, preserving each capability's position in the merge chain.
@@ -376,25 +410,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             if cap_settings is None:
                 continue
 
-            if capability.defer_loading is True:
-                # Request-only settings can be lazy without changing prompt/tool schemas.
-                # Keep them in place so loaded capabilities preserve merge order.
-                def deferred_settings(
-                    ctx: RunContext[AgentDepsT],
-                    *,
-                    capability: AbstractCapability[AgentDepsT] = capability,
-                    cap_settings: ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings] = cap_settings,
-                ) -> ModelSettings:
-                    cap_ctx = _ctx_for_active_cap(capability, ctx)
-                    if cap_ctx is None:
-                        return ModelSettings()
-                    if callable(cap_settings):
-                        return cap_settings(cap_ctx)
-                    return cap_settings
-
-                settings_chain.append(deferred_settings)
-            else:
-                settings_chain.append(cap_settings)
+            settings_chain.append(_settings_entry(capability, cap_settings))
 
         if not settings_chain:
             return None
@@ -563,6 +579,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def get_default_run_id(self) -> str | None:
         for capability in reversed(self._dispatch):
             if (run_id := capability.get_default_run_id()) is not None:
+                return run_id
+        return None
+
+    async def _get_default_run_id_for_inputs(self, get_inputs: _RunIdInputsFactory) -> str | None:
+        if type(self).get_default_run_id is not CombinedCapability.get_default_run_id:
+            return self.get_default_run_id()
+        for capability in reversed(self._dispatch):
+            if (run_id := await capability._get_default_run_id_for_inputs(get_inputs)) is not None:
                 return run_id
         return None
 
@@ -1102,6 +1126,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return accumulated if any_handled else None
 
 
+def _take_decision(
+    capability: AbstractCapability[AgentDepsT],
+    pending: dict[int, list[AbstractCapability[AgentDepsT] | None]],
+) -> AbstractCapability[AgentDepsT] | None:
+    decisions = pending[id(capability)]
+    return decisions.pop(0) if len(decisions) > 1 else decisions[0]
+
+
 # --- Composition helpers ---
 # These create closures that bind the current capability and inner handler,
 # building a middleware chain from outermost (first cap) to innermost (last cap).
@@ -1228,7 +1260,11 @@ def bind_capabilities_tier(
         if is_deferred_group(capability):
             # Each child of a deferred group binds in its own tier, as it would outside the group.
             return bind_capabilities_tier(capability, agent, innermost=innermost)
-        return capability.for_agent(agent) if is_innermost(capability) == innermost else capability
+        return (
+            capability._keep_authority(capability.for_agent(agent))  # pyright: ignore[reportPrivateUsage]
+            if is_innermost(capability) == innermost
+            else capability
+        )
 
     branches = combined.capabilities
     new_caps = [bind(c) for c in branches]
@@ -1268,6 +1304,32 @@ class _GroupMember(WrapperCapability[AgentDepsT]):
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         self.wrapped.apply(visitor)
+
+
+def _settings_entry(
+    capability: AbstractCapability[AgentDepsT],
+    cap_settings: ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings],
+) -> ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings]:
+    """A child's settings as an entry in the merge chain, evaluated against the child's own context."""
+    if capability.defer_loading is True:
+        # Request-only settings can be lazy without changing prompt/tool schemas.
+        # Keep them in place so loaded capabilities preserve merge order.
+        def deferred_settings(ctx: RunContext[AgentDepsT]) -> ModelSettings:
+            cap_ctx = _ctx_for_active_cap(capability, ctx)
+            if cap_ctx is None:
+                return ModelSettings()
+            if callable(cap_settings):
+                return cap_settings(cap_ctx)
+            return cap_settings
+
+        return deferred_settings
+    if callable(cap_settings):
+        # The settings function is the capability's code, held to its authority if it enqueues.
+        def attributed_settings(ctx: RunContext[AgentDepsT]) -> ModelSettings:
+            return cap_settings(_ctx_for_cap(capability, ctx))
+
+        return attributed_settings
+    return cap_settings
 
 
 def _ctx_for_cap(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
@@ -1317,4 +1379,4 @@ def _capability_active(capability: AbstractCapability[AgentDepsT], ctx: RunConte
     # Deferred capabilities are required to have an explicit `id` (enforced in
     # `_build_run_capabilities`), which is also the key they're registered under, so we read
     # it directly rather than resolving the instance back to its run-local registry id.
-    return capability.id is not None and capability.id in ctx._dispatch_active_capability_ids  # pyright: ignore[reportPrivateUsage]
+    return capability.id is not None and ctx._is_deferred_capability_dispatch_active(capability.id)  # pyright: ignore[reportPrivateUsage]

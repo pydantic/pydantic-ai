@@ -11,8 +11,8 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
-from pydantic_ai_harness.compaction._context_usage_events import ContextUsageMeasuredEvent
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW, resolve_context_window
+from pydantic_ai_harness.compaction._events import ContextUsageMeasuredEvent
 from pydantic_ai_harness.compaction._shared import (
     estimate_context_tokens,
     get_compaction_reclaim,

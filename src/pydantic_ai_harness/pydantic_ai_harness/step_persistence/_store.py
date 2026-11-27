@@ -22,7 +22,7 @@ from typing_extensions import TypedDict
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from pydantic_ai_harness._history import STORED_HISTORY_CONTEXT
 from pydantic_ai_harness.media import (
-    DiskMediaStore,
+    FileMediaStore,
     MediaStore,
     SqliteMediaStore,
     externalize_media,
@@ -604,7 +604,7 @@ class FileStepStore:
         self._root = Path(directory)
         resolved: MediaStore | None
         if media_store == 'auto':
-            resolved = DiskMediaStore(self._root / 'media')
+            resolved = FileMediaStore(self._root / 'media')
         else:
             resolved = media_store
         self._media_store: MediaStore | None = resolved

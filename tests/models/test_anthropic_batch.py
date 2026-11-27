@@ -40,6 +40,7 @@ from pydantic_ai.tools import ToolDefinition
 
 from ..batch_utils import UNRUN_MESSAGES
 from ..conftest import try_import
+from .conftest import anthropic_2023_06_01_client
 
 with try_import() as imports_successful:
     import httpx2
@@ -255,8 +256,8 @@ async def test_anthropic_batch_ignores_max_retries() -> None:
 
 
 async def test_anthropic_batch_preserves_supported_settings() -> None:
-
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test'))
+    provider = AnthropicProvider(anthropic_client=anthropic_2023_06_01_client('test'))
+    model = AnthropicModel('claude-sonnet-4-5', provider=provider)
     request = await model.batch_encode(
         BatchRequest(
             custom_id='item',
@@ -267,6 +268,7 @@ async def test_anthropic_batch_preserves_supported_settings() -> None:
                 anthropic_service_tier='standard_only',
                 anthropic_cache=True,
                 anthropic_cache_diagnostics=True,
+                anthropic_inference_geo='us',
                 extra_body={'temperature': 0.5},
             ),
             model_request_parameters=ModelRequestParameters(
@@ -280,6 +282,7 @@ async def test_anthropic_batch_preserves_supported_settings() -> None:
     assert body['metadata'] == {'user_id': 'user'}
     assert body['service_tier'] == 'standard_only'
     assert body['diagnostics'] == {'previous_message_id': None}
+    assert body['inference_geo'] == 'us'
     assert body['temperature'] == 0.5
     assert body['system'][-1]['text'] == 'Answer briefly'
     assert body['tools'][0]['name'] == 'weather'
@@ -357,8 +360,8 @@ class _FakeBatchAPI:
     replies: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     status: str = 'ended'
     message: dict[str, Any] = field(default_factory=lambda: _message([{'type': 'text', 'text': 'Hi!'}]))
-    created: list[tuple[list[dict[str, Any]], str | None]] = field(
-        default_factory=list[tuple[list[dict[str, Any]], str | None]]
+    created: list[tuple[list[dict[str, Any]], list[str]]] = field(
+        default_factory=list[tuple[list[dict[str, Any]], list[str]]]
     )
     raw_creates: list[bytes] = field(default_factory=list[bytes])
     sent: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
@@ -376,7 +379,9 @@ class _FakeBatchAPI:
         if path == '/v1/messages/batches':
             self.raw_creates.append(request.read())
             items = json.loads(request.read())['requests']
-            self.created.append((items, request.headers.get('anthropic-beta')))
+            # Before anthropic 2.9.0, the SDK adds `message-batches-2024-09-24` to every batch create.
+            betas = request.headers.get('anthropic-beta', '').split(',')
+            self.created.append((items, [b for b in betas if b not in ('', 'message-batches-2024-09-24')]))
             if self.replies:
                 reply = {'type': 'succeeded', 'message': self.replies[len(self.created) - 1]}
                 self.results.append({item['custom_id']: reply for item in items})
@@ -430,7 +435,7 @@ def _errored(error_type: str, message: str, *, details: dict[str, str] | None = 
         ('billing_error', 'Billing issue.', ModelQuotaExceededError, 402),
         ('permission_error', 'Not allowed.', ModelAuthenticationError, 403),
         ('not_found_error', 'Not found.', ModelNotFoundError, 404),
-        ('request_too_large', 'Request too large.', ModelHTTPError, 413),
+        ('request_too_large', 'Request too large.', ModelRequestRejectedError, 413),
         ('rate_limit_error', 'Rate limited.', ModelRateLimitError, 429),
         ('api_error', 'Internal server error.', ModelServerError, 500),
         ('timeout_error', 'Timed out.', ModelServerError, 504),
@@ -447,8 +452,6 @@ def test_anthropic_batch_errors_raise_the_category_of_the_same_error_outside_a_b
         model.batch_decode(_errored(error_type, message), _request())
     error = exc_info.value
     assert isinstance(error, ModelHTTPError)
-    if error_class is ModelHTTPError:
-        assert type(error) is ModelHTTPError
     assert (error.status_code, error.provider_error_type) == (status_code, error_type)
     assert error.body == {'type': 'error', 'error': {'type': error_type, 'message': message}, 'request_id': 'req_1'}
 
@@ -523,6 +526,33 @@ async def test_anthropic_batch_results_read_every_result_type(allow_model_reques
     for status in ('canceled', 'expired'):
         with pytest.raises(ModelAPIError, match=UNRUN_MESSAGES[status]):
             model.batch_decode(results[status], requests[status])
+
+
+async def test_anthropic_batch_result_reports_inference_geo(allow_model_requests: None) -> None:
+    """A batched request that set `anthropic_inference_geo` reports where it ran, as it would outside a batch.
+
+    Anthropic echoes `usage.inference_geo` on every result, so a request without the setting doesn't report it.
+    """
+    message = _message(
+        [{'type': 'text', 'text': 'Hi!'}], usage={'input_tokens': 10, 'output_tokens': 5, 'inference_geo': 'us'}
+    )
+    api = _FakeBatchAPI(
+        results=[{'set': {'type': 'succeeded', 'message': message}, 'unset': {'type': 'succeeded', 'message': message}}]
+    )
+    model = _fake_model(api)
+    requests = {
+        'set': _request('set', AnthropicModelSettings(anthropic_inference_geo='us')),
+        'unset': _request('unset'),
+    }
+    batch = await model.batch_create([await model.batch_encode(request) for request in requests.values()])
+    results = {result.custom_id: result for result in await model.batch_results(await model.batch_status(batch))}
+
+    reported = model.batch_decode(results['set'], requests['set']).provider_details
+    assert reported is not None
+    assert reported['inference_geo'] == 'us'
+    unreported = model.batch_decode(results['unset'], requests['unset']).provider_details
+    assert unreported is not None
+    assert 'inference_geo' not in unreported
 
 
 async def test_anthropic_batch_status_of_an_unknown_status_keeps_waiting(allow_model_requests: None) -> None:
@@ -616,8 +646,8 @@ async def test_anthropic_batches_are_grouped_by_beta_flags(allow_model_requests:
         (custom_ids, betas)
         for custom_ids, betas in ((tuple(r['custom_id'] for r in items), b) for items, b in api.created)
     ] == [
-        (('plain',), 'message-batches-2024-09-24'),
-        (('beta',), 'interleaved-thinking-2025-05-14,message-batches-2024-09-24'),
+        (('plain',), []),
+        (('beta',), ['interleaved-thinking-2025-05-14']),
     ]
 
 
@@ -639,10 +669,7 @@ async def test_anthropic_batch_is_created_with_the_client_default_betas(
         [await model.batch_encode(_request('beta', AnthropicModelSettings(anthropic_betas=['b-setting'])))]
     )
 
-    assert [betas for _, betas in api.created] == [
-        'b-client,message-batches-2024-09-24',
-        'b-client,b-setting,message-batches-2024-09-24',
-    ]
+    assert [betas for _, betas in api.created] == [['b-client'], ['b-client', 'b-setting']]
 
 
 async def test_anthropic_batch_request_is_the_request_sent_outside_a_batch(allow_model_requests: None) -> None:

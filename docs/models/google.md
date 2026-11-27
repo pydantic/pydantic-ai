@@ -134,6 +134,197 @@ After the request, inspect [`ModelResponse`][pydantic_ai.messages.ModelResponse]
 
 See [Google Cloud Model Garden](google-cloud.md#model-garden).
 
+## Gemini 2.5 retirement {#gemini-25-retirement}
+
+Requests to `gemini-2.5-pro` and `gemini-2.5-flash` emit a [`DeprecatedModelWarning`][pydantic_ai.exceptions.DeprecatedModelWarning]
+(see [Deprecated models](overview.md#deprecated-models)).
+From December 1, 2026, the Gemini API [routes them](https://aistudio.google.com/docs/deprecations#gemini-2.5-pro-models)
+to other models, billed at those models' rates: `gemini-2.5-pro` to `gemini-3.8-flash`, and `gemini-2.5-flash` to
+`gemini-3.5-flash-lite`. Google Cloud [lists October 20, 2026](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions#gemini-models)
+as the retirement date of both, and lists `gemini-3.8-flash` first among their replacements.
+
+`GoogleModel` keeps building Gemini 2.5 requests for these model names, so `thinking=False` and each thinking level
+still send a `thinking_budget`, and `thinking=True` only asks for the thoughts. Both new models accept these, along
+with the function tools, structured output and native tools `GoogleModel` sends for Gemini 2.5. Google's migration guides for
+[Gemini 3.8 Flash](https://aistudio.google.com/docs/whats-new-gemini-3.8#migrate-to-gemini-3-8-flash) and
+[Gemini 3.5 Flash-Lite](https://aistudio.google.com/docs/whats-new-gemini-3.6#migrate-to-gemini-3-5-flash-lite) list
+what changes:
+
+- `temperature`, `top_p` and `top_k` are [ignored](https://aistudio.google.com/docs/whats-new-gemini-3.6#sampling-parameter-deprecation).
+- A request that ends with a model turn, which only the [direct API](../direct.md) sends, fails with a 400 error.
+
+`gemini-3.8-flash` also rejects `google_logprobs` with `Logprobs is not enabled for this model`, so once the Gemini API
+routes `gemini-2.5-pro` to it, that setting fails there.
+
+`NativeOutput` with function tools, and native tools with function tools, stay unavailable on these model names, as on
+Gemini 2.5. To use the new models' features, change the model name.
+
+## Interactions API
+
+Choose Google's [Interactions API](https://ai.google.dev/gemini-api/docs/interactions-overview) when you need
+remote MCP servers through [`MCPServerTool`][pydantic_ai.native_tools.MCPServerTool], Google Maps,
+or music and video generation. It also exposes remote execution environments through `extra_body`
+when the chosen model supports them. For ordinary text, function tools and structured output,
+use `google:` and [`GoogleModel`][pydantic_ai.models.google.GoogleModel]. Interactions adds no caching or
+conversation-history benefit, and lacks explicit caching, token counting and batch requests.
+
+Select [`GoogleInteractionsModel`][pydantic_ai.models.google_interactions.GoogleInteractionsModel]
+explicitly with `google-interactions:<model>`:
+
+```python {gateway_toggle="skip"}
+from pydantic_ai import Agent
+
+agent = Agent('google-interactions:{{ google:medium.name }}')
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+It uses the same credentials as `GoogleModel`. To use Google Cloud or a configured proxy, pass
+an existing provider:
+
+```python {gateway_toggle="skip"}
+from pydantic_ai.models.google_interactions import GoogleInteractionsModel
+from pydantic_ai.providers.google_cloud import GoogleCloudProvider
+
+model = GoogleInteractionsModel(
+    '{{ google:medium.name }}',
+    provider=GoogleCloudProvider(project='your-project', location='global'),
+)
+```
+
+!!! note "Gateway support"
+    The managed Pydantic AI Gateway Google route does not serve `/interactions`. A customer-configured
+    Google provider on the Gateway may expose it. Use a direct Gemini API or Google Cloud provider
+    unless your Gateway configuration supports this endpoint.
+
+The adapter always sends `store=False` and the full conversation. It preserves separate thought
+steps, their signatures, native-tool calls and results, and provider-generated function-call IDs.
+Persist and restore the [complete message history](../message-history.md#storing-and-loading-messages-to-json)
+when continuing a conversation or resuming a deferred tool call. Removing signed steps can make
+Google reject later requests.
+
+Function tools, tool retries, deferred approvals, native and prompted structured output, multimodal
+inputs, and streaming use the ordinary Pydantic AI APIs.
+
+### Interactions native tools
+
+Supported native tools include Google Search, URL context, code execution, file search, and remote MCP
+servers; availability depends on the model and endpoint. Image-capable models support `BinaryImage` output
+and `ImageGenerationTool`. [Native tools](../native-tools.md) lists the parameters each tool supports on
+Interactions.
+
+Connect a remote MCP server with [`MCPServerTool`][pydantic_ai.native_tools.MCPServerTool]. Google calls the server
+directly, so it must be reachable at a public URL:
+
+```python {title="google_interactions_mcp.py" gateway_toggle="skip"}
+from pydantic_ai import Agent, MCPServerTool
+from pydantic_ai.capabilities import NativeTool
+
+agent = Agent(
+    'google-interactions:{{ google:medium.name }}',
+    capabilities=[
+        NativeTool(MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp'))
+    ],
+)
+result = agent.run_sync('Tell me about the pydantic/pydantic-ai repo.')
+print(result.output)
+"""
+The pydantic/pydantic-ai repo is a Python agent framework for building Generative AI applications.
+"""
+```
+
+[`google_interactions_native_tools`][pydantic_ai.models.google_interactions.GoogleInteractionsModelSettings.google_interactions_native_tools]
+exposes additional native tools, such as Google Maps and Vertex retrieval, that have no shared Pydantic AI tool type.
+Each entry is a tool dictionary in the Interactions SDK's shape. Google Maps needs only its type:
+
+```python {title="google_interactions_maps.py" gateway_toggle="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.google_interactions import GoogleInteractionsModelSettings
+
+settings = GoogleInteractionsModelSettings(
+    google_interactions_native_tools=[{'type': 'google_maps'}],
+)
+agent = Agent('google-interactions:{{ google:medium.name }}', model_settings=settings)
+result = agent.run_sync('Use Google Maps to find the address of the Eiffel Tower.')
+print(result.output)
+#> The Eiffel Tower is at Av. Gustave Eiffel, 75007 Paris, France.
+```
+
+The Maps lookup appears in the response as a `google_maps`
+[`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and
+[`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart].
+
+Grounding data includes more than citations: search queries are in `NativeToolCallPart.args`, and
+search suggestions, fetched URL status and Maps places are in `NativeToolReturnPart.content`.
+Additional raw step metadata remains in each native part's `provider_details`.
+An MCP result's content is the server's MCP `CallToolResult` (`content`, `structuredContent`, `isError`).
+Inline images, audio and embedded binary resources in it appear as
+[`BinaryContent`][pydantic_ai.messages.BinaryContent] values. They respect `include_binary_content` in
+telemetry and are converted back to the MCP format when replayed from serialized message history.
+The rest of each such MCP content block, such as a resource's `uri`, is kept for that conversion in the value's
+`vendor_metadata['google_interactions_mcp_content']`.
+
+### Interactions settings
+
+[`GoogleInteractionsModelSettings`][pydantic_ai.models.google_interactions.GoogleInteractionsModelSettings]
+provides typed Interactions settings. Use the shared `thinking`, `tool_choice`, and `service_tier`
+settings for portable configuration. `google_interactions_thinking_level` overrides the shared `thinking` setting with
+a native level, and `google_interactions_thinking_summaries` controls whether the API includes thought summaries. On
+Google Cloud, the shared `service_tier` is ignored so Provisioned Throughput is never skipped silently; set
+`google_interactions_service_tier` to choose a tier there. `google_labels` and `google_video_resolution` use the same types
+as `GoogleModelSettings`. Safety settings have a different API shape: use
+`google_interactions_safety_settings` for Interactions and `google_safety_settings` for GenerateContent.
+For native audio or video output, configure
+`google_interactions_response_format` and, when needed, `google_interactions_generation_config`, and read the returned
+[`FilePart`][pydantic_ai.messages.FilePart]s through the [direct model API](../direct.md).
+The typed generation configuration also exposes voice selection, transcription and video task controls.
+
+### Interactions file inputs and outputs
+
+Video inputs support YouTube URLs, `vendor_metadata` keys `start_offset`, `end_offset` and `fps`, and
+the shared `google_video_resolution` setting. Per-file `vendor_metadata['media_resolution']` takes
+precedence over that default. It uses the same `{'level': 'MEDIA_RESOLUTION_HIGH'}` shape as
+`GoogleModel`, including `MEDIA_RESOLUTION_ULTRA_HIGH` where supported by the chosen model.
+Explicit `vendor_metadata['media_processing']` replaces the static processing inferred from
+`start_offset`, `end_offset` and `fps`.
+
+Input file URLs are resolved by Google on both transports. Set `force_download=True` on an HTTP(S)
+file URL to download it locally with the library's address and response-size checks instead.
+Google Cloud can reject URLs blocked by the host's `robots.txt`; local downloading also handles that case.
+
+Native tool results accept PDF, MP3 audio and MP4 video for the Gemini 3.8 Flash, Gemini 4 Argon, Gemini 4 Carbon
+and Gemini 4 Hydrogen families, as defined by [`google_interactions_model_profile`][pydantic_ai.profiles.google.google_interactions_model_profile].
+This support has expanded since the [initial PDF/audio probes](https://github.com/pydantic/pydantic-ai/issues/6192).
+Other models retain the conservative GenerateContent MIME profile; unsupported result files are
+sent in a framed user turn that identifies their originating tool call.
+
+Use inline delivery for generated media. Video URI delivery requires `store=True`, so it is outside
+this stateless adapter's scope. URI-only output raises an error.
+
+### Unsupported Interactions features
+
+Interactions has no token-counting endpoint, batch support, or explicit prompt caching. Implicit caching is
+provider-managed. With `google-genai` earlier than
+[2.34](https://github.com/googleapis/python-genai/releases/tag/v2.34.0), which doesn't continue an Interactions [long
+decode](#long-decode), a request that reaches the model's per-request output cap returns its partial output with finish
+reason `length` and `provider_details['status']` set to `requires_continuation`. From 2.34, the SDK continues it in
+further requests, and the response holds every request's steps and their summed usage. Unlike on `GoogleModel`, a
+failure after the first request raises the SDK's own error, and a non-streamed response doesn't record the first
+request's input size for context-window checks ([#13938](https://github.com/pydantic/pydantic-ai/issues/13938)).
+Sampling settings absent from this API are ignored; its settings class describes them. Finish reasons are derived from
+interaction status, which has less detail than GenerateContent's finish reasons. Raw status and usage remain available
+in `provider_details`.
+
+The public Interactions contract has no equivalent for `google_logprobs`, `google_top_logprobs`,
+or Google Cloud's `google_model_armor_config`; use `GoogleModel` when you need those features.
+Native provider compaction is unavailable. Application-written `CompactionPart` summaries are
+sent as portable user text; another provider's opaque response compaction is omitted.
+The SDK has no per-request `max_retries` option. Use a [retrying HTTP transport](../retries.md#transport-retries)
+to configure retries for this adapter. Empty prompts need sendable content, as tracked in
+[#11123](https://github.com/pydantic/pydantic-ai/issues/11123).
+
+
 ## Custom HTTP Client
 
 Google providers use `httpx2` by default. You can pass a custom `httpx2.AsyncClient` to control transport settings:
@@ -160,8 +351,8 @@ seconds if it has none, to every phase of each request, so give it a read timeou
 models. A client created without a `timeout` has httpx's default of 5 seconds, which is too short for most model
 requests, so the providers warn about it.
 
-`GoogleModel` also tells Google how long each whole request may take, with the `X-Server-Timeout` header: the client's
-read timeout, or 20 minutes if that's longer. A read timeout only bounds the wait between bytes, so a response that
+`GoogleModel` and `GoogleInteractionsModel` also tell Google how long each whole request may take, with the
+`X-Server-Timeout` header: the client's read timeout, or 20 minutes if that's longer. A read timeout only bounds the wait between bytes, so a response that
 streams for longer than it isn't cut off by the server. A per-request [`timeout`][pydantic_ai.settings.ModelSettings.timeout]
 doesn't change the header. To set a different server deadline, send the header yourself in
 [`extra_headers`][pydantic_ai.settings.ModelSettings.extra_headers].
@@ -206,11 +397,13 @@ agent = Agent(model)
 
 This passes the options through to the SDK's [`HttpOptions.retry_options`](https://googleapis.github.io/python-genai/genai.html#genai.types.HttpOptions.retry_options). [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) overrides the number of attempts for a model, agent or run, keeping the delays and status codes set here, or the SDK's defaults (a first delay of one second; status 408, 429, 500, 502, 503 and 504) when `retry_options` isn't set. See the [Vertex AI retry strategy documentation](https://cloud.google.com/vertex-ai/generative-ai/docs/retry-strategy) for guidance on choosing values.
 
-When a Google error carries no `retry-after-ms` or `Retry-After` header, [`ModelAPIError.retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] is read from the `google.rpc.RetryInfo` detail in its body, including for an error chunk inside a stream. [Temporal](../durable_execution/temporal.md) waits that long before retrying a model activity, and you can use it in your own backoff ([Retries](../retries.md#transport-retries)). The SDK's `retry_options` above and [`wait_retry_after`](../retries.md#wait_retry_after) read only headers.
+When a Google error carries no `retry-after-ms` or `Retry-After` header, [`ModelAPIError.retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] is read from the `google.rpc.RetryInfo` detail in its body, including for an error chunk inside a stream and for a status a [retrying transport](../retries.md#error-handling) gave up on. [Temporal](../durable_execution/temporal.md) waits that long before retrying a model activity, and you can use it in your own backoff ([Retries](../retries.md#transport-retries)). The SDK's `retry_options` above and [`wait_retry_after`](../retries.md#wait_retry_after) read only headers.
 
 ## Document, Image, Audio, and Video Input
 
 `GoogleModel` supports multi-modal input, including documents, images, audio, and video.
+
+Gemini reads JPEG, PNG, GIF, WebP, HEIC, HEIF, AVIF and BMP images. On Google Cloud it also reads TIFF, which the Gemini API rejects. Gemini 2.5 models don't read Word or Excel documents; Gemini 3 models do. A file of another type that a tool returns is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance).
 
 YouTube video URLs can be passed directly to Google models:
 
@@ -346,6 +539,8 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
+`presence_penalty` and `frequency_penalty` aren't sent through the Gemini API, which rejects them for every model, or on Google Cloud for Gemini 3.5 Flash-Lite, Gemini 3.6 Flash and newer, and the Gemini 3 image models, which reject them too.
+
 ### Configure thinking
 
 Use the provider-agnostic [`Thinking`][pydantic_ai.capabilities.Thinking] capability to enable thinking:
@@ -373,27 +568,45 @@ agent = Agent(model, model_settings=model_settings)
 ```
 
 Pydantic AI resolves each model's supported levels from Google's documented thinking table and snaps a
-requested effort to the nearest supported level. `gemini-3.1-flash-image` is the exception: Google
-[documents](https://ai.google.dev/gemini-api/docs/image-generation) `minimal, high` for it, but only the Gemini
-API enforces them, so Pydantic AI applies those levels only when the client talks to the Gemini API, and Vertex AI
-keeps the default levels. For a model id the table doesn't cover, declare its
+requested effort to the nearest supported level. `gemini-3.1-flash-image` and `gemini-4-neon` are the exceptions:
+Pydantic AI applies their levels only when the client talks to the Gemini API, and Vertex AI keeps the default
+levels. Google [documents](https://ai.google.dev/gemini-api/docs/image-generation) `minimal, high` for
+`gemini-3.1-flash-image`, but only the Gemini API enforces them, and
+[Vertex's thinking table](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking) doesn't
+list `gemini-4-neon` yet. For a model id the table doesn't cover, declare its
 levels with [`GoogleModelProfile.google_thinking_levels`][pydantic_ai.profiles.google.GoogleModelProfile.google_thinking_levels]
 (default: every level but `xhigh`); unsupported efforts resolve to the nearest supported level.
 
-`gemini-4-argon`, `gemini-4-carbon` and `gemini-4-hydrogen` support the `low`, `medium` and `high` levels, so
-`thinking=False` and `'minimal'` resolve to `low`. `gemini-4-hydrogen` also supports `xhigh`, its deepest reasoning,
-which `thinking='xhigh'` and `'max'` select; on models without it, they resolve to `high`. The `google-genai` SDK's
-`ThinkingLevel` enum doesn't list `XHIGH` yet, so the SDK warns `XHIGH is not a valid ThinkingLevel` and sends the level
-anyway.
+`gemini-4-argon`, `gemini-4-carbon` and `gemini-4-hydrogen`, and `gemini-4-neon` on the Gemini API, support the
+`low`, `medium` and `high` levels, so `thinking=False` and `'minimal'` resolve to `low`. `gemini-4-hydrogen` and, on
+the Gemini API, `gemini-4-neon` also support `xhigh`, their deepest reasoning, which `thinking='xhigh'` and `'max'`
+select; on models without it, they resolve to `high`. On Google Cloud, `gemini-4-neon` keeps the default levels. The
+`google-genai` SDK's `ThinkingLevel` enum doesn't list `XHIGH` yet, so the SDK warns
+`XHIGH is not a valid ThinkingLevel` and sends the level anyway.
 
 On Google Cloud, `gemini-4-argon` rejects a `thinking_budget` in `google_thinking_config` with a 400 error: use
 `thinking_level` instead.
+
+Gemma 4 (`gemma-4-31b-it`, `gemma-4-26b-a4b-it`) supports only the `minimal` and `high` levels on the Gemini API and
+rejects any `thinking_budget`, so `thinking=False` and `'low'` resolve to `minimal`, and `'medium'` and above to
+`high`. Without a `thinking` setting it thinks by default there.
+
+On Gemini 2.5, `thinking='minimal'` sends a `thinking_budget` of 128 tokens. The exception is `gemini-2.5-flash-lite`
+on the Gemini API, which rejects budgets below 512, so it gets 512.
+To send another budget for `minimal`, set
+[`GoogleModelProfile.google_minimal_thinking_budget`][pydantic_ai.profiles.google.GoogleModelProfile.google_minimal_thinking_budget]
+in the model's `profile`.
 
 `thinking=False` turns thinking off where the model allows it. The Pro models can't turn it off, so they think as
 little as they allow instead: Gemini 3 Pro models use their lowest thinking level (`low` on `gemini-3.1-pro-preview`),
 and Gemini 2.5 Pro uses its minimum `thinking_budget` of 128 tokens. Neither asks for the thoughts to be returned.
 On Google Cloud, `gemini-3.1-pro-preview` accepts `thinking_budget=0`, which the Gemini API rejects for it, so
 there `thinking=False` sends `thinking_budget=0` and the model doesn't think.
+
+From December 1, 2026, the Gemini API [routes `gemini-2.5-flash` to `gemini-3.5-flash-lite`](https://aistudio.google.com/docs/deprecations),
+which rejects `thinking_budget=0`. So on the Gemini API, `thinking=False` on `gemini-2.5-flash` sends the minimum
+`thinking_budget` of 128 tokens, like Gemini 2.5 Pro. Before the reroute, `gemini-2.5-flash` thinks a little with that
+budget; `gemini-3.5-flash-lite` doesn't. On Google Cloud, `gemini-2.5-flash` keeps `thinking_budget=0`.
 
 See [Thinking](../capabilities/thinking.md) for the unified API and [Gemini API docs](https://ai.google.dev/gemini-api/docs/thinking) for Google's native thinking configuration.
 
@@ -547,7 +760,7 @@ A job that fails or is cancelled before it writes any results doesn't report whi
 
 ## Long decode
 
-`gemini-4-argon`, `gemini-4-carbon` and `gemini-4-hydrogen` cap the output of each request; Google's
+`gemini-4-argon`, `gemini-4-carbon`, `gemini-4-hydrogen` and `gemini-4-neon` cap the output of each request; Google's
 [long decode docs](https://ai.google.dev/gemini-api/docs/generate-content/long-decode) give the caps and defaults. When
 [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens] is above the cap, a request that reaches it returns a
 continuation token, and the `google-genai` SDK continues the response from it in another request, until the response
@@ -576,6 +789,14 @@ decode is one model request:
   already billed. A streamed run keeps what it streamed as a response with
   [`state='interrupted'`][pydantic_ai.messages.ModelResponse.state] that carries the finished requests' usage, which
   [`capture_run_messages()`][pydantic_ai.capture_run_messages] returns.
+- With `google-genai` 2.31.0 and later, a streamed run sends a later request that fails before it streams any output
+  3 more times from the same continuation token, with no wait. If they all fail, the model request fails as above.
+  This applies to errors the HTTP client raises: a connection that can't be opened or that drops, a timeout, or the
+  `HTTPStatusError` of a [retrying transport](../retries.md#transport-retries) that gave up. It doesn't apply to an
+  error status the SDK reads itself. `retry_options` and
+  [`max_retries`](../retries.md#setting-the-sdk-retry-count-per-request) can't turn this off, and they also retry a
+  connection that can't be opened, or a timeout before the response arrives, on each of those 4 requests: with
+  `max_retries=2`, such an error goes on the wire 12 times.
 - The SDK resumes a dropped stream from its last continuation token. If output was streamed after that token, the
   model request fails as above instead, since the resumed request would repeat that output.
 - On [Temporal](../durable_execution/temporal.md#activity-configuration), the whole long decode runs in one model
@@ -589,6 +810,49 @@ Without `max_tokens`, Google's default output limit applies, and a response that
 On [Google Cloud](google-cloud.md), `gemini-4-argon` is served on the `global` location and the `us` and `eu`
 multi-regions, not in single regions such as the default `us-central1`: pass one of those as the provider's
 [`location`](google-cloud.md#customizing-location-or-project).
+
+## Computer use
+
+To let Gemini use a computer, add the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability. On
+the Gemini API, it sends Google's own
+[computer use tool](https://ai.google.dev/gemini-api/docs/computer-use) as a
+[`ComputerTool`][pydantic_ai.native_tools.ComputerTool] to the Gemini 4 models, Gemini 3.8 Flash, Gemini 3.5 Flash-Lite
+and Gemini 3 Flash Preview. Other models, every model on Vertex AI, and any model with `ComputerUse(native=False)` get a
+regular function tool named `computer` instead.
+
+Google's tool can't zoom or read the pointer position. It can't be sent beside a function tool named like one of its
+functions, such as `click` or `type`, so with such a tool the model gets the `computer` function tool instead.
+
+### Actions that need approval
+
+Gemini's safety checks can flag an action, such as deleting files or accepting terms, as one a person must confirm. The
+flagged call waits for [approval](../deferred-tools.md#human-in-the-loop-tool-approval), with Gemini's explanation in
+its metadata under `reason`. Resolve it with a
+[`HandleDeferredToolCalls`](../deferred-tools.md#resolving-deferred-calls-with-a-handler) handler, or add
+[`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] to the agent's `output_type` to end the run and resume
+it later. Without either, the run fails at the first flagged call.
+
+```python {test="skip" lint="skip" gateway_toggle="skip"}
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
+from pydantic_ai.capabilities import HandleDeferredToolCalls
+from pydantic_ai_harness import ComputerUse
+
+
+async def ask_a_person(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
+    approvals = {}
+    for call in requests.approvals:
+        reason = requests.metadata[call.tool_call_id]['reason']
+        approvals[call.tool_call_id] = input(f'{reason} Approve? [y/N] ') == 'y'
+    return requests.build_results(approvals=approvals)
+
+
+agent = Agent(
+    '{{ google:medium }}',
+    capabilities=[my_desktop_sandbox, ComputerUse(), HandleDeferredToolCalls(handler=ask_a_person)],
+)
+```
+
+Google sends no safety decisions on streamed requests, so streamed runs never pause for approval.
 
 ## Streaming cancellation
 

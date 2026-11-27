@@ -7,7 +7,7 @@ from pydantic_ai import ModelProfile
 from pydantic_ai._http import AsyncHTTPClient, create_async_httpx2_client, warn_if_legacy_httpx_client
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.mistral import MistralModelProfile, MistralReasoningEffort, mistral_model_profile
 from pydantic_ai.providers import Provider
 
 try:
@@ -19,12 +19,14 @@ except ImportError as e:
     ) from e
 
 # Models with adjustable reasoning via `reasoning_effort` (opt-in, unlike always-on `magistral`):
-# the Mistral Large 4, Small 4, and Medium 3.5 families. Older `mistral-small-*` / `mistral-medium-*`
-# snapshots (e.g. `mistral-small-2506`, `mistral-medium-2505`) don't support reasoning and are
-# deliberately excluded, as is `mistral-large-latest` until Mistral repoints it; keep this set in
-# sync with the supported model ids reporting `capabilities.reasoning` on the Mistral `/v1/models`
-# API. The alias ids (`-latest`, `mistral-medium`, `mistral-medium-3`) resolve to a reasoning model
-# on the public API; on private deployments they may point to an older non-reasoning snapshot.
+# the Mistral Small 4 and Medium 3.5 families, which accept only `'none'` and `'high'`. Mistral Large 4
+# also reasons but can't turn it off, so it has its own set, `_LARGE_4_MODELS`, below. Older
+# `mistral-small-*` / `mistral-medium-*` snapshots (e.g. `mistral-small-2506`, `mistral-medium-2505`)
+# don't support reasoning and are deliberately excluded, as is `mistral-large-latest` until Mistral
+# repoints it; keep this set and `_LARGE_4_MODELS` together in sync with the supported model ids
+# reporting `capabilities.reasoning` on the Mistral `/v1/models` API. The alias ids (`-latest`,
+# `mistral-medium`, `mistral-medium-3`) resolve to a reasoning model on the public API; on private
+# deployments they may point to an older non-reasoning snapshot.
 # `magistral-medium-latest` and `magistral-small-latest` point at Medium 3.5 and Small 4 too: verified
 # live 2026-10-22, they reason only with `reasoning_effort='high'`, not at all without it or with
 # `'none'`, and reject `'low'`. The dated `magistral-*` ids they replaced are gone ("Invalid model"), so
@@ -32,13 +34,11 @@ except ImportError as e:
 # See https://docs.mistral.ai/capabilities/reasoning/.
 #
 # This lives on the provider, not the shared `mistral_model_profile`, because the set is validated
-# against Mistral's La Plateforme API and only the native route can translate `thinking` to
-# Mistral's 'high'/'none'. OpenAI-compatible routes (LiteLLM etc.) would emit OpenAI-style effort
-# values ('medium', 'low') these models reject, so they must keep ignoring `thinking`.
+# against Mistral's La Plateforme API and only the native route can translate `thinking` to the
+# `reasoning_effort` values each model accepts. OpenAI-compatible routes (LiteLLM etc.) would emit
+# OpenAI-style effort values these models reject, so they must keep ignoring `thinking`.
 _ADJUSTABLE_REASONING_MODELS = frozenset(
     {
-        'mistral-large-4',
-        'mistral-large-4-0',
         'mistral-small-latest',
         'mistral-small-2603',
         'mistral-medium-latest',
@@ -51,6 +51,11 @@ _ADJUSTABLE_REASONING_MODELS = frozenset(
         'magistral-small-latest',
     }
 )
+
+# Mistral Large 4 accepts `'low'`, `'medium'` and `'high'` and rejects `'none'`, so it can't turn reasoning off.
+# See https://docs.mistral.ai/capabilities/reasoning/.
+_LARGE_4_MODELS = frozenset({'mistral-large-4', 'mistral-large-4-0'})
+_LARGE_4_REASONING_EFFORTS: frozenset[MistralReasoningEffort] = frozenset({'low', 'medium', 'high'})
 
 
 class MistralProvider(Provider[Mistral]):
@@ -73,6 +78,15 @@ class MistralProvider(Provider[Mistral]):
         profile = mistral_model_profile(model_name)
         if model_name in _ADJUSTABLE_REASONING_MODELS:
             profile = merge_profile(profile, ModelProfile(supports_thinking=True, thinking_always_enabled=False))
+        elif model_name in _LARGE_4_MODELS:
+            profile = merge_profile(
+                profile,
+                MistralModelProfile(
+                    supports_thinking=True,
+                    thinking_always_enabled=True,
+                    mistral_reasoning_efforts=_LARGE_4_REASONING_EFFORTS,
+                ),
+            )
         return merge_profile(profile, ModelProfile(supports_inline_system_prompts=True))
 
     @overload

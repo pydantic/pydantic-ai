@@ -1,12 +1,13 @@
 """Pydantic AI's workspace backend conformance suite, run against `OpenSandboxBackend`.
 
-`TestFakeOpenSandboxBackend` runs everywhere, over the fake server, where commands run in a temporary host
+`TestFakeOpenSandboxBackend` runs on POSIX hosts, over the fake server, where commands run in a temporary host
 directory. `TestLiveOpenSandboxBackend` runs the same rules against a real server and is gated like
 `test_opensandbox_live.py`.
 """
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 
 import pytest
@@ -19,6 +20,7 @@ from .fake_opensandbox import FakeOpenSandbox
 from .test_opensandbox_live import LIVE_IMAGE, live_capability
 
 
+@pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 class TestFakeOpenSandboxBackend(WorkspaceBackendSuite):
     @pytest.mark.skip(reason='the shell filesystem pages a large file at a command per 64 KiB; the live tier runs it')
     async def test_large_file_round_trip(self, backend: WorkspaceBackend) -> None: ...

@@ -104,7 +104,7 @@ _DOCS_DIR = _ROOT / '../../docs/harness'
 _NON_CAPABILITY_PAGES = {
     'AGENTS.md',
     'CLAUDE.md',
-    'clai2.md',
+    'pax.md',
     'examples.md',
     'gh-aw.md',
     'index.md',
@@ -147,6 +147,7 @@ _CAPABILITY_DOC_PAGES = _capability_doc_pages()
 _CAPABILITY_PAGE_META = {
     'advisor.md': ('advisor', 'Advisor'),
     'ask-user.md': ('ask_user', 'Ask User'),
+    'deny-unanswered.md': ('deny_unanswered', 'Deny Unanswered'),
     'aws-lambda.md': ('aws_lambda', 'AWS Lambda Durability'),
     'absurd.md': ('absurd', 'Absurd Durability'),
     'pgtask.md': ('pgtask', 'pgtask Durability'),
@@ -156,8 +157,9 @@ _CAPABILITY_PAGE_META = {
     'ipython-code-mode.md': ('ipython_code_mode', 'IPython Code Mode'),
     'coder.md': ('coder', 'Coder'),
     'skills.md': ('skills', 'Skills'),
-    'filesystem.md': ('filesystem', 'FileSystem'),
+    'filesystem.md': ('file_system', 'FileSystem'),
     'shell.md': ('shell', 'Shell'),
+    'announce-working-directory.md': ('announce_working_directory', 'Announce Working Directory'),
     'smart-search.md': ('smart_search', 'Smart Search'),
     'managed-prompt.md': ('logfire', 'Managed Prompt'),
     'memory.md': ('memory', 'Memory'),
@@ -166,8 +168,10 @@ _CAPABILITY_PAGE_META = {
     'docker-container.md': ('docker_container', 'Docker Container'),
     'opensandbox-sandbox.md': ('opensandbox_sandbox', 'OpenSandbox'),
     'e2b-sandbox.md': ('e2b_sandbox', 'E2B Sandbox'),
+    'kubernetes-sandbox.md': ('kubernetes_sandbox', 'Kubernetes Sandbox'),
     'render-sandbox.md': ('render_sandbox', 'Render Sandbox'),
     'sprites-sandbox.md': ('sprites_sandbox', 'Sprites Sandbox'),
+    'model-router.md': ('model_router', 'Model Router'),
     'daytona-sandbox.md': ('daytona_sandbox', 'Daytona Sandbox'),
     'boxd-sandbox.md': ('boxd_sandbox', 'boxd Sandbox'),
     'smol-sandbox.md': ('smol_sandbox', 'Smol Sandbox'),
@@ -175,38 +179,51 @@ _CAPABILITY_PAGE_META = {
     'ssh-workspace.md': ('ssh_workspace', 'SSH Workspace'),
     'bubblewrap-sandbox.md': ('bubblewrap_sandbox', 'Bubblewrapped Workspace'),
     'repo-context.md': ('repo_context', 'Repo Context'),
+    'report-stale-files.md': ('report_stale_files', 'Report Stale Files'),
     'repair-tool-arguments.md': ('repair_tool_arguments', 'Repair Tool Arguments'),
     'render-workflows.md': ('render', 'Render Workflows'),
     'researcher.md': ('researcher', 'Researcher'),
     'pydantic-ai-docs.md': ('pydantic_ai_docs', 'Pydantic AI Docs'),
     'exa-search.md': ('exa', 'Exa Search'),
     'playwright.md': ('playwright', 'Playwright Browser'),
+    'computer-use.md': ('computer_use', 'Computer Use'),
     'youdotcom.md': ('youdotcom', 'You.com'),
     'keenable-search.md': ('keenable', 'Keenable Search'),
     'macroscope.md': ('macroscope', 'Macroscope'),
     'browser-use.md': ('browser_use', 'Browser Use'),
+    'cdp-browser.md': ('cdp_browser', 'CDP Browser'),
     'compaction.md': ('compaction', 'Compaction'),
     'tool-output-limits.md': ('tool_output_limits', 'Tool Output Limits'),
+    'tool-bridge.md': ('tool_bridge', 'Tool Bridge'),
     'tool-call-judge.md': ('tool_call_judge', 'Tool Call Judge'),
     'approval-reviewer.md': ('approval_reviewer', 'Approval Reviewer'),
     'permissions.md': ('permissions', 'Permissions'),
     'warn-on-cache-busts.md': ('warn_on_cache_busts', 'Warn On Cache Busts'),
+    'label-cross-model-history.md': ('label_cross_model_history', 'Label Cross Model History'),
     'step-persistence.md': ('step_persistence', 'Step Persistence'),
     'conversation-search.md': ('conversation_search', 'Conversation Search'),
-    'subagents.md': ('subagents', 'Subagents'),
+    'current-time.md': ('current_time', 'Current Time'),
+    'subagents.md': ('sub_agents', 'Subagents'),
+    'peers.md': ('peers', 'Peers'),
     'dynamic-workflow.md': ('dynamic_workflow', 'Dynamic Workflow'),
     'planning.md': ('planning', 'Planning'),
     'system-reminders.md': ('system_reminders', 'System Reminders'),
     'detect-loops.md': ('detect_loops', 'Detect Loops'),
+    'tool-budgets.md': ('tool_budgets', 'Tool Budgets'),
+    'report-remaining-budget.md': ('report_remaining_budget', 'Report Remaining Budget'),
+    'report-tool-errors.md': ('report_tool_errors', 'Report Tool Errors'),
     'trajectory-judge.md': ('trajectory_judge', 'Trajectory Judge'),
     'refine-output.md': ('refine_output', 'Refine Output'),
+    'require-verification.md': ('require_verification', 'Require Verification'),
+    'wrap-up-at-limits.md': ('wrap_up_at_limits', 'Wrap Up At Limits'),
     'capability-creation.md': ('capability_creation', 'Runtime Capability Creation'),
     'guardrails.md': ('guardrails', 'Input, Output & Tool Guardrails'),
+    'goal.md': ('goal', 'Goal'),
     'github.md': ('github', 'GitHub'),
     'google-workspace.md': ('google_workspace', 'Google Workspace'),
     'prompt-injection-defender.md': ('prompt_injection_defender', 'Prompt Injection Defender'),
     'artifact-scanning.md': ('artifact_scanning', 'Artifact Scanning'),
-    'spend.md': ('spend', 'Spend'),
+    'spend.md': ('spend_limits', 'Spend'),
     'localstack.md': ('localstack', 'LocalStack'),
     'logfire-mcp.md': ('logfire_mcp', 'Logfire MCP'),
     'linear.md': ('linear', 'Linear'),
@@ -501,3 +518,96 @@ def test_harness_docs_reference_no_removed_mcp_server_classes() -> None:
         'Removed MCP classes reappeared in harness docs; reference `pydantic_ai.mcp.MCPToolset` instead '
         '(docs/migration.md keeps the old names as the historical mapping):\n' + '\n'.join(offenders)
     )
+
+
+_PROBLEM_TO_CAPABILITY_HEADING = '## From problem to capability'
+# Both surfaces of the one capability index carry the problem-first table.
+_PROBLEM_TO_CAPABILITY_SURFACES = ('../../docs/harness/index.md', 'README.md')
+# (a phrase identifying one curated `## From problem to capability` row,
+# the phrase in the packaged skill's Task Routing Table that routes the same need)
+_PROBLEM_TO_SKILL_ROUTE = (
+    ('retried or blocked', 'Add guardrails'),
+    ('flooding the context window', 'limit large tool outputs'),
+    ('specific directory', 'work in a specific directory'),
+    ('spend ceiling', 'spend limits'),
+    ('without making progress', 'loop detection'),
+    ('malformed JSON', 'repair malformed tool arguments'),
+    ('the whole run ends', 'report tool exceptions to the model'),
+)
+
+
+def _section(surface: str, heading: str) -> str:
+    """The text of the section under `heading` on one surface, up to the next `##` heading."""
+    text = (_ROOT / surface).read_text(encoding='utf-8')
+    return text.split(f'\n{heading}\n', 1)[1].split('\n## ', 1)[0]
+
+
+def _section_table_rows(surface: str, heading: str) -> list[str]:
+    """The table rows, header included, of the section under `heading` on one surface."""
+    return [line for line in _section(surface, heading).splitlines() if line.startswith('| ')]
+
+
+def _without_link_targets(rows: list[str]) -> list[str]:
+    return [re.sub(r'\]\([^)\s]+\)', ']', row) for row in rows]
+
+
+def _problem_to_capability_rows(surface: str) -> list[str]:
+    """The data rows of the curated problem-first table on one capability index surface."""
+    lines = _section_table_rows(surface, _PROBLEM_TO_CAPABILITY_HEADING)
+    return [line for line in lines if not line.startswith('| If your problem')]
+
+
+@pytest.mark.parametrize('surface', _PROBLEM_TO_CAPABILITY_SURFACES)
+def test_problem_to_capability_links_resolve(surface: str) -> None:
+    """Every relative link in the problem-first table resolves on disk."""
+    targets = _markdown_link_targets('\n'.join(_problem_to_capability_rows(surface)))
+    assert targets, f'{surface} problem-to-capability table has no links'
+    relative = [target.split('#', 1)[0] for target in targets if not target.startswith('https://')]
+    unresolvable = [target for target in relative if not ((_ROOT / surface).parent / target).exists()]
+    assert not unresolvable, f'{surface} problem-to-capability table links to missing paths: {unresolvable}'
+
+
+def test_problem_to_capability_rows_match_across_surfaces() -> None:
+    """The README and the docs index carry the same problem-first rows; only link targets differ."""
+    docs, readme = (_without_link_targets(_problem_to_capability_rows(s)) for s in _PROBLEM_TO_CAPABILITY_SURFACES)
+    assert readme == docs
+
+
+_PACKAGES_HEADING = '## Pydantic AI, the harness SDK, `Coder`, and Pax'
+_PACKAGES_SURFACES = ('../../docs/harness/index.md', 'README.md', '../pydantic_ai_pax/README.md')
+
+
+@pytest.mark.parametrize('surface', _PACKAGES_SURFACES[1:])
+def test_package_comparison_matches_across_surfaces(surface: str) -> None:
+    """The Harness docs index and the Harness and Pax READMEs draw the same four-way distinction."""
+    canonical = _without_link_targets(_section_table_rows(_PACKAGES_SURFACES[0], _PACKAGES_HEADING))
+    assert [row.split(' | ', 1)[0] for row in canonical[1:]] == [
+        '| [Pydantic AI] (`pydantic-ai`)',
+        '| [Pydantic AI Harness] (`pydantic-ai-harness`)',
+        '| [`Coder`]',
+        '| [Pax] (`pydantic-ai-pax`)',
+    ]
+    assert _without_link_targets(_section_table_rows(surface, _PACKAGES_HEADING)) == canonical
+
+
+_VERSION_POLICY_HEADING = '## Version policy'
+
+
+def test_version_policy_matches_across_surfaces() -> None:
+    """The README and the docs index state the same version policy, including what stays stable after 1.0."""
+    docs, readme = (
+        _without_link_targets(_section(surface, _VERSION_POLICY_HEADING).splitlines())
+        for surface in ('../../docs/harness/index.md', 'README.md')
+    )
+    assert readme == docs
+    assert '### After 1.0' in docs
+
+
+def test_packaged_skill_routes_problem_index_needs() -> None:
+    """Each curated problem in the docs index is routed by the packaged skill's Task Routing Table."""
+    skill = (_PACKAGE / '.agents' / 'skills' / 'pydantic-ai-harness' / 'SKILL.md').read_text(encoding='utf-8')
+    routing = skill.split('## Task Routing Table', 1)[1].split('\n## ', 1)[0]
+    rows = '\n'.join(_problem_to_capability_rows(_PROBLEM_TO_CAPABILITY_SURFACES[0]))
+    for index_phrase, route_phrase in _PROBLEM_TO_SKILL_ROUTE:
+        assert index_phrase in rows, f'problem-to-capability table lost the row matching "{index_phrase}"'
+        assert route_phrase in routing, f'packaged skill no longer routes "{route_phrase}"'

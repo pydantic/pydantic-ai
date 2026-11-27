@@ -10,12 +10,14 @@ from __future__ import annotations as _annotations
 
 import base64
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, cast
 
 import pytest
 from inline_snapshot import snapshot
+from pytest_mock import MockerFixture
 
+from pydantic_ai import Agent
 from pydantic_ai._canonical_system import accepts_stateless_artifact, stateless_artifact_system
 from pydantic_ai.messages import (
     Citation,
@@ -43,6 +45,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import CodeExecutionTool
+from pydantic_ai.settings import ModelSettings
 
 from .conftest import try_import
 
@@ -56,6 +59,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.bedrock import BedrockConverseModel
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.models.xai import XaiModel
@@ -92,6 +96,7 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='model provider SDKs not installed')
 
 SIGNATURE = base64.b64encode(b'signature').decode()
+SKIP_THOUGHT_SIGNATURE = base64.b64encode(b'skip_thought_signature_validator').decode()
 GEMINI_API_URL = 'https://generativelanguage.googleapis.com/'
 VERTEX_URL = 'https://us-central1-aiplatform.googleapis.com/'
 
@@ -160,6 +165,13 @@ RECEIVERS: dict[str, Callable[[], Model]] = {
     'gemini-api': gemini_api_model,
     'google+vertex-client': vertex_client_google_model,
     'google-cloud': google_cloud_model,
+    'google-interactions': lambda: GoogleInteractionsModel('gemini-3.8-flash', provider=GoogleProvider(api_key='test')),
+    'google-interactions+vertex-client': lambda: GoogleInteractionsModel(
+        'gemini-3.8-flash', provider=GoogleProvider(client=Client(vertexai=True, api_key='test'))
+    ),
+    'google-cloud-interactions': lambda: GoogleInteractionsModel(
+        'gemini-3.8-flash', provider=GoogleCloudProvider(api_key='test')
+    ),
     'xai': lambda: XaiModel('grok-4', provider=XaiProvider(api_key='test-key')),
     'compatible-default': lambda: OpenAIChatModel(
         'qwen/qwen3', provider=OpenAICompatibleProvider('my-service', base_url='https://example.com/v1')
@@ -273,6 +285,18 @@ ACCEPT_CASES = [
         True,
     ),
     AcceptCase('older bedrock claude into anthropic', 'anthropic', thinking_response('bedrock'), False),
+    AcceptCase(
+        'stamped bedrock into bedrock claude',
+        'bedrock-claude',
+        thinking_response('bedrock', canonical_system='bedrock'),
+        False,
+    ),
+    AcceptCase(
+        'stamped bedrock into bedrock nova',
+        'bedrock-nova',
+        thinking_response('bedrock', canonical_system='bedrock'),
+        True,
+    ),
     # Gemini API and Google Cloud share the `google` name.
     AcceptCase(
         'gemini api into vertex client',
@@ -344,15 +368,28 @@ ACCEPT_CASES = [
 ]
 
 
+_GOOGLE_INTERACTIONS_RECEIVERS = {
+    'gemini-api': 'google-interactions',
+    'google+vertex-client': 'google-interactions+vertex-client',
+    'google-cloud': 'google-cloud-interactions',
+}
+ACCEPT_CASES.extend(
+    replace(case, id=f'interactions {case.id}', receiver=_GOOGLE_INTERACTIONS_RECEIVERS[case.receiver])
+    for case in list(ACCEPT_CASES)
+    if case.receiver in _GOOGLE_INTERACTIONS_RECEIVERS
+)
+
+
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in ACCEPT_CASES])
 def test_accepts_stateless_artifacts(case: AcceptCase):
     model = RECEIVERS[case.receiver]()
     assert model.accepts_stateless_artifacts(case.response, case.response.parts[0]) is case.accepted
 
 
-def test_response_level_data_is_judged_by_the_response_provider():
+@pytest.mark.parametrize('receiver', ['gemini-api', 'google-interactions'])
+def test_response_level_data_is_judged_by_the_response_provider(receiver: str):
     """Without a part, the response's own `provider_name` decides, as for Gemini signatures on unnamed parts."""
-    model = gemini_api_model()
+    model = RECEIVERS[receiver]()
     assert model.accepts_stateless_artifacts(ModelResponse(parts=[], provider_name='google'))
     assert not model.accepts_stateless_artifacts(ModelResponse(parts=[], provider_name='openai'))
     assert not model.accepts_stateless_artifacts(ModelResponse(parts=[], provider_name=None))
@@ -506,7 +543,8 @@ def test_canonical_system_stamp_round_trips():
     """A model stamps its responses when its canonical system differs from its name, and the stamp is stored.
 
     Models on a provider whose canonical system depends on its client always do: either Google provider name
-    covers both transports, and `OpenAIProvider` covers OpenAI and Azure.
+    covers both transports, and `OpenAIProvider` covers OpenAI and Azure. So do Bedrock Converse models with the
+    `openai_responses` thinking variant, whose encrypted reasoning Claude on Bedrock would otherwise accept by name.
     """
     assert RECEIVERS['openai']()._canonical_system_stamp == 'openai'  # pyright: ignore[reportPrivateUsage]
     assert RECEIVERS['openai+azure-client']()._canonical_system_stamp == 'azure'  # pyright: ignore[reportPrivateUsage]
@@ -517,10 +555,31 @@ def test_canonical_system_stamp_round_trips():
     assert RECEIVERS['openai-codex']()._canonical_system_stamp == 'openai'  # pyright: ignore[reportPrivateUsage]
     assert RECEIVERS['claude-code']()._canonical_system_stamp == 'anthropic'  # pyright: ignore[reportPrivateUsage]
     assert vertex_client_google_model()._canonical_system_stamp == 'google-cloud'  # pyright: ignore[reportPrivateUsage]
-    response = thinking_response('openai-codex', canonical_system='openai')
-    dumped = ModelMessagesTypeAdapter.dump_python([response], mode='json')
-    assert dumped[0]['canonical_system'] == 'openai'
-    assert ModelMessagesTypeAdapter.validate_python(dumped) == [response]
+    for receiver, stamp in (
+        ('google-interactions', 'google'),
+        ('google-interactions+vertex-client', 'google-cloud'),
+        ('google-cloud-interactions', 'google-cloud'),
+    ):
+        assert RECEIVERS[receiver]()._canonical_system_stamp == stamp  # pyright: ignore[reportPrivateUsage]
+    assert RECEIVERS['bedrock-claude']()._canonical_system_stamp == 'anthropic'  # pyright: ignore[reportPrivateUsage]
+    assert RECEIVERS['bedrock-nova']()._canonical_system_stamp is None  # pyright: ignore[reportPrivateUsage]
+    gpt_5_6 = BedrockConverseModel('us.openai.gpt-5.6-luna', provider=bedrock_provider())
+    assert gpt_5_6._canonical_system_stamp == 'bedrock'  # pyright: ignore[reportPrivateUsage]
+    # A model the name doesn't identify may be Claude, so its responses stay acceptable to Claude by name.
+    arn = 'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123'
+    assert BedrockConverseModel(arn, provider=bedrock_provider())._canonical_system_stamp is None  # pyright: ignore[reportPrivateUsage]
+    # One that routes to GPT-5.6 is identified by its profile.
+    arn_gpt_5_6 = BedrockConverseModel(
+        arn, provider=bedrock_provider(), profile=BedrockModelProfile(bedrock_thinking_variant='openai_responses')
+    )
+    assert arn_gpt_5_6._canonical_system_stamp == 'bedrock'  # pyright: ignore[reportPrivateUsage]
+    responses: list[ModelMessage] = [
+        thinking_response('openai-codex', canonical_system='openai'),
+        thinking_response('bedrock', canonical_system='bedrock'),
+    ]
+    dumped = ModelMessagesTypeAdapter.dump_python(responses, mode='json')
+    assert [message['canonical_system'] for message in dumped] == ['openai', 'bedrock']
+    assert ModelMessagesTypeAdapter.validate_python(dumped) == responses
 
 
 # Compaction: the trim, the boundary and the execution-availability window follow the same predicate.
@@ -632,6 +691,12 @@ def test_post_compaction_window_follows_the_serving_model():
             ModelResponse(parts=[], provider_name='bedrock', canonical_system='anthropic'),
             False,
             id='bedrock-claude',
+        ),
+        pytest.param(
+            RECEIVERS['google-interactions'],
+            ModelResponse(parts=[], provider_name='google', canonical_system='google'),
+            False,
+            id='google-interactions-has-no-native-compaction',
         ),
     ],
 )
@@ -1012,13 +1077,6 @@ thought
 </think>\
 """
                         },
-                        {
-                            'text': """\
-<think>
-
-</think>\
-"""
-                        },
                         {'text': 'answer'},
                     ],
                 },
@@ -1037,6 +1095,146 @@ async def test_bedrock_replays_claude_signatures_by_canonical_system(case: Repla
         anthropic_history(case.history_provider, canonical_system=case.canonical_system), ModelRequestParameters(), {}
     )
     assert _json(messages) == case.expected
+
+
+def _converse_response(*content: dict[str, object]) -> dict[str, object]:
+    return {
+        'output': {'message': {'role': 'assistant', 'content': list(content)}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 10, 'outputTokens': 10},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+
+async def test_bedrock_openai_responses_history_to_claude_omits_redacted_content(
+    allow_model_requests: None, mocker: MockerFixture
+):
+    """GPT-5.6's encrypted reasoning on Bedrock is not replayed into Claude on Bedrock.
+
+    The client is mocked: the claim is about what the adapter renders from history, and the mocked responses only
+    supply that history. The GPT-5.6 turn has the reasoning shape recorded for
+    `test_bedrock_thinking_openai_responses_variant`.
+    """
+    gpt_model = BedrockConverseModel('us.openai.gpt-5.6-luna', provider=bedrock_provider())
+    mocker.patch.object(gpt_model.client, 'converse').return_value = _converse_response(
+        {'reasoningContent': {'redactedContent': b'rsn_gpt-encrypted-reasoning'}}, {'text': 'Ok!'}
+    )
+    result = await Agent(gpt_model, model_settings=ModelSettings(max_tokens=32)).run('Hi')
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.canonical_system == 'bedrock'
+
+    claude_model = bedrock_claude_model()
+    mock_claude_converse = mocker.patch.object(claude_model.client, 'converse')
+    mock_claude_converse.return_value = _converse_response({'text': 'Hello!'})
+    # Without `max_tokens`, a Claude request is streamed behind the scenes rather than sent to `converse`.
+    await Agent(claude_model, model_settings=ModelSettings(max_tokens=32)).run(
+        'Continue', message_history=result.all_messages()
+    )
+
+    _, kwargs = mock_claude_converse.call_args
+    assert kwargs['messages'][1] == snapshot({'role': 'assistant', 'content': [{'text': 'Ok!'}]})
+
+
+async def test_bedrock_same_family_history_replay_keeps_thinking(allow_model_requests: None, mocker: MockerFixture):
+    """Same-family history replay keeps thinking: Claude re-sends its signature; gpt-oss keeps the text.
+
+    The client is mocked: the claim is about what the adapter renders from history, and the mocked responses only
+    supply that history.
+    """
+    thinking: dict[str, object] = {
+        'reasoningContent': {
+            'reasoningText': {'signature': 'own-signature', 'text': 'Internal reasoning about the answer.'}
+        }
+    }
+
+    claude_model = bedrock_claude_model()
+    mock_converse = mocker.patch.object(claude_model.client, 'converse')
+    mock_converse.return_value = _converse_response(thinking, {'text': 'Ok!'})
+    claude_agent = Agent(claude_model, model_settings=ModelSettings(max_tokens=32))
+    result = await claude_agent.run('Hi')
+    await claude_agent.run('Continue', message_history=result.all_messages())
+    _, kwargs = mock_converse.call_args
+    assert kwargs['messages'][1] == snapshot(
+        {
+            'role': 'assistant',
+            'content': [
+                {
+                    'reasoningContent': {
+                        'reasoningText': {'text': 'Internal reasoning about the answer.', 'signature': 'own-signature'}
+                    }
+                },
+                {'text': 'Ok!'},
+            ],
+        }
+    )
+
+    gpt_model = BedrockConverseModel('openai.gpt-oss-120b-1:0', provider=bedrock_provider())
+    mock_converse = mocker.patch.object(gpt_model.client, 'converse')
+    mock_converse.return_value = _converse_response(thinking, {'text': 'Ok!'})
+    gpt_agent = Agent(gpt_model, model_settings=ModelSettings(max_tokens=32))
+    result = await gpt_agent.run('Hi')
+    await gpt_agent.run('Continue', message_history=result.all_messages())
+    _, kwargs = mock_converse.call_args
+    # GPT-OSS has no native send-back channel (`bedrock_send_back_thinking_parts` is unset), so its thinking is
+    # replayed as text without the signature.
+    assert kwargs['messages'][1] == snapshot(
+        {
+            'role': 'assistant',
+            'content': [
+                {
+                    'text': """\
+<think>
+Internal reasoning about the answer.
+</think>\
+"""
+                },
+                {'text': 'Ok!'},
+            ],
+        }
+    )
+
+
+async def test_bedrock_unidentified_model_history_replays_into_named_claude(
+    allow_model_requests: None, mocker: MockerFixture
+):
+    """A model the name doesn't identify, like an application inference profile, may be Claude.
+
+    Its responses stay unstamped, so its thinking still replays into a named Claude model with its signature. The
+    client is mocked: the claim is about what the adapter renders from history, and the mocked responses only supply
+    that history.
+    """
+    thinking: dict[str, object] = {
+        'reasoningContent': {
+            'reasoningText': {'signature': 'own-signature', 'text': 'Internal reasoning about the answer.'}
+        }
+    }
+
+    arn_model = BedrockConverseModel(
+        'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123', provider=bedrock_provider()
+    )
+    mocker.patch.object(arn_model.client, 'converse').return_value = _converse_response(thinking, {'text': 'Ok!'})
+    result = await Agent(arn_model, model_settings=ModelSettings(max_tokens=32)).run('Hi')
+    claude_model = bedrock_claude_model()
+    mock_converse = mocker.patch.object(claude_model.client, 'converse')
+    mock_converse.return_value = _converse_response({'text': 'Hello!'})
+    await Agent(claude_model, model_settings=ModelSettings(max_tokens=32)).run(
+        'Continue', message_history=result.all_messages()
+    )
+    _, kwargs = mock_converse.call_args
+    assert kwargs['messages'][1] == snapshot(
+        {
+            'role': 'assistant',
+            'content': [
+                {
+                    'reasoningContent': {
+                        'reasoningText': {'text': 'Internal reasoning about the answer.', 'signature': 'own-signature'}
+                    }
+                },
+                {'text': 'Ok!'},
+            ],
+        }
+    )
 
 
 async def test_anthropic_replays_web_search_citations_by_canonical_system():
@@ -1190,6 +1388,39 @@ async def test_google_replays_thought_signatures_to_their_own_transport(
         if 'function_call' in part
     )
     assert function_call['thought_signature'] == expected_signature
+
+
+@pytest.mark.parametrize('receiver', list(_GOOGLE_INTERACTIONS_RECEIVERS.values()))
+@pytest.mark.parametrize('source', ['google', 'google-cloud'])
+@pytest.mark.parametrize('signature_part', ['thinking', 'tool-call'])
+async def test_google_interactions_replays_signatures_to_their_own_transport(
+    receiver: str, source: str, signature_part: str
+):
+    model = RECEIVERS[receiver]()
+    assert isinstance(model, GoogleInteractionsModel)
+    part = (
+        ThinkingPart('thought', signature=SIGNATURE, provider_name='google')
+        if signature_part == 'thinking'
+        else ToolCallPart(
+            'get', {}, tool_call_id='1', provider_name='google', provider_details={'thought_signature': SIGNATURE}
+        )
+    )
+    response = ModelResponse(
+        parts=[part], provider_name='google', canonical_system=source, provider_url='https://proxy.example.com/google'
+    )
+    params = ModelRequestParameters()
+    _, steps = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages([ModelRequest.user_text_prompt('hi'), response], params), params
+    )
+    own_transport = model.canonical_system == source
+    signatures = [step.get('signature') for step in steps if step.get('type') == 'thought']
+    assert signatures == ([SIGNATURE] if own_transport else [])
+    calls = [step for step in steps if step.get('type') == 'function_call']
+    if signature_part == 'tool-call':
+        # Another transport's signature is rejected, and an unsigned first call is too, so it gets the placeholder.
+        assert [call.get('signature') for call in calls] == [None if own_transport else SKIP_THOUGHT_SIGNATURE]
+    else:
+        assert calls == [] and (any(step.get('type') == 'model_output' for step in steps) or signatures)
 
 
 async def test_xai_replays_by_canonical_system():

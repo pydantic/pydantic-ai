@@ -90,6 +90,12 @@ class GrokModelProfile(ModelProfile, total=False):
     grok_default_effort_omitted: bool
     """Whether a default thinking request omits `reasoning_effort` so xAI applies its model default. Default: `False`."""
 
+    grok_supports_stop_sequences: bool
+    """Whether the model accepts `stop_sequences`. Default: `True`.
+
+    Only the Grok 4.20 non-reasoning models do: the others reject them with a 400.
+    """
+
 
 def grok_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Grok model."""
@@ -122,6 +128,12 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
 
     profile: GrokModelProfile = GrokModelProfile(
         supports_tools=True,
+        # The formats xAI's own 400 lists: 'Downloaded response does not contain a valid JPG, PNG, WebP, or ICO image',
+        # seen for a GIF on its API and through OpenRouter, whose raw error is xAI's (checked live with
+        # `grok-4-1-fast-non-reasoning` and `x-ai/grok-4.3`, 2026-11-04). Hosts that run Grok themselves weren't checked.
+        supported_image_media_types=frozenset(
+            {'image/jpeg', 'image/png', 'image/webp', 'image/x-icon', 'image/vnd.microsoft.icon'}
+        ),
         supports_json_schema_output=True,
         supports_json_object_output=True,
         supports_thinking=bool(grok_reasoning_efforts),
@@ -130,6 +142,10 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
         thinking_always_enabled=bool(grok_reasoning_efforts) and 'none' not in grok_reasoning_efforts,
         grok_supports_builtin_tools=grok_supports_builtin_tools,
         grok_reasoning_efforts=grok_reasoning_efforts,
+        # Verified live 2026-11-04 across the known Grok ids, including the retired slugs that redirect to a reasoning
+        # model, like `grok-4-1-fast-non-reasoning`. Deliberately `False` for an id this doesn't recognize, unlike the
+        # field's `True` default for a profile that doesn't set it: every Grok model but these rejects them.
+        grok_supports_stop_sequences=model_name.startswith('grok-4.20') and 'non-reasoning' in model_name,
         supported_native_tools=supported_native_tools,
     )
     if model_name in _GROK_43_REASONING_MODELS or model_name in _GROK_47_REASONING_MODELS:
@@ -165,6 +181,9 @@ def grok_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # outstanding: verified live 2026-09-25, a question sent 3 seconds into a 15-second tool was
         # answered right away. The protocol has no setting that makes it wait.
         'async_tool_call_mode': 'always',
+        # A `session.update` with a new `tools` array mid-session takes effect, as on the OpenAI Realtime API it
+        # mirrors: a tool it adds is called from the next response on (checked live).
+        'supports_tool_updates': True,
         'emits_input_speech_events': True,
         # Each transcript delta, of a few words to a sentence, says where it starts in its item's audio.
         'output_speech_timestamp_granularity': 'segment',

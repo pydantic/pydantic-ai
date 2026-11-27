@@ -1,0 +1,5 @@
+{
+  "against": "v2.69.0",
+  "reason": "`XaiModel.unsupported_settings` drops `service_tier`: xAI now receives a unified `'default'` or `'priority'` (`'auto'` and `'flex'` stay omitted), so a shared `service_tier='priority'` can be served and billed at xAI's priority rate.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13524"
+}
