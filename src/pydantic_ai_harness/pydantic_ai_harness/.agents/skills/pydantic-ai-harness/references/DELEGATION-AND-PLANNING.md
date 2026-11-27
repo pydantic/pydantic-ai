@@ -367,6 +367,8 @@ models; `True` makes them follow the parent run's resolved model, e.g. after a p
 `resource_limits=None` (backstop 256 MB, no time cap; dict merges, `'unlimited'` disables),
 `call_scheduler=None` (a `(RunContext) -> WorkflowCallScheduler` factory, called once per `run_workflow`
 call, for integrations that decide when sub-agent calls start; not called under `DBOSDurability`),
+`monty_sandbox=None` (a Monty server root URL, or a function returning an `AsyncMontyRemote` such as
+`logfire.agent_sandboxes`, to run the script on a remote worker; same values as Code Mode's),
 `id`/`description`/`defer_loading`.
 
 Gotchas:
@@ -387,6 +389,9 @@ Gotchas:
   budget...', 'last_error': ..., 'completed': [...]}`; later calls in that run are refused.
 - Children do not inherit the parent's workspace: give each its own workspace capability. Children
   gathered in parallel on one checkout can overwrite each other's edits.
+- With `monty_sandbox`, setup errors (bad URL or credentials, a failing pool function) reach the caller;
+  a worker crash or lost connection becomes a model retry listing completed sub-agent results. Under
+  Temporal the script runs in workflow code, so the worker must be reachable on replay.
 - `defer_loading=True` requires a stable `id`. `workflow.reveal(agent)` adds a sub-agent mid-run.
 - A `WorkflowCallScheduler` gets each call as a `WorkflowCall` (`agent_name`, `start`) and must release
   held calls in `flush`. Under `AWSLambdaDurability` a released call has to await `call.start()`
