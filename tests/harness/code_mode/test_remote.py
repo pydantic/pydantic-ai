@@ -1,7 +1,7 @@
 """Tests for CodeMode's remote transport and sandbox error routing.
 
 Dynamic Workflow dials remote workers through the same code, so the transport tests run against
-both capabilities.
+both capabilities, and its remote failure messages are tested here too.
 
 Refusal tests exercise native errors from a loopback gRPC server. Local-backed factory pool
 doubles cover factory plumbing and deterministic recovery branches, not remote execution.
@@ -180,8 +180,7 @@ async def test_unsupported_scheme_rejected(capability: _MontyCapability) -> None
 async def test_url_beyond_server_root_rejected(capability: _MontyCapability, url: str) -> None:
     """The client calls one fixed method at the server root, so a path, query, or fragment fails up front."""
     with pytest.raises(UserError, match='must be the server root') as exc_info:
-        agent = capability.agent(monty_sandbox=url)
-        await agent.run('never dials')
+        capability.agent(monty_sandbox=url)
     assert url not in str(exc_info.value)
     assert 'hunter2' not in str(exc_info.value)
 
@@ -574,6 +573,47 @@ class TestCodeModeErrorRouting:
         assert 'factory-key' not in str(first.content)
         assert calls == [None]
         assert local_backed_factory_pool.checkout.call_count == 3
+
+    @pytest.mark.parametrize(
+        ('error', 'guidance'),
+        [
+            (_CrashedError(True, _SECRET), 'ran longer than its time limit'),
+            (_CrashedError(False, _SECRET), 'crashed the sandbox worker'),
+            (_DisconnectError('session_timeout', _SECRET), 'lost its sandbox session'),
+            (_DisconnectError(None, _SECRET), 'lost its sandbox connection'),
+        ],
+    )
+    async def test_dynamic_workflow_execution_failure_gives_its_advice(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        local_backed_factory_pool: MagicMock,
+        error: Exception,
+        guidance: str,
+    ) -> None:
+        """Each worker failure kind maps to Dynamic Workflow's own message, without leaking pool details."""
+        monkeypatch.setattr('pydantic_ai_harness._monty_turns.MontyCrashedError', _CrashedError)
+        monkeypatch.setattr('pydantic_ai_harness._monty_turns.MontyDisconnectError', _DisconnectError)
+        original_resume = AsyncFutureSnapshot.resume
+
+        async def fail_after_sub_agent(
+            snapshot: AsyncFutureSnapshot, results: dict[int, ExternalSettledResult]
+        ) -> AsyncSnapshot:
+            await original_resume(snapshot, results)
+            raise error
+
+        monkeypatch.setattr(AsyncFutureSnapshot, 'resume', fail_after_sub_agent)
+        agent = Agent(
+            _snippets_model("await sub(task='a')", tool_name='run_workflow'),
+            capabilities=[
+                DynamicWorkflow(agents=[_sub_agent()], monty_sandbox=MagicMock(return_value=local_backed_factory_pool))
+            ],
+        )
+
+        result = await agent.run('fail after a sub-agent call')
+        (retry,) = _retries(result.all_messages())
+        assert guidance in str(retry.content)
+        assert 'sub(task="a") -> "ok"' in str(retry.content)
+        assert _SECRET not in str(result.all_messages())
 
     @pytest.mark.parametrize(
         ('error_name', 'code'),
