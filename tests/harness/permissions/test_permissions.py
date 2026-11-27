@@ -1564,7 +1564,13 @@ class TestProtectedCommandWords:
             'GLOBIGNORE=x cp dist/* out/',
             'shopt -s dot\\glob',
             'rm build/*(D)',
+            'ls *(D)',
+            'rm -r *(/D)',
             'cp @(.pax)/settings.json x',
+            'cp @(.p*) x',
+            'cp payload !(foo)/settings.json',
+            'cp payload .pa(x)',
+            'echo "x" "*(D)',
             'cp payload .pa[[:lower:]]/settings.json',
             'cp payload .pa[[:lower]/settings.json',
         ],
@@ -1578,7 +1584,13 @@ class TestProtectedCommandWords:
             'globignore',
             'escaped-dotglob',
             'zsh-qualifier',
+            'zsh-qualifier-alone',
+            'zsh-qualifier-holding-a-slash',
             'extglob',
+            'extglob-holding-a-pattern',
+            'negated-extglob',
+            'zsh-trailing-group',
+            'group-with-unbalanced-quotes',
             'character-class',
             'unclosed-character-class',
         ],
@@ -1598,13 +1610,37 @@ class TestProtectedCommandWords:
     async def test_an_interpreter_one_liner_naming_a_protected_path(self, command: str) -> None:
         assert await _held(_command(command)) == [command]
 
+    async def test_parentheses_that_are_not_a_pattern_s_group_still_run(self) -> None:
+        """A Markdown link or arithmetic names no protected path, though `](` and `*(` look like a group."""
+        commands = [
+            'git commit -m "See [docs](https://example.com/docs)"',
+            'gh pr create --body "Closes [#1](https://github.com/o/r/issues/1)"',
+            'gh pr create --body "[#1](https://github.com/o/r/issues/1)"',
+            'python -c "print(2*(3+4))"',
+            'echo $((2*(3+4)))',
+            'touch notes(1).txt',
+            'git commit -m "(wip)"',
+            "touch '*(draft'",
+        ]
+        assert await _held(*map(_command, commands)) == []
+
     async def test_a_very_long_option_word_counts_as_protected_quickly(self) -> None:
         commands = ['echo -' + 'a' * 60_000, 'cp -abcdefghijklmnopq payload out/']
         assert await _held(*map(_command, commands)) == commands
 
     async def test_a_windows_wildcard_that_could_name_a_protected_path(self) -> None:
-        commands = ['Set-Content .pa?\\settings.json x', 'Set-Content notes\\.*\\x y', 'Set-Content *.txt x']
-        assert await _held(*map(_command, commands), workspace=_WindowsRepo()) == commands[:2]
+        """PowerShell's wildcards match a name's leading `.`, so `*` may stand for `.pax`."""
+        commands = [
+            'Set-Content .pa?\\settings.json x',
+            'Set-Content notes\\.*\\x y',
+            'Set-Content -Force *\\settings.json x',
+            'Set-Content *.txt x',
+        ]
+        assert await _held(*map(_command, commands), workspace=_WindowsRepo()) == commands[:3]
+
+    async def test_a_powershell_parameter_value_after_a_colon(self) -> None:
+        commands = ['Set-Content -Path:.pax\\settings.json -Value:x', 'Set-Content -Path:notes.txt -Value:x']
+        assert await _held(*map(_command, commands), workspace=_WindowsRepo()) == commands[:1]
 
     @pytest.mark.parametrize(
         'command',

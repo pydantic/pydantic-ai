@@ -216,6 +216,9 @@ class Permissions(AbstractCapability[AgentDepsT]):
     against its end, so `'.git/hooks/*'` covers every repository's hooks. A folder's glob covers only the folder,
     so list `'dir/*'` too for what is in it. Case is ignored. Commands are checked best effort, by their words,
     split as the shell would: a path a command builds at run time, such as with `cd` first, is not seen.
+
+    A command that can't be checked asks: one over 64 KiB, one nesting `-c` or `eval` scripts more than three deep,
+    or one with a word holding more than 16 short options or whose braces expand to more than 64 words.
     """
 
     protected_commands: Sequence[str] = ()

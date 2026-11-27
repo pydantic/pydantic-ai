@@ -15,11 +15,17 @@ from pydantic_ai_harness.permissions._rules import command_segments
 _OPERATORS = ';&|()<>'
 """Characters the shell reads as operators outside quotes, which split words like whitespace does."""
 
+_GROUPING_OPERATORS = ';&|<>'
+"""`_OPERATORS` without parentheses, to read a pattern's group, as in `*(D)` or `@(.pax)`, as part of its word too."""
+
 _WORD_PARTS = re.compile(r'[`=]+')
 """Where a word splits further into words that may be paths: a backtick substitution and `--option=value`."""
 
 _FALLBACK_SPLIT = re.compile(r'[\s;&|()<>`=]+')
 """How a command whose quotes don't balance is split, both as written and with its quotes removed."""
+
+_GROUPING_FALLBACK_SPLIT = re.compile(r'[\s;&|<>`=]+')
+"""`_FALLBACK_SPLIT` without splitting at parentheses, as `_GROUPING_OPERATORS` is to `_OPERATORS`."""
 
 _QUOTES = re.compile(r'[\'"]')
 
@@ -35,8 +41,11 @@ _CODE_PARTS = re.compile(r'[\'"(),;]+')
 _DOT_OPTIONS = ('dotglob', 'globignore', 'globdots')
 """Shell options and variables that let a pattern match a name's leading `.`, without case or `_`, as zsh ignores."""
 
-_GROUPED_PATTERN = re.compile(r'[*?+@!\]]\(')
-"""A pattern with a group, as bash's `@(...)` or zsh's `*(D)`, which may match a name's leading `.`."""
+_GROUP_OPENERS = '*?+@!'
+"""What opens a bash extglob group, such as `@(...)`, before its `(`; zsh's `*(D)` reads as one too."""
+
+_GROUP = '\0'
+"""Stands in for a pattern's group or zsh glob qualifier in `_shell_pattern`, as a character no shell word holds."""
 
 _READING_PROGRAMS = frozenset(
     {
@@ -65,7 +74,8 @@ _SCRIPT_FLAG = re.compile(r'-[a-zA-Z]*c[a-zA-Z]*')
 """A shell option word that includes `-c`, as `-c`, `-lc` and `-ec` do."""
 
 _SCRIPT_DEPTH_LIMIT = 3
-"""How deep scripts run by a shell's `-c` or `eval` are looked into; a command nesting them deeper counts as protected."""
+"""How deep scripts run by a shell's `-c` or `eval` are looked into; a command nesting them deeper counts as
+protected."""
 
 _LENGTH_LIMIT = 4096
 """Longer words aren't globbed, which could take quadratic time: they count as protected."""
@@ -98,7 +108,7 @@ def matches(location: str, globs: Sequence[str], *, posix: bool, pattern: bool =
     if len(location) > _LENGTH_LIMIT:
         return True
     location = (location if posix else location.replace('\\', '/')).lower()
-    shell = _shell_pattern(location) if pattern else []
+    shell = _shell_pattern(location, posix=posix) if pattern else []
     if shell is None:
         return True
     wildcards = shell if any(part.char is None for part in shell) else []
@@ -131,34 +141,71 @@ def _glob_pattern(glob: str) -> list[_Char]:
     return parts
 
 
-def _shell_pattern(text: str) -> list[_Char] | None:
+def _shell_pattern(text: str, *, posix: bool) -> list[_Char] | None:
     """`text`'s parts as a shell's pattern, which only asks more where the shells differ; `None` if it can't be read.
 
-    Wildcards match within a name, and a bracket expression stands for any one character. A name's leading `.` is
-    matched only by a pattern for the name that starts with one, as without bash's `dotglob` or zsh's `globdots`;
-    `command_locations` counts a command that may turn those on, or use a pattern that may match one otherwise, as
-    protected.
+    Wildcards match within a name, and a bracket expression stands for any one character. On POSIX, a name's
+    leading `.` is matched only by a pattern for the name that starts with one, as without bash's `dotglob` or zsh's
+    `globdots`; `command_locations` counts a command that may turn those on as protected. A group, as bash's
+    `@(...)`, or a zsh glob qualifier, as the `(.)` that ends `*.py(.)`, stands for any text, a leading `.` included.
+    PowerShell's wildcards match a leading `.` too, so on Windows every wildcard may.
     """
     parts: list[_Char] = []
-    for n, name in enumerate(text.split('/')):
+    for n, name in enumerate(_without_groups(text).split('/')):
         if n:
             parts.append(_Char('/'))
-        name_parts = _name_pattern(name)
+        name_parts = _name_pattern(name, posix=posix)
         if name_parts is None:
             return None
         parts += name_parts
     return parts
 
 
-def _name_pattern(name: str) -> list[_Char] | None:
+def _without_groups(text: str) -> str:
+    """`text` with each group, and a zsh glob qualifier that ends it, as `_GROUP`; a `(` that doesn't close is kept.
+
+    A group may hold a `/`, as zsh's `*(/D)` does. A qualifier follows a pattern, so `(wip)` alone is kept.
+    """
+    closes = _paren_closes(text)
+    qualifier = next((start for start, end in closes.items() if end == len(text) - 1), None)
+    if qualifier is not None and text[qualifier - 1 : qualifier] in ('', '/'):
+        qualifier = None
+    kept: list[str] = []
+    i = 0
+    while i < len(text):
+        opens = i + 1 if text[i] in _GROUP_OPENERS and text[i + 1 : i + 2] == '(' else i
+        if opens in closes and (opens > i or i == qualifier):
+            kept.append(_GROUP)
+            i = closes[opens] + 1
+        else:
+            kept.append(text[i])
+            i += 1
+    return ''.join(kept)
+
+
+def _paren_closes(text: str) -> dict[int, int]:
+    """Where each `(` in `text` that closes is closed, found in one pass."""
+    opened: list[int] = []
+    closes: dict[int, int] = {}
+    for i, char in enumerate(text):
+        if char == '(':
+            opened.append(i)
+        elif char == ')' and opened:
+            closes[opened.pop()] = i
+    return closes
+
+
+def _name_pattern(name: str, *, posix: bool) -> list[_Char] | None:
     """One name's parts for `_shell_pattern`."""
-    dot = name.startswith('.')
+    dot = name.startswith('.') or not posix
     parts: list[_Char] = []
     i = 0
     while i < len(name):
         char = name[i]
         end = _bracket_end(name, i, classes=True) if char == '[' else None
-        if char in '*?':
+        if char == _GROUP:
+            parts.append(_Char(None, slash=False, star=True))
+        elif char in '*?':
             parts.append(_Char(None, slash=False, star=char == '*', dot=dot))
         elif end == -1:
             return None
@@ -263,9 +310,9 @@ async def command_locations(
 
     `None` when the paths can't be known, which counts as protected: with a word whose braces expand to more than
     `_BRACE_LIMIT` words, a pattern that could name `.` or `..`, as `.*` can, which moves where the rest of it
-    leads, or a mention of an option that lets patterns match a leading `.`, such as `dotglob`, or a pattern with a
-    group, such as `*(D)`, which may match one. With `expand=False`, as inside a durable run, where this process's environment may differ on replay and
-    is not the workspace's, nothing is expanded, and `None` too when a word would need it.
+    leads, or a mention of an option that lets patterns match a leading `.`, such as `dotglob`. With
+    `expand=False`, as inside a durable run, where this process's environment may differ on replay and is not the
+    workspace's, nothing is expanded, and `None` too when a word would need it.
     """
     if posix and _only_reads(command):
         return []
@@ -301,7 +348,7 @@ def _word_locations(word: str, paths: WorkspacePaths, cwd: str | None, *, posix:
     if braced is None:
         return None
     locations = [location if cwd is None else paths.join(cwd, location) for location in braced]
-    if any(_names_a_dot(location if posix else location.replace('\\', '/')) for location in locations):
+    if any(_names_a_dot(location if posix else location.replace('\\', '/'), posix=posix) for location in locations):
         return None
     return [paths.normpath(location) for location in locations]
 
@@ -371,12 +418,12 @@ def _is_integer(text: str) -> bool:
     return digits.isascii() and digits.isdecimal()
 
 
-def _names_a_dot(location: str) -> bool:
+def _names_a_dot(location: str, *, posix: bool) -> bool:
     """Whether a name in `location` is a pattern that could expand to `.` or `..`, as `.*` can in some shells.
 
     It moves where the rest of `location` leads, so where it leads isn't known.
     """
-    parts = _shell_pattern(location)
+    parts = _shell_pattern(location, posix=posix)
     if parts is None:
         # A pattern that can't be read: `matches` counts it as protected.
         return False
@@ -396,15 +443,17 @@ def _names_a_dot(location: str) -> bool:
 def _matches_dots(command: str) -> bool:
     """Whether `command` may let a pattern match a name's leading `.`, as `shopt -s dotglob` or `setopt GLOB_DOTS` does.
 
-    A persistent shell keeps such an option for the commands after, whose patterns are read as if it were off. A
-    pattern with a group, as bash's `@(...)` or zsh's `*(D)`, may match one too.
+    A persistent shell keeps such an option for the commands after, whose patterns are read as if it were off.
     """
     folded = command.lower().translate(str.maketrans('', '', '_\\\'"'))
-    return any(option in folded for option in _DOT_OPTIONS) or _GROUPED_PATTERN.search(command) is not None
+    return any(option in folded for option in _DOT_OPTIONS)
 
 
 def _expanded(words: list[str], *, posix: bool, expand: bool) -> list[str] | None:
-    """`words` with `~` and variables expanded as in this process; unexpanded, or `None` if one needs it, without `expand`."""
+    """`words` with `~` and variables expanded as in this process.
+
+    Without `expand`, they are kept as they are, or `None` if one needs expanding.
+    """
     if expand:
         return [os.path.expanduser(os.path.expandvars(word)) for word in words]
     if any(word.startswith('~') or '$' in word or (not posix and '%' in word) for word in words):
@@ -419,10 +468,12 @@ def _words(command: str, *, posix: bool, depth: int = 0) -> list[str] | None:
     such scripts nest deeper than `_SCRIPT_DEPTH_LIMIT`, or a word holds more short options than
     `_SHORT_OPTION_LIMIT`, as the paths they name aren't looked for.
     """
-    tokens = [token for token in _tokens(command, posix=posix) if token and not set(token) <= set(_OPERATORS)]
+    tokens = _operands(_tokens(command, posix=posix))
+    # The shell reads parentheses as operators outside a pattern, so a word with a group counts both ways.
+    grouped = [token for token in _operands(_tokens(command, posix=posix, grouping=True)) if '(' in token]
     words: list[str] = []
-    for token in tokens:
-        parts = _word_parts(token)
+    for token in [*tokens, *grouped]:
+        parts = _word_parts(token, posix=posix)
         if parts is None:
             return None
         words += parts
@@ -434,11 +485,17 @@ def _words(command: str, *, posix: bool, depth: int = 0) -> list[str] | None:
     return list(dict.fromkeys(word for word in words if word))
 
 
-def _word_parts(token: str) -> list[str] | None:
+def _operands(tokens: list[str]) -> list[str]:
+    """`tokens` without the operators."""
+    return [token for token in tokens if token and not set(token) <= set(_OPERATORS)]
+
+
+def _word_parts(token: str, *, posix: bool) -> list[str] | None:
     """`token`, its parts around a backtick or `=`, and, for a short option, what follows each of its letters.
 
     A word with quotes, parentheses, commas or `;`, as an interpreter's one-liner such as
-    `python -c "open('.pax/x', 'w')"` has, splits at them and at whitespace too. `None` for more short options than
+    `python -c "open('.pax/x', 'w')"` has, splits at them and at whitespace too. On Windows, what follows the `:` of
+    a PowerShell parameter written as `-Path:value` counts too. `None` for more short options than
     `_SHORT_OPTION_LIMIT`; a word longer than `_LENGTH_LIMIT` is kept whole, as it counts as protected.
     """
     if len(token) > _LENGTH_LIMIT:
@@ -451,13 +508,15 @@ def _word_parts(token: str) -> list[str] | None:
             return None
         # A short option's value may follow it in the same word, as in `-o.pax/x`, after any of its letters.
         parts += [token[i:] for i in range(2, options.end() + 1)]
+        if not posix and token[options.end() : options.end() + 1] == ':':
+            parts.append(token[options.end() + 1 :])
     return parts
 
 
-def _tokens(command: str, *, posix: bool) -> list[str]:
-    """`command` split as the shell would, operators included."""
+def _tokens(command: str, *, posix: bool, grouping: bool = False) -> list[str]:
+    """`command` split as the shell would, operators included; with `grouping`, parentheses kept in words."""
     try:
-        lexer = shlex.shlex(command, posix=posix, punctuation_chars=_OPERATORS)
+        lexer = shlex.shlex(command, posix=posix, punctuation_chars=_GROUPING_OPERATORS if grouping else _OPERATORS)
         lexer.whitespace_split = True
         # A `#` starts a comment only at the start of a word, and an unquoted one inside a word, as in `x#y`, is
         # part of it: with no comments, the words after a real one count too, which only asks more.
@@ -465,7 +524,8 @@ def _tokens(command: str, *, posix: bool) -> list[str]:
         return [token if posix else _QUOTES.sub('', token) for token in lexer]
     except ValueError:
         # Quotes that don't balance: every way of reading the words counts.
-        return [*_FALLBACK_SPLIT.split(command), *_FALLBACK_SPLIT.split(_QUOTES.sub('', command))]
+        split = _GROUPING_FALLBACK_SPLIT if grouping else _FALLBACK_SPLIT
+        return [*split.split(command), *split.split(_QUOTES.sub('', command))]
 
 
 def _scripts(words: list[str]) -> list[str]:
