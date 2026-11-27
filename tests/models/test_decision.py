@@ -12,7 +12,17 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, JsonValue, WithJsonSchema, field_validator
 
-from pydantic_ai import Agent, BinaryContent, BoolCriteria, DocumentUrl, ModelRetry, RunContext, Tool, ToolOutput
+from pydantic_ai import (
+    Agent,
+    BinaryContent,
+    BoolCriteria,
+    Choices,
+    DocumentUrl,
+    ModelRetry,
+    RunContext,
+    Tool,
+    ToolOutput,
+)
 from pydantic_ai.capabilities import Capability, FileUnderstanding, Instrumentation
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
@@ -1070,6 +1080,18 @@ async def test_no_score_limit(allow_model_requests: None):
     question = model.requests[0].questions['score']
     assert isinstance(question, ScoreQuestion)
     assert len(question.criteria) == 11
+
+
+async def test_whole_number_choices_from_zero_each_described_are_a_rubric(allow_model_requests: None):
+    """A rubric built at run time needs no class to read docstrings from, so it works wherever the code runs."""
+    model = InMemoryDecisionModel()
+    levels = Choices({level: f'Level {level}' for level in range(11)}, description='How good is it?')
+    result = await Agent(model, output_type=levels).run('Score this.')
+
+    assert result.output == 10
+    question = model.requests[0].questions['response']
+    assert isinstance(question, ScoreQuestion)
+    assert question.criteria == [f'Level {level}' for level in range(11)]
 
 
 class TenLevelDecisionModel(InMemoryDecisionModel):

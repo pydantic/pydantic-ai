@@ -317,6 +317,8 @@ async def look() -> int:
 
 assert_type(Agent(output_type=Choices({'refund': 'Money back.', 'replace': 'A new one.'})).run_sync('x').output, str)
 assert_type(Agent(output_type=Choices(['yes', 'no'])).run_sync('x').output, str)
+assert_type(Agent(output_type=Choices({0: 'It can wait.', 1: 'Handle it today.'})).run_sync('x').output, int)
+assert_type(Agent(output_type=Choices([200, 404])).run_sync('x').output, int)
 assert_type(
     Agent(output_type=Choices({doc.id: Choice(doc.title, value=doc) for doc in docs})).run_sync('x').output, Doc
 )

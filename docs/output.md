@@ -603,7 +603,7 @@ print(result.output)
 #> replace
 ```
 
-The descriptions are what make this worth a helper: each option carries its meaning into the schema the model receives, and the output is one of the keys, validated, and typed `str`. Passing a sequence of keys instead of a mapping describes nothing and asks the same question with a plain `enum`.
+The descriptions are what make this worth a helper: each option carries its meaning into the schema the model receives, and the output is one of the keys, validated, and typed `str`. Passing a sequence of keys instead of a mapping describes nothing and asks the same question with a plain `enum`. The keys can also be whole numbers, all of them rather than some, and then the output is the number, typed `int`: whole numbers from 0 upwards, each described, are a [rubric](models/decision.md#what-each-field-type-does) to a decision model.
 
 Like [`StructuredDict()`](#structured-dict), `Choices()` returns a type, so the same value works as an `output_type`, as a field of a Pydantic model, and as a [tool](tools.md) parameter. A type checker won't accept a type built at runtime in an annotation, though, so as a field or a parameter, put either one in `Annotated` on the type of the value it gives back: `Annotated[str, Intent]` for choices that don't [stand for something else](#choices-that-stand-for-something-else), and `Annotated[dict[str, Any], Person]` for a `StructuredDict()`. Pydantic reads the schema and validation from the metadata, and the type checker sees a plain `str` or `dict`:
 

@@ -36,7 +36,7 @@ INTENTS = {
 }
 
 
-def pick(key: str) -> FunctionModel:
+def pick(key: str | int) -> FunctionModel:
     """A model that fills the single output tool with `key`."""
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -103,6 +103,30 @@ def test_partially_described_choices_describe_only_what_was_described():
     assert schema['parameters']['properties']['response'] == snapshot(
         {'anyOf': [{'const': 'yes'}, {'const': 'no', 'description': 'Only when you are sure.'}], 'type': 'string'}
     )
+
+
+def test_whole_number_keys_are_an_integer_schema():
+    """Whole numbers keep their type on the wire, so 0 to n, each described, reads as a rubric's levels."""
+    urgency = Choices({0: 'It can wait.', 1: 'Handle it today.', 2: 'Money is at risk.'}, description='How urgent?')
+    assert output_tool(urgency)['parameters']['properties']['response'] == snapshot(
+        {
+            'anyOf': [
+                {'const': 0, 'description': 'It can wait.'},
+                {'const': 1, 'description': 'Handle it today.'},
+                {'const': 2, 'description': 'Money is at risk.'},
+            ],
+            'description': 'How urgent?',
+            'type': 'integer',
+        }
+    )
+    assert output_tool(Choices([200, 404]))['parameters']['properties']['response'] == snapshot(
+        {'enum': [200, 404], 'type': 'integer'}
+    )
+
+
+def test_a_whole_number_pick_is_the_number():
+    agent = Agent(pick(1), output_type=Choices({0: 'It can wait.', 1: 'Handle it today.'}))
+    assert agent.run_sync('The invoice run failed.').output == 1
 
 
 def test_a_pick_is_the_key():
@@ -390,6 +414,12 @@ def test_choices_construction_is_checked():
 
     with pytest.raises(UserError, match='not a single string'):
         Choices('abc')
+
+    with pytest.raises(UserError, match=re.escape("all strings or all whole numbers, but got ['a', 1].")):
+        Choices({'a': 'A letter.', 1: 'A number.'})  # pyright: ignore[reportArgumentType, reportCallIssue]
+
+    with pytest.raises(UserError, match=re.escape('all strings or all whole numbers, but got [True, False].')):
+        Choices([True, False])
 
     with pytest.raises(UserError, match='requires some'):
         Choice('The Login button.', value=Screen(clicks=[]).click)
