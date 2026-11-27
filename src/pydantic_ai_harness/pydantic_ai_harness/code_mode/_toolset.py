@@ -75,11 +75,12 @@ from pydantic_ai_harness._monty_exec import (
     Snapshot,
     TurnComplete,
     TurnFeed,
-    in_durable_task_orchestration,
+    durable_engine_spec,
     in_temporal_workflow,
     module_attrs,
     module_functions,
     unbounded_replay_engine,
+    uses_portal,
 )
 from pydantic_ai_harness._monty_turns import MontyFailure, MontyTurn, TurnRequest, model_safe_result
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, renamed_duration_limit, warn_argument_renamed
@@ -1697,14 +1698,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # behavior as a normal call while presenting one combined result to the model.
         capture = execution.capture
 
-        # Temporal workflow code and Durable Task orchestrator code both replay, and neither loop can be
-        # woken from Monty's thread, so Monty is called through a portal (see `call_monty`).
-        replays = in_temporal_workflow() or in_durable_task_orchestration()
+        spec = durable_engine_spec(ctx)
+        use_portal = uses_portal(spec)
         configured = _resolve_resource_limits(self.resource_limits)
-        # `run_code` executes in workflow code and the engine replays it. An elapsed timer may make the
-        # original run and replay take different branches, which the engine cannot record.
+        # `run_code` executes in workflow code, which the engine may replay. An elapsed timer may make
+        # the original run and replay take different branches, which the engine cannot record.
+        replays = spec is not None and spec.replays_orchestrator_code
         limits = configured | {'max_feed_duration_secs': None} if replays else configured
-        if repl is not None and await repl.restore(run_state, limits=limits, use_portal=replays):
+        if repl is not None and await repl.restore(run_state, limits=limits, use_portal=use_portal):
             # The type checker would reject the names the restored state defines.
             fresh_repl = type_check = False
         executor = partial(
@@ -1713,8 +1714,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             valid_names=callable_defs,
             sequential_names=sequential_tools,
             global_sequential=global_sequential,
-            # The configured limit, kept inside a Temporal workflow too: Monty's elapsed-time
-            # check is dropped there for replay, but sleeps are charged what they request.
+            # The configured limit, kept in replayed workflow code too: Monty's elapsed-time
+            # check is dropped there, but sleeps are charged what they request.
             max_sleep_seconds=configured.get('max_feed_duration_secs'),
             # Already converted in `__post_init__`; this narrows the field's type.
             os_handler=as_os_handler(self.os_access),
@@ -1731,7 +1732,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 type_check_stubs=type_check_stubs if type_check else None,
                 limits=limits,
                 replays=replays,
-                use_portal=replays,
+                use_portal=use_portal,
             )
             return await self._feed(executor(portal=portal), start, run_state, execution, fresh_repl=fresh_repl)
 

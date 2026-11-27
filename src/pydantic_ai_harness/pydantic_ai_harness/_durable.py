@@ -54,8 +54,8 @@ class _Durability(Protocol):
     in_durable_context: bool
 
 
-# `_monty_exec.in_temporal_workflow` asks Temporal directly, because only Temporal replays
-# `run_code`. This one covers every engine.
+# `_monty_exec.durable_engine_spec` reads how an engine runs `run_code` from its spec. This one
+# only asks whether any engine's durable container is running.
 def in_durable_context(ctx: RunContext[Any]) -> bool:
     """Whether this run executes inside a durable workflow or flow, without importing the optional extras."""
     return any(

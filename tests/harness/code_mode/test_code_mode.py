@@ -51,6 +51,7 @@ from pydantic_ai import (
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability, Capability, Instrumentation, ToolSearch, Toolset
 from pydantic_ai.computer_use import COMPUTER_KIND
+from pydantic_ai.durable_exec import DurabilityEngineSpec
 from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -160,6 +161,26 @@ async def build_ctx(
     prepared_tm = await tm.for_run_step(ctx)
     ctx.tool_manager = prepared_tm
     return ctx
+
+
+_ORCHESTRATOR_SPEC = DurabilityEngineSpec(
+    engine_name='orchestrator',
+    durable_unit_noun='activity',
+    durable_container_noun='workflow',
+    replays_orchestrator_code=True,
+    thread_wakeable_loop=False,
+    bounds_blocking_orchestrator_code=True,
+)
+"""An engine like Temporal: its workflow code replays, on a loop Monty's thread can't wake, and it stops code that blocks."""
+
+
+def in_orchestrator_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run `run_code` as in `_ORCHESTRATOR_SPEC`'s workflow code, without a server."""
+
+    def engine_spec(ctx: RunContext[object]) -> DurabilityEngineSpec:
+        return _ORCHESTRATOR_SPEC
+
+    monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.durable_engine_spec', engine_spec)
 
 
 # ---------------------------------------------------------------------------
@@ -1198,10 +1219,7 @@ class TestCodeMode:
     ) -> None:
         """Temporal replays `run_code`, so its elapsed timer cannot decide workflow control flow."""
 
-        def in_temporal_workflow() -> bool:
-            return True
-
-        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.in_temporal_workflow', in_temporal_workflow)
+        in_orchestrator_code(monkeypatch)
         options: tuple[CodeModeResourceLimits | None, ...] = (
             None,
             {'max_duration_seconds': 0.001, 'max_memory': 8 * 1024 * 1024},
@@ -1640,10 +1658,7 @@ class TestCodeMode:
         def failing_monty() -> Never:
             raise RuntimeError('spawn failed')
 
-        def in_temporal_workflow() -> bool:
-            return True
-
-        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.in_temporal_workflow', in_temporal_workflow)
+        in_orchestrator_code(monkeypatch)
         monkeypatch.setattr('pydantic_ai_harness._monty_exec.AsyncMonty', failing_monty)
 
         threads_before = set(threading.enumerate())
@@ -5705,16 +5720,13 @@ class TestCodeModeOSAccessInTemporal:
     """Inside a Temporal workflow, host-state calls reach `os_access` on the run's own thread.
 
     Through the portal Monty would call the handler from its own thread, where `temporalio.workflow`
-    APIs such as `workflow.now()` refuse to run. `in_temporal_workflow` is patched so the portal path
-    runs here without a Temporal server; `test_temporal.py` covers a real workflow.
+    APIs such as `workflow.now()` refuse to run. The engine spec is patched so the portal path runs
+    here without a Temporal server; `test_temporal.py` covers a real workflow.
     """
 
     @pytest.fixture(autouse=True)
     def _in_workflow(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        def in_temporal_workflow() -> bool:
-            return True
-
-        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.in_temporal_workflow', in_temporal_workflow)
+        in_orchestrator_code(monkeypatch)
 
     async def _run(self, code: str, os_access: Any, mount: MountDir | None = None) -> Any:
         wrapper = CodeMode[object](os_access=os_access, mount=mount).get_wrapper_toolset(_build_function_toolset(add))

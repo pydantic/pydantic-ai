@@ -10,8 +10,9 @@ Two capabilities build on this:
 
 The snapshot API (rather than `feed_run`) is used deliberately: it exposes each suspension
 to this host-controlled loop, which owns sequential barriers, dispatch cancellation, and
-trace context. Workers come from Monty's async bindings (`MontyRunState`); inside a Temporal
-workflow each call into them goes through a blocking portal (see `call_monty`).
+trace context. Workers come from Monty's async bindings (`MontyRunState`); in workflow code whose
+loop can't be woken from another thread, each call into them goes through a blocking portal (see
+`call_monty`).
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from typing_extensions import TypeVarTuple, Unpack
 
 from pydantic_ai import RunContext
 from pydantic_ai._utils import is_async_callable, run_in_executor
+from pydantic_ai.capabilities import WrapperCapability
 from pydantic_ai.durable_exec import BaseDurabilityCapability, DurabilityEngineSpec
 from pydantic_ai_harness._typeguards import is_object_tuple, is_str_keyed_dict
 
@@ -85,7 +87,7 @@ _Args = TypeVarTuple('_Args')
 
 
 def in_temporal_workflow() -> bool:
-    """Whether this code runs in a Temporal workflow, where Monty must be called through the portal.
+    """Whether this code runs in a Temporal workflow.
 
     Reads `sys.modules` so the optional extra is never imported.
     """
@@ -94,12 +96,51 @@ def in_temporal_workflow() -> bool:
 
 
 def in_durable_task_orchestration() -> bool:
-    """Whether this code runs in an Azure Durable Task orchestration, where Monty must be called through the portal.
+    """Whether this code runs in an Azure Durable Task orchestration.
 
     Reads `sys.modules` so the optional extra is never imported.
     """
     bridge = sys.modules.get('pydantic_ai_harness.azure_durable_task._bridge')
     return bridge is not None and bridge.current_loop() is not None
+
+
+def _durability_spec(ctx: RunContext[object]) -> DurabilityEngineSpec | None:
+    """The spec of the run's durability capability whose durable container is running, or `None`.
+
+    Read from `ctx.capabilities`, so a capability passed with `agent.run(capabilities=[...])` counts
+    as one attached to the agent does. A wrapper around a single capability, such as
+    `prefix_tools()`, is listed there instead of what it wraps, so it is unwrapped as
+    `BaseDurabilityCapability.from_agent` does: the wrapped engine still binds its durable operations.
+    """
+    for capability in ctx.capabilities.values():
+        while isinstance(capability, WrapperCapability):
+            capability = capability.wrapped
+        if isinstance(capability, BaseDurabilityCapability) and capability.in_durable_context:
+            return capability.engine_spec
+    return None
+
+
+def durable_engine_spec(ctx: RunContext[object]) -> DurabilityEngineSpec | None:
+    """The spec of the durable engine whose workflow code this run executes in, or `None` outside one.
+
+    Read from the run's durability capability, as `unbounded_replay_engine` reads it, so the two
+    always agree. The deprecated `TemporalAgent` runs a workflow without one, so a Temporal workflow
+    with none gets Temporal's spec. (`unbounded_replay_engine` refuses a snippet in a Durable Task
+    orchestration whose agent has none, so no fallback is needed there.)
+    """
+    if (spec := _durability_spec(ctx)) is not None:
+        return spec
+    if in_temporal_workflow():
+        # Only reached in a workflow, so `temporalio` is already imported.
+        from pydantic_ai.durable_exec.temporal._spec import TEMPORAL_ENGINE_SPEC
+
+        return TEMPORAL_ENGINE_SPEC
+    return None
+
+
+def uses_portal(spec: DurabilityEngineSpec | None) -> bool:
+    """Whether Monty must be called through a portal: in workflow code whose loop Monty's thread can't wake."""
+    return spec is not None and not spec.thread_wakeable_loop
 
 
 def unbounded_replay_engine(ctx: RunContext[object]) -> DurabilityEngineSpec | None:
@@ -108,14 +149,7 @@ def unbounded_replay_engine(ctx: RunContext[object]) -> DurabilityEngineSpec | N
     Sandboxed code there can't have an elapsed-time limit, since every replay must take the recorded
     path, and nothing else stops a snippet that computes forever, so it must not run there.
     """
-    spec = next(
-        (
-            capability.engine_spec
-            for capability in ctx.capabilities.values()
-            if isinstance(capability, BaseDurabilityCapability) and capability.in_durable_context
-        ),
-        None,
-    )
+    spec = _durability_spec(ctx)
     if spec is None and in_durable_task_orchestration():
         # An agent with no durability capability of its own, such as one an inline tool runs.
         from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability
@@ -126,16 +160,17 @@ def unbounded_replay_engine(ctx: RunContext[object]) -> DurabilityEngineSpec | N
     return spec
 
 
-# Running Monty inside a Temporal workflow or a Durable Task orchestration
-# ------------------------------------------------------------------------
+# Running Monty in workflow code whose loop can't be woken from another thread
+# ----------------------------------------------------------------------------
 # Monty's bindings are async and complete each awaited call from Monty's own I/O thread by waking
-# the event loop the `await` started on (`loop.call_soon_threadsafe`). Neither a Temporal workflow's
-# event loop nor the loop that drives an Azure Durable Task orchestrator can be woken that way, so
-# the call would never complete. Inside a workflow or orchestration, the
+# the event loop the `await` started on (`loop.call_soon_threadsafe`). Some engines run workflow
+# code on a loop that can't be woken that way (`DurabilityEngineSpec.thread_wakeable_loop` is
+# `False`), such as a Temporal workflow's loop or the loop that drives an Azure Durable Task
+# orchestrator, so the call would never complete. In such workflow code, the
 # helpers below therefore route every Monty call through an `anyio` blocking portal: a helper
 # thread running a normal asyncio loop. The workflow thread blocks until the sandbox suspends or
 # completes, exactly as it did with Monty's former sync bindings, and control is back in the
-# workflow between calls, where nested tools run as activities. Outside a workflow the portal is
+# workflow between calls, where nested tools run as activities. Elsewhere the portal is
 # `None` and every helper is a plain `await`.
 
 
@@ -237,8 +272,9 @@ class MontyRunState:
     """A Monty worker pool and its checked-out REPL session, opened lazily and closed together.
 
     Workers are local subprocesses from `AsyncMonty`, or remote ones dialed through
-    `AsyncMontyRemote` when `monty_sandbox_url` or `pool_factory` is set. Inside a Temporal workflow or
-    a Durable Task orchestration every Monty call goes through `portal`, opened with the pool and closed after it.
+    `AsyncMontyRemote` when `monty_sandbox_url` or `pool_factory` is set. In workflow code whose loop
+    can't be woken from another thread, every Monty call goes through `portal`, opened with the pool and
+    closed after it.
     """
 
     monty_sandbox_url: str | None = field(default=None, repr=False)
@@ -567,7 +603,7 @@ class MontyExecutor:
     valid_names: Container[str]
     sequential_names: set[str] = field(default_factory=set[str])
     global_sequential: bool = False
-    # Set inside a Temporal workflow or a Durable Task orchestration; see `call_monty`.
+    # Set in workflow code whose loop can't be woken from another thread; see `call_monty`.
     portal: BlockingPortal | None = None
     # Total seconds the code may sleep, or `None` for no cap. Sleep time does not count toward
     # Monty's execution-time limit, so it gets the same allowance separately.
