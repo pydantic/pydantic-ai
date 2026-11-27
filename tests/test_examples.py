@@ -163,6 +163,7 @@ RUNNABLE_HARNESS_PAGES = frozenset(
         'deny-unanswered.md',
         'detect-loops.md',
         'memory.md',
+        'pax.md',
         'permissions.md',
         'report-remaining-budget.md',
         'report-tool-errors.md',

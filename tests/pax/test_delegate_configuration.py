@@ -162,7 +162,14 @@ async def test_review_resolves_models_settings_and_policy_directory(tmp_path: Pa
 
     async with DelegationTasks().opened() as owner:
         with owner.bind():
-            result = await agent.run('PRIVATE_PARENT_PROMPT', workspace=Workspace(LocalWorkspaceBackend(candidate)))
+            # `policy` is outside the session's directory, so the operator names it for its `AGENTS.md` to stay
+            # instructions in Review.
+            workspace = AuthorityWorkspace(
+                Workspace(LocalWorkspaceBackend(candidate)),
+                authority='operator',
+                path_authority={str(policy): 'operator'},
+            )
+            result = await agent.run('PRIVATE_PARENT_PROMPT', workspace=workspace)
         (record,) = owner.records.values()
         assert record.working_directory == str(policy)
         assert record.resumable is False and record.model == 'review-light'

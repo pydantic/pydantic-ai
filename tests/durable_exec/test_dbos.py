@@ -32,6 +32,8 @@ from pydantic_ai import (
     CapabilityEvent,
     CapabilityInstructionSource,
     CapabilityLoadDeltaPart,
+    CompactionPart,
+    CompactionStartEvent,
     CustomEvent,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -64,15 +66,19 @@ from pydantic_ai.capabilities import (
     MCP,
     BatchModelRequests,
     Capability,
+    CompactionRequest,
+    CompactionResult,
     DynamicCapability,
     Hooks,
     ModelFallback,
+    NativeCompaction,
     PrepareTools,
     SetToolMetadata,
     ToolSearch,
     WrapModelRequestHandler,
     WrapperCapability,
     durable_operation,
+    on_event,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
@@ -82,6 +88,7 @@ from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     ModelAPIError,
+    ModelContextWindowExceededError,
     ModelHTTPError,
     ModelRateLimitError,
     ModelRequestTimeout,
@@ -3275,6 +3282,36 @@ async def test_dbos_durability_sticky_fallback_goes_straight_to_the_candidate(db
     assert calls == ['primary', 'target', 'target', 'target', 'target']
 
 
+async def test_dbos_durability_fallback_on_unsupported_setting_warning(dbos: DBOS) -> None:
+    """A model that would ignore a setting the request relies on is moved on from inside a DBOS workflow too."""
+    calls: list[str] = []
+
+    class IgnoresStopSequences(FunctionModel):
+        unsupported_settings = frozenset({'stop_sequences'})
+
+    def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('called')
+        return ModelResponse(parts=[TextPart('answered')])
+
+    agent = Agent(
+        IgnoresStopSequences(answer, model_name='primary'),
+        name='durability_unsupported_setting_fallback',
+        model_settings={'stop_sequences': ['STOP']},
+        capabilities=[
+            ModelFallback('backup', fallback_on=(ModelAPIError, UnsupportedSettingWarning)),
+            DBOSDurability(models={'backup': FunctionModel(answer, model_name='backup')}),
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> tuple[str | None, list[str]]:
+        result = await agent.run('Hello DBOS')
+        return result.response.model_id, [f'{a.model_name} {a.outcome}' for a in result.response.failed_attempts or []]
+
+    assert await run_durable_agent() == ('backup', ['primary error'])
+    assert calls == ['called']
+
+
 async def test_dbos_durability_rejects_a_live_workspace_workflow_input(dbos: DBOS, tmp_path: Path) -> None:
     """A live backend passed into a workflow has no durable steps behind it, so the run refuses it.
 
@@ -4321,6 +4358,29 @@ async def test_dbos_step_wrapped_tool_rejects_cancel_in_workflow(dbos: DBOS) -> 
 
     with pytest.raises(RunCancelled):
         await agent.run('run')
+
+
+async def test_dbos_step_wrapped_tool_rejects_request_compaction_in_workflow(dbos: DBOS) -> None:
+    """`ctx.request_compaction()` inside a step-wrapped tool raises: a replayed step wouldn't request it again."""
+
+    async def compact(ctx: RunContext[object]) -> str:
+        ctx.request_compaction()
+        return 'requested'  # pragma: no cover
+
+    agent = Agent(
+        TestModel(),
+        deps_type=object,
+        name='dbos_request_compaction_dynamic',
+        toolsets=[DynamicToolset(lambda ctx: FunctionToolset([compact]), id='compact_dynamic')],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    with pytest.raises(UserError, match='`request_compaction` is not supported inside a durable step'):
+        await run_workflow()
 
 
 async def test_dbos_step_wrapped_sub_agent_self_cancel_is_a_failed_tool_return(dbos: DBOS) -> None:
@@ -6083,6 +6143,109 @@ class _OverrideAddedOperation(AbstractCapability[object]):
         self.calls += 1
 
 
+@dataclass
+class _ChecksTheResponseDurably(AbstractCapability[object]):
+    """Rewrites the model's response from an `after_model_request` that runs as a durable step."""
+
+    @durable_operation('after_model_request')
+    async def after_model_request(
+        self, ctx: RunContext[object], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        return replace(response, parts=[TextPart(f'Checked: {response.text}')])
+
+
+@dataclass
+class _HandsOnTheResponseDurably(AbstractCapability[object]):
+    """Hands the model's response on unchanged from an `after_model_request` that runs as a durable step."""
+
+    @durable_operation('after_model_request')
+    async def after_model_request(
+        self, ctx: RunContext[object], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        return response
+
+
+@dataclass
+class _UnannotatedChecksTheResponseDurably(AbstractCapability[object]):
+    """A durable `after_model_request` override that doesn't annotate what it returns."""
+
+    @durable_operation('after_model_request')
+    async def after_model_request(
+        self, ctx: RunContext[object], *, request_context: ModelRequestContext, response: ModelResponse
+    ):
+        return replace(response, parts=[TextPart(f'Checked: {response.text}')])
+
+
+@durable_operation('after_model_request')
+async def _check_the_response(
+    self: AbstractCapability[object],
+    ctx: RunContext[object],
+    *,
+    request_context: ModelRequestContext,
+    response: ModelResponse,
+):
+    return replace(response, parts=[TextPart(f'Checked: {response.text}')])
+
+
+@dataclass
+class _AliasedChecksTheResponseDurably(AbstractCapability[object]):
+    """An unannotated durable `after_model_request` override written under another name and set as the hook."""
+
+    after_model_request = _check_the_response
+
+
+@pytest.mark.parametrize('capability', [_UnannotatedChecksTheResponseDurably, _AliasedChecksTheResponseDurably])
+async def test_dbos_durability_an_unannotated_durable_after_model_request_returns_its_response(
+    dbos: DBOS, capability: type[_UnannotatedChecksTheResponseDurably | _AliasedChecksTheResponseDurably]
+) -> None:
+    """An override returns what the hook it overrides returns, so that, not its own annotation, decides how it's sent."""
+    agent = Agent(
+        _durability_fn_model,
+        name=f'durability_unannotated_after_model_request_{capability.__name__.lower()}',
+        capabilities=[capability(id='unannotated_after'), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await run_agent() == 'Checked: Echo: Hello'
+
+
+async def test_dbos_durability_a_durable_after_model_request_returns_its_response(dbos: DBOS) -> None:
+    """The step takes the request context but returns a response, which comes back as the response."""
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_after_model_request_rewrites',
+        capabilities=[_ChecksTheResponseDurably(id='checks_the_response'), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await run_agent() == snapshot('Checked: Echo: Hello')
+
+
+async def test_dbos_durability_a_lowered_durable_after_model_request_can_hand_on_the_response(dbos: DBOS) -> None:
+    """A capability below operator authority whose durable `after_model_request` hands the response on unchanged."""
+    capability = _HandsOnTheResponseDurably(id='hands_on_the_response').with_authority('user')
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_after_model_request_hands_on',
+        capabilities=[capability, DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await run_agent() == snapshot('Echo: Hello')
+
+
 async def test_dbos_durability_override_capabilities_follow_the_per_run_rules(dbos: DBOS) -> None:
     """A capability an override adds has no registered steps, so inside a workflow it is refused like a per-run one."""
     agent = Agent(_durability_fn_model, name='durability_override_added', capabilities=[DBOSDurability()])
@@ -7565,6 +7728,129 @@ def test_dbos_records_what_a_stream_produced_before_failing(error: ModelAPIError
     assert streamed_before_failing(replayed) == partial
 
 
+async def test_dbos_durability_compaction_runs_model_calls_as_steps(dbos: DBOS) -> None:
+    """A `compact_history` hook runs in the workflow, and its call through `request.conversation_request.model` is a DBOS step.
+
+    The model rejects the first attempt for exceeding its context window, so the overflow is compacted and retried
+    within the same attempt; a listener cancels the requested compaction of the following step.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if not info.function_tools:
+            # The compaction's own request, which offers no tools.
+            return ModelResponse(parts=[TextPart('a summary')])
+        if not any(isinstance(part, CompactionPart) for message in messages for part in message.parts):
+            raise ModelContextWindowExceededError('model', 'context_length_exceeded')
+        if sum(isinstance(message, ModelResponse) for message in messages) == 0:
+            return ModelResponse(parts=[ToolCallPart('compact_again', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        # A run with an event listener streams its requests.
+        response = model_fn(messages, info)
+        part = response.parts[0]
+        if isinstance(part, ToolCallPart):
+            yield {0: DeltaToolCall(name=part.tool_name, json_args='{}')}
+        else:
+            yield response.text or ''
+
+    class Summarize(AbstractCapability[None]):
+        async def compact_history(self, ctx: RunContext[None], request: CompactionRequest) -> CompactionResult | None:
+            summary = await request.conversation_request.model.request(
+                [ModelRequest(parts=[UserPromptPart('Summarize the conversation.')])],
+                None,
+                ModelRequestParameters(),
+            )
+            part = CompactionPart(content=summary.text)
+            return CompactionResult(
+                messages=[ModelRequest(parts=[part]), request.messages[-1]], part=part, handler='summarize', kept_from=1
+            )
+
+    cancelled: list[str] = []
+
+    class HoldRequested(AbstractCapability[None]):
+        @on_event(CompactionStartEvent)
+        async def _hold(self, ctx: RunContext[None], event: CompactionStartEvent) -> None:
+            if event.reason != 'context_overflow':
+                cancelled.append(event.reason)
+                event.cancel()
+
+    agent = Agent(
+        FunctionModel(model_fn, stream_function=stream_fn),
+        name='durability_compaction',
+        deps_type=type(None),
+        capabilities=[HoldRequested(), Summarize(), DBOSDurability()],
+    )
+
+    @agent.tool
+    def compact_again(ctx: RunContext[None]) -> str:
+        ctx.request_compaction(reason='threshold')
+        return 'requested'
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> tuple[str, list[str]]:
+        result = await agent.run('Hello DBOS')
+        return result.output, [record.reason for record in result.compactions]
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        output, reasons = await run_durable_agent()
+    assert (output, reasons, cancelled) == ('done', ['context_overflow'], ['threshold'])
+    steps = await dbos.list_workflow_steps_async(wfid)
+    assert [step['function_name'] for step in steps] == snapshot(
+        [
+            'durability_compaction__model.request_stream',
+            'durability_compaction__model.request',
+            'durability_compaction__model.request_stream',
+            'durability_compaction__model.request_stream',
+        ]
+    )
+
+
+async def test_dbos_run_compact_runs_the_compaction_as_a_step(dbos: DBOS) -> None:
+    """`run(compact=...)` in a workflow compacts through the durable model, so the provider call is a DBOS step."""
+
+    class CompactingModel(FunctionModel):
+        async def compact_messages(
+            self, request_context: ModelRequestContext, *, instructions: str | None = None
+        ) -> ModelResponse:
+            return ModelResponse(
+                parts=[CompactionPart(content=f'a summary of {len(request_context.messages)}, about {instructions}')]
+            )
+
+    def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        [summary] = messages[0].parts
+        assert isinstance(summary, CompactionPart)
+        return ModelResponse(parts=[TextPart(f'answered from {summary.content}')])
+
+    model = CompactingModel(
+        answer, profile=ModelProfile(supports_compaction_on_demand=True, compaction_instructions='replaces_prompt')
+    )
+    agent = Agent(model, name='durability_run_compact', capabilities=[NativeCompaction(), DBOSDurability()])
+
+    @DBOS.workflow()
+    async def compact_durably() -> tuple[str, list[str]]:
+        result = await agent.run(
+            'What did I say?',
+            message_history=[
+                ModelRequest(parts=[UserPromptPart('Hello DBOS')]),
+                ModelResponse(parts=[TextPart('Hello!')]),
+            ],
+            compact={'focus': 'the greeting'},
+        )
+        return result.output, [record.handler for record in result.compactions]
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        output, handlers = await compact_durably()
+    assert output == 'answered from a summary of 2, about the greeting'
+    assert handlers == ['native']
+    steps = await dbos.list_workflow_steps_async(wfid)
+    assert [step['function_name'] for step in steps] == snapshot(
+        ['durability_run_compact__model.compact_messages', 'durability_run_compact__model.request']
+    )
+
+
 class _Survey(BaseModel):
     answer: int
 
@@ -7919,3 +8205,84 @@ async def test_dbos_tool_instance_defaults_patch_cache_holds_its_result_after_ca
     monkeypatch.setitem(_cancelled_probe_events, 'release', release)
     with SetWorkflowID(f'tool-instances-cancelled-run-{uuid.uuid4()}'):
         await cancelled_tool_instances_run_workflow()
+
+
+async def compaction_event_stream_handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for _ in stream:
+        pass
+
+
+@pytest.mark.parametrize('threshold', [2, 100], ids=['compacting', 'not-compacting'])
+@pytest.mark.parametrize('with_handler', [False, True], ids=['without-handler', 'with-handler'])
+async def test_dbos_stateless_openai_compaction_events_are_steps(
+    dbos: DBOS, with_handler: bool, threshold: int
+) -> None:
+    """Stateless `OpenAICompaction` compacts through `compact_history`, so its compaction events reach the handler.
+
+    With an `event_stream_handler`, the `CompactionStartEvent` and `CompactionEndEvent` it handles are two steps of
+    their own, which a workflow started before the upgrade didn't record. Without one, or without a compaction, the
+    steps are the ones it always had.
+    """
+    from pydantic_ai.models.openai import OpenAICompaction, OpenAIResponsesModel
+
+    class Responses(OpenAIResponsesModel):
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('answered')], model_name=self.model_name)
+
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: RunContext[Any] | None = None,
+        ) -> AsyncGenerator[StreamedResponse]:
+            async with stand_in.request_stream(
+                messages, model_settings, model_request_parameters, run_context
+            ) as stream:
+                yield stream
+
+        async def compact_messages(
+            self, request_context: ModelRequestContext, *, instructions: str | None = None
+        ) -> ModelResponse:
+            return ModelResponse(parts=[CompactionPart(content='summary', provider_name='openai')])
+
+    async def answer(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'answered'
+
+    stand_in = FunctionModel(stream_function=answer)
+    name = f'stateless_openai_compaction_{with_handler}_{threshold}'
+    agent = Agent(
+        Responses('gpt-5.4-nano', provider=OpenAIProvider(api_key='test')),
+        name=name,
+        capabilities=[
+            OpenAICompaction(message_count_threshold=threshold),
+            DBOSDurability(event_stream_handler=compaction_event_stream_handler if with_handler else None),
+        ],
+    )
+
+    @DBOS.workflow(name=f'{name}_workflow')
+    async def compact_durably() -> list[str]:
+        result = await agent.run(
+            'And now?',
+            message_history=[ModelRequest(parts=[UserPromptPart('Hi')]), ModelResponse(parts=[TextPart('Hello!')])],
+        )
+        return [record.handler for record in result.compactions]
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        assert await compact_durably() == (['native'] if threshold == 2 else [])
+    steps = [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)]
+    handled = [f'{name}__event_stream_handler'] * 2
+    expected = {
+        (False, 2): [f'{name}__model.compact_messages', f'{name}__model.request'],
+        (True, 2): [f'{name}__model.compact_messages', f'{name}__model.request_stream', *handled],
+        (False, 100): [f'{name}__model.request'],
+        (True, 100): [f'{name}__model.request_stream'],
+    }
+    assert steps == expected[with_handler, threshold]

@@ -3580,11 +3580,23 @@ def test_named_workflow_and_task_recovery_refuses_quota_only_closure(
     assert client.closed == []
 
 
-def test_marker_from_body_rejects_deeply_nested_json() -> None:
-    """Malformed nested issue markers cannot abort monitoring."""
-    body = health.MARKER_PREFIX + '{"nested":' + '[' * 10_000 + '0' + ']' * 10_000 + '} -->'
+def test_marker_from_body_rejects_deeply_nested_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Malformed nested issue markers cannot abort monitoring.
 
-    assert _marker_from_body(body) is None
+    From Python 3.14, whether `json.loads` raises `RecursionError` at this depth depends on the stack size.
+    The marker's parse is replaced with one that raises it, to reach that case on any stack.
+    """
+    marker = '{"nested":' + '[' * 10_000 + '0' + ']' * 10_000 + '}'
+    loads = json.loads
+
+    def loads_marker_too_deep(s: str) -> object:
+        if s == marker:
+            raise RecursionError('maximum recursion depth exceeded while decoding a JSON array from a unicode string')
+        return loads(s)
+
+    monkeypatch.setattr(json, 'loads', loads_marker_too_deep)
+
+    assert _marker_from_body(health.MARKER_PREFIX + marker + ' -->') is None
 
 
 def test_monitor_ignores_successful_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -48,6 +48,8 @@ built from the pieces `Coder` puts together.
 from a Markdown workflow file in GitHub Actions, or run a Python script directly with `uv run`;
 nothing requires an Action.
 
+**Can I control which content my agent treats as instructions?** Yes. What a capability tells the model mid-conversation is a typed part that records who wrote it (you, your user, or nobody you trust), and Pydantic AI speaks it in the voice that authority allows; what a capability enqueues can be lowered, never raised, as it moves through a run. Tool results and fetched pages stay data on every provider, and text that imitates the framework's own frames is flagged to the model. A workspace's files carry your authority unless you mark them untrusted, path by path. See [Where the content came from](../capabilities/custom.md#where-the-content-came-from) for the source and authority table, [Capability parts](../message-history.md#capability-parts) for how they are stored, and [Marking who wrote the files](../workspace-custom.md#workspace-authority).
+
 *Last checked: 2026-09-26*
 
 ## Sources
