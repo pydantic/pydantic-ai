@@ -26,6 +26,7 @@ from pydantic_ai.durable_exec import (
     WorkspaceCallParams,
     revalidate_function_call,
 )
+from pydantic_ai.durable_exec._toolset import dump_json_function_args
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
@@ -141,9 +142,10 @@ def function_transport(
     def dump(params: ToolsetCallToolParams) -> _Call:
         tool = params.tool
         assert tool is not None
+        tool_args = dump_json_function_args(toolset, tool, params.tool_args, by_alias=True, round_trip=True)
         return _Call(
             name=params.name,
-            tool_args=_FUNCTION_TOOL_ARGS.dump_python(params.tool_args, mode='json', by_alias=True, round_trip=True),
+            tool_args=_FUNCTION_TOOL_ARGS.dump_python(tool_args, mode='json', by_alias=True, round_trip=True),
             context=ContextSnapshot.capture(params.ctx),
             tool_def=tool.tool_def,
             original_name=tool.original_name if isinstance(tool, FunctionToolsetTool) else None,

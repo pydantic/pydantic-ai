@@ -35,6 +35,7 @@ from ._compat import (
     WorkspaceCallParams,
     WorkspaceCallResult,
     capability_operation_result_type,
+    dump_json_function_args,
     dump_json_object,
     function_tool_original_name,
     load_json_object,
@@ -135,9 +136,10 @@ class RenderFunctionCallTransport(Generic[AgentDepsT], RenderJSONTransport[Tools
         tool = params.tool
         if tool is None:  # pragma: no cover - core resolves tools before dispatch
             raise ValueError(f'Function tool {params.name!r} has no resolved definition.')
+        tool_args = dump_json_function_args(self._toolset, tool, params.tool_args, by_alias=True)
         payload = _CallToolPayload(
             name=params.name,
-            tool_args=to_json_object(_FUNCTION_TOOL_ARGS.dump_python(params.tool_args, mode='json', by_alias=True)),
+            tool_args=to_json_object(_FUNCTION_TOOL_ARGS.dump_python(tool_args, mode='json', by_alias=True)),
             run_context=self._context_codec.dump(params.ctx),
             tool_def=tool.tool_def,
             original_name=function_tool_original_name(tool),
