@@ -64,11 +64,12 @@ agent = Agent(model)
 
 #### API version
 
-`GoogleProvider` sends Gemini API requests to the `v1beta` API version, which serves every feature Pydantic AI uses.
+`GoogleProvider` sends Gemini API requests to the `v1beta` API version, the `google-genai` 2 default.
 With `google-genai` 3, set the `GOOGLE_GENAI_API_VERSION` environment variable to use another version. A client you
 pass as `GoogleProvider(client=...)` keeps its own version. From `google-genai` 3 that defaults to `v1`, which serves
 neither [context caching](#context-caching-google_cached_content) nor the [Live API](../realtime/gemini.md), nor the
-`-latest` model aliases and some preview models. So build such a client with
+`-latest` model aliases and some preview models, as the
+[3.0.0 release notes](https://github.com/googleapis/python-genai/releases/tag/v3.0.0) say. So build such a client with
 `HttpOptions(api_version='v1beta')`.
 
 ### Google Cloud (Enterprise)
