@@ -8,6 +8,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
+from typing_extensions import TypeIs
+
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage
@@ -39,6 +41,17 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 _escalating: ContextVar[bool] = ContextVar('pydantic_ai_harness.compaction.escalating', default=False)
+
+
+def is_capability_tier(
+    tier: CompactionStrategy[AgentDepsT] | AbstractCapability[AgentDepsT],
+) -> TypeIs[AbstractCapability[AgentDepsT]]:
+    """Whether a strategy is itself a capability, and so participates in capability-tree walks.
+
+    The union input lets the guard narrow to a bound `AbstractCapability[AgentDepsT]`; a plain
+    `isinstance` on `CompactionStrategy` alone loses the type parameter to `Unknown`.
+    """
+    return isinstance(tier, AbstractCapability)
 
 
 @dataclass
@@ -155,6 +168,46 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
             self,
             tiers=[tier.with_focus(focus) if isinstance(tier, SupportsFocus) else tier for tier in self.tiers],
         )
+
+    def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
+        """Visit each tier that is itself a capability, so capability-tree walks see through this composite.
+
+        A durability engine binds a tier's `durable_operation` methods by walking the capability tree;
+        with the leaf default, a `SummarizingCompaction` nested as a tier never registers its operations
+        and runs its model I/O inside the workflow sandbox instead of as an activity.
+        """
+        for tier in self.tiers:
+            if is_capability_tier(tier):
+                tier.apply(visitor)
+
+    def visit_and_replace(
+        self, visitor: Callable[[AbstractCapability[AgentDepsT]], AbstractCapability[AgentDepsT] | None]
+    ) -> AbstractCapability[AgentDepsT] | None:
+        """Visit each capability tier, rebuilding from the survivors.
+
+        Like `CombinedCapability`, the composite is defined by its tiers: only they are visited,
+        and the composite itself is not offered to the visitor. A tier the visitor removes is
+        dropped; when no tier survives, this composite contributes nothing and is removed too.
+        Non-capability tiers pass through untouched, preserving order.
+        """
+        new_tiers: list[CompactionStrategy[AgentDepsT]] = []
+        unchanged = True
+        for tier in self.tiers:
+            if not is_capability_tier(tier):
+                new_tiers.append(tier)
+                continue
+            new_tier = tier.visit_and_replace(visitor)
+            if new_tier is not tier:
+                unchanged = False
+            if new_tier is not None:
+                # Visitors only see this composite's tiers, which are both capabilities and
+                # compaction strategies; the strategy side of the result is invisible to pyright.
+                new_tiers.append(new_tier)  # pyright: ignore[reportArgumentType]
+        if unchanged:
+            return self
+        if not new_tiers:
+            return None
+        return replace(self, tiers=new_tiers)
 
     def _target(self, model: AbstractModel | str) -> int | None:
         """Absolute token target, resolved against *model* when expressed as a fraction.
