@@ -16,3 +16,8 @@
             - DeferredToolRequests
             - PendingModelResponse
             - OutputObjectDefinition
+            - OutputMode
+            - StructuredOutputMode
+            - OutputSpec
+            - OutputTypeOrFunction
+            - TextOutputFunc
