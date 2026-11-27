@@ -1,18 +1,20 @@
-"""Pin what each model class does with each request feature: send it, or raise.
+"""Check what each model class does with each request feature against what its profile says.
 
-`models/AGENTS.md` asks a model class to raise on a request feature it can't form, never to drop it silently. This
-module checks that against the wire, with the probes and cases of `test_model_settings_support.py`: for each feature it
-sends a minimal request with the feature and the same request without it, and compares the two payloads.
+`models/AGENTS.md` asks a model class to raise on a request feature it can't form, never to drop it silently, and the
+`ModelProfile` flags are where a class says what it can form. This module checks both against the wire, with the probes
+and cases of `test_model_settings_support.py`: for each feature it sends a minimal request with the feature and the same
+request without it, and compares the two payloads.
 
 - **sent:** the payload moved. A fallback that renders the feature as text, such as instructions moved into a user
   message, also moves the payload and counts as sent.
-- **raises:** the request raised before reaching the wire. The table pins the exception's class name, not its message,
-  since some adapters raise `NotImplementedError` or `RuntimeError` rather than `UserError`.
+- **raises:** the request raised before reaching the wire. Any exception counts: which class an adapter should raise is
+  https://github.com/pydantic/pydantic-ai/issues/14027 (F1).
 - **dropped:** the payload didn't move and nothing was raised: the feature was silently ignored.
 
-`EXPECTED` lists every pair whose outcome isn't `sent`, so a class that starts dropping a feature, or stops, fails the
-test until the table is updated. Every `dropped` entry there has its reason in `DROPPED_BECAUSE`: a documented filter, a deliberate skip, or a
-tracked gap.
+A feature with a profile flag is expected to be sent when the flag is on and to raise when it's off, so a class states
+what it supports by setting the flag, the same way for every class. `SENT_DESPITE_FLAG` lists the exceptions to that
+with their reasons. A feature without a flag is expected to be sent. Every `dropped` outcome needs its reason in
+`DROPPED_BECAUSE`: a documented filter, a deliberate skip, or a tracked gap.
 
 `ToolDefinition.strict` is left out: a provider that drops it is handled by retrying on the invalid arguments, so it
 stays best-effort.
@@ -22,6 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Literal
 
 import pytest
 
@@ -37,12 +40,21 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.output import OutputObjectDefinition
+from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.tools import ToolDefinition
 
 from .test_model_settings_support import CASES, PROBE_TOOL, Case, RequestShape
 
-Outcome = str
-"""`'sent'`, `'dropped'`, or `'raises <exception class>'`."""
+Outcome = Literal['sent', 'dropped', 'raises']
+
+ProfileFlag = Literal[
+    'supports_tools',
+    'supports_json_schema_output',
+    'supports_image_output',
+    'supports_image_input',
+    'supports_document_input',
+    'supports_audio_file_input',
+]
 
 OUTPUT_SCHEMA = {'type': 'object', 'properties': {'answer': {'type': 'string'}}, 'required': ['answer']}
 
@@ -92,15 +104,22 @@ class Feature:
     id: str
     with_feature: RequestShape
     without: RequestShape = RequestShape(parameters=BARE)
+    flag: ProfileFlag | None = None
+    """The profile flag that says whether the model supports the feature, if there is one."""
 
 
 FEATURES = [
-    Feature('function_tools', RequestShape(parameters=ModelRequestParameters(function_tools=[PROBE_TOOL]))),
+    Feature(
+        'function_tools',
+        RequestShape(parameters=ModelRequestParameters(function_tools=[PROBE_TOOL])),
+        flag='supports_tools',
+    ),
     Feature(
         'output_tools',
         RequestShape(
             parameters=ModelRequestParameters(output_mode='tool', output_tools=[OUTPUT_TOOL], allow_text_output=False)
         ),
+        flag='supports_tools',
     ),
     Feature(
         'native_output',
@@ -109,6 +128,7 @@ FEATURES = [
                 output_mode='native', output_object=OUTPUT_OBJECT, allow_text_output=False
             )
         ),
+        flag='supports_json_schema_output',
     ),
     Feature(
         'prompted_output',
@@ -122,11 +142,15 @@ FEATURES = [
         'instruction_parts',
         RequestShape(parameters=ModelRequestParameters(instruction_parts=[InstructionPart('Probe instructions.')])),
     ),
-    Feature('allow_image_output', RequestShape(parameters=ModelRequestParameters(allow_image_output=True))),
+    Feature(
+        'allow_image_output',
+        RequestShape(parameters=ModelRequestParameters(allow_image_output=True)),
+        flag='supports_image_output',
+    ),
     Feature('cache_point', RequestShape(('probe', CachePoint()), parameters=BARE)),
-    Feature('image_input', RequestShape(('probe', PNG), parameters=BARE)),
-    Feature('document_input', RequestShape(('probe', PDF), parameters=BARE)),
-    Feature('audio_input', RequestShape(('probe', WAV), parameters=BARE)),
+    Feature('image_input', RequestShape(('probe', PNG), parameters=BARE), flag='supports_image_input'),
+    Feature('document_input', RequestShape(('probe', PDF), parameters=BARE), flag='supports_document_input'),
+    Feature('audio_input', RequestShape(('probe', WAV), parameters=BARE), flag='supports_audio_file_input'),
     Feature(
         'replayed_signed_thinking',
         RequestShape(history=_replayed_answer(with_thinking=True), parameters=BARE),
@@ -141,113 +165,25 @@ DECISION_MODELS = frozenset({'TypeSafeModel', 'SystemOneModel', 'OpenAIDecisions
 
 FEATURE_CASES = [case for case in CASES if case.id not in DECISION_MODELS]
 
-EXPECTED: dict[str, dict[str, Outcome]] = {
-    'OpenAIChatModel': {
-        'allow_image_output': 'dropped',
-    },
-    'OpenAIResponsesModel': {
-        'audio_input': 'raises NotImplementedError',
-    },
-    'OpenAICodexModel': {
-        'audio_input': 'raises NotImplementedError',
-    },
-    'OpenAIResponsesModel (ChatGPT plan usage)': {
-        'audio_input': 'raises NotImplementedError',
-    },
-    'CerebrasModel': {
-        'native_output': 'raises UserError',
-        'allow_image_output': 'raises UserError',
-    },
-    'CrusoeModel': {
-        'allow_image_output': 'raises UserError',
-    },
-    'GitHubCopilotModel': {
-        'allow_image_output': 'dropped',
-    },
-    'OllamaModel': {
-        'allow_image_output': 'raises UserError',
-    },
-    'OpenRouterModel': {
-        'allow_image_output': 'dropped',
-    },
-    'SnowflakeModel': {
-        'output_tools': 'raises UserError',
-        'native_output': 'raises UserError',
-        'allow_image_output': 'raises UserError',
-    },
-    'ZaiModel': {
-        'native_output': 'raises UserError',
-        'allow_image_output': 'raises UserError',
-    },
-    'BedrockMantleChatModel': {
-        'allow_image_output': 'raises UserError',
-    },
-    'BedrockMantleResponsesModel': {
-        'allow_image_output': 'raises UserError',
-        'audio_input': 'raises NotImplementedError',
-    },
-    'AnthropicModel': {
-        'allow_image_output': 'raises UserError',
-        'audio_input': 'raises NotImplementedError',
-    },
-    'GroqModel': {
-        'native_output': 'raises UserError',
-        'allow_image_output': 'raises UserError',
-        'document_input': 'raises NotImplementedError',
-        'audio_input': 'raises NotImplementedError',
-    },
-    'MistralModel': {
-        'native_output': 'raises UserError',
-        'allow_image_output': 'raises UserError',
-        'audio_input': 'raises NotImplementedError',
-    },
-    'CohereModel': {
-        'native_output': 'raises UserError',
-        'allow_image_output': 'raises UserError',
-        'image_input': 'raises RuntimeError',
-        'document_input': 'raises RuntimeError',
-        'audio_input': 'raises RuntimeError',
-    },
-    'GoogleInteractionsModel': {
-        'allow_image_output': 'raises UserError',
-        'cache_point': 'dropped',
-    },
-    'GoogleModel': {
-        'allow_image_output': 'raises UserError',
-        'cache_point': 'dropped',
-    },
-    'BedrockConverseModel': {
-        'allow_image_output': 'raises UserError',
-        'audio_input': 'raises NotImplementedError',
-    },
-    'HuggingFaceModel': {
-        'native_output': 'dropped',
-        'allow_image_output': 'raises UserError',
-        'document_input': 'raises RuntimeError',
-        'audio_input': 'raises RuntimeError',
-    },
-    'XaiModel': {
-        'allow_image_output': 'raises UserError',
-        'cache_point': 'dropped',
-        'audio_input': 'raises NotImplementedError',
-    },
-    'MCPSamplingModel': {
-        'function_tools': 'dropped',
-        'output_tools': 'dropped',
-        'native_output': 'raises UserError',
-        'prompted_output': 'dropped',
-        'instruction_parts': 'dropped',
-        'allow_image_output': 'raises UserError',
-        'cache_point': 'raises NotImplementedError',
-        'document_input': 'raises NotImplementedError',
-        'audio_input': 'raises NotImplementedError',
-        'replayed_signed_thinking': 'dropped',
-    },
+SENT_DESPITE_FLAG: dict[tuple[str, str], str] = {
+    ('OpenAIChatModel', 'audio_input'): (
+        "documented: a file in a user prompt is sent as it is, whatever the model's flag says (`supports_image_input`)"
+    ),
+    ('SnowflakeModel', 'function_tools'): (
+        'tracked gap: only `GoogleModel` checks `supports_tools` for function tools, '
+        'https://github.com/pydantic/pydantic-ai/issues/14027 (F5)'
+    ),
 }
-"""Per case, every feature whose outcome isn't `sent`. Every `dropped` entry has its reason in `DROPPED_BECAUSE`."""
+"""Why each feature that's sent although its profile flag is off is allowed to be sent."""
+
+RAISES_WITHOUT_FLAG: dict[tuple[str, str], str] = {
+    ('MCPSamplingModel', 'cache_point'): 'tracked gap: https://github.com/pydantic/pydantic-ai/issues/14857',
+}
+"""Why each feature without a profile flag that raises is allowed to raise."""
 
 CHAT_IMAGE_OUTPUT_GAP = 'tracked gap: https://github.com/pydantic/pydantic-ai/issues/14790'
 CACHE_POINT_HINT = 'documented: "Models that don\'t support caching will filter these out" (`CachePoint`)'
+MCP_GAP = 'tracked gap: https://github.com/pydantic/pydantic-ai/issues/14774'
 
 DROPPED_BECAUSE: dict[tuple[str, str], str] = {
     ('OpenAIChatModel', 'allow_image_output'): CHAT_IMAGE_OUTPUT_GAP,
@@ -256,54 +192,59 @@ DROPPED_BECAUSE: dict[tuple[str, str], str] = {
     ('GoogleInteractionsModel', 'cache_point'): CACHE_POINT_HINT,
     ('GoogleModel', 'cache_point'): CACHE_POINT_HINT,
     ('XaiModel', 'cache_point'): CACHE_POINT_HINT,
-    (
-        'HuggingFaceModel',
-        'native_output',
-    ): 'tracked gap: https://github.com/pydantic/pydantic-ai/issues/14789',
-    ('MCPSamplingModel', 'function_tools'): 'tracked gap: https://github.com/pydantic/pydantic-ai/issues/14774',
-    ('MCPSamplingModel', 'output_tools'): 'tracked gap: https://github.com/pydantic/pydantic-ai/issues/14774',
-    (
-        'MCPSamplingModel',
-        'prompted_output',
-    ): 'tracked gap: rides on `instruction_parts`, https://github.com/pydantic/pydantic-ai/issues/14774',
-    ('MCPSamplingModel', 'instruction_parts'): 'tracked gap: https://github.com/pydantic/pydantic-ai/issues/14774',
+    ('HuggingFaceModel', 'native_output'): 'tracked gap: https://github.com/pydantic/pydantic-ai/issues/14789',
+    ('MCPSamplingModel', 'function_tools'): MCP_GAP,
+    ('MCPSamplingModel', 'output_tools'): MCP_GAP,
+    ('MCPSamplingModel', 'prompted_output'): f'{MCP_GAP} (rides on `instruction_parts`)',
+    ('MCPSamplingModel', 'instruction_parts'): MCP_GAP,
     (
         'MCPSamplingModel',
         'replayed_signed_thinking',
     ): 'deliberate: MCP sampling messages have no thinking content (`_mcp.py`)',
 }
-"""Why each `dropped` entry in `EXPECTED` is allowed: a documented filter, a deliberate skip, or a tracked gap."""
+"""Why each feature that's silently dropped is allowed to be: a documented filter, a deliberate skip, or a tracked gap."""
 
 
-async def _outcome(case: Case, feature: Feature) -> tuple[Outcome, str]:
+async def _outcome(case: Case, feature: Feature) -> tuple[Outcome, bool | None, str]:
+    """The feature's outcome, the value of its profile flag if it has one, and the error message if it raised."""
     without = await case.probe({}, feature.without)
     assert without.payload is not None, f'{case.id} sent nothing for the request without {feature.id}'
+    profile = without.observed.profile
+    flag = None if feature.flag is None else bool(profile.get(feature.flag, DEFAULT_PROFILE.get(feature.flag)))
     with_feature = await case.probe({}, feature.with_feature)
     if with_feature.payload is None:
         error = with_feature.observed.error
         assert error is not None, f'{case.id} sent nothing for {feature.id} and raised nothing'
-        return f'raises {type(error).__name__}', str(error)
-    return ('dropped' if with_feature.payload == without.payload else 'sent'), ''
+        return 'raises', flag, f'{type(error).__name__}: {error}'
+    return ('dropped' if with_feature.payload == without.payload else 'sent'), flag, ''
+
+
+def _expected(case: Case, feature: Feature, flag: bool | None) -> Outcome:
+    key = (case.id, feature.id)
+    if key in DROPPED_BECAUSE:
+        return 'dropped'
+    if flag is None:
+        return 'raises' if key in RAISES_WITHOUT_FLAG else 'sent'
+    return 'sent' if flag or key in SENT_DESPITE_FLAG else 'raises'
 
 
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id, marks=case.marks) for case in FEATURE_CASES])
-async def test_request_features_are_sent_or_raise(case: Case, allow_model_requests: None):
-    """Each request feature moves the payload, or its other outcome is listed in `EXPECTED`."""
-    observed = {feature.id: await _outcome(case, feature) for feature in FEATURES}
-    not_sent = {feature: outcome for feature, (outcome, _) in observed.items() if outcome != 'sent'}
-    assert not_sent == EXPECTED.get(case.id, {}), '\n'.join(
-        f'{case.id} {feature}: {outcome} {message}' for feature, (outcome, message) in observed.items()
-    )
+async def test_request_features_match_the_profile(case: Case, allow_model_requests: None):
+    """A flagged feature is sent when its flag is on and raises when it's off; an unflagged one is sent."""
+    mismatches: list[str] = []
+    for feature in FEATURES:
+        outcome, flag, message = await _outcome(case, feature)
+        if outcome != (expected := _expected(case, feature, flag)):
+            flag_text = '' if feature.flag is None else f' with `{feature.flag}={flag}`'
+            mismatches.append(f'{feature.id}{flag_text}: expected {expected}, got {outcome} {message}'.rstrip())
+    assert not mismatches, f'{case.id}:\n' + '\n'.join(mismatches)
 
 
-def test_expected_names_known_cases_and_features():
-    assert set(EXPECTED) <= {case.id for case in FEATURE_CASES}
-    assert {feature for outcomes in EXPECTED.values() for feature in outcomes} <= FEATURE_IDS
-
-
-def test_every_drop_has_a_reason():
-    """A silent drop is only allowed with a reason: a documented filter, a deliberate skip, or a tracked gap."""
-    drops = {
-        (case, feature) for case, outcomes in EXPECTED.items() for feature, o in outcomes.items() if o == 'dropped'
-    }
-    assert drops == set(DROPPED_BECAUSE)
+def test_exceptions_name_known_cases_and_features():
+    case_ids = {case.id for case in FEATURE_CASES}
+    flagged = {feature.id for feature in FEATURES if feature.flag is not None}
+    for table in (DROPPED_BECAUSE, SENT_DESPITE_FLAG, RAISES_WITHOUT_FLAG):
+        assert {case for case, _ in table} <= case_ids
+        assert {feature for _, feature in table} <= FEATURE_IDS
+    assert {feature for _, feature in SENT_DESPITE_FLAG} <= flagged
+    assert not {feature for _, feature in RAISES_WITHOUT_FLAG} & flagged

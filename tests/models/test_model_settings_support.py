@@ -74,6 +74,7 @@ from pydantic_ai.direct import model_request
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, UserContent, UserPromptPart
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.system_one import SystemOneModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers.system_one import SystemOneProvider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
@@ -352,6 +353,8 @@ class Observed:
     """The settings an `UnsupportedSettingWarning` named while the request was made."""
     error: Exception | None
     """The exception the request ended with: a probe's own abort or error response, or an error raised before it."""
+    profile: ModelProfile
+    """The profile of the probed model, so a check can compare what the profile claims with what the wire shows."""
     warning_messages: tuple[str, ...]
     """Every warning message recorded while the request was made.
 
@@ -393,6 +396,7 @@ async def _observe(model: Model, request: Awaitable[object]) -> Observed:
         unsupported=model._unsupported_settings(),  # pyright: ignore[reportPrivateUsage]
         warned=frozenset(warned),
         error=error,
+        profile=model.profile,
         warning_messages=tuple(str(warning.message) for warning in caught),
     )
 
