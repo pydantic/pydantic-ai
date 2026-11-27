@@ -5764,7 +5764,8 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
 def _with_fitted_attachment_call_id(part: ModelRequestPart, replacements: Mapping[str, str]) -> ModelRequestPart:
     """`part`, when it's a tool's rendered attachments, naming its call by the ID the call's result carries on the wire.
 
-    So the lookalike note names the call as the wire does. Any other part is returned as is. Only a call on the wire has a fitted ID: a nested one, such as a Code Mode call's, keeps the stored one it's known by.
+    So the lookalike note names the call as the wire does. Any other part is returned as is. Only a call on the
+    wire has a fitted ID: a nested one, such as a Code Mode call's, keeps the stored one it's known by.
     """
     if (
         not isinstance(part, _ToolContentPart)
