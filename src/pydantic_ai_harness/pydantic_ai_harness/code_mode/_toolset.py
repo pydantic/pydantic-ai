@@ -857,13 +857,13 @@ def _started_calls_note(execution: RunCodeExecution) -> str:
     return f'\n\n{_describe_started_calls(execution.nested_calls, execution.nested_returns)}'
 
 
-TIME_LIMIT_MESSAGE = (
+_TIME_LIMIT_MESSAGE = (
     'The code ran longer than its time limit and was stopped, so the session was reset. '
     'Re-run any imports, recreate any state you need, and make the code do less work per call.'
 )
 # The REPL keeps state between snippets, so each retry says what the reset lost.
 _WORKER_FAILURE_ADVICE: dict[WorkerFailure, str] = {
-    'time_limit': TIME_LIMIT_MESSAGE,
+    'time_limit': _TIME_LIMIT_MESSAGE,
     'crashed': 'The code crashed the sandbox worker and the session was reset. Revise the code and try again.',
     'session_ended': (
         'The sandbox session ended; state is lost. Re-run any imports, recreate any state '
@@ -1664,7 +1664,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     @staticmethod
     async def _reset_for_runtime_error(error: MontyFailure, run_state: MontyRunState) -> str:
         if _is_duration_exhausted(error):
-            advice = TIME_LIMIT_MESSAGE
+            advice = _TIME_LIMIT_MESSAGE
         elif 'MemoryError' in error.exception_types and (
             not error.has_traceback or _exhausted_sandbox_limit(error) == 'max_memory'
         ):

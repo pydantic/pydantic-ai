@@ -1095,7 +1095,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             except BaseException as exc:
                 failure = MontyFailure.from_error(exc)
                 if failure is None or failure.kind == 'other':
-                    # An interruption such as cancellation, or a host error such as a failing scheduler or
+                    # An interruption such as cancellation, or a host error such as a call scheduler's or the
                     # Lambda `flush`: the caller handles it, and its text never reaches the model.
                     raise
                 outcome = _failure_outcome(

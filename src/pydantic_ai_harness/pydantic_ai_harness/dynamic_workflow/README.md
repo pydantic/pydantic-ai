@@ -483,8 +483,8 @@ arguments, and their results.
 Pool creation, connection, and session checkout errors propagate to the code calling the agent,
 since the model can't fix sandbox configuration. A worker crash or lost connection ends the script
 and becomes a model retry that lists the completed sub-agent results; the original exception stays
-the retry's cause. Any other host error, such as a failing `call_scheduler`, also propagates to your
-code, so its text never reaches the model. A time limit, including a
+the retry's cause. Any other host error, such as a `call_scheduler` whose `flush` raises, also
+propagates to your code, so its text never reaches the model. A time limit, including a
 pool's `request_timeout` and a remote `turn_timeout`, asks the model to make the script do less
 work.
 
