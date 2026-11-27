@@ -933,13 +933,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     requests), and the agent's own system prompt is reinjected at the head of the
     first request via the
     [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability.
-    In server-side history, a `message_history` passed to a run method or the
-    [`conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store]'s, it replaces the
-    system prompt the history opens with, which can be a stale copy of the agent's own, along
-    with any other copy or dynamic rendering of the agent's prompt, and keeps the history's other
-    system prompts, such as one an earlier run enqueued. A system
-    prompt the server put right after the agent's, in the opening request, is replaced along
-    with it.
+    When the history comes from the server (a `message_history` passed to a run method, or the
+    conversation loaded from the
+    [`conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store]), the reinjector replaces
+    the system prompt that history opens with, which can be a stale copy of the agent's own, plus
+    any other copy or dynamic rendering of the agent's prompt. It keeps the history's other system
+    prompts, such as one an earlier run enqueued. A system prompt the server put right after the
+    agent's, in the opening request, is replaced along with it.
     Request-level [`instructions`][pydantic_ai.messages.ModelRequest.instructions] on
     frontend messages are reset to `None` as well.
 
