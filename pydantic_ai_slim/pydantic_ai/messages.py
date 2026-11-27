@@ -8566,7 +8566,14 @@ class FunctionToolResultEvent(ToolResultEvent):
     _: KW_ONLY
 
     content: str | Sequence[UserContent] | None = None
-    """The content that will be sent to the model as a UserPromptPart following the result."""
+    """The tool's own [`ToolReturn.content`][pydantic_ai.messages.ToolReturn.content], if any.
+
+    For a tool executed in the run, all the content that reaches the model with its result is on the result's
+    [`attachments`][pydantic_ai.messages.ToolReturnPart.attachments] on `part`, including the content of the tools it
+    called, such as Code Mode's `run_code` and `ToolBridge`'s `tool_call`, which this field leaves out. Content supplied
+    with a deferred tool result is sent as a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] after the request's
+    tool results.
+    """
 
     event_kind: Literal['function_tool_result'] = 'function_tool_result'
     """Event type identifier, used as a discriminator."""

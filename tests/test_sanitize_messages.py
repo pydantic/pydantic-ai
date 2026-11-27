@@ -1604,3 +1604,25 @@ def _is_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
 
 
 _NO_DEFAULT = object()
+
+
+def test_sanitize_messages_checks_attachment_files_and_text_metadata() -> None:
+    """A client's attachments are data whatever they say, but their files are checked like any file it sends."""
+    attachments = [
+        ToolResultAttachment(content=ImageUrl('s3://bucket/secret.png'), tool_call_id='c1', tool_name='fetch'),
+        ToolResultAttachment(
+            content=TextContent('kept', metadata={'origin': 'my_app'}), tool_call_id='c1', tool_name='fetch'
+        ),
+    ]
+    client: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('hi')]),
+        ModelResponse(parts=[ToolCallPart('fetch', {}, tool_call_id='c1')]),
+        ModelRequest(parts=[ToolReturnPart('fetch', 'ok', tool_call_id='c1', attachments=attachments)]),
+    ]
+    with pytest.warns(UserWarning):
+        sanitized = sanitize_messages(client)
+    tool_return = sanitized[-1].parts[0]
+    assert isinstance(tool_return, ToolReturnPart)
+    assert tool_return.attachments == [
+        ToolResultAttachment(content=TextContent('kept'), tool_call_id='c1', tool_name='fetch')
+    ]
