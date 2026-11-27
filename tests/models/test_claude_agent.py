@@ -813,8 +813,22 @@ async def test_other_endpoints_are_not_served():
 
 
 def test_infer_model_needs_a_claude_agent_provider():
-    with pytest.raises(UserError, match='Claude Code models require a `ClaudeAgentProvider`'):
+    with pytest.raises(UserError, match='Claude Agent models require a `ClaudeAgentProvider`'):
         infer_model('claude-agent:claude-sonnet-5-5', provider_factory=lambda _: AnthropicProvider(api_key='key'))
+
+
+async def test_another_model_on_the_provider_is_told_to_use_claude_agent_model():
+    fake = FakeClaudeCode([])
+    provider = ClaudeAgentProvider()
+    provider._sessions.transport_factory = fake  # pyright: ignore[reportPrivateUsage]
+    other = AnthropicModel('claude-sonnet-5-5', provider=provider)
+
+    with pytest.raises(ModelHTTPError, match='use `ClaudeAgentModel`') as exc_info:
+        # A small `max_tokens`, as the Anthropic SDK streams a request that could run longer.
+        await Agent(other, model_settings={'max_tokens': 100}).run('Hi')
+
+    assert exc_info.value.status_code == 400
+    assert fake.sessions == []
 
 
 def test_default_provider():

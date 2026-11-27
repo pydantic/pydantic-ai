@@ -914,8 +914,12 @@ class ClaudeCodeTransport(httpx2.AsyncBaseTransport):
             body = _MessagesRequest.model_validate_json(await request.aread())
         except ValidationError as e:
             return _error_response(400, 'invalid_request_error', f"Claude Code can't serve this request: {e}")
-        # `ClaudeAgentModel` streams every request, and a request's history ends with the user's turn.
-        assert body.stream and body.messages[-1].role == 'user'
+        if not body.stream:
+            # Only `ClaudeAgentModel` streams every request, so this is another model given a `ClaudeAgentProvider`.
+            message = 'Claude Code only streams: use `ClaudeAgentModel` with a `ClaudeAgentProvider`.'
+            return _error_response(400, 'invalid_request_error', message, retry=False)
+        # A request's history ends with the user's turn.
+        assert body.messages[-1].role == 'user'
         if (inherit := request.headers.get(INHERIT_MCP_SERVERS_HEADER)) is not None:
             body.inherit_mcp_servers = _inherit_ta.validate_json(inherit)
 

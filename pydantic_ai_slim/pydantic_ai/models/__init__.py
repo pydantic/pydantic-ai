@@ -3944,7 +3944,7 @@ def infer_model(  # noqa: C901
             from .claude_agent import ClaudeAgentModel
 
             if not isinstance(provider, ClaudeAgentProvider):
-                raise UserError('Claude Code models require a `ClaudeAgentProvider`.')
+                raise UserError('Claude Agent models require a `ClaudeAgentProvider`.')
             return ClaudeAgentModel(model_name, provider=provider)
         case 'bedrock':
             from .bedrock import BedrockConverseModel
