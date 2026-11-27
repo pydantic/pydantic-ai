@@ -1274,6 +1274,31 @@ class TestSkillLibraryLayering:
         assert names == ['review']
 
     @requires_posix_permissions
+    @pytest.mark.parametrize(
+        'skills',
+        [
+            pytest.param(Skills('skills', exclude=['deploy']), id='excluded'),
+            pytest.param(Skills('skills', include=['review']), id='not-included'),
+        ],
+    )
+    async def test_an_unreadable_skill_left_out_of_the_selection_is_not_reported(
+        self, tmp_path: Path, skills: Skills
+    ) -> None:
+        # Like a deselected invalid `SKILL.md`: a user who disables a skill to silence it gets no notice.
+        _write_skill(tmp_path / 'skills', 'deploy')
+        _write_skill(tmp_path / 'skills', 'review')
+        locked = tmp_path / 'skills' / 'deploy'
+        locked.chmod(0)
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter('error')
+                names = await _names(skills, tmp_path)
+        finally:
+            locked.chmod(0o755)
+
+        assert names == ['review']
+
+    @requires_posix_permissions
     async def test_an_unknown_name_error_names_the_skipped_paths(self, tmp_path: Path) -> None:
         # The included skill's library is unreadable, so the skipped path is the likelier cause.
         _write_skill(tmp_path / 'locked', 'deploy')

@@ -491,18 +491,14 @@ async def load_skill_libraries(
     """
     libraries, skipped = await _libraries(workspace, directories, missing_directories)
     discovered, unreadable = await _discover_skills(workspace, libraries)
-    skipped.extend(unreadable)
     # An unreadable skill directory still names a skill, so selecting it reports it as skipped, not unknown.
-    unreadable_names = {_normalize_name(posixpath.basename(entry.path)) for entry in unreadable}
-    available_names = frozenset(name for name, _ in discovered).union(unreadable_names)
-    normalized_include = None if include is None else frozenset(_normalize_name(name) for name in include)
-    normalized_exclude = frozenset(_normalize_name(name) for name in exclude)
-    if unknown_names == 'error':
-        _validate_selection('include', normalized_include, available_names, skipped)
-        _validate_selection('exclude', normalized_exclude, available_names, skipped)
-    selected_names = (
-        normalized_include if normalized_include is not None else available_names.difference(normalized_exclude)
+    unreadable_by_name = {_normalize_name(posixpath.basename(entry.path)): entry for entry in unreadable}
+    available_names = frozenset(name for name, _ in discovered).union(unreadable_by_name)
+    selected_names = _selected_names(
+        available_names, include=include, exclude=exclude, unknown_names=unknown_names, skipped=[*skipped, *unreadable]
     )
+    # Like an invalid `SKILL.md` below, an unreadable skill the user left out stays quiet.
+    skipped.extend(entry for name, entry in unreadable_by_name.items() if name in selected_names)
 
     by_name: dict[str, SkillDefinition] = {}
     for name, skill_file in discovered:
@@ -517,6 +513,23 @@ async def load_skill_libraries(
         elif not await same_skill((workspace, previous.path), (workspace, skill_file)):
             skipped.append(skip_duplicate_name(skill.name, previous.path, skill_file, duplicate_names))
     return list(by_name.values()), skipped
+
+
+def _selected_names(
+    available_names: frozenset[str],
+    *,
+    include: Collection[str] | None,
+    exclude: Collection[str],
+    unknown_names: UnknownNames,
+    skipped: Sequence[SkippedSkill],
+) -> frozenset[str]:
+    """The normalized names `include` and `exclude` select from `available_names`, validated per `unknown_names`."""
+    normalized_include = None if include is None else frozenset(_normalize_name(name) for name in include)
+    normalized_exclude = frozenset(_normalize_name(name) for name in exclude)
+    if unknown_names == 'error':
+        _validate_selection('include', normalized_include, available_names, skipped)
+        _validate_selection('exclude', normalized_exclude, available_names, skipped)
+    return normalized_include if normalized_include is not None else available_names.difference(normalized_exclude)
 
 
 async def _read_or_skip(workspace: Workspace, skill_file: str) -> SkillDefinition | SkippedSkill:
