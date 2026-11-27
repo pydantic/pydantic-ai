@@ -5,7 +5,7 @@ import json
 from collections import defaultdict
 from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cached_property
 from typing import Any, Literal, assert_never, cast
@@ -36,6 +36,7 @@ from ..messages import (
     ImageUrl,
     InstructionBaselinePart,
     InstructionDeltaPart,
+    InstructionPart,
     MarkerCitationAnchor,
     ModelMessage,
     ModelRequest,
@@ -86,6 +87,8 @@ from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
+from ._history_digest import Hasher, continuation_digest, history_hasher
+from ._prompt_cache import instruction_cache_boundaries
 from ._tool_choice import resolve_tool_choice, support_tool_forcing, tool_forcing_unavailable_reason
 
 try:
@@ -280,8 +283,15 @@ class XaiModelSettings(ModelSettings, total=False):
     xai_store_messages: bool
     """Whether to store messages on xAI's servers for conversation continuity."""
 
-    xai_previous_response_id: str
-    """The ID of the previous response to continue the conversation."""
+    xai_previous_response_id: Literal['auto'] | str
+    """ID of a prior stored response to continue, omitting already-stored messages and instructions.
+
+    - `'auto'`: chain to the most recent usable `provider_response_id` in the message history whose
+      `history_digest` still matches. If none matches, no `previous_response_id` is sent.
+    - A concrete response ID string: use it as the seed when no usable prior response exists in history;
+      once history holds a matching `provider_response_id`, it takes precedence so retries and tool-call
+      continuations extend the chain cleanly without duplicating messages.
+    """
 
     xai_include_encrypted_content: bool
     """Whether to include the encrypted content in the response.
@@ -375,7 +385,6 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
     'xai_top_logprobs': 'top_logprobs',
     'xai_user': 'user',
     'xai_store_messages': 'store_messages',
-    'xai_previous_response_id': 'previous_response_id',
     'xai_reasoning_effort': 'reasoning_effort',
     'xai_max_turns': 'max_turns',
     'xai_agent_count': 'agent_count',
@@ -406,6 +415,7 @@ class XaiModel(Model[AsyncClient]):
 
     _model_name: str
     _provider: Provider[AsyncClient]
+    _history_digest_key: bytes | None = None
 
     def __init__(
         self,
@@ -414,6 +424,7 @@ class XaiModel(Model[AsyncClient]):
         provider: Literal['xai'] | Provider[AsyncClient] = 'xai',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
+        history_digest_key: bytes | None = None,
     ):
         """Initialize the xAI model.
 
@@ -422,12 +433,15 @@ class XaiModel(Model[AsyncClient]):
             provider: The provider to use for API calls. Defaults to `'xai'`.
             profile: Optional model profile specification. Defaults to a profile picked by the provider based on the model name.
             settings: Optional model settings.
+            history_digest_key: Optional secret to HMAC-key each stored response's
+                [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest].
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self._provider = provider
+        self._history_digest_key = history_digest_key
 
         super().__init__(settings=settings, profile=profile)
 
@@ -473,6 +487,8 @@ class XaiModel(Model[AsyncClient]):
         self,
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
+        *,
+        continues_chain: bool = False,
     ) -> list[chat_types.chat_pb2.Message]:
         """Convert pydantic_ai messages to xAI SDK messages."""
         xai_messages: list[chat_types.chat_pb2.Message] = []
@@ -500,13 +516,19 @@ class XaiModel(Model[AsyncClient]):
                 case _:
                     assert_never(message)
 
-        # Insert instructions as system messages after existing system messages if present
+        # Insert instructions as system messages after existing system messages if present.
+        # When continuing a server-side response, stable instructions are already stored on the server.
         if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
-            system_prompt_count = next(
-                (i for i, m in enumerate(xai_messages) if m.role != chat_types.chat_pb2.MessageRole.ROLE_SYSTEM),
-                len(xai_messages),
-            )
-            xai_messages[system_prompt_count:system_prompt_count] = [system(part.content) for part in instruction_parts]
+            if continues_chain:
+                _, instruction_parts = self._split_stable_instructions(instruction_parts)
+            if instruction_parts:
+                system_prompt_count = next(
+                    (i for i, m in enumerate(xai_messages) if m.role != chat_types.chat_pb2.MessageRole.ROLE_SYSTEM),
+                    len(xai_messages),
+                )
+                xai_messages[system_prompt_count:system_prompt_count] = [
+                    system(part.content) for part in instruction_parts
+                ]
 
         return xai_messages
 
@@ -943,6 +965,105 @@ class XaiModel(Model[AsyncClient]):
 
         return tool_defs, tool_choice
 
+    @staticmethod
+    def _split_stable_instructions(
+        instruction_parts: Sequence[InstructionPart],
+    ) -> tuple[list[InstructionPart], list[InstructionPart]]:
+        ordered = InstructionPart.sorted(instruction_parts)
+        _, stable_count = instruction_cache_boundaries(ordered)
+        return ordered[:stable_count], ordered[stable_count:]
+
+    def _chained_instructions(
+        self,
+        messages: Sequence[ModelMessage],
+        model_request_parameters: ModelRequestParameters,
+    ) -> list[str]:
+        """Stable leading instructions stored alongside a server-side response."""
+        if any(isinstance(part, CompactionPart) for message in messages for part in message.parts):
+            return []
+        stable, _ = self._split_stable_instructions(
+            self._get_instruction_parts(messages, model_request_parameters) or ()
+        )
+        return [part.content for part in stable]
+
+    def _history_to_record(
+        self,
+        messages: Sequence[ModelMessage],
+        model_settings: XaiModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> Hasher | None:
+        if model_settings.get('xai_store_messages') is False:
+            return None
+        if not model_settings.get('xai_store_messages') and model_settings.get('xai_previous_response_id') is None:
+            return None
+        return history_hasher(
+            messages,
+            self._history_digest_key,
+            with_instructions=False,
+            leading_instructions=self._chained_instructions(messages, model_request_parameters),
+        )
+
+    def _history_known_unchanged(
+        self, response: ModelResponse, history: Sequence[ModelMessage], chained_instructions: Sequence[str]
+    ) -> bool:
+        if response.history_digest is None:
+            return False
+        return any(
+            response.history_digest
+            == continuation_digest(
+                history_hasher(
+                    history,
+                    self._history_digest_key,
+                    with_instructions=with_instructions,
+                    leading_instructions=chained_instructions,
+                ),
+                response.parts,
+            )
+            for with_instructions in (False, True)
+        )
+
+    def _get_previous_response_id_and_new_messages(
+        self,
+        messages: list[ModelMessage],
+        *,
+        chained_instructions: Sequence[str] = (),
+    ) -> tuple[str | None, list[ModelMessage], bool]:
+        previous_response_id: str | None = None
+        trimmed_messages: list[ModelMessage] = []
+        for index in range(len(messages) - 1, -1, -1):
+            m = messages[index]
+            if isinstance(m, ModelResponse) and any(isinstance(part, CompactionPart) for part in m.parts):
+                return None, messages, True
+            if isinstance(m, ModelResponse) and self.accepts_server_state(m):
+                if not self._history_known_unchanged(m, messages[:index], chained_instructions):
+                    return None, messages, True
+                previous_response_id = m.provider_response_id
+                break
+            trimmed_messages.append(m)
+
+        if previous_response_id and trimmed_messages:
+            return previous_response_id, list(reversed(trimmed_messages)), False
+        return None, messages, False
+
+    def _resolve_previous_response_id(
+        self,
+        setting: str | None,
+        messages: list[ModelMessage],
+        *,
+        chained_instructions: Sequence[str] = (),
+    ) -> tuple[str | None, list[ModelMessage]]:
+        if setting is None:
+            return None, messages
+        auto_id, trimmed, at_boundary = self._get_previous_response_id_and_new_messages(
+            messages,
+            chained_instructions=chained_instructions,
+        )
+        if auto_id is not None:
+            return auto_id, trimmed
+        if setting == 'auto' or at_boundary:
+            return None, messages
+        return setting, messages
+
     async def _create_chat(
         self,
         messages: list[ModelMessage],
@@ -954,8 +1075,19 @@ class XaiModel(Model[AsyncClient]):
         Returns:
             The xAI SDK chat object, ready to call .sample() or .stream() on.
         """
+        chained_instructions = self._chained_instructions(messages, model_request_parameters)
+        previous_response_id, new_messages = self._resolve_previous_response_id(
+            model_settings.get('xai_previous_response_id'),
+            messages,
+            chained_instructions=chained_instructions,
+        )
+
         # Convert messages to xAI format
-        xai_messages = await self._map_messages(messages, model_request_parameters)
+        xai_messages = await self._map_messages(
+            new_messages,
+            model_request_parameters,
+            continues_chain=previous_response_id is not None,
+        )
 
         # Resolve tool_choice and filter function tools
         filtered_tool_defs, resolved_tool_choice = self._get_tool_choice(model_settings, model_request_parameters)
@@ -993,6 +1125,8 @@ class XaiModel(Model[AsyncClient]):
 
         # Map model settings to xAI SDK parameters
         xai_settings = _map_model_settings(model_settings, self._unsupported_settings())
+        if previous_response_id is not None:
+            xai_settings['previous_response_id'] = previous_response_id
 
         # Fall back to unified thinking when xai_reasoning_effort is not set.
         if 'reasoning_effort' not in xai_settings and model_request_parameters.thinking is not None:
@@ -1057,11 +1191,15 @@ class XaiModel(Model[AsyncClient]):
             model_settings,
             model_request_parameters,
         )
+        xai_model_settings = cast(XaiModelSettings, model_settings or {})
 
-        chat = await self._create_chat(messages, cast(XaiModelSettings, model_settings or {}), model_request_parameters)
+        chat = await self._create_chat(messages, xai_model_settings, model_request_parameters)
         with _map_api_errors(self.model_name):
             response = await chat.sample()
-        return self._process_response(response)
+        return _with_history_digest(
+            self._process_response(response),
+            self._history_to_record(messages, xai_model_settings, model_request_parameters),
+        )
 
     @asynccontextmanager
     async def request_stream(
@@ -1077,11 +1215,13 @@ class XaiModel(Model[AsyncClient]):
             model_settings,
             model_request_parameters,
         )
+        xai_model_settings = cast(XaiModelSettings, model_settings or {})
 
-        chat = await self._create_chat(messages, cast(XaiModelSettings, model_settings or {}), model_request_parameters)
+        chat = await self._create_chat(messages, xai_model_settings, model_request_parameters)
+        history = self._history_to_record(messages, xai_model_settings, model_request_parameters)
         response_stream = chat.stream()
         try:
-            yield await self._process_streamed_response(response_stream, model_request_parameters)
+            yield await self._process_streamed_response(response_stream, model_request_parameters, history=history)
         finally:
             aclose = getattr(response_stream, 'aclose', None)
             if aclose is not None:  # pragma: no branch
@@ -1192,6 +1332,8 @@ class XaiModel(Model[AsyncClient]):
         self,
         response: AsyncIterator[tuple[chat_types.Response, Any]],
         model_request_parameters: ModelRequestParameters,
+        *,
+        history: Hasher | None = None,
     ) -> 'XaiStreamedResponse':
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response: _utils.PeekableAsyncStream[
@@ -1211,9 +1353,17 @@ class XaiModel(Model[AsyncClient]):
             _response=peekable_response,
             _timestamp=first_response.created,
             _provider=self._provider,
+            _history=history,
         )
         streamed_response.canonical_system = self._canonical_system_stamp
         return streamed_response
+
+
+def _with_history_digest(response: ModelResponse, history: Hasher | None) -> ModelResponse:
+    """`response` with its digest recorded, when `history` says a later request may continue from it."""
+    if history is None:
+        return response
+    return replace(response, history_digest=continuation_digest(history, response.parts))
 
 
 @dataclass
@@ -1227,6 +1377,7 @@ class XaiStreamedResponse(StreamedResponse):
     ]
     _timestamp: datetime
     _provider: Provider[AsyncClient]
+    _history: Hasher | None = None
     # State to avoid re-emitting duplicate events.
     _encrypted_contents: dict[int, str] = field(default_factory=dict[int, str], init=False)
     _seen_tool_call_ids: set[str] = field(default_factory=set[str], init=False)
@@ -1250,6 +1401,9 @@ class XaiStreamedResponse(StreamedResponse):
     _tool_return_parts: dict[str, NativeToolReturnPart] = field(
         default_factory=dict[str, NativeToolReturnPart], init=False
     )
+
+    def get(self) -> ModelResponse:
+        return _with_history_digest(super().get(), self._history)
 
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
         return (grpc.RpcError,)

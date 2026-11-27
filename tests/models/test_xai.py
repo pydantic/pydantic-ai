@@ -72,6 +72,7 @@ from pydantic_ai.exceptions import ModelEmptyResponseError, ModelHTTPError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CachePoint,
+    CompactionPart,
     FinishReason,
     UploadedFile,
 )
@@ -6732,6 +6733,184 @@ async def test_xai_stream_intermediate_chunks_keep_finish_reason_unset(allow_mod
     # Unset while the two intermediate chunks arrive, 'stop' from the finishing chunk onwards.
     assert finish_reasons[:2] == [None, None]
     assert all(reason == 'stop' for reason in finish_reasons[2:])
+
+
+def _with_response_id(resp: chat_types.Response, response_id: str) -> chat_types.Response:
+    resp.proto.id = response_id
+    return resp
+
+
+async def test_xai_previous_response_id_auto_trims_history_and_instructions(allow_model_requests: None):
+    """`xai_previous_response_id='auto'` chains to stored responses and omits already-stored messages and instructions."""
+    resp_1 = _with_response_id(create_response(content='First answer'), 'resp_turn_1')
+    resp_2 = _with_response_id(create_response(content='Second answer'), 'resp_turn_2')
+    mock_client = MockXai.create_mock([resp_1, resp_2])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(
+        m,
+        instructions='Always respond briefly.',
+        model_settings=XaiModelSettings(
+            xai_store_messages=True,
+            xai_previous_response_id='auto',
+        ),
+    )
+
+    r1 = await agent.run('Question 1')
+    assert r1.response.history_digest is not None
+
+    r2 = await agent.run('Question 2', message_history=r1.all_messages())
+    assert r2.output == 'Second answer'
+
+    calls = get_mock_chat_create_kwargs(mock_client)
+    assert 'previous_response_id' not in calls[0]
+    assert calls[0]['messages'] == [
+        {'content': [{'text': 'Always respond briefly.'}], 'role': 'ROLE_SYSTEM'},
+        {'content': [{'text': 'Question 1'}], 'role': 'ROLE_USER'},
+    ]
+    assert calls[1]['previous_response_id'] == 'resp_turn_1'
+    assert calls[1]['messages'] == [
+        {'content': [{'text': 'Question 2'}], 'role': 'ROLE_USER'},
+    ]
+
+
+async def test_xai_previous_response_id_concrete_seed_without_history_omits_stored_instructions(
+    allow_model_requests: None,
+):
+    """Continuing with an explicit ID and no `message_history` omits stored stable instructions."""
+    resp = _with_response_id(create_response(content='Continued'), 'resp_2')
+    mock_client = MockXai.create_mock([resp])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(
+        m,
+        instructions='System voice',
+        model_settings=XaiModelSettings(
+            xai_store_messages=True,
+            xai_previous_response_id='resp_1',
+        ),
+    )
+
+    result = await agent.run('Follow up')
+    assert result.output == 'Continued'
+    calls = get_mock_chat_create_kwargs(mock_client)
+    assert calls[0]['previous_response_id'] == 'resp_1'
+    assert calls[0]['messages'] == [
+        {'content': [{'text': 'Follow up'}], 'role': 'ROLE_USER'},
+    ]
+
+
+async def test_xai_previous_response_id_concrete_seed_overridden_by_in_run_response(allow_model_requests: None):
+    """Within a run, tool-call continuations chain from the latest response ID instead of repeating the seed."""
+    resp_1 = _with_response_id(
+        create_response_with_tool_calls(
+            content='',
+            tool_calls=[create_tool_call('tc_1', 'ping', {})],
+        ),
+        'resp_tool_call',
+    )
+    resp_2 = _with_response_id(create_response(content='pong!'), 'resp_final')
+    mock_client = MockXai.create_mock([resp_1, resp_2])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(
+        m,
+        instructions='System voice',
+        model_settings=XaiModelSettings(
+            xai_store_messages=True,
+            xai_previous_response_id='resp_seed',
+        ),
+    )
+
+    @agent.tool_plain
+    def ping() -> str:
+        return 'ok'
+
+    result = await agent.run('Call ping')
+    assert result.output == 'pong!'
+
+    calls = get_mock_chat_create_kwargs(mock_client)
+    assert calls[0]['previous_response_id'] == 'resp_seed'
+    assert calls[0]['messages'] == [
+        {'content': [{'text': 'Call ping'}], 'role': 'ROLE_USER'},
+    ]
+    assert calls[1]['previous_response_id'] == 'resp_tool_call'
+    assert calls[1]['messages'] == [
+        {'content': [{'text': 'ok'}], 'role': 'ROLE_TOOL', 'tool_call_id': 'tc_1'},
+    ]
+
+
+async def test_xai_previous_response_id_breaks_chain_on_modified_history_instructions_key_or_compaction(
+    allow_model_requests: None,
+):
+    """Tampered history, changed instructions, wrong digest key, or compaction forces full resend."""
+    resp_1 = _with_response_id(create_response(content='First'), 'resp_1')
+    resp_resend = _with_response_id(create_response(content='Resent'), 'resp_2')
+    mock_client = MockXai.create_mock([resp_1, resp_resend, resp_resend, resp_resend, resp_resend])
+    settings = XaiModelSettings(xai_store_messages=True, xai_previous_response_id='auto')
+
+    m_keyed = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client), history_digest_key=b'k1')
+    r1 = await Agent(m_keyed, instructions='Voice A', model_settings=settings).run('Original prompt')
+    history = r1.all_messages()
+
+    # 1. Tampered user prompt in history -> breaks chain
+    tampered = [
+        ModelRequest(parts=[UserPromptPart(content='Edited prompt')], instructions='Voice A'),
+        history[1],
+    ]
+    await Agent(m_keyed, instructions='Voice A', model_settings=settings).run('Next', message_history=tampered)
+
+    # 2. Changed instructions -> breaks chain even with unedited messages
+    await Agent(m_keyed, instructions='Voice B', model_settings=settings).run('Next', message_history=history)
+
+    # 3. Different history_digest_key -> breaks chain
+    m_other_key = XaiModel(
+        XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client), history_digest_key=b'k2'
+    )
+    await Agent(m_other_key, instructions='Voice A', model_settings=settings).run('Next', message_history=history)
+
+    # 4. Compaction boundary -> breaks even concrete seed
+    compacted = [
+        ModelResponse(
+            parts=[CompactionPart(content='summary', provider_name='xai')],
+            model_name=XAI_NON_REASONING_MODEL,
+            provider_name='xai',
+            provider_response_id='resp_compact',
+        )
+    ]
+    await Agent(
+        m_keyed,
+        instructions='Voice A',
+        model_settings=XaiModelSettings(xai_store_messages=True, xai_previous_response_id='resp_seed'),
+    ).run('After compact', message_history=compacted)
+
+    calls = get_mock_chat_create_kwargs(mock_client)
+    for idx in range(1, 5):
+        assert 'previous_response_id' not in calls[idx], f'call {idx} should not continue'
+        assert any(msg['role'] == 'ROLE_SYSTEM' for msg in calls[idx]['messages'])
+
+
+async def test_xai_previous_response_id_stream_records_history_digest(allow_model_requests: None):
+    """Streaming requests with `xai_store_messages=True` stamp `history_digest` for follow-up auto continuation."""
+    stream_chunks = [get_grok_text_chunk('streamed turn 1', 'stop')]
+    mock_stream_client = MockXai.create_mock_stream([stream_chunks])
+    m_stream = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_stream_client))
+    settings = XaiModelSettings(xai_store_messages=True, xai_previous_response_id='auto')
+
+    async with Agent(m_stream, instructions='Stream sys').run_stream('Hi', model_settings=settings) as stream_res:
+        await stream_res.get_output()
+
+    messages_after_turn_1 = stream_res.all_messages()
+    resp_id = stream_res.response.provider_response_id
+    assert resp_id is not None
+    assert stream_res.response.history_digest is not None
+
+    mock_next = MockXai.create_mock([_with_response_id(create_response(content='turn 2'), 'resp_turn_2')])
+    m_next = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_next))
+    r2 = await Agent(m_next, instructions='Stream sys', model_settings=settings).run(
+        'Follow up', message_history=messages_after_turn_1
+    )
+    assert r2.output == 'turn 2'
+    next_calls = get_mock_chat_create_kwargs(mock_next)
+    assert next_calls[0]['previous_response_id'] == resp_id
+    assert next_calls[0]['messages'] == [{'content': [{'text': 'Follow up'}], 'role': 'ROLE_USER'}]
 
 
 # End of tests
