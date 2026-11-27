@@ -50,6 +50,7 @@ from ...messages import (
     ToolCallPart,
     ToolPartKind,
     ToolReturnPart,
+    ToolUIVisibility,
     UploadedFile,
     UploadedFileProviderName,
     UserContent,
@@ -87,7 +88,13 @@ from .._adapter import (
     tool_availability_delta_payload,
     tool_retry_payload,
 )
-from .._utils import client_error_text, get_ui_message_id, set_ui_message_id, without_internal_text_metadata
+from .._utils import (
+    client_error_text,
+    client_view,
+    get_ui_message_id,
+    set_ui_message_id,
+    without_internal_text_metadata,
+)
 from ._event_stream import VercelAIEventStream
 from ._utils import (
     CAPABILITY_LOAD_DELTA_DATA_TYPE,
@@ -252,6 +259,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         server_message_id: str | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         manage_message_history: Literal['client', 'server'] = 'client',
+        default_ui_visibility: ToolUIVisibility = 'public',
         conversation_store: ConversationStore | None = None,
         conversation_scope: str | None = None,
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
@@ -273,6 +281,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             server_message_id=server_message_id,
             manage_system_prompt=manage_system_prompt,
             manage_message_history=manage_message_history,
+            default_ui_visibility=default_ui_visibility,
             conversation_store=conversation_store,
             conversation_scope=conversation_scope,
             allowed_file_url_schemes=allowed_file_url_schemes,
@@ -309,6 +318,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         on_cancel: OnCancelFunc[BaseChunk] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         manage_message_history: Literal['client', 'server'] = 'client',
+        default_ui_visibility: ToolUIVisibility = 'public',
         conversation_store: ConversationStore | None = None,
         conversation_scope: str | None = None,
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
@@ -347,6 +357,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             on_cancel=on_cancel,
             manage_system_prompt=manage_system_prompt,
             manage_message_history=manage_message_history,
+            default_ui_visibility=default_ui_visibility,
             conversation_store=conversation_store,
             conversation_scope=conversation_scope,
             allowed_file_url_schemes=allowed_file_url_schemes,
@@ -1109,8 +1120,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         generate_message_id: Callable[[ModelRequest | ModelResponse, Literal['system', 'user', 'assistant'], int], str]
         | None = None,
         sdk_version: Literal[5, 6, 7] = 5,
+        default_ui_visibility: ToolUIVisibility = 'public',
     ) -> list[UIMessage]:
-        """Transform Pydantic AI messages into Vercel AI messages.
+        """Transform Pydantic AI messages into Vercel AI messages, as the client is to be sent them.
+
+        A tool's calls and returns are dumped by their `ui_visibility` stamp: neither for a `'private'` tool, and a
+        `'redacted'` tool's calls with a placeholder instead of each result. See
+        [Tool visibility](../../ui/overview.md#tool-visibility).
 
         Note: The round-trip `dump_messages` -> `load_messages` is not fully lossless for tool
         results. Successful, failed, and denied results each round-trip via their own part type
@@ -1169,10 +1185,15 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             sdk_version: Vercel AI SDK version to target: 5, 6, or 7. Defaults to 5 for backwards
                 compatibility. Set to 6 to emit tool approval parts for deferred tool calls; 7 emits
                 identically to 6 (v7's data-stream protocol equals v6's).
+            default_ui_visibility: What the client is sent for a tool part with no `ui_visibility` stamp, as
+                [`UIAdapter.default_ui_visibility`][pydantic_ai.ui.UIAdapter.default_ui_visibility]. A stamped
+                part is dumped by its stamp, so this only reaches history without stamps, such as one from an
+                earlier version or a run that didn't set a default.
 
         Returns:
             A list of UIMessage objects in Vercel AI format
         """
+        messages = client_view(messages, default_ui_visibility)
         tool_results = _collect_tool_results(messages)
         id_generator = generate_message_id or _generate_message_id
         result: list[UIMessage] = []

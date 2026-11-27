@@ -36,8 +36,9 @@ def _is_deprecation_shim(package: Path) -> bool:
 # Packages that are supporting infrastructure rather than capabilities, kept out of the README
 # capability tables per review. `media` exports the content-addressed stores Step Persistence
 # uses; its docs page and README are framed as Step Persistence supporting infrastructure, not
-# as a capability (https://github.com/pydantic/pydantic-ai-harness/issues/625).
-_NOT_A_CAPABILITY = frozenset({'media'})
+# as a capability (https://github.com/pydantic/pydantic-ai-harness/issues/625). `conversation_store` exports
+# backends of core's `ConversationStore`, documented the same way.
+_NOT_A_CAPABILITY = frozenset({'conversation_store', 'media'})
 
 
 def _capability_packages() -> list[Path]:
@@ -97,13 +98,14 @@ def test_capability_linked_from_top_readme(package: Path) -> None:
 # ACP is the one page that stays experimental.
 
 _DOCS_DIR = _ROOT / '../../docs/harness'
-# `media.md` documents Step Persistence's storage plumbing (see `_NOT_A_CAPABILITY` above),
+# `media.md` and `conversation-store.md` document storage plumbing (see `_NOT_A_CAPABILITY` above),
 # `gh-aw.md` walks through the gh-aw engine definition under `gh-aw/`, and `integrations.md` is the overview of the
 # integration capabilities, so the capability-page checks do not apply
 # to them. `AGENTS.md` (and its `CLAUDE.md` link) holds the directory's agent instructions.
 _NON_CAPABILITY_PAGES = {
     'AGENTS.md',
     'CLAUDE.md',
+    'conversation-store.md',
     'pax.md',
     'examples.md',
     'gh-aw.md',

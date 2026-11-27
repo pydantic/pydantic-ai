@@ -31,6 +31,7 @@ from publish_pr_review_checks import (
     ReviewFinding,
     gate,
     publish,
+    is_trusted,
     review_payload,
     verdict,
 )
@@ -156,6 +157,25 @@ def test_run_label_changes_nothing_for_a_trusted_author() -> None:
     """The label does not buy a second review of a head that was already reviewed."""
     github = FakeGitHub(labels=[RUN_LABEL], labeled_by=MAINTAINER)
     assert not gate(github, {**ENV, 'EVENT_ACTION': 'labeled', 'EVENT_LABEL': RUN_LABEL})
+    assert github.statuses == []
+
+
+@pytest.mark.parametrize(
+    ('author', 'labeled_by', 'expected'),
+    [
+        (MAINTAINER, None, True),
+        (CONTRIBUTOR, None, False),
+        (Actor(login='maintainer', type='Bot'), None, False),
+        (CONTRIBUTOR, CONTRIBUTOR, False),
+        (CONTRIBUTOR, Actor(login='maintainer', type='Bot'), False),
+        (Actor(login='maintainer', type='Bot'), MAINTAINER, True),
+    ],
+    ids=['write-author', 'read-author', 'app-author', 'read-access-labeler', 'bot-labeler', 'write-labeler'],
+)
+def test_trusted_matches_the_review_gate(author: Actor, labeled_by: Actor | None, expected: bool) -> None:
+    """The other workflows the run label activates trust exactly whom the review gate trusts, and write nothing."""
+    github = FakeGitHub(author=author, labels=[RUN_LABEL] if labeled_by else [], labeled_by=labeled_by)
+    assert is_trusted(github) is expected
     assert github.statuses == []
 
 
