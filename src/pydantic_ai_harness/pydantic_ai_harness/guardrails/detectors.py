@@ -40,6 +40,7 @@ from pydantic_ai.messages import ToolReturn
 from pydantic_ai_harness.guardrails._shared import GuardrailResult, TextDetector as TextDetector
 from pydantic_ai_harness.guardrails._tool_guardrail import ToolResultInfo
 from pydantic_ai_harness.guardrails._tool_return_text import (
+    detect_tool_return_attachments as _detect_tool_return_attachments,
     detect_tool_return_content as _detect_tool_return_content,
     is_text_tool_return as _is_text_tool_return,
 )
@@ -432,8 +433,9 @@ def for_tool_result_text(
 
     Plain string results are passed to `detector`. For a `ToolReturn` with a
     string `return_value`, the detector also checks the text in its
-    model-directed `content`, both part by part and over each stretch of
-    adjacent text parts joined, so a secret split across two of them is caught.
+    model-directed `content` and `attachments`, both part by part and over each
+    stretch of adjacent text parts joined, so a secret split across two of them
+    is caught.
     The `ToolReturn` is rebuilt when either channel is redacted, retaining its
     `metadata`, `kind`, and non-text content.
 
@@ -467,7 +469,7 @@ def for_tool_result_text(
 
 
 def _tool_return_verdict(detector: TextDetector, result: ToolReturn[str]) -> GuardrailResult:
-    """Run `detector` over a `ToolReturn`'s string `return_value` and its `content`.
+    """Run `detector` over a `ToolReturn`'s string `return_value`, its `content` and its `attachments`.
 
     The `ToolReturn` is rebuilt when either changed.
     """
@@ -483,13 +485,17 @@ def _tool_return_verdict(detector: TextDetector, result: ToolReturn[str]) -> Gua
     content_verdict, content = _detect_tool_return_content(detector, result.content)
     if content_verdict is not None:
         return content_verdict
+    attachments_verdict, attachments = _detect_tool_return_attachments(detector, result.attachments)
+    if attachments_verdict is not None:
+        return attachments_verdict
 
-    if verdict.action == 'replace' or content is not None:
+    if verdict.action == 'replace' or content is not None or attachments is not None:
         return GuardrailResult.replace(
             replace(
                 result,
                 return_value=return_value,
                 content=result.content if content is None else content,
+                attachments=result.attachments if attachments is None else attachments,
             )
         )
     return GuardrailResult.allow()

@@ -148,9 +148,11 @@ The tool result text is not recorded. Clean results emit no span.
   Provider-native tools and externally supplied deferred results are not
   classified. Tool retry and failure messages raised with `ModelRetry` or
   `ToolFailed` are also outside its scope.
-- For `ToolReturn`, both `return_value` and model-visible `content` are classified.
-  `ToolReturn.metadata` and metadata on additional content items are not. A
-  rejected result drops the original value, content, and metadata.
+- For `ToolReturn`, `return_value`, model-visible `content` and the text of its
+  `attachments` (the content of the tools it called, such as Code Mode's nested
+  calls) are classified. `ToolReturn.metadata` and metadata on additional content
+  items are not. A rejected result drops the original value, content, attachments,
+  and metadata.
 - The default pattern detector checks common text fields. Bare string results and
   strings in `ToolReturn.content` are treated as content fields. Other strings not
   under recognized text fields require `semantic_detection=True`. Strings used as

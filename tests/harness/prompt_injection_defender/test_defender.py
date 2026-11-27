@@ -14,7 +14,15 @@ from stackone_defender import DefenseResult, PromptDefense
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import CachePoint, TextContent, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
+from pydantic_ai.messages import (
+    CachePoint,
+    TextContent,
+    ToolCallPart,
+    ToolResultAttachment,
+    ToolReturn,
+    ToolReturnPart,
+    UserContent,
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage
@@ -260,6 +268,27 @@ async def test_blocks_injection_split_across_tool_return_content() -> None:
     assert isinstance(out, ToolReturn)
     assert isinstance(out.return_value, str)
     assert 'withheld' in out.return_value
+
+
+@pytest.mark.parametrize('item', [INJECTION, TextContent(INJECTION)])
+async def test_blocks_injection_in_tool_return_attachments(item: str | TextContent) -> None:
+    """The content of the tools a tool called, such as Code Mode's nested calls, reaches the model with its result."""
+    attachment = ToolResultAttachment(content=item, tool_call_id='nested-1', tool_name='read')
+    result: ToolReturn[object] = ToolReturn(return_value={'body': 'ok'}, attachments=[attachment])
+    out = await _run(PromptInjectionDefender(block_high_risk=True), result)
+    assert isinstance(out, ToolReturn)
+    assert isinstance(out.return_value, str)
+    assert 'withheld' in out.return_value
+    assert out.attachments == ()
+
+
+async def test_clean_tool_return_attachments_pass_through() -> None:
+    attachments = [
+        ToolResultAttachment(content='clean', tool_call_id='nested-1', tool_name='read'),
+        ToolResultAttachment(content=CachePoint(), tool_call_id='nested-1', tool_name='read'),
+    ]
+    result: ToolReturn[object] = ToolReturn(return_value={'body': 'ok'}, attachments=attachments)
+    assert await _run(PromptInjectionDefender(block_high_risk=True), result) is result
 
 
 async def test_tool_return_content_metadata_is_not_classified() -> None:

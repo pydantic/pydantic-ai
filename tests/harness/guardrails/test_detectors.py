@@ -20,6 +20,7 @@ from pydantic_ai.messages import (
     TextContent,
     TextPart,
     ToolCallPart,
+    ToolResultAttachment,
     ToolReturn,
     ToolReturnPart,
     UserContent,
@@ -837,6 +838,56 @@ class TestForToolResultText:
         assert verdict == GuardrailResult.replace(
             ToolReturn('safe summary', content=[image, 'key: [redacted:openai_key]'])
         )
+
+    def test_attachment_text_reaches_the_detector(self):
+        """The content of the tools a tool called, such as Code Mode's nested calls, reaches the model with its result.
+
+        Each call's run is scanned as one span and keeps its attribution; another call's attachments are left alone.
+        """
+        image = BinaryContent(data=b'image', media_type='image/png')
+        nested = ToolResultAttachment(content=f'key: {_OPENAI_KEY}', tool_call_id='nested-1', tool_name='fetch')
+        split = [
+            ToolResultAttachment(content=part, tool_call_id='nested-2', tool_name='read', capability_id='files')
+            for part in (f'sk-{"a" * 20}', 'a' * 12)
+        ]
+        clean = ToolResultAttachment(content=image, tool_call_id='nested-3', tool_name='shot')
+        result = ToolReturn('safe summary', attachments=[nested, *split, clean])
+
+        verdict = for_tool_result_text(redact_secrets)(self._info(result))
+
+        assert verdict == GuardrailResult.replace(
+            ToolReturn(
+                'safe summary',
+                attachments=[
+                    ToolResultAttachment(
+                        content='key: [redacted:openai_key]', tool_call_id='nested-1', tool_name='fetch'
+                    ),
+                    ToolResultAttachment(
+                        content='[redacted:openai_key]',
+                        tool_call_id='nested-2',
+                        tool_name='read',
+                        capability_id='files',
+                    ),
+                    clean,
+                ],
+            )
+        )
+
+    def test_clean_attachments_are_allowed(self):
+        attachment = ToolResultAttachment(content='safe context', tool_call_id='nested-1', tool_name='fetch')
+
+        verdict = for_tool_result_text(redact_secrets)(self._info(ToolReturn('safe', attachments=[attachment])))
+
+        assert verdict == GuardrailResult.allow()
+
+    def test_an_attachment_detector_verdict_is_preserved(self):
+        attachment = ToolResultAttachment(content='blocked context', tool_call_id='nested-1', tool_name='fetch')
+
+        verdict = for_tool_result_text(blocked_keywords(['blocked']))(
+            self._info(ToolReturn('safe summary', attachments=[attachment]))
+        )
+
+        assert verdict.action == 'block'
 
     def test_unmodified_multipart_content_is_allowed(self):
         result = ToolReturn('no secret', content=['safe context', TextContent(content='more context')])

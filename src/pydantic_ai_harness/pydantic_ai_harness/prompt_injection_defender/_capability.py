@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any
 
@@ -13,7 +13,7 @@ from pydantic_core import to_jsonable_python
 
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, durable_operation
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import TextContent, ToolCallPart, ToolReturn
+from pydantic_ai.messages import TextContent, ToolCallPart, ToolReturn, UserContent
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector, matches_tool_selector
 from pydantic_ai_harness._from_spec import use_default_from_spec
 from pydantic_ai_harness._judge import SerializableToolSelector
@@ -111,14 +111,18 @@ def _model_visible_values(result: object) -> list[object]:
         # `content` field when projecting this separate message part.
         values.append({'content': result.content})
     elif result.content is not None:
-        text = '\n'.join(
-            item if isinstance(item, str) else item.content
-            for item in result.content
-            if isinstance(item, str | TextContent)
-        )
-        if text:
-            values.append({'content': text})
+        values.extend(_content_text_value(result.content))
+    # The content of the tools this tool called, such as Code Mode's nested calls, reaches the model with this result.
+    values.extend(_content_text_value([attachment.content for attachment in result.attachments]))
     return values
+
+
+def _content_text_value(content: Sequence[UserContent]) -> list[object]:
+    """The text in `content`, joined under Defender's `content` field, or nothing when it holds no text."""
+    text = '\n'.join(
+        item if isinstance(item, str) else item.content for item in content if isinstance(item, str | TextContent)
+    )
+    return [{'content': text}] if text else []
 
 
 @dataclass

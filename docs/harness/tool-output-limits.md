@@ -259,7 +259,9 @@ for an image or PDF, reaches the model with its files as they are. A lone data i
 measured as itself, and several as one JSON list. When a band
 applies, the reduced text replaces that data, ahead of the files. Text `content` is reduced the
 same way whatever the return value holds. Non-text `content` that overflows is left unreduced
-with a `warnings.warn`.
+with a `warnings.warn`. `ToolReturn.attachments`, the content of the tools a tool called (such
+as Code Mode's nested calls), is kept as it is and not reduced: scope the capability to those
+tools to bound it.
 
 ### `ToolReturn.metadata` is preserved
 
