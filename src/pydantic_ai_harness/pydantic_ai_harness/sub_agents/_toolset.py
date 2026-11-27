@@ -1968,16 +1968,17 @@ def _runs_child_workflows(agent: AbstractAgent[Any, Any]) -> bool:
 
 
 def _check_durable_delegate(ctx: RunContext[Any], agent_name: str, agent: AbstractAgent[Any, Any]) -> None:
-    """Refuse a delegate that could pass this run's managed layer on through a child workflow, which drops it.
+    """Refuse a durable delegate that could pass this run's managed layer on from a durable unit, which drops it.
 
-    A layer the delegate agent holds itself, as an `include_self` delegate does, is read in its child workflows,
-    so only a layer it would inherit counts. The managed layer is read last, so a `max_mode` function is read here
-    only for a durable delegate that delegates and doesn't hold it.
+    Any durable engine may run the delegate's own delegations in a child workflow, task or activity whose context
+    carries its agent but not its run's capabilities. A layer the delegate agent holds itself, as an `include_self`
+    delegate does, is read there, so only a layer it would inherit counts. The managed layer is read last, so a
+    `max_mode` function is read here only for a durable delegate that delegates and doesn't hold it.
     """
-    if not _runs_child_workflows(agent) or not _delegates(agent):
+    if BaseDurabilityCapability.from_agent(agent) is None or not _delegates(agent):
         return
     if managed_layer_not_held_by(ctx, agent):
-        # Inside the child workflow, only the delegate agent's own capabilities can be read, not the layer it got.
+        # In such a unit, only the delegate agent's own capabilities can be read, not the layer it got.
         raise UserError(
             f'Sub-agent {agent_name!r} is bound to a durable execution engine and has its own `SubAgents` or `SubAgentToolset` '
             'but no `Permissions` with the same `max_mode` and `managed_rules`: '

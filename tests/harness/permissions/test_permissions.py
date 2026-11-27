@@ -52,6 +52,8 @@ from pydantic_ai_harness.permissions import (
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.sub_agents import SubAgent, SubAgents, SubAgentToolset
 from tests.conftest import try_import
+from tests.harness._deferred_tools import call_then_echo
+from tests.harness._recording_durability import RecordingDurability
 
 with try_import() as prefect_installed:
     from pydantic_ai.durable_exec.prefect._cache_policies import PrefectAgentInputs
@@ -2242,6 +2244,37 @@ class TestInheritedBySubAgents:
         """No one can be asked in the delegate, so the `rm` it holds is denied and `doomed` stays."""
         permissions = Permissions[None]('full', max_mode=max_mode)
         assert await self._delegate(tmp_path, permissions) == (True, True)
+
+    @pytest.mark.parametrize('held', [False, True], ids=['inherited', 'held'])
+    async def test_a_delegate_bound_to_any_durable_engine_that_delegates_needs_the_layer_itself(
+        self, held: bool
+    ) -> None:
+        """Any engine may run its delegations in a durable unit where a layer it only inherited can't be read."""
+        rules = [PermissionRule[None]('deny', command='rm')]
+        grandchild = Agent[None, str](FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')])))
+        child = Agent[None, str](
+            FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('child done')])),
+            name='recording_child',
+            deps_type=type(None),
+            capabilities=[
+                *([Permissions[None](managed_rules=rules)] if held else []),
+                SubAgents[None](agents=[SubAgent(grandchild, name='grandchild')]),
+                RecordingDurability(),
+            ],
+        )
+        parent = Agent[None, str](
+            call_then_echo('delegate_task', {'agent_name': 'child', 'task': 'go'}, 'd1', 'parent done'),
+            deps_type=type(None),
+            capabilities=[
+                Permissions[None](managed_rules=rules),
+                SubAgents[None](agents=[SubAgent(child, name='child')]),
+            ],
+        )
+        if held:
+            assert (await parent.run('go')).output == 'parent done'
+        else:
+            with pytest.raises(UserError, match=r"Sub-agent 'child' is bound to a durable execution engine .*14944"):
+                await parent.run('go')
 
     async def test_every_permissions_managed_layer_reaches_a_delegate(self, tmp_path: Path) -> None:
         """One `Permissions` denies `touch` and another `rm`, so the delegate runs neither."""
