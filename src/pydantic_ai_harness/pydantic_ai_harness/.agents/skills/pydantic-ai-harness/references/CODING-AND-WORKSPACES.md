@@ -219,15 +219,17 @@ Tool arguments (scripted tests need them; `expected_hash` exists only with `cont
 `find_files(pattern, path='.')`, `create_directory(path)`, `file_info(path)`; `list_files` and `grep`
 as under Coder.
 
-`read_file` returns `[header, BinaryContent]` for a PNG, JPEG, GIF, WebP or PDF up to 5 MB (detected
-from its leading bytes, not its extension), and a text description (size, media type, and for other
-binary files the first 64 bytes in hex) for any other binary file; text files come back as a string.
-With `max_image_side` set (`Coder` sets 1024; `FileSystem` defaults to `None`), an image longer than that
-on either side is downscaled first, in its own format; the header adds a
-`Shown downscaled from WxH to wxh pixels.` line and keeps the file's own size and hash; one over 25
-megapixels at its decoding scale is described as too large. It needs Pillow
-(the `coder` extra); setting `max_image_side` without it raises `ImportError`.
-A file over 64 MiB is described by its size instead of read: find the lines with `search_files` or `grep`.
+`read_file` returns `[header, BinaryContent]` up to 5 MB for an image (PNG, JPEG, GIF, WebP), PDF or
+video (MP4, QuickTime, WebM, FLV, MPEG, WMV, 3GP), detected from its leading bytes, not its extension. A
+model whose profile says it can't take that kind of file gets a note in its place, or a description when
+`FileUnderstanding` is on the agent. Office documents, audio and Matroska stay described, since some
+models whose profile admits the kind reject the format. Any other binary file gets a text description
+(size, media type and the first 64 bytes in hex); text files come back as a string. With `max_image_side`
+set (`Coder` sets 1024; `FileSystem` defaults to `None`), an image longer than that on either side is
+downscaled first, in its own format; the header adds a `Shown downscaled from WxH to wxh pixels.` line
+and keeps the file's own size and hash; one over 25 megapixels at its decoding scale is described as too
+large. It needs Pillow (the `coder` extra); setting `max_image_side` without it raises `ImportError`. A
+file over 64 MiB is described by its size instead of read: find the lines with `search_files` or `grep`.
 
 `read_file` has the tool kind `READ_FILE_KIND` (`file_system.read_file`). `ToolOutputLimits`'
 `read_tool_result` and `grep_tool_result`, `Memory`'s `read_memory` and `RepoContext`'s inventory tool step aside for it when
