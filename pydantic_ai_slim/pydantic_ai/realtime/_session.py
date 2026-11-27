@@ -104,6 +104,7 @@ from ..messages import (
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolPartKind,
+    ToolReturn,
     ToolReturnPart,
     ToolSearchReturnPart,
     ToolUIVisibility,
@@ -496,9 +497,12 @@ def _build_session_tool_return(
     )
     # TODO: send the attachments as data on the live channel, as `Model.prepare_messages` does for a run (a follow-up
     # to https://github.com/pydantic/pydantic-ai/issues/12391). Until then a session sends them as user content, as
-    # it always did, a lone string as it was returned.
-    contents = [attachment.content for attachment in attachments]
-    user_content = contents[0] if len(contents) == 1 and isinstance(contents[0], str) else contents or None
+    # it always did: a result's own `content` as it was returned, unless it carries the content of tools it called.
+    user_content: str | Sequence[UserContent] | None
+    if isinstance(tool_result, ToolReturn) and not tool_result.attachments:
+        user_content = cast(ToolReturn[Any], tool_result).content or None
+    else:
+        user_content = [attachment.content for attachment in attachments] or None
     if not tools_added:
         return result_part, user_content, []
     # As in the graph (`_tool_execution._call_tool`): `load_capability` reveals its own capability's tools, a name
