@@ -97,6 +97,13 @@ class RenderPayloadTooLargeError(RenderProtocolError):
     """Raised before dispatch when task arguments exceed Render's limit."""
 
 
+class UnsupportedInChildTaskError(UserError):
+    """Raised in a child task for something Render can't carry back to the parent run.
+
+    The task finishes with a permanent error instead of being retried, as a retry would be refused the same way.
+    """
+
+
 @dataclass(frozen=True)
 class ChildEffects:
     """The decoded effects one child task reported for its caller to apply."""
