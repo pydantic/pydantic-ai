@@ -119,9 +119,10 @@ def file_name(log_id: str) -> str:
 class InMemoryWorkLogStore:
     """The default store: each log lives in this process until `discard` or process exit.
 
-    A long-lived server should call `discard` when a conversation ends. Under a durable engine a
-    store operation can run in another process, so use `FileWorkLogStore` or `WorkspaceWorkLogStore`
-    there. The state is left out of comparisons, so `WorkLog()` stated twice is one log.
+    A long-lived server should call `discard` when a conversation ends. The log is lost when the
+    process exits, so a durable run that can resume after a worker restart needs `FileWorkLogStore`
+    or `WorkspaceWorkLogStore`. The state is left out of comparisons, so `WorkLog()` stated twice is
+    one log.
     """
 
     _entries: dict[str, list[WorkLogEntry]] = field(

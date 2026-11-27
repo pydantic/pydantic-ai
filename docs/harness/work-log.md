@@ -126,7 +126,7 @@ With `CodeMode(speculate=...)`, a call launched while the model is still writing
 
 The log's writes and both tools run as durable operations of the capability's `id`, `'work_log'`: `append` for each recorded entry, and `search` and `read` for the tools. A replay reuses what was recorded. That records one operation per entry, so under Temporal each recorded tool call, reply or thought outside another durable unit runs as an activity of its own in the workflow history. An append made inside another durable unit runs inline in it, and the entry's key keeps a retried unit from writing twice.
 
-Keep the `id` fixed once a workflow is live. Under a durable engine a store operation can run in another process, so use `FileWorkLogStore` or `WorkspaceWorkLogStore` there rather than the in-memory default.
+Keep the `id` fixed once a workflow is live. Each store numbers entries in the memory of the process that writes them, so two processes appending to one log give two entries the same `seq`. With one worker at a time, `FileWorkLogStore` and `WorkspaceWorkLogStore` keep the log across a worker restart, which the in-memory default loses. When a log's operations can run on several workers at once, implement `WorkLogStore` over storage that assigns `seq` atomically, such as a database.
 
 ## Two of them
 

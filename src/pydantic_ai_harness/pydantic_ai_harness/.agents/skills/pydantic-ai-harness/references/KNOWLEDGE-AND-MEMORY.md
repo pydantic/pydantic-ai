@@ -298,8 +298,9 @@ Gotchas:
 - `ToolBridge`'s `tool_call` and the tool it runs share one `tool_call_id`.
 - `seq` follows the order calls finished, so a nested Code Mode call comes before its `run_code`.
 - It adds no instructions; `ResetCompaction`'s notice points the model at the log.
-- Under durable execution each recorded entry is one `append` operation; use the file or workspace
-  store there, since an operation can run in another process.
+- Under durable execution each recorded entry is one `append` operation. Every store supports one
+  writer process per log: with one worker use the file or workspace store, which survive a worker
+  restart; with several, write a `WorkLogStore` over storage that assigns `seq` atomically.
 - `conversation_id` is trusted as given: derive it from the authenticated user in multi-tenant apps.
 - Each search reads the whole log, so it slows as the log grows; the workspace store reads one file
   per entry, one round trip each in a remote sandbox.
