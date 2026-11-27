@@ -79,7 +79,7 @@ def test_defaults_aliases_and_collisions() -> None:
     for key in ('ctrl-enter', 'ctrl-shift-enter', 'ctrl-m', 'enter'):
         with pytest.raises(ValidationError, match='collide'):
             InputBindings(newline=key)
-    for key in ('ctrl-c', 'ctrl-j', 'paste', 'escape', 'ctrl-x ctrl-s', 'a'):
+    for key in ('ctrl-c', 'ctrl-j', 'ctrl-n', 'paste', 'escape', 'ctrl-x ctrl-s', 'a'):
         with pytest.raises(ValidationError, match='Choose a decoded key'):
             InputBindings(send=key)
     assert InputBindings().label('steer', keyboard='mac') == 'Option+Return'
@@ -658,6 +658,20 @@ async def test_question_and_queue_focus_keys_decode_through_real_input(
                 pipe.send_text(chunk)
                 keys.read()
             assert received == [expected]
+        finally:
+            keys.stop()
+
+
+@pytest.mark.parametrize('sequence', ['\x1b[P', '\x1b[R'])
+async def test_bare_csi_f1_and_f3_stay_unmapped(sequence: str) -> None:
+    """Only F2 and F4, which the composer uses, decode from Kitty's bare CSI forms."""
+    received: list[str] = []
+    with create_pipe_input() as pipe:
+        keys = PromptKeys(source=pipe, feed=lambda key, data: received.append(key), eof=lambda: None)
+        try:
+            pipe.send_text(sequence)
+            keys.read()
+            assert received == []
         finally:
             keys.stop()
 

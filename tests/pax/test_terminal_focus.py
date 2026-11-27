@@ -606,6 +606,38 @@ async def test_a_hidden_sessions_approval_waits_to_be_shown_while_the_browser_ca
     assert await desk.run(body) == 'exit'
 
 
+async def test_closing_a_hidden_session_ends_the_approval_it_waits_to_show(tmp_path: Path) -> None:
+    """Closing the session cancels its approval's wait to be shown; the command never runs."""
+    ran: list[str] = []
+    desk = Desk(
+        tmp_path,
+        agent=removing_agent(tmp_path, ran),
+        builtin=(RECORDER, WEB),
+        settings=Settings(model=None, question_placement='composer'),
+    )
+    home, terminal = desk.home, desk.terminal
+
+    async def body() -> None:
+        (web,) = [entry.loaded.plugin for entry in home.loader.entries() if entry.loaded and entry.name == 'web']
+        assert isinstance(web, WebPlugin)
+        answerer = web.service.answerer
+        b = await desk.live.new(workspace=desk.folder('b'))
+        home.send_input('/permissions auto')
+        home.send_input(f'/resume {b.conversation.conversation_id}')
+        await until(desk.live, lambda: terminal.shown is desk.runtimes[b.id] and home.idle)
+        home.send_input('clean up')
+        await settle(lambda: bool(answerer.questions) or home.idle)
+        assert answerer.questions, 'the approval waits for its session to be shown'
+        await desk.live.close(home.live_session.id)
+        await settle(lambda: not answerer.questions)
+        assert ran == []
+        assert [session.id for session in desk.live.listing()] == [b.id]
+        b.send_input('/exit')
+
+    assert await desk.run(body) == 'exit'
+    assert terminal.home_closed
+
+
 def held(command: str, call_id: str) -> PermissionRequest:
     return PermissionRequest(
         call=ToolCallPart('run_command', {'command': command}, tool_call_id=call_id),
