@@ -80,6 +80,8 @@ gh() {
     payload='{"state":"DISMISSED"}'
   elif [[ "$endpoint" = "repos/$REPO/issues/123/labels"* ]]; then
     payload='{}'
+  elif [ "$endpoint" = "repos/$REPO/contents/scripts/gather-pydantic-ai-review-context.sh" ]; then
+    payload=$CONTEXT_SCRIPT
   else
     echo "unexpected gh request: $*" >&2
     return 91
@@ -312,6 +314,48 @@ def test_compiled_stale_pr_skip_precedes_the_pr_head_checkout():
     assert steps[checkout_index]['if'] == "steps.stale-pr.outputs.skipped != 'true'"
 
 
+@pytest.mark.parametrize('fetched', [True, False], ids=['fetched', 'fetch-failed'])
+def test_compiled_review_context_runs_the_default_branch_script(tmp_path: Path, fetched: bool):
+    """The agent job gathers review context with the default branch's script, never the checked-out head's."""
+    compiled = TypeAdapter(dict[str | bool, object]).validate_python(
+        yaml.safe_load((ROOT / '.github/workflows/pydantic-ai-pr-review.lock.yml').read_text())
+    )
+    jobs = TypeAdapter(dict[str, dict[str, object]]).validate_python(compiled['jobs'])
+    steps = TypeAdapter(list[dict[str, object]]).validate_python(jobs['agent']['steps'])
+    script = next(step for step in steps if step.get('name') == 'Gather PR review context').get('run')
+    assert isinstance(script, str)
+    workspace = tmp_path / 'workspace'
+    head_copy = workspace / 'scripts' / 'gather-pydantic-ai-review-context.sh'
+    head_copy.parent.mkdir(parents=True)
+    head_copy.write_text('#!/usr/bin/env bash\necho head > "$RAN"\n')
+    head_copy.chmod(0o755)
+    (tmp_path / 'runner').mkdir()
+    endpoint = f'repos/{REPO}/contents/scripts/gather-pydantic-ai-review-context.sh'
+
+    result = run_shell(
+        f'cd "$WORKSPACE"\n{script}',
+        tmp_path,
+        WORKSPACE=str(workspace),
+        RUNNER_TEMP=str(tmp_path / 'runner'),
+        RAN=str(tmp_path / 'ran'),
+        PR_NUMBER='123',
+        # Runs itself again as `"$0"`, as `--partition-files` does in the real script.
+        CONTEXT_SCRIPT=(
+            '#!/usr/bin/env bash\nset -euo pipefail\n'
+            'if [ "${1:-}" = again ]; then shift; echo "default $*" > "$RAN"; else "$0" again "$@"; fi'
+        ),
+        FAIL_ENDPOINT=endpoint if not fetched else 'none',
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / 'calls').read_text() == f'GET {endpoint} paginate=false slurp=false\n'
+    if fetched:
+        assert (tmp_path / 'ran').read_text() == f'default 123 {REPO}\n'
+    else:
+        assert not (tmp_path / 'ran').exists()
+        assert 'could not fetch' in result.stdout
+
+
 @pytest.mark.parametrize(
     'live', [{'state': 'closed', 'head': {'sha': HEAD}}, {'state': 'open', 'head': {'sha': '2' * 40}}]
 )
@@ -336,7 +380,9 @@ def evaluate_expression(expression: str, values: dict[str, str | bool | int]) ->
     expression = expression.strip().removeprefix('${{').removesuffix('}}')
     for name in sorted(values, key=len, reverse=True):
         expression = expression.replace(name, repr(values[name]))
-    return eval(expression.replace('&&', ' and ').replace('||', ' or ').strip(), {'__builtins__': {}})
+    return eval(
+        expression.replace('&&', ' and ').replace('||', ' or ').strip(), {'__builtins__': {}, 'format': str.format}
+    )
 
 
 @pytest.mark.parametrize(
@@ -364,6 +410,50 @@ def test_unrelated_label_events_cannot_evict_pending_reviews(action: str, label:
     suffix = concurrency['group'].split('}}', 1)[1]
     assert evaluate_expression(suffix, values) == ('-noop-456' if isolated else '')
     assert evaluate_expression(concurrency['cancel-in-progress'], values) == cancels
+
+
+BOTS = '.github/workflows/bots.yml'
+REVIEW_CHECKS = '.github/workflows/pr-review-checks.yml'
+REVIEW_GATES_EVENTS = '.github/workflows/pr-review-gates-events.yml'
+
+
+@pytest.mark.parametrize(
+    ('event', 'run_event', 'path', 'conclusion', 'group', 'cancels'),
+    [
+        ('workflow_run', 'pull_request', BOTS, 'success', f'feature-{HEAD}', True),
+        ('workflow_run', 'pull_request', BOTS, 'skipped', f'feature-{HEAD}', True),
+        ('workflow_run', 'pull_request_review', REVIEW_GATES_EVENTS, 'failure', f'feature-{HEAD}', True),
+        ('workflow_run', 'pull_request_review', REVIEW_GATES_EVENTS, 'cancelled', 'run-456', True),
+        ('workflow_run', 'pull_request', REVIEW_CHECKS, 'success', f'feature-{HEAD}', True),
+        ('workflow_run', 'pull_request', REVIEW_CHECKS, 'skipped', 'run-456', True),
+        ('workflow_run', 'merge_group', REVIEW_CHECKS, 'success', 'run-456', True),
+        ('merge_group', '', '', '', 'run-456', False),
+    ],
+)
+def test_review_gate_wake_ups_collapse_per_head(
+    event: str, run_event: str, path: str, conclusion: str, group: str, cancels: bool
+):
+    workflow = TypeAdapter(dict[str | bool, object]).validate_python(
+        yaml.safe_load((ROOT / '.github/workflows/pr-review-gates.yml').read_text())
+    )
+    concurrency = TypeAdapter(dict[str, str]).validate_python(workflow['concurrency'])
+    jobs = TypeAdapter(dict[str, dict[str, object]]).validate_python(workflow['jobs'])
+    values: dict[str, str | bool | int] = {
+        'github.event_name': event,
+        'github.event.workflow_run.event': run_event,
+        'github.event.workflow_run.path': path,
+        'github.event.workflow_run.conclusion': conclusion,
+        'github.event.workflow_run.head_branch': 'feature',
+        'github.event.workflow_run.head_sha': HEAD,
+        'github.run_id': 456,
+    }
+    prefix, expression = concurrency['group'].split('${{', 1)
+    assert prefix == 'pr-review-gates-'
+    assert evaluate_expression(expression, values) == group
+    assert evaluate_expression(concurrency['cancel-in-progress'], values) == cancels
+    # A wake-up that skips the evaluation must not share, and so cancel, the head's group.
+    evaluates = event == 'merge_group' or group != 'run-456'
+    assert evaluate_expression(TypeAdapter(str).validate_python(jobs['review-target']['if']), values) == evaluates
 
 
 @pytest.mark.parametrize(

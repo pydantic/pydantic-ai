@@ -1,7 +1,7 @@
 ---
 name: pre-push-review
-description: Review candidate content locally under the scope, exemptions, and three-review budget
-  defined by pushing-commits-to-the-repo
+description: Review candidate content locally under the scope, exemptions, and review budget defined
+  by pushing-commits-to-the-repo
 allowed-tools:
   - Read
   - Glob

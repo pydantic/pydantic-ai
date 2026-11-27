@@ -711,7 +711,11 @@ class GoogleModel(Model[Client]):
         On the Gemini API, `gemini-2.5-flash-lite` also gets `google_minimal_thinking_budget=512`, and `gemini-2.5-flash`
         gets `thinking_always_enabled`, so `thinking=False` sends the minimum `thinking_budget` that its reroute target
         accepts instead of 0.
+
+        `deprecation` comes from the Gemini API's or Google Cloud's deprecation schedule, which date the same model
+        differently.
         """
+        profile = _google_common.with_deprecation(self._model_name, profile, google_cloud=self._is_google_cloud)
         if self._is_google_cloud:
             profile = merge_profile(
                 profile, GoogleModelProfile(google_supports_batch_api=False, google_supports_computer_use=False)
@@ -1762,6 +1766,8 @@ class GeminiStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         if self._provider_timestamp is not None:
             self.provider_details = {'timestamp': self._provider_timestamp}
+        # A stream that ends before a chunk reports a finish reason or a blocked prompt was cut off.
+        self.state = 'incomplete'
         try:
             async for chunk in MapStreamDecodeErrors(self._response, self._model_name, errors.UnknownApiResponseError):
                 for event in self._map_chunk(chunk):
@@ -1793,6 +1799,7 @@ class GeminiStreamedResponse(StreamedResponse):
             finish_reason, finish_details = finished
             self.provider_details = {**(self.provider_details or {}), **finish_details}
             self.finish_reason = finish_reason
+            self.state = 'complete'
 
         if candidate.grounding_metadata is not None:
             self._grounding_metadata = candidate.grounding_metadata
@@ -1839,6 +1846,7 @@ class GeminiStreamedResponse(StreamedResponse):
         self._has_content_filter = True
         self.provider_details = {**(self.provider_details or {}), **blocked_details}
         self.finish_reason = 'content_filter'
+        self.state = 'complete'
         if chunk.response_id:  # pragma: no branch
             self.provider_response_id = chunk.response_id
 
