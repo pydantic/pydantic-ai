@@ -5,7 +5,7 @@ import math
 import sys
 import time
 from collections import deque
-from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Collection, Generator, Sequence
 from contextlib import (
     AbstractAsyncContextManager,
     AbstractContextManager,
@@ -160,13 +160,19 @@ async def _default_model_name(*, store: SettingsStore, fallback: Model | str | N
 
 
 def _process(
-    *, process: ClaiProcess[DepsT] | None, store: SettingsStore | None, builtin_plugins: Sequence[PluginSettings]
+    *,
+    process: ClaiProcess[DepsT] | None,
+    store: SettingsStore | None,
+    builtin_plugins: Sequence[PluginSettings],
+    only_plugins: Collection[str] | None,
 ) -> ClaiProcess[DepsT]:
     """The process a session joins: `process`, else a new one over `store` with `builtin_plugins`."""
     if process is not None and store is not None:
         raise TypeError('create_shell takes `store` or `process`, not both: the process holds its store.')
     return process or ClaiProcess[DepsT].open(
-        store, builtin_plugins=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in builtin_plugins)
+        store,
+        builtin_plugins=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in builtin_plugins),
+        only_plugins=only_plugins,
     )
 
 
@@ -259,13 +265,14 @@ def create_shell(
     process: ClaiProcess[DepsT] | None = None,
     signals: bool = True,
     settings_for: Callable[[ProjectSettings], Settings] | None = None,
+    only_plugins: Collection[str] | None = None,
     trust: WorkspaceTrust | None = None,
 ) -> 'SessionRuntime[DepsT, OutputT]':
     """Build one session's runtime, without attaching terminal input in headless mode.
 
     `workspace` is the directory the session works in, by default the current one. `process` holds
     what the session shares with the others in this Pax, its built-in plugins included; without one,
-    it gets its own over `store` and `builtin_plugins`, which are otherwise unused.
+    it gets its own over `store` and `builtin_plugins`, which are otherwise unused, limited to `only_plugins`.
     `signals` lets Ctrl+C cancel this session's turns; only the session the terminal shows takes it.
     `settings_for` gives the settings Pax starts with beside a project file, which `/project` applies from.
     `trust` is whether you trust the session's directory; by default, what you decided before, else untrusted.
@@ -275,7 +282,7 @@ def create_shell(
         if settings is not None
         else Settings(model=None)
     )
-    process = _process(process=process, store=store, builtin_plugins=builtin_plugins)
+    process = _process(process=process, store=store, builtin_plugins=builtin_plugins, only_plugins=only_plugins)
     store, conversations = process.store, process.conversations
     session = Session(
         agent,

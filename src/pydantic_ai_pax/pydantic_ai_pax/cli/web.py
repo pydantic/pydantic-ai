@@ -1,7 +1,7 @@
 """`pax --web`: Pax with no terminal prompt, driven only from the web UI, logging the conversation as it goes."""
 
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from pathlib import Path
 
 from anyio import CancelScope, create_task_group, get_cancelled_exc_class, to_thread
@@ -41,11 +41,13 @@ async def run_web(
     port: int | None = None,
     token: str | None = None,
     restart: WebHandoff | None = None,
+    only_plugins: Collection[str] | None = None,
 ) -> None:
     """Load the stock plugins and `web`, start the web UI, and run turns the browser enters until Ctrl+C.
 
     `console` gets the transcript as plain text. Nothing saved changes: `web` loads for this launch only.
     `resume`, `session_id`, and `fork_session` work as for `chat`, except that `resume` needs an ID.
+    `only_plugins` loads only those plugins, as for `chat`; name `web` among them.
 
     `project` is the launch directory's project file and `settings_for` the settings Pax starts with
     beside a project file. Each session runs in its own directory: `resume` starts there, `/resume ID`
@@ -73,6 +75,7 @@ async def run_web(
         console=console,
         workspace=workspace,
         store=store,
+        only_plugins=only_plugins,
     )
     if (notice := undecided_notice(shell.session.trust)) is not None:
         console.print(notice, markup=False)
@@ -108,6 +111,7 @@ def _web_session(
     workspace: Path | None,
     store: SettingsStore | None = None,
     process: ClaiProcess[None] | None = None,
+    only_plugins: Collection[str] | None = None,
 ) -> SessionRuntime[None, str]:
     """A session of `pax --web` in `workspace`: over a new process with `store`, or joining `process`."""
     settings = settings_for(project)
@@ -127,6 +131,7 @@ def _web_session(
         # Ctrl+C reaches the session Pax started with, which ends Pax; the others are interrupted from the browser.
         signals=process is None,
         settings_for=settings_for,
+        only_plugins=only_plugins,
     )
     SessionWorkspace(
         session=shell.session,

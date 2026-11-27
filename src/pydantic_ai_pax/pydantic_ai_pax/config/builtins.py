@@ -47,6 +47,9 @@ Other harness capabilities are not listed here: a user adds one on purpose with 
 `compaction` runs alongside `coder`, whose `ClearToolResults` only empties old tool results; see `plugins.compatibility`.
 """
 
+MINIMAL_PLUGINS: frozenset[str] = frozenset({'coder', 'ask_user', 'persistence'})
+"""What `pax --minimal` loads: the coding tools, questions to the user, and saved sessions. Nothing else, saved or not."""
+
 STOCK_PLUGINS: tuple[PluginSettings, ...] = tuple(
     plugin.model_copy(update={'settings': {**plugin.settings, 'sub_agents': True}}) if plugin.id == 'coder' else plugin
     for plugin in DEFAULT_PLUGINS

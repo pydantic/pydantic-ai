@@ -101,6 +101,14 @@ def run(*, splash: Splash | None = None) -> None:
     )
     parser.add_argument('-m', '--model', help='Provider-qualified model name')
     parser.add_argument(
+        '--minimal',
+        action='store_true',
+        help=(
+            'Load only the coding tools, ask_user, and saved sessions for this launch, whatever plugins are enabled; '
+            '/plugins enable loads more'
+        ),
+    )
+    parser.add_argument(
         '-p', '--prompt', metavar='TEXT', help='Run one prompt without interaction and print only the answer'
     )
     parser.add_argument(
@@ -144,6 +152,15 @@ def run(*, splash: Splash | None = None) -> None:
         _list_live_sessions()
         return
     _launch(args, parser, splash)
+
+
+def _only_plugins(args: argparse.Namespace) -> frozenset[str] | None:
+    """The plugins a `--minimal` launch loads, with `web` when it serves the web UI; `None` loads every enabled one."""
+    if not args.minimal:
+        return None
+    from pydantic_ai_pax.config.builtins import MINIMAL_PLUGINS
+
+    return MINIMAL_PLUGINS | {'web'} if args.web else MINIMAL_PLUGINS
 
 
 def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: Splash | None) -> None:
@@ -191,6 +208,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
             agent_model=agent is not None and agent.model is not None and not model,
         )
         settings = settings_for(project)
+        only_plugins = _only_plugins(args)
         if args.prompt is not None:
             from pydantic_ai_pax.cli.headless import run_headless
 
@@ -206,6 +224,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
                         agent=agent,
                         session_id=args.session_id,
                         fork_session=args.fork_session,
+                        only_plugins=only_plugins,
                     )
                 )
             )
@@ -227,6 +246,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
                     port=args.port,
                     token=None if args.token_file is None else read_token(args.token_file),
                     restart=served,
+                    only_plugins=only_plugins,
                 )
             )
             return
@@ -251,6 +271,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
                     worktree=worktree,
                     web=served,
                     settings_for=settings_for,
+                    only_plugins=only_plugins,
                 )
             )
             offer_worktree_cleanup(worktree=launched, read_remove_commands=store.worktree_remove_commands, store=store)
@@ -474,6 +495,8 @@ def relaunch_argv(
             argv += ['--port', str(args.port)]
         if args.token_file is not None:
             argv += ['--token-file', str(args.token_file)]
+    if args.minimal:
+        argv.append('--minimal')
     if args.agent is not None:
         argv += ['--agent', args.agent]
     if args.model is not None:
@@ -594,11 +617,14 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         or args.agent is not None
         or args.session_id is not None
         or args.fork_session
+        or args.minimal
     ):
         parser.error(
-            '--resume, --continue, --session-id, --fork-session, --worktree, and --agent cannot be combined with'
-            ' config, plugins, or sessions'
+            '--resume, --continue, --session-id, --fork-session, --worktree, --agent, and --minimal cannot be'
+            ' combined with config, plugins, or sessions'
         )
+    if args.minimal and (args.agent is not None or args.update):
+        parser.error('--minimal cannot be combined with --agent, which loads no plugins, or --update')
     if args.update and (
         args.command
         or args.prompt is not None

@@ -2,7 +2,7 @@
 
 import os
 import sys
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Collection, Mapping, Sequence
 from contextlib import asynccontextmanager, nullcontext
 from functools import partial
 from pathlib import Path
@@ -197,6 +197,7 @@ async def chat(
     worktree: Worktree | None = None,
     web: WebHandoff | None = None,
     settings_for: Callable[[ProjectSettings], Settings] | None = None,
+    only_plugins: Collection[str] | None = None,
 ) -> None:
     """Start an asyncio terminal conversation with a caller-supplied agent.
 
@@ -215,6 +216,8 @@ async def chat(
     `settings_for` gives the settings of a session the web UI opens in another directory, beside that one's
     project file; without it, such a session starts with `settings`. The terminal shows one session at a
     time: `/resume` of one the web UI has open shows that one, and the other stays live.
+    `only_plugins` loads only those plugins until Pax exits, as `pax --minimal` does; `/plugins enable` and
+    `/plugins add` load more. Nothing is saved for the plugins it leaves off.
     """
     # Before anything is drawn, as the CLI checks these before it starts.
     session_id = launch_session_id(resume=resume, session_id=session_id, fork=fork_session)
@@ -240,6 +243,7 @@ async def chat(
         settings_for=settings_for,
         worktree=worktree,
         background=background,
+        only_plugins=only_plugins,
     )
     with theme.use(lambda: shell.context.settings.theme, background=background), transcript.capture(console):
         await _decide_trust(shell, console=console)
@@ -359,6 +363,7 @@ def _create_home_shell(
     settings_for: Callable[[ProjectSettings], Settings] | None,
     worktree: Worktree | None,
     background: str | None,
+    only_plugins: Collection[str] | None,
 ) -> SessionRuntime[DepsT, OutputT]:
     """Build the session Pax starts with, under the launch banner, in colours for the terminal's `background`."""
     with (
@@ -380,6 +385,7 @@ def _create_home_shell(
             transcript=transcript,
             load_plugins=load_plugins,
             settings_for=settings_for,
+            only_plugins=only_plugins,
         )
 
 
@@ -441,6 +447,7 @@ async def _start_session(
     with shell.defer_identity() if browse else nullcontext():
         await shell.loader.load_all(fresh=fresh)
         _report_project_plugins(shell.loader, console)
+        _report_own_plugins(shell.loader, console)
         await _serve_again(shell.loader, web, console=console)
         if restored:
             # Now that observability has subscribed and renderers have loaded.
@@ -505,6 +512,8 @@ def _reload_shell(
             load_plugins=load_plugins,
             workspace=Path(shell.session.workspace),
             settings_for=shell.context.settings_for,
+            # The launch's limit, with what `/plugins enable` and `/plugins add` allowed since.
+            only_plugins=shell.process.plugins.only,
             # A reload keeps the decision, also one held for the session only, as in your home folder.
             trust=shell.session.trust,
         )
@@ -578,6 +587,17 @@ def _opener(
         )
 
     return build
+
+
+def _report_own_plugins(loader: SessionPlugins[DepsT], console: Console) -> None:
+    """One line for each loaded plugin Pax does not ship, naming the tools it gives the model."""
+    shipped = {declaration.factory for declaration in loader.process.builtin.values()}
+    for entry in loader.entries():
+        if entry.loaded is None or entry.declaration.factory in shipped:
+            continue
+        tools = entry.loaded.tool_names()
+        offers = f'tools {", ".join(tools)}' if tools else entry.loaded.summary()
+        console.print(f'Plugin {entry.name}: {offers}', style=theme.color(theme.INFO), markup=False, highlight=False)
 
 
 def _report_project_plugins(loader: SessionPlugins[DepsT], console: Console) -> None:

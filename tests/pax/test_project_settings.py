@@ -398,6 +398,7 @@ APPROVED_ONLY: dict[str, JsonValue] = {
     'accounts.pool': False,
     'sessions.naming': False,
     'sessions.naming_model': 'test:namer',
+    'sessions.import_external': False,
 }
 """A non-default value for each key that waits for approval, by `/set` key."""
 

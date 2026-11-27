@@ -487,6 +487,18 @@ def test_session_naming_is_on_by_default_unless_turned_off(tmp_path: Path) -> No
     assert SettingsStore(path).load().session_namer is True
 
 
+def test_session_import_is_on_for_databases_from_before_the_setting(tmp_path: Path) -> None:
+    """Older databases have no `sessions.import_external` row, so `/resume` keeps listing imports; `false` turns it off."""
+    path = tmp_path / 'config.db'
+    store = SettingsStore(path)
+    store.set('sessions.naming', False)
+    assert store.load().session_import_external is True
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute("INSERT INTO settings VALUES ('sessions.import_external', 'false')")
+    loaded = SettingsStore(path).load()
+    assert loaded.session_import_external is False and loaded.session_namer is False
+
+
 @pytest.mark.parametrize('value_json', ['false', 'true'])
 async def test_historical_tool_output_preference_is_preserved(tmp_path: Path, value_json: str) -> None:
     path = tmp_path / 'config.db'

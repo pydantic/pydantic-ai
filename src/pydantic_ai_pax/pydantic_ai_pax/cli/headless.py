@@ -2,7 +2,7 @@
 
 import os
 import sys
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Collection
 from contextlib import asynccontextmanager
 
 from anyio import CancelScope
@@ -47,13 +47,14 @@ async def run_headless(
     agent: AbstractAgent[None, object] | None = None,
     session_id: str | None = None,
     fork_session: bool = False,
+    only_plugins: Collection[str] | None = None,
 ) -> int:
     """Print only the final answer; preserve sessions and report failures on stderr.
 
     `resume_from` imports the `resume` session from Claude Code or Codex first.
 
     A supplied `agent` runs without any plugins, like `chat(..., load_plugins=False)`.
-    `resume`, `session_id`, and `fork_session` work as for `chat`, except that `resume` needs an ID.
+    `resume`, `session_id`, `fork_session`, and `only_plugins` work as for `chat`, except that `resume` needs an ID.
     """
     if resume == '':
         # The browser needs a terminal, which a headless run has none of.
@@ -78,6 +79,7 @@ async def run_headless(
             project=project,
             headless=True,
             load_plugins=load_plugins,
+            only_plugins=only_plugins,
         )
         # Nobody is asked in a headless run, so a folder you never decided about stays untrusted.
         if (notice := undecided_notice(shell.session.trust)) is not None:

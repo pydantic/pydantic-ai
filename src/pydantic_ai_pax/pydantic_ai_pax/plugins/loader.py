@@ -829,6 +829,12 @@ class SessionPlugins(Generic[DepsT]):
         entry = self._entry(name)
         _check_not_included(entry)
         _requested('enable', name)
+        self._process.allow(name)
+        if not entry.declaration.enabled and self._entry(name).declaration.enabled:
+            # Only a launch limited to `only` held it off, so its own declaration loads and nothing is saved:
+            # a saved copy would outrank a built-in or drop-in declaration from then on.
+            await self._load_enabled(entry)
+            return
         declaration = entry.declaration.model_copy(update={'enabled': True})
         self._process.approve(name, declaration)
         self._process.store.save_plugin(declaration, requires=self._requirements(entry))
@@ -1031,6 +1037,7 @@ class SessionPlugins(Generic[DepsT]):
             raise
         requires = self._requirements(self._entry(name))
         store.save_plugin(staged.pop(name), requires=requires)
+        self._process.allow(name)
         _requested('add', name)
         await self._process.follow(name, origin=self, again=True)
         if existing is None:
@@ -1096,6 +1103,7 @@ class SessionPlugins(Generic[DepsT]):
             if any(entry.name == declaration.id for entry in self.entries()):
                 raise ValueError(f'Plugin {declaration.id} already exists; it has not been changed.')
             self._process.store.save_plugin(declaration, overwrite=False)
+        self._process.allow(declaration.id)
         _requested('add', declaration.id)
         await self._load_enabled(self._entry(declaration.id))
         await self._process.follow(declaration.id, origin=self, again=False)
