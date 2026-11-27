@@ -10,7 +10,7 @@ import shlex
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from fnmatch import fnmatchcase
-from typing import Any, Generic, Literal, NamedTuple, Required
+from typing import Any, Generic, Literal, NamedTuple, Required, cast
 
 from typing_extensions import TypedDict
 
@@ -463,11 +463,12 @@ def parse_permission_rule(rule: str, verdict: PermissionVerdict, *, reason: str 
         return _shell_rule(rule, name, inner, verdict, reason=reason)
     if inner is None:
         return PermissionRule(verdict, tools=[name], reason=reason)
-    if inner.endswith(':*'):
+    arg, equals, glob = inner.partition('=')
+    arg, glob = arg.strip(), glob.strip()
+    arg, glob = (arg, glob) if equals and arg.isidentifier() and glob else ('path', inner)
+    if arg == 'path' and inner.endswith(':*'):
         # Otherwise it would be a `path` glob that a shell tool's call never matches, so a deny would refuse nothing.
         raise UserError(f'Permission rule {rule!r} uses `:*`, which only `Bash(...)` and `Shell(...)` take.')
-    arg, equals, glob = inner.partition('=')
-    arg, glob = (arg, glob.strip()) if equals and arg.isidentifier() and glob else ('path', inner)
     if arg == 'path' and name.lower() in _SHELL_TOOL_NAMES:
         # A shell tool's call has no `path`, so the rule would match nothing.
         raise UserError(
@@ -531,11 +532,17 @@ def parse_permission_rules(rules: Mapping[PermissionVerdict, Sequence[str]]) -> 
     """`PermissionRule`s from rule strings by verdict, such as `{'allow': ['Bash(git status:*)'], 'deny': [...]}`.
 
     Each string is parsed by `parse_permission_rule`. The order doesn't matter: `'deny'` beats `'ask'`, which beats
-    `'allow'`, whatever the order. A key other than a verdict, or a single string instead of a list of them, raises
-    `UserError`, since settings files that people write by hand aren't type-checked.
+    `'allow'`, whatever the order. A key other than a verdict, or anything but a list of strings under one, such
+    as a single string, raises `UserError`, since settings files that people write by hand aren't type-checked.
     """
     for verdict, strings in rules.items():
         _check_verdict(verdict, 'A permission rules mapping')
-        if isinstance(strings, str):
-            raise UserError(f'Permission rules for {verdict!r} must be a list of strings, not one string: {strings!r}.')
+        _check_strings(verdict, strings)
     return [parse_permission_rule(rule, verdict) for verdict, strings in rules.items() for rule in strings]
+
+
+def _check_strings(verdict: str, strings: object) -> None:
+    """Raise `UserError` unless `strings` is a list or tuple of strings."""
+    if isinstance(strings, (list, tuple)) and all(isinstance(rule, str) for rule in cast(Sequence[object], strings)):
+        return
+    raise UserError(f'Permission rules for {verdict!r} must be a list of strings: {strings!r}.')

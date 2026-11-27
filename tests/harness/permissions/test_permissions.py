@@ -940,6 +940,17 @@ class TestParsePermissionRule:
             'deny', tools=['run_command'], args={'command': 'rm *'}
         )
 
+    @pytest.mark.parametrize(
+        ('rule', 'args'),
+        [
+            ('web_fetch(url=http://localhost:*)', {'url': 'http://localhost:*'}),
+            ('deploy(target=prod:*)', {'target': 'prod:*'}),
+            ('web_fetch(url = https://example.com/*)', {'url': 'https://example.com/*'}),
+        ],
+    )
+    def test_a_named_argument_glob_matches_as_written(self, rule: str, args: dict[str, str]) -> None:
+        assert parse_permission_rule(rule, 'deny').args == args
+
     def test_text_before_an_equals_sign_that_is_no_argument_name_is_part_of_the_path(self) -> None:
         assert parse_permission_rule('write_file(9=x)', 'deny') == PermissionRule(
             'deny', tools=['write_file'], args={'path': '9=x'}
@@ -1023,9 +1034,10 @@ class TestParsePermissionRules:
         with pytest.raises(UserError, match="has the verdict 'denny'"):
             parse_permission_rules({'denny': []})  # pyright: ignore[reportArgumentType]
 
-    def test_a_single_string_raises(self) -> None:
+    @pytest.mark.parametrize('strings', ['read_file', [42], [None], None])
+    def test_anything_but_a_list_of_strings_raises(self, strings: object) -> None:
         with pytest.raises(UserError, match="for 'deny' must be a list of strings"):
-            parse_permission_rules({'deny': 'read_file'})
+            parse_permission_rules({'deny': strings})  # pyright: ignore[reportArgumentType]
 
     async def test_a_recursive_deny_refuses_a_file_at_the_top(self, tmp_path: Path) -> None:
         (tmp_path / 'app').mkdir()
