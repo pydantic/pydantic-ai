@@ -2253,6 +2253,51 @@ class TestLauncherProgram:
         assert [event.type for event in parsed.log_entries] == ['session.result']
         assert parsed.log_entries[0].data['status'] == 'failure'
 
+    @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
+    @requires_clai2
+    def test_pax_runs_with_python_dotenv_disabled(self, tmp_path: Path) -> None:
+        invocation = launch(
+            tmp_path,
+            {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'environment_agent:agent'},
+            extra_python_path=CLAI2_SOURCE,
+        )
+        workspace = Path(invocation.cwd)
+        (workspace / 'environment_agent.py').write_text(
+            """import json
+import os
+from pathlib import Path
+
+from pydantic_ai import Agent
+
+seen = {'import': os.environ.get('PYTHON_DOTENV_DISABLED')}
+agent = Agent(name='environment')
+
+
+@agent.instructions
+def record() -> str:
+    seen['run'] = os.environ.get('PYTHON_DOTENV_DISABLED')
+    Path(__file__).with_name('seen.json').write_text(json.dumps(seen), encoding='utf-8')
+    return 'Answer briefly.'
+""",
+            encoding='utf-8',
+        )
+        arguments = invocation.argv.copy()
+        arguments[arguments.index('-m') + 1] = 'test'
+
+        completed = subprocess.run(
+            [sys.executable, *arguments, *code_mode_off_args(tmp_path)],
+            cwd=workspace,
+            env=invocation.env,
+            input=invocation.stdin,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert completed.returncode == 0, completed.stdout
+        # The agent module imports without it: the default agent copies the environment for its commands then.
+        assert json.loads((workspace / 'seen.json').read_text(encoding='utf-8')) == {'import': None, 'run': '1'}
+
 
 class TestLogParser:
     """The `log-parser` preserves trusted recorder events without inventing history."""
