@@ -46,6 +46,7 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.guardrails._shared import (
     GuardOutcome,
+    GuardrailDirection,
     RecordedVerdict,
     evaluate_all,
     record_verdict,
@@ -64,8 +65,8 @@ _DEFAULT_ARGS_BLOCK_MESSAGE = 'Tool call blocked by tool guardrail.'
 _DEFAULT_RESULT_BLOCK_MESSAGE = 'Tool result blocked by tool guardrail.'
 _DEFAULT_RETRY_MESSAGE = 'Tool call rejected by tool guardrail.'
 
-_ARGS_DIRECTION = 'tool args'
-_RESULT_DIRECTION = 'tool result'
+_ARGS_DIRECTION: GuardrailDirection = 'tool args'
+_RESULT_DIRECTION: GuardrailDirection = 'tool result'
 
 # What `_screen_result` returns for `allow`: the tool's own result or failure goes to the model.
 _UNCHANGED = object()
@@ -381,7 +382,13 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
                 return args
             case 'block':
                 message = verdict.message or _DEFAULT_ARGS_BLOCK_MESSAGE
-                trace_block(ctx, direction=_ARGS_DIRECTION, message=message, tool_name=call.tool_name)
+                trace_block(
+                    ctx,
+                    direction=_ARGS_DIRECTION,
+                    guard=self.guard,
+                    message=message,
+                    tool_name=call.tool_name,
+                )
                 raise SkipToolExecution(message)
             case 'retry':
                 raise _verdict_retry(verdict.message or _DEFAULT_RETRY_MESSAGE)
@@ -395,6 +402,7 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
                 trace_approval(
                     ctx,
                     direction=_ARGS_DIRECTION,
+                    guard=self.guard,
                     tool_name=call.tool_name,
                     tool_call_id=call.tool_call_id,
                     args=args,
@@ -407,12 +415,7 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
                         '(a mapping).'
                     )
                 replacement = dict(verdict.replacement)
-                trace_redaction(
-                    ctx,
-                    direction=_ARGS_DIRECTION,
-                    replacement=replacement,
-                    tool_name=call.tool_name,
-                )
+                trace_redaction(ctx, direction=_ARGS_DIRECTION, replacement=replacement, tool_name=call.tool_name)
                 return replacement
             case _:  # pragma: no cover - assert_never exhaustiveness guard
                 assert_never(verdict.action)
@@ -583,7 +586,13 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
                 return _UNCHANGED
             case 'block':
                 message = verdict.message or _DEFAULT_RESULT_BLOCK_MESSAGE
-                trace_block(ctx, direction=_RESULT_DIRECTION, message=message, tool_name=call.tool_name)
+                trace_block(
+                    ctx,
+                    direction=_RESULT_DIRECTION,
+                    guard=self.result_guard,
+                    message=message,
+                    tool_name=call.tool_name,
+                )
                 return message
             case 'replace':
                 trace_redaction(

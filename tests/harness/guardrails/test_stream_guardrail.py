@@ -311,9 +311,16 @@ class TestStreamGuardrail:
 
         content = {'guardrail.replacement': str(TextPart(content='[redacted]'))} if include_content else {}
         message = {'guardrail.message': 'no SSNs'} if include_content else {}
+        named = {'guardrail.guard': guard.__qualname__, 'guardrail.position': 0}
         assert [(span.name, dict(span.attributes or {})) for span in exporter.get_finished_spans()] == [
-            ('guardrail redacted stream', {'guardrail.direction': 'stream', 'guardrail.action': 'replace', **content}),
-            ('guardrail blocked stream', {'guardrail.direction': 'stream', 'guardrail.action': 'block', **message}),
+            (
+                'guardrail redacted stream',
+                {'guardrail.direction': 'stream', 'guardrail.action': 'replace', **content},
+            ),
+            (
+                'guardrail blocked stream',
+                {'guardrail.direction': 'stream', 'guardrail.action': 'block', **named, **message},
+            ),
         ]
 
     async def test_tool_call_args_streamed_after_another_part_started_are_screened(self):
@@ -433,12 +440,21 @@ class TestStreamGuardrail:
             yield PartStartEvent(index=0, part=call)
             yield PartEndEvent(index=0, part=call)
 
+        def refuse(part: StreamGuardrailPart) -> bool:
+            return False
+
         with pytest.raises(OutputBlocked):
-            async for _ in StreamGuardrail(guard=lambda part: False).wrap_run_event_stream(ctx, stream=events()):
+            async for _ in StreamGuardrail(guard=refuse).wrap_run_event_stream(ctx, stream=events()):
                 pass  # pragma: no cover
 
         assert [dict(span.attributes or {}) for span in exporter.get_finished_spans()] == [
-            {'guardrail.direction': 'stream', 'guardrail.action': 'block', 'guardrail.tool': 'weather'}
+            {
+                'guardrail.direction': 'stream',
+                'guardrail.action': 'block',
+                'guardrail.guard': refuse.__qualname__,
+                'guardrail.position': 0,
+                'guardrail.tool': 'weather',
+            }
         ]
 
     async def test_other_parts_pass_through_unscreened(self):

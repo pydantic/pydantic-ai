@@ -1159,12 +1159,20 @@ class TestHardFailure:
         assert error.reason is None
 
 
+def _deny(value: object) -> GuardrailResult:
+    return GuardrailResult.block('denied')
+
+
+def _ask_approval(call: object) -> GuardrailResult:
+    return GuardrailResult.approve()
+
+
 class TestTracing:
     """Non-`allow` verdicts are recorded as spans, content only when opted in."""
 
     async def test_block_span_carries_the_message_when_content_is_included(self):
         tracer, exporter = _recording_tracer()
-        guard = ToolGuardrail[object](guard=lambda call: GuardrailResult.block('denied'))
+        guard = ToolGuardrail[object](guard=_deny)
 
         with pytest.raises(SkipToolExecution):
             await _guard_args(guard, {}, ctx=_run_ctx(trace_include_content=True, tracer=tracer))
@@ -1174,13 +1182,14 @@ class TestTracing:
         assert dict(span.attributes or {}) == {
             'guardrail.direction': 'tool args',
             'guardrail.action': 'block',
+            'guardrail.guard': '_deny',
             'guardrail.tool': 'lookup',
             'guardrail.message': 'denied',
         }
 
     async def test_block_span_omits_the_message_by_default(self):
         tracer, exporter = _recording_tracer()
-        guard = ToolGuardrail[object](result_guard=lambda info: GuardrailResult.block('denied'))
+        guard = ToolGuardrail[object](result_guard=_deny)
 
         await _guard_result(guard, 'x', ctx=_run_ctx(tracer=tracer))
 
@@ -1189,12 +1198,13 @@ class TestTracing:
         assert dict(span.attributes or {}) == {
             'guardrail.direction': 'tool result',
             'guardrail.action': 'block',
+            'guardrail.guard': '_deny',
             'guardrail.tool': 'lookup',
         }
 
     async def test_redaction_span_carries_only_the_replacement_when_content_is_included(self):
         tracer, exporter = _recording_tracer()
-        guard = ToolGuardrail[object](result_guard=lambda info: GuardrailResult.replace('clean'))
+        guard = ToolGuardrail[object](result_guard=lambda _: GuardrailResult.replace('clean'))
 
         await _guard_result(guard, 'dirty', ctx=_run_ctx(trace_include_content=True, tracer=tracer))
 
@@ -1209,7 +1219,7 @@ class TestTracing:
 
     async def test_redaction_span_omits_values_by_default(self):
         tracer, exporter = _recording_tracer()
-        guard = ToolGuardrail[object](guard=lambda call: GuardrailResult.replace({'query': 'clean'}))
+        guard = ToolGuardrail[object](guard=lambda _: GuardrailResult.replace({'query': 'clean'}))
 
         await _guard_args(guard, {'query': 'dirty'}, ctx=_run_ctx(tracer=tracer))
 
@@ -1221,10 +1231,9 @@ class TestTracing:
             'guardrail.tool': 'lookup',
         }
 
-    async def test_the_approval_span_is_the_only_record_of_the_call(self):
-        """Deferring means the tool never runs, so no `execute_tool` span carries the arguments."""
+    async def test_the_approval_span_names_the_guard_and_carries_the_arguments(self):
         tracer, exporter = _recording_tracer()
-        guard = ToolGuardrail[object](guard=lambda call: GuardrailResult.approve())
+        guard = ToolGuardrail[object](guard=_ask_approval)
 
         with pytest.raises(ApprovalRequired):
             await _guard_args(guard, {'q': 'x'}, ctx=_run_ctx(trace_include_content=True, tracer=tracer))
@@ -1234,6 +1243,7 @@ class TestTracing:
         assert dict(span.attributes or {}) == {
             'guardrail.direction': 'tool args',
             'guardrail.action': 'approve',
+            'guardrail.guard': '_ask_approval',
             'guardrail.tool': 'lookup',
             'guardrail.tool_call_id': 'call-1',
             'guardrail.arguments': "{'q': 'x'}",
@@ -1241,7 +1251,7 @@ class TestTracing:
 
     async def test_the_approval_span_omits_the_arguments_by_default(self):
         tracer, exporter = _recording_tracer()
-        guard = ToolGuardrail[object](guard=lambda call: GuardrailResult.approve())
+        guard = ToolGuardrail[object](guard=_ask_approval)
 
         with pytest.raises(ApprovalRequired):
             await _guard_args(guard, {'q': 'x'}, ctx=_run_ctx(tracer=tracer))
@@ -1249,6 +1259,7 @@ class TestTracing:
         assert dict(_only_span(exporter).attributes or {}) == {
             'guardrail.direction': 'tool args',
             'guardrail.action': 'approve',
+            'guardrail.guard': '_ask_approval',
             'guardrail.tool': 'lookup',
             'guardrail.tool_call_id': 'call-1',
         }

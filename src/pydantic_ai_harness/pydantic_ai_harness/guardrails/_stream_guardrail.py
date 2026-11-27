@@ -24,7 +24,13 @@ from pydantic_ai.messages import (
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._durable import in_durable_context
 from pydantic_ai_harness.guardrails._exceptions import OutputBlocked
-from pydantic_ai_harness.guardrails._shared import GuardOutcome, as_guards, evaluate_all, trace_block, trace_redaction
+from pydantic_ai_harness.guardrails._shared import (
+    GuardOutcome,
+    as_guards,
+    evaluate_all,
+    trace_block,
+    trace_redaction,
+)
 
 StreamGuardrailPart = TextPart | ThinkingPart | ToolCallPart
 """The streamed parts a `StreamGuardrail` holds back and screens."""
@@ -268,9 +274,10 @@ class StreamGuardrail(AbstractCapability[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], index: int, part: StreamGuardrailPart, held: list[AgentStreamEvent]
     ) -> list[AgentStreamEvent]:
         """Run the guard chain on the complete `part` at `index`, returning the `held` events to release."""
-        verdict, position = await evaluate_all(
-            as_guards(self.guard, capability='StreamGuardrail'), ctx, part, check_replacement=_replacement_check(part)
-        )
+        guards = as_guards(self.guard, capability='StreamGuardrail')
+        verdict, position = await evaluate_all(guards, ctx, part, check_replacement=_replacement_check(part))
+        # The chain is evaluated live, never replayed, so `position` is always in it.
+        guard = guards[position]
         match verdict.action:
             case 'allow':
                 return _replace_part(held, index, part) if isinstance(part, ToolCallPart) else held
@@ -281,7 +288,9 @@ class StreamGuardrail(AbstractCapability[AgentDepsT]):
             case 'block':
                 message = verdict.message or _DEFAULT_BLOCK_MESSAGE
                 tool_name = part.tool_name if isinstance(part, ToolCallPart) else None
-                trace_block(ctx, direction='stream', message=message, tool_name=tool_name)
+                trace_block(
+                    ctx, direction='stream', guard=guard, position=position, message=message, tool_name=tool_name
+                )
                 raise OutputBlocked(message)
             case 'retry' | 'approve':
                 raise UserError(

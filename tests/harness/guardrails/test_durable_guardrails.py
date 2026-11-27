@@ -27,14 +27,18 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Text
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.guardrails import (
     GuardrailResult,
+    InputBlocked,
     InputGuardrail,
+    OutputBlocked,
     OutputGuardrail,
+    OutputGuardrailFunc,
+    ToolBlocked,
     ToolCallInfo,
     ToolGuardrail,
     ToolResultInfo,
 )
-from pydantic_ai_harness.guardrails._exceptions import InputBlocked, ToolBlocked
 from tests.harness._recording_durability import RecordingDurability
+from tests.harness.conftest import Instrumented
 
 pytestmark = pytest.mark.anyio
 
@@ -308,3 +312,64 @@ async def test_a_carried_guard_error_does_not_outlive_its_run() -> None:
     gc.collect()
 
     assert error_ref is not None and error_ref() is None
+
+
+def _allow_output(output: object) -> bool:
+    return True
+
+
+def _block_output(output: object) -> GuardrailResult:
+    return GuardrailResult.block('blocked')
+
+
+_chain_guardrail = OutputGuardrail(guard=[_allow_output, _block_output], id='output')
+_chain_agent: Agent[None, str] = Agent(
+    FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('answer')])),
+    name='shortened_chain',
+    deps_type=type(None),
+    capabilities=[_chain_guardrail, DBOSDurability[None]()],
+)
+
+
+@DBOS.workflow(name='shortened_chain')
+async def _chain_workflow() -> str:
+    return (await _chain_agent.run('go')).output
+
+
+@pytest.mark.parametrize(
+    ('changed_chain', 'named'),
+    [
+        pytest.param([_allow_output], {}, id='shortened'),
+        pytest.param([_block_output, _allow_output], {'guardrail.guard': '_allow_output'}, id='reordered'),
+    ],
+)
+async def test_dbos_replays_a_verdict_after_the_chain_changes(
+    dbos: DBOS, instrumented: Instrumented, changed_chain: list[OutputGuardrailFunc[object]], named: dict[str, str]
+) -> None:
+    """A recorded verdict still applies after the chain changes, and its span keeps the recorded position.
+
+    The span names the guard now at that position: none in a shorter chain, another in a reordered one.
+    """
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id), pytest.raises(OutputBlocked):
+        await _chain_workflow()
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+
+    instrumentation, exporter = instrumented(False)
+    _chain_guardrail.guard = changed_chain
+    _chain_agent.instrument = instrumentation.settings
+    try:
+        handle = await DBOS.fork_workflow_async(workflow_id, len(steps) + 1)
+        with pytest.raises(OutputBlocked):
+            await handle.get_result(polling_interval_sec=0.01)
+    finally:
+        _chain_guardrail.guard = [_allow_output, _block_output]
+        _chain_agent.instrument = None
+
+    [span] = [span for span in exporter.get_finished_spans() if span.name == 'guardrail blocked output']
+    assert dict(span.attributes or {}) == {
+        'guardrail.direction': 'output',
+        'guardrail.action': 'block',
+        'guardrail.position': 1,
+        **named,
+    }

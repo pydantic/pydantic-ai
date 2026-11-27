@@ -72,7 +72,7 @@ from pydantic_ai_harness.sub_agents import (
 from pydantic_ai_harness.system_reminders import Reminder, SystemReminders
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.conftest import no_leaked_tasks
-from tests.harness.conftest import IsDatetime
+from tests.harness.conftest import Instrumented, IsDatetime
 
 TASK_REPORT_ORIGIN = 'pydantic-ai-harness.subagents.report.v1'
 TASK_QUESTION_ORIGIN = 'pydantic-ai-harness.subagents.question.v1'
@@ -1409,6 +1409,14 @@ class TestInputGuardrailParallel:
         assert unwound.is_set()
 
 
+def _refuse_nope(_: object) -> GuardrailResult:
+    return GuardrailResult.block('nope')
+
+
+def _redact_all(_: object) -> GuardrailResult:
+    return GuardrailResult.replace('[redacted]')
+
+
 class TestInputGuardrailTracing:
     """Spans emitted on block and redaction."""
 
@@ -1416,7 +1424,7 @@ class TestInputGuardrailTracing:
         tracer, exporter = _recording_tracer()
         run_ctx, req_ctx = _build_ctx_and_req(tracer=tracer, trace_include_content=True)
 
-        ig = InputGuardrail(guard=lambda _: GuardrailResult.block('nope'))
+        ig = InputGuardrail(guard=_refuse_nope)
         with pytest.raises(SkipModelRequest):
             await ig.wrap_model_request(run_ctx, request_context=req_ctx, handler=_unreachable_handler)
 
@@ -1425,6 +1433,8 @@ class TestInputGuardrailTracing:
         assert dict(span.attributes or {}) == {
             'guardrail.direction': 'input',
             'guardrail.action': 'block',
+            'guardrail.guard': '_refuse_nope',
+            'guardrail.position': 0,
             'guardrail.message': 'nope',
         }
 
@@ -1433,19 +1443,24 @@ class TestInputGuardrailTracing:
         tracer, exporter = _recording_tracer()
         run_ctx, req_ctx = _build_ctx_and_req(tracer=tracer)
 
-        ig = InputGuardrail(guard=lambda _: GuardrailResult.block('nope'))
+        ig = InputGuardrail(guard=_refuse_nope)
         with pytest.raises(SkipModelRequest):
             await ig.wrap_model_request(run_ctx, request_context=req_ctx, handler=_unreachable_handler)
 
         span = _only_span(exporter)
         assert span.name == 'guardrail blocked input'
-        assert dict(span.attributes or {}) == {'guardrail.direction': 'input', 'guardrail.action': 'block'}
+        assert dict(span.attributes or {}) == {
+            'guardrail.direction': 'input',
+            'guardrail.action': 'block',
+            'guardrail.guard': '_refuse_nope',
+            'guardrail.position': 0,
+        }
 
     async def test_redaction_span_records_only_the_replacement_when_enabled(self):
         tracer, exporter = _recording_tracer()
         run_ctx, req_ctx = _build_ctx_and_req(tracer=tracer, trace_include_content=True)
 
-        ig = InputGuardrail(guard=lambda _: GuardrailResult.replace('[redacted]'))
+        ig = InputGuardrail(guard=_redact_all)
         await ig.wrap_model_request(run_ctx, request_context=req_ctx, handler=_sentinel_handler)
 
         span = _only_span(exporter)
@@ -1456,13 +1471,10 @@ class TestInputGuardrailTracing:
             'guardrail.replacement': '[redacted]',
         }
 
-    async def test_redacted_prompt_reaches_no_span_when_content_is_traced(self):
+    async def test_redacted_prompt_reaches_no_span_when_content_is_traced(self, instrumented: Instrumented):
         """With content capture on, every span holds the redacted prompt and none the original."""
-        exporter = InMemorySpanExporter()
-        provider = TracerProvider()
-        provider.add_span_processor(SimpleSpanProcessor(exporter))
-        agent = Agent(TestModel(custom_output_text='ok'), capabilities=[InputGuardrail(guard=redact_secrets)])
-        agent.instrument = InstrumentationSettings(tracer_provider=provider, include_content=True)
+        tracing, exporter = instrumented(True)
+        agent = Agent(TestModel(custom_output_text='ok'), capabilities=[InputGuardrail(guard=redact_secrets), tracing])
 
         await agent.run(f'my key is {_SECRET}')
 
@@ -1476,12 +1488,15 @@ class TestInputGuardrailTracing:
         tracer, exporter = _recording_tracer()
         run_ctx, req_ctx = _build_ctx_and_req(tracer=tracer)
 
-        ig = InputGuardrail(guard=lambda _: GuardrailResult.replace('[redacted]'))
+        ig = InputGuardrail(guard=_redact_all)
         await ig.wrap_model_request(run_ctx, request_context=req_ctx, handler=_sentinel_handler)
 
         span = _only_span(exporter)
         assert span.name == 'guardrail redacted input'
-        assert dict(span.attributes or {}) == {'guardrail.direction': 'input', 'guardrail.action': 'replace'}
+        assert dict(span.attributes or {}) == {
+            'guardrail.direction': 'input',
+            'guardrail.action': 'replace',
+        }
 
 
 class TestInputGuardrailStreaming:
