@@ -1477,7 +1477,11 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 self._telemetry(ctx).vetoed(event)
                 return _vetoed_reply('The sub-agent was not created', event)
             spec = DynamicAgentSpec(
-                name=name, description=event.description, instructions=event.instructions, model=model
+                name=name,
+                description=event.description,
+                instructions=event.instructions,
+                model=model,
+                instructions_authority=dynamic.instructions_authority,
             )
             created[name] = (spec, self._build_created(spec))
         finally:

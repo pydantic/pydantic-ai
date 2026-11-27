@@ -259,6 +259,13 @@ class DynamicAgentSpec:
     model: str | None
     """The `SubAgents.models` key the sub-agent runs on, or `None` for the delegating run's model."""
 
+    instructions_authority: Literal['none', 'operator'] = 'none'
+    """The `DynamicAgents.instructions_authority` of the settings that created the sub-agent.
+
+    With `'none'`, `SubAgents` delivers `instructions` itself, so a factory leaves them out of the agent's own
+    instructions. With `'operator'`, `SubAgents` doesn't deliver them, and a factory that wants the agent to have them
+    makes them its own instructions."""
+
 
 DynamicAgentFactory: TypeAlias = 'Callable[[DynamicAgentSpec], AbstractAgent[AgentDepsT, Any]]'
 """Builds the agent for a sub-agent the model created with `create_agent`."""

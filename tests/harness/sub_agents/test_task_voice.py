@@ -29,6 +29,7 @@ from pydantic_ai_harness.guardrails import GuardrailResult, InputGuardrail
 from pydantic_ai_harness.sub_agents import (
     DelegationTasks,
     DynamicAgents,
+    DynamicAgentSpec,
     InMemoryTransport,
     ParentMessagePart,
     SubAgent,
@@ -346,6 +347,35 @@ class TestSubAgentsTaskAuthorityUser:
         sent, instructions = child.first
         assert instructions == f'{CREATED_INSTRUCTIONS}\n\n{AGENT_TASK_INSTRUCTIONS}'
         assert sent == [('user', TASK)]
+
+    async def test_a_shared_factory_reads_the_level_from_the_spec(self) -> None:
+        """A factory used by settings with different levels delivers the instructions once under each."""
+
+        def factory(spec: DynamicAgentSpec) -> Agent[object, str]:
+            operator = spec.instructions_authority == 'operator'
+            return Agent(deps_type=object, instructions=spec.instructions if operator else None)
+
+        delivered: dict[str, tuple[list[tuple[str, str]], str | None]] = {}
+        for level in ('none', 'operator'):
+            child = Child()
+            dynamic = DynamicAgents[object](factory=factory, instructions_authority=level, task_authority='user')
+            parent = Agent(
+                creating(child, instructions=CREATED_INSTRUCTIONS),
+                capabilities=[SubAgents(dynamic_agents=dynamic, agent_folders=None)],
+            )
+            await parent.run('Go.')
+            delivered[level] = child.first
+        assert delivered == {
+            'none': (
+                [
+                    ('user', AGENT_MESSAGE_NOTE),
+                    ('user', f'<agent_message>{CREATED_INSTRUCTIONS}</agent_message>'),
+                    ('user', TASK),
+                ],
+                AGENT_TASK_INSTRUCTIONS,
+            ),
+            'operator': ([('user', TASK)], f'{CREATED_INSTRUCTIONS}\n\n{AGENT_TASK_INSTRUCTIONS}'),
+        }
 
     @pytest.mark.parametrize('task_authority', ['none', 'user'])
     async def test_a_created_agents_instructions_come_first(self, task_authority: TaskAuthority) -> None:
