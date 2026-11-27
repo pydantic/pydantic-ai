@@ -11,6 +11,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import MCPServerTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets._mcp_bridge import MCPBridgeToolset
 
 from .native_or_local import NativeOrLocalTool
 
@@ -343,6 +344,10 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         if self.allowed_tools is not None:
             allowed = set(self.allowed_tools)
             toolset = toolset.filtered(lambda _ctx, tool_def: tool_def.name in allowed)
+        if self._effective_authority == 'none':
+            # No server text in tool definitions: one fixed bridge tool calls the server's tools, and their catalog
+            # goes out with the capability's instructions, which below operator authority are stated as data.
+            toolset = MCPBridgeToolset(toolset)
         # Prefixed last, so `allowed_tools` matches the server's own names. `__init__` only accepts
         # `True` beside an explicit `id`, never one derived from the URL.
         prefix = self.id if self.tool_prefix is True else self.tool_prefix
