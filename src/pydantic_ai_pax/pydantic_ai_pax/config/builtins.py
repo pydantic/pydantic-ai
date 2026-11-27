@@ -33,6 +33,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='posthog', factory='pydantic_ai_pax.builtin_plugins.posthog', enabled=False),
     PluginSettings(id='grain', factory='pydantic_ai_pax.builtin_plugins.grain', enabled=False),
     PluginSettings(id='linear', factory='pydantic_ai_pax.builtin_plugins.linear', enabled=False),
+    PluginSettings(id='web_search', factory='pydantic_ai_pax.builtin_plugins.web_search', enabled=False),
     PluginSettings(id='herdr', factory='pydantic_ai_pax.builtin_plugins.herdr'),
     PluginSettings(id='aoe', factory='pydantic_ai_pax.builtin_plugins.aoe', enabled=False),
     PluginSettings(id='web', factory='pydantic_ai_pax.builtin_plugins.web', enabled=False),
