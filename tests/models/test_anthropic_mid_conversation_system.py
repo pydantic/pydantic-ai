@@ -11,7 +11,7 @@ The API accepts the entry only directly behind a user turn and directly ahead of
 past user turns that ended up behind it, and then, if nothing legal precedes where it landed, gets a
 minimal `.` user turn to follow. These tests pin both, in that order — deciding the anchor first put
 it between a `tool_use` and its `tool_result` — plus both sides of the `supports_inline_system_prompts`
-profile flag, the client-transport gate, and the cache breakpoint that now lands on the new message.
+profile flag, which every client transport now shares, and the cache breakpoint that now lands on the new message.
 
 `tool_addition` / `tool_removal` blocks ride the same entry, so the tests for those live here too.
 """
@@ -713,14 +713,14 @@ async def test_mid_conversation_system_prompt_on_bedrock(
 ):
     """Bedrock serves the `system` role, so a supported model gets the native entry there too.
 
-    Anthropic publishes the feature for the Claude API, Amazon Bedrock and Google Cloud, and this is
-    the Bedrock half of that recorded rather than assumed. It replaced a test that sent
+    Anthropic publishes the feature for the Claude API, Amazon Bedrock, Google Cloud and Microsoft Foundry, and this
+    is the Bedrock part of that recorded rather than assumed. It replaced a test that sent
     `us.anthropic.claude-sonnet-5` and concluded from the `<system>`-tagged result that Bedrock
     doesn't serve the role — but Sonnet 5 ignores the entry on every transport, so that test was
     measuring the model.
 
-    The Bedrock provider segment is stripped before the prefix check, so `us.anthropic.` in front of
-    a supported model leaves both halves of the gate open.
+    The Bedrock provider segment is stripped before the model-prefix check, so `us.anthropic.` in front of
+    a supported model still turns the feature on.
     """
     model = AnthropicModel(
         'us.anthropic.claude-opus-4-8', provider=AnthropicProvider(anthropic_client=anthropic_bedrock_client)
