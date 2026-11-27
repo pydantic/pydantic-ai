@@ -2224,8 +2224,8 @@ class TestTaskControlTelemetry:
         assert isinstance(attributes['sub_agents.task_id'], str)
 
     async def test_a_directly_registered_toolsets_background_task_settles_and_is_recorded(self) -> None:
-        """Without `SubAgents.wrap_run` no run trace context is stored, so the settled span goes under the current one."""
-        toolset = SubAgentToolset[Any](
+        """Without `SubAgents.wrap_run` no run trace context is stored, so the settled span goes under the task's current span."""
+        toolset = SubAgentToolset[None](
             agents={'researcher': researcher()},
             forward_usage=True,
             inherit_tools=False,
@@ -2242,6 +2242,7 @@ class TestTaskControlTelemetry:
         settings, exporter = traced(False)
         parent = Agent(
             scripted(call('delegate_task', agent_name='researcher', task='Find x.', background=True), text('Bye.')),
+            deps_type=type(None),
             toolsets=[toolset],
         )
         parent.instrument = settings
@@ -2251,11 +2252,13 @@ class TestTaskControlTelemetry:
                 with owner.bind():
                     await parent.run('Go.')
                 await owner.wait_children(None)
-        assert [
-            attributes['sub_agents.outcome']
-            for name, attributes in decisions(exporter)
-            if name == 'sub_agents task settled'
-        ] == ['ok']
+        spans = exporter.get_finished_spans()
+        [settled] = [span for span in spans if span.name == 'sub_agents task settled']
+        [delegate] = [span for span in spans if span.name == 'execute_tool delegate_task']
+        # The task's copied context still has the call that started it as its current span.
+        assert settled.parent is not None and delegate.context is not None
+        assert settled.parent.span_id == delegate.context.span_id
+        assert (settled.attributes or {})['sub_agents.outcome'] == 'ok'
 
     @pytest.mark.parametrize('include_content', [False, True])
     async def test_a_listener_answer_is_a_span(self, include_content: bool) -> None:
