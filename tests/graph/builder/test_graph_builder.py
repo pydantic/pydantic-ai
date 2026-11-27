@@ -327,6 +327,31 @@ async def test_join_without_dominating_fork_error():
         g.build()
 
 
+async def test_unreachable_join_without_dominating_fork_error():
+    """Test that a join no start node reaches, looping with one other step, raises GraphBuildingError."""
+    g = GraphBuilder(output_type=int, input_type=int)
+
+    @g.step
+    async def source(ctx: StepContext[None, None, int]) -> int:
+        return ctx.inputs  # pragma: no cover
+
+    @g.step
+    async def orphan(ctx: StepContext[None, None, int]) -> int:
+        return ctx.inputs  # pragma: no cover
+
+    join_sum = g.join(reduce_sum, initial=0, node_id='join_sum')
+
+    g.add(
+        g.edge_from(g.start_node).to(source),
+        g.edge_from(source).to(g.end_node),
+        g.edge_from(orphan).to(join_sum),
+        g.edge_from(join_sum).to(orphan),
+    )
+
+    with pytest.raises(GraphBuildingError, match="Join 'join_sum' in this graph has no dominating fork"):
+        g.build(validate_graph_structure=False)
+
+
 async def test_validation_no_edges_from_start():
     """Test that validation catches graphs with no edges from start node."""
     g = GraphBuilder(output_type=int)
