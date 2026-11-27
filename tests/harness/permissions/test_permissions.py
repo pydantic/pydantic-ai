@@ -2147,7 +2147,7 @@ class TestInheritedBySubAgents:
     """`SubAgents` holds every delegate to the managed layer, whatever it shares; the person's own layer stays opt-in."""
 
     async def _delegate(
-        self, tmp_path: Path, capability: AbstractCapability[None], *, max_depth: int = 2
+        self, tmp_path: Path, *capabilities: AbstractCapability[None], max_depth: int = 2
     ) -> tuple[bool, bool]:
         """Whether a delegate's `touch made` ran, and whether its `rm -rf doomed` left `doomed` in place."""
         (tmp_path / 'doomed').mkdir()
@@ -2161,7 +2161,7 @@ class TestInheritedBySubAgents:
                 DenyUnanswered[None](),
             ],
         )
-        await agent.run('go', capabilities=[capability])
+        await agent.run('go', capabilities=list(capabilities))
         return (tmp_path / 'made').exists(), (tmp_path / 'doomed').is_dir()
 
     @pytest.mark.parametrize('max_depth', [2, 3])
@@ -2179,6 +2179,12 @@ class TestInheritedBySubAgents:
         """No one can be asked in the delegate, so the `rm` it holds is denied and `doomed` stays."""
         permissions = Permissions[None]('full', max_mode=max_mode)
         assert await self._delegate(tmp_path, permissions) == (True, True)
+
+    async def test_every_permissions_managed_layer_reaches_a_delegate(self, tmp_path: Path) -> None:
+        """One `Permissions` denies `touch` and another `rm`, so the delegate runs neither."""
+        touch = Permissions[None](managed_rules=[PermissionRule('deny', command='touch')])
+        rm = Permissions[None](managed_rules=[PermissionRule('deny', command='rm')])
+        assert await self._delegate(tmp_path, touch, rm) == (False, True)
 
     async def test_a_wrapped_permissions_is_found(self, tmp_path: Path) -> None:
         permissions = Permissions[None](managed_rules=[PermissionRule('deny', command='rm')])
