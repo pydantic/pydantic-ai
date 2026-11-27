@@ -7,7 +7,7 @@ import shlex
 import shutil
 import signal
 import sys
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -19,8 +19,8 @@ from anyio.to_thread import run_sync
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, on_event
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import CommandResult, FileEntry, LocalWorkspaceBackend, WorkspaceCommand, WorkspaceError
 from pydantic_ai_harness.shell import (
@@ -653,3 +653,136 @@ class TestLifecycle:
                 await connected.wait()
             group.cancel_scope.cancel()
         await wait_for_exit(int(pid_file.read_text()))
+
+
+class TestStreamingSecretMasking:
+    async def test_command_output_events_mask_secrets_while_log_keeps_raw(self, tmp_path: Path) -> None:
+        secret = 'sk-stream-secret-xyz'
+        recorder = Recorder()
+        output = await shell(
+            tmp_path,
+            {'command': 'printf "before:%s:after\\n" "$TOK"'},
+            capabilities=[recorder],
+            secret_env={'TOK': secret},
+        )
+        assert recorder.output == 'before:[REDACTED:TOK]:after\n'
+        assert secret not in recorder.output
+        assert '[REDACTED:TOK]' in output
+        assert secret not in output
+        log_path = next(
+            line.removeprefix('Output: ').strip() for line in output.splitlines() if line.startswith('Output: ')
+        )
+        assert secret in Path(log_path).read_text(encoding='utf-8')
+
+    async def test_secret_split_across_event_chunk_boundary_is_masked(self, tmp_path: Path) -> None:
+        secret = 'sk-test-123456789012'  # 20 bytes
+        # 4079 + 17 = 4096 (_EVENT_CHUNK_BYTES): puts 17 bytes in chunk 1 and 3 bytes in chunk 2.
+        padding = 'x' * 4079
+        recorder = Recorder()
+        script = f'import os, sys; sys.stdout.write({padding!r} + os.environ["TOKEN"] + "\\n")'
+        await shell(
+            tmp_path,
+            {'command': f'{shlex.quote(sys.executable)} -c {shlex.quote(script)}'},
+            capabilities=[recorder],
+            secret_env={'TOKEN': secret},
+        )
+        emitted_chunks = [event.text for event in recorder.events if isinstance(event, CommandOutputEvent)]
+        assert len(emitted_chunks) >= 2
+        for chunk in emitted_chunks:
+            assert 'sk-test-' not in chunk
+            assert '89012' not in chunk
+        assert recorder.output == f'{padding}[REDACTED:TOKEN]\n'
+
+    async def test_overlapping_secrets_across_chunk_boundary_masked_as_one(self, tmp_path: Path) -> None:
+        # LONG and SHORT overlap; XYZabc starts at 4093 (3 bytes before 4096 boundary) so SHORT then LONG span chunks.
+        padding = 'p' * 4093
+        recorder = Recorder()
+        script = f'import sys; sys.stdout.write({padding!r} + "XYZabcdefghijk tail\\n")'
+        await shell(
+            tmp_path,
+            {'command': f'{shlex.quote(sys.executable)} -c {shlex.quote(script)}'},
+            capabilities=[recorder],
+            secret_env={'LONG': 'abcdefghijk', 'SHORT': 'XYZabc'},
+        )
+        assert recorder.output == f'{padding}[REDACTED:SHORT] tail\n'
+
+    async def test_adjacent_secrets_across_chunk_boundary_keep_distinct_masks(self, tmp_path: Path) -> None:
+        # Adjacent (non-overlapping) secrets abc and defghijk must emit two separate masks even across the 4096 boundary.
+        padding = 'p' * 4093
+        recorder = Recorder()
+        script = f'import sys; sys.stdout.write({padding!r} + "abcdefghijk tail\\n")'
+        await shell(
+            tmp_path,
+            {'command': f'{shlex.quote(sys.executable)} -c {shlex.quote(script)}'},
+            capabilities=[recorder],
+            secret_env={'FIRST': 'abc', 'SECOND': 'defghijk'},
+        )
+        assert recorder.output == f'{padding}[REDACTED:FIRST][REDACTED:SECOND] tail\n'
+
+    async def test_buffered_partial_secret_flushed_and_masked_on_log_clear(self, tmp_path: Path) -> None:
+        secret = 'tok-prefix-tail'
+        recorder = Recorder()
+        # Write 4090 bytes + secret prefix "tok-prefix", wait so emitter polls and holds it in `held`,
+        # then write >200 bytes to trip max_log_bytes=4200 and clear the log, then write clean text.
+        script = (
+            'import sys, time; '
+            'sys.stdout.write("a" * 4090 + "tok-prefix"); sys.stdout.flush(); '
+            'time.sleep(0.3); '
+            'sys.stdout.write("-tail\\n" + "b" * 300); sys.stdout.flush(); '
+            'time.sleep(1.3); '
+            'sys.stdout.write("after-clear\\n")'
+        )
+        await shell(
+            tmp_path,
+            {'command': f'{shlex.quote(sys.executable)} -c {shlex.quote(script)}', 'timeout': 10},
+            capabilities=[recorder],
+            secret_env={'TOK': secret},
+            max_log_bytes=4200,
+        )
+        emitted = recorder.output
+        assert 'tok-prefix' not in emitted
+        assert 'after-clear' in emitted
+
+    async def test_per_run_callable_secret_env_masks_events(self, tmp_path: Path) -> None:
+        events: list[CommandOutputEvent] = []
+
+        class Collector(AbstractCapability[str]):
+            @on_event(CommandOutputEvent)
+            async def on_out(self, ctx: RunContext[str], event: CommandOutputEvent) -> None:
+                events.append(event)
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            'shell',
+                            {'command': f'{shlex.quote(sys.executable)} -c "import os; print(os.environ[\'TOK\'])"'},
+                        )
+                    ]
+                )
+            return ModelResponse(parts=[TextPart('done')])
+
+        async def stream_respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            for part in respond(messages, info).parts:
+                if isinstance(part, TextPart):
+                    yield part.content
+                else:
+                    assert isinstance(part, ToolCallPart)
+                    yield {0: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
+
+        agent = Agent[str](
+            FunctionModel(respond, stream_function=stream_respond),
+            deps_type=str,
+            capabilities=[
+                Shell(tools=['shell'], secret_env=lambda ctx: {'TOK': f'run-secret-{ctx.deps}'}),
+                LocalWorkspace(tmp_path),
+                Collector(),
+            ],
+        )
+        await agent.run('one', deps='one')
+        await agent.run('two', deps='two')
+        combined = ''.join(event.text for event in events)
+        assert 'run-secret-one' not in combined
+        assert 'run-secret-two' not in combined
+        assert combined.count('[REDACTED:TOK]') == 2

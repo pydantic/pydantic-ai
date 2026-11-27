@@ -9,8 +9,8 @@ from typing import NoReturn
 
 import pytest
 
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import LocalWorkspace, local_workspace
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, local_workspace, on_event
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -20,7 +20,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceRef
@@ -28,7 +28,7 @@ from pydantic_ai_harness import coder
 from pydantic_ai_harness.coder import FILE_TOOL_NAMES, Coder, coder_agent
 from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.repo_context import RepoContext
-from pydantic_ai_harness.shell import Shell
+from pydantic_ai_harness.shell import CommandOutputEvent, Shell
 from pydantic_ai_harness.sub_agents import SubAgents, TaskControl
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 from tests.harness._strict_requests import PROVIDERS, capturing_model, strict_tools
@@ -284,3 +284,88 @@ async def test_coder_tools_reach_each_provider_non_strict(
 
 def test_coder_loads_from_agent_spec() -> None:
     Agent.from_spec({'model': 'test', 'capabilities': ['Coder']}, custom_capability_types=[Coder])
+
+
+async def test_coder_secret_env_static_per_run_and_repr(tmp_path: Path) -> None:
+    static_secret = 'coder-static-secret'
+    assert static_secret not in repr(Coder(secret_env={'DEPLOY_TOKEN': static_secret}))
+
+    events: list[str] = []
+
+    class CaptureOutput(AbstractCapability[str]):
+        @on_event(CommandOutputEvent)
+        async def capture(self, ctx: RunContext[str], event: CommandOutputEvent) -> None:
+            events.append(event.text)
+
+    tool_returns: list[str] = []
+
+    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            cmd = f"{sys.executable} -c \"import os; print(os.environ['API_KEY'], os.environ['API_KEY'][::-1])\""
+            return ModelResponse(parts=[ToolCallPart('shell', {'command': cmd})])
+        part = messages[-1].parts[0]
+        assert isinstance(part, ToolReturnPart) and isinstance(part.content, str)
+        tool_returns.append(part.content)
+        return ModelResponse(parts=[TextPart('done')])
+
+    async def stream_respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        for part in respond(messages, info).parts:
+            if isinstance(part, TextPart):
+                yield part.content
+            else:
+                assert isinstance(part, ToolCallPart)
+                yield {0: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
+
+    static_agent = Agent[str](
+        FunctionModel(respond, stream_function=stream_respond),
+        deps_type=str,
+        capabilities=[
+            LocalWorkspace(tmp_path),
+            Coder[str](secret_env={'API_KEY': static_secret}, repo_context=False, caching=False),
+            CaptureOutput(),
+        ],
+    )
+    await static_agent.run('go', deps='unused')
+    assert static_secret not in tool_returns[-1]
+    assert static_secret[::-1] in tool_returns[-1]
+    assert '[REDACTED:API_KEY]' in tool_returns[-1]
+    assert ''.join(events).startswith(f'[REDACTED:API_KEY] {static_secret[::-1]}')
+
+    events.clear()
+    tool_returns.clear()
+    dynamic_agent = Agent[str](
+        FunctionModel(respond, stream_function=stream_respond),
+        deps_type=str,
+        capabilities=[
+            LocalWorkspace(tmp_path),
+            Coder[str](
+                secret_env=lambda ctx: {'API_KEY': f'per-run-{ctx.deps}'},
+                repo_context=False,
+                caching=False,
+            ),
+            CaptureOutput(),
+        ],
+    )
+    await dynamic_agent.run('run1', deps='tenant-1')
+    await dynamic_agent.run('run2', deps='tenant-2')
+    assert all('per-run-tenant-1' not in r and 'per-run-tenant-2' not in r for r in tool_returns)
+    assert '1-tnanet-nur-rep' in tool_returns[0]
+    assert '2-tnanet-nur-rep' in tool_returns[1]
+    combined_events = ''.join(events)
+    assert 'per-run-tenant-1' not in combined_events
+    assert 'per-run-tenant-2' not in combined_events
+    assert combined_events.count('[REDACTED:API_KEY]') == 2
+
+    async def async_secret(ctx: RunContext[str]) -> dict[str, str]:
+        return {'API_KEY': f'async-{ctx.deps}'}
+
+    async_agent = Agent[str](
+        FunctionModel(respond),
+        deps_type=str,
+        capabilities=[LocalWorkspace(tmp_path), Coder[str](secret_env=async_secret, repo_context=False, caching=False)],
+    )
+    tool_returns.clear()
+    await async_agent.run('run-async', deps='tenant-async')
+    assert 'async-tenant-async' not in tool_returns[0]
+    assert 'cnysa-tnanet-cnysa' in tool_returns[0]
+    assert '[REDACTED:API_KEY]' in tool_returns[0]

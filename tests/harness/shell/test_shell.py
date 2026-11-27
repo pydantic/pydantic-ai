@@ -34,6 +34,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -2503,6 +2504,114 @@ class TestShellSecretEnv:
         run_ts = await toolset.for_run(_ctx(shell_dir))
         assert isinstance(run_ts, ShellToolset)
         assert run_ts._resolve_env() == {'TMP_TOKEN': _SECRET}  # pyright: ignore[reportPrivateUsage]
+
+    async def test_callable_secret_env_per_run_and_async(self, tmp_path: Path) -> None:
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('run_command', {'command': _read_env_var('TMP_TOKEN')})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        def make_secret(ctx: RunContext[str]) -> dict[str, str]:
+            return {'TMP_TOKEN': f'tok-{ctx.deps}'}
+
+        async def make_async_secret(ctx: RunContext[str]) -> dict[str, str] | None:
+            await anyio.sleep(0)
+            if ctx.deps == 'none':
+                return None
+            return {'TMP_TOKEN': f'async-{ctx.deps}'}
+
+        for secret_fn in (make_secret, make_async_secret):
+            seen: list[str] = []
+
+            def run_respond(messages: list[ModelMessage], info: AgentInfo, seen: list[str] = seen) -> ModelResponse:
+                if len(messages) > 1:
+                    part = messages[-1].parts[0]
+                    assert isinstance(part, ToolReturnPart) and isinstance(part.content, str)
+                    seen.append(part.content)
+                return respond(messages, info)
+
+            agent = Agent[str](
+                FunctionModel(run_respond),
+                deps_type=str,
+                capabilities=[Shell(secret_env=secret_fn), LocalWorkspace(tmp_path)],
+            )
+            await agent.run('first', deps='alpha')
+            await agent.run('second', deps='beta')
+            assert seen == ['[stdout]\n[REDACTED:TMP_TOKEN]\n', '[stdout]\n[REDACTED:TMP_TOKEN]\n']
+
+        none_seen: list[str] = []
+
+        def none_respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) > 1:
+                part = messages[-1].parts[0]
+                assert isinstance(part, ToolReturnPart) and isinstance(part.content, str)
+                none_seen.append(part.content)
+            return respond(messages, info)
+
+        agent_none = Agent[str](
+            FunctionModel(none_respond),
+            deps_type=str,
+            capabilities=[Shell(secret_env=make_async_secret), LocalWorkspace(tmp_path)],
+        )
+        await agent_none.run('none', deps='none')
+        assert none_seen == ['[stdout]\nABSENT\n']
+
+    async def test_concurrent_runs_isolate_per_run_secret_env(self, tmp_path: Path) -> None:
+        cmd = (
+            f'{sys.executable} -c '
+            "\"import os, time; time.sleep(0.05); tok = os.environ['TMP_TOKEN']; "
+            'print(tok, tok[::-1])"'
+        )
+        results: dict[str, str] = {}
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('run_command', {'command': cmd})])
+            part = messages[-1].parts[0]
+            assert isinstance(part, ToolReturnPart) and isinstance(part.content, str)
+            return ModelResponse(parts=[TextPart(part.content)])
+
+        agent = Agent[str](
+            FunctionModel(respond),
+            deps_type=str,
+            capabilities=[Shell(secret_env=lambda ctx: {'TMP_TOKEN': f'secret-{ctx.deps}'}), LocalWorkspace(tmp_path)],
+        )
+
+        async def run_one(dep: str) -> None:
+            result = await agent.run('go', deps=dep)
+            results[dep] = result.output
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(run_one, 'user-a')
+            tg.start_soon(run_one, 'user-b')
+
+        assert results['user-a'] == '[stdout]\n[REDACTED:TMP_TOKEN] a-resu-terces\n'
+        assert results['user-b'] == '[stdout]\n[REDACTED:TMP_TOKEN] b-resu-terces\n'
+
+    async def test_callable_secret_env_resolved_once_per_run_and_supports_persist_cwd(self, tmp_path: Path) -> None:
+        calls = 0
+
+        def get_secrets(ctx: RunContext[str]) -> dict[str, str]:
+            nonlocal calls
+            calls += 1
+            return {'TMP_TOKEN': f'tok-{ctx.deps}-{calls}'}
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('run_command', {'command': _read_env_var('TMP_TOKEN')})])
+            if len(messages) == 3:
+                return ModelResponse(parts=[ToolCallPart('run_command', {'command': _read_env_var('TMP_TOKEN')})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent[str](
+            FunctionModel(respond),
+            deps_type=str,
+            capabilities=[Shell(secret_env=get_secrets, persist_cwd=True), LocalWorkspace(tmp_path)],
+        )
+        await agent.run('run1', deps='x')
+        assert calls == 1
+        await agent.run('run2', deps='x')
+        assert calls == 2
 
 
 async def test_background_tools_push_run_command_output(tmp_path: Path) -> None:

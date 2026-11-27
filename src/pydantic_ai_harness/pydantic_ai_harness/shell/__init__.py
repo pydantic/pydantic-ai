@@ -8,7 +8,7 @@ from pydantic_ai_harness.shell._events import (
     CommandStartedEvent,
 )
 from pydantic_ai_harness.shell._persistent import MAX_FOREGROUND_WAIT
-from pydantic_ai_harness.shell._toolset import RUN_SCOPED_TOOL_NAMES, SHELL_TOOL_NAMES, ShellToolset
+from pydantic_ai_harness.shell._toolset import RUN_SCOPED_TOOL_NAMES, SHELL_TOOL_NAMES, SecretEnv, ShellToolset
 
 __all__ = [
     'LLM_API_KEY_ENV_PATTERNS',
@@ -19,6 +19,7 @@ __all__ = [
     'CommandFinishedEvent',
     'CommandOutputEvent',
     'CommandStartedEvent',
+    'SecretEnv',
     'Shell',
     'ShellToolset',
 ]

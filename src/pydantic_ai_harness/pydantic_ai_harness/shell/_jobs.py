@@ -569,3 +569,103 @@ def past_secrets(data: AnyStr, cut: int, secrets: Sequence[AnyStr]) -> int:
             break
         cut = max(cut, start - negative_length)
     return cut
+
+
+@dataclass(frozen=True)
+class CompiledSecrets:
+    """Precomputed secret env mapping, non-empty values, `[REDACTED:<name>]` masks, and UTF-8 bytes."""
+
+    env: dict[str, str] | None = None
+    values: tuple[str, ...] = ()
+    masks: tuple[str, ...] = ()
+    encoded: tuple[bytes, ...] = ()
+    max_len: int = 0
+
+
+EMPTY_SECRETS = CompiledSecrets()
+
+
+def compile_secrets(secret_env: Mapping[str, str] | None) -> CompiledSecrets:
+    """Compile `secret_env` entries into an env dict, non-empty values, masks, and UTF-8 bytes."""
+    if secret_env is None:
+        return EMPTY_SECRETS
+    env_dict = dict(secret_env)
+    values: list[str] = []
+    masks: list[str] = []
+    encoded: list[bytes] = []
+    for name, value in env_dict.items():
+        if value:
+            values.append(value)
+            masks.append(f'[REDACTED:{name}]')
+            encoded.append(value.encode())
+    return CompiledSecrets(
+        env=env_dict,
+        values=tuple(values),
+        masks=tuple(masks),
+        encoded=tuple(encoded),
+        max_len=max(map(len, values), default=0),
+    )
+
+
+def redact_secrets(text: str, secrets: CompiledSecrets) -> str:
+    """`text` with every occurrence of a secret masked; overlapping occurrences form one masked span.
+
+    Spans are found in the original text, so masking one secret cannot leave part of another that overlaps it.
+    At a shared start, the longest span names the mask.
+    """
+    if not secrets.values or not text:
+        return text
+    parts: list[str] = []
+    end = 0
+    for start, negative_length, number in secret_spans(text, secrets.values):
+        if start >= end:
+            parts += [text[end:start], secrets.masks[number]]
+        end = max(end, start - negative_length)
+    return ''.join(parts) + text[end:]
+
+
+def redact_tail(text: str, max_chars: int, secrets: CompiledSecrets) -> str:
+    """`text` masked, or as much of its end as `max_chars` needs, so masking a large output costs little.
+
+    The end starts after any secret it would split. It grows while masking leaves it no longer than `max_chars`,
+    as a run of overlapping secrets masks to one span, so the cap still sees all it would keep.
+    """
+    if not secrets.values or not text:
+        return text
+    window = (max_chars + 1) * secrets.max_len
+    while True:
+        start = past_secrets(text, max(0, len(text) - window), secrets.values)
+        masked = redact_secrets(text[start:], secrets)
+        if not start or len(masked) > max_chars:
+            return masked
+        window *= 2
+
+
+def _overlapping_cluster_start(buf: str, hold_from: int, values: Sequence[str]) -> int:
+    """Move `hold_from` to the start of any overlapping-secret cluster in `buf` that crosses it."""
+    group_start = group_end = 0
+    for span_start, negative_length, _ in secret_spans(buf, values):
+        if span_start >= hold_from:
+            break
+        span_end = span_start - negative_length
+        if span_start < group_end:
+            group_end = max(group_end, span_end)
+        else:
+            group_start, group_end = span_start, span_end
+        if group_end > hold_from:
+            return group_start
+    return hold_from
+
+
+def split_safe_prefix(buf: str, secrets: CompiledSecrets) -> tuple[str, str]:
+    """Split `buf` into `(safe_prefix, held)` without splitting a secret or overlapping-secret cluster."""
+    if not secrets.values or not buf:
+        return buf, ''
+    start_search = max(0, len(buf) - secrets.max_len + 1)
+    hold_from = next(
+        (pos for pos in range(start_search, len(buf)) if any(s.startswith(buf[pos:]) for s in secrets.values)),
+        len(buf),
+    )
+    if hold_from < len(buf):
+        hold_from = _overlapping_cluster_start(buf, hold_from, secrets.values)
+    return buf[:hold_from], buf[hold_from:]

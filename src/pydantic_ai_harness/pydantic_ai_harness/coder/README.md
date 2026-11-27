@@ -99,7 +99,9 @@ agent = Agent(
 )
 ```
 
-Don't pass `os.environ`: that hands the model's commands every secret in the process, LLM API keys included.
+Don't pass `os.environ`: that hands the model's commands every secret in the process, LLM API keys included. For
+credentials that should reach commands while being masked as `[REDACTED:<name>]` in shell results, error messages,
+and `CommandOutputEvent`s (a static mapping or per-run `RunContext` callable), pass `Coder(secret_env=...)`.
 
 ## Sharing a workspace
 

@@ -220,22 +220,25 @@ non-credential vars like `GOOGLE_APPLICATION_CREDENTIALS`. Treat it as a
 starting point and add your own patterns.
 
 `secret_env` is for credentials the application injects for commands to use, such as a per-job
-token. Each value reaches commands like `env`, unfiltered by `denied_env_patterns`, and is
-replaced with `[REDACTED:<name>]` in tool results and retry or failure messages before the model
-sees them:
+token. Pass either a static mapping or a sync/async callable `(ctx: RunContext) -> Mapping[str, str] | None`
+to supply credentials per run. Each value reaches commands like `env`, unfiltered by `denied_env_patterns`, and is
+replaced with `[REDACTED:<name>]` in tool results, retry or failure messages, and the `shell` tool's
+`CommandOutputEvent` stream:
 
 ```python
+from pydantic_ai import RunContext
 from pydantic_ai_harness import Shell
 
 Shell(secret_env={'DEPLOY_TOKEN': 'tok-...'})
+Shell(secret_env=lambda ctx: {'DEPLOY_TOKEN': ctx.deps.deploy_token})
 ```
 
-Masking replaces exact occurrences of each value in what the tools return. It guards against a
-secret printed by accident, not against a command that transforms it (`base64`, `rev`, `cut`, JSON
+Masking replaces exact occurrences of each value before tool output reaches the model and before
+`CommandOutputEvent`s emit. It guards against a secret printed by accident, not against a command that transforms it (`base64`, `rev`, `cut`, JSON
 escaping) or splits it between stdout and stderr. That includes a command the model writes on
 purpose to reveal it. A short or common value, such as `1` or `true`, is masked everywhere it
-appears. A command can also put a secret where the model reads it unmasked, such as a file or a
-`shell` log it opens with a file tool, and the `shell` tool's events carry raw output. Empty values
+appears. A command can still put a secret where the model reads it unmasked, such as a file or a
+`shell` log it opens with a file tool. Empty values
 are not masked.
 
 None of these is a security boundary: with `LocalWorkspace`, a command can still read

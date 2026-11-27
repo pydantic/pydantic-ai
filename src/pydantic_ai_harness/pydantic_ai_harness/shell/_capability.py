@@ -16,7 +16,7 @@ from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_arg
 from pydantic_ai_harness._workspace import require_workspace
 from pydantic_ai_harness.announce_working_directory import AnnounceWorkingDirectory
 from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT
-from pydantic_ai_harness.shell._toolset import RUN_SCOPED_TOOL_NAMES, ShellToolset
+from pydantic_ai_harness.shell._toolset import RUN_SCOPED_TOOL_NAMES, SecretEnv, ShellToolset
 
 _DEFAULT_DENIED_COMMANDS: tuple[str, ...] = (
     'rm',
@@ -130,14 +130,15 @@ class Shell(AbstractCapability[AgentDepsT]):
     provider-credential denylist.
     """
 
-    secret_env: Mapping[str, str] | None = field(default=None, kw_only=True, repr=False)
-    """Secrets added to every command's environment, like `env`, and masked in what the tools return.
+    secret_env: SecretEnv[AgentDepsT] | None = field(default=None, kw_only=True, repr=False)
+    """Secrets added to every command's environment, like `env`, and masked before leaving the toolset.
 
-    Exact occurrences of each value are replaced with `[REDACTED:<name>]` in tool results and retry or failure
-    messages before the model sees them. This guards against a secret printed by accident, not against a command
-    that transforms or splits it, and a short or common value is masked everywhere it appears.
-    `denied_env_patterns` does not filter these. Log files, which the model can read with other tools, and the
-    persistent `shell` tool's events hold the raw output.
+    Accepts a static mapping or a sync/async callable `(ctx: RunContext[AgentDepsT]) -> Mapping[str, str] | None`
+    resolved per run. Exact occurrences of each value are replaced with `[REDACTED:<name>]` in tool results,
+    retry or failure messages, and the persistent `shell` tool's `CommandOutputEvent`s. This guards against a
+    secret printed by accident, not against a command that transforms or splits it, and a short or common value
+    is masked everywhere it appears. `denied_env_patterns` does not filter these. Log files, which the model
+    can read with other tools, still hold the raw output.
     """
 
     tools: Sequence[str] = RUN_SCOPED_TOOL_NAMES
@@ -163,7 +164,11 @@ class Shell(AbstractCapability[AgentDepsT]):
             self.denied_commands = [] if self.allowed_commands else list(_DEFAULT_DENIED_COMMANDS)
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
-        result = await handler()
+        try:
+            result = await handler()
+        finally:
+            if self._toolset is not None and ctx.run_id is not None:
+                self._toolset.clear_run_secrets(ctx.run_id)
         if self.persist_cwd and ctx.run_id is not None:
             # A cancelled worker may be replaced while the workflow is still active;
             # only a completed run can safely discard the cwd needed by its successor.

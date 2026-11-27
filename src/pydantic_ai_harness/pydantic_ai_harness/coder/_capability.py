@@ -26,7 +26,7 @@ from pydantic_ai_harness.compaction import ClearToolResults
 from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.repo_context import RepoContext
-from pydantic_ai_harness.shell import MAX_FOREGROUND_WAIT, Shell
+from pydantic_ai_harness.shell import MAX_FOREGROUND_WAIT, SecretEnv, Shell
 from pydantic_ai_harness.sub_agents import SubAgents, TaskControl
 from pydantic_ai_harness.sub_agents._tasks import ASK_PARENT_TOOL_NAME
 from pydantic_ai_harness.sub_agents._toolset import CONTROL_TOOL_NAMES, delegation_depth
@@ -261,6 +261,11 @@ class Coder(CombinedCapability[AgentDepsT]):
         max_image_side: Longest side, in pixels, of an image `read_file` returns; a larger
             one is downscaled to it first. Needs Pillow, which the `coder` extra installs.
             `None` sends images at full size and drops the Pillow requirement.
+        secret_env: Secrets added to every shell command's environment (a mapping or
+            per-run sync/async callable receiving `RunContext[AgentDepsT]`), and masked as
+            `[REDACTED:<name>]` in shell results, retry/failure messages, and streamed
+            `CommandOutputEvent`s. Log files on disk, which file tools can still read, hold
+            the raw output.
     """
 
     def __init__(
@@ -277,6 +282,7 @@ class Coder(CombinedCapability[AgentDepsT]):
         caching: bool = True,
         strict: bool | None = False,
         max_image_side: int | None = MAX_IMAGE_SIDE,
+        secret_env: SecretEnv[AgentDepsT] | None = None,
     ) -> None:
         if autonomy not in get_args(Autonomy):
             raise ValueError(f'`autonomy` must be one of {", ".join(map(repr, get_args(Autonomy)))}, not {autonomy!r}.')
@@ -328,6 +334,7 @@ class Coder(CombinedCapability[AgentDepsT]):
                 denied_commands=[],
                 default_timeout=MAX_FOREGROUND_WAIT,
                 allow_interactive=True,
+                secret_env=secret_env,
                 # No env patterns: the workspace, not the host process, supplies the command environment.
                 tools=['shell'],
             ),

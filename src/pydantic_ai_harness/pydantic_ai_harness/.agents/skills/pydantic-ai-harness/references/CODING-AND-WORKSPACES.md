@@ -316,8 +316,8 @@ Parameters: `denied_commands` (default `rm`, `rmdir`, `mkfs`, `dd`, `format`, `s
 `halt`, `poweroff`, `init`), `denied_operators`, `default_timeout=30.0`, `max_output_chars=50_000`
 (keeps the **tail**; `shell` already returns at most the last 16,000 bytes), `max_file_bytes=None`
 (per-file `ulimit -f`), `max_log_bytes=100_000_000` (see below), `persist_cwd=False` (sticky `cd`),
-`allow_interactive=False`, `env`, `denied_env_patterns`, `secret_env` (added like `env`; exact occurrences
-masked as `[REDACTED:<name>]` in tool results, so not a value a command encodes or slices, nor logs the
+`allow_interactive=False`, `env`, `denied_env_patterns`, `secret_env` (a mapping or per-run `RunContext` callable, added like `env`; exact occurrences
+masked as `[REDACTED:<name>]` in tool results and live `shell` output events, so not a value a command encodes or slices, nor logs the
 model reads with file tools; short values are masked everywhere).
 
 - `max_log_bytes` bounds `start_command` and `shell` logs, including with `tools=['shell']`: a log past

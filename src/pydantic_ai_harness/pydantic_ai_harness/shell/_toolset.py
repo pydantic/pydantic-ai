@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
+import inspect
 import os
 import posixpath
 import re
@@ -11,10 +12,11 @@ import shlex
 import uuid
 import weakref
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeAlias
 
 import anyio
 
@@ -26,7 +28,15 @@ from pydantic_ai.workspaces import Workspace, WorkspaceError, WorkspaceTimeoutEr
 from pydantic_ai_harness._output import truncate_tail
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored
 from pydantic_ai_harness._workspace import metadata_dir, require_workspace, supports_commands
-from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT, Job, past_secrets, secret_spans
+from pydantic_ai_harness.shell._jobs import (
+    CONTROL_TIMEOUT,
+    EMPTY_SECRETS,
+    CompiledSecrets,
+    Job,
+    compile_secrets,
+    redact_secrets,
+    redact_tail,
+)
 from pydantic_ai_harness.shell._limits import (
     file_limit_status,
     limited_script,
@@ -35,6 +45,15 @@ from pydantic_ai_harness.shell._limits import (
 )
 from pydantic_ai_harness.shell._persistent import MAX_FOREGROUND_WAIT, CommandMode, run_persistent_command
 from pydantic_ai_harness.shell._policy import is_interactive_command, recoverable, run_model_command
+
+SecretEnv: TypeAlias = (
+    Mapping[str, str]
+    | Callable[[RunContext[AgentDepsT]], Mapping[str, str] | Awaitable[Mapping[str, str] | None] | None]
+)
+"""Secrets passed to commands and masked in tool output, retry/error text, and streamed events."""
+
+_MAX_CACHED_RUN_SECRETS = 256
+_ACTIVE_SECRET_ENV: ContextVar[CompiledSecrets | None] = ContextVar('_ACTIVE_SECRET_ENV', default=None)
 
 RUN_SCOPED_TOOL_NAMES: tuple[str, ...] = ('run_command', 'start_command', 'check_command', 'stop_command')
 """The default tools. Background commands keep running until they exit, `stop_command` stops them, or the workspace ends."""
@@ -91,7 +110,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         max_log_bytes: int | None = None,
         env: Mapping[str, str] | None = None,
         denied_env_patterns: Sequence[str] = (),
-        secret_env: Mapping[str, str] | None = None,
+        secret_env: SecretEnv[AgentDepsT] | None = None,
         tools: Sequence[str] = RUN_SCOPED_TOOL_NAMES,
         cwd: Path | None = None,
         id: str | None = None,
@@ -119,11 +138,11 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         self._allow_interactive = allow_interactive
         self._env = dict(env) if env is not None else None
         self._denied_env_patterns = list(denied_env_patterns)
-        self._secret_env = dict(secret_env) if secret_env is not None else None
-        secrets = {name: value for name, value in (secret_env or {}).items() if value}
-        self._secret_values = list(secrets.values())
-        self._secret_masks = [f'[REDACTED:{name}]' for name in secrets]
-        self._secret_bytes = [value.encode() for value in self._secret_values]
+        self._secret_env: SecretEnv[AgentDepsT] | None = (
+            secret_env if callable(secret_env) else (dict(secret_env) if secret_env is not None else None)
+        )
+        self._static_secrets: CompiledSecrets = EMPTY_SECRETS if callable(secret_env) else compile_secrets(secret_env)
+        self._run_secrets: dict[tuple[str, int], CompiledSecrets] = {}
         self._tools = tuple(tools)
         # Each workspace's job directory, looked up on its first command; weak, so no finished run's workspace is kept.
         self._jobs_dirs: weakref.WeakKeyDictionary[Workspace, str] = weakref.WeakKeyDictionary()
@@ -173,6 +192,9 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         """
         if not self._persist_cwd:
             return self
+        secret_env: SecretEnv[AgentDepsT] | None = self._secret_env
+        if callable(secret_env):
+            secret_env = (await self._resolve_secrets(ctx)).env
         return ShellToolset(
             allowed_commands=self._allowed_commands,
             denied_commands=self._denied_commands,
@@ -185,10 +207,36 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             allow_interactive=self._allow_interactive,
             env=self._env,
             denied_env_patterns=self._denied_env_patterns,
-            secret_env=self._secret_env,
+            secret_env=secret_env,
             tools=self._tools,
             id=self.id,
         )
+
+    async def _resolve_secrets(self, ctx: RunContext[AgentDepsT]) -> CompiledSecrets:
+        if not callable(self._secret_env):
+            return self._static_secrets
+        cache_key = (ctx.run_id, id(ctx.deps)) if ctx.run_id is not None else None
+        if cache_key is not None and (cached := self._run_secrets.get(cache_key)) is not None:
+            return cached
+        resolved = self._secret_env(ctx)
+        if inspect.isawaitable(resolved):
+            resolved = await resolved
+        compiled = compile_secrets(resolved)
+        if cache_key is not None:
+            if len(self._run_secrets) >= _MAX_CACHED_RUN_SECRETS:
+                self._run_secrets.pop(next(iter(self._run_secrets)))
+            self._run_secrets[cache_key] = compiled
+        return compiled
+
+    def clear_run_secrets(self, run_id: str) -> None:
+        """Drop any cached per-run secrets resolved for `run_id`."""
+        for key in [k for k in self._run_secrets if k[0] == run_id]:
+            self._run_secrets.pop(key, None)
+
+    def _current_secrets(self) -> CompiledSecrets:
+        if (active := _ACTIVE_SECRET_ENV.get()) is not None:
+            return active
+        return self._static_secrets
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         """Offer no tools when the workspace cannot execute commands; fail a run with no workspace."""
@@ -220,45 +268,22 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         `ToolFailed` messages are masked and capped; a future tool returning rich
         content (e.g. `ToolReturn`) needs this seam extended.
         """
+        secrets = await self._resolve_secrets(ctx)
+        token = _ACTIVE_SECRET_ENV.set(secrets)
         try:
-            result = await super().call_tool(name, tool_args, ctx, tool)
-        except (ModelRetry, ToolFailed) as exc:
-            if (masked := self._redact(exc.message)) == exc.message:
-                raise
-            raise type(exc)(masked) from None
-        if not isinstance(result, str):
-            return result
-        if self._secret_values:
-            result = self._redact_tail(result)
-        return truncate_tail(result, self._max_output_chars)
-
-    def _redact_tail(self, text: str) -> str:
-        """`text` masked, or as much of its end as the output cap needs, so masking a large output costs little.
-
-        The end starts after any secret it would split. It grows while masking leaves it no longer than the cap,
-        as a run of overlapping secrets masks to one span, so the cap still sees all it would keep.
-        """
-        window = (self._max_output_chars + 1) * max(map(len, self._secret_values))
-        while True:
-            start = past_secrets(text, max(0, len(text) - window), self._secret_values)
-            masked = self._redact(text[start:])
-            if not start or len(masked) > self._max_output_chars:
-                return masked
-            window *= 2
-
-    def _redact(self, text: str) -> str:
-        """`text` with every occurrence of a secret masked; overlapping occurrences form one masked span.
-
-        Spans are found in the original text, so masking one secret cannot leave part of another that overlaps it.
-        At a shared start, the longest span names the mask.
-        """
-        parts: list[str] = []
-        end = 0
-        for start, negative_length, number in secret_spans(text, self._secret_values):
-            if start >= end:
-                parts += [text[end:start], self._secret_masks[number]]
-            end = max(end, start - negative_length)
-        return ''.join(parts) + text[end:]
+            try:
+                result = await super().call_tool(name, tool_args, ctx, tool)
+            except (ModelRetry, ToolFailed) as exc:
+                if (masked := redact_secrets(exc.message, secrets)) == exc.message:
+                    raise
+                raise type(exc)(masked) from None
+            if not isinstance(result, str):
+                return result
+            if secrets.values:
+                result = redact_tail(result, self._max_output_chars, secrets)
+            return truncate_tail(result, self._max_output_chars)
+        finally:
+            _ACTIVE_SECRET_ENV.reset(token)
 
     def _resolve_env(self) -> dict[str, str] | None:
         """The variables handed to the workspace for each command, on top of its own environment.
@@ -267,13 +292,14 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         `None` adds nothing. An explicit `env` is added, minus names that match
         `denied_env_patterns` (glob, via `fnmatch`), then `secret_env`, which the patterns do not filter.
         """
-        if self._env is None and self._secret_env is None:
+        secret_env = self._current_secrets().env
+        if self._env is None and secret_env is None:
             return None
         return {
             name: value
             for name, value in (self._env or {}).items()
             if not any(fnmatch.fnmatchcase(name, pattern) for pattern in self._denied_env_patterns)
-        } | (self._secret_env or {})
+        } | (secret_env or {})
 
     async def _cwd_for(self, ctx: RunContext[AgentDepsT]) -> str:
         """The absolute workspace directory the next `run_command` or `start_command` command starts in."""
@@ -524,7 +550,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             mode=mode,
             timeout=self._default_timeout if timeout is None else timeout,
             log_limit=self._max_log_bytes,
-            secrets=self._secret_bytes,
+            secrets=self._current_secrets(),
         )
 
     @recoverable
@@ -559,8 +585,9 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
     async def _read_bg_output(self, job: Job) -> tuple[str, str]:
         """The retained tail of a background command's stdout and stderr logs."""
         limit = self._max_output_chars * _OUTPUT_BYTES_PER_CHAR
-        stdout = await job.tail(job.output_path, limit, secrets=self._secret_bytes)
-        stderr = await job.tail(job.stderr_path, limit, secrets=self._secret_bytes)
+        secret_bytes = self._current_secrets().encoded
+        stdout = await job.tail(job.output_path, limit, secrets=secret_bytes)
+        stderr = await job.tail(job.stderr_path, limit, secrets=secret_bytes)
         return stdout.decode('utf-8', errors='replace'), stderr.decode('utf-8', errors='replace')
 
     @recoverable

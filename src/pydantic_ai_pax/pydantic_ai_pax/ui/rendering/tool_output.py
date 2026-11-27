@@ -419,7 +419,7 @@ class ToolOutput:
     def _shell_finished(self, event: CommandFinishedEvent) -> None:
         """One row: the exit status and line count, and the log when output was cut or keeps coming.
 
-        Without `show_output` no output is shown: the events carry the raw output, before the harness masks secrets.
+        Without `show_output` no output is shown. Emitted output events carry masked secrets; the log file holds the raw output.
         """
         preview = self._shells.pop(event.tool_call_id, ShellPreview())
         if preview.pending and preview.completed_lines < self.shell_lines:

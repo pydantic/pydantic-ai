@@ -95,7 +95,7 @@ if TYPE_CHECKING:
     from .report_tool_errors import ReportToolErrors
     from .require_verification import DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS, RequireVerification
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
-    from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
+    from .shell import LLM_API_KEY_ENV_PATTERNS, SecretEnv, Shell
     from .skills import Skills
     from .smart_search import SmartSearch
     from .smol_sandbox import SmolSandbox, SmolSandboxBackend
@@ -217,6 +217,7 @@ __all__ = [
     'Researcher',
     'SSHWorkspace',
     'SSHWorkspaceBackend',
+    'SecretEnv',
     'Shell',
     'Skills',
     'SlidingWindowCompaction',
@@ -347,6 +348,7 @@ _LAZY_EXPORTS = {
     'ReportToolErrors': 'report_tool_errors',
     'RequireVerification': 'require_verification',
     'Researcher': 'researcher',
+    'SecretEnv': 'shell',
     'Shell': 'shell',
     'Skills': 'skills',
     'SlidingWindowCompaction': 'compaction',

@@ -21,7 +21,17 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.workspaces import WorkspaceError
 from pydantic_ai_harness._events import event_ctx
 from pydantic_ai_harness.shell._events import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
-from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT, POLL_MAX, POLL_MIN, Job, past_secrets
+from pydantic_ai_harness.shell._jobs import (
+    CONTROL_TIMEOUT,
+    EMPTY_SECRETS,
+    POLL_MAX,
+    POLL_MIN,
+    CompiledSecrets,
+    Job,
+    past_secrets,
+    redact_secrets,
+    split_safe_prefix,
+)
 
 MAX_FOREGROUND_WAIT: float = 270.0
 """Longest a foreground `shell` call waits before returning handles to the still-running command.
@@ -76,12 +86,21 @@ def command_output(result: str, *, pid: int) -> str:
 class _CommandOutput(Generic[AgentDepsT]):
     """Emit at most `_OUTPUT_TAIL_BYTES` of the log as events, decoded incrementally."""
 
-    def __init__(self, job: Job, ctx: RunContext[AgentDepsT] | None, *, log_limited: bool) -> None:
+    def __init__(
+        self,
+        job: Job,
+        ctx: RunContext[AgentDepsT] | None,
+        *,
+        log_limited: bool,
+        secrets: CompiledSecrets = EMPTY_SECRETS,
+    ) -> None:
         self.job = job
         # `None` where events cannot reach the run's event stream: then nothing is read or emitted.
         self.ctx = ctx
         self.log_limited = log_limited
         """Whether `max_log_bytes` can empty the log, so its clears are checked."""
+        self.secrets = secrets
+        self.held = ''
         self.offset = 0
         """Position in the log, which goes back to 0 when `max_log_bytes` empties it."""
         self.emitted = 0
@@ -97,6 +116,14 @@ class _CommandOutput(Generic[AgentDepsT]):
             self.job.output_path, self.offset, min(_EVENT_CHUNK_BYTES, _OUTPUT_TAIL_BYTES - self.emitted)
         )
 
+    async def _flush(self) -> None:
+        if self.ctx is None:
+            return
+        remaining = self.held + self.decoder.decode(b'', final=True)
+        self.held = ''
+        if remaining:
+            await self.ctx.emit(CommandOutputEvent(text=redact_secrets(remaining, self.secrets)))
+
     async def emit(self) -> bool:
         """Emit the next chunk of the log, returning whether there was one."""
         if self.ctx is None or self.emitted >= _OUTPUT_TAIL_BYTES:
@@ -109,6 +136,7 @@ class _CommandOutput(Generic[AgentDepsT]):
         if (clears := await self._clears()) != self.clears:
             if clears % 2:
                 return False
+            await self._flush()
             self.clears = clears
             self.offset = 0
             self.decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
@@ -119,7 +147,10 @@ class _CommandOutput(Generic[AgentDepsT]):
         self.offset += len(chunk)
         self.emitted += len(chunk)
         if chunk:
-            await self.ctx.emit(CommandOutputEvent(text=self.decoder.decode(chunk)))
+            buf = self.held + self.decoder.decode(chunk)
+            text, self.held = split_safe_prefix(buf, self.secrets)
+            if text:
+                await self.ctx.emit(CommandOutputEvent(text=redact_secrets(text, self.secrets)))
         return bool(chunk)
 
     async def drain(self) -> None:
@@ -129,9 +160,7 @@ class _CommandOutput(Generic[AgentDepsT]):
     async def finish(self) -> None:
         if self.ctx is None:
             return
-        tail = self.decoder.decode(b'', final=True)
-        if tail:
-            await self.ctx.emit(CommandOutputEvent(text=tail))
+        await self._flush()
         clears = await self._clears()
         size = await self.job.size(self.job.output_path)
         line_count = None if clears else await _count_lines(self.job)
@@ -161,7 +190,7 @@ async def run_persistent_command(
     mode: CommandMode,
     timeout: float,
     log_limit: int | None = None,
-    secrets: Sequence[bytes] = (),
+    secrets: CompiledSecrets = EMPTY_SECRETS,
 ) -> str:
     """Start `command` as a detached job and return its PID, output log, and status file.
 
@@ -179,7 +208,7 @@ async def run_persistent_command(
     job = await Job.launch(
         ctx.workspace, command, base=base, cwd=cwd, env=env, combined=True, log_limit=log_limit, job_id=job_id
     )
-    output = _CommandOutput(job, events, log_limited=log_limit is not None)
+    output = _CommandOutput(job, events, log_limited=log_limit is not None, secrets=secrets)
 
     try:
         if output.ctx is not None:
@@ -200,7 +229,7 @@ async def run_persistent_command(
         # result, and the PID and paths are what the model must not lose.
         result = ''
         if mode == 'foreground':
-            result = await _output_tail(job, secrets)
+            result = await _output_tail(job, secrets.encoded)
             if result and not result.endswith('\n'):
                 result += '\n'
         result += (
