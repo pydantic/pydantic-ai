@@ -190,7 +190,8 @@ ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'suspended', '
 """Lifecycle state of a model response.
 
 - `'complete'`: the response has been fully received from the model.
-- `'incomplete'`: the response is still being streamed and may receive more parts.
+- `'incomplete'`: the response is still being streamed and may receive more parts, or its stream
+  ended before the provider's terminal event, which Anthropic, Google and OpenAI Responses models detect.
   Yielded by [`AgentStream.response`][pydantic_ai.result.AgentStream.response] and
   [`StreamedRunResult.stream_response`][pydantic_ai.result.StreamedRunResult.stream_response]
   while iteration is in flight.
@@ -6047,7 +6048,8 @@ class ModelResponse:
     """The state of this response, indicating whether it is final or requires further action.
 
     - `'complete'` — The response is done. This is the default.
-    - `'incomplete'` — A streamed response is still in flight or was stopped before completion.
+    - `'incomplete'` — A streamed response is still in flight, was stopped before completion, or ended before
+      the provider's terminal event.
     - `'suspended'` — The model paused mid-turn and expects a continuation request.
       The agent graph will automatically send a continuation request.
       Set by providers that pause mid-turn (e.g. Anthropic `pause_turn`)
@@ -8331,10 +8333,11 @@ class EnqueuedMessagesEvent:
     does not affect the event, but in-place mutation of delivered content will be visible through it.
 
     Content enqueued during a tool call goes into the [`ModelRequest`][pydantic_ai.messages.ModelRequest]
-    carrying that call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], right after it. Its
-    `messages` then holds a request of its own with the delivered parts, a view of what was delivered rather
-    than a message in history, and `parts` holds those parts as they sit in history. Events are emitted in
-    the order their content lands in history.
+    carrying that call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], right after it, and content
+    enqueued with `placement='before_prompt'` goes into the request being sent, right before its
+    [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]. Its `messages` then holds a request of its own
+    with the delivered parts, a view of what was delivered rather than a message in history, and `parts`
+    holds those parts as they sit in history. Events are emitted in the order their content lands in history.
     """
 
     enqueue_id: str
@@ -8345,8 +8348,8 @@ class EnqueuedMessagesEvent:
     tool call's request, a request of its own holding the delivered `parts`."""
 
     parts: tuple[ModelRequestPart, ...] = ()
-    """The parts added to the request carrying a tool call's return, as they sit in history, or `()` when the
-    content was added as its own `messages`."""
+    """The parts added to an existing request (the one carrying a tool call's return, or the one holding the
+    user prompt), as they sit in history, or `()` when the content was added as its own `messages`."""
 
     event_kind: Literal['enqueued_messages'] = 'enqueued_messages'
     """Event type identifier, used as a discriminator."""
