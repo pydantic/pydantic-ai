@@ -520,16 +520,25 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         A `ToolMessage` carries no tool name, so it only loads after the `AssistantMessage` that made the
         call, which a client sending only its new messages leaves out. The stored history's pending call
         stands in for it, so nothing the client sends decides which call it answers. A result for a call
-        that isn't pending is dropped with a warning, as `manage_message_history='server'` drops it anyway.
+        that isn't pending is dropped with a warning, as `manage_message_history='server'` drops it anyway —
+        unless the stored history already answers the call, which a client echoing the stored history back,
+        as a plain continuation does, resends, and which then drops quietly.
         """
         messages = self.run_input.messages
         orphaned = _orphaned_tool_call_ids(messages)
         if not orphaned:
             return self.messages
         pending = [call for call in pending_tool_calls(message_history) if call.tool_call_id in orphaned]
-        if dropped := len(orphaned) - len(pending):
+        pending_ids = {call.tool_call_id for call in pending}
+        last_response = next((m for m in reversed(message_history) if isinstance(m, ModelResponse)), None)
+        answered_calls = (
+            {part.tool_call_id for part in last_response.parts if isinstance(part, ToolCallPart)}
+            if last_response
+            else set()
+        ) - pending_ids
+        if dropped := len(orphaned - pending_ids - answered_calls):
             warn_dropped_tool_results(dropped, stacklevel=5)
-        answered = {call.tool_call_id for call in pending}
+        answered = pending_ids
         dropped_ids = orphaned - answered
         kept = [m for m in messages if not isinstance(m, ToolMessage) or m.tool_call_id not in dropped_ids]
         if pending:
