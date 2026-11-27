@@ -140,3 +140,7 @@ A `client` is one connection shared by every run; see [Per-user credentials](#pe
 `Linear` emits no spans of its own. Core [instrumentation](../capabilities/instrumentation.md) records each Linear tool call as a tool span.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/linear/)
+
+## API reference
+
+::: pydantic_ai_harness.linear.Linear
