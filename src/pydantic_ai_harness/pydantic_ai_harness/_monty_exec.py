@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import sys
-from collections.abc import Awaitable, Callable, Container, Coroutine, Mapping
+from collections.abc import Awaitable, Callable, Container, Coroutine, Iterator, Mapping
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, nullcontext
 from dataclasses import dataclass, field
 from functools import partial
@@ -156,24 +156,34 @@ def session_os_policy(os_policy: OSPolicy | None) -> OSPolicy:
     return _OS_POLICY | (os_policy or {})
 
 
+def module_attrs(modules: Mapping[str, ExternalModule]) -> Iterator[tuple[str, ExternalModule, dict[str, object]]]:
+    """Each module in `modules` and each of its submodules, by dotted name, with its public attributes.
+
+    The one walk behind both what the model is told (stubs) and what a call can reach (functions), so
+    the two can't disagree. Attributes starting with `_` are left out: the sandbox can't reach them,
+    and a remote worker, whose reported names Monty treats as untrusted, must not be able to call them
+    by naming them.
+    """
+    for name, module in modules.items():
+        public = {attr: value for attr, value in module.attrs.items() if not attr.startswith('_')}
+        yield name, module, public
+        yield from module_attrs(
+            {f'{name}.{attr}': value for attr, value in public.items() if isinstance(value, ExternalModule)}
+        )
+
+
 def module_functions(modules: Mapping[str, ExternalModule]) -> dict[str, Callable[..., object]]:
     """The host functions in `modules` and their submodules, keyed by the dotted name a sandbox call reports.
 
     Monty names a call after the module it was imported from, however the sandbox bound it, so
-    `from duckdb import sql; sql(...)` arrives as `duckdb.sql`. Attributes starting with `_` are
-    left out: the sandbox can't reach them, and a remote worker, whose reported names Monty treats as
-    untrusted, must not be able to call them by naming them.
+    `from duckdb import sql; sql(...)` arrives as `duckdb.sql`.
     """
-    functions: dict[str, Callable[..., object]] = {}
-    for name, module in modules.items():
-        for attr, value in module.attrs.items():
-            if attr.startswith('_'):
-                continue
-            if isinstance(value, ExternalModule):
-                functions |= module_functions({f'{name}.{attr}': value})
-            elif callable(value):
-                functions[f'{name}.{attr}'] = value
-    return functions
+    return {
+        f'{name}.{attr}': value
+        for name, _, public in module_attrs(modules)
+        for attr, value in public.items()
+        if callable(value) and not isinstance(value, ExternalModule)
+    }
 
 
 async def build_remote_pool(

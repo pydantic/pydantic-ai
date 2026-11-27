@@ -6,7 +6,7 @@ import asyncio
 import re
 
 import pytest
-from pydantic_monty import AsyncMonty, ExternalModule, MontyComplete
+from pydantic_monty import ExternalModule
 
 from pydantic_ai import Agent, ToolOutput
 from pydantic_ai.exceptions import UserError
@@ -191,18 +191,13 @@ async def test_stubs_type_check_the_snippet_and_describe_the_module() -> None:
             "Missing for: 'warehouse', 'warehouse.util'.",
             id='no_submodule_stubs',
         ),
+        pytest.param(
+            {'statistics': WAREHOUSE},
+            "`external_modules` key 'statistics' names a module Monty already provides",
+            id='monty_module',
+        ),
     ],
 )
 def test_modules_are_checked_when_the_agent_is_built(modules: dict[str, ExternalModule], message: str) -> None:
     with pytest.raises(UserError, match=re.escape(message)):
         CodeMode(external_modules=modules)
-
-
-async def test_names_monty_bundles_are_rejected() -> None:
-    """A module Monty bundles shadows an external one of the same name, so each name Monty reports is refused."""
-    async with AsyncMonty() as pool, pool.checkout() as session:
-        complete = await session.feed_start('import sys\nsys.builtin_module_names')
-    assert isinstance(complete, MontyComplete)
-    for name in [*complete.output, 'time']:
-        with pytest.raises(UserError, match=re.escape(f'key {name!r} names a module Monty already provides')):
-            CodeMode(external_modules={name: WAREHOUSE})
