@@ -57,6 +57,7 @@ _HARNESS_DOCS = (
     'kubernetes_sandbox',
     'linear',
     'logfire_mcp',
+    'memory',
     'modal_sandbox',
     'notion',
     'opensandbox_sandbox',
