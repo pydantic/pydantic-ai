@@ -15,6 +15,7 @@ from pydantic_ai.capabilities import (
     DynamicCapability,
     LocalWorkspace,
     WindowsWorkspace,
+    WrapperCapability,
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest
@@ -136,6 +137,22 @@ async def test_a_workspaceless_capability_function_that_returns_a_workspace_fail
 
     agent = Agent(TestModel(call_tools=[], custom_output_text='done'), deps_type=type(None))
     session = Session(agent, deps=None, plugins=[WorkspacelessCapability[None](dynamic)])
+    with pytest.raises(UserError, match="A capability's `for_run` changed the workspace"):
+        await session.prompt('go')
+
+
+async def test_a_wrapped_workspace_factory_that_returns_a_sandbox_fails_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A wrapper that doesn't expose the function through `apply` hides it from Pax and from the selection before
+    # `for_run`, so the session's directory is selected first and the sandbox it returns later is refused.
+    monkeypatch.chdir(tmp_path)
+    sandbox = tmp_path / 'sandbox'
+    sandbox.mkdir()
+    hidden = WrapperCapability[None](DynamicCapability[None](lambda ctx: LocalWorkspace(sandbox)))
+
+    agent = Agent(TestModel(call_tools=[], custom_output_text='done'), deps_type=type(None))
+    session = Session(agent, deps=None, plugins=[hidden])
     with pytest.raises(UserError, match="A capability's `for_run` changed the workspace"):
         await session.prompt('go')
 

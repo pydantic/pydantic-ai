@@ -25,6 +25,7 @@ from pydantic_ai import Agent, RunContext, UserError, capture_run_messages
 from pydantic_ai.capabilities import (
     AbstractCapability,
     CombinedCapability,
+    DynamicCapability,
     LocalWorkspace,
     WindowsWorkspace,
     WrapperCapability,
@@ -1240,6 +1241,18 @@ async def test_a_run_workspace_capability_overrides_the_agents(tmp_path: Path) -
 
 
 @posix_only
+async def test_a_capability_function_behind_a_wrapper_supplies_the_workspace_in_for_run(tmp_path: Path) -> None:
+    # A wrapper that doesn't expose the function through `apply` keeps it out of the selection before `for_run`.
+    # With no other workspace selected there, the one the function supplies in `for_run` is the run's, as before.
+    hidden = WrapperCapability[None](DynamicCapability[None](lambda ctx: LocalWorkspace(tmp_path)))
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[hidden])
+
+    result = await agent.run('go')
+
+    assert result.workspace.ref == WorkspaceRef(provider='local', id=str(tmp_path))
+
+
+@posix_only
 async def test_for_run_sees_the_workspace_a_capability_function_supplies(tmp_path: Path) -> None:
     (tmp_path / 'catalog.txt').write_text('from the workspace')
     seen: list[str] = []
@@ -1545,8 +1558,10 @@ async def test_a_run_workspace_capability_function_is_asked_before_the_agents(tm
 
     result = await agent.run('go', capabilities=[lambda ctx: run_level])
 
-    # Asked again after `for_run`, to check that it did not change the workspace.
-    assert result.workspace.backend is run_level.supplied[0]
+    # Asked once before `for_run`, and once after it to check that it did not change the workspace.
+    selected, _ = run_level.supplied
+    assert result.workspace.backend is selected
+    assert run_level.refs == [None, None]
 
 
 async def test_an_unrecognized_history_ref_is_an_error_when_the_agent_has_workspace_capabilities() -> None:
