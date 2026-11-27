@@ -45,7 +45,7 @@ from .workspaces import Workspace, WorkspaceRef
 
 if TYPE_CHECKING:
     from ._agent_graph import GraphAgentState
-    from ._appended_messages import AppendedMessages
+    from ._conversation_log import ConversationLog
     from .capabilities.abstract import AbstractCapability
     from .run import AgentRunResult
 
@@ -746,7 +746,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                     run_id=self.run_id,
                     conversation_id=self.conversation_id,
                     metadata=self.metadata,
-                    appended_messages=self._settled_full_history(state.appended_messages, start),
+                    conversation_log=self._settled_full_history(state.conversation_log, start),
                 ),
                 _new_message_index=self._new_message_index,
                 _traceparent_value=self._traceparent_value,
@@ -758,19 +758,19 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
-    def _settled_full_history(self, record: AppendedMessages, start: int) -> AppendedMessages:
+    def _settled_full_history(self, record: ConversationLog, start: int) -> ConversationLog:
         """The full history for the settled result of a run whose history a capability rewrote, or an empty record."""
-        from ._appended_messages import AppendedMessages
+        from ._conversation_log import ConversationLog
 
         if not record.full or record.messages is None:
-            return AppendedMessages()
+            return ConversationLog()
         # The run kept its full history when it ended, with the streamed response, which the run commits itself, but
         # not the request with the tool returns the stream added to its copy after it. Content queued at a deferred
         # pause is in both, recorded before the run committed the response, so the copy's order is kept for it.
         added = [message for message in self._all_messages[start:] if isinstance(message, _messages.ModelRequest)]
         in_copy = {id(message) for message in added}
         kept = [message for message in record.messages if id(message) not in in_copy]
-        return AppendedMessages([*kept, *added], record.new_message_index, full=True)
+        return ConversationLog([*kept, *added], record.new_message_index, full=True)
 
     def all_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
         """Return the history of _messages.

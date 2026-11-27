@@ -163,9 +163,9 @@ def full_history(state: _agent_graph.GraphAgentState) -> tuple[list[_messages.Mo
     For a run that ended, it's what `keep_full_history` kept. For one that raised, it's worked out from the run's
     record without changing it, as the run whose conversation a nested run's error carries may still be going.
     """
-    appended = state.appended_messages
-    if appended.full and appended.messages is not None:
-        return appended.messages, appended.new_message_index
+    log = state.conversation_log
+    if log.full and log.messages is not None:
+        return log.messages, log.new_message_index
     return _merged_history(state)
 
 
@@ -176,13 +176,13 @@ def keep_full_history(state: _agent_graph.GraphAgentState) -> None:
     again nor holds on to the record: an edit to the history after the run then reaches the conversation, as it
     would without a capability, unless one dropped or rewrote messages during the run.
     """
-    appended = state.appended_messages
+    log = state.conversation_log
     full = _merged_history(state)
     if full is None:
-        appended.messages = None
+        log.messages = None
     else:
-        appended.messages, appended.new_message_index = full
-        appended.full = True
+        log.messages, log.new_message_index = full
+        log.full = True
 
 
 def _merged_history(state: _agent_graph.GraphAgentState) -> tuple[list[_messages.ModelMessage], int] | None:
@@ -195,10 +195,10 @@ def _merged_history(state: _agent_graph.GraphAgentState) -> tuple[list[_messages
     message a capability only adds, and filling in or adding to a message as `rewritten` allows, keeps the history
     whole, so this is `None`.
     """
-    recorded = state.appended_messages.messages
+    recorded = state.conversation_log.messages
     if recorded is None:
         return None
-    merge = _HistoryMerge(recorded, given=state.appended_messages.new_message_index, history=state.message_history)
+    merge = _HistoryMerge(recorded, given=state.conversation_log.new_message_index, history=state.message_history)
     for message in state.message_history:
         merge.place(message)
     merge.finish()

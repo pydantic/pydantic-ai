@@ -964,8 +964,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         return f'<{type(self).__name__} result={result_repr} usage={self.usage}>'
 
 
-def _appended_messages_data(data: dict[str, Any]) -> dict[str, Any]:
-    """The `GraphAgentState.appended_messages` a serialized result's `conversation_messages` and `conversation_run_start` describe.
+def _conversation_log_data(data: dict[str, Any]) -> dict[str, Any]:
+    """The `GraphAgentState.conversation_log` a serialized result's `conversation_messages` and `conversation_run_start` describe.
 
     An int in `conversation_messages` stands for the message at that index of `messages`; one out of range fails
     validation, as does a `conversation_run_start` outside the conversation.
@@ -1077,7 +1077,7 @@ class AgentRunResult(Generic[OutputDataT]):
             if key in data:
                 state_data[key] = data[key]
         if 'conversation_messages' in data:
-            state_data['appended_messages'] = _appended_messages_data(data)
+            state_data['conversation_log'] = _conversation_log_data(data)
 
         validated: dict[str, Any] = {
             '_output_tool_name': data.get('output_tool_name'),

@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 
 @dataclasses.dataclass
-class AppendedMessages:
+class ConversationLog:
     """The history a run was given, followed by every message the run appended to it, in order.
 
     A capability can rewrite the run's message history, say to drop old messages before a request, so
@@ -65,4 +65,4 @@ class AppendedMessages:
 
 def append_to_history(ctx: RunContext[Any], *messages: ModelMessage) -> None:
     """Append `messages` to the history of the run `ctx` belongs to, recording them as messages the run added."""
-    ctx._appended_messages.append(ctx.messages, *messages)  # pyright: ignore[reportPrivateUsage]
+    ctx._conversation_log.append(ctx.messages, *messages)  # pyright: ignore[reportPrivateUsage]

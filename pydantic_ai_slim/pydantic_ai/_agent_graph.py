@@ -95,7 +95,7 @@ from . import (
     result,
     usage as _usage,
 )
-from ._appended_messages import AppendedMessages
+from ._conversation_log import ConversationLog
 from ._cancel import RunCancellation
 from ._capability_parts import has_capability_parts
 from ._context_size import context_input_tokens
@@ -990,7 +990,7 @@ class GraphAgentState:
     it. The result's `conversation` puts this request and the unsaved ones back in place of the merged request, so its
     store doesn't get this one's parts again.
     """
-    appended_messages: AppendedMessages = dataclasses.field(default_factory=AppendedMessages)
+    conversation_log: ConversationLog = dataclasses.field(default_factory=ConversationLog)
     """Internal: the history this run was given and every message it appended, which the result's `conversation` holds
     when a capability dropped or replaced some of them in `message_history`."""
     metadata: dict[str, Any] | None = None
@@ -3149,7 +3149,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # The agent acted on what was streamed before the interruption, so the step counts;
             # a stream that failed before producing anything doesn't.
             _usage_attribution.record_request(ctx.state.usage)
-        ctx.state.appended_messages.append(ctx.state.message_history, recorded)
+        ctx.state.conversation_log.append(ctx.state.message_history, recorded)
 
     async def _end_step_without_response(
         self,
@@ -3429,7 +3429,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # before `before_model_request` sees it.
         fill_run_metadata(self.request, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         # A run resuming without a new prompt sends the request it was given again.
-        ctx.state.appended_messages.append(
+        ctx.state.conversation_log.append(
             ctx.state.message_history, self.request, given=self.is_resuming_without_prompt
         )
         self._capability_load_records = _deliver_capability_loads(ctx, self.request)
@@ -3614,7 +3614,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         _set_resumed_history(ctx, request_context.messages[:-1])
         # Nothing is appended for the suspended response, which the continuation completes, so the history the
         # run was given is the one without it.
-        ctx.state.appended_messages.start(ctx.state.message_history)
+        ctx.state.conversation_log.start(ctx.state.message_history)
         # At the start of the step, before `wrap_model_request`, as in `_prepare_request`.
         ctx.deps.usage_limits.check_before_request(ctx.state.usage)
         return request_context, run_context
@@ -3634,7 +3634,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         """
         persistent_messages_before_processing = len(ctx.state.message_history)
         mirrored_messages = HistoryMirroringMessages(
-            request_context.messages, MirroredHistory(ctx.state.message_history, ctx.state.appended_messages)
+            request_context.messages, MirroredHistory(ctx.state.message_history, ctx.state.conversation_log)
         )
         request_context.messages = mirrored_messages
         try:
@@ -4308,7 +4308,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # copy is replaced rather than the response changed, as a hook may have returned one it holds on to.
             interrupted = replace(response, state='interrupted')
             ctx.state.message_history[-1] = interrupted
-            ctx.state.appended_messages.replace(response, interrupted)
+            ctx.state.conversation_log.replace(response, interrupted)
             raise
 
         # Set the `_result` attribute since we can't use `return` in an async iterator
@@ -4387,7 +4387,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if record_usage:
             ModelRequestNode._record_response_usage(ctx, response, described=described)
             ModelRequestNode._enforce_usage_limits(ctx, [response])
-        ctx.state.appended_messages.append(ctx.state.message_history, response)
+        ctx.state.conversation_log.append(ctx.state.message_history, response)
 
     @staticmethod
     def _record_response_usage(
@@ -4906,7 +4906,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             # those calls will never be answered and need synthesized `'interrupted'` returns.
             # Without it, a run cancelled during its first (or only) tool call would leave a history
             # that can't take a new prompt.
-            ctx.state.appended_messages.append(
+            ctx.state.conversation_log.append(
                 ctx.state.message_history,
                 _messages.ModelRequest(
                     parts=list(output_parts),
@@ -5031,7 +5031,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         # To allow this message history to be used in a future run without dangling tool calls,
         # append a new ModelRequest using the tool returns and retries
         if tool_responses:
-            ctx.state.appended_messages.append(
+            ctx.state.conversation_log.append(
                 ctx.state.message_history, final_tool_results_request(tool_responses, ctx.state, final_result.output)
             )
 
@@ -5081,10 +5081,10 @@ def _drop_unanswered_request_scoped_prompts(state: GraphAgentState) -> None:
         parts = [part for part in message.parts if not is_request_scoped(part)]
         if not parts and len(messages) - start > 1:
             del messages[index]
-            state.appended_messages.replace(message, None)
+            state.conversation_log.replace(message, None)
         else:
             messages[index] = replace(message, parts=parts)
-            state.appended_messages.replace(message, messages[index])
+            state.conversation_log.replace(message, messages[index])
 
 
 def _model_selection_context(
@@ -5184,7 +5184,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         _pending_immediate_dispatches=ctx.deps.pending_immediate_dispatches,
         _event_stream_replacements=ctx.deps.event_stream_replacements,
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
-        _appended_messages=ctx.state.appended_messages,
+        _conversation_log=ctx.state.conversation_log,
         _output_submitter=_GraphOutputSubmitter(weakref.ref(ctx.state), weakref.ref(ctx.deps)),
         workspace=ctx.deps.workspace,
     )
@@ -5192,7 +5192,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
     # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the shared
     # identity of the mutable members passed by reference above — `loaded_capability_ids`,
     # `discovered_tool_names`, `pending_messages`, `_cancellation`, `_event_stream_buffer`,
-    # `_mcp_tool_defs_cache`, `_appended_messages`, `_durable_operations`, `_run_capabilities_by_id` (see the
+    # `_mcp_tool_defs_cache`, `_conversation_log`, `_durable_operations`, `_run_capabilities_by_id` (see the
     # invariant on `GraphAgentDeps.loaded_capability_ids`). Never add any of them as a `replace` kwarg — forking
     # the object would silently break in-step capability loads / tool reveals / message enqueues /
     # cancellation / event delivery / tool-defs caching / the record of appended messages / durable operation

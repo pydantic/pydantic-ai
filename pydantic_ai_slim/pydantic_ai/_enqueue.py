@@ -11,7 +11,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, SupportsIndex, TypeAlias
 
-from ._appended_messages import append_to_history
+from ._conversation_log import append_to_history
 from ._capability_parts import operator_voice_lookalike
 from ._framing import resembles_frame
 from ._utils import fill_run_metadata
@@ -656,7 +656,7 @@ def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestCon
         spliced_target = replace(target, parts=parts)
         queue._spliced_request = (original, spliced_target)  # pyright: ignore[reportPrivateUsage]
         ctx.messages[-1] = spliced_target
-        ctx._appended_messages.replace(target, spliced_target)  # pyright: ignore[reportPrivateUsage]
+        ctx._conversation_log.replace(target, spliced_target)  # pyright: ignore[reportPrivateUsage]
         request_context.messages = [
             spliced_target if message is target else message for message in request_context.messages
         ]

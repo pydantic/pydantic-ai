@@ -21,7 +21,7 @@ from typing_extensions import TypeVar, deprecated
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 
 from . import _utils, messages as _messages
-from ._appended_messages import AppendedMessages
+from ._conversation_log import ConversationLog
 from ._cancel import current_run_clock
 from ._context_size import context_tokens
 from ._enqueue import (
@@ -431,7 +431,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     their own, which is what they have always done.
     """
 
-    _appended_messages: AppendedMessages = field(default_factory=AppendedMessages, repr=False)
+    _conversation_log: ConversationLog = field(default_factory=ConversationLog, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.
 
     The record of the messages the run appended to [`messages`][pydantic_ai.tools.RunContext.messages], the same
