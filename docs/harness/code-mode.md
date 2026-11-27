@@ -810,17 +810,17 @@ warehouse = ExternalModule(
 agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(external_modules={'warehouse': warehouse})])
 ```
 
-The `stubs` are required. They are the module's `.pyi` text: the `run_code` description shows them to the model, and the type checker checks calls against them. A submodule is an `ExternalModule` attribute with its own stubs, imported as `warehouse.util`. Attributes starting with `_` stay hidden from the sandbox.
+The `stubs` are required. They are the module's `.pyi` text: the `run_code` description shows them to the model, and the type checker checks calls against them. A submodule is an `ExternalModule` attribute with its own stubs, imported as `warehouse.util`. Attributes starting with `_` stay hidden from the sandbox. A name Monty already provides, such as `math` or `json`, raises `UserError`, since the sandbox would import Monty's module instead.
 
 Calls into a module behave like this:
 
-- **Sync functions** run in a worker thread, so a blocking driver doesn't stall the event loop.
+- **Sync functions** run in a worker thread, so a blocking driver doesn't stall the event loop. Inside a Temporal workflow they run inline, since workflow code can't start threads.
 - **Async functions** run on the event loop like async tools, and `asyncio.gather` runs them alongside tool calls.
 - **Exceptions** a function raises are raised at the call site in the sandbox, where the code can catch them.
-- **Values** cross as Monty converts them, so tuples, sets, `bytes` and dates arrive unchanged. A value it can't convert fails the snippet with a `TypeError`. Return plain data, or wrap a class instance in `pydantic_monty.ClassInstance`.
+- **Values** cross as Monty converts them, so tuples, sets, `bytes` and dates arrive unchanged. A value it can't convert fails the snippet with a `TypeError`. Return plain data.
 - **Not tool calls**: module calls don't count toward `max_tool_calls` (each one counts toward `max_suspensions`, as every sandbox pause does), and they don't appear in the message history or in the `run_code` metadata. They emit no spans of their own; instrument your functions if you want them traced.
 
-Under durable execution, module functions run in workflow code, as `os_access` does, so they run again when a [Temporal](#temporal-durability) workflow replays or a DBOS or Prefect workflow recovers. Keep them to reads that return the same result each time, and use a tool for anything with side effects, since a tool call runs once as an activity or step.
+Under durable execution, module functions run in workflow code, as `os_access` does, so they run again when a [Temporal](#temporal-durability) workflow replays or a DBOS or Prefect workflow recovers. Keep them to reads that return the same result each time. Put side effects in a tool the engine records as an activity, step or task (under DBOS, one decorated with `@DBOS.step`; see [Tools with side effects](../durable_execution/dbos.md#tools-with-side-effects)), and make it idempotent, since a recorded call can still run again if it fails before its result is saved.
 
 ## Sandbox restrictions
 
