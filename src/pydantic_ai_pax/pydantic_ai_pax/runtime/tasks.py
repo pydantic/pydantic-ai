@@ -92,7 +92,9 @@ async def review_workspace(ctx: RunContext[object], request: DelegationWorkspace
     """Only the isolated Review specialist may leave a local session's directory.
 
     Its workspace carries the parent's authority, never more: the model picks the directory, so its
-    instruction files are no more the operator's than the parent's own are.
+    instruction files are no more the operator's than the parent's own are. `SubAgents` puts a directory
+    outside the parent's working directory at `'none'`, so another checkout's instruction files reach
+    Review as data.
     """
     if request.agent_name != REVIEW_AGENT_NAME:
         raise ModelRetry('Only Review accepts `working_directory`; omit it for other delegates.')

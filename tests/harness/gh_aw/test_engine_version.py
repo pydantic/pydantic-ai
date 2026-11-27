@@ -53,11 +53,11 @@ def test_unpublished_reason_checks_both_packages(
     assert engine_version_module.unpublished_reason('0.21.0') is None
     assert urls == [
         'https://pypi.org/pypi/pydantic-ai-harness/0.21.0/json',
-        'https://pypi.org/pypi/pydantic-clai2/0.21.0/json',
+        'https://pypi.org/pypi/pydantic-ai-pax/0.21.0/json',
     ]
 
 
-def test_unpublished_reason_reports_missing_clai2_release(
+def test_unpublished_reason_reports_missing_pax_release(
     engine_version_module: _EngineVersionModule, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     urls: list[str] = []
@@ -65,7 +65,7 @@ def test_unpublished_reason_reports_missing_clai2_release(
 
     def urlopen(url: str, *, timeout: float) -> _Response:
         urls.append(url)
-        if 'pydantic-clai2' in url:
+        if 'pydantic-ai-pax' in url:
             raise urllib.error.HTTPError(url, 404, 'not found', Message(), error_response)
         return _Response(200)
 
@@ -74,13 +74,13 @@ def test_unpublished_reason_reports_missing_clai2_release(
     reason = engine_version_module.unpublished_reason('0.21.0')
 
     assert reason is not None
-    assert 'pydantic-clai2' in reason
+    assert 'pydantic-ai-pax' in reason
     assert 'engine.version: 0.21.0' in reason
     assert 'HTTP 404' in reason
     assert error_response.closed
     assert urls == [
         'https://pypi.org/pypi/pydantic-ai-harness/0.21.0/json',
-        'https://pypi.org/pypi/pydantic-clai2/0.21.0/json',
+        'https://pypi.org/pypi/pydantic-ai-pax/0.21.0/json',
     ]
 
 
@@ -113,7 +113,7 @@ def test_unpublished_reason_names_package_on_request_error(
 
     def urlopen(url: str, *, timeout: float) -> _Response:
         urls.append(url)
-        if 'pydantic-clai2' in url:
+        if 'pydantic-ai-pax' in url:
             raise OSError('connection failed')
         return _Response(200)
 
@@ -121,8 +121,8 @@ def test_unpublished_reason_names_package_on_request_error(
 
     reason = engine_version_module.unpublished_reason('0.21.0')
 
-    assert reason == 'Could not ask PyPI whether pydantic-clai2 0.21.0 is published: connection failed'
+    assert reason == 'Could not ask PyPI whether pydantic-ai-pax 0.21.0 is published: connection failed'
     assert urls == [
         'https://pypi.org/pypi/pydantic-ai-harness/0.21.0/json',
-        'https://pypi.org/pypi/pydantic-clai2/0.21.0/json',
+        'https://pypi.org/pypi/pydantic-ai-pax/0.21.0/json',
     ]

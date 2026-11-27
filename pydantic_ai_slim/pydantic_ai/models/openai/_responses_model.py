@@ -751,7 +751,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
         """Turn off defaults that haven't been checked live on this provider.
 
-        Azure clients and the gateway lose the Batch API and Responses WebSockets. Azure clients and every provider
+        Azure clients and the gateway lose the Batch API and Responses WebSockets, and the gateway loses on-demand
+        compaction. Azure clients and every provider
         class except `OpenAIProvider` and `BedrockMantleProvider` lose the native `ComputerTool`. The check is on the
         provider class, so the gateway's OpenAI route and `OpenAIProvider(base_url=...)` keep the tool.
 
@@ -765,6 +766,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if is_azure(self._provider.client, self._provider.name) or is_gateway_provider(self._provider):
             # Azure batches need a batch deployment; the gateway doesn't serve the Batch API yet.
             profile = merge_profile(profile, OpenAIModelProfile(openai_supports_batch_api=False))
+        if is_gateway_provider(self._provider):
+            # The gateway doesn't serve the `/responses/compact` endpoint (probed live).
+            profile = merge_profile(profile, OpenAIModelProfile(supports_compaction_on_demand=False))
         # An Azure-named custom provider may advertise socket support with an ordinary OpenAI client.
         is_azure_client = isinstance(self._provider.client, AsyncAzureOpenAI)
         if is_azure_client or is_gateway_provider(self._provider):
@@ -2345,6 +2349,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         set_reasoning_context(reasoning, reasoning_context, self.profile)
         if reasoning_summary:
             reasoning['summary'] = reasoning_summary
+        elif model_settings.get('thinking_summary') and self._request_thinks(model_settings, model_request_parameters):
+            # Every reasoning model accepts `auto`, unlike `concise`. Summaries aren't requested by default because
+            # they may require organization verification.
+            reasoning['summary'] = 'auto'
         return reasoning or OMIT
 
     def _request_thinks(
@@ -2357,6 +2365,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
         # `_translate_thinking` sends an explicit effort instead of the one unified `thinking` maps to.
         return ('openai_reasoning_effort',) if model_settings.get('openai_reasoning_effort') is not None else ()
+
+    def _settings_overriding_thinking_summary(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `_translate_thinking` sends an explicit summary instead of the one `thinking_summary` asks for.
+        return ('openai_reasoning_summary',) if model_settings.get('openai_reasoning_summary') else ()
 
     def _overrides_unified_effort(self, model_settings: Mapping[str, object]) -> bool:
         return model_settings.get('openai_reasoning_effort') is not None

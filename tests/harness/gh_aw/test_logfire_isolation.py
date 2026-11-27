@@ -15,7 +15,7 @@ from typing_extensions import TypedDict
 
 from tests.conftest import try_import
 
-from .test_engine_definition import CLAI2_SOURCE, launch, proxy_env
+from .test_engine_definition import PAX_SOURCE, launch, proxy_env
 
 with try_import() as exporter_installed:
     importlib.import_module('opentelemetry.exporter.otlp.json.file')
@@ -119,7 +119,7 @@ def test_launcher_ignores_checkout_logfire_configuration(tmp_path: Path, token: 
             'LOGFIRE_CONFIG_DIR': str(workspace),
             'LOGFIRE_CREDENTIALS_DIR': str(credentials),
         },
-        extra_python_path=CLAI2_SOURCE,
+        extra_python_path=PAX_SOURCE,
     )
     completed = subprocess.run(
         [
@@ -209,7 +209,7 @@ def test_tracing_exports_locally_without_sandbox_credentials(tmp_path: Path) -> 
     invocation = launch(
         tmp_path,
         {**proxy_env('openai', 'openai/gpt-5'), 'PAI_OTEL_EXPORT_PATH': str(destination)},
-        extra_python_path=CLAI2_SOURCE,
+        extra_python_path=PAX_SOURCE,
     )
     environment = {
         key: value

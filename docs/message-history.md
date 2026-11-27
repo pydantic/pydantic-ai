@@ -818,7 +818,11 @@ assert loaded.result.all_messages() == result.all_messages()
 ```
 
 The round-trip preserves the output, messages and new-message boundary, output tool name, usage, run and
-conversation IDs, metadata, and trace context. Run-local state used only while the agent is executing is not stored.
+conversation IDs, metadata, trace context, and the run's [`compactions`][pydantic_ai.agent.AgentRunResult.compactions].
+A compaction record's [`replaced`][pydantic_ai.messages.CompactionRecord.replaced] history, and so its `summarized`
+messages, is held in memory only and isn't stored, also when the result is pickled (copying a record on its own keeps it); see
+[storing the full conversation](capabilities/compaction.md#storing-the-full-conversation). Run-local state used only
+while the agent is executing is not stored.
 
 A [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] reads its values off the stream that is
 producing them, so it lasts only as long as that stream. Once the stream has finished, take
@@ -1197,7 +1201,7 @@ Content left queued isn't delivered. When you drive the run with [`iter()`][pyda
 
 Adjacent part-style items (user content and [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]s) are coalesced into one [`ModelRequest`][pydantic_ai.messages.ModelRequest]; complete messages stay separate. This lets a single call inject an interleaved exchange — for example a synthetic tool call (a [`ModelResponse`][pydantic_ai.messages.ModelResponse]) followed by its result (a [`ModelRequest`][pydantic_ai.messages.ModelRequest]). The content must end in a request, so the agent has something to respond to.
 
-The standard-run `enqueue` methods return an `enqueue_id` (`str`) for a non-empty call, or `None` when called with no content. When the queued content is actually delivered into run history, the [event stream](agent.md#streaming-all-events) yields an [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] carrying that `enqueue_id` and the delivered content, so a client can observe when its steering message took effect. The event carries the delivered message objects themselves, the same objects held in the run's message history. Content that went into a tool call's request (see [below](#from-inside-a-tool-or-hook)) has no message of its own in history, so `messages` holds a request of its own with the delivered parts, and `parts` holds the [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]s as they sit in history. A history processor that replaces history with new message objects does not affect the event, but [in-place mutation](#editing-existing-messages) of delivered content will be visible through it. `RealtimeSession.enqueue` also returns an `enqueue_id` or `None`; realtime delivery is documented under [enqueuing prompts](realtime/tools.md#enqueuing-prompts).
+The standard-run `enqueue` methods return an `enqueue_id` (`str`) for a non-empty call, or `None` when called with no content. When the queued content is actually delivered into run history, the [event stream](agent.md#streaming-all-events) yields an [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] carrying that `enqueue_id` and the delivered content, so a client can observe when its steering message took effect. The event carries the delivered message objects themselves, the same objects held in the run's message history. Content that went into a tool call's request (see [below](#from-inside-a-tool-or-hook)) or [before the prompt](#placing-context-before-the-prompt) has no message of its own in history, so `messages` holds a request of its own with the delivered parts, and `parts` holds the [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]s as they sit in history. A history processor that replaces history with new message objects does not affect the event, but [in-place mutation](#editing-existing-messages) of delivered content will be visible through it. `RealtimeSession.enqueue` also returns an `enqueue_id` or `None`; realtime delivery is documented under [enqueuing prompts](realtime/tools.md#enqueuing-prompts).
 
 ### From inside a tool or hook
 
@@ -1243,6 +1247,52 @@ history instead of being lifted into the top-level system prompt, so it doesn't 
 cached prefix ahead of it. Only enqueue a `SystemPromptPart` for an instruction you authored; see
 the warning in that section for why late-arriving tool or webhook output belongs in user content
 instead.
+
+### Placing context before the prompt
+
+Context the model should read before answering, such as stored memory or the current plan recorded at the start of a run, belongs before the user's question: models follow a question better when it comes last, and tracing tools that show a run's last user message as its input show the question, not the context. Pass `placement='before_prompt'` to put enqueued content into the request being sent, right before its [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], instead of after it:
+
+```python {title="enqueue_before_prompt.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import Agent, DataCapabilityPart, ModelRequest, OperatorSource, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.models.test import TestModel
+
+
+@dataclass(kw_only=True)
+class AccountPart(DataCapabilityPart[str], namespace='accounts', tag='account'):
+    pass
+
+
+@dataclass
+class AccountContext(AbstractCapability[Any]):
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if ctx.run_step == 1:
+            ctx.enqueue(
+                AccountPart(content='Plan: Team, 12 seats.', source=OperatorSource()),
+                placement='before_prompt',
+            )
+        return request_context
+
+
+agent = Agent(TestModel(), capabilities=[AccountContext()])
+result = agent.run_sync('How many seats do we have?')
+request = result.all_messages()[0]
+assert isinstance(request, ModelRequest)
+print([part.part_kind for part in request.parts])
+#> ['capability', 'user-prompt']
+```
+
+The request hasn't been sent yet, so this doesn't change anything a provider has cached, and every later request sends it in the same place. The content goes into the request holding the prompt rather than into a request of its own, and content placed there later in the same step goes after it, still before the prompt. When the request being sent holds no user prompt, such as one carrying tool results later in the run, the content is added where `placement='append'` (the default) puts it. So is content delivered when the run would otherwise end or when it pauses, and content enqueued in a realtime session, which has no prompt request to place it in.
+
+Only [`DataCapabilityPart`][pydantic_ai.messages.DataCapabilityPart] kinds can be placed before the prompt; anything else raises [`UserError`][pydantic_ai.exceptions.UserError]. Instructions and system prompts keep `'append'`: models with sealed system blocks read a request's own system prompts after the user's words, which the framework arranges when it renders the request. Plain user content keeps it too, since ahead of the user's own prompt it would read as the user speaking. Its [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] carries the delivered parts in `parts`, like content that went into a tool call's request.
+
+[`Memory`](harness/memory.md) records its run-start snapshot this way, and [`Planning`](harness/planning.md) its run-start plan record. [`SystemReminders`](harness/system-reminders.md) appends its reminders after the prompt, since a reminder is steering and recency is the point.
 
 ### From external code driving `agent.iter()`
 
