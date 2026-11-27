@@ -5315,6 +5315,67 @@ def test_cut_off_function_tool_call_that_is_not_the_last_part_is_retried():
     ] == snapshot([('invalid', 'retried'), ('valid', 'success')])
 
 
+async def test_streamed_output_is_kept_when_a_later_function_tool_call_is_cut_off():
+    """Once `run_stream()` has the output, a function tool call after it that the token limit cut off is only retried.
+
+    The caller already has the output, so there's no re-prompt to save by raising `IncompleteToolCall`.
+
+    Not a VCR test: no provider reliably ends a response at `max_tokens` inside a function tool call that follows a
+    complete output tool call, so the stream is scripted; `test_openai_responses_function_tool_call_cut_off_by_max_tokens`
+    records a cut-off function tool call on its own.
+    """
+
+    async def stream(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"name": "Paris", "population": 3}')}
+        yield {1: DeltaToolCall(name='get_weather', json_args='{"city": "Par')}
+
+    agent = Agent(_LengthFunctionModel(stream_function=stream), output_type=ToolOutput(_City))
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return 'sunny'  # pragma: no cover
+
+    async with agent.run_stream('Hello') as result:
+        assert await result.get_output() == _City(name='Paris', population=3)
+    assert [
+        (part.tool_name, part.outcome) for part in result.all_messages()[-1].parts if isinstance(part, ToolReturnPart)
+    ] == snapshot([('final_result', 'success'), ('get_weather', 'retried')])
+
+
+def test_cut_off_function_tool_call_after_an_output_tool_call_raises_in_run():
+    """In `run()`, a cut-off function tool call after a valid output tool call raises instead of re-prompting.
+
+    Under the default `'graceful'` end strategy, the function tool call's retry would set the output aside and re-prompt
+    the model with the same token limit, which would only cut the call off again.
+
+    Not a VCR test: no provider reliably ends a response at `max_tokens` inside a function tool call that follows a
+    complete output tool call; `test_openai_responses_function_tool_call_cut_off_by_max_tokens` records a cut-off function
+    tool call on its own.
+    """
+    requests = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal requests
+        requests += 1
+        return ModelResponse(
+            parts=[
+                ToolCallPart(info.output_tools[0].name, '{"name": "Paris", "population": 3}'),
+                ToolCallPart('get_weather', '{"city": "Par'),
+            ],
+            finish_reason='length',
+        )
+
+    agent = Agent(FunctionModel(respond), output_type=ToolOutput(_City))
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return 'sunny'  # pragma: no cover
+
+    with pytest.raises(IncompleteToolCall):
+        agent.run_sync('Hello')
+    assert requests == 1
+
+
 def test_empty_response_with_finish_reason_length():
     def return_empty_response(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         resp = ModelResponse(parts=[])
