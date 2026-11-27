@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import re
+import warnings
 
 import pytest
 from pydantic_monty import ExternalModule
@@ -122,15 +124,28 @@ async def test_module_exception_is_raised_at_the_call_site() -> None:
 
 
 async def test_wrong_arguments_to_an_async_function_are_raised_at_the_call_site() -> None:
-    """An async function rejects bad arguments when called, before there is a coroutine to defer.
+    """Arguments an async function can't take raise where the sandbox awaits it, as for a tool call.
 
     Only the first snippet is type-checked, so the second reaches the function with the wrong arguments.
     """
     code = (
-        'kwargs = {"unknown": 1}\ntry:\n    call = warehouse.fx_rate(**kwargs)\n'
+        'kwargs = {"unknown": 1}\ntry:\n    await warehouse.fx_rate(**kwargs)\n'
         '    r = "called"\nexcept TypeError:\n    r = "caught"\nr'
     )
     assert (await _agent('import warehouse', code).run('go')).output == "'caught'"
+
+
+async def test_an_async_call_left_queued_leaves_no_unawaited_coroutine() -> None:
+    """Sequential mode queues an async call until it is awaited; one never awaited is dropped cleanly."""
+    agent = Agent(
+        _code_model('import warehouse\npending = warehouse.fx_rate(currency="EUR")\n"done"'),
+        capabilities=[CodeMode(external_modules={'warehouse': WAREHOUSE})],
+    )
+    with warnings.catch_warnings(record=True) as caught, agent.parallel_tool_call_execution_mode('sequential'):
+        warnings.simplefilter('always')
+        assert (await agent.run('go')).output == "'done'"
+        gc.collect()
+    assert [w.message for w in caught if 'never awaited' in str(w.message)] == []
 
 
 async def test_code_that_catches_the_output_stop_calls_no_module_function() -> None:
@@ -191,6 +206,7 @@ async def test_stubs_type_check_the_snippet_and_describe_the_module() -> None:
             "Missing for: 'warehouse', 'warehouse.util'.",
             id='no_submodule_stubs',
         ),
+        pytest.param({'class': WAREHOUSE}, "`external_modules` key 'class' is not a module name.", id='keyword'),
         pytest.param(
             {'statistics': WAREHOUSE},
             "`external_modules` key 'statistics' names a module Monty already provides",

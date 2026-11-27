@@ -617,18 +617,22 @@ class MontyExecutor:
                     return await call_monty(self.portal, snapshot.resume_auto)
 
         name = snapshot.function_name
+        start: Callable[[], Coroutine[Any, Any, object]]
         if (function := self.module_functions.get(name)) is not None:
-            return await self._call_module_function(snapshot, function)
-        if name not in self.valid_names:
-            return await self._raise_in_sandbox(snapshot, NameError(f'Unknown function: {name}'))
+            start = partial(self._call_module_function, name, function, snapshot.args, snapshot.kwargs)
+            inline = not is_async_callable(function)
+        else:
+            if name not in self.valid_names:
+                return await self._raise_in_sandbox(snapshot, NameError(f'Unknown function: {name}'))
+            if snapshot.args:
+                return await self._raise_in_sandbox(
+                    snapshot, TypeError(f'{name}() does not accept positional arguments; use keyword arguments')
+                )
+            start = partial(self.dispatch, name, snapshot.kwargs)
+            inline = name in self.sequential_names
 
-        if snapshot.args:
-            return await self._raise_in_sandbox(
-                snapshot, TypeError(f'{name}() does not accept positional arguments; use keyword arguments')
-            )
-
-        if name in self.sequential_names:
-            # Rendered as `def` (sync), so the sandbox code doesn't `await` the result --
+        if inline:
+            # A sequential tool or a sync module function, called without `await` --
             # resolve inline. Await pending parallel tasks first (barrier) for ordering.
             # The dispatch coroutine is created only after the barrier: it is not in
             # `_pending`, so if it existed while the barrier awaits and we were cancelled
@@ -636,7 +640,7 @@ class MontyExecutor:
             for cid in list(self._pending):
                 self._pre_resolved[cid] = await _await_external(self._pending.pop(cid))
             try:
-                call = self._dispatch(snapshot, parallel=False)
+                call = self._dispatch(snapshot, start, parallel=False)
             except Exception as exc:
                 return await self._raise_in_sandbox(snapshot, exc)
             # The wrapped outcome (`{'return_value': ...}` / `{'exception': ...}`) is already
@@ -645,7 +649,7 @@ class MontyExecutor:
 
         # Deferred execution -- resolved later at FutureSnapshot.
         try:
-            call = self._dispatch(snapshot, parallel=not self.global_sequential)
+            call = self._dispatch(snapshot, start, parallel=not self.global_sequential)
         except Exception as exc:
             # `dispatch` refused the call before building its coroutine (e.g. an exhausted
             # per-snippet budget). Deliver the error at the sandbox call site, the same way a
@@ -657,40 +661,19 @@ class MontyExecutor:
         self._pending[snapshot.call_id] = call
         return await call_monty(self.portal, snapshot.resume, ExternalFuture(future=...))
 
-    async def _call_module_function(self, snapshot: FunctionSnapshot, function: Callable[..., object]) -> Snapshot:
-        """Call a host module function: a sync one now, an async one deferred like a parallel tool call.
+    async def _call_module_function(
+        self, name: str, function: Callable[..., Any], args: tuple[object, ...], kwargs: dict[str, object]
+    ) -> object:
+        """Call a host module function inside `module_call_guard`: a sync one in a worker thread.
 
-        An exception it raises is raised at the sandbox call site, where the code can catch it.
+        Like a tool call, it is called only once this coroutine runs, so one refused, or closed or
+        cancelled while still queued, leaves no unawaited coroutine behind.
         """
-        name = snapshot.function_name
-        context = snapshot.trace_context()
-        if not is_async_callable(function):
+        async with self.module_call_guard(name):
+            if is_async_callable(function):
+                return await function(*args, **kwargs)
             # Bound first, so a host keyword such as `func` can't collide with `run_in_executor`'s own.
-            call = self._guarded(name, run_in_executor(partial(function, *snapshot.args, **snapshot.kwargs)))
-            return await call_monty(self.portal, snapshot.resume, await _await_external(PendingCall(call, context)))
-        # The task is created under the call's trace context, so spans the function opens nest under it.
-        token = otel_context.attach(context)
-        try:
-            # Arguments the function can't take raise here, before there is a coroutine to defer.
-            coroutine = function(*snapshot.args, **snapshot.kwargs)
-            assert inspect.iscoroutine(coroutine), 'an async callable returns a coroutine'
-            call = self._guarded(name, coroutine)
-            self._pending[snapshot.call_id] = PendingCall(
-                call if self.global_sequential else asyncio.ensure_future(call), context
-            )
-        except Exception as exc:
-            return await self._raise_in_sandbox(snapshot, exc)
-        finally:
-            otel_context.detach(token)
-        return await call_monty(self.portal, snapshot.resume, ExternalFuture(future=...))
-
-    async def _guarded(self, name: str, call: Coroutine[Any, Any, object]) -> object:
-        """Run a module function's call inside `module_call_guard`."""
-        try:
-            async with self.module_call_guard(name):
-                return await call
-        finally:
-            call.close()  # a no-op once it has run; closes it unawaited when the guard refuses
+            return await run_in_executor(partial(function, *args, **kwargs))
 
     async def _sleep(self, snapshot: FunctionSnapshot) -> Snapshot:
         """Wait for a sandbox sleep here rather than in Monty, charging it to `max_sleep_seconds`.
@@ -742,11 +725,13 @@ class MontyExecutor:
         """Resume the suspended call by raising `exc` at its sandbox call site."""
         return await call_monty(self.portal, snapshot.resume, ExternalException(exception=exc))
 
-    def _dispatch(self, snapshot: FunctionSnapshot, *, parallel: bool) -> PendingCall:
+    def _dispatch(
+        self, snapshot: FunctionSnapshot, start: Callable[[], Coroutine[Any, Any, object]], *, parallel: bool
+    ) -> PendingCall:
         context = snapshot.trace_context()
         token = otel_context.attach(context)
         try:
-            call = self.dispatch(snapshot.function_name, snapshot.kwargs)
+            call = start()
             # Tasks inherit the active context; bare coroutines need it restored when awaited.
             return PendingCall(asyncio.ensure_future(call) if parallel else call, context)
         finally:
