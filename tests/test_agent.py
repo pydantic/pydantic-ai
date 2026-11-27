@@ -3170,6 +3170,31 @@ def test_structured_dict_validate_checks_patterns_in_linear_time(monkeypatch: py
     )
 
 
+def test_output_type_structured_dict_accepts_output_matching_patterns():
+    """Pattern keywords pass values they don't apply to, and descend into the subschemas of matching keys.
+
+    It feeds output shaped to reach each keyword's branches, which no provider sends on demand, so this is a unit test.
+    """
+    Record = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {
+                'count': {'pattern': '^a'},
+                'labels': {
+                    'patternProperties': {'^a': {'type': 'integer'}},
+                    'additionalProperties': {'type': 'string'},
+                },
+                'items': {'patternProperties': {'^a': True}, 'additionalProperties': False},
+            },
+        },
+        validate=True,
+    )
+    output = {'count': 5, 'labels': {'ab': 1, 'z': 'ok'}, 'items': [1]}
+    agent = Agent(TestModel(custom_output_args=output), output_type=Record)
+
+    assert agent.run_sync('Record').output == output
+
+
 @pytest.mark.parametrize(
     ('schema', 'match'),
     [

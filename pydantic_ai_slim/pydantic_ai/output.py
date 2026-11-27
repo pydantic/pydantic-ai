@@ -569,7 +569,8 @@ def _error_message(error: Any) -> str:
     if error.context:
         from jsonschema.exceptions import best_match
 
-        message += f' (closest: {_error_message(best_match(error.context))})'
+        closest: Any = cast(Any, best_match)(error.context)  # `jsonschema` has no type information
+        message += f' (closest: {_error_message(closest)})'
     return message
 
 
