@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import replace
 from typing import Literal
 
 from pydantic_ai.durable_exec import (
@@ -134,3 +135,15 @@ class RecordingDurability(BaseDurabilityCapability[object]):
             self.journal,
             self.failure,
         )
+
+
+class UnwakeableLoopDurability(RecordingDurability):
+    """An engine whose workflow code runs on a loop that can't be woken from another thread."""
+
+    engine_spec = replace(RecordingDurability.engine_spec, thread_wakeable_loop=False)
+
+
+class ReplayingDurability(RecordingDurability):
+    """An engine that replays its workflow code against the recorded history."""
+
+    engine_spec = replace(RecordingDurability.engine_spec, replays_orchestrator_code=True)

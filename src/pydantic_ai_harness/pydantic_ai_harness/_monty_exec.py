@@ -104,17 +104,22 @@ def in_durable_task_orchestration() -> bool:
 def durable_engine_spec(ctx: RunContext[Any]) -> DurabilityEngineSpec | None:
     """The spec of the durable engine whose workflow code this run executes in, or `None` outside one.
 
-    Read from the run's durability capability. The deprecated `TemporalAgent` runs a workflow without
-    one, so a Temporal workflow with none gets Temporal's spec.
+    Read from the run's durability capability. An agent can also run in an engine's workflow code
+    without one, like an agent wrapped in the deprecated `TemporalAgent` or a sub-agent with no
+    capability of its own, so it gets the spec of the engine whose workflow code is running.
     """
     durability = BaseDurabilityCapability.from_agent(ctx.agent) if ctx.agent is not None else None
     if durability is not None and durability.in_durable_context:
         return durability.engine_spec
+    # Each check finds its engine's module already imported, so these imports load nothing new.
     if in_temporal_workflow():
-        # Only reached in a workflow, so `temporalio` is already imported.
         from pydantic_ai.durable_exec.temporal._spec import TEMPORAL_ENGINE_SPEC
 
         return TEMPORAL_ENGINE_SPEC
+    if in_durable_task_orchestration():
+        from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability
+
+        return AzureDurableTaskDurability.engine_spec
     return None
 
 
