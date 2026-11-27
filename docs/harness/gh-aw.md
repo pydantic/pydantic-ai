@@ -615,7 +615,9 @@ event structure, status, or usage.
 ### What a working run looks like
 
 The agent step starts `pax -a <target> -m <provider:model> -p <prompt>` with the
-generated `Coder` agent or the `PAI_AGENT` target resolved by the engine. The recorder
+generated `Coder` agent or the `PAI_AGENT` target resolved by the engine. The engine
+starts Pax with `PYTHON_DOTENV_DISABLED=1`, so a `.env` file in the checkout is not
+loaded; set the run's variables with `engine.env`. The recorder
 captures assistant messages, reasoning, tool calls and results (including native tools),
 and usage. Repository Python imported through
 `PAI_AGENT` and any caller-supplied `PYTHONPATH` are trusted engine configuration.

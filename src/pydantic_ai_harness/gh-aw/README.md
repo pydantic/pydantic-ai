@@ -75,7 +75,9 @@ count as a `noop`.
 The engine creates a generated module with a private wrapper around either the harness's
 `Coder` composition or the agent selected by `PAI_AGENT`. It resolves an import target or
 JSON/YAML spec once, retaining import tracebacks. Pax runs the wrapper with `-a`,
-`engine.model` as `-m <provider:model>`, and the prompt with `-p`. The engine installs
+`engine.model` as `-m <provider:model>`, and the prompt with `-p`. The engine starts Pax
+with `PYTHON_DOTENV_DISABLED=1`, so a `.env` file in the checkout is not loaded; set the
+run's variables with `engine.env`. The engine installs
 `pydantic-clai2` and `pydantic-ai-harness` at the release `engine.version` pins, plus
 `pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0`; the explicit provider extras keep
 Anthropic and OpenAI model support available. Gateway MCP tools are attached
