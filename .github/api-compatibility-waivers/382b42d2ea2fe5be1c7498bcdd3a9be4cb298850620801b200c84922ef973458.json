@@ -1,0 +1,5 @@
+{
+  "against": "v2.76.0",
+  "reason": "`DEFAULT_PLUGINS` gains a disabled `browser` declaration after `linear`; every existing entry keeps its value and relative order.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/15048"
+}

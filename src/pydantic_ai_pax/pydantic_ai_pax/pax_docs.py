@@ -62,6 +62,7 @@ _HARNESS_DOCS = (
     'opensandbox_sandbox',
     'ordinal',
     'permissions',
+    'playwright',
     'posthog',
     'pylon',
     'refine_output',

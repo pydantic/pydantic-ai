@@ -7635,7 +7635,7 @@ dependencies = [
 
 [package.optional-dependencies]
 all = [
-    { name = "pydantic-ai-harness", extra = ["boxd", "daytona", "e2b", "kubernetes", "modal", "opensandbox", "render", "sprites"] },
+    { name = "pydantic-ai-harness", extra = ["boxd", "daytona", "e2b", "kubernetes", "modal", "opensandbox", "playwright", "render", "sprites"] },
     { name = "pydantic-ai-slim", extra = ["anthropic", "bedrock", "bedrock-mantle", "cerebras", "cohere", "crusoe", "google", "groq", "huggingface", "mistral", "openai", "openrouter", "snowflake", "typesafe", "xai", "zai"] },
 ]
 anthropic = [
@@ -7695,6 +7695,9 @@ openrouter = [
 opensandbox = [
     { name = "pydantic-ai-harness", extra = ["opensandbox"] },
 ]
+playwright = [
+    { name = "pydantic-ai-harness", extra = ["playwright"] },
+]
 render = [
     { name = "pydantic-ai-harness", extra = ["render"] },
 ]
@@ -7727,7 +7730,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=12.3.0" },
     { name = "prompt-toolkit", specifier = ">=3.0.52" },
     { name = "pydantic-ai-harness", extras = ["boxd"], marker = "extra == 'boxd'", editable = "src/pydantic_ai_harness" },
-    { name = "pydantic-ai-harness", extras = ["boxd", "daytona", "e2b", "kubernetes", "modal", "opensandbox", "render", "sprites"], marker = "extra == 'all'", editable = "src/pydantic_ai_harness" },
+    { name = "pydantic-ai-harness", extras = ["boxd", "daytona", "e2b", "kubernetes", "modal", "opensandbox", "playwright", "render", "sprites"], marker = "extra == 'all'", editable = "src/pydantic_ai_harness" },
     { name = "pydantic-ai-harness", extras = ["boxlite", "smol"], marker = "extra == 'local'", editable = "src/pydantic_ai_harness" },
     { name = "pydantic-ai-harness", extras = ["coder", "skills"], editable = "src/pydantic_ai_harness" },
     { name = "pydantic-ai-harness", extras = ["daytona"], marker = "extra == 'daytona'", editable = "src/pydantic_ai_harness" },
@@ -7735,6 +7738,7 @@ requires-dist = [
     { name = "pydantic-ai-harness", extras = ["kubernetes"], marker = "extra == 'kubernetes'", editable = "src/pydantic_ai_harness" },
     { name = "pydantic-ai-harness", extras = ["modal"], marker = "extra == 'modal'", editable = "src/pydantic_ai_harness" },
     { name = "pydantic-ai-harness", extras = ["opensandbox"], marker = "extra == 'opensandbox'", editable = "src/pydantic_ai_harness" },
+    { name = "pydantic-ai-harness", extras = ["playwright"], marker = "extra == 'playwright'", editable = "src/pydantic_ai_harness" },
     { name = "pydantic-ai-harness", extras = ["render"], marker = "extra == 'render'", editable = "src/pydantic_ai_harness" },
     { name = "pydantic-ai-harness", extras = ["sprites"], marker = "extra == 'sprites'", editable = "src/pydantic_ai_harness" },
     { name = "pydantic-ai-slim", extras = ["anthropic"], marker = "extra == 'anthropic'", editable = "pydantic_ai_slim" },
@@ -7764,7 +7768,7 @@ requires-dist = [
     { name = "uvicorn", specifier = ">=0.38.0" },
     { name = "websockets", specifier = ">=15.0" },
 ]
-provides-extras = ["all", "anthropic", "bedrock", "bedrock-mantle", "boxd", "cerebras", "cohere", "crusoe", "daytona", "e2b", "google", "groq", "huggingface", "kubernetes", "local", "mistral", "modal", "openai", "openrouter", "opensandbox", "render", "snowflake", "sprites", "typesafe", "xai", "zai"]
+provides-extras = ["all", "anthropic", "bedrock", "bedrock-mantle", "boxd", "cerebras", "cohere", "crusoe", "daytona", "e2b", "google", "groq", "huggingface", "kubernetes", "local", "mistral", "modal", "openai", "openrouter", "opensandbox", "playwright", "render", "snowflake", "sprites", "typesafe", "xai", "zai"]
 
 [[package]]
 name = "pydantic-ai-slim"

@@ -159,7 +159,8 @@ These are on from the start:
 - `observability`: traces to [Logfire](https://pydantic.dev/logfire), when you set a token
 
 Turn on more when you need them, such as `github`, `linear`, `notion`, `slack`,
-`google_workspace`, and `logfire_mcp`.
+`google_workspace`, `logfire_mcp`, and `browser` (a headless Chromium the model drives;
+it needs the `playwright` extra).
 
 To install a plugin, clone it from Git, name a plugin or a harness capability by its import
 path, or drop a file in `~/.config/pydantic-ai-pax/plugins/`:

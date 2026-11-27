@@ -1181,6 +1181,7 @@ settings using the former import paths are redirected to the new modules.
 | `hooks` | `pydantic_ai_pax.builtin_plugins.hooks` | `{}` | runs your commands before and after tool calls and turns; see [lifecycle hooks](#lifecycle-hooks-commands-from-settings) |
 | `sandbox` | `pydantic_ai_pax.builtin_plugins.sandbox` | `{}` | `/sandbox`: runs a new conversation in a sandbox, a VM on this machine (`local smol` or `local boxlite`) or a cloud one, signed in to GitHub as your `gh` login; `/computer-use` lets the model use its desktop; see [Sandboxes](docs/reference.md#sandboxes-sandbox) and [Computer use](docs/reference.md#computer-use-computer-use) |
 | `slack` (off until enabled) | `pydantic_ai_pax.builtin_plugins.slack` | `{}` | Slack's hosted tools as you, read-only by default; see [below](#slack-your-slack-workspace-as-you) |
+| `browser` (off until enabled) | `pydantic_ai_pax.builtin_plugins.browser` | `{}` | a headless Chromium the model drives, refusing private and loopback addresses; needs the `playwright` extra; see [below](#browser-a-headless-chromium-the-model-drives) |
 
 [`day_ai`](#day_ai-day-ai-crm-tools) and [`grain`](#grain-meetings-with-a-saved-sign-in)
 are built in too, but start disabled because they need your Day AI or Grain
@@ -1193,6 +1194,8 @@ deferred-capability catalog instead of its tools and instructions. The model
 loads one with `load_capability` when a task needs it, and its tools and the
 server's instructions arrive then. Each still connects at the start of every
 run, so a missing key or sign-in is reported as before.
+[`browser`](#browser-a-headless-chromium-the-model-drives) is deferred the same
+way.
 
 ### Other harness capabilities
 
@@ -2489,6 +2492,91 @@ The settings can also be given up front:
 ```text
 /plugins add grain pydantic_ai_pax.builtin_plugins.grain '{"read_only": false, "include_instructions": true}'
 ```
+
+### `browser`: a headless Chromium the model drives
+
+`browser` (`pydantic_ai_pax.builtin_plugins.browser`) gives the agent harness's
+[`PlaywrightBrowser`](../pydantic_ai_harness/pydantic_ai_harness/playwright/README.md):
+a real Chromium, without a window, that the model drives one tool call at a time
+(`navigate`, `snapshot`, `click`, `type_text`, `screenshot`, and the rest). It is for
+pages that need JavaScript or several steps, such as a form or a single-page app.
+Like the hosted integrations it is deferred: the model sees one catalog line,
+`playwright_browser`, and loads the tools when a task needs them.
+
+It starts disabled, and needs two installs that Pax does not make for you: the
+`playwright` extra, and Playwright's own Chromium build.
+
+```sh
+uv tool install 'pydantic-ai-pax[playwright]'
+"$(uv tool dir)/pydantic-ai-pax/bin/python" -m playwright install chromium
+```
+
+Run the installer with Pax's own Python, as above: a `playwright` command on your
+`PATH` may belong to another Playwright version, whose Chromium build this one does
+not use. On a fresh Linux machine, `install --with-deps chromium` also installs the
+system libraries Chromium needs.
+
+`/plugins enable browser` turns it on for the next prompt, and `/plugins disable
+browser` turns it off. There is no `/browser on|off`: a plugin's commands exist only
+while it is loaded, so a `/browser` command could not turn on a browser that is
+off. Without the `playwright` extra, enabling it fails with the command that
+installs it, and Pax carries on without the plugin; it stays enabled, so each
+launch says the same until you install the extra or disable it. With the extra
+but no Chromium, the plugin loads and says how to install Chromium: when it loads,
+it asks Playwright where Chromium should be, which starts Playwright's driver
+(not a browser) for a moment. A browser tool called without Chromium returns the
+same hint to the model, which can run it with its shell, and the next call
+starts the browser.
+
+The browser lasts one turn. Chromium starts at the turn's first browser call and
+closes when the turn ends, so each turn starts on a blank page with no cookies,
+and the browser is signed in to nothing of yours. Downloads are refused, and no
+tool puts a file into a page.
+
+**Where it can go.** Every request the browser makes is checked before it leaves.
+Private, loopback, link-local and other reserved addresses are refused, including
+the cloud metadata address `169.254.169.254`, `localhost`, and the RFC 1918 ranges,
+also when a hostname resolves to one; so are `file:` URLs. That keeps a page, or a
+model steered by one, from reaching services on this machine or its network, and it
+also means the browser cannot open a local development server. `allowed_domains`
+narrows it further, to the sites you list and their subdomains:
+
+```text
+/plugins add browser pydantic_ai_pax.builtin_plugins.browser '{"allowed_domains": ["example.com"]}'
+```
+
+Neither is a security boundary. The allowlist bounds navigation and the requests a
+page's scripts use to send data (`fetch`, XHR, WebSocket, `sendBeacon`), not the
+images, scripts, styles and frames a page loads, so a page can still send data
+out in those URLs. A name is checked on the address this process gets, and
+Chromium looks it up again before it connects, so DNS rebinding gets past the
+private-address block. See
+[Egress and SSRF](../pydantic_ai_harness/pydantic_ai_harness/playwright/README.md#egress-and-ssrf)
+for everything the guard covers and what it leaves open.
+
+**Untrusted pages.** Page text, snapshots and screenshots reach the model as tool
+output, and a page can carry instructions meant for it. [`/permissions`](docs/reference.md#permissions)
+does not ask before a browser call in any mode: `auto` and `read-only` check file
+writes and shell commands, and these are neither, so the model can fill in and
+submit forms on any site it may reach without asking. Set `allowed_domains` when the
+model reads pages you do not control and you want it kept to known sites.
+
+**In a sandbox.** Chromium runs where Pax runs, also for a [`/sandbox`](docs/reference.md#sandboxes-sandbox)
+conversation: pages load over this machine's network, not the sandbox's, and a
+server the model starts in the sandbox is out of the browser's reach. Chromium's
+own renderer sandbox stays on.
+
+The plugin has no other settings. For a visible window, screenshots on every
+navigation, other timeouts, a local app (`block_private_addresses: false`), or a
+container where Chromium's renderer sandbox cannot start (`chromium_sandbox: false`),
+declare `PlaywrightBrowser` under the same id, which takes the built-in's place:
+
+```text
+/plugins add browser pydantic_ai_harness.playwright:PlaywrightBrowser '{"headless": false}'
+```
+
+That declaration is not deferred, so its tools are in every request.
+`/plugins remove browser` brings the built-in back.
 
 ## Managing plugins
 
