@@ -284,6 +284,7 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         self._lock = anyio.Lock()
         self._operations = 0
         self._close_after_operation = False
+        self._close_requested = False
         self._display = x11_display(
             self._run_argv,
             checked_desktop_size(desktop),
@@ -333,7 +334,7 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
             # Check and detach together: an operation may start before this task gets the lock.
             async with self._lock:
                 if self._operations:
-                    self._close_after_operation = True
+                    self._close_requested = True
                     return
                 sandbox, self._sandbox = self._sandbox, None
             if sandbox is not None:
@@ -349,10 +350,12 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
             yield
         finally:
             self._operations -= 1
-            if self._operations == 0 and self._close_after_operation and self._sandbox is not None:
-                # Detached before any await, so an operation starting meanwhile attaches on its own.
-                sandbox, self._sandbox = self._sandbox, None
-                await run_to_completion(sandbox.close)
+            if self._operations == 0:
+                close, self._close_requested = self._close_after_operation or self._close_requested, False
+                if close and self._sandbox is not None:
+                    # Detached before any await, so an operation starting meanwhile attaches on its own.
+                    sandbox, self._sandbox = self._sandbox, None
+                    await run_to_completion(sandbox.close)
 
     async def _acquire(self) -> Sandbox:
         """Create or attach once, however many first operations race; renew an idle timeout on the way."""

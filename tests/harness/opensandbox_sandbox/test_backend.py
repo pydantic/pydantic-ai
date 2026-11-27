@@ -645,6 +645,27 @@ class TestTransport:
             release.touch()
         assert server.closed_transports == server.opened_transports
 
+    async def test_a_close_deferred_by_an_operation_applies_once(
+        self, server: FakeOpenSandbox, owned_connection: ConnectionConfig, working_dir: str
+    ) -> None:
+        """Not a VCR test: the deferral depends on an operation in flight, which the fake server holds open."""
+        backend = OpenSandboxBackend(image='fake-image', connection=owned_connection, working_dir=working_dir)
+        started, release = Path(working_dir, 'started'), Path(working_dir, 'release')
+        script = f'touch {started}; while [ ! -e {release} ]; do sleep 0.01; done'
+        async with anyio.create_task_group() as group:
+            group.start_soon(backend.run, ['sh', '-c', script])
+            await _wait_for(started)
+            await backend.aclose()
+            release.touch()
+        assert server.closed_transports == server.opened_transports
+        assert backend.ref is not None
+        server.requests.clear()
+        await backend.run(['true'])
+        await backend.run(['true'])
+        assert server.requests.count(f'GET /v1/sandboxes/{backend.ref.id}') == 1
+        assert server.opened_transports == server.closed_transports + 1
+        await backend.aclose()
+
 
 class TestDestroy:
     async def test_destroying_a_missing_sandbox_returns_quietly(self, server: FakeOpenSandbox) -> None:
