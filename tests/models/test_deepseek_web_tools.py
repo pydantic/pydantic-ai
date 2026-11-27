@@ -242,6 +242,35 @@ async def test_streamed_web_search_billing(model_name: str, billed: int, allow_m
     assert getattr(stream.get().usage, 'web_searches', 0) == billed
 
 
+async def test_web_tool_usage_counts(allow_model_requests: None) -> None:
+    """Each non-zero web tool count lands in the details, and none counts as a billed web search.
+
+    No recording holds an image search, so a mock transport reports the counts.
+    """
+    reply: dict[str, JsonValue] = {
+        **_reply(_FOUND_IT),
+        'usage': {
+            'input_tokens': 10,
+            'input_tokens_details': {'cached_tokens': 0},
+            'output_tokens': 2,
+            'output_tokens_details': {'reasoning_tokens': 0},
+            'total_tokens': 12,
+            'server_tool_use': {'tool_search': 1, 'tool_fetch': 0, 'tool_image_search': 2},
+        },
+    }
+    requests: list[dict[str, JsonValue]] = []
+    async with _mock_client(reply, requests) as client:
+        model = DeepSeekResponsesModel('deepseek-flash', provider=DeepSeekProvider(api_key='test', http_client=client))
+        result = await Agent(model, capabilities=[WebSearch()]).run('Find a picture of a kiwi.')
+    details = result.response.usage.details
+    assert {key: details[key] for key in ('tool_search', 'tool_fetch', 'tool_image_search') if key in details} == {
+        'tool_search': 1,
+        'tool_image_search': 2,
+    }
+    assert 'web_search_requests' not in details
+    assert not hasattr(result.response.usage, 'web_searches')
+
+
 @pytest.mark.parametrize(
     'provider_details',
     [None, {'deepseek_web_tool': 'edited'}, {'deepseek_web_tool': {}}],
@@ -275,14 +304,15 @@ async def test_deepseek_replays_standard_search_history(
     assert 'search_1' not in json.dumps(requests[1])
 
 
+# The local fallbacks are only declared: the mocked model answers without calling a tool.
 def _search_example(query: str) -> str:
     """Search the web."""
-    return 'No results.'
+    raise NotImplementedError
 
 
 def _fetch_example(url: str) -> str:
     """Fetch a URL."""
-    return 'Empty page.'
+    raise NotImplementedError
 
 
 @pytest.mark.parametrize(
