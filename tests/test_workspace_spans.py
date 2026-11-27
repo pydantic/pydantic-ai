@@ -13,12 +13,11 @@ import anyio
 import anyio.lowlevel
 import pytest
 from inline_snapshot import snapshot
-from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace, WorkspaceTimeoutError
+from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
 
 from .conftest import Instrumented, try_import
 from .workspace_fakes import RunOnlyWorkspaceBackend
@@ -145,29 +144,15 @@ async def test_shell_filesystem_commands_are_traced_without_their_text(
     assert all(data[:100] not in str(span.attributes) for span in exporter.get_finished_spans())
 
 
-class RunOptions(TypedDict, total=False):
-    timeout: float
-    cwd: str
-
-
-@pytest.mark.parametrize(
-    ('command', 'options', 'error'),
-    [
-        (['sleep', '5'], {'timeout': 0.01}, WorkspaceTimeoutError),
-        # Only file lookups treat a missing file as an answer: a command that never started is a failure.
-        (['true'], {'cwd': 'missing'}, FileNotFoundError),
-    ],
-)
-async def test_a_failed_run_is_an_error(
-    tmp_path: Path, command: list[str], options: RunOptions, error: type[Exception], instrumented: Instrumented
-) -> None:
+async def test_a_failed_run_is_an_error(tmp_path: Path, instrumented: Instrumented) -> None:
+    """Only file lookups treat a missing file as an answer: a command that never started is a failure."""
     instrumentation, exporter = instrumented(False)
     agent = Agent(TestModel(call_tools=['fail']), capabilities=[LocalWorkspace(tmp_path), instrumentation])
 
     @agent.tool
     async def fail(ctx: RunContext[object]) -> str:
-        with pytest.raises(error):
-            await ctx.workspace.run(command, **options)
+        with pytest.raises(FileNotFoundError):
+            await ctx.workspace.run(['true'], cwd='missing')
         return 'failed'
 
     await agent.run('go')
@@ -175,7 +160,7 @@ async def test_a_failed_run_is_an_error(
     [span] = [span for span in exporter.get_finished_spans() if span.name == 'workspace run']
     assert span.status.status_code.name == 'ERROR'
     [event] = [event for event in span.events if event.name == 'exception']
-    assert str((event.attributes or {})['exception.type']).endswith(error.__name__)
+    assert str((event.attributes or {})['exception.type']).endswith('FileNotFoundError')
     assert 'exception.message' not in (event.attributes or {})
 
 

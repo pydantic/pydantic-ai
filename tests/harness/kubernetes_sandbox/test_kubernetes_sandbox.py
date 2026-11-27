@@ -9,9 +9,6 @@ from pathlib import Path
 
 import anyio
 import pytest
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.agent.spec import AgentSpec
@@ -37,6 +34,9 @@ with try_import() as imports_successful:
         SandboxDirectConnectionConfig,
         SandboxdPodTunnelConnectionConfig,
     )
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
     from pydantic_ai_harness import KubernetesSandbox, KubernetesSandboxBackend
 
