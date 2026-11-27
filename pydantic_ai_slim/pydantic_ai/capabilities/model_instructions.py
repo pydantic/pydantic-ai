@@ -108,19 +108,29 @@ class ModelInstructions(AbstractCapability[AgentDepsT]):
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two under one `id` are one block stated twice; two with different instructions raise rather than merge.
 
-        Merging two mappings would make one's patterns shadow the other's, depending on their order. Agreeing ones
-        merge as any capability's fields do, which keeps the lowest authority ceiling either was given.
+        Merging two mappings would make one's patterns shadow the other's, depending on their order, so mappings
+        agree only with the same patterns in the same order. Agreeing ones merge as any capability's fields do,
+        which keeps the lowest authority ceiling either was given.
         """
         first = capabilities[0]
         assert isinstance(first, ModelInstructions)
         for other in capabilities[1:]:
             assert isinstance(other, ModelInstructions)
-            if other.instructions != first.instructions:
+            if not _agree(other.instructions, first.instructions):
                 raise UserError(
                     f'Capability id {first.id!r} is used by multiple `ModelInstructions` capabilities that disagree '
                     "on 'instructions'. Give each its own `id`, or make them agree."
                 )
         return super().combine(capabilities)
+
+
+def _agree(
+    a: Mapping[str, str] | ModelInstructionsFunc[AgentDepsT], b: Mapping[str, str] | ModelInstructionsFunc[AgentDepsT]
+) -> bool:
+    # The first matching pattern wins, so two mappings agree only if their patterns come in the same order.
+    if isinstance(a, Mapping) and isinstance(b, Mapping):
+        return list(a.items()) == list(b.items())
+    return a == b
 
 
 def _match(instructions: Mapping[str, str], model: AbstractModel) -> str | None:

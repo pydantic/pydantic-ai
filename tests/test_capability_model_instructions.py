@@ -343,13 +343,17 @@ def test_fallback_model_does_not_call_the_function() -> None:
 
 def test_two_with_one_id_keep_the_lowest_authority() -> None:
     """A copy lowered with `with_authority` keeps its ceiling when it combines with one at full authority."""
-    capability = ModelInstructions({'*': 'Any.'})
-    for capabilities in (
-        [capability, capability.with_authority('none')],
-        [capability.with_authority('none'), capability],
-    ):
-        combined = ModelInstructions.combine(capabilities)
-        assert combined._effective_authority == 'none'  # pyright: ignore[reportPrivateUsage]
+
+    def per_model(ctx: RunContext[None]) -> str:
+        return 'Any.'  # pragma: no cover
+
+    for capability in (ModelInstructions[None]({'*': 'Any.'}), ModelInstructions[None](per_model)):
+        for capabilities in (
+            [capability, capability.with_authority('none')],
+            [capability.with_authority('none'), capability],
+        ):
+            combined = ModelInstructions.combine(capabilities)
+            assert combined._effective_authority == 'none'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_two_with_one_id_and_different_instructions_raise() -> None:
@@ -357,6 +361,20 @@ def test_two_with_one_id_and_different_instructions_raise() -> None:
         UserError, match="used by multiple `ModelInstructions` capabilities that disagree on 'instructions'"
     ):
         Agent(TestModel(), capabilities=[ModelInstructions({'*': 'One.'}), ModelInstructions({'*': 'Two.'})])
+
+
+def test_two_with_one_id_and_reordered_patterns_raise() -> None:
+    """The first matching pattern wins, so the same patterns in another order are different instructions."""
+    with pytest.raises(
+        UserError, match="used by multiple `ModelInstructions` capabilities that disagree on 'instructions'"
+    ):
+        Agent(
+            TestModel(),
+            capabilities=[
+                ModelInstructions({'gpt-*': 'GPT.', '*': 'Any.'}),
+                ModelInstructions({'*': 'Any.', 'gpt-*': 'GPT.'}),
+            ],
+        )
 
 
 def test_two_with_one_id_and_the_same_instructions_are_one() -> None:
