@@ -692,6 +692,11 @@ class _InheritedPermissions(Permissions[AgentDepsT]):
     # child run under durable execution.
     _safe_at_runtime: ClassVar[bool] = True
 
+    @classmethod
+    def get_serialization_name(cls) -> str | None:
+        """Return `None`: only `SubAgents` builds it, so no agent spec names it."""
+        return None
+
 
 def inherited_managed_permissions(ctx: RunContext[AgentDepsT]) -> list[Permissions[AgentDepsT]]:
     """The managed layer of each `Permissions` on `ctx`'s run, for a `SubAgents` delegate to inherit.
