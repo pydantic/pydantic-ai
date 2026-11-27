@@ -20,7 +20,16 @@ from pydantic_core import to_json
 from ... import _utils, usage
 from ..._utils import now_utc as _now_utc, number_to_datetime
 from ...exceptions import ModelConnectionError
-from ...messages import BinaryImage, FilePart, ModelResponse, ModelResponseStreamEvent, TextPart, ToolCallPart
+from ...messages import (
+    BinaryImage,
+    FilePart,
+    ModelResponse,
+    ModelResponseStreamEvent,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    ToolCallPart,
+)
 from .. import StreamedResponse
 from .._decode_errors import MapStreamDecodeErrors
 from .._history_digest import Hasher
@@ -81,7 +90,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_now_utc)
     _usage_received: bool | None = field(default=False, init=False)
     _has_refusal: bool = field(default=False, init=False)
-    _refusal_text: str = field(default='', init=False)
+    # Refusal text deltas, joined once the stream ends: appending each to a string would copy it every time.
+    _refusal_deltas: list[str] = field(default_factory=list[str], init=False)
     _last_sequence_number: int | None = field(default=None, init=False)
     # Text annotations by item ID and content index, collected until `output_text.done` maps them.
     _annotations_by_item: dict[tuple[str, int], list[object]] = field(
@@ -97,7 +107,20 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _phase_started_content: set[tuple[str, int]] = field(default_factory=set[tuple[str, int]], init=False)
     _mcp_list_tools_return_ids: set[str] = field(default_factory=set[str], init=False)
     _pending_tool_search_call_ids: deque[str] = field(default_factory=deque[str], init=False)
-    _function_call_args: dict[str, str] = field(default_factory=dict[str, str], init=False)
+    # The argument deltas each function call item has received, joined when the call is finalized.
+    _function_call_arg_deltas: dict[str, list[str]] = field(default_factory=dict[str, list[str]], init=False)
+    # Raw CoT deltas by reasoning item, one list per `raw_content` entry. A thinking part gets them, joined, only when
+    # it's read: rebuilding `raw_content` for each delta would take time quadratic in the reasoning's length.
+    _raw_content_deltas: dict[str, list[list[str]]] = field(default_factory=dict[str, list[list[str]]], init=False)
+    # The `raw_content` entry of each item's `content_index`, in the order the indices first arrive. The index comes
+    # from the stream, so it's never a list position: one past the end would pad the list up to it.
+    _raw_content_entries: dict[tuple[str, int], int] = field(default_factory=dict[tuple[str, int], int], init=False)
+    _unwritten_raw_content: set[str] = field(default_factory=set[str], init=False)
+    """The reasoning items whose thinking part doesn't show all of their raw CoT deltas yet."""
+    _reasoning_ids_by_part: dict[int, str] = field(default_factory=dict[int, str], init=False)
+    """The reasoning item whose raw CoT each thinking part shows, by part index."""
+    _last_started_part: int = field(default=-1, init=False)
+    """The index of the part the latest `PartStartEvent` started."""
     _finalized_function_calls: set[str] = field(default_factory=set[str], init=False)
     _status: ResponseStatus | None = field(default=None, init=False)
     """The response's latest status, which decides whether its computer calls may run."""
@@ -107,6 +130,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _is_websocket: bool = False
 
     def get(self) -> ModelResponse:
+        self._write_raw_content(*self._unwritten_raw_content)
         response = super().get()
         if self._status not in (None, 'completed'):
             # OpenAI says not to run the actions of a response that didn't complete. A stream learns its status only
@@ -179,10 +203,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
             async for chunk in MapStreamDecodeErrors(self._response, self._model_name):
                 for event in self._map_event(chunk):
+                    if isinstance(event, PartStartEvent):
+                        self._start_part(event)
                     yield event
+            self._write_raw_content(*self._unwritten_raw_content)
 
-            if self._refusal_text:
-                self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
+            if refusal := ''.join(self._refusal_deltas):
+                self.provider_details = {**(self.provider_details or {}), 'refusal': refusal}
 
         # This is used to resume suspended background streams with `starting_after`.
         if self.state == 'suspended' and self._last_sequence_number is not None:
@@ -193,6 +220,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     def _map_event(self, chunk: responses.ResponseStreamEvent) -> Iterator[ModelResponseStreamEvent]:  # noqa: C901
         self._last_sequence_number = chunk.sequence_number
+        if (
+            isinstance(chunk, responses.ResponseOutputItemAddedEvent | responses.ResponseOutputItemDoneEvent)
+            and not isinstance(chunk.item, responses.ResponseReasoningItem)
+            and (item_id := chunk.item.id) in self._unwritten_raw_content
+        ):
+            # An item that reuses a reasoning item's id can take over that id's part in the parts manager, so the
+            # reasoning part gets its raw CoT first.
+            self._write_raw_content(item_id)
         if isinstance(
             chunk,
             (
@@ -243,13 +278,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             case responses.ResponseReasoningSummaryTextDeltaEvent():
                 yield from self._map_reasoning_summary_delta(chunk.item_id, chunk.summary_index, chunk.delta)
             case responses.ResponseReasoningTextDeltaEvent():
-                # Handle raw CoT from gpt-oss models using callback pattern
-                yield from self._parts_manager.handle_thinking_delta(
-                    vendor_part_id=chunk.item_id,
-                    id=chunk.item_id,
-                    provider_name=self.provider_name,
-                    provider_details=make_raw_content_updater(chunk.delta, chunk.content_index),
-                )
+                yield from self._map_reasoning_text_delta(chunk)
             case responses.ResponseOutputTextAnnotationAddedEvent():
                 # The event's `annotation` uses look-alike classes from another SDK module, which
                 # `responses_output_text_annotations_ta` rejects, so it's turned into a plain dict first.
@@ -395,8 +424,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     ) -> Iterator[ModelResponseStreamEvent]:
         # Without `output_item.added` (a resumed stream) the part has no tool name yet, so
         # skip its deltas and let `output_item.done` create it; never mutate finalized args.
-        if chunk.item_id in self._function_call_args and chunk.item_id not in self._finalized_function_calls:
-            self._function_call_args[chunk.item_id] += chunk.delta
+        if chunk.item_id in self._function_call_arg_deltas and chunk.item_id not in self._finalized_function_calls:
+            self._function_call_arg_deltas[chunk.item_id].append(chunk.delta)
             yield from self._parts_manager.handle_tool_call_delta_events(
                 vendor_part_id=chunk.item_id,
                 args=chunk.delta,
@@ -405,7 +434,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     def _handle_function_call_part(self, item: responses.ResponseFunctionToolCall) -> ModelResponseStreamEvent:
         item_id = item.id
         if item_id is not None:  # pragma: no branch
-            self._function_call_args[item_id] = item.arguments
+            self._function_call_arg_deltas[item_id] = [item.arguments]
         # Preserve any namespace attached to a discovered deferred tool for replay.
         provider_details: dict[str, Any] | None = None
         if item.namespace:
@@ -437,7 +466,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             # `output_item.done` creates it from the full item.
             return
 
-        received_args = self._function_call_args.get(item_id, '')
+        received_args = ''.join(self._function_call_arg_deltas.get(item_id, []))
         if received_args == final_args:
             self._finalized_function_calls.add(item_id)
             return
@@ -461,7 +490,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             )
             return
 
-        self._function_call_args[item_id] = final_args
+        self._function_call_arg_deltas[item_id] = [final_args]
         self._finalized_function_calls.add(item_id)
 
     def _map_output_item_added(
@@ -699,6 +728,62 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
         self._mcp_list_tools_return_ids.add(item.id)
 
+    def _map_reasoning_text_delta(
+        self, chunk: responses.ResponseReasoningTextDeltaEvent
+    ) -> Iterator[ModelResponseStreamEvent]:
+        """Collect raw CoT from gpt-oss models into the thinking part's `provider_details['raw_content']`."""
+        first_delta = chunk.item_id not in self._raw_content_deltas
+        deltas = self._raw_content_deltas.setdefault(chunk.item_id, [])
+        entry = self._raw_content_entries.setdefault((chunk.item_id, chunk.content_index), len(deltas))
+        if entry == len(deltas):
+            deltas.append([chunk.delta])
+        else:
+            deltas[entry].append(chunk.delta)
+        updater = make_raw_content_updater(chunk.delta, entry)
+        if first_delta:
+            # The part has no `raw_content` yet, so applying the updater to it costs nothing.
+            for event in self._parts_manager.handle_thinking_delta(
+                vendor_part_id=chunk.item_id,
+                id=chunk.item_id,
+                provider_name=self.provider_name,
+                provider_details=updater,
+            ):
+                assert isinstance(event, PartStartEvent | PartDeltaEvent)
+                self._reasoning_ids_by_part[event.index] = chunk.item_id
+                yield event
+            return
+        self._unwritten_raw_content.add(chunk.item_id)
+        for event in self._parts_manager.handle_thinking_delta(
+            vendor_part_id=chunk.item_id, provider_name=self.provider_name
+        ):
+            assert isinstance(event, PartDeltaEvent)
+            # The updater is for consumers that rebuild the part from the events: the part itself gets the delta from
+            # `_write_raw_content`.
+            yield replace(event, delta=replace(event.delta, provider_details=updater))
+
+    def _start_part(self, event: PartStartEvent) -> None:
+        """Record the part `event` starts, after giving the part that started before it all of its raw CoT.
+
+        `StreamedResponse.__aiter__` reads that part from the parts manager for its `PartEndEvent`, as it does the last
+        part once the stream ends.
+        """
+        if (item_id := self._reasoning_ids_by_part.get(self._last_started_part)) in self._unwritten_raw_content:
+            self._write_raw_content(item_id)
+        self._last_started_part = event.index
+
+    def _write_raw_content(self, *item_ids: str) -> None:
+        """Give each item's thinking part the raw CoT deltas it doesn't show yet, joining each entry's deltas once."""
+        for item_id in item_ids:
+            self._unwritten_raw_content.remove(item_id)
+            entries = self._raw_content_deltas[item_id]
+            for deltas in entries:
+                deltas[:] = [''.join(deltas)]
+            # The consumer already got an event for each of these deltas, so this update's own event is dropped.
+            for _ in self._parts_manager.handle_thinking_delta(
+                vendor_part_id=item_id, provider_details={'raw_content': [joined[0] for joined in entries]}
+            ):
+                pass
+
     def _map_reasoning_summary_delta(
         self, item_id: str, summary_index: int, content: str
     ) -> Iterator[ModelResponseStreamEvent]:
@@ -715,13 +800,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         # Accumulate refusal text from deltas as a fallback in case the done event is missing.
         self._has_refusal = True
         self.finish_reason = 'content_filter'
-        self._refusal_text += chunk.delta
+        self._refusal_deltas.append(chunk.delta)
 
     def _map_refusal_done(self, chunk: responses.ResponseRefusalDoneEvent) -> None:
         # The done event contains the full refusal text, replacing any accumulated deltas.
         self._has_refusal = True
         self.finish_reason = 'content_filter'
-        self._refusal_text = chunk.refusal
+        self._refusal_deltas = [chunk.refusal]
 
     def _map_code_interpreter_code_delta(
         self, chunk: responses.ResponseCodeInterpreterCallCodeDeltaEvent
@@ -867,19 +952,21 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def make_raw_content_updater(delta: str, index: int) -> Callable[[dict[str, Any] | None], dict[str, Any]]:
-    """Create a callback that updates `provider_details['raw_content']`.
+def make_raw_content_updater(delta: str, entry: int) -> Callable[[dict[str, Any] | None], dict[str, Any]]:
+    """Create a callback that adds `delta` to entry `entry` of `provider_details['raw_content']`.
 
     This is used for streaming raw CoT from gpt-oss models. The callback pattern keeps
     `raw_content` logic in OpenAI code while the parts manager stays provider-agnostic.
+    An `entry` past the last one starts the next entry.
     """
 
     def update_provider_details(existing: dict[str, Any] | None) -> dict[str, Any]:
         details = {**(existing or {})}
         raw_list: list[str] = list(details.get('raw_content', []))
-        while len(raw_list) <= index:
-            raw_list.append('')
-        raw_list[index] += delta
+        if entry < len(raw_list):
+            raw_list[entry] += delta
+        else:
+            raw_list.append(delta)
         details['raw_content'] = raw_list
         return details
 
