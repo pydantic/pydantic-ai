@@ -280,7 +280,5 @@ def record_flagged(
         content={
             'artifact_scan.source': result.source,
             'artifact_scan.excerpts': [finding.excerpt for finding in result.findings],
-        }
-        if ctx.trace_include_content
-        else None,
+        },
     )

@@ -763,13 +763,14 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
 
     def _trace(self, ctx: RunContext[AgentDepsT], loop: DetectedLoop) -> None:
         action = self.action
-        # The names come from the model's tool calls, so one the run never offered is model output,
-        # recorded only with content.
-        tool_names = loop.tool_names
-        if not ctx.trace_include_content:
-            tool_names = tuple(name for name in tool_names if name in self._offered_tool_names)
+        # The names come from the model's tool calls, so one the run never offered is model output: the full
+        # list is content, and replaces the offered ones when content is recorded.
+        offered = tuple(name for name in loop.tool_names if name in self._offered_tool_names)
         # Hashes of short arguments, such as a user id, can be reversed by trying candidate values.
-        content: dict[str, AttributeValue] = {'detect_loops.fingerprints': loop.fingerprints}
+        content: dict[str, AttributeValue] = {
+            'detect_loops.tool_names': loop.tool_names,
+            'detect_loops.fingerprints': loop.fingerprints,
+        }
         if loop.passage is not None:
             content['detect_loops.passage'] = loop.passage
         record_decision(
@@ -780,7 +781,7 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
                 'detect_loops.action': action if isinstance(action, str) else 'handler',
                 'detect_loops.count': loop.count,
                 'detect_loops.window': loop.window,
-                'detect_loops.tool_names': tool_names,
+                'detect_loops.tool_names': offered,
             },
             content=content,
         )
