@@ -18,6 +18,7 @@ continues in the same process. Claude Code's own tools, settings files, skills, 
 from __future__ import annotations as _annotations
 
 import asyncio
+import hashlib
 import json
 import math
 import os
@@ -62,6 +63,7 @@ try:
         McpSdkServerConfig,
         Message,
         RateLimitEvent,
+        ResultError,
         ResultMessage,
         StreamEvent,
         ToolResultBlock,
@@ -90,6 +92,9 @@ _TOOL_PREFIX = f'mcp__{_MCP_SERVER}__'
 
 _MAX_SESSIONS = 8
 """Live sessions kept per provider; the least recently used idle one is closed to make room for another."""
+
+_MAX_FORK_POINTS = 256
+"""Finished answers a provider remembers the transcript entry of, so a new session can fork from one."""
 
 _ENV = {
     # Claude Code prefers an API key, proxy or cloud provider from the environment over the user's login. Those are
@@ -362,6 +367,8 @@ class _Turn:
     pieces: dict[tuple[int, str], list[str]] = field(default_factory=dict[tuple[int, str], list[str]])
     """The streamed text of each block's field, joined once the block stops."""
     stop_reason: str | None = None
+    fork_point: _ForkPoint | None = None
+    """The transcript entry of the turn's last message, which Claude Code reports as each message ends."""
     complete: bool = True
     """Whether every event was understood, so the blocks are what the next request continues from."""
 
@@ -607,6 +614,29 @@ async def _one_frame(frame: dict[str, JsonValue]) -> AsyncIterator[dict[str, Jso
     yield frame
 
 
+@dataclass(frozen=True)
+class _ForkPoint:
+    """Where a session's transcript ends with an answer: a new session forked there starts with its history cached."""
+
+    session_id: str
+    message_uuid: str
+
+
+def _answer_digests(messages: Sequence[_Message]) -> list[tuple[int, str]]:
+    """Identifies each prefix of `messages` that ends with an answer, with its length, the way `continuation` compares.
+
+    The messages before the answer must match exactly; the answer itself, only in what a stored response keeps.
+    """
+    prefix = hashlib.sha256()
+    digests: list[tuple[int, str]] = []
+    for length, message in enumerate(messages, start=1):
+        if message.role == 'assistant':
+            answer = json.dumps(_response_projection(message.blocks()), sort_keys=True).encode()
+            digests.append((length, hashlib.sha256(prefix.digest() + answer).hexdigest()))
+        prefix.update(json.dumps([message.role, message.blocks()], sort_keys=True).encode() + b'\n')
+    return digests
+
+
 @dataclass(eq=False)
 class ClaudeCodeSessions:
     """The live Claude Code sessions of one provider, by conversation."""
@@ -618,6 +648,27 @@ class ClaudeCodeSessions:
     """Replaces the Claude Code process, for tests."""
     user_mcp_servers: dict[str, str] | None = None
     """The user's own MCP servers and claude.ai connectors, by their names in Claude Code's tool names, once found."""
+    fork_points: dict[str, _ForkPoint] = field(default_factory=dict[str, _ForkPoint])
+    """Where this provider's sessions ended an answer, by the digest of the history up to it, oldest first.
+
+    Only sessions this provider started are forked: a fork point read from the history itself could name any of the
+    user's Claude Code sessions.
+    """
+
+    def remember_fork_point(self, history: Sequence[_Message], point: _ForkPoint) -> None:
+        """Remember where a session's transcript ends with `history`'s last message, an answer."""
+        [*_, (_, digest)] = _answer_digests(history)
+        self.fork_points.pop(digest, None)
+        self.fork_points[digest] = point
+        while len(self.fork_points) > _MAX_FORK_POINTS:
+            del self.fork_points[next(iter(self.fork_points))]
+
+    def _fork_point(self, messages: Sequence[_Message]) -> tuple[_ForkPoint, int] | None:
+        """The latest answer of the history one of this provider's sessions ended, and the history's length to it."""
+        for length, digest in reversed(_answer_digests(messages)):
+            if (point := self.fork_points.get(digest)) is not None:
+                return point, length
+        return None
 
     def acquire(self) -> None:
         """Keep each conversation's session alive until the matching `release_lease`."""
@@ -647,6 +698,7 @@ class ClaudeCodeSessions:
         request: _MessagesRequest,
         disallowed_tools: list[str],
         system_prompt: SystemPromptFile,
+        fork: _ForkPoint | None = None,
     ) -> ClaudeAgentOptions:
         config = session.config
         server = session.server(request.callable_tools)
@@ -672,6 +724,9 @@ class ClaudeCodeSessions:
             cwd=self.options.cwd,
             client_app=f'pydantic-ai/{__version__}',
             env={**_ENV, 'CLAUDE_CODE_MAX_OUTPUT_TOKENS': str(config.max_tokens)},
+            resume=fork.session_id if fork is not None else None,
+            fork_session=fork is not None,
+            resume_session_at=fork.message_uuid if fork is not None else None,
         )
 
     async def _find_user_mcp_servers(self) -> dict[str, str]:
@@ -713,11 +768,27 @@ class ClaudeCodeSessions:
         return [f'{MCP_PREFIX}{server}' for server in servers if server not in allowed]
 
     async def _start(self, request: _MessagesRequest) -> _Session:
+        """A new session that has been sent the request: forked from an earlier one's transcript when it can be."""
+        if (found := self._fork_point(request.messages)) is not None:
+            point, length = found
+            try:
+                return await self._start_session(request, request.messages[length:], fork=point)
+            except ResultError:
+                # Claude Code no longer has the transcript, as when it was deleted: the history is replayed instead.
+                self.fork_points = {key: other for key, other in self.fork_points.items() if other != point}
+            except (ClaudeCodeExited, ClaudeSDKError):
+                # The forked process failed for another reason; a new one is sent the whole history.
+                pass
+        return await self._start_session(request, request.messages)
+
+    async def _start_session(
+        self, request: _MessagesRequest, messages: list[_Message], fork: _ForkPoint | None = None
+    ) -> _Session:
         session = _Session(config=_SessionConfig.of(request), loop=asyncio.get_running_loop())
         disallowed_tools = await self._inherited_servers(session, request.inherited_servers)
         system_prompt = await session.write_system_prompt()
         try:
-            options = self._client_options(session, request, disallowed_tools, system_prompt)
+            options = self._client_options(session, request, disallowed_tools, system_prompt, fork)
             transport = self.transport_factory(options) if self.transport_factory is not None else None
             session.client = ClaudeSDKClient(options=options, transport=transport)
         except BaseException:
@@ -730,7 +801,7 @@ class ClaudeCodeSessions:
                 # request would offer the model none of their tools.
                 await _settled_mcp_servers(session.client, expected=session.offered_servers)
             session.messages = aiter(session.client.receive_messages())
-            await session.replay(request.messages)
+            await session.replay(messages)
         except BaseException:
             await session.close()
             raise
@@ -866,6 +937,14 @@ class _TurnStream(httpx2.AsyncByteStream):
     def _message(self, message: Message) -> Iterator[bytes]:
         if isinstance(message, StreamEvent) and message.parent_tool_use_id is None:
             yield from self._event(message.event)
+        elif isinstance(message, AssistantMessage):
+            # Claude Code reports each message, with its transcript entry, before the response's `message_stop`, which
+            # ends this stream: the last one before it is where the turn's answer ends.
+            if message.parent_tool_use_id is None and message.session_id and message.uuid:
+                self._turn.fork_point = _ForkPoint(message.session_id, message.uuid)
+            else:
+                # A message without its entry, or a subagent's (none come with Claude Code's tools off), leaves none.
+                self._turn.fork_point = None
         elif results := self._session.external_result(message):
             for block in results:
                 yield from self._result(block)
@@ -892,6 +971,9 @@ class _TurnStream(httpx2.AsyncByteStream):
         session.seen = [*session.seen, _Message(role='assistant', content=turn.blocks)]
         session.awaiting_results = turn.tool_use_ids if turn.stop_reason == 'tool_use' else []
         session.broken |= not turn.complete
+        if turn.complete and turn.fork_point is not None and not session.awaiting_results:
+            # A later request that goes on from this answer can fork from it, after this session has gone.
+            self._sessions.remember_fork_point(session.seen, turn.fork_point)
 
     async def aclose(self) -> None:
         # A response that didn't end leaves the session mid-turn.

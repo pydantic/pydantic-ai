@@ -20,7 +20,17 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import anyio
-from claude_agent_sdk import ClaudeAgentOptions, CLIConnectionError, CLINotFoundError, ProcessError, Transport
+from claude_agent_sdk import (
+    ClaudeAgentOptions,
+    CLIConnectionError,
+    CLINotFoundError,
+    ProcessError,
+    ResultError,
+    Transport,
+)
+
+from pydantic_ai.models.claude_agent import ClaudeAgentModel
+from pydantic_ai.providers.claude_agent import ClaudeAgentProvider
 
 
 @dataclass
@@ -55,6 +65,13 @@ def thinking(content: str, signature: str) -> dict[str, Any]:
     return {'type': 'thinking', 'thinking': content, 'signature': signature}
 
 
+def restart(model: ClaudeAgentModel) -> None:
+    """As after a restart, or with a history from storage: the provider knows no session to fork."""
+    provider = model._provider  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(provider, ClaudeAgentProvider)
+    provider._sessions.fork_points.clear()  # pyright: ignore[reportPrivateUsage]
+
+
 def tool_use(tool_use_id: str, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     return {'type': 'tool_use', 'id': tool_use_id, 'name': f'mcp__pydantic_ai__{name}', 'input': arguments}
 
@@ -82,6 +99,8 @@ class FakeClaudeCode:
     discoveries: list[FakeSession] = field(default_factory=list['FakeSession'])
     """The processes started only to find the user's own MCP servers."""
     exit_on_history: bool = False
+    exit_once_on_history: bool = False
+    """The next process exits when it's sent history to replay, and the ones after it don't."""
     """Each process exits when it's sent history to replay."""
     mcp_servers: list[str] = field(default_factory=list[str])
     """The user's own MCP servers and connectors, which Claude Code offers when MCP config isn't strict."""
@@ -95,18 +114,23 @@ class FakeClaudeCode:
     """Set once a response waits on its `hold`."""
     missing: bool = False
     """There's no Claude Code executable to start."""
+    transcripts: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
+    """The transcript each session has left, as its assistant messages' UUIDs, by session ID."""
+    untracked: bool = False
+    """Assistant messages come without their transcript entry, as no Claude Code this provider supports sends them."""
 
     def __call__(self, options: ClaudeAgentOptions) -> FakeSession:
-        session = FakeSession(self, options)
+        session = FakeSession(self, options, f'session-{len(self.sessions) + len(self.discoveries)}')
         # A process with no MCP server of Pydantic AI's is the one that finds the user's own servers.
         (self.sessions if options.mcp_servers else self.discoveries).append(session)
         return session
 
 
 class FakeSession(Transport):
-    def __init__(self, script: FakeClaudeCode, options: ClaudeAgentOptions) -> None:
+    def __init__(self, script: FakeClaudeCode, options: ClaudeAgentOptions, session_id: str) -> None:
         self.script = script
         self.options = options
+        self.session_id = session_id
         self.frames: list[dict[str, Any]] = []
         """The user and assistant frames the SDK sent, history replay included."""
         self.tool_results: list[dict[str, Any]] = []
@@ -135,6 +159,15 @@ class FakeSession(Transport):
             path = anyio.Path(self.options.system_prompt['path'])
             self.system_prompt = await path.read_text(encoding='utf-8')
             self.system_prompt_mode = stat.S_IMODE((await path.stat()).st_mode)
+        options = self.options
+        if options.resume is not None:
+            kept = self.script.transcripts.get(options.resume)
+            if kept is None or options.resume_session_at not in kept:
+                message = f'No conversation found with session ID: {options.resume}'
+                raise ResultError(message, {'subtype': 'error_during_execution', 'errors': [message]}, exit_code=1)
+            assert options.fork_session
+            # A fork starts its transcript with the one it forked, up to the message it forked at.
+            self.script.transcripts[self.session_id] = kept[: kept.index(options.resume_session_at) + 1]
 
     def is_ready(self) -> bool:  # pragma: no cover
         return not self.closed
@@ -180,7 +213,8 @@ class FakeSession(Transport):
                 self.frames.append(message)
                 if message['type'] == 'user':
                     if message.get('shouldQuery') is False:
-                        if self.script.exit_on_history:
+                        if self.script.exit_on_history or self.script.exit_once_on_history:
+                            self.script.exit_once_on_history = False
                             self._outbox.put_nowait(None)
                             return
                         self._send(self._init())
@@ -344,13 +378,26 @@ class FakeSession(Transport):
                 # Claude Code's final usage repeats the input counts, as the Messages API's does.
                 {'type': 'message_delta', 'delta': stop, 'usage': response.usage}
             )
-        for event in events:
+        for index, event in enumerate(events):
             self._send({'type': 'stream_event', 'uuid': 'u', 'session_id': 'fake-session', 'event': event})
+            if index == 0:
+                # Claude Code reports its status between a response's events.
+                self._send({'type': 'system', 'subtype': 'status', 'session_id': self.session_id})
         if cut:
             return
         # Claude Code reports the whole message before its `message_stop` event.
         assistant = {**message, 'content': response.blocks, 'stop_reason': response.stop_reason}
-        self._send({'type': 'assistant', 'message': assistant, 'parent_tool_use_id': None})
+        transcript = self.script.transcripts.setdefault(self.session_id, [])
+        transcript.append(f'{self.session_id}/{len(transcript)}')
+        self._send(
+            {
+                'type': 'assistant',
+                'message': assistant,
+                'parent_tool_use_id': None,
+                'session_id': self.session_id,
+                'uuid': None if self.script.untracked else transcript[-1],
+            }
+        )
         self._send(
             {'type': 'stream_event', 'uuid': 'u', 'session_id': 'fake-session', 'event': {'type': 'message_stop'}}
         )

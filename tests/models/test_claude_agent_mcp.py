@@ -29,6 +29,7 @@ with try_import() as imports_successful:
         FakeResponse,
         FakeSession,
         external_tool_use,
+        restart,
         text,
         tool_use,
     )
@@ -198,6 +199,7 @@ async def test_native_tool_parts_continue_and_replay():
     async with agent:
         first = await agent.run('What does the guide cover?')
         second = await agent.run('Which topic?', message_history=first.all_messages())
+    restart(model)
     third = await agent.run('And my first question?', message_history=second.all_messages())
 
     assert third.output == 'Docs.'
@@ -238,6 +240,7 @@ async def test_a_call_beside_one_of_ours():
         return 'Lisbon'
 
     result = await agent.run('Where, and what docs?')
+    restart(model)
     again = await agent.run('Again.', message_history=result.all_messages())
 
     assert [

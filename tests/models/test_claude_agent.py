@@ -50,7 +50,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.claude_agent import ClaudeAgentProvider
 
-    from .claude_code_fake import FakeClaudeCode, FakeResponse, FakeSession, text, thinking, tool_use
+    from .claude_code_fake import FakeClaudeCode, FakeResponse, FakeSession, restart, text, thinking, tool_use
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='claude-agent-sdk not installed'),
@@ -272,6 +272,7 @@ async def test_a_new_session_replays_the_history():
         return f'Sunny in {city}'
 
     first = await agent.run('Weather?')
+    restart(model)
     second = await agent.run('And now?', message_history=first.all_messages())
 
     assert second.output == 'Still sunny.'
@@ -343,7 +344,7 @@ async def test_a_client_that_fails_to_start_removes_the_system_prompt_file():
 
 
 async def test_changed_instructions_start_a_new_session():
-    """A session's system prompt is fixed when it starts, so new instructions replay the history into a new one."""
+    """A session's system prompt is fixed when it starts, so new instructions fork its transcript into a new one."""
     model, fake = claude_agent(FakeResponse([text('One.')]), FakeResponse([text('Two.')]))
 
     async with model:
@@ -351,9 +352,9 @@ async def test_changed_instructions_start_a_new_session():
         await Agent(model, instructions='Be verbose.').run('Again.', message_history=first.all_messages())
 
     assert [session.system_prompt for session in fake.sessions] == ['Be terse.', 'Be verbose.']
-    assert frame_shape(fake.sessions[1]) == snapshot(
-        [('user', ['text'], False), ('assistant', ['text'], True), ('user', ['text'], True)]
-    )
+    # The new session holds the history from the transcript it forked, so it's sent only the new message.
+    assert frame_shape(fake.sessions[1]) == snapshot([('user', ['text'], True)])
+    assert (fake.sessions[1].options.resume, fake.sessions[1].options.resume_session_at) == ('session-0', 'session-0/0')
     assert all(session.closed for session in fake.sessions)
 
 
@@ -562,8 +563,10 @@ async def test_a_process_that_exits_during_replay():
     fake = FakeClaudeCode([FakeResponse([text('One.')])], exit_on_history=True)
     provider = ClaudeAgentProvider()
     provider._sessions.transport_factory = fake  # pyright: ignore[reportPrivateUsage]
-    agent = Agent(ClaudeAgentModel('claude-sonnet-5-5', provider=provider))
+    model = ClaudeAgentModel('claude-sonnet-5-5', provider=provider)
+    agent = Agent(model)
     first = await agent.run('Count.')
+    restart(model)
 
     with pytest.raises(ModelHTTPError, match='Claude Code exited while it was sent the history'):
         await agent.run('Again.', message_history=first.all_messages())

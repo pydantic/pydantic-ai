@@ -68,11 +68,11 @@ async def main():
         print(result.output)
 ```
 
-A request whose history the process hasn't seen, such as one with different instructions or tools, edited history, or a conversation picked up from storage, starts a new process and sends it the history first. That's always correct, but it doesn't read from the earlier process's prompt cache. At most eight conversations keep a process at a time: the one used least recently makes room, and when all eight are busy, a new conversation's process stops after its request. When the agent, model, or run that holds them exits, the processes are stopped.
+A request that no live process can continue, such as the next run without `async with`, a retry, one with different instructions or tools, or one that goes on from an earlier answer, starts a new process. When one of the provider's earlier processes ended an answer in the request's history, the new process forks that process's transcript at the latest such answer and is sent only the rest. With the same instructions, tools, model and settings, it reads the history up to there from the prompt cache. Otherwise, as for a conversation picked up from storage after a restart, it's sent the whole history first: always correct, but without reading from the prompt cache. The provider remembers the last 256 answers its processes ended. At most eight conversations keep a process at a time: the one used least recently makes room, and when all eight are busy, a new conversation's process stops after its request. When the agent, model, or run that holds them exits, the processes are stopped.
 
 Like any Claude Code session, each one leaves its transcript in Claude Code's configuration directory, under `~/.claude/projects/` by default, so it also shows up in `claude --resume` in the directory it ran in. Claude Code writes its prompt cache entries for 5 minutes, as the [`anthropic` provider](anthropic.md) asks for, rather than the hour it uses by default on a plan.
 
-Under [durable execution](../durable_execution/overview.md), each model request starts its own Claude Code process and sends it the history, so requests don't share a prompt cache. Tools from [your own MCP servers](#your-own-mcp-servers-and-connectors) run inside the model request, so a retried request runs them again.
+Under [durable execution](../durable_execution/overview.md), each model request starts its own Claude Code process. On the worker that ran the request before it, that process forks the earlier one's transcript and reads from the prompt cache; on another worker it's sent the whole history. Tools from [your own MCP servers](#your-own-mcp-servers-and-connectors) run inside the model request, so a retried request runs them again.
 
 ## Your own MCP servers and connectors
 
