@@ -1397,10 +1397,15 @@ class CompactionRunResult:
     """
 
     _state: _agent_graph.GraphAgentState = dataclasses.field(repr=False)
+    _new_message_index: int = dataclasses.field(repr=False, default=0)
+    """Where the messages the run added, like one a hook queued, start in the history, as for `AgentRunResult`."""
 
     @classmethod
     def _of(cls, run_result: AgentRunResult[Any]) -> CompactionRunResult:
-        return cls(_state=run_result._state)  # pyright: ignore[reportPrivateUsage]
+        return cls(
+            _state=run_result._state,  # pyright: ignore[reportPrivateUsage]
+            _new_message_index=run_result._new_message_index,  # pyright: ignore[reportPrivateUsage]
+        )
 
     def all_messages(self) -> list[_messages.ModelMessage]:
         """The compacted message history, to continue the conversation with in place of the one that was compacted."""
@@ -1411,16 +1416,17 @@ class CompactionRunResult:
         return _messages.ModelMessagesTypeAdapter.dump_json(self.all_messages())
 
     def new_messages(self) -> list[_messages.ModelMessage]:
-        """The messages the compaction wrote in place of the ones it summarized, which hold the summary.
+        """The messages of [`all_messages()`][pydantic_ai.agent.CompactionRunResult.all_messages] that weren't in the history it was given.
 
-        They're the compacted history up to the messages it kept as they were, at
-        [`CompactionRecord.kept_from`][pydantic_ai.messages.CompactionRecord.kept_from]; the rest of
-        [`all_messages()`][pydantic_ai.agent.CompactionRunResult.all_messages] is the end of the history it was given.
-        Empty when nothing was compacted.
+        They're the messages the compaction wrote in place of the ones it summarized, which hold the summary, up to
+        its record's [`kept_from`][pydantic_ai.messages.CompactionRecord.kept_from], and a message a hook queued
+        during the run with [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue], which ends the history.
+        Empty when nothing was compacted or queued.
         """
-        if not (compactions := self._state.compactions):
-            return []
-        return self.all_messages()[: compactions[-1].kept_from]
+        messages = self.all_messages()
+        written = compactions[-1].kept_from if (compactions := self._state.compactions) else 0
+        # The messages the run added come after the ones the compaction kept from the history it was given.
+        return [*messages[:written], *messages[max(written, self._new_message_index) :]]
 
     def new_messages_json(self) -> bytes:
         """Return new messages from [`new_messages`][pydantic_ai.agent.CompactionRunResult.new_messages] as JSON bytes."""

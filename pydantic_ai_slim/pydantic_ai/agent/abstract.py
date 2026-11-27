@@ -963,7 +963,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         `after_model_request` hooks don't run.
 
         If no capability compacts, or a [`CompactionStartEvent`][pydantic_ai.messages.CompactionStartEvent] listener
-        cancels the compaction, the result holds the history as it was given and no compactions.
+        cancels the compaction, the result holds the history as it was given and no compactions. A message a hook
+        queues during the run with [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] isn't answered, so
+        `all_messages()` ends with it as a request, and the next run sends it with its prompt.
 
         Example:
         ```python {test="skip"}

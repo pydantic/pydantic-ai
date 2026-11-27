@@ -285,6 +285,8 @@ async def test_a_history_ending_in_a_request_keeps_it():
     last = unchanged.all_messages()[-1]
     assert isinstance(last, ModelRequest) and last.parts == given[-1].parts
     assert last.run_id == unchanged.run_id
+    # It was in the given history, so it isn't new, though the run stamped it.
+    assert unchanged.new_messages() == []
 
     summarize = Summarize()
     result = await Agent(FunctionModel(not_sent), capabilities=[summarize]).compact_history(given)
@@ -292,6 +294,7 @@ async def test_a_history_ending_in_a_request_keeps_it():
         ['ModelRequest: CompactionPart', 'ModelResponse: TextPart', 'ModelRequest: UserPromptPart']
     )
     assert result.compactions[0].messages_before == 5
+    assert result.new_messages() == result.all_messages()[:1]
 
 
 @pytest.mark.parametrize(
@@ -429,6 +432,7 @@ async def test_a_changed_appending_system_prompt_isnt_added_to_the_history(compa
     else:
         assert result.all_messages() == given
         assert result.compactions == []
+    assert result.new_messages() == result.all_messages()[: 1 if compacts else 0]
 
     await agent.run('And now?', message_history=result.all_messages())
     # The model is sent the appended statement, framed, at the start of the new request.
@@ -479,7 +483,9 @@ async def test_a_message_a_hook_enqueues_is_kept_and_the_added_request_isnt(comp
         assert (record.part_message_index, record.part_index) == (0, 0)
         assert record.replaced == [*given, remembered]
         assert record.summarized == given
-        assert result.new_messages() == result.all_messages()[:1]
+        # The summary and the queued message, neither of which was in the given history.
+        assert result.new_messages() == result.all_messages()
     else:
         assert result.all_messages()[:-1] == given
         assert result.compactions == []
+        assert result.new_messages() == [remembered]
