@@ -2410,7 +2410,8 @@ jobs:
   # needs has a `cancel-after-` job that cancels the run once it fails or times out in a merge group;
   # `check` runs `if: always()`, so it then reports the failure at once and the queue rebuilds the
   # groups behind it. Each matrix job fails fast in a merge group, so its companion acts on the
-  # first failed leg. These jobs run no repository code, so they alone hold `actions: write`.
+  # first failed leg, so a second failure elsewhere shows only on a re-run. These jobs run no
+  # repository code, so they alone hold `actions: write`.
   # A run that is already cancelled skips them. Pull requests skip them and run every job.
 
   cancel-after-quality:
