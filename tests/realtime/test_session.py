@@ -55,6 +55,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
+    OperatorSource,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -8858,6 +8859,29 @@ async def test_session_enqueue_records_system_prompts_alone_as_system_prompts() 
     assert sent.system_prompt == 'one\n\ntwo'
     assert session.new_messages()[-1] == ModelRequest(
         parts=[first, second], timestamp=IsDatetime(), conversation_id=IsStr(), run_id=IsStr()
+    )
+
+
+async def test_session_enqueue_before_prompt_is_delivered_as_append_delivers_it() -> None:
+    """A session has no prompt request to place data in, so `'before_prompt'` content is its own turn, as with `'append'`.
+
+    The restriction to data capability parts holds here too.
+    """
+    conn = FakeRealtimeConnection([ResponseDone()])
+    agent: Agent[None, str] = Agent()
+    report = _LiveReportPart(content='found it', source=OperatorSource())
+
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        with pytest.raises(UserError, match="placement='before_prompt'"):
+            session.enqueue('plain text', placement='before_prompt')
+        assert session.enqueue(report, placement='before_prompt') is not None
+        _ = [event async for event in session]
+
+    assert [item for item in conn.sent if isinstance(item, str)] == [
+        '<pyai:data kind="test_realtime.report">\nfound it\n</pyai:data>'
+    ]
+    assert session.new_messages()[-1] == ModelRequest(
+        parts=[report], timestamp=IsDatetime(), conversation_id=IsStr(), run_id=IsStr()
     )
 
 

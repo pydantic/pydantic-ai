@@ -1334,7 +1334,7 @@ class TestReminder:
         ctx = _ctx()
         enqueued: list[object] = []
 
-        def record(*content: object, priority: object = 'asap') -> None:
+        def record(*content: object, priority: object = 'asap', placement: object = 'append') -> None:
             enqueued.extend(content)
 
         ctx.enqueue = record
@@ -1391,6 +1391,33 @@ class TestReminder:
         """A history ending in a suspended response is echoed to the provider verbatim, so nothing is added."""
         cap = await self._cap('Do X')
         assert await self._enqueued(cap, [ModelResponse(parts=[TextPart('prior')])]) == []
+
+    async def test_run_start_record_goes_before_the_prompt_and_a_tool_loop_record_after_the_results(self) -> None:
+        """A run starting without the plan reads it before the question; in the tool loop it follows the results.
+
+        The store changes outside the plan tools during the run, so the second request records the plan again.
+        """
+        store = InMemoryPlanStore()
+        await store.set_items([PlanItem(id='a', content='Do X')])
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('bump', {}, tool_call_id='c1')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[Planning(store=store)])
+
+        @agent.tool_plain
+        async def bump() -> str:
+            await store.add_item(PlanItem(id='b', content='Do Y'))
+            return 'bumped'
+
+        result = await agent.run('Continue the work')
+        assert [
+            [type(part).__name__ for part in message.parts]
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+        ] == snapshot([['PlanReminderPart', 'UserPromptPart'], ['ToolReturnPart'], ['PlanReminderPart']])
 
     async def test_plan_is_enqueued_on_the_user_channel(self) -> None:
         """The model-written plan goes on the user channel, never in system voice."""
