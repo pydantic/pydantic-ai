@@ -62,6 +62,7 @@ __all__ = (
     'ModelRequestRejectedError',
     'ModelAuthenticationError',
     'ModelNotFoundError',
+    'ModelSchemaTooComplexError',
     'ModelRequestTimeout',
     'ModelEmptyResponseError',
     'ModelInvalidResponseError',
@@ -649,8 +650,9 @@ class ModelAPIError(AgentRunError):
     [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError]), or
     [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] (and its
     [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError],
-    [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] and
-    [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError]). When the error
+    [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError],
+    [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] and
+    [`ModelSchemaTooComplexError`][pydantic_ai.exceptions.ModelSchemaTooComplexError]). When the error
     came with an HTTP status code, the raised exception is also a
     [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]; see
     [`ModelHTTPError.for_category`][pydantic_ai.exceptions.ModelHTTPError.for_category].
@@ -857,8 +859,9 @@ class ModelRequestRejectedError(ModelAPIError):
     For example an HTTP 400, 413 or 422, or a gRPC `INVALID_ARGUMENT`, when no more specific category applies.
     Its subclasses say why, where the provider does:
     [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError],
-    [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError], and
-    [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError].
+    [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError],
+    [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError], and
+    [`ModelSchemaTooComplexError`][pydantic_ai.exceptions.ModelSchemaTooComplexError].
 
     Exhausted credits are a [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] instead, even
     when the provider sends them as a 400 like Anthropic does, since topping up the account fixes them.
@@ -906,6 +909,24 @@ class ModelNotFoundError(ModelRequestRejectedError):
     [`suggested_model_id`][pydantic_ai.exceptions.ModelHTTPError.suggested_model_id] may suggest a close known one.
     A 404 can also mean that the provider's base URL is wrong. A subclass of
     [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError].
+    """
+
+
+class ModelSchemaTooComplexError(ModelRequestRejectedError):
+    """Raised when the provider rejected the request because it couldn't compile its strict schemas.
+
+    For example Anthropic's 400 saying that the schema is too complex or that the compiled grammar is too large,
+    which can arrive only after minutes of compiling, for strict tool schemas and a Native Output schema that are
+    within the documented limits. Its [`hint`][pydantic_ai.exceptions.ModelHTTPError.hint] says how to simplify
+    them. When the model chose Native Output for the request itself, because the output type didn't pick a mode, the
+    run sends the request again in Tool Output instead of raising this, on the agent's model or one
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] moved the request to, but not on a model inside a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], which handles the error itself; see
+    [Schema complexity limits](../models/anthropic.md#schema-complexity-limits). A subclass of
+    [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError].
+
+    It's not the [`UserError`][pydantic_ai.exceptions.UserError] Pydantic AI raises before sending a schema whose
+    `$ref`s expand too far when inlined: this is the provider rejecting a request that was sent.
     """
 
 
@@ -1155,8 +1176,9 @@ class ModelHTTPError(ModelAPIError):
                 [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError],
                 [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError],
                 [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError],
-                [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError], or
-                [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError].
+                [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError],
+                [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError], or
+                [`ModelSchemaTooComplexError`][pydantic_ai.exceptions.ModelSchemaTooComplexError].
             status_code: The HTTP status code.
             model_name: The name of the model.
             body: The body of the error response.
@@ -1268,6 +1290,10 @@ class _HTTPModelNotFoundError(_CategorizedHTTPError, ModelNotFoundError):
     pass
 
 
+class _HTTPModelSchemaTooComplexError(_CategorizedHTTPError, ModelSchemaTooComplexError):
+    pass
+
+
 _HTTP_CATEGORY_CLASSES: dict[type[ModelAPIError], type[_CategorizedHTTPError]] = {
     ModelRateLimitError: _HTTPModelRateLimitError,
     ModelQuotaExceededError: _HTTPModelQuotaExceededError,
@@ -1279,6 +1305,7 @@ _HTTP_CATEGORY_CLASSES: dict[type[ModelAPIError], type[_CategorizedHTTPError]] =
     ModelRequestRejectedError: _HTTPModelRequestRejectedError,
     ModelAuthenticationError: _HTTPModelAuthenticationError,
     ModelNotFoundError: _HTTPModelNotFoundError,
+    ModelSchemaTooComplexError: _HTTPModelSchemaTooComplexError,
 }
 
 
@@ -1491,11 +1518,13 @@ class DeprecatedModelWarning(UserWarning):
 
     It's emitted each time a model prepares a request it sends, streamed or not, for a model whose profile has a
     [`deprecation`][pydantic_ai.profiles.ModelProfile.deprecation]. The message names the model, its retirement
-    date and the replacement the provider recommends, and links the provider's announcement. Creating the model
-    doesn't warn. Python's warning filters decide how often it's shown.
+    date, the model the provider routes its requests to from then, if any, and the replacement the provider
+    recommends, and links the provider's announcement. Creating the model doesn't warn. Python's warning filters
+    decide how often it's shown.
 
-    The profile is set for models on the Anthropic and OpenAI APIs, including through the Pydantic AI Gateway, and
-    not where another platform, such as Amazon Bedrock, Google Cloud's Vertex AI or Azure, serves the same model on a
+    The profile is set for models on the Anthropic and OpenAI APIs and, for some Google models, on the Gemini API and
+    Google Cloud, each with that API's dates, including through the Pydantic AI Gateway. It isn't set where another
+    platform, such as Amazon Bedrock, Google Cloud's Vertex AI for Claude models or Azure, serves the same model on a
     schedule of its own. See [Deprecated models](../models/overview.md#deprecated-models).
 
     To turn it into an error, use a warnings filter:
