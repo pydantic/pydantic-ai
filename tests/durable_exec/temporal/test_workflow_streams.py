@@ -737,6 +737,8 @@ async def test_unknown_event_kinds_are_skipped(client: Client) -> None:
             "Skipping agent events of unknown kind 'other_future_event' on Workflow Stream topic 'agent_events': they were likely published by a worker running a newer version of Pydantic AI. Upgrade `pydantic-ai` in this consumer to receive them.",
         ]
     )
+    # The warning points at the code iterating the events, so a module-scoped warnings filter matches it.
+    assert {warning.filename for warning in warned} == {__file__}
     assert received[0] == PartStartEvent(index=0, part=TextPart('before'))
     assert _kinds(received) == snapshot(
         [

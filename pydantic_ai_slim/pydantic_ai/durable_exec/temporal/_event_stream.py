@@ -514,7 +514,8 @@ async def _decode_agent_events(
                         'they were likely published by a worker running a newer version of Pydantic AI. '
                         'Upgrade `pydantic-ai` in this consumer to receive them.',
                         UserWarning,
-                        stacklevel=2,
+                        # Past `DurableAgentRunEvents.__anext__`, which resumes this generator, to the consumer.
+                        stacklevel=3,
                     )
                 continue
             yield WorkflowStreamItem(topic=item.topic, data=event, offset=item.offset)
