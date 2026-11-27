@@ -38,6 +38,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 # extra admits both. We only use their shared interfaces, so these unions type them without
 # importing a family that the other generation's installs don't ship.
 from ._http import AsyncHTTPClient, HTTPAuth, HTTPTimeout
+from ._run_context import _CURRENT_RUN_CONTEXT
 from .direct import model_request
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
@@ -1076,6 +1077,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self._telemetry_url_derived_id = None
 
         # Assigned before the client is built: `_build_client` reads it to install the sampling handler.
+        self._sampling_run_context_holder = _SamplingRunContextHolder()
         self.sampling_model = sampling_model
         if isinstance(client, FastMCPClient):
             forwarded_values: dict[str, Any] = {
@@ -1268,7 +1270,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         existing session continue using the previously configured handler.
         """
         self.sampling_model = model
-        self.client.set_sampling_callback(_build_sampling_handler(model))  # pyright: ignore[reportUnknownMemberType]
+        self.client.set_sampling_callback(_build_sampling_handler(model, self._sampling_run_context_holder))  # pyright: ignore[reportUnknownMemberType]
 
     def _build_client(
         self, *, auth: HTTPAuth | Literal['oauth'] | str | None, headers: dict[str, str] | None
@@ -1287,7 +1289,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         sampling_handler = options['sampling_handler']
         if self.sampling_model is not None:
             # `set_sampling_model` replaces the handler passed to `__init__`, if there was one.
-            sampling_handler = _build_sampling_handler(self.sampling_model)
+            sampling_handler = _build_sampling_handler(self.sampling_model, self._sampling_run_context_holder)
         return FastMCPClient[Any](
             transport=transport,
             sampling_handler=sampling_handler,
@@ -1331,6 +1333,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         run_toolset = copy.copy(self)
         # The copy binds a lock of its own on first use instead of sharing the template's.
         vars(run_toolset).pop('_enter_lock', None)
+        run_toolset._sampling_run_context_holder = _SamplingRunContextHolder()
         run_toolset._auth_func = None
         run_toolset._headers_func = None
         run_toolset.client = run_toolset._build_client(auth=auth, headers=headers)
@@ -1691,11 +1694,12 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         use_task = bool((tool.tool_def.metadata or {}).get('task'))
         resource_uri = _app_resource_uri(tool.tool_def)
         if resource_uri is None:
-            if self.process_tool_call is not None:
-                return await self.process_tool_call(
-                    ctx, functools.partial(self.direct_call_tool, use_task=use_task), name, tool_args
-                )
-            return await self.direct_call_tool(name, tool_args, use_task=use_task)
+            async with self._sampling_run_context_holder.capture(ctx, enabled=self.sampling_model is not None):
+                if self.process_tool_call is not None:
+                    return await self.process_tool_call(
+                        ctx, functools.partial(self.direct_call_tool, use_task=use_task), name, tool_args
+                    )
+                return await self.direct_call_tool(name, tool_args, use_task=use_task)
 
         # Tools without a UI keep calling `direct_call_tool`, which subclasses and tests may replace. App tools
         # take the same steps, but also keep the raw result of this tool's call: a hook only sees the value mapped
@@ -1707,7 +1711,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             name: str, args: dict[str, Any], *, metadata: dict[str, Any] | None = None
         ) -> ToolResult:
             nonlocal sent
-            result = await self._call_tool_checked(name, args, metadata=metadata, use_task=use_task)
+            async with self._sampling_run_context_holder.capture(ctx, enabled=self.sampling_model is not None):
+                result = await self._call_tool_checked(name, args, metadata=metadata, use_task=use_task)
             if name == tool_name:
                 # A copy, as the mapped value shares objects with the result and a hook may edit it in place.
                 sent = copy.deepcopy(result)
@@ -2111,7 +2116,31 @@ class _BorrowedHTTPClient:
         return attr
 
 
-def _build_sampling_handler(sampling_model: models.Model) -> SamplingHandler[Any, Any]:
+class _SamplingRunContextHolder:
+    def __init__(self) -> None:
+        self.run_context: RunContext[Any] | None = None
+        self._lock: anyio.abc.Lock | None = None
+
+    @asynccontextmanager
+    async def capture(self, run_context: RunContext[Any], *, enabled: bool) -> AsyncGenerator[None]:
+        if not enabled:
+            yield
+            return
+        lock = self._lock
+        if lock is None:
+            lock = anyio.Lock()
+            self._lock = lock
+        async with lock:
+            self.run_context = run_context
+            try:
+                yield
+            finally:
+                self.run_context = None
+
+
+def _build_sampling_handler(
+    sampling_model: models.Model, run_context_holder: _SamplingRunContextHolder
+) -> SamplingHandler[Any, Any]:
     """Build a FastMCP-shaped sampling handler that delegates to a Pydantic AI model."""
 
     async def handler(
@@ -2128,8 +2157,12 @@ def _build_sampling_handler(sampling_model: models.Model) -> SamplingHandler[Any
             model_settings['stop_sequences'] = stop_sequences
 
         # The server chose these `stop_sequences`, not the user, so a sampling model that ignores them doesn't warn.
-        with suppress_unsupported_setting_warnings(['stop_sequences'] if stop_sequences is not None else []):
-            model_response = await model_request(sampling_model, pai_messages, model_settings=model_settings)
+        token = _CURRENT_RUN_CONTEXT.set(run_context_holder.run_context)
+        try:
+            with suppress_unsupported_setting_warnings(['stop_sequences'] if stop_sequences is not None else []):
+                model_response = await model_request(sampling_model, pai_messages, model_settings=model_settings)
+        finally:
+            _CURRENT_RUN_CONTEXT.reset(token)
         return mcp_types.CreateMessageResult(
             role='assistant',
             content=_mcp.map_from_model_response(model_response),

@@ -3111,6 +3111,7 @@ def as_modern_mcp_session(monkeypatch: pytest.MonkeyPatch, as_mcp_sdk_v2: None) 
 
 
 @pytest.fixture
+@pytest.mark.skipif(TASK_SERVER_UNAVAILABLE, reason='fastmcp-tasks not installed')
 def as_legacy_mcp_session(monkeypatch: pytest.MonkeyPatch) -> None:
     """Present the connected client as a handshake-era session."""
     init_result = mcp_types.InitializeResult.model_validate(
@@ -3123,7 +3124,110 @@ def as_legacy_mcp_session(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(Client, 'initialize_result', property(lambda self: init_result))
 
 
-@pytest.mark.skipif(TASK_SERVER_UNAVAILABLE, reason='fastmcp-tasks not installed')
+SERVER_CODE = """
+from fastmcp import Context, FastMCP
+from mcp.types import SamplingMessage, TextContent
+
+mcp = FastMCP('sampling-test')
+
+@mcp.tool
+async def sample(ctx: Context) -> str:
+    try:
+        response = await ctx.session.create_message(
+            messages=[
+                SamplingMessage(
+                    role='user',
+                    content=TextContent(type='text', text='sample this'),
+                )
+            ],
+            max_tokens=16,
+        )
+    except Exception as exc:
+        return f'Sampling failed: {exc}'
+    return response.content.text
+
+mcp.run()
+"""
+
+
+def make_stdio_sampling_client() -> Client[Any]:
+    transport = StdioTransport(command=sys.executable, args=['-c', SERVER_CODE])
+    try:
+        return Client(transport, mode='legacy')
+    except TypeError:
+        return Client(transport)
+
+
+def make_sampling_toolset(client: Client[Any], sampling_limiter: Any) -> MCPToolset:
+    from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
+
+    toolset = MCPToolset(client)
+    toolset.set_sampling_model(
+        ConcurrencyLimitedModel(TestModel(custom_output_text='sampled response'), sampling_limiter)
+    )
+    return toolset
+
+
+def tool_return_contents(result: Any) -> list[str]:
+    return [
+        part.content
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and isinstance(part.content, str)
+    ]
+
+
+@pytest.mark.subprocess(reason='serves an MCP sampling server over stdio from a separate process')
+async def test_shared_limiter_sampling_handler_raises_user_error() -> None:
+    """Sampling through the limiter the agent already holds raises the distinct-limiter UserError."""
+    from pydantic_ai.concurrency import ConcurrencyLimiter
+
+    limiter = ConcurrencyLimiter(max_running=1)
+    client = make_stdio_sampling_client()
+    toolset = make_sampling_toolset(client, limiter)
+    agent = Agent(TestModel(call_tools=['sample']), toolsets=[toolset], max_concurrency=limiter)
+
+    with anyio.fail_after(10):
+        result = await agent.run('test')
+
+    assert any('limiter' in content.lower() for content in tool_return_contents(result))
+
+
+@pytest.mark.subprocess(reason='serves an MCP sampling server over stdio from a separate process')
+async def test_shared_limiter_sampling_handler_agent_lifecycle_raises_user_error() -> None:
+    """The distinct-limiter guard also fires while the agent is entered as a context manager."""
+    from pydantic_ai.concurrency import ConcurrencyLimiter
+
+    limiter = ConcurrencyLimiter(max_running=1)
+    client = make_stdio_sampling_client()
+    toolset = make_sampling_toolset(client, limiter)
+    agent = Agent(TestModel(call_tools=['sample']), toolsets=[toolset], max_concurrency=limiter)
+
+    with anyio.fail_after(10):
+        async with agent:
+            result = await agent.run('test')
+
+    assert any('limiter' in content.lower() for content in tool_return_contents(result))
+
+
+@pytest.mark.subprocess(reason='serves an MCP sampling server over stdio from a separate process')
+async def test_distinct_limiter_sampling_model_round_trip_completes() -> None:
+    """With separate agent and sampling limiters the sampling round trip completes."""
+    from pydantic_ai.concurrency import ConcurrencyLimiter
+
+    agent_limiter = ConcurrencyLimiter(max_running=1)
+    sampling_limiter = ConcurrencyLimiter(max_running=1)
+    client = make_stdio_sampling_client()
+    toolset = make_sampling_toolset(client, sampling_limiter)
+    agent = Agent(TestModel(call_tools=['sample']), toolsets=[toolset], max_concurrency=agent_limiter)
+
+    with anyio.fail_after(10):
+        result = await agent.run('test')
+
+    assert any('sampled response' in content for content in tool_return_contents(result))
+    assert not any('limiter' in content.lower() for content in tool_return_contents(result))
+
+
 class TestMCPToolsetBackgroundTasks:
     """Task-augmented execution across both generations.
 
