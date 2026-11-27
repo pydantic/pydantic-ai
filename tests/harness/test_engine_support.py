@@ -308,3 +308,39 @@ def test_the_compatibility_page_is_current(capsys: pytest.CaptureFixture[str]) -
     for engine in ENGINES:
         _table(engine)
     assert durable_exec_support.main([]) == 0, capsys.readouterr().err
+
+
+def _harness_modules_needing(extra: str) -> set[str]:
+    """The imported Harness modules that import `extra`, directly or through another Harness module."""
+    harness = {name: module for name, module in sys.modules.items() if name.split('.')[0] == 'pydantic_ai_harness'}
+
+    def references(module: ModuleType) -> set[str]:
+        names = (
+            value.__name__ if isinstance(value, ModuleType) else getattr(value, '__module__', None)
+            for value in vars(module).values()
+        )
+        return {name for name in names if isinstance(name, str)}
+
+    needing = {
+        name for name, module in harness.items() if any(ref.split('.')[0] == extra for ref in references(module))
+    }
+    while added := {name for name, module in harness.items() if name not in needing and references(module) & needing}:
+        needing |= added
+    return needing
+
+
+@pytest.mark.parametrize(
+    'extra', ['pydantic_monty', 'yaml', 'json_repair', 'PIL', 'jupyter_client', 'stackone_defender']
+)
+def test_the_harness_conformance_module_imports_without_an_extra(extra: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A missing extra skips only the cases that need it, so `pydantic_ai_harness.conformance` imports without it.
+
+    The module is imported again with the extra unavailable, and every Harness module that needs it forgotten, so a
+    top-level import of one of them fails here. Nothing else is imported again, which would register its event types
+    twice. It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
+    """
+    for name in {'pydantic_ai_harness.conformance', *_harness_modules_needing(extra)}:
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    # `None` in `sys.modules` makes importing the module raise `ModuleNotFoundError`, as when it isn't installed.
+    monkeypatch.setitem(sys.modules, extra, None)
+    importlib.import_module('pydantic_ai_harness.conformance')

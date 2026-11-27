@@ -33,10 +33,10 @@ from pydantic_ai.durable_exec.conformance import (
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import ToolSelector
 
+# A capability whose module needs an extra is imported in its builder instead, so this module imports without the
+# extra, and a suite skips only that capability's case.
 from .background_tools import BackgroundTools
 from .capability_creation import CapabilityCreation, CapabilityStore
-from .code_mode import CodeMode
-from .coder import Coder
 from .compaction import CompactOnRequest, DeduplicateFileReads, PruneToolResults, SlidingWindowCompaction
 from .conversation_search import ConversationSearch, SnapshotHistorySource
 from .file_system import FileSystem
@@ -46,11 +46,9 @@ from .memory import InMemoryMemoryStore, Memory
 from .permissions import PermissionRule, Permissions
 from .planning import Planning, SqlitePlanStore
 from .pydantic_ai_docs import PydanticAIDocs
-from .repair_tool_arguments import RepairToolArguments
 from .repo_context import RepoContext
 from .report_tool_errors import ReportToolErrors
 from .shell import Shell
-from .skills import Skills
 from .step_persistence import InMemoryStepStore, StepPersistence
 from .tool_bridge import ToolBridge
 from .tool_budgets import ToolBudgets
@@ -68,6 +66,8 @@ def _workspace(build: Callable[[], AbstractCapability[None]]) -> CapabilityBuild
 
 def _skills(directory: Path) -> list[AbstractCapability[None]]:
     """`Skills` over a library with one `weather` skill, in a local workspace."""
+    from .skills import Skills  # `[skills]`
+
     skill = directory / 'skills' / 'weather'
     skill.mkdir(parents=True)
     (skill / 'SKILL.md').write_text('---\ndescription: Report the weather.\n---\n\nSay sunny.\n')
@@ -85,6 +85,8 @@ def _coder_repo(directory: Path) -> list[AbstractCapability[None]]:
     Its `.git` ends the walk up for the repo root, which would otherwise make a workspace call per parent directory,
     so the units its calls record depend on how deep the directory is.
     """
+    from .coder import Coder  # `[coder]`
+
     (directory / '.git').mkdir()
     return [Coder(), LocalWorkspace(directory)]
 
@@ -160,16 +162,26 @@ def _background_echo(_: Path) -> list[AbstractCapability[None]]:
 
 
 def _prompt_injection_defender() -> AbstractCapability[None]:
-    # Imported here, as `stackone_defender` is an optional dependency. It declares durable operations and no default
-    # id, so a durable agent needs one given.
-    from .prompt_injection_defender import PromptInjectionDefender
+    from .prompt_injection_defender import PromptInjectionDefender  # `[prompt-injection-defender]`
 
+    # It declares durable operations and no default id, so a durable agent needs one given.
     return PromptInjectionDefender(id='prompt_injection_defender')
 
 
+def _code_mode() -> AbstractCapability[None]:
+    from .code_mode import CodeMode  # `[code-mode]`
+
+    return CodeMode()
+
+
+def _repair_tool_arguments() -> AbstractCapability[None]:
+    from .repair_tool_arguments import RepairToolArguments  # `[repair-tool-arguments]`, or `[coder]`
+
+    return RepairToolArguments()
+
+
 def _ipython_code_mode(tools: ToolSelector[None] = ()) -> AbstractCapability[None]:
-    # Imported here, as `jupyter_client` is an optional dependency.
-    from .ipython_code_mode import IPythonCodeMode
+    from .ipython_code_mode import IPythonCodeMode  # `[ipython]`
 
     return IPythonCodeMode(tools=tools)
 
@@ -195,7 +207,7 @@ CALLS: Mapping[str, Calls] = {
     'CodeMode': Calls(
         # The program calls `echo` through the sandbox, which dispatches it to the host tool.
         (('run_code', {'code': "await echo(text='hi')"}),),
-        build=_with_echo(CodeMode),
+        build=_with_echo(_code_mode),
     ),
     'Coder': Calls(_FILE_EDITS, build=_coder_repo),
     'CompactOnRequest': Calls(
@@ -253,7 +265,7 @@ CALLS: Mapping[str, Calls] = {
         build=lambda _: [PruneToolResults()],
     ),
     'PydanticAIDocs': Calls((('read_pyai_docs', {'topic': 'hooks'}),), build=_pydantic_ai_docs),
-    'RepairToolArguments': Calls(_ECHO, build=_with_echo(RepairToolArguments)),
+    'RepairToolArguments': Calls(_ECHO, build=_with_echo(_repair_tool_arguments)),
     # Reading a file in `src` also states the instruction file nested there. Its inventory tool steps aside for
     # `read_file`, which the nested instructions need.
     'RepoContext': Calls((('read_file', {'path': 'src/app.py'}),), build=_nested_repo_context),
