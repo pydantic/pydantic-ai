@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Literal
 
 import pytest
 from inline_snapshot import snapshot
@@ -200,8 +200,8 @@ def test_a_hook_that_replaces_the_content_keeps_it_data_attributed_to_the_call()
             call: ToolCallPart,
             tool_def: ToolDefinition,
             args: ValidatedToolArgs,
-            result: Any,
-        ) -> Any:
+            result: object,
+        ) -> object:
             return ToolReturn(return_value='replaced', content=['replaced by a hook'])
 
     agent = Agent(deps_type=type(None), tools=[fetch_page], capabilities=[Replace()])

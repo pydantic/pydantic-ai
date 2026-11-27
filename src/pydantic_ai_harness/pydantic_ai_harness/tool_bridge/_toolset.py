@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass, field, replace
-from typing import Any, cast
+from typing import Any
 
 from pydantic import TypeAdapter
 from typing_extensions import TypedDict
@@ -21,12 +21,13 @@ from pydantic_ai.exceptions import (
     ToolRetryError,
     UserError,
 )
-from pydantic_ai.messages import ToolCallPart, ToolKind, ToolReturn, ToolReturnPart
+from pydantic_ai.messages import ToolCallPart, ToolKind, ToolReturnPart
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets import WrapperToolset
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 from pydantic_ai_harness._code_tools import is_code_execution_tool, reserve_nested_call
+from pydantic_ai_harness._typeguards import is_tool_return
 
 SEARCH_TOOL_NAME = 'tool_search'
 DESCRIBE_TOOL_NAME = 'tool_describe'
@@ -262,13 +263,12 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
             raise ToolFailed(exc.tool_failed.model_response_str(wrap_if_error=False)) from exc
         finally:
             ctx.usage.tool_calls -= reserved
-        if not isinstance(result, ToolReturn):
+        if not is_tool_return(result):
             return result
         # The bridged tool's content keeps naming that tool, and the capability that contributed it, rather than
         # becoming `tool_call`'s own.
-        tool_return = cast(ToolReturn[Any], result)
         tool_def = manager.get_tool_def(name)
         attachments = tool_result_attachments(
-            tool_return, call=call, capability_id=tool_def.capability_id if tool_def is not None else None
+            result, call=call, capability_id=tool_def.capability_id if tool_def is not None else None
         )
-        return replace(tool_return, content=None, attachments=attachments)
+        return replace(result, content=None, attachments=attachments)
