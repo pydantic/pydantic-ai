@@ -753,7 +753,9 @@ jobs:
     runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:
-      fail-fast: false
+      # Lets a merge group's companion `cancel-after-` job act on the first failed leg; pull
+      # requests run every leg.
+      fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
         # `latest-versions-canary.yml` runs the endpoints of this list; update it alongside.
         # Growing this or any other test matrix grows the tracked-job count that
@@ -1049,7 +1051,9 @@ jobs:
     runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 20
     strategy:
-      fail-fast: false
+      # Lets a merge group's companion `cancel-after-` job act on the first failed leg; pull
+      # requests run every leg.
+      fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
         shard: ${{ fromJSON(needs.classify.outputs.harness_only == 'true' && '[1]' || '[1, 2]') }}
@@ -1310,7 +1314,9 @@ jobs:
     runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     strategy:
-      fail-fast: false
+      # Lets a merge group's companion `cancel-after-` job act on the first failed leg; pull
+      # requests run every leg.
+      fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
         resolution: [locked, lowest]
@@ -1498,7 +1504,9 @@ jobs:
     runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:
-      fail-fast: false
+      # Lets a merge group's companion `cancel-after-` job act on the first failed leg; pull
+      # requests run every leg.
+      fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
         # No 3.15: our declared minimums (pydantic-core 2.41, numpy 2.3, tiktoken 0.12, ...) have no 3.15 wheels.
         python-version: ["3.11", "3.12", "3.13", "3.14"]
@@ -1676,7 +1684,9 @@ jobs:
     runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     strategy:
-      fail-fast: false
+      # Lets a merge group's companion `cancel-after-` job act on the first failed leg; pull
+      # requests run every leg.
+      fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
         # No 3.15: the examples need duckdb and datasets, which are skipped there (see `examples/pyproject.toml`).
         python-version: ["3.11", "3.12", "3.13", "3.14"]
@@ -1768,7 +1778,9 @@ jobs:
     runs-on: ${{ matrix.os == 'ubuntu-latest' && vars.CI_LINUX_RUNNER || matrix.os }}
     timeout-minutes: 15
     strategy:
-      fail-fast: false
+      # Lets a merge group's companion `cancel-after-` job act on the first failed leg; pull
+      # requests run every leg.
+      fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     env:
@@ -1882,7 +1894,9 @@ jobs:
     runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     strategy:
-      fail-fast: false
+      # Lets a merge group's companion `cancel-after-` job act on the first failed leg; pull
+      # requests run every leg.
+      fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
         fastmcp:
           # The `[mcp]` extra's floor. `pydantic-ai-pax` requires FastMCP 3.4.0 or later.
@@ -2390,6 +2404,187 @@ jobs:
       - run: uv run --no-sync strict-no-cover
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage
+
+  # A merge group's `check` waits for every job it needs, so a failure would otherwise hold the queue
+  # until the slowest job ends, and the queue keeps every build slot until then. Each job `check`
+  # needs has a `cancel-after-` job that cancels the run once it fails or times out in a merge group;
+  # `check` runs `if: always()`, so it then reports the failure at once and the queue rebuilds the
+  # groups behind it. Each matrix job fails fast in a merge group, so its companion acts on the
+  # first failed leg. These jobs run no repository code, so they alone hold `actions: write`.
+  # A run that is already cancelled skips them. Pull requests skip them and run every job.
+
+  cancel-after-quality:
+    needs: quality
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.quality.result == 'failure' || needs.quality.result == 'cancelled') }}
+    runs-on: &cancel-runner ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
+    permissions: &cancel-permissions
+      actions: write
+    steps: &cancel-steps
+      - name: Cancel the merge group run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY"
+
+  cancel-after-complexity:
+    needs: complexity
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.complexity.result == 'failure' || needs.complexity.result == 'cancelled') }}
+    runs-on: *cancel-runner
+    permissions: *cancel-permissions
+    steps: *cancel-steps
+
+  cancel-after-mypy:
+    needs: mypy
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.mypy.result == 'failure' || needs.mypy.result == 'cancelled') }}
+    runs-on: *cancel-runner
+    permissions: *cancel-permissions
+    steps: *cancel-steps
+
+  cancel-after-docs-assets:
+    needs: docs-assets
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.docs-assets.result == 'failure' || needs.docs-assets.result == 'cancelled') }}
+    runs-on: *cancel-runner
+    permissions: *cancel-permissions
+    steps: *cancel-steps
+
+  cancel-after-docs-only:
+    needs: docs-only
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.docs-only.result == 'failure' || needs.docs-only.result == 'cancelled') }}
+    runs-on: *cancel-runner
+    permissions: *cancel-permissions
+    steps: *cancel-steps
+
+  cancel-after-content-checks:
+    needs: content-checks
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.content-checks.result == 'failure' || needs.content-checks.result == 'cancelled') }}
+    runs-on: *cancel-runner
+    permissions: *cancel-permissions
+    steps: *cancel-steps
+
+  cancel-after-test:
+    needs: test
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.test.result == 'failure' || needs.test.result == 'cancelled') }}
+    runs-on: *cancel-runner
+    permissions: *cancel-permissions
+    steps: *cancel-steps
+
+  cancel-after-test-all-extras:
+    needs: test-all-extras
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.test-all-extras.result == 'failure' || needs.test-all-extras.result == 'cancelled') }}
+    runs-on: *cancel-runner
+    permissions: *cancel-permissions
+    steps: *cancel-steps
+
+  cancel-after-test-durable-exec:
+    needs: test-durable-exec
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.test-durable-exec.result == 'failure' || needs.test-durable-exec.result == 'cancelled') }}
+    runs-on: *cancel-runner
+    permissions: *cancel-permissions
+    steps: *cancel-steps
+
+  cancel-after-test-lowest-versions:
+    needs: test-lowest-versions
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.test-lowest-versions.result == 'failure' || needs.test-lowest-versions.result == 'cancelled') }}
+    runs-on: *cancel-runner
+    permissions: *cancel-permissions
+    steps: *cancel-steps
+
+  cancel-after-test-temporal-latest:
+    needs: test-temporal-latest
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.test-temporal-latest.result == 'failure' || needs.test-temporal-latest.result == 'cancelled') }}
+    runs-on: *cancel-runner
+    permissions: *cancel-permissions
+    steps: *cancel-steps
+
+  cancel-after-test-examples:
+    needs: test-examples
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.test-examples.result == 'failure' || needs.test-examples.result == 'cancelled') }}
+    runs-on: *cancel-runner
+    permissions: *cancel-permissions
+    steps: *cancel-steps
+
+  cancel-after-test-fastmcp-3:
+    needs: test-fastmcp-3
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.test-fastmcp-3.result == 'failure' || needs.test-fastmcp-3.result == 'cancelled') }}
+    runs-on: *cancel-runner
+    permissions: *cancel-permissions
+    steps: *cancel-steps
+
+  cancel-after-test-harness-browser-use:
+    needs: test-harness-browser-use
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.test-harness-browser-use.result == 'failure' || needs.test-harness-browser-use.result == 'cancelled') }}
+    runs-on: *cancel-runner
+    permissions: *cancel-permissions
+    steps: *cancel-steps
+
+  cancel-after-test-clai2-clipboard:
+    needs: test-clai2-clipboard
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.test-clai2-clipboard.result == 'failure' || needs.test-clai2-clipboard.result == 'cancelled') }}
+    runs-on: *cancel-runner
+    permissions: *cancel-permissions
+    steps: *cancel-steps
+
+  cancel-after-test-windows-workspace:
+    needs: test-windows-workspace
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.test-windows-workspace.result == 'failure' || needs.test-windows-workspace.result == 'cancelled') }}
+    runs-on: *cancel-runner
+    permissions: *cancel-permissions
+    steps: *cancel-steps
+
+  cancel-after-test-clai2-web:
+    needs: test-clai2-web
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.test-clai2-web.result == 'failure' || needs.test-clai2-web.result == 'cancelled') }}
+    runs-on: *cancel-runner
+    permissions: *cancel-permissions
+    steps: *cancel-steps
+
+  cancel-after-harness-localstack-integration:
+    needs: harness-localstack-integration
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.harness-localstack-integration.result == 'failure' || needs.harness-localstack-integration.result == 'cancelled') }}
+    runs-on: *cancel-runner
+    permissions: *cancel-permissions
+    steps: *cancel-steps
+
+  cancel-after-harness-mongodb-integration:
+    needs: harness-mongodb-integration
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.harness-mongodb-integration.result == 'failure' || needs.harness-mongodb-integration.result == 'cancelled') }}
+    runs-on: *cancel-runner
+    permissions: *cancel-permissions
+    steps: *cancel-steps
+
+  cancel-after-harness-postgres-integration:
+    needs: harness-postgres-integration
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.harness-postgres-integration.result == 'failure' || needs.harness-postgres-integration.result == 'cancelled') }}
+    runs-on: *cancel-runner
+    permissions: *cancel-permissions
+    steps: *cancel-steps
+
+  cancel-after-harness-redis-integration:
+    needs: harness-redis-integration
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.harness-redis-integration.result == 'failure' || needs.harness-redis-integration.result == 'cancelled') }}
+    runs-on: *cancel-runner
+    permissions: *cancel-permissions
+    steps: *cancel-steps
+
+  cancel-after-harness-azure-durable-task-integration:
+    needs: harness-azure-durable-task-integration
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.harness-azure-durable-task-integration.result == 'failure' || needs.harness-azure-durable-task-integration.result == 'cancelled') }}
+    runs-on: *cancel-runner
+    permissions: *cancel-permissions
+    steps: *cancel-steps
+
+  cancel-after-harness-kubernetes-integration:
+    needs: harness-kubernetes-integration
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.harness-kubernetes-integration.result == 'failure' || needs.harness-kubernetes-integration.result == 'cancelled') }}
+    runs-on: *cancel-runner
+    permissions: *cancel-permissions
+    steps: *cancel-steps
+
+  cancel-after-harness-bubblewrap-integration:
+    needs: harness-bubblewrap-integration
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && (needs.harness-bubblewrap-integration.result == 'failure' || needs.harness-bubblewrap-integration.result == 'cancelled') }}
+    runs-on: *cancel-runner
+    permissions: *cancel-permissions
+    steps: *cancel-steps
 
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:

@@ -46,6 +46,10 @@ BenchmarkJob = TypedDict('BenchmarkJob', {'needs': str, 'if': str})
 ConditionalJob = TypedDict('ConditionalJob', {'if': str})
 
 
+class JobStrategy(TypedDict, total=False):
+    strategy: dict[str, object]
+
+
 class DependentJob(TypedDict, total=False):
     needs: str | list[str]
 
@@ -60,6 +64,7 @@ DEPENDENT_JOB_ADAPTER: TypeAdapter[DependentJob] = TypeAdapter(DependentJob)
 JOB_ADAPTER: TypeAdapter[dict[str, object]] = TypeAdapter(dict[str, object])
 SERVICES_ADAPTER: TypeAdapter[dict[str, dict[str, object]]] = TypeAdapter(dict[str, dict[str, object]])
 STRING_ADAPTER: TypeAdapter[str] = TypeAdapter(str)
+STRATEGY_ADAPTER: TypeAdapter[JobStrategy] = TypeAdapter(JobStrategy)
 
 
 def _workflow(path: Path = WORKFLOW) -> Workflow:
@@ -740,6 +745,40 @@ def test_ci_service_images_are_pinned_by_digest():
         for service in _services(job).values():
             image = STRING_ADAPTER.validate_python(service['image'])
             assert re.fullmatch(r'[^\s@]+:[^\s@]+@sha256:[0-9a-f]{64}', image), name
+
+
+def test_merge_group_cancels_the_run_once_a_job_check_needs_fails():
+    """Each job `check` needs has a companion that cancels a merge group's run once it fails or times out.
+
+    `check` runs `if: always()`, so it then reports the failure at once instead of after the slowest job.
+    """
+    jobs = _workflow()['jobs']
+    # `classify` gates every job, so its failure skips the rest at once; `harness-integration-changes` only lists
+    # paths; `coverage` runs last, with nothing left to cancel.
+    exempt = {'classify', 'harness-integration-changes', 'coverage'}
+    needed = set(CHECK_JOB_ADAPTER.validate_python(jobs['check'])['needs']) - exempt
+    companions = {name for name in jobs if name.startswith('cancel-after-')}
+    assert companions == {f'cancel-after-{name}' for name in needed}
+    for name in sorted(needed):
+        companion = JOB_ADAPTER.validate_python(jobs[f'cancel-after-{name}'])
+        assert companion['needs'] == name
+        assert companion['if'] == (
+            f"${{{{ !cancelled() && github.event_name == 'merge_group' && "
+            f"(needs.{name}.result == 'failure' || needs.{name}.result == 'cancelled') }}}}"
+        )
+        # It runs no repository code, so it alone holds `actions: write`.
+        assert companion['permissions'] == {'actions': 'write'}
+        assert JOB_STEPS_ADAPTER.validate_python(companion)['steps'] == [
+            {
+                'name': 'Cancel the merge group run',
+                'env': {'GH_TOKEN': '${{ github.token }}'},
+                'run': 'gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY"',
+            }
+        ]
+        # A companion acts once its whole job has finished, so a matrix stops at its first failed leg.
+        strategy = STRATEGY_ADAPTER.validate_python(jobs[name]).get('strategy')
+        if strategy is not None:
+            assert strategy.get('fail-fast') == "${{ github.event_name == 'merge_group' }}", name
 
 
 def test_live_service_images_daily_runs_the_ci_jobs_on_their_floating_tags():
