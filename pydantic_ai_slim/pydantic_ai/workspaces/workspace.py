@@ -758,7 +758,9 @@ class Workspace(WorkspaceBackend):
         if isinstance(path, FileCitationSource):
             name = path.location.path
             if (target := await self._real_path_in_working_dir(name)) is None:
-                raise PermissionError(f'{name!r} is not inside the working directory')
+                raise PermissionError(
+                    f'{name!r} is not inside the working directory, or the backend cannot resolve symlinks to check'
+                )
         else:
             name = target = path
         data = await self.read_bytes(target)
