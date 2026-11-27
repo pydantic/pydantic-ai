@@ -390,8 +390,8 @@ class ConversationStore(ABC):
             record is not None
             and window is not None
             and shared < len(history)
-            # Messages that all match the first stored ones are a history cut short, which cleaning never makes.
-            and shared < len(messages)
+            # A run's conversation holds at least as many messages as its index says, so fewer are a cut, not cleaning.
+            and len(messages) >= window
             and await self._sent_as_cleaned(record, history, messages[:window])
         ):
             return record.head_id, messages[window:], branches

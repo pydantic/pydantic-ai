@@ -1760,6 +1760,30 @@ async def test_dropping_the_last_of_two_identical_turns_is_saved() -> None:
     assert len(record.branches) == 1
 
 
+async def test_dropping_the_oldest_turn_is_saved() -> None:
+    """Cutting the oldest turns, so the messages kept are the stored tail, isn't mistaken for the history a run cleaned."""
+    store = InMemoryConversationStore()
+    messages = [
+        ModelRequest(parts=[UserPromptPart('one')]),
+        ModelResponse(parts=[TextPart('a')]),
+        ModelRequest(parts=[UserPromptPart('two')]),
+        ModelResponse(parts=[TextPart('b')]),
+    ]
+    await store.save(Conversation(conversation_id='c', messages=messages))
+    loaded = await store.load('c')
+    assert loaded is not None
+
+    loaded.messages = loaded.messages[2:]
+    await store.save(loaded)
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert reloaded.messages == messages[2:]
+    record = await store.read_record('c')
+    assert record is not None
+    assert len(record.branches) == 1
+
+
 @dataclasses.dataclass
 class _Answer:
     text: str
