@@ -26,8 +26,6 @@ from ...messages import (
     CompactionPart,
     FilePart,
     FileUrl,
-    InstructionBaselinePart,
-    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -69,7 +67,6 @@ from .. import (
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
-    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
@@ -636,10 +633,6 @@ class GoogleInteractionsModel(Model[Client]):
                 result, files = await self._map_tool_return(part, context)
                 context.steps.append(result)
                 context.tool_files.extend(files)
-            case InstructionBaselinePart() | InstructionDeltaPart():
-                raise _unprojected_instruction_delta_error()
-            case SpeechPart():
-                raise _unconverted_speech_part_error()
             case _:
                 assert_never(part)
 
