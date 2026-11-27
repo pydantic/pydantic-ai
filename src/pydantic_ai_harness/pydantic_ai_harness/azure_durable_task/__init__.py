@@ -7,8 +7,10 @@ except ImportError as _import_error:
 
 from ._bridge import run_durable
 from ._capability import AzureDurableTaskDurability
+from ._continue_as_new import ContinueAsNew
 
 __all__ = (
     'AzureDurableTaskDurability',
+    'ContinueAsNew',
     'run_durable',
 )
