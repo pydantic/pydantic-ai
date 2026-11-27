@@ -302,7 +302,7 @@ def test_install_pins_pax_and_installs_spec_extra_for_yaml_agents() -> None:
         for line in step.run.splitlines()
         if line.strip().startswith('python3 -P -m pip install ')
         for argument in shlex.split(line)
-        if argument.startswith(('pydantic-ai-harness[coder]==', 'pydantic-ai-pax=='))
+        if argument.startswith(('pydantic-ai-harness[coder]==', 'pydantic-ai-pax==', 'pydantic-clai2=='))
     ]
     assert harness_requirements == [
         'pydantic-ai-harness[coder]==${GH_AW_ENGINE_VERSION}',
