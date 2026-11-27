@@ -4452,10 +4452,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         them only describes it.
         """
         fill_response_cost(response)
-        billed = response
-        if request_context is not None:
-            billed = _billed_by_request(response, request_context.messages)
-        billed = _without_described(billed, described)
+        billed = _without_described(
+            response if request_context is None else _billed_by_request(response, request_context.messages), described
+        )
         if request_context is not None:
             request_context._usage_response_ledger.responses.append(billed)  # pyright: ignore[reportPrivateUsage]
         _record_billed_usage(ctx.state.usage, billed)
