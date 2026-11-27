@@ -1081,6 +1081,9 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
 
         For a realtime session, the result is produced when the session closes; a transformed result
         becomes `session.result` before the caller leaves the `async with` boundary.
+
+        A [`compact_history()`][pydantic_ai.agent.AbstractAgent.compact_history] run ends after its compaction
+        step without a model response, so its result's `output` is `None`, whatever the agent's `output_type`.
         """
         return result
 
@@ -1094,6 +1097,10 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
 
         `handler()` runs `before_run`, the run body with `on_run_error` recovery, and
         `after_run`. Returning without calling `handler()` skips that lifecycle.
+
+        The result `handler()` returns for a
+        [`compact_history()`][pydantic_ai.agent.AbstractAgent.compact_history] run has an `output` of `None`,
+        whatever the agent's `output_type`: that run ends after its compaction step without a model response.
 
         If `handler()` raises and this method catches the exception and returns a result instead,
         the error is suppressed and the recovery result is used directly without `after_run`.

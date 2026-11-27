@@ -6,6 +6,7 @@ standing in for a provider, none of which is sent a request.
 
 from __future__ import annotations
 
+import copy
 from collections.abc import AsyncIterable
 from dataclasses import dataclass, field
 from typing import Any
@@ -489,3 +490,79 @@ async def test_a_message_a_hook_enqueues_is_kept_and_the_added_request_isnt(comp
         assert result.all_messages()[:-1] == given
         assert result.compactions == []
         assert result.new_messages() == [remembered]
+
+
+@pytest.mark.parametrize('result_shape', ['copied-tail', 'merged-summary'])
+async def test_a_handler_that_doesnt_return_the_added_request_itself(result_shape: str):
+    """A handler can return a copy of the request it's given, or fold its summary into that request.
+
+    A copy of a kept message is committed as the original, so the added request is still dropped. A summary folded
+    into the added request replaces it: the message holding the summary stays, and only the record of what the
+    compaction replaced loses the added request.
+    """
+
+    class Compact(AbstractCapability[Any]):
+        async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
+            part = CompactionPart(content='summary')
+            messages: list[ModelMessage]
+            if result_shape == 'copied-tail':
+                messages = [
+                    ModelRequest(parts=[part]),
+                    copy.deepcopy(request.messages[-2]),
+                    copy.deepcopy(request.messages[-1]),
+                ]
+            else:
+                messages = [ModelRequest(parts=[part])]
+            return CompactionResult(messages=messages, part=part, handler='compact')
+
+    given = history()
+    result = await Agent(FunctionModel(not_sent), capabilities=[Compact()]).compact_history(given)
+
+    [record] = result.compactions
+    assert record.replaced == given
+    assert record.messages_before == len(given)
+    if result_shape == 'copied-tail':
+        assert result.all_messages() == [ModelRequest(parts=[CompactionPart(content='summary')]), given[-1]]
+        # The kept response is the given one, not the handler's copy.
+        assert result.all_messages()[1] is given[-1]
+        assert (record.messages_after, record.kept_from) == (2, 1)
+    else:
+        assert result.all_messages() == [ModelRequest(parts=[CompactionPart(content='summary')])]
+        assert (record.messages_after, record.kept_from) == (1, 1)
+    assert (record.part_message_index, record.part_index) == (0, 0)
+    assert result.new_messages() == result.all_messages()[:1]
+
+
+@pytest.mark.parametrize('position', ['ahead-of-the-kept-tail', 'ahead-of-the-summary'])
+async def test_a_handler_that_writes_the_added_request_out_ahead_of_what_it_keeps(position: str):
+    """The added request a handler writes out ahead of what it keeps is dropped, and the record's indexes move down.
+
+    A message a hook queued comes after the added request, so it's the request being answered, which the handler keeps.
+    """
+
+    class Remember(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            ctx.enqueue('remember this')
+            return request_context
+
+    class WriteOut(AbstractCapability[Any]):
+        async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
+            *_, added, remembered = request.messages
+            part = CompactionPart(content='summary')
+            summary = ModelRequest(parts=[part])
+            prefix = [summary, added] if position == 'ahead-of-the-kept-tail' else [added, summary]
+            return CompactionResult(messages=[*prefix, remembered], part=part, handler='write-out', kept_from=2)
+
+    given = history()
+    result = await Agent(FunctionModel(not_sent), capabilities=[Remember(), WriteOut()]).compact_history(given)
+
+    assert shapes(result.all_messages()) == snapshot(['ModelRequest: CompactionPart', 'ModelRequest: UserPromptPart'])
+    remembered = result.all_messages()[-1]
+    [record] = result.compactions
+    assert (record.messages_before, record.messages_after, record.kept_from) == (len(given) + 1, 2, 1)
+    assert (record.part_message_index, record.part_index) == (0, 0)
+    assert record.replaced == [*given, remembered]
+    assert record.summarized == given
+    assert result.new_messages() == result.all_messages()
