@@ -1,9 +1,11 @@
 import gc
+import inspect
 import json
 import os
 import re
 import subprocess
 import sys
+import textwrap
 import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import fields, replace
@@ -33,6 +35,7 @@ from pydantic_ai import (
     DocumentCitationSource,
     DocumentUrl,
     FilePart,
+    FinalResultEvent,
     ImageUrl,
     InstructionPart,
     InstrumentationSettings,
@@ -41,11 +44,14 @@ from pydantic_ai import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    ModelResponseOrigin,
     ModelRetry,
     MultiModalContent,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
     RequestUsage,
     RunUsage,
     SpeechPart,
@@ -3296,42 +3302,26 @@ def test_args_as_dict_raise_if_invalid_non_dict_json():
         part.args_as_dict(raise_if_invalid=True)
 
 
-@pytest.mark.subprocess(reason='`-O` strips `assert` statements only when it starts the interpreter')
 def test_args_as_dict_rejects_non_dict_json_under_optimization():
-    """Non-object JSON stays invalid when `python -O` strips `assert` statements."""
-    # Uses no `assert`, which `-O` strips from this script too.
-    script = """
-import json
-import sys
+    """Non-object JSON stays invalid when `python -O` strips `assert` statements.
 
-from pydantic_ai.messages import ToolCallPart
+    `compile(..., optimize=1)` strips `assert` statements as `-O` does, so the method is compiled that way in process.
+    An `-O` interpreter would find no `-O` bytecode cached and compile everything it imports from source.
+    """
+    # The premise: this raises if `optimize=1` ever stops stripping `assert` statements.
+    exec(compile('assert False', '<assert probe compiled with optimize=1>', 'exec', optimize=1))
 
-results = {}
-for raw in ['[1, 2, 3]', '"text"', '1', 'null']:
-    part = ToolCallPart(tool_name='test_tool', args=raw)
-    try:
-        part.args_as_dict(raise_if_invalid=True)
-        raised = None
-    except Exception as e:
-        raised = type(e).__name__
-    results[raw] = {'args_as_dict': part.args_as_dict(), 'raise_if_invalid': raised}
-print(json.dumps({'optimize': sys.flags.optimize, 'results': results}))
-"""
-    result = subprocess.run(
-        [sys.executable, '-O', '-c', script],
-        capture_output=True,
-        text=True,
-        env={key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')},
-    )
+    source = textwrap.dedent(inspect.getsource(ToolCallPart.args_as_dict))
+    code = compile(source, '<args_as_dict compiled with optimize=1>', 'exec', optimize=1)
+    namespace: dict[str, Callable[..., object]] = {}
+    exec(code, ToolCallPart.args_as_dict.__globals__, namespace)
+    args_as_dict = namespace['args_as_dict']
 
-    assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == {
-        'optimize': 1,
-        'results': {
-            raw: {'args_as_dict': {INVALID_JSON_KEY: raw}, 'raise_if_invalid': 'AssertionError'}
-            for raw in ['[1, 2, 3]', '"text"', '1', 'null']
-        },
-    }
+    for raw in ['[1, 2, 3]', '"text"', '1', 'null']:
+        part = ToolCallPart(tool_name='test_tool', args=raw)
+        with pytest.raises(AssertionError):
+            args_as_dict(part, raise_if_invalid=True)
+        assert args_as_dict(part) == {INVALID_JSON_KEY: raw}
 
 
 def test_args_as_json_str_valid_json_canonical():
@@ -4346,3 +4336,62 @@ async def test_agent_run_rejects_non_sequence_user_prompt():
     agent = Agent(TestModel())
     with pytest.raises(ValueError, match='must be a `str` or a sequence of `UserContent` items, got `dict`'):
         await agent.run(cast(Any, {'name': 'John'}))
+
+
+_STREAM_EVENTS: TypeAdapter[AgentStreamEvent] = TypeAdapter(AgentStreamEvent)
+
+
+@pytest.mark.parametrize(
+    'event',
+    [
+        PartStartEvent(index=0, part=TextPart(content='Hi')),
+        PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' there')),
+        PartEndEvent(index=0, part=TextPart(content='Hi there')),
+        FinalResultEvent(tool_name=None, tool_call_id=None),
+    ],
+    ids=lambda event: event.event_kind,
+)
+def test_origin_round_trips(event: PartStartEvent | PartDeltaEvent | PartEndEvent | FinalResultEvent):
+    """An event with an `origin` round-trips through `AgentStreamEvent`, and one without serializes without the key."""
+    assert 'origin' not in _STREAM_EVENTS.dump_python(event, mode='json')
+
+    event = replace(event, origin=ModelResponseOrigin(run_id='run', run_step=3, attempt=2, execution_attempt=4))
+    serialized = _STREAM_EVENTS.dump_python(event, mode='json')
+    assert serialized['origin'] == {'run_id': 'run', 'run_step': 3, 'attempt': 2, 'execution_attempt': 4}
+    decoded = _STREAM_EVENTS.validate_python(serialized)
+    assert isinstance(decoded, type(event))
+    assert decoded.origin == event.origin
+
+
+def test_origin_is_left_out_of_equality_and_repr():
+    """Events compare and print as they did before `origin` existed, so identical streams of two runs compare equal."""
+    event = PartStartEvent(index=0, part=TextPart(content='Hi'))
+    stamped = replace(event, origin=ModelResponseOrigin(run_id='run', run_step=1))
+    assert stamped == event
+    assert repr(stamped) == repr(event) == "PartStartEvent(index=0, part=TextPart(content='Hi'))"
+
+
+def test_events_without_origin_serialize_as_before():
+    """An event without an `origin` serializes byte for byte as it did before the field existed."""
+    assert _STREAM_EVENTS.dump_json(PartStartEvent(index=0, part=TextPart(content='Hi'))) == snapshot(
+        b'{"index":0,"part":{"content":"Hi","id":null,"provider_name":null,"provider_details":null,"citations":null,"part_kind":"text"},"previous_part_kind":null,"canonical_system":null,"event_kind":"part_start"}'
+    )
+    assert _STREAM_EVENTS.dump_json(FinalResultEvent(tool_name=None, tool_call_id=None)) == snapshot(
+        b'{"tool_name":null,"tool_call_id":null,"event_kind":"final_result"}'
+    )
+
+
+def test_supersedes():
+    """A later attempt or execution of the same request step supersedes an earlier one, and nothing else does."""
+    first = ModelResponseOrigin(run_id='run', run_step=1)
+    re_executed = ModelResponseOrigin(run_id='run', run_step=1, execution_attempt=2)
+    next_attempt = ModelResponseOrigin(run_id='run', run_step=1, attempt=2)
+
+    assert re_executed.supersedes(first)
+    assert re_executed.response_id == first.response_id == 'run:1:1'
+    assert next_attempt.supersedes(re_executed)
+    assert next_attempt.response_id == 'run:1:2'
+    assert not first.supersedes(re_executed)
+    assert not first.supersedes(first)
+    assert not ModelResponseOrigin(run_id='run', run_step=2).supersedes(first)
+    assert not ModelResponseOrigin(run_id='other', run_step=1, attempt=2).supersedes(first)

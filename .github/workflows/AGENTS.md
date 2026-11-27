@@ -36,6 +36,8 @@ previous label-as-switch design left a window in which a push got *neither* revi
 checked again when `CI` passes; a label or dispatch must be repeated. Nothing removes the
 `final-review` label: to retry a skipped request, remove and reapply it. A head that
 already has a `CI Review` is not reviewed again.
+An approval or `final-review` label requests a review only on a pull request into the default
+branch.
 
 `CI Review` starts on `workflow_run`, `pull_request_review`, `pull_request` (the
 `final-review` label) and `workflow_dispatch`. `workflow_run` and `workflow_dispatch`
@@ -636,6 +638,19 @@ Leave it unset in pydantic/pydantic-ai: unset, each job runs on its fallback lab
 
 The release and docs-deploy jobs run only in pydantic/pydantic-ai, so a tag pushed to a copy
 starts none of them.
+
+# `PRIORITY_SLA_POST` turns on the scheduled priority SLA comments
+
+`priority-sla.yml` comments on each open P1 or P2 issue that sat past its window.
+`issue_pr_attention_monitor.py` → `priority_sla` holds the rules that decide which issues are due.
+
+- A scheduled run posts only when the `PRIORITY_SLA_POST` repository variable is `true`.
+- Unset or any other value makes a scheduled run a dry run. Its summary lists the comments it
+  would post, and it posts nothing.
+- A manual run ignores the variable. It posts only when its `dry_run` input is off.
+
+Edit the variable under **Settings → Secrets and variables → Actions → Variables**. The next
+scheduled run reads the new value without a pull request.
 
 # Code owners review dependency, CI config and durable runtime changes
 

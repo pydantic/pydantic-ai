@@ -948,6 +948,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     _headers_func: MCPHeadersFunc[AgentDepsT] | None = None
     _static_auth: HTTPAuth | Literal['oauth'] | str | None = None
     _static_headers: dict[str, str] | None = None
+    # Bumped by each tools `list_changed` notification, so a `tools/list` response that was in flight
+    # when it arrived isn't cached.
+    _tools_cache_generation: int = 0
 
     @functools.cached_property
     def _enter_lock(self) -> anyio.Lock:
@@ -1357,6 +1360,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         return self._server_capabilities is not None
 
     def _invalidate_tools_cache(self) -> None:
+        self._tools_cache_generation += 1
         self._cached_tools = None
 
     def _invalidate_resources_cache(self) -> None:
@@ -1496,8 +1500,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         if self.cache_tools and self._cached_tools is not None:
             return self._cached_tools
         async with self._connected():
+            generation = self._tools_cache_generation
             tools = await self.client.list_tools()
-            if self.cache_tools:
+            # A `list_changed` notification that arrived while the request was in flight makes this list stale.
+            if self.cache_tools and generation == self._tools_cache_generation:
                 self._cached_tools = tools
             return tools
 
