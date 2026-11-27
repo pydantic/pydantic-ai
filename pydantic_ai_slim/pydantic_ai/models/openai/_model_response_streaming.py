@@ -22,6 +22,7 @@ class ModelResponseStreamedResponse(StreamedResponse):
         self.provider_response_id = self._model_response.provider_response_id
         self.provider_details = self._model_response.provider_details
         self.canonical_system = self._model_response.canonical_system
+        self.pricing_provider = self._model_response.pricing_provider
         self.finish_reason = self._model_response.finish_reason
         self.state = self._model_response.state
         self.metadata = self._model_response.metadata
