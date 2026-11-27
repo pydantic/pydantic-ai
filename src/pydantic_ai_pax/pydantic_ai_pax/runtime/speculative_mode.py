@@ -635,6 +635,7 @@ def speculative_capabilities(
             mount_mode=mode,
             permissions=permissions,
             os_access=OSAccess(),
+            resource_limits='unlimited',
             repl_store=repl_states,
         ),
         EagerTiming(),

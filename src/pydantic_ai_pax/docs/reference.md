@@ -2160,7 +2160,8 @@ native as `CodeMode` keeps them by default.
 
 `run_code` is a persistent Python sandbox with isolated environment variables,
 the host clock (through `datetime`), and no network. The model writes one snippet that calls many tools, and Pax runs it while the model
-is still writing.
+is still writing. A snippet has no time or memory limit, and its sleeps wait as long as asked, so stop the
+turn to end one that runs away.
 
 The sandbox keeps its variables, functions, and imports from one prompt to the
 next. Pax saves them with the session when each turn ends, so `/resume` and

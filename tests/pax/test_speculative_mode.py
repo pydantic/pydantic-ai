@@ -9,6 +9,7 @@ import json
 import re
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 
 import anyio
@@ -43,6 +44,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition, ToolSelector
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness._monty_exec import MontyExecutor
 from pydantic_ai_harness.code_mode import (
     SpeculativeCallClaimedEvent,
     SpeculativeCallEvictedEvent,
@@ -1057,6 +1059,33 @@ class TestSandboxCallDisplay:
         assert await show.wrap_tool_execute(context(), call=call, tool_def=tool_def, args={}, handler=late) == 'late'
         # Nothing was held, so the claim reports nothing; emitting would fail, as this context has no stream.
         await show.on_event(context(), event=claimed(ready=True, elapsed_ms=1, launch_id=call.tool_call_id))
+
+
+async def test_run_code_sleeps_past_the_default_allowance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pax's sandbox runs with unlimited resources, so a sleep longer than the default 30s isn't refused."""
+    slept: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr(
+        'pydantic_ai_harness.code_mode._toolset.MontyExecutor', partial(MontyExecutor, sleep=fake_sleep)
+    )
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('run_code', {'code': 'import time\ntime.sleep(120)\n"awake"'})])
+
+    result = await fold_agent(streamed(respond), SpeculationCounters(), tmp_path).run('sleep')
+    returns = [
+        part
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+    ]
+    assert [str(part.content) for part in returns] == ['awake']
+    assert slept == [120]
 
 
 async def test_guidance_mentions_raw_triple_quoted_multiline_shell_commands(tmp_path: Path) -> None:
