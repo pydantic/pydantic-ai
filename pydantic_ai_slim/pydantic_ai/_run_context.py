@@ -21,12 +21,14 @@ from typing_extensions import TypeVar, deprecated
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 
 from . import _utils, messages as _messages
+from ._appended_messages import AppendedMessages
 from ._cancel import current_run_clock
 from ._context_size import context_tokens
 from ._enqueue import (
     EnqueueContent,
     EnqueueGuard,
     PendingMessage,
+    PendingMessagePlacement,
     PendingMessagePriority,
     PendingMessageQueue,
     QueueChangeMethod,
@@ -428,6 +430,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
     the durable unit runs in the same process as the durable container; engines that serialize the
     run context across the boundary (Temporal) leave it `None` and the units fall back to entering
     their own, which is what they have always done.
+    """
+
+    _appended_messages: AppendedMessages = field(default_factory=AppendedMessages, repr=False)
+    """Private implementation detail — not part of the public API; do not read or write.
+
+    The record of the messages the run appended to [`messages`][pydantic_ai.tools.RunContext.messages], the same
+    object `GraphAgentState` holds, so framework code appending to the history from a hook records them with
+    `append_to_history`.
     """
 
     _mcp_tool_defs_cache: dict[str, dict[str, ToolDefinition]] = field(default_factory=lambda: {}, repr=False)
@@ -1129,6 +1139,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         self,
         *content: EnqueueContent,
         priority: PendingMessagePriority = 'asap',
+        placement: PendingMessagePlacement = 'append',
     ) -> str | None:
         """Enqueue content to be injected into the conversation.
 
@@ -1139,8 +1150,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
         a capability hook wrapping the call) goes into the
         [`ModelRequest`][pydantic_ai.messages.ModelRequest] that carries that call's
         [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], right after it, when that request is the
-        next one sent. Anything else is added to the history as its own messages, and so is content
-        enqueued after it.
+        next one sent. Content placed `'before_prompt'` goes into the request being sent, right before its
+        [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]. Anything else is added to the history as its
+        own messages, and so is tool-call content enqueued after it.
 
         Called from a capability's hook or tool, except an app-facing callback capability such as
         [`Hooks`][pydantic_ai.capabilities.Hooks], whose functions are the application's, it stamps each
@@ -1178,6 +1190,20 @@ class RunContext(Generic[RunContextAgentDepsT]):
                     In a realtime session, this means after the next response completes. Either way
                     the model gets a turn on the delivered content, a `SystemPromptPart` included: it
                     marks provenance, not silence.
+            placement: Where the content lands when it's delivered into a model request:
+                `'append'` (default) — after what the history already holds, as described above.
+                `'before_prompt'` — inside the request being sent, right before its
+                    [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], after anything placed there
+                    earlier. Use it for context the model should read before the user's question, such
+                    as a snapshot of stored memory recorded at the start of a run. The request hasn't been
+                    sent yet, so this doesn't change anything the provider has cached. When the request
+                    being sent holds no user prompt, such as one carrying tool results, or the content
+                    is delivered some other way (at the end of a run, when it pauses, or in a realtime
+                    session), it lands as `'append'` would put it. Takes only
+                    [`DataCapabilityPart`][pydantic_ai.messages.DataCapabilityPart] kinds: instructions and
+                    system prompts keep `'append'`, since a model with sealed system blocks reads a
+                    request's own system prompts after the user's words, and so does plain user content,
+                    which ahead of the user's prompt would read as the user speaking.
 
         Returns:
             The `enqueue_id` of the queued message, echoed on the
@@ -1187,7 +1213,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         Raises:
             UserError: If the run or realtime session has ended, or this `RunContext` isn't backed
                 by a running agent's queue (e.g. the synthetic context from
-                `Agent.system_prompt_parts`), since there'd be nowhere to deliver the message.
+                `Agent.system_prompt_parts`), since there'd be nowhere to deliver the message; or if
+                content placed `'before_prompt'` is anything but data capability parts.
         """
         if self.pending_messages is None:
             raise UserError(
@@ -1197,6 +1224,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         pending = PendingMessage.from_content(
             *content,
             priority=priority,
+            placement=placement,
             _tool_call=None if self.tool_call_id is None else (self.tool_call_id, self.run_step),
         )
         if pending is None:

@@ -234,8 +234,24 @@ result, as a standard run does
 from policy or by asking a person from inside the handler, or move that workflow to a standard agent
 run.
 
-Tools registered with `defer_loading=True` are rejected in a realtime session for a related reason;
-see [Deferred capability loading](capabilities.md#deferred-capability-loading).
+## Tools revealed mid-session
+
+A tool registered with `defer_loading=True` is hidden until [tool search](../tools-advanced.md#tool-search)
+reveals it, and a tool can reveal others by returning [`ToolReturn.tools`][pydantic_ai.messages.ToolReturn],
+as in a standard run. On a model that takes new tools mid-session, the session sends the provider the
+revealed tools ahead of the result that reveals them, so the model can call them from its next response.
+Loading a [deferred capability](capabilities.md#deferred-capability-loading) reveals its tools the same
+way, and that page lists the models that take new tools.
+
+A model that keeps the tools the session opened with can't be given a hidden tool later, so opening a
+session there with a `defer_loading=True` tool raises [`UserError`][pydantic_ai.exceptions.UserError] before
+connecting, unless the [seeded](history.md#seeding-a-session) history already revealed it. A tool that only
+appears after the session opens, such as from a [dynamically built toolset](../toolsets.md#dynamically-building-a-toolset), can still be
+revealed there; the session then warns that the model can't call it.
+
+The tools change mid-session only by a reveal: a dynamic toolset or `prepare_tools` hook that changes the tools
+between turns changes which calls the session accepts, not what the model is offered
+([#7251](https://github.com/pydantic/pydantic-ai/issues/7251)).
 
 ## Enqueuing prompts
 
