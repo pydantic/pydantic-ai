@@ -314,9 +314,11 @@ class GitHubClient:
                     Mapping[str, object], self.get(f'/repos/{repo}/collaborators/{encoded}/permission')
                 ).get('permission')
             except urllib.error.HTTPError as exc:
-                exc.close()
+                # Re-raise an open error: a closed one has no body, and the body alone can name
+                # a secondary rate limit. The caller closes it.
                 if exc.code != 404:
                     raise
+                exc.close()
                 permission = None
             self._maintainers[key] = login if permission in _MAINTAINER_PERMISSIONS else None
         return self._maintainers[key]

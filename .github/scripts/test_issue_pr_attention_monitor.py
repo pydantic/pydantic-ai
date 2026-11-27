@@ -3411,6 +3411,28 @@ def test_priority_sla_stops_its_sweep_at_a_rate_limit(
     assert lines[-1].startswith('due: ')
 
 
+def test_priority_sla_stops_its_sweep_at_a_rate_limited_permission_lookup(monkeypatch: pytest.MonkeyPatch):
+    stale = [label_event('p:2-high', created_at=days_ago(8))]
+    client = sla_client(
+        {1: list(stale), 2: [*stale, sla_event('commented', 'stranger', days_ago(9))], 3: list(stale)},
+        assignees={1: ['DouweM'], 3: ['DouweM']},
+    )
+    real = client.get
+
+    def get(path: str) -> Any:
+        if path.endswith('/collaborators/stranger/permission'):
+            raise http_error(403, 'You have exceeded a secondary rate limit.', x_ratelimit_remaining='12')
+        return real(path)
+
+    monkeypatch.setattr(client, 'get', get)
+
+    due, _, failures = monitor.priority_sla(client, 'r', now=SLA_NOW, post=False)
+
+    assert due == [1]
+    assert failures[0].startswith('#2 priority SLA: HTTPError')
+    assert failures[1:] == ['priority SLA: rate limited, stopped before the remaining issues']
+
+
 def test_priority_sla_post_stops_at_a_rate_limit(monkeypatch: pytest.MonkeyPatch):
     stale = [label_event('p:2-high', created_at=days_ago(8))]
     client = sla_client({1: list(stale), 2: list(stale)}, assignees={1: ['DouweM'], 2: ['DouweM']})
