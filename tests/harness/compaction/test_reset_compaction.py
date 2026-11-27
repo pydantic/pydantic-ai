@@ -504,6 +504,13 @@ class TestResetCompaction:
                 "response: text 'done'",
             ]
         )
+        # Attributed like a receipt: to `CompactOnRequest`, whose hook ran the reset.
+        assert [
+            part.capability_id
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ResetNoticePart)
+        ] == ['compact_on_request']
 
     @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
     async def test_compact_on_request_stands_down_when_the_reset_already_ran(self) -> None:
@@ -533,6 +540,10 @@ class TestResetCompaction:
         assert 'call `search_work_log` with no query' in named and 'in full with `read_work_log`' in named
         [(_, unnamed)] = _notices(unknown)
         assert 'your earlier replies are in the work log. To pick up where you left off' in unnamed
+        # Outside any capability's hook the application wrote the notice, so no capability is credited.
+        assert [
+            part.capability_id for message in known for part in message.parts if isinstance(part, ResetNoticePart)
+        ] == [None]
 
     async def test_an_earlier_notice_kept_in_the_tail_is_replaced(self) -> None:
         async def restate(ctx: RunContext[None]) -> str:

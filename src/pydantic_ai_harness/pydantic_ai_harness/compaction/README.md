@@ -660,8 +660,7 @@ request and the tail keep the user's words, and the log doesn't hold the rest. A
 are removed, so each reset replaces the last notice rather than adding one.
 
 The notice is a `ResetNoticePart`, a data
-[capability part](https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts): it reaches the model on the user channel in a `<context_cleared>` frame, with a note in the application's voice saying the frame is the application's, like a [receipt](#compaction-receipts)
-on the user channel, and a later compaction or summary doesn't take it for the user's words. Its
+[capability part](https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts): it reaches the model on the user channel in a `<context_cleared>` frame, with a note in the application's voice saying the frame is the application's, and a later compaction or summary doesn't take it for the user's words. Its
 typed fields `number`, `work_log` (the log's handle) and `kept_responses` are never sent to the
 model; find notices in history by the type. The default text tells the model that the conversation before this point was cleared and it is continuing the same task, how many times this conversation has been cleared, that the work log holds its earlier tool calls and replies (the replies only when `WorkLog.record_text` is on), how to pick up where it left off with the tools that search and read the log (under the names the model sees), to read a file again before editing it, since a log entry can be out of date, and what the reset kept. Its mentions of calls made inside code and of calling the tools from code apply when [Code Mode](../code_mode/) is on the agent. That wording was measured live across providers. The handle is what the [store](../work_log/README.md#stores)'s `locate` returns: a file path or a workspace directory, and none for the in-memory store or a store given its own `workspace=`, whose log the agent can reach only through the tools.
 
@@ -685,7 +684,7 @@ To write your own, pass `notice=`, a function from a `ResetNotice` to the text:
 returns text, a `CurrentStatePart`, or `None` or an empty string to add nothing. It reaches the model
 in a `<current_state>` frame. Text is recorded as the output of the `restate` callable (a `ToolResultSource` named after it), so text in it that looks like a frame gets a note naming its author, as command output such as `git status` should. Return `CurrentStatePart(content=..., source=OperatorSource())` for text your application wrote itself, or another source for text from elsewhere. It runs as the
 `restate` durable operation of the stable default `id='reset_compaction'`, so a replay reuses the
-recorded result. An exception it raises fails the request, as any hook error does; as a `TieredCompaction` tier, when `TieredCompaction` runs on its own trigger, one of its `skip_on` errors skips the tier instead.
+recorded result. An exception it raises fails the request, as any hook error does; as a `TieredCompaction` tier, when `TieredCompaction` runs on its own trigger, one of its `skip_on` errors skips the tier instead, and as a `FallbackCompaction` entry one of its `fallback_on` errors moves on to the next entry.
 
 Each notice records its number, and the next reset counts on from the highest number in the history,
 so the count continues in a run resumed from saved history, such as a

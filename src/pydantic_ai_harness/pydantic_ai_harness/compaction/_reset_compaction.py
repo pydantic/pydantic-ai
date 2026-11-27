@@ -22,6 +22,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._work_log_kinds import WORK_LOG_READ_KIND, WORK_LOG_SEARCH_KIND
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import reinject_pinned
+from pydantic_ai_harness.compaction._receipts import receipt_capability_id
 from pydantic_ai_harness.compaction._shared import (
     compact_with_span,
     context_for_request,
@@ -330,7 +331,7 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
             ResetNoticePart(
                 content=self.notice(facts),
                 source=OperatorSource(),
-                capability_id=self.id,
+                capability_id=receipt_capability_id(ctx, self),
                 number=facts.number,
                 work_log=facts.work_log,
                 kept_responses=kept_responses,
