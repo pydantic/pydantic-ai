@@ -39,7 +39,6 @@ from pydantic_ai.durable_exec import (
 from pydantic_ai.durable_exec._base import (
     BaseDurabilityCapability,
     _await_pending_event_dispatch,  # pyright: ignore[reportPrivateUsage]
-    _EventDispatchAborted,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.durable_exec._codec import JSON_CODEC
 from pydantic_ai.durable_exec._operation import (
@@ -561,7 +560,7 @@ async def test_model_request_waits_for_events_pulled_before_it() -> None:
 
 @pytest.mark.parametrize('count', [1, 2], ids=['failed-event', 'event-after-the-failed-one'])
 async def test_model_request_after_a_failed_dispatch_does_not_start(count: int) -> None:
-    """A model request waiting on a failed burst stops without the handler's error, which the stream raises."""
+    """A model request waiting on a failed burst raises a plain error chained from the handler's, and doesn't start."""
     handler_error = RuntimeError('handler failed')
     waiting = asyncio.Event()
     waiters: list[asyncio.Task[None]] = []
@@ -593,8 +592,11 @@ async def test_model_request_after_a_failed_dispatch_does_not_start(count: int) 
         async for _ in durability._batched_event_stream(ctx, stream()):  # pyright: ignore[reportPrivateUsage]
             pass  # pragma: no cover
     (waiter,) = waiters
-    with pytest.raises(_EventDispatchAborted):
+    with pytest.raises(
+        RuntimeError, match='failed for an earlier event, so this model request was not started'
+    ) as raised:
         await waiter
+    assert raised.value.__cause__ is handler_error
 
 
 async def test_model_request_wait_propagates_its_own_cancellation() -> None:

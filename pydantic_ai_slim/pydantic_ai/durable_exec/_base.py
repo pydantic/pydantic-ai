@@ -280,10 +280,10 @@ class _CompactMessagesCacheIdentity(CacheIdentity[ModelCompactMessagesParams]):
         return (params.model_id, params.request_context, params.instructions, params.run_context)
 
 
-_PENDING_EVENT_DISPATCH: ContextVar[Callable[[], Awaitable[None]] | None] = ContextVar(
+_PENDING_EVENT_DISPATCH: ContextVar[_BatchedEventDispatch | None] = ContextVar(
     'pydantic_ai_pending_event_dispatch', default=None
 )
-"""Waits for the events a batched event stream has pulled so far to be recorded, in the task that pulls them."""
+"""The batched event dispatch whose pulled events a model request in this task waits for."""
 
 
 async def _await_pending_event_dispatch() -> None:
@@ -291,17 +291,15 @@ async def _await_pending_event_dispatch() -> None:
 
     A model-request unit hands its events to the handler live, so under batched dispatch it would otherwise start
     while an earlier event's handler unit is still in flight, and the handler would see the events out of order.
+    Raises when one of those earlier units failed, so the request doesn't run after events the handler never saw.
     """
-    if (drain := _PENDING_EVENT_DISPATCH.get()) is not None:
-        await drain()
-
-
-class _EventDispatchAborted(BaseException):
-    """Stops a model request whose earlier events' handler unit failed; the event stream raises that failure.
-
-    A `BaseException`, so a capability's `except Exception` around the model request doesn't take the handler's
-    failure for the model's and retry or fall back.
-    """
+    if (dispatch := _PENDING_EVENT_DISPATCH.get()) is None:
+        return
+    await dispatch.drain()
+    if (error := dispatch.dispatch_error) is not None:
+        raise RuntimeError(
+            'The event stream handler failed for an earlier event, so this model request was not started.'
+        ) from error
 
 
 _DispatchItem = tuple[AgentStreamEvent, 'asyncio.Future[None]']
@@ -327,14 +325,15 @@ class _BatchedEventDispatch:
         self._available = asyncio.Event()  # noqa: TID251  (runs on Temporal's deterministic workflow event loop)
         self._output: asyncio.Queue[_DispatchItem | BaseException | None] = asyncio.Queue()  # noqa: TID251  (runs on Temporal's deterministic workflow event loop)
         self._producer_done = False
-        self._failed = False
+        self.dispatch_error: BaseException | None = None
+        """The error a burst's handler unit raised, once one has failed; no later model request starts."""
         self._last_dispatched: asyncio.Future[None] | None = None
 
     async def events(self) -> AsyncIterator[AgentStreamEvent]:
         # The producer pulls the stream, so the model requests the stream runs happen in its task: give that task
-        # `drain` so they wait for the events pulled before them (see `_await_pending_event_dispatch`).
+        # this dispatch so they wait for the events pulled before them (see `_await_pending_event_dispatch`).
         producer_context = copy_context()
-        producer_context.run(_PENDING_EVENT_DISPATCH.set, self.drain)
+        producer_context.run(_PENDING_EVENT_DISPATCH.set, self)
         producer = asyncio.create_task(self._produce(), context=producer_context)
         dispatcher = asyncio.create_task(self._dispatch())
         try:
@@ -361,7 +360,7 @@ class _BatchedEventDispatch:
             await aclose_if_supported(self._stream)
 
     async def drain(self) -> None:
-        """Wait until every event pulled so far has been dispatched, and stop the caller if a dispatch failed."""
+        """Wait until every event pulled so far has been dispatched, or its burst has failed (see `dispatch_error`)."""
         pending = self._last_dispatched
         if pending is None:
             return
@@ -371,12 +370,10 @@ class _BatchedEventDispatch:
                 await asyncio.shield(pending)
             except BaseException:
                 # `pending` failed, or was cancelled, which a failed burst does to the events after its first:
-                # `_failed` says which. Only the caller's own cancellation propagates as is.
+                # `dispatch_error` says which. Only the caller's own cancellation propagates as is.
                 task = asyncio.current_task()
                 if task is not None and task.cancelling():
                     raise
-        if self._failed:
-            raise _EventDispatchAborted
 
     async def _produce(self) -> None:
         try:
@@ -417,7 +414,7 @@ class _BatchedEventDispatch:
         try:
             await self._dispatch_events([event for event, _ in burst])
         except BaseException as exc:
-            self._failed = True
+            self.dispatch_error = exc
             burst[0][1].set_exception(exc)
             for _, acknowledged in burst[1:]:
                 acknowledged.cancel()
