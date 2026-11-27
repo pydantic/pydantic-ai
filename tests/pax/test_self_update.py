@@ -26,7 +26,7 @@ from termflow.tui.menu import MenuResult
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from pydantic_ai_pax import app, chat, cli
+from pydantic_ai_pax import app, chat, cli, paths
 from pydantic_ai_pax.cli import cli as cli_module, self_update
 from pydantic_ai_pax.cli.cli import relaunch_argv
 from pydantic_ai_pax.cli.self_update import (
@@ -680,21 +680,134 @@ async def test_tool_executable_asks_uv_for_its_bin_directory(tmp_path: Path) -> 
     assert await tool_executable(str(uv)) is None
 
 
-async def test_a_pydantic_clai2_environment_keeps_updating_as_clai2(
+MOVED = (
+    'clai2 is now pax, installed as its own uv tool: start it with pax from now on{}'
+    ' clai2 keeps working until you remove it: once no session uses it, run uv tool uninstall pydantic-clai2.'
+)
+"""What `/update` from a `pydantic-clai2` environment tells the person, with how to resume the conversation."""
+
+
+def _in_environment(monkeypatch: pytest.MonkeyPatch, tools: Path, name: str) -> None:
+    """Run as if from the `uv tool` environment `name` in `tools`, as `sys.prefix` says."""
+    monkeypatch.setattr(sys, 'prefix', str(tools / name))
+
+
+async def test_a_pydantic_clai2_environment_installs_pax_as_its_own_tool(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A `uv tool install pydantic-clai2` from before the rename reinstalls the shim, so its `clai2` command stays."""
-    monkeypatch.setattr(sys, 'prefix', str(tmp_path / 'tools' / 'pydantic-clai2'))
-    assert Update(channel='stable', target='0.53.0').command(uv='uv', overrides=None)[-1] == 'pydantic-clai2==0.53.0'
-    assert Update(channel='main', target=NEWER).command(uv='uv', overrides=tmp_path)[-1] == 'pydantic-clai2'
-    assert 'Start clai2 again.' in after_exit_script(['uv'], pid=42, overrides=None)
+    """A `uv tool install pydantic-clai2` from before the rename gets `pydantic-ai-pax` as a tool of its own.
+
+    That is the install a `pydantic-ai-pax` environment runs, byte for byte. It replaces nothing the `clai2`
+    processes running from the old environment use, so only processes running from the Pax environment hold it up.
+    """
+    stable, main = Update(channel='stable', target='0.53.0'), Update(channel='main', target=NEWER)
+    commands = [stable.command(uv='uv', overrides=None), main.command(uv='uv', overrides=tmp_path)]
+    assert self_update.moved_notice('abc') is None, 'only a `pydantic-clai2` environment has moved'
+    tools, bin_dir = tmp_path / 'tools', tmp_path / 'bin'
+    bin_dir.mkdir()
+    _in_environment(monkeypatch, tools, 'pydantic-clai2')
+    assert [stable.command(uv='uv', overrides=None), main.command(uv='uv', overrides=tmp_path)] == commands
+    assert commands[0][-1] == 'pydantic-ai-pax==0.53.0'
+    assert 'Start pax again.' in after_exit_script(['uv'], pid=42, overrides=None)
     uv = tmp_path / 'uv'
-    uv.write_text(f'#!/bin/sh\n[ "$*" = "tool dir --bin" ] && echo {tmp_path}\n')
+    uv.write_text(f'#!/bin/sh\ncase "$*" in "tool dir") echo {tools};; "tool dir --bin") echo {bin_dir};; esac\n')
     uv.chmod(0o755)
-    (tmp_path / 'pax').write_text('')
-    assert await tool_executable(str(uv)) is None, 'the shim environment has no `pax` command'
-    (tmp_path / 'clai2').write_text('')
-    assert await tool_executable(str(uv)) == str(tmp_path / 'clai2')
+    (bin_dir / 'clai2').write_text('')
+    assert await tool_executable(str(uv)) is None, 'the restart needs the `pax` the install wrote'
+    (bin_dir / 'pax').write_text('')
+    assert await tool_executable(str(uv)) == str(bin_dir / 'pax')
+    import fcntl
+
+    legacy, pax = tools / 'pydantic-clai2' / self_update.RUNNING, tools / 'pydantic-ai-pax' / self_update.RUNNING
+    legacy.mkdir(parents=True)
+    with (legacy / '4343-0-a.lock').open('wb') as clai2:
+        fcntl.flock(clai2, fcntl.LOCK_EX)
+        assert await self_update.sibling_processes(str(uv)) == [], 'a running `clai2` keeps its environment'
+        pax.mkdir(parents=True)
+        with (pax / '4545-0-b.lock').open('wb') as sibling:
+            fcntl.flock(sibling, fcntl.LOCK_EX)
+            assert await self_update.sibling_processes(str(uv)) == ['4545']
+
+
+async def test_update_in_a_pydantic_clai2_environment_restarts_as_pax_with_the_same_conversation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The restart resumes the conversation in `pax`, which finds it in the config folder both installs share."""
+    tools = tmp_path / 'tools'
+    _in_environment(monkeypatch, tools, 'pydantic-clai2')
+    # The folder an older `clai2` kept its files in, which the first Pax to look moves to the new name.
+    legacy = Path(os.environ['XDG_CONFIG_HOME']) / 'pydantic-clai2'
+    legacy.mkdir(parents=True)
+    updates, ran = _updates(['main'])
+
+    def build(*, channel: Callable[[], UpdateChannel]) -> Updates:
+        return updates
+
+    monkeypatch.setattr(session_runtime, 'Updates', build)
+    inputs(monkeypatch, ['hello', '/update now', '/exit'])
+    with pytest.raises(Relaunch) as raised:
+        await chat(
+            Agent(TestModel()),
+            deps=None,
+            settings=Settings(model='test', update_channel='main'),
+            console=Console(file=StringIO(), width=200),
+            store=SettingsStore(),
+        )
+    [command] = ran
+    assert command[-1] == 'pydantic-ai-pax'
+    relaunch = raised.value
+    assert (relaunch.executable, relaunch.new_session_id) == ('/tools/pax', None)
+    session_id = relaunch.session_id
+    assert session_id is not None
+
+    async def relaunching(*args: object, **kwargs: object) -> None:
+        raise relaunch
+
+    execs: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(app, 'chat', relaunching)
+
+    def execv(path: str, argv: list[str]) -> None:
+        execs.append((path, argv))
+
+    monkeypatch.setattr(os, 'execv', execv)
+    monkeypatch.setattr('sys.argv', ['clai2'])
+    capsys.readouterr()
+    await anyio.to_thread.run_sync(cli_module.run)
+    assert execs == [('/tools/pax', ['/tools/pax', '--resume', session_id])]
+    notice = MOVED.format(f'. This conversation continues in it; to reopen it later, run pax --resume {session_id}.')
+    assert capsys.readouterr().out == f'{notice}\n'
+    # The new `pax`, a process of its own, opens the same settings and finds the conversation there.
+    _in_environment(monkeypatch, tools, 'pydantic-ai-pax')
+    paths.pax_dir.cache_clear()
+    store = SettingsStore()
+    assert store.path.parent.name == 'pydantic-ai-pax'
+    assert legacy.resolve() == store.path.parent.resolve(), 'an older `clai2` still finds the same files'
+    saved = await SqliteConversationStore(database=store.path.with_name('sessions.db')).get(conversation_id=session_id)
+    assert saved.messages
+
+
+async def test_an_install_from_a_pydantic_clai2_environment_that_does_not_restart_says_pax(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`clai2 --update`, a `pax` uv did not write, and Windows name the new command without restarting into it."""
+    _in_environment(monkeypatch, tmp_path, 'pydantic-clai2')
+    notice = MOVED.format(', and resume a conversation with pax --resume <ID>.')
+    updates, ran = _updates(['stable'], executable=None)
+    assert await updates.command([]) == f'Updated Pax to 0.53.0 (stable). Exiting; start pax again to use it.\n{notice}'
+    assert [command[-1] for command in ran] == ['pydantic-ai-pax==0.53.0']
+    # What holds an install up is a `pax` running from the Pax environment it would replace.
+    refused, _ = _updates(['stable'])
+    refused.others = AsyncMock(return_value=['4545'])
+    assert await refused.command([]) == (
+        'Not updating to 0.53.0: other pax processes run from the install it would replace, '
+        'and would break (PID 4545). Quit them, then update again.'
+    )
+    windows, _ = _updates(['stable'])
+    windows.windows, windows.hand_off = True, Mock()
+    assert await windows.command([]) == (
+        'Installing Pax 0.53.0 (stable) in a new window once Pax exits. '
+        f'Exiting; start pax again when it finishes.\n{notice}'
+    )
 
 
 async def _relaunch_after(

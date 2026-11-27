@@ -7,7 +7,9 @@ API requests, so neither the check nor the install needs `git` or meets the unau
 source checkout is updated the same way: the install becomes a `uv tool` Pax. Pax then restarts as the new build and resumes the conversation,
 serving its web UI again on the same port with the same token when one ran.
 The install replaces the environment's files, so it is refused while another `pax` process runs from it; one
-started while uv installs is not covered.
+started while uv installs is not covered. A `uv tool` environment installed as `pydantic-clai2`, Pax's former name,
+gets `pydantic-ai-pax` as a tool of its own instead: that replaces nothing the `clai2` processes running from the
+old environment use, and Pax restarts as `pax`.
 On Windows, which locks the files of a running program, the install runs in a new PowerShell window after
 Pax exits.
 """
@@ -32,7 +34,7 @@ from anyio import CancelScope, open_process, run_process, to_thread
 from pydantic import StringConstraints, TypeAdapter
 from typing_extensions import TypedDict
 
-from pydantic_ai_pax.cli.install import DISTRIBUTION, command_name, tool_distribution
+from pydantic_ai_pax.cli.install import COMMAND, DISTRIBUTION, LEGACY_DISTRIBUTION, tool_distribution
 from pydantic_ai_pax.config import UpdateChannel
 from pydantic_ai_pax.plugins import InstallProgress, UpdateStage
 from pydantic_ai_pax.ui.stderr_relay import terminal_stderr
@@ -157,17 +159,17 @@ class Update:
         return ''.join(f'{self.requirement(name)}\n' for name in PACKAGES)
 
     def command(self, *, uv: str, overrides: Path | None) -> list[str]:
-        """The `uv tool install` that replaces the current install; `main` reads `overrides`.
+        """The `uv tool install` of `pydantic-ai-pax` that replaces its install; `main` reads `overrides`.
 
+        From a `pydantic-clai2` environment, it installs `pydantic-ai-pax` next to it as its own tool.
         `--compile-bytecode` writes the `.pyc` files during the install, so the restart into the new build
         does not compile every module it imports.
         """
         install = [uv, 'tool', 'install', '--force', '--compile-bytecode']
-        distribution = tool_distribution()
         if self.channel == 'stable':
-            return [*install, f'{distribution}=={self.target}']
+            return [*install, f'{DISTRIBUTION}=={self.target}']
         assert overrides is not None, 'a main install needs the overrides file'
-        return [*install, '--overrides', str(overrides), distribution]
+        return [*install, '--overrides', str(overrides), DISTRIBUTION]
 
 
 def find_update(channel: UpdateChannel, current: Installed, target: str) -> Update | None:
@@ -215,7 +217,7 @@ def after_exit_script(command: Sequence[str], *, pid: int, overrides: Path | Non
         powershell(command),
         '$code = $LASTEXITCODE',
         *([f'Remove-Item -LiteralPath {_powershell_quote(str(overrides))}'] if overrides is not None else []),
-        f'if ($code -eq 0) {{ \'Updated Pax. Start {command_name()} again.\' }} else {{ "uv exited with status $code." }}',
+        f'if ($code -eq 0) {{ \'Updated Pax. Start {COMMAND} again.\' }} else {{ "uv exited with status $code." }}',
         "Read-Host 'Press Enter to close'",
     ]
     return '\n'.join(lines)
@@ -288,9 +290,9 @@ async def _tool_dir(uv: str, *options: str) -> Path | None:
 
 
 async def tool_executable(uv: str) -> str | None:
-    """The command that `uv tool install` just wrote to uv's tool bin directory, if it is there."""
+    """The `pax` that `uv tool install` just wrote to uv's tool bin directory, if it is there."""
     directory = await _tool_dir(uv, '--bin')
-    path = None if directory is None else directory / command_name()
+    path = None if directory is None else directory / COMMAND
     return str(path) if path is not None and await to_thread.run_sync(path.is_file) else None
 
 
@@ -355,9 +357,32 @@ def running_elsewhere(environment: Path) -> list[str]:
 
 
 async def sibling_processes(uv: str) -> list[str]:
-    """The PIDs of other `pax` processes running from the `uv tool` environment an install would replace."""
+    """The PIDs of other `pax` processes running from the `uv tool` environment an install would replace.
+
+    That is always the `pydantic-ai-pax` one: the install leaves a `pydantic-clai2` environment, and the `clai2`
+    processes running from it, as they are.
+    """
     directory = await _tool_dir(uv)
-    return [] if directory is None else await to_thread.run_sync(running_elsewhere, directory / tool_distribution())
+    return [] if directory is None else await to_thread.run_sync(running_elsewhere, directory / DISTRIBUTION)
+
+
+def moved_notice(session_id: str | None) -> str | None:
+    """What an install from a `pydantic-clai2` environment tells the person, resuming `session_id`; `None` elsewhere.
+
+    The old environment stays, so sessions that start `clai2` by name keep working until the person removes it.
+    """
+    if tool_distribution() != LEGACY_DISTRIBUTION:
+        return None
+    start = f'clai2 is now {COMMAND}, installed as its own uv tool: start it with {COMMAND} from now on'
+    resume = (
+        f'{start}, and resume a conversation with {COMMAND} --resume <ID>.'
+        if session_id is None
+        else f'{start}. This conversation continues in it; to reopen it later, run {COMMAND} --resume {session_id}.'
+    )
+    return (
+        f'{resume} clai2 keeps working until you remove it: once no session uses it, '
+        f'run uv tool uninstall {LEGACY_DISTRIBUTION}.'
+    )
 
 
 def _in_thread(work: Callable[[], None]) -> None:
@@ -464,7 +489,7 @@ class Updates:
             return None
         self.failed = True
         return (
-            f'Not updating to {update.label}: other {command_name()} processes run from the install it would replace, '
+            f'Not updating to {update.label}: other {COMMAND} processes run from the install it would replace, '
             f'and would break (PID {", ".join(others)}). Quit them, then update again.'
         )
 
@@ -542,9 +567,9 @@ class Updates:
             # The script removes the overrides file once uv has read it.
             self.hand_off(after_exit_script(command, pid=os.getpid(), overrides=overrides))
             self.restart_required = True
-            return (
+            return _with_notice(
                 f'Installing Pax {update.label} ({channel}) in a new window once Pax exits. '
-                f'Exiting; start {command_name()} again when it finishes.'
+                f'Exiting; start {COMMAND} again when it finishes.'
             )
         report = self.report()
 
@@ -578,5 +603,12 @@ class Updates:
         self.web = served if self.relaunch is not None else None
         await tell('installed' if self.relaunch is None else 'restarting')
         if self.relaunch is None:
-            return f'Updated Pax to {update.label} ({channel}). Exiting; start {command_name()} again to use it.'
+            return _with_notice(f'Updated Pax to {update.label} ({channel}). Exiting; start {COMMAND} again to use it.')
+        # The CLI tells the person about the move to `pax` as it restarts, once it knows the conversation to resume.
         return f'Updated Pax to {update.label} ({channel}). Restarting...'
+
+
+def _with_notice(result: str) -> str:
+    """`result`, then the move to `pax` when there is one, for an install that does not restart into it."""
+    notice = moved_notice(None)
+    return result if notice is None else f'{result}\n{notice}'

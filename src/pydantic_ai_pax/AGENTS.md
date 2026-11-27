@@ -441,7 +441,9 @@ The package was `pydantic-clai2` until it became `pydantic-ai-pax`. The `pydanti
 factory as it validates, and `SettingsStore.save_plugin` stores factories under `pydantic_clai2`,
 which older builds sharing the database still import. The keyring service and the `clai2-bleeding` release keep the old
 name so existing installs keep their data. The config and state folders moved to `pydantic-ai-pax`: `paths.py` moves a
-`pydantic-clai2` folder on first use and leaves a symlink, so older builds still share it.
+`pydantic-clai2` folder on first use and leaves a symlink, so older builds still share it. `/update` in a
+`pydantic-clai2` `uv tool` environment installs `pydantic-ai-pax` as its own tool and restarts as `pax`, leaving
+the old environment and its `clai2` command in place, so the shim needs no release after V1.
 
 ## File map
 

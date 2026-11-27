@@ -305,6 +305,10 @@ def _run_command(args: argparse.Namespace, store: 'SettingsStore') -> str:
 
 def _relaunch(args: argparse.Namespace, relaunch: 'Relaunch', *, launched: 'Worktree | None') -> None:
     """Replace this process with the new build; the working directory, a worktree included, carries over."""
+    from pydantic_ai_pax.cli.self_update import moved_notice
+
+    if (notice := moved_notice(relaunch.session_id)) is not None:
+        print(notice)
     argv = relaunch_argv(
         args,
         executable=relaunch.executable,
