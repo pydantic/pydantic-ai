@@ -1236,6 +1236,62 @@ async def test_saved_background_compaction_loads_in_builds_with_and_without_the_
 
 
 @pytest.mark.parametrize(
+    ('stored', 'supported', 'trigger'),
+    [
+        ('{"threshold": 0.7}', True, (None, 0.7)),
+        ('{"threshold": 0.7, "threshold_tokens": 150000}', True, (150_000, None)),
+        ('{"threshold": 0.7, "threshold_tokens": 150000}', False, (None, 0.7)),
+    ],
+    ids=['saved-before-threshold-tokens', 'this-build', 'build-without-threshold-tokens'],
+)
+async def test_saved_threshold_tokens_loads_in_builds_with_and_without_the_feature(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stored: str,
+    supported: bool,
+    trigger: tuple[int | None, float | None],
+) -> None:
+    """A build lacking the feature drops a saved `threshold_tokens` and compacts at `threshold` again."""
+    store = SettingsStore(tmp_path / 'settings.db')
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'compaction',
+                '{"id": "compaction", "factory": "pydantic_clai2.builtin_plugins.compaction", "enabled": true, '
+                f'"settings": {stored}}}',
+            ),
+        )
+    if 'threshold_tokens' in stored:
+        store.save_plugin(store.plugins()[0], requires={'threshold_tokens': frozenset({'compaction-threshold-tokens'})})
+    saved = store.plugins()
+    if not supported:
+        monkeypatch.setattr(
+            features, 'SUPPORTED_FEATURES', features.SUPPORTED_FEATURES - {'compaction-threshold-tokens'}
+        )
+    loader: PluginLoader[None] = PluginLoader(
+        store=store,
+        console=Console(file=io.StringIO(), width=200),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+    )
+
+    await loader.load_all()
+
+    [entry] = [entry for entry in loader.entries() if entry.name == 'compaction']
+    assert entry.loaded is not None and isinstance(entry.loaded.plugin, CompactionPlugin)
+    chain = entry.loaded.plugin.chain
+    assert (chain.max_tokens, chain.max_fraction) == trigger
+    assert entry.ignored == (
+        None
+        if supported
+        else 'compaction: ignored saved threshold_tokens (needs compaction-threshold-tokens); using defaults.'
+    )
+    assert store.plugins() == saved
+    await loader.close('exit')
+
+
+@pytest.mark.parametrize(
     ('stored', 'supported', 'titles'),
     [('{}', True, False), ('{"titles": true}', True, True), ('{"titles": true}', False, False)],
     ids=['saved-before-titles', 'this-build', 'build-without-titles'],

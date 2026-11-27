@@ -42,6 +42,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/plugins [...]` | Manage plugins; no arguments opens the menu |
 | `/mcp [...]` | Manage MCP servers (from the built-in `mcp` plugin) |
 | `/compact [FOCUS]` | Summarise older messages now (from the built-in `compaction` plugin) |
+| `/auto-compact [TOKENS\|PERCENT\|reset]` | Choose when compaction runs automatically in the compaction settings, or set it directly, such as `70%` or `150k` (from the built-in `compaction` plugin) |
 | `/refine [FOCUS]` | Have the model review and revise its last answer (from the built-in `refinement` plugin) |
 | `/usage` | Tokens and cost per turn |
 | `/cost` | The retained history's total cost and tokens |
@@ -621,7 +622,7 @@ repository symlinks can select any readable file beneath it. See
 for symlink loading, scope, and backend requirements.
 
 Interactive commands: `/login`, `/set` (alias `/settings`), `/system_prompt`, `/theme`, `/model`, `/model add`, `/model settings`, `/model chains`, `/help`, `/clear` (alias `/new`), `/resume`, `/exit`, `/config`,
-`/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, `/compact` from the built-in `compaction` plugin, and `/refine` from the built-in `refinement` plugin.
+`/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, `/compact` and `/auto-compact` from the built-in `compaction` plugin, and `/refine` from the built-in `refinement` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Suggestions match any substring, case-sensitively. While
 you type a command name, the best match comes first and is highlighted without
@@ -2319,7 +2320,37 @@ back to truncation; other exceptions propagate. The summary request is billed
 to the current model unless `summarization_model` selects another.
 
 The chain runs automatically before requests above `threshold` (85% of the context
-window by default). `/compact` runs the same chain between turns regardless of that
+window by default). To change when, run `/auto-compact`, or `/plugins configure compaction`: both
+open the compaction settings, with **Compact at** first.
+
+```text
+Compaction settings
+> Compact at               85% - about 170k tokens
+  Strategy                 summarization
+  Protected tokens         50000
+  ...
+```
+
+Space steps through 50%, 60%, 70%, 80%, 85%, and 90% of the window, each shown with what it means
+in tokens on the model you are using, once its window is known. Enter lists them, with
+**Type a value...** for a token count such as `150k`, whatever the window, or a share the list does
+not have. R resets it to 85%. Each change is saved as you make it and applies from the next turn.
+A share follows you when you switch models; a token count does not. You can also type the value and
+skip the menu:
+
+```text
+/auto-compact 150k     # once a request passes 150,000 tokens (also 150000, 150,000, 1.5m)
+/auto-compact 70%      # once a request passes 70% of the window
+/auto-compact reset    # back to 85% of the window
+```
+
+Where the menu cannot open, as in the web UI or with output redirected to a file, `/auto-compact`
+alone says when compaction runs; the web UI's Plugins page has the same compaction settings.
+
+A token count saves `threshold_tokens` and a share saves `threshold` and clears `threshold_tokens`.
+With `threshold_tokens` set, the chain runs once a request passes that many tokens, whatever the
+model's window, and `threshold` is ignored. Keep it below the model's window: above it, the provider rejects the
+request before compaction runs, and saving such a count says so. `/compact` runs the same chain between turns regardless of that
 threshold, but it caps the protected tokens at half the conversation, so it usually has older
 messages to summarise; the protected tail can exceed that cap by the whole message that crosses it. Add free text to say what the summary must keep, for example
 `/compact don't lose the "auth" decisions`. The focus is passed to the summariser
@@ -2332,12 +2363,12 @@ conversation sends nothing.
 
 The window comes from genai-prices, the same catalog the `/model add` menu shows
 context sizes from. A model it does not list (`test`, a local endpoint) is
-assumed to have 200,000 tokens, the harness default. To change any of this,
+assumed to have 200,000 tokens, the harness default. `/auto-compact` moves the trigger; to change any of this,
 run `/plugins configure compaction` (or press `c` on its `/plugins` row): each
 edit is validated and saved as you make it, and the plugin reloads so the next
 turn uses the new settings. A turn already running keeps the old ones.
 You can also redeclare the plugin with your own settings;
-`/plugins disable compaction` turns it off, `/compact` included:
+`/plugins disable compaction` turns it off, `/compact` and `/auto-compact` included:
 
 ```text
 /plugins add compaction pydantic_ai_pax.builtin_plugins.compaction '{"threshold": 0.7, "protected_tokens": 20000, "context_window": 200000}'
@@ -2347,11 +2378,12 @@ You can also redeclare the plugin with your own settings;
 |---|---|---|
 | `strategy` | `"summarization"` | `"truncation"` skips the summary and only drops older messages |
 | `threshold` | `0.85` | fraction of the window above which the fallback chain runs |
+| `threshold_tokens` | unset | tokens above which the fallback chain runs, in place of `threshold` |
 | `protected_tokens` | `50000` | tokens of the most recent messages never compacted |
 | `context_window` | unset | overrides the catalog when it is wrong or silent for your model |
 | `summarization_model` | unset | a cheaper model to write the summary; unset uses the one in use |
 | `background_compaction` | `false` | experimental: write the summary in the background before it is due ([below](#background-compaction-experimental)) |
-| `background_start` | `0.85` | experimental: with `background_compaction`, the fraction of `threshold` at which the background summary starts |
+| `background_start` | `0.85` | experimental: with `background_compaction`, the fraction of the trigger (`threshold`, or `threshold_tokens` when set) at which the background summary starts |
 
 The status row shows compact used/max context tokens, such as `128k/1m`.
 The maximum comes from the request's model or the `context_window` override.
@@ -2363,7 +2395,7 @@ Until a response in the conversation reports its usage, the used figure is an es
 from the text's length that leaves out most tool definitions, shown with `~`, such as `~13k/1m`.
 It usually reads low, so it can rise sharply once the first response arrives.
 
-The context figure turns yellow when a request still exceeds `threshold` after
+The context figure turns yellow when a request still exceeds `threshold` (or `threshold_tokens`) after
 compaction, for example because the protected tail is too large. For windows smaller
 than 50,000 tokens, redeclare the plugin with a smaller `protected_tokens` value;
 `/compact` does not override that protection. Run `/compact` to retry the chain,
@@ -2373,8 +2405,9 @@ refresh with the next request; `/compact` alone does not change them.
 #### Background compaction (experimental)
 
 With `background_compaction` set to `true` (in `/plugins configure compaction`), Pax starts the
-summary early instead of waiting for `threshold`. Once a request, or the end of a turn, passes
-`background_start` of the threshold (by default 85% of 85%, about 72% of the window), the summary is
+summary early instead of waiting for the trigger. Once a request, or the end of a turn, passes
+`background_start` of the trigger (by default 85% of 85%, about 72% of the window; with
+`threshold_tokens`, 85% of that count), the summary is
 written in the background. The turn keeps running, and the summary can finish while you read. A
 turn that ends already over the threshold starts none; the next request compacts as usual.
 
@@ -3506,7 +3539,7 @@ Pax sends every tool, MCP tool, and output tool with strict mode off, whatever t
 provider, and relies on argument repair and retries instead. A `NativeOutput` schema keeps
 the provider's mode, as Anthropic and Bedrock only offer native output in strict mode. The built-in `compaction`
 plugin, [described in Compacting the conversation](#compacting-the-conversation), is on by default beside it:
-it summarises older messages before the context runs out and adds `/compact`.
+it summarises older messages before the context runs out and adds `/compact` and `/auto-compact`.
 The built-in `refinement` plugin adds `/refine`: the model reviews its last answer and gives it
 again, revised, as a turn of its own. Add words to say what to look at, such as
 `/refine check the error handling`. To have every answer reviewed without asking, add harness

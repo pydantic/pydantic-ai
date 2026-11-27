@@ -152,7 +152,7 @@ These are on from the start:
   specialist to review another directory; see [delegate models](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#delegate-models-and-review-directory).
 - `ask_user`: questions from the model
 - `repo_context`: reads `AGENTS.md` or `CLAUDE.md` from the folder, its parents, and subfolders
-- `compaction`: summarises older messages, and `/compact`
+- `compaction`: summarises older messages, `/compact`, and `/auto-compact`
 - `refinement`: `/refine`, which has the model review and revise its last answer
 - `persistence`: extra checkpoints so an interrupted session can recover
 - `mcp`: MCP servers, managed with `/mcp`
@@ -246,7 +246,8 @@ and the status row prefixes a known cost with `>=`.
 
 When the conversation nears the model's context limit, Pax summarises older messages
 for you. Run `/compact` to do it now, and add a note to say what the summary must keep,
-such as `/compact keep the API decisions`.
+such as `/compact keep the API decisions`. To choose when it happens, run `/auto-compact` and
+press Space to step through the levels, or type it: `/auto-compact 70%` or `/auto-compact 150k`.
 
 ![/usage table, /cost line, and /compact reporting the tokens it saved](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/usage.png)
 

@@ -22,6 +22,7 @@ SUPPORTED_FEATURES: frozenset[str] = frozenset(
         'coder-review-agent',
         'logfire-variables-key',
         'compaction-background',
+        'compaction-threshold-tokens',
         'mcp-defer-loading',
         'aoe-titles',
     }
