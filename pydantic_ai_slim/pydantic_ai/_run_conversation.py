@@ -186,13 +186,28 @@ def keep_full_history(state: _agent_graph.GraphAgentState) -> None:
 
 
 def keep_step_history(state: _agent_graph.GraphAgentState) -> None:
-    """Merge into the run's record the messages a capability put in its history for the step that just ended, like a summary.
+    """Merge into the run's record a summary a capability put in its history for the step that just ended.
 
-    So a later step that summarizes the history again, or trims it, doesn't drop one the model was sent.
+    So a later step that summarizes the history again, or trims it, doesn't drop one the model was sent. Other
+    messages a capability put there, like rewritten copies, are left to the end of the run, so they aren't kept once
+    per step.
     """
-    full = _merged_history(state)
-    if full is not None:
-        state.appended_messages.messages, state.appended_messages.new_message_index = full
+    appended, history = state.appended_messages, state.message_history
+    if appended.messages is None:
+        return
+    recorded = {id(message) for message in appended.messages}
+    summaries = {
+        id(message)
+        for message in history
+        if id(message) not in recorded and any(isinstance(part, _messages.CompactionPart) for part in message.parts)
+    }
+    if summaries:
+        kept = [message for message in history if id(message) in recorded or id(message) in summaries]
+        merge = _HistoryMerge(appended.messages, given=appended.new_message_index, history=kept)
+        for message in kept:
+            merge.place(message)
+        merge.finish()
+        appended.messages, appended.new_message_index = merge.merged, merge.given_end
 
 
 def _merged_history(state: _agent_graph.GraphAgentState) -> tuple[list[_messages.ModelMessage], int] | None:
