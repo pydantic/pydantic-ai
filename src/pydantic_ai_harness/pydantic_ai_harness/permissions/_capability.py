@@ -69,6 +69,8 @@ class _Decision(NamedTuple):
     source: Literal['rule', 'mode', 'approved', 'remembered']
     asked: _Asked | None = None
     reason: str | None = None
+    what: str = 'tool call'
+    """What a denied call would have done, for the model's denial."""
 
 
 class _AskedMetadata(BaseModel):
@@ -299,7 +301,11 @@ class Permissions(AbstractCapability[AgentDepsT]):
         posix = ctx.workspace.platform != 'windows'
         rule = decide(rules, command=command, command_arg=shell_command_arg(tool_def), args=args, posix=posix)
         if rule is not None and rule.verdict != 'allow':
-            return _Decision(rule.verdict, 'rule', _rule_asks(rule, _subject(tool_def, args, command)), rule.reason)
+            subject = _subject(tool_def, args, command)
+            if rule.verdict == 'ask':
+                return _Decision('ask', 'rule', _rule_asks(rule, subject), rule.reason)
+            what = 'tool call' if subject is None else _WHAT[subject[0]]
+            return _Decision('deny', 'rule', reason=rule.reason, what=what)
         asked = self._mode_asks(mode, tool_def=tool_def, args=args, command=command, allowed=rule is not None)
         if asked is not None:
             return _Decision('ask', 'mode', asked, asked.reason)
@@ -361,8 +367,7 @@ def _refusal(decision: _Decision) -> SkipToolExecution | ApprovalRequired:
     """The exception that refuses a call `decision` denies, or holds one it asks about."""
     asked, reason = decision.asked, decision.reason
     if decision.verdict == 'deny':
-        what = 'tool call' if asked is None else _WHAT[asked.action]
-        message = f'A permission rule denied this {what}, so it did not run. Do not retry it.'
+        message = f'A permission rule denied this {decision.what}, so it did not run. Do not retry it.'
         return SkipToolExecution(ToolDenied(f'{message} Reason: {reason}' if reason else message))
     if asked is None:
         # Not a command or file write, so it takes the plain approval flow, like `requires_approval=True`.
@@ -370,7 +375,7 @@ def _refusal(decision: _Decision) -> SkipToolExecution | ApprovalRequired:
     return ApprovalRequired(metadata=_AskedMetadata(permissions=asked).model_dump())
 
 
-def _trace(ctx: RunContext[Any], mode: PermissionMode, decision: _Decision) -> None:
+def _trace(ctx: RunContext[AgentDepsT], mode: PermissionMode, decision: _Decision) -> None:
     """Record the decision on the open `execute_tool` span; the reason only with `trace_include_content`."""
     span = get_current_span()
     if isinstance(ctx.tracer, NoOpTracer) or not span.is_recording():

@@ -28,6 +28,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.tools import DeferredToolResults, RunContext, ToolApproved
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import CommandResult, Workspace, WorkspaceCommand, WorkspaceRef
+from pydantic_ai_harness.code_mode import CodeMode
 from pydantic_ai_harness.file_system import WRITE_FILE_KIND, FileSystem
 from pydantic_ai_harness.permissions import (
     DEFAULT_ASK_COMMANDS,
@@ -942,6 +943,40 @@ class TestPermissionsTelemetry:
         [decision] = await _decisions(rules, mode, ('run_command', {'command': 'cat x'}), include_content=True)
 
         assert decision['permissions.reason'] == reason
+
+    async def test_a_call_denied_inside_code_mode_records_the_decision_on_its_own_span(self) -> None:
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        agent = Agent[None, str](
+            _calls(('run_code', {'code': 'await lookup(x=1)'})),
+            deps_type=type(None),
+            tools=[Tool(_lookup, name='lookup')],
+            capabilities=[
+                Instrumentation(InstrumentationSettings(tracer_provider=provider, include_content=False)),
+                CodeMode(),
+                Permissions(rules=[PermissionRule('deny', tools=['lookup'])]),
+            ],
+        )
+
+        await agent.run('go')
+
+        assert {
+            span.name: {key: value for key, value in (span.attributes or {}).items() if key.startswith('permissions.')}
+            for span in exporter.get_finished_spans()
+            if span.name.startswith('execute_tool')
+        } == {
+            'execute_tool lookup': {
+                'permissions.decision': 'deny',
+                'permissions.source': 'rule',
+                'permissions.mode': 'full',
+            },
+            'execute_tool run_code': {
+                'permissions.decision': 'allow',
+                'permissions.source': 'mode',
+                'permissions.mode': 'full',
+            },
+        }
 
     async def test_an_uninstrumented_run_leaves_the_current_span_alone(self) -> None:
         """Without `Instrumentation`, the open span is the application's own, not a tool span."""
