@@ -866,6 +866,11 @@ still one request.
   harness data cut further, with the truncation marker, until it fits. It is never dropped.
 - When the prompt template, `instructions` and summary so far don't fit on their own, the request
   goes out whole, for the provider to decide.
+- A summary is written in at most 32 requests. A history that needs more raises
+  `ModelContextWindowExceededError`, as an overflowing request would, before any request when its
+  estimated size already needs more, and otherwise once the rest can't fit the requests left. The
+  history is left unchanged; `FallbackCompaction` falls back on it by default, and a
+  `TieredCompaction` tier is skipped on it.
 
 Each chunk is a summary request of the run, and the `compact_messages` span records how many there
 were as `compaction.summary_calls`. A `RelevanceCompaction` summarizer fits its request the same way.

@@ -523,6 +523,7 @@ A summarizer with a smaller context window than the run's model, such as a cheap
 - Requests are measured with the `tokenizer`, or the [text estimate](#triggers) without one, as the triggers are.
 - A single message, or a tool call with its returns, too large for a request on its own has its tool output and harness data cut further, with the truncation marker, until it fits. It is never dropped.
 - When the request's fixed part (the prompt template, `instructions` and the summary so far) doesn't fit on its own, the request goes out whole, for the provider to accept or reject.
+- A summary is written in at most 32 requests. A history that needs more raises `ModelContextWindowExceededError`, as an overflowing request would, before any request when its estimated size already needs more, and otherwise once the rest can't fit the requests left. The history is left unchanged; a [`FallbackCompaction`](#fallbackcompaction-recover-when-a-strategy-fails) falls back on it by default, and a `TieredCompaction` tier is skipped on it. Summarize such histories with a model with a larger window.
 
 Each chunk is a summary request of the run, counted in its [usage](#usage-accounting), and the `compact_messages` [span](#tracing) records how many there were as `compaction.summary_calls`. A `RelevanceCompaction` summarizer fits its request the same way.
 

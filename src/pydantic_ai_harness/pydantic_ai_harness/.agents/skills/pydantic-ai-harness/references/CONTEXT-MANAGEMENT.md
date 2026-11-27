@@ -165,7 +165,8 @@ one LLM call per compaction, or one per chunk when the history doesn't fit the s
 `context_window` with room for the summary (its `max_tokens` setting, else a quarter of the window up to
 8,192 tokens): chunks end on message boundaries that keep tool calls with their returns, are summarized
 oldest first, each updating the summary so far, and none is dropped (an oversized message has its tool
-output cut instead; the span records `compaction.summary_calls`). `model=None` inherits the run's model; a non-text model (for
+output cut instead; the span records `compaction.summary_calls`; more than 32 chunks raises
+`ModelContextWindowExceededError`, which `FallbackCompaction` falls back on). `model=None` inherits the run's model; a non-text model (for
 example a decision model) needs `model=` set or the first compaction raises `UserError`.
 Useful keyword options: `model_settings`, `summarization_capabilities` (outer capabilities do not
 run on the summary call), `incremental=True` (update the previous summary rather than
