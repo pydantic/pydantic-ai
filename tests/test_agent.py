@@ -5256,7 +5256,11 @@ def test_tool_exceeds_token_limit_but_complete_non_object_args():
 
 
 def test_function_tool_args_that_parse_but_are_rejected_with_finish_reason_length_are_retried():
-    """Only arguments cut off before they're complete are blamed on the token limit: arguments that parse are retried."""
+    """Only arguments cut off before they're complete are blamed on the token limit: arguments that parse are retried.
+
+    Not a VCR test: no provider can be reliably recorded returning complete but schema-invalid JSON with a `'length'`
+    finish reason; `test_openai_responses_function_tool_call_cut_off_by_max_tokens` records the cut-off case.
+    """
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -5279,7 +5283,11 @@ def test_function_tool_args_that_parse_but_are_rejected_with_finish_reason_lengt
 
 
 def test_cut_off_function_tool_call_that_is_not_the_last_part_is_retried():
-    """Only the response's last part can have been cut off by the token limit, so an earlier invalid call is retried."""
+    """Only the response's last part can have been cut off by the token limit, so an earlier invalid call is retried.
+
+    Not a VCR test: no provider reliably truncates the first of two tool calls while the last part is complete;
+    `test_openai_responses_function_tool_call_cut_off_by_max_tokens` records the last-part case.
+    """
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
