@@ -324,13 +324,9 @@ AUTO = cast(ModelSettings, {'openai_previous_response_id': 'auto'})
 CONVERSATION = cast(ModelSettings, {'openai_conversation_id': 'conv_1'})
 THREADS = cast(ModelSettings, {'max_tokens': 512, 'anthropic_previous_message_id': 'auto'})
 XAI_STORE = cast(ModelSettings, {'xai_store_messages': True})
-XAI_RESENDS = (
-    'Defect: `XaiModel` passes `xai_previous_response_id` through without trimming the history the stored response '
-    'holds, so the API sees it twice (https://github.com/pydantic/pydantic-ai/issues/14837)'
-)
 XAI_REPEATS_INSTRUCTIONS = (
-    'Defect: `XaiModel` sends the instructions as a system message on a request with `xai_previous_response_id`, '
-    'and the stored response already holds them (https://github.com/pydantic/pydantic-ai/issues/14837)'
+    "Documented: without the stored response in `message_history`, `XaiModel` can't tell what the server holds, "
+    'so it sends the instructions, which the stored response already holds'
 )
 GPT_6_2_SEED = (
     'Defect: a seed without `message_history` on GPT-6.2 sends the instructions in the top-level field, next to the '
@@ -417,8 +413,6 @@ CASES: list[tuple[Case, pytest.MarkDecorator]] = [
             XAI_STORE,
             seed_xai,
             instructions_channel='system',
-            instructions_xfail=XAI_RESENDS,
-            held_xfail=XAI_RESENDS,
         ),
         xai_case,
     ),

@@ -6011,10 +6011,12 @@ class ModelResponse:
 
     Set by models that continue server-side state, such as
     [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] with
-    [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id]
-    and [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] with
+    [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id],
+    [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] with
     [`anthropic_previous_message_id`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_previous_message_id],
-    so a later request continues from this response only while it and the messages before it are unchanged.
+    and [`XaiModel`][pydantic_ai.models.xai.XaiModel] with
+    [`xai_store_messages`][pydantic_ai.models.xai.XaiModelSettings.xai_store_messages], so a later request
+    continues from this response only while it and the messages before it are unchanged.
     With `anthropic_previous_message_id`, it also covers the response's `provider_response_id`, which a continue
     request names, and its `'thread_fingerprint'`.
     The `metadata` fields on messages, tool return parts and user prompt `TextContent` are never sent to

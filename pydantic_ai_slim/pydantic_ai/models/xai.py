@@ -293,8 +293,9 @@ class XaiModelSettings(ModelSettings, total=False):
 
     The stored response holds the messages it was created from, the instructions included. When the response is in the
     `message_history`, only the messages after it are sent, without the instructions. If the instructions or the
-    history before it have changed since, the request starts over instead: it sends the whole history and the
-    instructions, and doesn't continue from the response. Without the response in the `message_history`, the request
+    history before it have changed since, or the response was stored without a digest (by an earlier release), the
+    request starts over instead: it sends the whole history and the instructions, and doesn't continue from the
+    response. Without the response in the `message_history`, the request
     sends what it's given, the instructions included, so the model may see the instructions twice.
     """
 

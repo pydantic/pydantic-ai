@@ -124,6 +124,33 @@ agent = Agent(model)
 
 `metadata` is a sequence of `(key, value)` string tuples forwarded verbatim to the underlying `xai_sdk.AsyncClient`, so the xAI SDK's own documentation on [maximizing cache hits](https://docs.x.ai/developers/advanced-api-usage/prompt-caching/maximizing-cache-hits) applies. Because it is client-scoped, it applies to *every* request made through the provider — a provider configured with a fixed `x-grok-conv-id` must not be shared between unrelated conversations, or those conversations will collide on the same cache node. Use a separate provider per conversation when the metadata is conversation-specific. Like `api_host` and `timeout`, it is omitted when left unset and ignored when a custom `xai_sdk.AsyncClient` is passed.
 
+## Stored conversations {#stored-conversations}
+
+With [`xai_store_messages=True`][pydantic_ai.models.xai.XaiModelSettings.xai_store_messages], xAI stores each response with the messages it was created from, and a later request can continue from it by setting [`xai_previous_response_id`][pydantic_ai.models.xai.XaiModelSettings.xai_previous_response_id] to its [`provider_response_id`][pydantic_ai.messages.ModelResponse.provider_response_id]:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.xai import XaiModelSettings
+
+agent = Agent(
+    '{{ xai:medium }}',
+    instructions='Be concise.',
+    model_settings=XaiModelSettings(xai_store_messages=True),
+)
+
+
+async def main():
+    first = await agent.run('What is the capital of France?')
+    if response_id := first.response.provider_response_id:
+        await agent.run(
+            'And of Germany?',
+            message_history=first.all_messages(),
+            model_settings=XaiModelSettings(xai_previous_response_id=response_id),
+        )
+```
+
+When the stored response is in the `message_history`, only the messages after it are sent, without the instructions: the stored response already holds them. If the instructions or the history before it have changed since, the request starts over and sends everything without continuing from the response, since xAI would otherwise carry on from its own copy. Without the response in the `message_history`, the request sends what it's given, the instructions included, so the model may see the instructions twice.
+
 ## SDK retries {#sdk-retries}
 
 The `xai_sdk.AsyncClient` turns on gRPC's own retries: a request that fails with `UNAVAILABLE` is attempted up to 5 times, with a backoff between 0.1 and 1 second. gRPC also transparently retries an attempt that never reached the server. These retries happen inside the gRPC channel, so Pydantic AI can't see or count them. To keep the retry policy in your own code, pass a client with gRPC retries disabled:
