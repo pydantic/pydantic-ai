@@ -38,7 +38,7 @@ from opentelemetry import propagate
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai import Agent, ToolsetTool, models
-from pydantic_ai._run_context import RunContext
+from pydantic_ai._run_context import _CURRENT_RUN_CONTEXT, RunContext, get_current_run_context
 from pydantic_ai._utils import BaseExceptionGroup
 from pydantic_ai.capabilities import MCP, Capability
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior, UserError
@@ -810,6 +810,45 @@ class TestMCPToolsetIntegration:
         # The transport's finalizer stops the server, and the connection tasks end once the process has exited.
         with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             await asyncio.wait(connection_tasks)
+
+    @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
+    async def test_plain_run_connect_task_does_not_capture_the_run_context(self):
+        """The stdio connection task created by a plain run inherits no run context, so it can't pin the run alive."""
+        tasks_before = asyncio.all_tasks()
+        toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
+        # A name skips the agent's name inference, which reads this frame's `f_locals`. Before Python 3.13, that
+        # read leaves a snapshot of the locals on the frame, which would still hold `toolset` after the `del` below.
+        agent = Agent(TestModel(call_tools=[]), name='stdio_agent', toolsets=[toolset])
+        await agent.run('Hello')
+
+        connection_tasks = asyncio.all_tasks() - tasks_before
+        assert connection_tasks
+        if sys.version_info >= (3, 12):
+            # `Task.get_context` was added in 3.12. The task was created mid-run, so its context must
+            # not hold the run's context variables — that is what pinned the run after it ended.
+            # `MCPToolset` connects with `_CURRENT_RUN_CONTEXT` set to None, so the snapshot holds None.
+            for task in connection_tasks:
+                assert task.get_context().get(_CURRENT_RUN_CONTEXT) is None
+
+        toolset_ref = weakref.ref(toolset)
+        del agent, toolset
+        gc.collect()
+        assert toolset_ref() is None
+        # The transport's finalizer stops the server, and the connection tasks end once the process has exited.
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            await asyncio.wait(connection_tasks)
+
+    async def test_entered_connection_preserves_the_current_run_context(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """Connecting outside a run leaves the caller's current run context untouched."""
+        token = _CURRENT_RUN_CONTEXT.set(run_context)
+        toolset = MCPToolset(fastmcp_server)
+        try:
+            async with toolset:
+                assert get_current_run_context() is run_context
+        finally:
+            _CURRENT_RUN_CONTEXT.reset(token)
 
     async def test_get_tools_caches_and_lists(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         toolset = MCPToolset(fastmcp_server, include_instructions=True)

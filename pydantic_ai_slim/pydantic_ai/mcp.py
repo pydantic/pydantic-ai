@@ -39,6 +39,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 # extra admits both. We only use their shared interfaces, so these unions type them without
 # importing a family that the other generation's installs don't ship.
 from ._http import AsyncHTTPClient, HTTPAuth, HTTPTimeout
+from ._run_context import _CURRENT_RUN_CONTEXT
 from .direct import model_request
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
@@ -1407,7 +1408,16 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 # once initialization fully succeeds, so `_initialized` can't see stale data from a
                 # session that got torn down mid-setup.
                 async with AsyncExitStack() as exit_stack:
-                    await exit_stack.enter_async_context(self.client)
+                    # FastMCP's stdio transport snapshots the current context into its long-lived
+                    # connection task (`asyncio.create_task`), which would otherwise pin the run's
+                    # `RunContext` — and through it the agent, toolset and transport — until the
+                    # server process stops. Connect without the ambient run context; the caller's
+                    # context is restored before the entered session is used.
+                    token = _CURRENT_RUN_CONTEXT.set(None)
+                    try:
+                        await exit_stack.enter_async_context(self.client)
+                    finally:
+                        _CURRENT_RUN_CONTEXT.reset(token)
                     # A modern (sessionless) session has no `initialize` handshake, so server
                     # metadata comes from era-neutral client properties; older clients only populate
                     # `initialize_result`.

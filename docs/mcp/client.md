@@ -57,6 +57,8 @@ You can use [`async with agent`][pydantic_ai.agent.Agent.__aenter__] to open and
 
 A stdio server's subprocess starts with the toolset's first connection. FastMCP's [`StdioTransport`](https://gofastmcp.com/clients/transports) keeps it running between connections by default, so later runs reuse it, and stops it when the transport is closed or garbage-collected, for example once the agent and its toolsets go out of scope. With `StdioTransport(..., keep_alive=False)`, the subprocess stops whenever its connection closes instead.
 
+Note that FastMCP's long-lived stdio connection task runs without the ambient run context: handlers it calls while connecting see no current run, and an ended run can't keep the connection — and through it the agent and the subprocess — alive.
+
 Note that a shared `MCPToolset` instance connects to the server as a single identity; if your users have their own credentials for the MCP server, see [per-user authentication](#per-user-authentication).
 
 ### Streamable HTTP
