@@ -941,10 +941,11 @@ jobs:
         if: always() && (needs.review.result == 'cancelled' || needs.douwebot-opencode.result == 'cancelled')
         run: |
           gh pr comment "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --body \
-            "A push cancelled the \`douwebot\` review before it finished, so there is no verdict on this PR. "\
-            "Re-apply the \`douwebot\` label to review the new head."
+            "A push cancelled the \`${LABEL}\` review before it finished, so there is no verdict on this PR. "\
+            "Remove the \`${LABEL}\` label and add it again to review the new head."
         env:
           GH_TOKEN: ${{ github.token }}
+          LABEL: ${{ github.event.label.name }}
 
       - name: Report review failure
         if: always() && (needs.review.result == 'failure' || needs.douwebot-opencode.result == 'failure' || steps.publish.outcome == 'failure') && github.event.action == 'labeled' && github.event.label.name == 'douwebot'
