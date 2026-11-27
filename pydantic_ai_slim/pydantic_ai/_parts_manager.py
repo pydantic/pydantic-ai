@@ -70,8 +70,13 @@ def tool_def_ui_visibility(tool_def: ToolDefinition, *, approved: bool = False) 
 def tool_part_kinds(model_request_parameters: ModelRequestParameters) -> dict[str, ToolPartKind]:
     """The `tool_kind` a call to each tool gets: a function tool's declared kind, and `'output'` for an output tool."""
     kinds = {td.name: td.tool_kind for td in model_request_parameters.function_tools if td.tool_kind is not None}
-    kinds.update((td.name, td.tool_kind or _OUTPUT_TOOL_PART_KIND) for td in model_request_parameters.output_tools)
+    kinds.update(output_tool_part_kinds(model_request_parameters))
     return kinds
+
+
+def output_tool_part_kinds(model_request_parameters: ModelRequestParameters) -> dict[str, ToolPartKind]:
+    """The `tool_kind` a call to each output tool gets: `'output'`, unless its definition declares a kind."""
+    return {td.name: td.tool_kind or _OUTPUT_TOOL_PART_KIND for td in model_request_parameters.output_tools}
 
 
 def ui_visibility_stamps(model_request_parameters: ModelRequestParameters) -> dict[str, ToolUIVisibility]:

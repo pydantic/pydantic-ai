@@ -54,6 +54,7 @@ from pydantic_ai.messages import (
     parse_tool_kind,
     sanitize_messages,
 )
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import DEFAULT_OUTPUT_TOOL_NAME, is_output_tool_part
@@ -1329,6 +1330,24 @@ async def test_streamed_function_call_named_after_an_output_tool_prefix_is_not_m
     assert tool_parts(run_result.all_messages()) == [
         ('tool-call', 'submit_report_draft', None, ''),
         ('tool-return', 'submit_report_draft', None, 'success'),
+        ('tool-call', 'submit_report', 'output', ''),
+        ('tool-return', 'submit_report', 'output', 'success'),
+    ]
+
+
+async def test_output_tool_call_from_a_capability_supplied_response_is_marked():
+    """An output call in a response a `wrap_model_request` capability returns instead of the model's is marked too."""
+
+    @dataclass
+    class AnswerItself(AbstractCapability[Any]):
+        async def wrap_model_request(
+            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any
+        ) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart('submit_report', {'title': 'done'}, 'call_1')])
+
+    agent = Agent(TestModel(), output_type=ToolOutput(Report, name='submit_report'), capabilities=[AnswerItself()])
+    result = await agent.run('Write the report.')
+    assert tool_parts(result.all_messages()) == [
         ('tool-call', 'submit_report', 'output', ''),
         ('tool-return', 'submit_report', 'output', 'success'),
     ]

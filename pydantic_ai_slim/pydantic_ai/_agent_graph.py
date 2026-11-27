@@ -55,7 +55,12 @@ from pydantic_ai._instrumentation import (
     open_request_policy,
 )
 from pydantic_ai._model_request_attempts import AttemptStart, carried_attempts
-from pydantic_ai._parts_manager import stamp_and_type_call_part, tool_part_kinds, ui_visibility_stamps
+from pydantic_ai._parts_manager import (
+    output_tool_part_kinds,
+    stamp_and_type_call_part,
+    tool_part_kinds,
+    ui_visibility_stamps,
+)
 from pydantic_ai._tool_execution import last_response_index, process_tool_calls
 from pydantic_ai._utils import (
     ScopedTask,
@@ -6093,10 +6098,13 @@ def _stamp_ui_visibility(
 ) -> _messages.ModelResponse:
     """Stamp each `ToolCallPart` of a response a capability supplied instead of `Model.request()` with its tool's `ui_visibility`.
 
-    Only the stamp is written: those calls keep the typing they came with, as execution types each call from its tool
-    (`ToolManager._with_tool_kind_and_visibility`).
+    Function tool calls keep the typing they came with, as execution types each call from its tool
+    (`ToolManager._with_tool_kind_and_visibility`). An output tool call gets the `'output'` kind here: it has no typed
+    subclass and its definition declares no kind, so execution can't give it one, and its return copies it from the call.
     """
-    return _stamp_and_type_call_parts(response, {}, ui_visibility_stamps(model_request_parameters))
+    return _stamp_and_type_call_parts(
+        response, output_tool_part_kinds(model_request_parameters), ui_visibility_stamps(model_request_parameters)
+    )
 
 
 def _stamp_and_type_call_parts(
