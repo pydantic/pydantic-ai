@@ -44,7 +44,7 @@ class RepairToolArguments(AbstractCapability[AgentDepsT]):
             return args
         try:
             json.loads(args)
-        except (json.JSONDecodeError, RecursionError):
+        except (json.JSONDecodeError, ValueError, RecursionError):
             with ctx.tracer.start_as_current_span('repair_tool_arguments'):
                 try:
                     repaired = json_repair.repair_json(args, skip_json_loads=True, ensure_ascii=False)

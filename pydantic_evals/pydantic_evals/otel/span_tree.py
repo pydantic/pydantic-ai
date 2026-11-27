@@ -276,7 +276,7 @@ class SpanNode:
         if isinstance(expected, dict | list) and isinstance(stored, str):
             try:
                 return json.loads(stored) == expected
-            except (json.JSONDecodeError, RecursionError):
+            except (json.JSONDecodeError, ValueError, RecursionError):
                 return False
         # The OTel SDK stores sequence attribute values as tuples
         if isinstance(expected, list) and isinstance(stored, tuple):

@@ -593,7 +593,9 @@ class TestHttpKeenableClient:
 
         assert page == (payload if isinstance(payload, dict) else {})
 
-    @pytest.mark.parametrize('body', [b'', b'<html>gateway timeout</html>', b'{"results": "\xff"}'])
+    @pytest.mark.parametrize(
+        'body', [b'', b'<html>gateway timeout</html>', b'{"results": "\xff"}', b'{"results": [' + b'9' * 5000 + b']}']
+    )
     async def test_malformed_2xx_bodies_become_retries(self, monkeypatch: pytest.MonkeyPatch, body: bytes):
         # A 2xx that is not JSON is neither an `httpx2.HTTPError` nor a deliberate
         # exception; without this it would kill the run as a bare decode error.

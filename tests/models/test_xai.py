@@ -6735,3 +6735,17 @@ async def test_xai_stream_intermediate_chunks_keep_finish_reason_unset(allow_mod
 
 
 # End of tests
+
+
+def test_tool_json_parse_fallbacks() -> None:
+    from pydantic_ai.models.xai import _get_tool_result_content, _parse_tool_args
+
+    oversized = '{"value": ' + '9' * 5000 + '}'
+    deeply_nested = '[' * 20000 + ']' * 20000
+    for content in (oversized, deeply_nested):
+        assert _parse_tool_args(content) == {}
+        assert _get_tool_result_content(content) == content
+
+    valid = '{"value": 1}'
+    assert _parse_tool_args(valid) == {'value': 1}
+    assert _get_tool_result_content(valid) == {'value': 1}

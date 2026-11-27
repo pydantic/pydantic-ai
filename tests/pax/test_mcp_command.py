@@ -582,3 +582,15 @@ def test_oauth_toggle_restores_a_short_timeout(tmp_path: Path) -> None:
     form.toggle_oauth()
     form.toggle_oauth()
     assert json.loads(form.config)['timeout'] == 330, 'a timeout the user chose is kept'
+
+
+def test_form_json_fallbacks_for_large_or_deep_values() -> None:
+    from pydantic_ai_pax.mcp.form import _json_problem, _one_line
+
+    oversized = '{"value": ' + '9' * 5000 + '}'
+    deeply_nested = '[' * 20000 + ']' * 20000
+    assert _json_problem(oversized) == 'Invalid JSON'
+    assert _json_problem(deeply_nested) == 'Invalid JSON'
+    assert _json_problem('not json').startswith('Invalid JSON: ')
+    assert _one_line(oversized).startswith('{"value": ')
+    assert _one_line(deeply_nested).startswith('[')

@@ -69,6 +69,41 @@ class TestRepairToolArguments:
         monkeypatch.setattr(json_repair, 'repair_json', fail)
         await self.test_invalid_schema_still_retries(capabilities, tmp_path, '{"path": "hello.txt",}')
 
+    @pytest.mark.parametrize('payload_kind', ['oversized_integer', 'deeply_nested'])
+    async def test_oversized_integer_args_fall_back_to_repair(
+        self,
+        capabilities: list[AbstractCapability[object]],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        payload_kind: str,
+    ) -> None:
+        repairs: list[str] = []
+
+        def repair_json(args: str, *, skip_json_loads: bool, ensure_ascii: bool) -> str:
+            repairs.append(args)
+            return '{"path": "hello.txt", "content": "hello"}'
+
+        monkeypatch.setattr(json_repair, 'repair_json', repair_json)
+        if payload_kind == 'oversized_integer':
+            arguments = '{"path": "hello.txt", "content": "hello", "extra": ' + '9' * 5000 + '}'
+        else:
+            arguments = '{"path": "hello.txt", "content": "hello", "extra": ' + '[' * 20000 + '0' + ']' * 20000 + '}'
+
+        calls = 0
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return ModelResponse(parts=[ToolCallPart('write_file', arguments)])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(model_for(respond), capabilities=capabilities)
+        result = await agent.run('Write hello.txt', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        assert result.output == 'done'
+        assert (tmp_path / 'hello.txt').read_text() == 'hello'
+        assert repairs == [arguments]
+
     @pytest.mark.parametrize(
         'arguments',
         [

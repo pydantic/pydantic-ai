@@ -160,10 +160,11 @@ async def test_memory_symlink_escape_is_model_retry(tmp_path: Path) -> None:
     assert (tmp_path / 'outside.md').read_text() == 'secret'
 
 
-async def test_file_store_recovers_corrupt_receipts(tmp_path: Path) -> None:
+@pytest.mark.parametrize('journal', ['not json', '{"a": ' + '9' * 5000 + '}'])
+async def test_file_store_recovers_corrupt_receipts(tmp_path: Path, journal: str) -> None:
     root = tmp_path / 'store'
     root.mkdir()
-    (root / '.memory-operations.json').write_text('not json')
+    (root / '.memory-operations.json').write_text(journal)
     toolset = MemoryToolset(Memory[None](store=FileMemoryStore('.', workspace=LocalWorkspaceBackend(root))))
     assert (await toolset.write_memory(_ctx(), 'new'))['status'] == 'created'
     assert (root / 'main' / 'MEMORY.md').read_text() == 'new\n'
