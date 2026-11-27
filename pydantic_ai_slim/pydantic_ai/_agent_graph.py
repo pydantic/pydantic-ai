@@ -4173,7 +4173,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         finally:
             # Only the before-chain keeps the old write-back; wrap and after hooks get a request-only list.
             mirrored_messages.detach()
-            persistent_messages_after_processing = len(ctx.state.message_history)
+        # What `deliver_asap_messages` appends below lands after the request being prepared, so the resumed
+        # request's position is counted against the history as the before-chain left it.
+        persistent_messages_after_processing = len(ctx.state.message_history)
         # The drain capability ran ahead of the other hooks, so `'asap'` content a `before_model_request` hook
         # enqueued would wait for the next request. Delivering it now puts it in this request and in history with
         # one call, which is what a request-scoped reminder needs.
@@ -4234,8 +4236,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # `message_history` *is* the request being sent, so it's prior context, not new. Track it
                 # two ways so `_first_new_message_index` can exclude it however capabilities/processors
                 # mutate the list: by object (identity/value, survives reordering and removal) and by
-                # position (survives an in-place rebuild that changes its fields). It's the last message
-                # here, before the model output is appended, so its index is `len(messages) - 1`.
+                # position (survives an in-place rebuild that changes its fields). It's the last message the
+                # before-chain left, ahead of any `'asap'` content delivered after it.
                 ctx.deps.resumed_request = self.request
                 ctx.deps.resumed_request_index = persistent_messages_after_processing - 1
             elif ctx.deps.resumed_request_index is not None:

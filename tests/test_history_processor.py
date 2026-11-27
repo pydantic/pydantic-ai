@@ -52,42 +52,6 @@ def function_model(received_messages: list[ModelMessage]) -> FunctionModel:
     return FunctionModel(capture_model_function, stream_function=capture_model_stream_function)
 
 
-async def test_reinject_system_prompt_resumed_run_with_asap_enqueue_keeps_new_messages() -> None:
-    calls = 0
-
-    def model_function(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            return ModelResponse(parts=[ToolCallPart(tool_name='test_tool', args={}, tool_call_id='call-1')])
-        return ModelResponse(parts=[TextPart('done')])
-
-    enqueued = False
-
-    def enqueue_asap_once(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
-        nonlocal enqueued
-        if not enqueued:
-            enqueued = True
-            ctx.enqueue('ASAP message', priority='asap')
-        return request_context
-
-    agent = Agent(
-        FunctionModel(model_function),
-        system_prompt='System prompt',
-        capabilities=[ReinjectSystemPrompt(), Hooks(before_model_request=enqueue_asap_once)],
-    )
-
-    def test_tool() -> str:
-        return 'tool result'
-
-    agent.tool_plain(test_tool)
-
-    result = await agent.run(message_history=[ModelRequest(parts=[UserPromptPart(content='Continue')])])
-
-    assert calls == 2
-    assert result.new_messages() == result.all_messages()[1:]
-
-
 async def test_history_processor_public_type(function_model: FunctionModel) -> None:
     """`HistoryProcessor` is publicly importable so consumers can type their own processors."""
 
@@ -2101,6 +2065,49 @@ async def test_reinject_system_prompt_resumed_tool_loop_excludes_resumed_request
     # The reinjected resumed request stays excluded; everything produced this run is new.
     assert result.new_messages() == result.all_messages()[1:]
     assert not _user_request_present(result.new_messages())
+
+
+@pytest.mark.parametrize('tool_calls', [0, 1])
+@pytest.mark.parametrize('replace_existing', [False, True])
+async def test_reinject_system_prompt_resumed_run_keeps_messages_a_hook_enqueues(
+    replace_existing: bool, tool_calls: int
+):
+    """
+    A `before_model_request` hook's `'asap'` content is appended after the request being prepared, on every
+    step. With system-prompt reinjection rebuilding the resumed request, the boundary falls back to its
+    position, which must not count those appended messages as ones before the resumed request.
+    """
+
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count <= tool_calls:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id=f'tool_call_{call_count}')]
+            )
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    async def remind(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
+        ctx.enqueue('Reminder: be brief.')
+        return request_context
+
+    agent = Agent(
+        model=FunctionModel(model_function, model_name='test'),
+        system_prompt='Server prompt',
+        capabilities=[ReinjectSystemPrompt(replace_existing=replace_existing), Hooks(before_model_request=remind)],
+    )
+
+    @agent.tool
+    async def my_tool(_ctx: RunContext) -> str:
+        return 'tool executed'
+
+    result = await agent.run(message_history=[ModelRequest(parts=[UserPromptPart(content='Original prompt')])])
+
+    # One reminder request and one response per step, plus a tool return request per tool call.
+    assert len(result.all_messages()) == 1 + 2 * (tool_calls + 1) + tool_calls
+    assert result.new_messages() == result.all_messages()[1:]
 
 
 async def test_history_processor_truncation_during_resumed_tool_loop_keeps_run_messages():
