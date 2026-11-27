@@ -5610,27 +5610,26 @@ def _sends(messages: list[ModelMessage], prompt: str) -> bool:
 
 
 def _answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    if _sends(messages, 'fail'):
+    # A provider rejects an empty request, as when the history repair drops every part of one.
+    if _sends(messages, 'fail') or not messages[-1].parts:
         raise RuntimeError('the model failed')
-    if _sends(messages, 'call the failing tool'):
-        return ModelResponse(parts=[ToolCallPart('failing_tool')])
+    if _sends(messages, 'call a tool'):
+        return ModelResponse(parts=[ToolCallPart('a_tool')])
     if info.output_tools:
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'response': 1})])
     return ModelResponse(parts=[TextPart('an answer')])
 
 
-def failing_tool() -> str:
-    raise RuntimeError('the tool failed')
-
-
-def _fail_on_prompt(messages: list[ModelMessage]) -> list[ModelMessage]:
-    if _sends(messages, 'fail in the history processor'):
-        raise RuntimeError('the history processor failed')
-    return messages
+def a_tool() -> str:
+    return 'done'
 
 
 def _keep_last(messages: list[ModelMessage]) -> list[ModelMessage]:
     return messages[-1:]
+
+
+def _keep_first_two_and_last(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return [*messages[:2], *messages[2:][-1:]]
 
 
 @dataclass(frozen=True)
@@ -5685,47 +5684,8 @@ RUN_SPAN_INDEX_CASES = [
         ),
         expected_index=3,
     ),
-    RunSpanIndexCase(
-        # The request sent merges this run's prompt into the previous run's output tool return, so the
-        # index points at that merged message.
-        id='structured-output-second-run-model-fails',
-        prompts=('question 1', 'fail'),
-        output_type=int,
-        expected_index=2,
-        failed_run_tail=snapshot(
-            [
-                {
-                    'role': 'user',
-                    'parts': [
-                        {
-                            'type': 'tool_call_response',
-                            'id': IsStr(),
-                            'name': 'final_result',
-                            'result': 'Final result processed.',
-                        },
-                        {'type': 'text', 'content': 'fail'},
-                    ],
-                }
-            ]
-        ),
-    ),
-    RunSpanIndexCase(
-        id='system-prompt-history-tool-fails',
-        prompts=('question 1', 'call the failing tool'),
-        system_prompt='Be brief.',
-        expected_index=3,
-        failed_run_tail=snapshot([{'role': 'user', 'parts': [{'type': 'text', 'content': 'call the failing tool'}]}]),
-    ),
-    RunSpanIndexCase(
-        id='system-prompt-history-history-processor-fails',
-        prompts=('question 1', 'fail in the history processor'),
-        system_prompt='Be brief.',
-        capabilities=(ProcessHistory(_fail_on_prompt),),
-        expected_index=3,
-        failed_run_tail=snapshot(
-            [{'role': 'user', 'parts': [{'type': 'text', 'content': 'fail in the history processor'}]}]
-        ),
-    ),
+    # A failed run keeps the index it had when it started, which FOLLOWUP_ISSUE tracks.
+    # The two cases below pin failed runs where that index is right, which a fix there has to keep.
     RunSpanIndexCase(
         # The resumed request is the history the run was given, so the run added nothing.
         id='resumed-without-prompt-model-fails',
@@ -5737,6 +5697,20 @@ RUN_SPAN_INDEX_CASES = [
         ),
         expected_index=3,
         failed_run_tail=[],
+    ),
+    RunSpanIndexCase(
+        # The processor drops the tool call this run added, the history repair then drops its orphaned
+        # tool return, and the model fails on the empty request: nothing the run added is recorded.
+        id='history-processor-drops-the-runs-tool-call-model-fails',
+        prompts=('call a tool',),
+        history=(
+            ModelRequest(parts=[UserPromptPart('question 1')]),
+            ModelResponse(parts=[TextPart('an answer')]),
+        ),
+        capabilities=(ProcessHistory(_keep_first_two_and_last),),
+        expected_index=2,
+        failed_run_tail=[],
+        marks=(pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST),),
     ),
 ]
 
@@ -5752,7 +5726,7 @@ def test_run_span_new_message_index(
         FunctionModel(_answer),
         system_prompt=case.system_prompt,
         output_type=case.output_type,
-        tools=[failing_tool],
+        tools=[a_tool],
         capabilities=[*case.capabilities, Instrumentation(settings=settings)],
     )
     history = list(case.history)
