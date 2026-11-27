@@ -535,20 +535,24 @@ jobs:
           # Exclude the tag being built: once its GitHub release exists, `gh release view`
           # would otherwise compare the release to itself and make this gate a no-op.
           # Try the highest versions first, not the newest: a V1 maintenance release can be published last.
-          candidates=$(gh release list --repo pydantic/pydantic-ai --limit 20 \
+          candidates=$(gh release list --repo pydantic/pydantic-ai --limit 1000 \
             --exclude-drafts --exclude-pre-releases --json tagName \
             | jq -r --arg current "$GITHUB_REF_NAME" \
               'map(select(.tagName != $current and (.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))))
                | sort_by(.tagName | ltrimstr("v") | split(".") | map(tonumber)) | reverse | .[].tagName')
           # Compare against the highest release this commit contains. A release tagged at main's head is
           # not in a branch cut before it, or in an older main commit re-run afterwards, and comparing
-          # those against it reports everything it added as removed. GitHub's compare answers the
-          # ancestry question without the history the shallow checkout lacks: `ahead` or `identical`
-          # means the release is an ancestor of this commit.
+          # those against it reports everything it added as removed. The shallow checkout lacks the
+          # history to answer that, so fetch just the commits (no trees or blobs) into a separate bare
+          # repository. Fetching them into the checkout would make it a partial clone, and the tag's
+          # trees that `check_api_compatibility.py` reads would then arrive one lazy fetch at a time.
+          ancestry="$RUNNER_TEMP/release-ancestry"
+          git init --quiet --bare "$ancestry"
+          git -C "$ancestry" fetch --quiet --filter=tree:0 --no-tags \
+            "https://github.com/$GITHUB_REPOSITORY.git" "$GITHUB_SHA" 'refs/tags/v*:refs/tags/v*'
           release_tag=
           for tag in $candidates; do
-            status=$(gh api "repos/pydantic/pydantic-ai/compare/$tag...$GITHUB_SHA?per_page=1" --jq .status)
-            if [ "$status" = ahead ] || [ "$status" = identical ]; then
+            if git -C "$ancestry" merge-base --is-ancestor "$tag" "$GITHUB_SHA"; then
               release_tag=$tag
               break
             fi
