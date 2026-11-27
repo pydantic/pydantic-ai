@@ -20,6 +20,7 @@ from typing_extensions import TypedDict, TypeIs
 
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.durable_exec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import durable_operation_dispatch
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, ToolRetryError, UsageLimitExceeded, UserError
@@ -74,9 +75,11 @@ from pydantic_ai_harness._monty_exec import (
     Snapshot,
     TurnComplete,
     TurnFeed,
+    in_durable_task_orchestration,
     in_temporal_workflow,
     module_attrs,
     module_functions,
+    unbounded_replay_engine,
 )
 from pydantic_ai_harness._monty_turns import MontyFailure, MontyTurn, TurnRequest, model_safe_result
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, renamed_duration_limit, warn_argument_renamed
@@ -215,6 +218,16 @@ def in_durable_execution(ctx: RunContext[object]) -> bool:
         isinstance(capability, BaseDurabilityCapability) and capability.in_durable_context
         for capability in ctx.capabilities.values()
     )
+
+
+def _refuse_storeless_server(unbounded: DurabilityEngineSpec | None) -> None:
+    """Raise when turns had to be activities, since the snippet would otherwise rerun in orchestrator code."""
+    if unbounded is not None:
+        raise UserError(
+            f"The `monty_sandbox` server doesn't store sessions, which `CodeMode` needs to run each turn in its own "
+            f'{unbounded.durable_unit_noun} in this {unbounded.engine_name} {unbounded.durable_container_noun}. '
+            'Use a Monty server with a session store.'
+        )
 
 
 def _exhausted_sandbox_limit(error: MontyFailure) -> str | None:
@@ -1472,33 +1485,73 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             return None
         return next((run_id for run_id, cap in ctx.capabilities.items() if cap is self.capability), None)
 
-    def _durable_turn(self, ctx: RunContext[AgentDepsT]) -> Callable[[TurnRequest], Awaitable[MontyTurn]] | None:
-        """The operation that runs each Monty turn in a Temporal activity, or `None` to run turns here.
+    def _turn_operation(self, ctx: RunContext[AgentDepsT]) -> Callable[[TurnRequest], Awaitable[MontyTurn]] | None:
+        """`CodeMode`'s `monty_turn` operation for this run, or `None` when it isn't bound.
 
-        A remote sandbox otherwise keeps the workflow task waiting on the network while a snippet
-        computes, and Temporal fails a workflow task that does not yield within 2 seconds. Turns move
-        out only where they behave as they do here: an `os_access` handler may use workflow APIs, and
-        Monty restarts a mount's `write_bytes_limit` count and drops its `'overlay'` writes when a
-        stored session loads. The operation is bound only for a `CodeMode` with an `id` that was on the
-        agent when it was built, so one a `DynamicCapability` returns keeps its turns here. The answer
-        is fixed for the run, so every `run_code` call takes the same path, and `workflow.patched`
-        keeps runs that started before this existed on the path they started on.
+        It is bound only for a `CodeMode` with an `id` that was on the agent when it was built, so one a
+        `DynamicCapability` returns has none.
         """
         from pydantic_ai_harness.code_mode._capability import CodeMode  # imports this module
 
         capability = self.capability
         if not isinstance(capability, CodeMode) or durable_operation_dispatch(ctx, capability.id, 'monty_turn') is None:
             return None
-        if self.monty_sandbox is None or self.os_access is not None:
-            return None
+        return partial(capability._monty_turn, ctx)  # pyright: ignore[reportPrivateUsage]
+
+    def _turn_config_blockers(self) -> list[str]:
+        """The settings that keep Monty turns out of activities, each as the change that would allow them.
+
+        An `os_access` handler may use workflow APIs, and Monty restarts a mount's `write_bytes_limit`
+        count and drops its `'overlay'` writes when a stored session loads, so turns move out only
+        where they behave as they do in orchestrator code.
+        """
+        blockers: list[str] = []
+        if self.monty_sandbox is None:
+            blockers.append('set `monty_sandbox` to a Monty server that stores sessions')
+        if self.os_access is not None:
+            blockers.append('remove `os_access`')
         mounts = self.mount if isinstance(self.mount, list) else [self.mount] if self.mount is not None else []
         if any(mount.mode == 'overlay' or mount.write_bytes_limit is not None for mount in mounts):
-            return None
-        from temporalio import workflow  # only once a workflow is known to be running
+            blockers.append("use only mounts without `mode='overlay'` or `write_bytes_limit`")
+        return blockers
 
-        if not workflow.patched(_DURABLE_TURNS_PATCH):
+    def _durable_turn(self, ctx: RunContext[AgentDepsT]) -> Callable[[TurnRequest], Awaitable[MontyTurn]] | None:
+        """The operation that runs each Monty turn in an activity, or `None` to run turns here.
+
+        A remote sandbox otherwise keeps the workflow waiting on the network while a snippet computes:
+        Temporal fails a workflow task that does not yield within 2 seconds, and nothing stops a snippet
+        in Azure Durable Task orchestrator code. The answer is fixed for the run, so every `run_code`
+        call takes the same path, and under Temporal `workflow.patched` keeps runs that started before
+        this existed on the path they started on.
+        """
+        run_turn = self._turn_operation(ctx)
+        if run_turn is None or self._turn_config_blockers():
             return None
-        return partial(capability._monty_turn, ctx)  # pyright: ignore[reportPrivateUsage]
+        if in_temporal_workflow():
+            from temporalio import workflow  # only once a workflow is known to be running
+
+            if not workflow.patched(_DURABLE_TURNS_PATCH):
+                return None
+        return run_turn
+
+    def _refuse_unbounded_snippets(self, ctx: RunContext[AgentDepsT]) -> DurabilityEngineSpec | None:
+        """The engine whose replayed code nothing bounds, if this run is in it; raise unless turns can be activities.
+
+        Only there do a snippet's turns have to run as activities, where `max_duration_seconds` stops them.
+        """
+        if (spec := unbounded_replay_engine(ctx)) is None:
+            return None
+        blockers = self._turn_config_blockers()
+        if self._turn_operation(ctx) is None:
+            blockers.append('give `CodeMode` an `id` and add it to the agent directly, not from a `DynamicCapability`')
+        if blockers:
+            raise UserError(
+                f"`CodeMode` can't run snippets in this {spec.engine_name} {spec.durable_container_noun}: "
+                f'{spec.engine_name} replays orchestrator code, so a snippet there has no time limit, and nothing '
+                f'stops one that computes forever. To run each turn in its own {spec.durable_unit_noun}, where '
+                f'`max_duration_seconds` applies, {"; ".join(blockers)}.'
+            )
+        return spec
 
     async def _feed_start(
         self,
@@ -1509,17 +1562,18 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         *,
         type_check_stubs: str | None,
         limits: ResourceLimits,
-        in_workflow: bool,
+        replays: bool,
+        use_portal: bool,
     ) -> tuple[Callable[[], Awaitable[Snapshot]], BlockingPortal | None]:
         """How to start feeding `code`, and the portal to call Monty through: in turns, or on the live session."""
-        if in_workflow and run_state.stores_sessions and (run_turn := self._durable_turn(ctx)) is not None:
+        if replays and run_state.stores_sessions and (run_turn := self._durable_turn(ctx)) is not None:
             # The configured limits: Monty's elapsed-time check is replay-safe in an activity, and it is
-            # what stops a turn, since Temporal's timeout does not stop a running activity.
+            # what stops a turn, since neither engine's timeout stops a running activity.
             feed = TurnFeed(run_turn, run_state, capture, _resolve_resource_limits(self.resource_limits))
             return partial(feed.start, code, type_check_stubs), None
         type_check = type_check_stubs is not None
         session = await run_state.get_session(
-            type_check=type_check, type_check_stubs=type_check_stubs, limits=limits, in_temporal_workflow=in_workflow
+            type_check=type_check, type_check_stubs=type_check_stubs, limits=limits, use_portal=use_portal
         )
         start = partial(
             session.feed_start,
@@ -1600,6 +1654,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         """Run one REPL feed, turning sandbox failures into retries for the model."""
         run_state = self._run_state
         assert run_state is not None, '`CodeModeToolset` must be entered before calling `run_code`'
+        unbounded = self._refuse_unbounded_snippets(ctx)
 
         repl = self._persistent_repl(ctx)
         if repl is not None:
@@ -1642,12 +1697,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # behavior as a normal call while presenting one combined result to the model.
         capture = execution.capture
 
-        in_workflow = in_temporal_workflow()
+        # Temporal workflow code and Durable Task orchestrator code both replay, and neither loop can be
+        # woken from Monty's thread, so Monty is called through a portal (see `call_monty`).
+        replays = in_temporal_workflow() or in_durable_task_orchestration()
         configured = _resolve_resource_limits(self.resource_limits)
-        # `run_code` executes in workflow code and Temporal replays it. An elapsed timer may make the
-        # original run and replay take different branches, which Temporal cannot record.
-        limits = configured | {'max_feed_duration_secs': None} if in_workflow else configured
-        if repl is not None and await repl.restore(run_state, limits=limits, in_temporal_workflow=in_workflow):
+        # `run_code` executes in workflow code and the engine replays it. An elapsed timer may make the
+        # original run and replay take different branches, which the engine cannot record.
+        limits = configured | {'max_feed_duration_secs': None} if replays else configured
+        if repl is not None and await repl.restore(run_state, limits=limits, use_portal=replays):
             # The type checker would reject the names the restored state defines.
             fresh_repl = type_check = False
         executor = partial(
@@ -1673,13 +1730,15 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 capture,
                 type_check_stubs=type_check_stubs if type_check else None,
                 limits=limits,
-                in_workflow=in_workflow,
+                replays=replays,
+                use_portal=replays,
             )
             return await self._feed(executor(portal=portal), start, run_state, execution, fresh_repl=fresh_repl)
 
         try:
             completed = await run_feed()
         except MontyStoresNoSessions:
+            _refuse_storeless_server(unbounded)
             # The first turn ran no code, so the snippet runs in the workflow, as before turns were activities.
             run_state.stores_sessions = False
             completed = await run_feed()

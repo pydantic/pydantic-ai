@@ -175,7 +175,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     `pydantic_monty.OsHandler`). A plain function is called from a Monty thread, not the event
     loop's thread, with the run's contextvars set, so it must not touch asyncio objects; an `async`
     handler is awaited on an event loop instead. Inside a Temporal workflow, clock, environment, and
-    randomness calls run on the workflow's own thread, so the handler can use `workflow.now()`.
+    randomness calls run on the workflow's own thread, so the handler can use `workflow.now()`. Under
+    Azure Durable Task, `CodeMode` refuses to run with a handler; see the Code Mode guide.
     The positional `(name, args, kwargs)` form is deprecated.
     """
 
@@ -260,12 +261,12 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = field(
         default=None, repr=False
     )
-    """Where sandboxed code runs: an `http://`, `https://`, `ws://`, or `wss://` URL of the server root, with no path, query, or fragment, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`, called for each run, or for each turn when turns run as Temporal activities. Unset, code runs locally.
+    """Where sandboxed code runs: an `http://`, `https://`, `ws://`, or `wss://` URL of the server root, with no path, query, or fragment, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`, called for each run, or for each turn when turns run as activities. Unset, code runs locally.
 
     A remote pool's `request_timeout` adds a per-turn transport deadline to `max_duration_seconds`.
     In Temporal workflow code, only the transport deadline applies. Tools, `os_access`, and print
     output stay in your process, and so do mounts unless turns run as activities, where the activity
-    worker reads them.
+    worker reads them. Under Azure Durable Task, every turn runs as an activity.
     """
 
     monty_sandbox_url: str | None = field(default=None, repr=False)
@@ -477,12 +478,15 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                     external_modules=self.external_modules,
                 )
         except Exception as error:
-            # Temporal records an activity's failure, cause included, in workflow history, and a pool
+            # The engines record an activity's failure, cause included, in workflow history, and a pool
             # or connection error's text can carry the pool's URL or credentials, so only the type's
             # name is kept, and the retry policy matches it. A `UserError` stays one, which Temporal
             # does not retry; the `monty_sandbox` factory can raise one, so its text is dropped too.
             name = type(error).__name__
-            raise (UserError if isinstance(error, UserError) else redacted_error_type(name))(name) from None
+            redacted = (UserError if isinstance(error, UserError) else redacted_error_type(name))(name)
+        # Raised outside the `except` block, so it has no `__context__` at all: the Durable Task SDK records
+        # `__cause__ or __context__` and ignores the `__suppress_context__` that `raise ... from None` sets.
+        raise redacted
 
     @property
     def has_wrap_run_event_stream(self) -> bool:

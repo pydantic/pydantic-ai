@@ -449,6 +449,10 @@ and is re-executed during replay against the recorded sub-agent results.
 Unlike Code Mode, a `max_duration_seconds` you set still applies inside the workflow, so a script that
 runs close to it can stop at a different point on replay and cause a `NondeterminismError`.
 
+`DynamicWorkflow` doesn't support `AzureDurableTaskDurability` yet: the script would run in
+orchestrator code, where nothing stops one that computes forever, so `run_workflow` raises
+`UserError` there ([#14974](https://github.com/pydantic/pydantic-ai/issues/14974)).
+
 ## Running under other durable engines
 
 `DBOSDurability` numbers a workflow's steps in the order they start, so the steps of concurrent

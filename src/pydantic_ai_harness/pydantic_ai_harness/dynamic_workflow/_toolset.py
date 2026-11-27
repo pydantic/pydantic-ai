@@ -63,6 +63,7 @@ from pydantic_ai_harness._monty_exec import (
     MontyRunState,
     PrintCapture,
     in_temporal_workflow,
+    unbounded_replay_engine,
 )
 from pydantic_ai_harness._monty_turns import is_sandbox_panic
 from pydantic_ai_harness._sub_agent_output import (
@@ -699,6 +700,17 @@ def index_workflow_agents(
     return by_name
 
 
+def _refuse_unbounded_scripts(ctx: RunContext[object]) -> None:
+    """Raise in replayed orchestrator code that nothing bounds, where a script would have no time limit."""
+    if (unbounded := unbounded_replay_engine(ctx)) is not None:
+        raise UserError(
+            f"`DynamicWorkflow` can't run scripts in this {unbounded.engine_name} "
+            f'{unbounded.durable_container_noun}: {unbounded.engine_name} replays orchestrator code, so a '
+            'script there has no time limit, and nothing stops one that computes forever. See '
+            'https://github.com/pydantic/pydantic-ai/issues/14974.'
+        )
+
+
 @dataclass(kw_only=True)
 class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
     """Single-tool toolset that runs sub-agent orchestration scripts in a Monty sandbox."""
@@ -1030,6 +1042,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
+        _refuse_unbounded_scripts(ctx)
         code = tool_args['code']
         budget_exhausted = False
         completed_dispatches: list[_CompletedDispatch] = []
@@ -1057,7 +1070,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         monty = MontyRunState()
         try:
             session = await monty.get_session(
-                type_check=True, type_check_stubs=type_check_stubs, limits=limits, in_temporal_workflow=in_temporal
+                type_check=True, type_check_stubs=type_check_stubs, limits=limits, use_portal=in_temporal
             )
             # `_by_name` is not mutated while a script executes (reveals land in `get_tools`,
             # which does not interleave with `call_tool`), so it is a stable name registry for

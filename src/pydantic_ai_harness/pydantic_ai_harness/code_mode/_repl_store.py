@@ -92,7 +92,7 @@ class PersistentRepl(Generic[AgentDepsT]):
             return
         self.ctx = ctx
 
-    async def restore(self, run_state: MontyRunState, *, limits: ResourceLimits, in_temporal_workflow: bool) -> bool:
+    async def restore(self, run_state: MontyRunState, *, limits: ResourceLimits, use_portal: bool) -> bool:
         """Load the pending state into the run's first session; return whether it was restored.
 
         A state saved under other resource limits, or one Monty cannot load, such as a truncated dump
@@ -110,7 +110,7 @@ class PersistentRepl(Generic[AgentDepsT]):
             )
             return False
         session = await run_state.get_session(
-            type_check=False, type_check_stubs=None, limits=limits, in_temporal_workflow=in_temporal_workflow
+            type_check=False, type_check_stubs=None, limits=limits, use_portal=use_portal
         )
         self.pending = None
         try:

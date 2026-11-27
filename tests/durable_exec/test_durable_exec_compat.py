@@ -216,6 +216,16 @@ def test_public_engine_builder_exports() -> None:
     assert all(getattr(durable_exec, name) is not None for name in durable_exec.__all__)
 
 
+def test_engine_spec_orchestrator_code_defaults() -> None:
+    """An engine that declares nothing runs container code once, on an ordinary loop, with no engine bound on blocking."""
+    spec = DurabilityEngineSpec(engine_name='Defaults', durable_unit_noun='unit', durable_container_noun='container')
+    assert (spec.replays_orchestrator_code, spec.thread_wakeable_loop, spec.bounds_blocking_orchestrator_code) == (
+        False,
+        True,
+        False,
+    )
+
+
 def test_unwrap_model_removes_nested_wrappers() -> None:
     model = TestModel()
     assert unwrap_model(WrapperModel(WrapperModel(model))) is model

@@ -30,7 +30,9 @@ from anyio.from_thread import BlockingPortal, start_blocking_portal
 from opentelemetry import context as otel_context
 from typing_extensions import TypeVarTuple, Unpack
 
+from pydantic_ai import RunContext
 from pydantic_ai._utils import is_async_callable, run_in_executor
+from pydantic_ai.durable_exec import BaseDurabilityCapability, DurabilityEngineSpec
 from pydantic_ai_harness._typeguards import is_object_tuple, is_str_keyed_dict
 
 try:
@@ -91,11 +93,45 @@ def in_temporal_workflow() -> bool:
     return workflow is not None and workflow.in_workflow()
 
 
-# Running Monty inside a Temporal workflow
-# ----------------------------------------
+def in_durable_task_orchestration() -> bool:
+    """Whether this code runs in an Azure Durable Task orchestration, where Monty must be called through the portal.
+
+    Reads `sys.modules` so the optional extra is never imported.
+    """
+    bridge = sys.modules.get('pydantic_ai_harness.azure_durable_task._bridge')
+    return bridge is not None and bridge.current_loop() is not None
+
+
+def unbounded_replay_engine(ctx: RunContext[object]) -> DurabilityEngineSpec | None:
+    """The engine running this code, when it replays the code but doesn't stop it when it blocks; else `None`.
+
+    Sandboxed code there can't have an elapsed-time limit, since every replay must take the recorded
+    path, and nothing else stops a snippet that computes forever, so it must not run there.
+    """
+    spec = next(
+        (
+            capability.engine_spec
+            for capability in ctx.capabilities.values()
+            if isinstance(capability, BaseDurabilityCapability) and capability.in_durable_context
+        ),
+        None,
+    )
+    if spec is None and in_durable_task_orchestration():
+        # An agent with no durability capability of its own, such as one an inline tool runs.
+        from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability
+
+        spec = AzureDurableTaskDurability.engine_spec
+    if spec is None or not spec.replays_orchestrator_code or spec.bounds_blocking_orchestrator_code:
+        return None
+    return spec
+
+
+# Running Monty inside a Temporal workflow or a Durable Task orchestration
+# ------------------------------------------------------------------------
 # Monty's bindings are async and complete each awaited call from Monty's own I/O thread by waking
-# the event loop the `await` started on (`loop.call_soon_threadsafe`). A Temporal workflow's event
-# loop cannot be woken that way, so the call would never complete. Inside a workflow, the
+# the event loop the `await` started on (`loop.call_soon_threadsafe`). Neither a Temporal workflow's
+# event loop nor the loop that drives an Azure Durable Task orchestrator can be woken that way, so
+# the call would never complete. Inside a workflow or orchestration, the
 # helpers below therefore route every Monty call through an `anyio` blocking portal: a helper
 # thread running a normal asyncio loop. The workflow thread blocks until the sandbox suspends or
 # completes, exactly as it did with Monty's former sync bindings, and control is back in the
@@ -201,8 +237,8 @@ class MontyRunState:
     """A Monty worker pool and its checked-out REPL session, opened lazily and closed together.
 
     Workers are local subprocesses from `AsyncMonty`, or remote ones dialed through
-    `AsyncMontyRemote` when `monty_sandbox_url` or `pool_factory` is set. Inside a Temporal workflow
-    every Monty call goes through `portal`, opened with the pool and closed after it.
+    `AsyncMontyRemote` when `monty_sandbox_url` or `pool_factory` is set. Inside a Temporal workflow or
+    a Durable Task orchestration every Monty call goes through `portal`, opened with the pool and closed after it.
     """
 
     monty_sandbox_url: str | None = field(default=None, repr=False)
@@ -232,7 +268,7 @@ class MontyRunState:
         type_check: bool,
         type_check_stubs: str | None,
         limits: ResourceLimits,
-        in_temporal_workflow: bool = False,
+        use_portal: bool = False,
     ) -> AsyncMontySession:
         """Return the live REPL session, spawning or dialing the pool on first use.
 
@@ -240,7 +276,7 @@ class MontyRunState:
         """
         if self.pool is None:
             try:
-                if in_temporal_workflow:
+                if use_portal:
                     self.portal = self._pool_stack.enter_context(start_blocking_portal())
                 remote = self.pool_factory if self.pool_factory is not None else self.monty_sandbox_url
                 pool = AsyncMonty() if remote is None else await build_remote_pool(remote, limits)
@@ -531,7 +567,7 @@ class MontyExecutor:
     valid_names: Container[str]
     sequential_names: set[str] = field(default_factory=set[str])
     global_sequential: bool = False
-    # Set inside a Temporal workflow; see `call_monty`.
+    # Set inside a Temporal workflow or a Durable Task orchestration; see `call_monty`.
     portal: BlockingPortal | None = None
     # Total seconds the code may sleep, or `None` for no cap. Sleep time does not count toward
     # Monty's execution-time limit, so it gets the same allowance separately.

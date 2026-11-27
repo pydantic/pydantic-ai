@@ -237,7 +237,7 @@ Pass `resource_limits='unlimited'` only when another execution boundary supplies
 
 Nested calls also count toward the run's [`tool_calls_limit`](../agent.md#usage-limits), along with the `run_code` call making them. Each is checked before it runs, counting pending calls, and one that would exceed the limit ends the run with [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded], as a top-level call does, even if the snippet catches it.
 
-When snippets run in Temporal workflow code, `CodeMode` disables `max_duration_seconds`, even an explicit override: `run_code` is replayed there, and measuring elapsed time could make replay diverge from the recorded workflow. Turns that run as activities keep it (see [Remote turns as activities](#remote-turns-as-activities)). The memory and suspension caps still apply. Put time-bounded work behind a Temporal activity.
+When snippets run in Temporal workflow code, `CodeMode` disables `max_duration_seconds`, even an explicit override: `run_code` is replayed there, and measuring elapsed time could make replay diverge from the recorded workflow. Turns that run as activities keep it (see [Remote turns as activities](#remote-turns-as-activities)), and under [Azure Durable Task](#azure-durable-task-durability) every turn does. The memory and suspension caps still apply. Put time-bounded work behind a Temporal activity.
 
 ## Submitting the final output
 
@@ -613,6 +613,25 @@ Tool results and nested call arguments keep their types and shared values, since
 
 Code Mode also resets the session if the server won't store the session a snippet error left, or no longer has a run's stored state (for example because it expired); in the second case it tells the model the connection was lost, as for a dropped connection outside Temporal.
 
+## Azure Durable Task durability
+
+`CodeMode` also works alongside [`AzureDurableTaskDurability`](azure-durable-task.md). Install both integrations:
+
+```bash
+pip/uv-add "pydantic-ai-harness[codemode,azure-durable-task]"
+```
+
+Then follow the [Azure Durable Task guide](azure-durable-task.md) to drive the agent with `run_durable` and register its activities.
+
+Durable Task replays the orchestrator from the start each time an activity finishes, so a snippet that ran in orchestrator code couldn't have a time limit: measuring elapsed time could make replay diverge from the recorded history. Unlike Temporal, whose deadlock detector fails a workflow task that doesn't yield within 2 seconds, Durable Task also never stops orchestrator code that blocks, so nothing would stop a model-written `while True: pass`. Code Mode therefore never runs a snippet in orchestrator code. It runs each turn as an activity, as in [Remote turns as activities](#remote-turns-as-activities), where `max_duration_seconds` and `max_memory` apply, and that needs:
+
+- `monty_sandbox` set to a Monty server that stores sessions.
+- No `os_access`.
+- No `mount` in `'overlay'` mode, the default, or with `write_bytes_limit`. The activity worker reads `'read-only'` and `'read-write'` mounts, so their directories must exist wherever turn activities run.
+- A `CodeMode` with an `id`, `'code_mode'` by default, that's on the agent when it's built, not one a `DynamicCapability` returns.
+
+Any other configuration fails the run with a `UserError` on its first `run_code` call, naming the changes it needs, and so does a server that stores no sessions. Nested tool calls are activities, which `asyncio.gather` schedules concurrently, a sandbox sleep is a durable timer, and replay reads each turn's result from history. Turns use the `capability_options` retry policy you pass to `AzureDurableTaskDurability`. Durable Task doesn't stop a running activity, so `max_duration_seconds` is what bounds a turn; with `resource_limits='unlimited'`, only a pool factory's own `request_timeout` does.
+
 ## Observability
 
 With [Logfire](https://pydantic.dev/logfire) or any OpenTelemetry backend, each `run_code` span fans out into spans for its nested tool calls ([setup](../logfire.md#using-logfire)).
@@ -820,7 +839,7 @@ Calls into a module behave like this:
 - **Values** cross as Monty converts them, so tuples, sets, `bytes` and dates arrive unchanged. A value it can't convert fails the snippet with a `TypeError`. Return plain data.
 - **Not tool calls**: module calls don't count toward `max_tool_calls` (each one counts toward `max_suspensions`, as every sandbox pause does), and they don't appear in the message history or in the `run_code` metadata. They emit no spans of their own; instrument your functions if you want them traced.
 
-Under durable execution, module functions run in workflow code, as `os_access` does, so they run again when a [Temporal](#temporal-durability) workflow replays or a DBOS or Prefect workflow recovers. Keep them to reads that return the same result each time. Put side effects in a tool the engine records as an activity, step or task (under DBOS, one decorated with `@DBOS.step`; see [Tools with side effects](../durable_execution/dbos.md#tools-with-side-effects)), and make it idempotent, since a recorded call can still run again if it fails before its result is saved.
+Under durable execution, module functions run in workflow code, as `os_access` does, so they run again when a [Temporal](#temporal-durability) workflow or an [Azure Durable Task](#azure-durable-task-durability) orchestration replays, or a DBOS or Prefect workflow recovers. Keep them to reads that return the same result each time. Put side effects in a tool the engine records as an activity, step or task (under DBOS, one decorated with `@DBOS.step`; see [Tools with side effects](../durable_execution/dbos.md#tools-with-side-effects)), and make it idempotent, since a recorded call can still run again if it fails before its result is saved.
 
 ## Sandbox restrictions
 
@@ -828,7 +847,7 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
 
 - No third-party imports. Allowed stdlib modules: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `fnmatch`, `hashlib`, `os.path`, `tomllib`, `annotationlib`, `colorsys`, `keyword`, `stat`, `statistics` (each must be imported before use). [Host modules](#host-modules) adds modules of your own.
 - `asyncio.gather(...)` takes positional awaitables but no keyword arguments. Other task creation and wait APIs are unavailable.
-- No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and unseeded `random` fail unless an `os_access` handler implements them (the built-in `OSAccess` does), or, for the clock, `os_policy` sets one. `time.sleep` and `asyncio.sleep` really wait, up to the sleep allowance in [Resource limits](#resource-limits); in a Temporal workflow a sleep is a durable timer.
+- No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and unseeded `random` fail unless an `os_access` handler implements them (the built-in `OSAccess` does), or, for the clock, `os_policy` sets one. `time.sleep` and `asyncio.sleep` really wait, up to the sleep allowance in [Resource limits](#resource-limits); in a Temporal workflow or an Azure Durable Task orchestration a sleep is a durable timer.
 - No `import *`.
 - Filesystem I/O needs an `os_access` handler or a `mount`; `os.getenv` / `os.environ` need an `os_access` handler.
 - Approval-required (`requires_approval=True`) and external (`kind='external'`) tools stay native under `tools='all'`, so their deferred calls pause the run as usual; an explicit selector can still sandbox them. A sandboxed call that needs approval or is deferred, including one from a toolset wrapped with `.approval_required()` or a tool that raises `ApprovalRequired` or `CallDeferred` from its body (both keep `kind='function'`), needs a `HandleDeferredToolCalls` (or equivalent) capability to resolve it inline; without one, it raises an error the model sees as a retry.
