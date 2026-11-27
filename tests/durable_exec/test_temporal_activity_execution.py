@@ -13,7 +13,11 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 
+import anyio
 import pytest
+
+from pydantic_ai.exceptions import ModelRequestTimeout
+from pydantic_ai.models._request_timeout import RequestDeadline
 
 from ..conftest import try_import
 
@@ -87,6 +91,45 @@ async def test_handle_that_ends_cancelled(anyio_backend: str) -> None:
     handle: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
     await _cancel_while_awaiting(handle)
     assert handle.cancelled()
+
+
+class _CompletingActivityHandle(asyncio.Future[Any]):
+    """Like an activity handle under `WAIT_CANCELLATION_COMPLETED` whose activity returns a result for the cancel."""
+
+    def cancel(self, msg: Any | None = None) -> bool:
+        self.get_loop().call_soon(self.set_result, 'partial')
+        return False
+
+
+async def test_result_of_activity_completed_after_cancel_is_handed_over(anyio_backend: str) -> None:
+    """An activity that completes after the cancel hands its result over with the cancellation, which still raises."""
+    received: list[tuple[asyncio.CancelledError, Any]] = []
+    task = asyncio.create_task(
+        _await_with_single_cancel(
+            _CompletingActivityHandle(), on_cancelled_result=lambda error, result: received.append((error, result))
+        )
+    )
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert [(type(error), result) for error, result in received] == [(asyncio.CancelledError, 'partial')]
+
+
+def _passed_deadline() -> RequestDeadline:
+    return RequestDeadline(model_name='model', timeout=0.0, deadline=anyio.current_time())
+
+
+async def test_request_deadline_waits_for_the_cancelled_activity(anyio_backend: str) -> None:
+    """A request deadline waits for the activity it cancelled to resolve, as its configured cancellation type says,
+    including a stream opted in to keeping its partial with `WAIT_CANCELLATION_COMPLETED`."""
+    handle = _ActivityHandle()
+    with pytest.raises(ModelRequestTimeout):
+        with _passed_deadline().enforce():
+            await _await_with_single_cancel(handle)
+    assert handle.done()
+    with pytest.raises(RuntimeError, match='Activity cancelled'):
+        handle.result()
 
 
 async def test_result_and_error_pass_through(anyio_backend: str) -> None:

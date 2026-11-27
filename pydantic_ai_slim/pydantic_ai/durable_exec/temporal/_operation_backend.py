@@ -6,7 +6,7 @@ from typing import Any, Generic, Literal, Protocol, TypeVar, cast
 
 from temporalio import activity, workflow
 from temporalio.exceptions import ApplicationError, TemporalError
-from temporalio.workflow import ActivityConfig
+from temporalio.workflow import ActivityCancellationType, ActivityConfig
 
 from pydantic_ai.durable_exec._operation import (
     CapabilityOperationId,
@@ -28,8 +28,9 @@ from pydantic_ai.durable_exec._operation import (
 )
 from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, RegisteredOperationBackend
 from pydantic_ai.exceptions import ModelAPIError, UserError
+from pydantic_ai.models._streamed_before_failing import mark_streamed_before_failing
 
-from ._activity_execution import execute_activity, execute_child_workflow
+from ._activity_execution import CancelledResultHandler, execute_activity, execute_child_workflow
 from ._model_errors import (
     model_errors_as_application_errors,
     rebuilt_model_errors,
@@ -59,6 +60,14 @@ re-created agents whose backends never saw the worker being configured.
 """
 
 TemporalOperationConfigValue = ActivityConfig | ChildWorkflowOperationConfig
+
+_STREAM_CANCEL_PARTIAL_PATCH = 'pydantic_ai:stream_cancel_partial'
+"""`workflow.patched()` ID marking histories in which a cancelled model stream's activity hands over what it streamed.
+
+Only a streamed model activity configured with `WAIT_CANCELLATION_COMPLETED` checks it, so a run with the default
+`TRY_CANCEL` issues the commands it always did. With the marker, the run records the result the activity returns for
+the cancellation; without it, the run waited for that result and discarded it.
+"""
 
 
 class TemporalParameterTransport(ParameterTransport[ParamsT, WireT], Protocol[ParamsT, WireT]):
@@ -162,9 +171,22 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
         model_name, activity_config['summary'] = self._summary(params)
 
         if isinstance(operation_id, ModelRequestId | ModelCompactMessagesId):
+            on_cancelled_result: CancelledResultHandler | None = None
+            if (
+                isinstance(operation_id, ModelRequestId)
+                and operation_id.streaming
+                and activity_config.get('cancellation_type') == ActivityCancellationType.WAIT_CANCELLATION_COMPLETED
+                and workflow.patched(_STREAM_CANCEL_PARTIAL_PATCH)
+            ):
+                # The stream's activity returns what it streamed when the run cancels it, which the run waits for and
+                # records.
+                on_cancelled_result = mark_streamed_before_failing
             with rebuilt_model_errors(), model_response_payload_errors(model_name):
                 return await execute_activity(
-                    activity=self.registration, args=cast(Sequence[Any], payload), **activity_config
+                    activity=self.registration,
+                    args=cast(Sequence[Any], payload),
+                    on_cancelled_result=on_cancelled_result,
+                    **activity_config,
                 )
         if isinstance(operation_id, ModelCancelSuspendedResponseId | ModelCountTokensId):
             with rebuilt_model_errors():

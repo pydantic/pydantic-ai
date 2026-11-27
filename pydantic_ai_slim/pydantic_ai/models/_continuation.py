@@ -63,6 +63,7 @@ from ..settings import ModelSettings
 from ..usage import RequestUsage, _add_usage_tokens  # pyright: ignore[reportPrivateUsage]
 from . import Model, ModelRequestContext, StreamedResponse
 from ._request_timeout import enforce_request_deadline, without_carried_deadline
+from ._streamed_before_failing import streamed_before_failing
 
 __all__ = [
     'MAX_BACKGROUND_POLLS',
@@ -544,6 +545,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
                     )
                 )
         except BaseException as error:
+            self._keep_output_of_unopened_segment(seed, error)
             if seed is not None:
                 await cancel_abandoned_job(self.model, seed, error)
                 self._job_cancelled = True
@@ -723,6 +725,8 @@ class _ContinuationStreamedResponse(StreamedResponse):
             # server-side job (that stays on the `cancel()`/`close_stream()` path). Re-raise as-is.
             raise
         except BaseException as error:
+            if self._current_sub is None:
+                self._keep_output_of_unopened_segment(response, error)
             # A later segment failed (transport error, `check_usage` raising, or the max-continuations
             # raise) with a suspended job in hand. The non-streaming continuation loop cancels the
             # server-side job on exactly this class of failure; mirror it so streaming doesn't leak the
@@ -742,6 +746,17 @@ class _ContinuationStreamedResponse(StreamedResponse):
             # additional usage. This also handles `aclose()` racing a debounced consumer's prefetch task.
             if self._current_sub is not None:
                 self.finalize_response(self._current_sub.get())
+
+    def _keep_output_of_unopened_segment(self, response: ModelResponse | None, error: BaseException) -> None:
+        """Keep what a segment produced before `error` ended it while it was being opened, on top of `response`.
+
+        A durable model streams each segment in its durable unit and only hands it over once the unit returns. A
+        cancellation that arrives meanwhile carries what the unit streamed (see `mark_streamed_before_failing`), which
+        `get()` then includes, as it includes what a segment cancelled while it streamed here produced.
+        """
+        if (partial := streamed_before_failing(error)) is not None:
+            self.finalize_response(partial)
+            self._merged_response = partial if response is None else merge_responses(response, partial)
 
     async def _next_segment_messages(self, response: ModelResponse | None) -> list[ModelMessage] | None:
         """The messages that request the next segment after `response`, or `None` once the stream ends.

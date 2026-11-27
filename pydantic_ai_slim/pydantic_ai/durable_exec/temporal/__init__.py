@@ -38,6 +38,7 @@ from ._event_stream import (
     workflow_stream_event_handler,
 )
 from ._external_events import fail_external_event, resolve_external_event
+from ._keep_partial import KeepPartialInterceptor
 from ._logfire import LogfirePlugin
 from ._operation_names import TemporalOperationNamer
 from ._payload_converter import PydanticAIPayloadConverter
@@ -235,6 +236,11 @@ class PydanticAIPlugin(SimplePlugin):
 
     def configure_worker(self, config: WorkerConfig) -> WorkerConfig:
         config = super().configure_worker(config)
+        # Tells a streamed model activity configured to keep its partial on a cancellation that it should. Added here
+        # rather than through `SimplePlugin(interceptors=...)`, which needs the worker config's client to dedupe
+        # against the client's interceptors, while this one is worker-only. Applying the plugin twice only sets the
+        # same header twice.
+        config['interceptors'] = [*config.get('interceptors', []), KeepPartialInterceptor()]  # pyright: ignore[reportUnknownMemberType]
 
         workflows = list(config.get('workflows', []))  # pyright: ignore[reportUnknownMemberType]
         activities = list(

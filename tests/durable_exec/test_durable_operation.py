@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal, assert_never, cast
 from unittest.mock import AsyncMock
@@ -90,7 +91,7 @@ from pydantic_ai.durable_exec._utils import (
     StreamedActivityResult,
     StreamedModelRequestResult,
 )
-from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import ModelRetry, RunCancelled, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     DocumentUrl,
     FileUrl,
@@ -253,6 +254,47 @@ async def test_durability_forces_sequential_tools_inside_durable_context() -> No
         return cast(AgentRunResult[Any], object())
 
     await bound.wrap_run(ctx, handler=handler)
+
+
+async def test_cancelled_model_stream_unit_fails_unless_the_engine_returns_its_output() -> None:
+    """A model stream unit cancelled after it produced output still fails by default, rather than returning it.
+
+    Only an engine that waits for the unit's result on a cancellation, like Temporal, returns the output.
+    """
+    streamed = asyncio.Event()
+
+    async def stream_then_block(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'partial'
+        streamed.set()
+        await asyncio.Event().wait()
+
+    async def drain(ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in stream:
+            pass
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_then_block),
+        name='cancelled_stream',
+        # The durability's handler has the run stream its model request through the unit.
+        capabilities=[JournalDurability(event_stream_handler=drain)],
+    )
+    # Cancelled from outside, as the engine cancels a durable container: a `CancellationToken` can't be used inside one.
+    run = asyncio.create_task(agent.run('Hello'))
+    # Also stop waiting if the run ends first, so a run that never streams fails below rather than hanging here.
+    streaming = asyncio.create_task(streamed.wait())
+    await asyncio.wait({run, streaming}, return_when=asyncio.FIRST_COMPLETED)
+    streaming.cancel()
+    run.cancel()
+
+    with pytest.raises(asyncio.CancelledError) as exc_info:
+        await run
+    run_cancelled = RunCancelled.from_cancellation(exc_info.value)
+    assert run_cancelled is not None
+    # The unit failed, so the run didn't get what it streamed: only a Temporal model activity hands that over.
+    response = run_cancelled.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'interrupted'
+    assert response.parts == []
 
 
 def test_prepare_run_context_without_agent() -> None:
