@@ -1969,7 +1969,7 @@ def _runs_child_workflows(agent: AbstractAgent[Any, Any]) -> bool:
 def _check_durable_delegate(ctx: RunContext[Any], agent_name: str, agent: AbstractAgent[Any, Any]) -> None:
     """Refuse a delegate that could pass this run's managed layer on through a child workflow, which drops it.
 
-    The managed layer is read last, so a `max_mode` function is read only when this refuses the delegation.
+    The managed layer is read last, so a `max_mode` function is read here only for a durable delegate that delegates.
     """
     if not _runs_child_workflows(agent) or not _delegates(agent):
         return
