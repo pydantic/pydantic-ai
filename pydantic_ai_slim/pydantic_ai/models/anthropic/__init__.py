@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import base64
 import warnings
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator, Mapping, Sequence
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass, field, replace
 from functools import cached_property, partial
 from itertools import chain
@@ -994,8 +994,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return await _batch.batch_status(self, batch)
 
     async def batch_results(self, batch: Batch) -> list[BatchResult]:
+        return [result async for result in self.batch_results_iter(batch)]
+
+    async def batch_results_iter(self, batch: Batch) -> AsyncGenerator[BatchResult]:
         with map_api_errors(self.model_name):
-            return await _batch.batch_results(self, batch)
+            async with aclosing(_batch.batch_results_iter(self, batch)) as results:
+                async for result in results:
+                    yield result
 
     async def batch_cancel(self, batch: Batch) -> Batch:
         with map_api_errors(self.model_name):

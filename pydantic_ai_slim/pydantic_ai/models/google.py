@@ -4,7 +4,7 @@ import base64
 import re
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Generator, Iterator, Mapping, Sequence
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import aclosing, asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cached_property
@@ -933,8 +933,19 @@ class GoogleModel(Model[Client]):
             return await _batch_module().batch_status(self, batch)
 
     async def batch_results(self, batch: Batch) -> list[BatchResult]:
+        return [result async for result in self.batch_results_iter(batch)]
+
+    async def batch_results_iter(self, batch: Batch) -> AsyncGenerator[BatchResult]:
+        """Yield the results of a batch job that has ended, one at a time.
+
+        The Gemini API serves the results as one file, which is downloaded to a temporary file on disk, rather than into
+        memory, and read from there line by line. The temporary file is removed when iteration ends, including when
+        the caller closes the iterator early.
+        """
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
-            return await _batch_module().batch_results(self, batch)
+            async with aclosing(_batch_module().batch_results_iter(self, batch)) as results:
+                async for result in results:
+                    yield result
 
     async def batch_cancel(self, batch: Batch) -> Batch:
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):

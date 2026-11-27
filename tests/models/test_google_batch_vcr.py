@@ -207,7 +207,7 @@ async def test_gemini_batch_mixes_successes_and_errors(
     invalid = _request('batch-error', GoogleModelSettings(google_cached_content='cachedContents/does-not-exist'))
     encoded = [await model.batch_encode(ok), await model.batch_encode(invalid)]
     batch = await wait_for_batch(model, await model.batch_create(encoded), vcr)
-    results = {result.custom_id: result for result in await model.batch_results(batch)}
+    results = {result.custom_id: result async for result in model.batch_results_iter(batch)}
     assert {custom_id: result.status for custom_id, result in results.items()} == {
         'batch-ok': 'succeeded',
         'batch-error': 'errored',

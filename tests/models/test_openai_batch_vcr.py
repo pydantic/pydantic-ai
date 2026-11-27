@@ -63,7 +63,10 @@ async def test_openai_batch_roundtrip(
     assert batch.provider_details is not None and batch.provider_details['status'] == 'completed'
     results = {result.custom_id: result for result in await model.batch_results(batch)}
     assert set(results) == {'pydantic-ai-batch-one', 'pydantic-ai-batch-two'}
-    assert request_capture.paths[-1] == f'/v1/files/{batch.provider_details["input_file_id"]}'
+    # The input file is deleted before the results are read, so a caller that stops reading early doesn't leave it.
+    paths = request_capture.paths
+    input_file = f'/v1/files/{batch.provider_details["input_file_id"]}'
+    assert paths.index(input_file) < min(index for index, path in enumerate(paths) if path.endswith('/content'))
 
     for request in requests:
         response = model.batch_decode(results[request.custom_id], request)
@@ -92,9 +95,11 @@ async def test_openai_batch_item_error(allow_model_requests: None, openai_api_ke
     model = OpenAIResponsesModel('gpt-4.1-nano', provider=OpenAIProvider(api_key=openai_api_key))
     ok, invalid = _request('batch-ok'), _request('batch-error', {'max_tokens': 1})
     batch = await model.batch_create([await model.batch_encode(ok), await model.batch_encode(invalid)])
-    results = {
-        result.custom_id: result for result in await model.batch_results(await wait_for_batch(model, batch, vcr))
-    }
+    # The recorded batch wrote the succeeded request to its output file and the rejected one to its error file, so the
+    # results stream of each yields every `custom_id` once.
+    streamed = [result async for result in model.batch_results_iter(await wait_for_batch(model, batch, vcr))]
+    assert sorted(result.custom_id for result in streamed) == ['batch-error', 'batch-ok']
+    results = {result.custom_id: result for result in streamed}
     assert {custom_id: result.status for custom_id, result in results.items()} == {
         'batch-ok': 'succeeded',
         'batch-error': 'errored',
@@ -120,7 +125,7 @@ async def test_openai_batch_unknown_model(allow_model_requests: None, openai_api
     request = _request('batch-error')
     batch = await wait_for_batch(model, await model.batch_create([await model.batch_encode(request)]), vcr)
     assert batch.provider_details is not None and batch.provider_details['status'] == 'failed'
-    [result] = await model.batch_results(batch)
+    [result] = [result async for result in model.batch_results_iter(batch)]
     assert result.status == 'errored'
     with pytest.raises(ModelHTTPError) as exc_info:
         model.batch_decode(result, request)

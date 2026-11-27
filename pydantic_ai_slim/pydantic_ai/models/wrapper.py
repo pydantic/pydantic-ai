@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 import warnings
 from collections.abc import AsyncGenerator, Awaitable, Collection, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, aclosing, asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -168,6 +168,11 @@ class WrapperModel(Model):
 
     async def batch_results(self, batch: Batch) -> list[BatchResult]:
         return await self.wrapped.batch_results(batch)
+
+    async def batch_results_iter(self, batch: Batch) -> AsyncGenerator[BatchResult]:
+        async with aclosing(self.wrapped.batch_results_iter(batch)) as results:
+            async for result in results:
+                yield result
 
     async def batch_cancel(self, batch: Batch) -> Batch:
         return await self.wrapped.batch_cancel(batch)

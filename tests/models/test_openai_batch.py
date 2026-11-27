@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from contextlib import aclosing
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -38,7 +39,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.tools import ToolDefinition
-from tests.batch_utils import UNRUN_MESSAGES
+from tests.batch_utils import UNRUN_MESSAGES, LineStream
 from tests.conftest import try_import
 from tests.models.mock_openai import with_history_digests
 
@@ -450,6 +451,8 @@ class _FakeBatchAPI:
     create_gave_up: bool = False
     """Whether the create's `create_error` is one a retrying transport gave up on, so it raises `HTTPStatusError`."""
     response_bodies: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    closed: list[str] = field(default_factory=list[str])
+    """The files whose content streams were closed, in order."""
 
     def handle(self, request: httpx2.Request) -> httpx2.Response:
         path = request.url.path.removeprefix('/v1')
@@ -488,7 +491,10 @@ class _FakeBatchAPI:
                 },
             )
         if path.startswith('/files/') and path.endswith('/content'):
-            return httpx2.Response(200, content=self.files[path.split('/')[2]])
+            file_id = path.split('/')[2]
+            return httpx2.Response(
+                200, stream=LineStream(self.files[file_id].encode(), lambda: self.closed.append(file_id))
+            )
         if path == '/batches/batch_missing':
             return httpx2.Response(404, json={'error': {'message': 'No batch found', 'type': 'invalid_request_error'}})
         if path.endswith('/cancel'):
@@ -697,6 +703,64 @@ async def test_batch_results_read_every_kind_of_line(allow_model_requests: None)
     for custom_id, status in (('expired', 'expired'), ('cancelled', 'canceled'), ('unrun', 'expired')):
         with pytest.raises(ModelAPIError, match=UNRUN_MESSAGES[status]):
             model.batch_decode(results[custom_id], by_id[custom_id])
+
+
+async def test_batch_results_iter_streams_the_results_of_a_partial_batch(allow_model_requests: None) -> None:
+    """An expired batch streams what ran from its output and error files, then what it never got to from its input file.
+
+    `batch_results` collects the same results, and every file's stream is closed.
+    """
+    api = _FakeBatchAPI(batch=_batch_json('in_progress'))
+    model = _fake_model(api)
+    batch = await model.batch_create(
+        [await model.batch_encode(_request(custom_id)) for custom_id in ('ok', 'expired', 'unrun')]
+    )
+    api.files['file-output'] = _line('ok', {'status_code': 200, 'body': _RESPONSE_BODY}) + '\n'
+    api.files['file-errors'] = _line('expired', error={'code': 'batch_expired', 'message': 'Expired.'}) + '\n'
+    api.batch = _batch_json('expired', output_file_id='file-output', error_file_id='file-errors')
+    batch = await model.batch_status(batch)
+
+    streamed = [result async for result in model.batch_results_iter(batch)]
+
+    assert [(result.custom_id, result.status) for result in streamed] == [
+        ('ok', 'succeeded'),
+        ('expired', 'expired'),
+        ('unrun', 'expired'),
+    ]
+    assert streamed == await model.batch_results(batch)
+    # The input file of a batch that didn't complete is still needed to tell what it held, so it's kept.
+    assert api.closed[:3] == ['file-output', 'file-errors', 'file-input']
+    assert ('DELETE', '/files/file-input') not in api.requests
+
+
+async def test_batch_results_iter_deletes_the_input_file_and_closes_the_stream_when_the_caller_stops_early(
+    allow_model_requests: None,
+) -> None:
+    api = _FakeBatchAPI(batch=_batch_json('in_progress'))
+    model = _fake_model(api)
+    batch = await model.batch_create(
+        [await model.batch_encode(_request(custom_id)) for custom_id in ('one', 'two', 'three')]
+    )
+    api.files['file-output'] = '\n'.join(
+        _line(custom_id, {'status_code': 200, 'body': _RESPONSE_BODY}) for custom_id in ('one', 'two', 'three')
+    )
+    api.batch = _batch_json('completed', output_file_id='file-output')
+    batch = await model.batch_status(batch)
+
+    async with aclosing(model.batch_results_iter(batch)) as results:
+        assert (await anext(results)).custom_id == 'one'
+
+    assert ('DELETE', '/files/file-input') in api.requests
+    assert api.closed == ['file-output']
+
+
+async def test_batch_results_iter_checks_the_batch_before_it_yields_anything(allow_model_requests: None) -> None:
+    api = _FakeBatchAPI(batch=_batch_json('in_progress'))
+    model = _fake_model(api)
+    batch = await model.batch_create([await model.batch_encode(_request())])
+    with pytest.raises(UserError, match='has not ended yet'):
+        await anext(model.batch_results_iter(batch))
+    assert ('GET', '/files/file-input/content') not in api.requests
 
 
 async def test_batch_results_of_a_failed_batch(allow_model_requests: None) -> None:
@@ -959,7 +1023,8 @@ async def test_completed_batch_deletes_its_input_file(
     api.batch = _batch_json('completed', output_file_id='file-output')
     [result] = await model.batch_results(await model.batch_status(batch))
     assert result.status == 'succeeded'
-    assert api.requests[-1] == ('DELETE', '/files/file-input')
+    # Deleted before the results are read, so a caller that stops reading early doesn't leave the file behind.
+    assert api.requests[-2:] == [('DELETE', '/files/file-input'), ('GET', '/files/file-output/content')]
 
 
 async def test_batch_results_only_delete_the_input_file_this_process_uploaded(allow_model_requests: None) -> None:
