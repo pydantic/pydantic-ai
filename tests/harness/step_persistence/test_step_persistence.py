@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, NoReturn, cast
+from typing import Any, NoReturn, ParamSpec, cast
 from uuid import UUID
 
 import anyio
@@ -412,6 +413,19 @@ def _without_file_records(node: Any) -> Any:
     return node
 
 
+_P = ParamSpec('_P')
+
+
+def _counting(calls: list[None], function: Callable[_P, None]) -> Callable[_P, None]:
+    """`function`, appending to `calls` each time it is called."""
+
+    def counted(*args: _P.args, **kwargs: _P.kwargs) -> None:
+        calls.append(None)
+        function(*args, **kwargs)
+
+    return counted
+
+
 class TestFileStepStore:
     async def test_keyed_writes_are_idempotent_after_snapshot_pruning(self, tmp_path: Path) -> None:
         store = FileStepStore(tmp_path, max_snapshots_per_run=1)
@@ -440,6 +454,139 @@ class TestFileStepStore:
         await store.save_snapshot(snapshot)
 
         assert await store.list_snapshots(run_id='r1') == [snapshot]
+
+    async def test_snapshot_record_suppresses_retry_if_an_older_key_ledger_write_was_interrupted(
+        self, tmp_path: Path
+    ) -> None:
+        # Nothing orders the saves of a run, so a save that crashed between its snapshot file and its key-log
+        # line can be followed by a later save: the snapshot missing from the key log is then not the newest.
+        older = ContinuableSnapshot(run_id='r1', step_index=1, messages=[], idempotency_key='0:1:complete')
+        newer = ContinuableSnapshot(run_id='r1', step_index=2, messages=[], idempotency_key='1:2:complete')
+        await FileStepStore(tmp_path).save_snapshot(older)
+        (tmp_path / 'r1' / 'snapshot-keys.jsonl').unlink()
+        await FileStepStore(tmp_path).save_snapshot(newer)
+
+        store = FileStepStore(tmp_path)
+        await store.save_snapshot(older)
+
+        assert await store.list_snapshots(run_id='r1') == [older, newer]
+
+    async def test_keyed_snapshot_save_reads_only_snapshot_files_the_store_has_not_seen(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Counting reads is the only way to see the cost: the saved snapshots are the same either way.
+        reads: list[str] = []
+        read_text = Path.read_text
+
+        def counting_read_text(path: Path, encoding: str | None = None, errors: str | None = None) -> str:
+            reads.append(f'{path.parent.name}/{path.name}')
+            return read_text(path, encoding, errors)
+
+        monkeypatch.setattr(Path, 'read_text', counting_read_text)
+
+        async def save(store: FileStepStore, index: int) -> list[str]:
+            reads.clear()
+            await store.save_snapshot(
+                ContinuableSnapshot(run_id='r1', step_index=index, messages=[], idempotency_key=f'{index}:complete')
+            )
+            return sorted(reads)
+
+        writer = FileStepStore(tmp_path)
+        assert [await save(writer, index) for index in range(4)] == [[], [], [], []]
+        # A second store over the same directory reads each existing snapshot once, then only those another
+        # store wrote since.
+        other = FileStepStore(tmp_path)
+        assert await save(other, 4) == ['snapshots/0.json', 'snapshots/1.json', 'snapshots/2.json', 'snapshots/3.json']
+        assert await save(other, 5) == []
+        assert await save(writer, 6) == ['snapshots/4.json', 'snapshots/5.json']
+        assert await save(other, 7) == ['snapshots/6.json']
+
+    async def test_keyed_event_append_parses_only_lines_appended_since_the_last_one(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Counting parsed events is the only way to see the cost: the appended events are the same either way.
+        store = FileStepStore(tmp_path)
+        events = [
+            StepEvent(run_id='r1', kind='run_started', step_index=index, idempotency_key=f'event:{index}')
+            for index in range(4)
+        ]
+        parsed: list[None] = []
+        monkeypatch.setattr(StepEvent, '__init__', _counting(parsed, StepEvent.__init__))
+        counts: list[int] = []
+        for event in [*events, events[0]]:
+            parsed.clear()
+            await store.append_event(event)
+            counts.append(len(parsed))
+        monkeypatch.undo()
+
+        assert counts == [0, 1, 1, 1, 1]
+        assert await store.list_events(run_id='r1') == events
+
+    async def test_keyed_snapshot_save_rereads_a_snapshot_file_replaced_under_the_same_name(
+        self, tmp_path: Path
+    ) -> None:
+        # Another writer replaces `0.json` with a snapshot whose key-log line it never wrote.
+        store = FileStepStore(tmp_path / 'store')
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=[], idempotency_key='0:0'))
+        replacement = ContinuableSnapshot(run_id='r1', step_index=1, messages=[], idempotency_key='1:1')
+        await FileStepStore(tmp_path / 'other').save_snapshot(replacement)
+        (tmp_path / 'other' / 'r1' / 'snapshots' / '0.json').replace(tmp_path / 'store' / 'r1' / 'snapshots' / '0.json')
+
+        await store.save_snapshot(replacement)
+
+        assert await store.list_snapshots(run_id='r1') == [replacement]
+
+    async def test_keyed_event_append_parses_a_line_without_its_newline_on_every_call(self, tmp_path: Path) -> None:
+        first = StepEvent(run_id='r1', kind='run_started', step_index=0, idempotency_key='event:0')
+        second = StepEvent(run_id='r1', kind='run_started', step_index=1, idempotency_key='event:1')
+        await FileStepStore(tmp_path / 'other').append_event(second)
+        second_line = (tmp_path / 'other' / 'r1' / 'events.jsonl').read_text(encoding='utf-8').rstrip('\n')
+        store = FileStepStore(tmp_path / 'store')
+        await store.append_event(first)
+        log = tmp_path / 'store' / 'r1' / 'events.jsonl'
+        complete = log.read_text(encoding='utf-8')
+
+        # A corrupt line a crash cut short raises on every keyed append, as a full read does.
+        log.write_text(complete + '{', encoding='utf-8')
+        for _ in range(2):
+            with pytest.raises(ValueError):
+                await store.append_event(second)
+        # A line a writer is still appending already counts.
+        log.write_text(complete + second_line, encoding='utf-8')
+        await store.append_event(second)
+
+        assert await store.list_events(run_id='r1') == [first, second]
+
+    async def test_keyed_event_append_rereads_a_log_rewritten_since_the_last_one(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        first = StepEvent(run_id='r1', kind='run_started', step_index=0, idempotency_key='event:0')
+        second = StepEvent(run_id='r1', kind='run_started', step_index=1, idempotency_key='event:1')
+        await store.append_event(first)
+        await store.append_event(second)
+        log = tmp_path / 'r1' / 'events.jsonl'
+        log.write_text(log.read_text(encoding='utf-8').splitlines(keepends=True)[1], encoding='utf-8')
+
+        await store.append_event(first)
+
+        assert await store.list_events(run_id='r1') == [second, first]
+
+    async def test_keyed_writes_stay_idempotent_across_more_runs_than_the_store_indexes(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        run_ids = [f'r{index}' for index in range(100)]
+        for run_id in run_ids:
+            await store.append_event(StepEvent(run_id=run_id, kind='run_started', step_index=0, idempotency_key='e'))
+            await store.save_snapshot(
+                ContinuableSnapshot(run_id=run_id, step_index=0, messages=[], idempotency_key='s')
+            )
+
+        for run_id in run_ids:
+            await store.append_event(StepEvent(run_id=run_id, kind='run_started', step_index=0, idempotency_key='e'))
+            await store.save_snapshot(
+                ContinuableSnapshot(run_id=run_id, step_index=0, messages=[], idempotency_key='s')
+            )
+
+        assert [len(await store.list_events(run_id=run_id)) for run_id in run_ids] == [1] * 100
+        assert [len(await store.list_snapshots(run_id=run_id)) for run_id in run_ids] == [1] * 100
 
     async def test_snapshot_scan_skips_a_partially_written_snapshot_file(self, tmp_path: Path) -> None:
         # The corrupt file is the only one in the directory on purpose: the key scan returns as soon as
