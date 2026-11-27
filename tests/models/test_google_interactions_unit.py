@@ -274,7 +274,14 @@ def test_inference_preserves_instance(monkeypatch: pytest.MonkeyPatch):
 
 @pytest.mark.parametrize(
     'model_name',
-    ['gemini-3.8-flash', 'models/gemini-3.8-flash', 'gemini-4-argon', 'gemini-4-carbon', 'gemini-4-hydrogen'],
+    [
+        'gemini-3.8-flash',
+        'models/gemini-3.8-flash',
+        'gemini-4-argon',
+        'gemini-4-carbon',
+        'gemini-4-hydrogen',
+        'gemini-4-neon',
+    ],
 )
 def test_interactions_profile_model_names(model_name: str, monkeypatch: pytest.MonkeyPatch):
     """Profile aliases retain verified MIME capabilities without making a provider request."""
