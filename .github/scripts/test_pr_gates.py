@@ -549,7 +549,7 @@ class ReviewGitHub:
     )
     events: list[review_gates.IssueEvent] = field(default_factory=list[review_gates.IssueEvent])
     pushed: datetime | None = datetime(2026, 11, 26, 12, tzinfo=UTC)
-    """When this PR's first workflow run on the head started."""
+    """When this PR's newest CI run on the head started."""
     permissions: dict[str, str] = field(default_factory=dict[str, str])
     """The permission of each user other than the author."""
 
@@ -576,7 +576,7 @@ class ReviewGitHub:
     def issue_events(self) -> list[review_gates.IssueEvent]:
         return self.events.copy()
 
-    def first_run_at(self, head: str) -> datetime | None:
+    def pushed_at(self, head: str) -> datetime | None:
         assert head == self.head
         return self.pushed
 
@@ -1373,8 +1373,10 @@ def test_the_lock_covers_the_compliance_tests_and_itself():
         assert (Path(__file__).parents[2] / path).is_file(), path
 
 
-def test_the_gh_client_reads_history_and_this_prs_first_run_on_the_head(monkeypatch: pytest.MonkeyPatch):
-    """A run started for another branch with the same head isn't this PR's, so it doesn't date the push."""
+def test_the_gh_client_reads_history_and_this_prs_last_push_of_the_head(monkeypatch: pytest.MonkeyPatch):
+    """The newest CI run of this PR on the head dates its push: a branch that left the head and fast-forwarded back to
+    it is dated by the return. A run started for another branch with the same head isn't this PR's.
+    """
     responses = {
         'repos/o/r/issues/7/events?per_page=100': [
             [
@@ -1382,10 +1384,10 @@ def test_the_gh_client_reads_history_and_this_prs_first_run_on_the_head(monkeypa
                 {'event': 'head_ref_force_pushed', 'actor': None, 'created_at': '2026-11-26T12:01:00Z'},
             ]
         ],
-        f'repos/o/r/actions/runs?head_sha={HEAD}&event=pull_request&per_page=100': [
+        f'repos/o/r/actions/workflows/ci.yml/runs?head_sha={HEAD}&event=pull_request&per_page=100': [
             {
                 'workflow_runs': [
-                    {'created_at': '2026-11-26T11:00:00Z', 'pull_requests': [{'number': 8}]},
+                    {'created_at': '2026-11-26T13:00:00Z', 'pull_requests': [{'number': 8}]},
                     {'created_at': '2026-11-26T12:05:00Z', 'pull_requests': [{'number': 7}]},
                     {'created_at': '2026-11-26T12:03:00Z', 'pull_requests': [{'number': 7}]},
                 ]
@@ -1400,5 +1402,5 @@ def test_the_gh_client_reads_history_and_this_prs_first_run_on_the_head(monkeypa
     monkeypatch.setattr(pr_gates.subprocess, 'run', fake_run)
     client = review_gates.ReviewGhCli('o/r', 7)
     assert [event.event for event in client.issue_events()] == ['labeled', 'head_ref_force_pushed']
-    assert client.first_run_at(HEAD) == datetime(2026, 11, 26, 12, 3, tzinfo=UTC)
-    assert client.first_run_at(OLD_HEAD) is None
+    assert client.pushed_at(HEAD) == datetime(2026, 11, 26, 12, 5, tzinfo=UTC)
+    assert client.pushed_at(OLD_HEAD) is None

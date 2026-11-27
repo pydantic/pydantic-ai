@@ -168,8 +168,8 @@ class ReviewGitHub(Protocol):
     def changed_files(self) -> list[ChangedFile]: ...
     def permission(self, login: str) -> str: ...
     def issue_events(self) -> list[IssueEvent]: ...
-    def first_run_at(self, head: str) -> datetime | None:
-        """When GitHub started this PR's first `pull_request` workflow run on `head`, which a push of it starts."""
+    def pushed_at(self, head: str) -> datetime | None:
+        """When GitHub last received `head` for this PR: its newest CI run on it, which every push of it starts."""
         ...
 
     def size(self, pull: ReviewPullRequest) -> Size: ...
@@ -245,10 +245,13 @@ def github_dir_change(github: ReviewGitHub, pull: ReviewPullRequest) -> Verdict:
 def compliance_lock(github: ReviewGitHub, pull: ReviewPullRequest) -> Verdict:
     """A change to a file in `LOCKED_PATHS` needs a maintainer's `APPROVAL_LABEL`, applied after the head was pushed.
 
-    The label counts once its latest `labeled` event comes from a `User` with write access after GitHub received the
-    current head: after this PR's first workflow run on it, and after any force push, which can return a branch to an
-    older head. Both times are GitHub's own; commit dates are the author's, so they aren't read. A fork PR's runs
-    aren't linked to it, so it can't be approved here: a maintainer recreates it as a same-repository PR.
+    The label counts once its latest `labeled` event comes from a `User` with write access after GitHub last received
+    the current head: after this PR's newest CI run on it, and after any force push. The newest run, not the first,
+    since a branch can leave a commit and return to it later, by a force push and then a fast-forward, after an
+    approval of what came in between. CI runs on opened, pushed and reopened PRs, never on a label, so the approval
+    itself doesn't move that time. Both times are GitHub's own; commit dates are the author's, so they aren't read.
+    A fork PR's runs aren't linked to it, so it can't be approved here: a maintainer recreates it as a same-repository
+    PR.
     """
     locked = sorted(
         {path for file in github.changed_files() for path in (file.filename, file.previous_filename) if path}
@@ -265,9 +268,9 @@ def compliance_lock(github: ReviewGitHub, pull: ReviewPullRequest) -> Verdict:
     if approval is None or approval.actor is None or not _maintainer(github, approval.actor):
         return Verdict(failures=[f'{changes}: only a user with write access can add `{APPROVAL_LABEL}`.'])
     approver = approval.actor
-    if (first_run := github.first_run_at(pull.head.sha)) is None:
+    if (last_push := github.pushed_at(pull.head.sha)) is None:
         return Verdict(failures=[f'{changes}: no workflow run of this PR shows when its head was pushed.'])
-    pushed = max([first_run, *(event.created_at for event in events if event.event == 'head_ref_force_pushed')])
+    pushed = max([last_push, *(event.created_at for event in events if event.event == 'head_ref_force_pushed')])
     if approval.created_at <= pushed:
         return Verdict(
             failures=[
@@ -501,11 +504,13 @@ class ReviewGhCli(GhCli):
         )
         return [event for page in pages for event in page]
 
-    def first_run_at(self, head: str) -> datetime | None:
-        """Read this PR's `pull_request` runs on `head`; a run started for another branch with the same head isn't one."""
+    def pushed_at(self, head: str) -> datetime | None:
+        """Read this PR's CI runs on `head`; a run started for another branch with the same head isn't one."""
         pages = _WORKFLOW_RUN_PAGES.validate_json(
             self._api(
-                '--paginate', '--slurp', f'{self._repo}/actions/runs?head_sha={head}&event=pull_request&per_page=100'
+                '--paginate',
+                '--slurp',
+                f'{self._repo}/actions/workflows/ci.yml/runs?head_sha={head}&event=pull_request&per_page=100',
             )
         )
         runs = [
@@ -514,7 +519,7 @@ class ReviewGhCli(GhCli):
             for run in page.workflow_runs
             if any(pull.number == self._number for pull in run.pull_requests)
         ]
-        return min(runs, default=None)
+        return max(runs, default=None)
 
     def size(self, pull: ReviewPullRequest) -> Size:
         """Use the same Git-attribute-aware calculation as PR Bots."""

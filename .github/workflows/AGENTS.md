@@ -292,9 +292,10 @@ The gate and the `prior-findings` job read both attributions; `EARLIER_REVIEW_AT
 
 `Gate: compliance lock` fails a PR that adds, changes, deletes or renames a file in `LOCKED_PATHS` of
 `.github/scripts/compliance_lock.py`, which lists the module itself, until it carries `compliance:approved`. The label counts only
-when its latest `labeled` event comes from a `User` with write access, after GitHub received the current head: after
-the PR's first `pull_request` workflow run on that head and after any force push. Both are GitHub's own times; commit
-dates aren't read. A push after the approval needs the label removed and added again. A fork PR's runs aren't linked
+when its latest `labeled` event comes from a `User` with write access, after GitHub last received the current head:
+after the PR's newest `ci.yml` run on that head and after any force push. It's the newest run, since a branch can
+leave a commit and later return to it by a fast-forward, which records no force push. `ci.yml` doesn't run on label
+changes, so the approval doesn't move that time. Both are GitHub's own times; commit dates aren't read. A push after the approval needs the label removed and added again. A fork PR's runs aren't linked
 to it, so the gate fails closed there. The gate runs default-branch code like the others, so a PR can't loosen it
 for itself.
 
