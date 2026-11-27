@@ -1,5 +1,5 @@
 {
-  "against": "v2.75.0",
+  "against": "v2.76.0",
   "reason": "Pax 0.x: `PROJECT_MCP_FILE` is now `.pax/mcp_servers.json`, the project folder's new name; a folder without it still reads `.clai/mcp_servers.json`.",
   "pull_request": "https://github.com/pydantic/pydantic-ai/pull/14783"
 }
