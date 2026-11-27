@@ -2187,7 +2187,9 @@ not the filesystem the file tools act on there.
   or `run_code`. Any bound `Permissions` in `read-only` mode (the session's,
   the agent's own, or a plugin's) mounts it read-only for that run, and so does
   one with protected paths outside `full`, such as the session's under `auto`,
-  since `pathlib` could change Pax's settings without asking.
+  since `pathlib` could change Pax's settings without asking. So does one with
+  a `managed_rules` ask or deny rule that isn't only about commands, since
+  `pathlib` could write a file that rule covers.
 - **Not mounted:** no `read_file`, `allowed_patterns` or `denied_patterns`, a
   `ToolGuardrail` or `ToolCallJudge` that may check or hide `read_file`, no
   `FileSystem`, more than one, a supplied agent that does not expose its
