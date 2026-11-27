@@ -32,7 +32,15 @@ from .messages import ModelRequestAttempt, ModelResponse
 if TYPE_CHECKING:
     from .models import Model
 
-__all__ = ('AttemptStart', 'carried_attempts', 'carry_attempts', 'failed_attempt', 'record_attempt_span')
+__all__ = (
+    'AttemptStart',
+    'carried_attempts',
+    'carried_partial_response',
+    'carry_attempts',
+    'carry_partial_response',
+    'failed_attempt',
+    'record_attempt_span',
+)
 
 ATTEMPT_ATTRIBUTE = 'pydantic_ai.model_request.attempt'
 """The zero-based position of an attempt among the attempts at its request."""
@@ -78,6 +86,25 @@ def carried_attempts(error: BaseException) -> list[ModelRequestAttempt]:
     return attempts
 
 
+_CARRIED_PARTIAL_RESPONSE = '_pydantic_ai_partial_response'
+
+
+def carry_partial_response(error: BaseException, response: ModelResponse) -> None:
+    """Carry what a stream that failed with `error` before its first event was billed for, so the run still counts it.
+
+    A provider can report usage when it opens a stream, like the input tokens of Anthropic's `message_start`, and
+    then fail before any output reaches the consumer. The request can still fall back or retry then, so the
+    `StreamedResponse` is discarded, and its partial response rides on the error to the attempt record instead.
+    """
+    setattr(error, _CARRIED_PARTIAL_RESPONSE, response)
+
+
+def carried_partial_response(error: BaseException) -> ModelResponse | None:
+    """The partial response `carry_partial_response` put on `error`, if any."""
+    response: ModelResponse | None = getattr(error, _CARRIED_PARTIAL_RESPONSE, None)
+    return response
+
+
 def failed_attempt(
     model: Model,
     failure: Exception | ModelResponse,
@@ -89,10 +116,13 @@ def failed_attempt(
     """Describe an attempt at a request to `model` that raised `failure`, or returned the rejected response `failure`.
 
     `kind` says whether the request moved on from it to the same model or another one. A rejected response's cost is
-    filled in first, so the attempt carries it.
+    filled in first, so the attempt carries it, as is that of a stream the error ended after the provider billed for
+    it (see `carry_partial_response`).
     """
     timestamp = start.timestamp
     if isinstance(failure, Exception):
+        if (partial := carried_partial_response(failure)) is not None:
+            fill_response_cost(partial)
         return ModelRequestAttempt(
             model_name=model.model_name,
             provider_name=model.system,
@@ -100,6 +130,7 @@ def failed_attempt(
             error=_describe_error(failure),
             timestamp=timestamp,
             duration=duration,
+            usage=partial.usage if partial is not None else None,
             kind=kind,
             retry_after=failure.retry_after if isinstance(failure, ModelAPIError) else None,
         )

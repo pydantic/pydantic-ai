@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 import json
 import warnings
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -79,6 +79,7 @@ from pydantic_ai_harness.spend_limits import (
 )
 from pydantic_ai_harness.spend_limits._exceptions import SpendCompositionWarning
 from pydantic_graph import End
+from tests.capability_models import BilledThenFailsModel
 from tests.continuation_utils import ScriptedContinuationModel, StreamSegment
 
 pytestmark = [
@@ -2557,6 +2558,41 @@ class TestFallbackAttempts:
         assert spent[0] == spent[1] == Spent(usd=Decimal('120'), tokens=132, requests=2)
         # A response either one rejected is reported as a failed attempt, not as the answer.
         assert recorded[0] == recorded[1] == [('gpt-4o-mini', True), ('gpt-4o', reject_all)]
+
+    @pytest.mark.parametrize('moved_on_by', ['FallbackModel', 'ModelFallback'])
+    async def test_a_streamed_attempt_billed_before_it_failed_is_charged_once(self, moved_on_by: str):
+        """A stream that failed before its first event, after the provider reported usage, is charged once.
+
+        Not a VCR test: a provider reporting usage on opening a stream and then failing before any output depends on
+        its load, so it can't be recorded on demand.
+        """
+
+        async def answer_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            yield 'ok'
+
+        def answer() -> FunctionModel:
+            return FunctionModel(stream_function=answer_stream, model_name='gpt-4o')
+
+        async def consume(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
+            async for _ in events:
+                pass
+
+        guard = SpendLimits[None](budgets=[Budget(window='total')], price=lambda r: Decimal(r.usage.input_tokens))
+        if moved_on_by == 'FallbackModel':
+            agent = Agent(
+                FallbackModel(BilledThenFailsModel(answer()), answer()), deps_type=type(None), capabilities=[guard]
+            )
+        else:
+            agent = Agent(
+                BilledThenFailsModel(answer()), deps_type=type(None), capabilities=[guard, ModelFallback(answer())]
+            )
+        result = await agent.run('hi', event_stream_handler=consume)
+
+        billed = result.response.usage.input_tokens
+        assert (await guard.status())[0].spent == Spent(
+            usd=Decimal(100 + billed), tokens=result.usage.total_tokens, requests=2
+        )
+        assert result.usage.input_tokens == 100 + billed
 
     async def test_a_capability_rejection_is_charged_once_when_a_later_attempt_is_recovered(self):
         """The response a recovery returns carries the rejected attempt, which was already charged as billed."""

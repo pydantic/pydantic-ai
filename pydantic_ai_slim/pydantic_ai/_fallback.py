@@ -18,14 +18,20 @@ from __future__ import annotations as _annotations
 
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, NoReturn, TypeGuard, assert_never, cast, get_args
 
 from opentelemetry.trace import Span, Tracer
 
 from . import exceptions as _exceptions
-from ._model_request_attempts import AttemptStart, carried_attempts, failed_attempt, record_attempt_span
+from ._model_request_attempts import (
+    AttemptStart,
+    carried_attempts,
+    carry_partial_response,
+    failed_attempt,
+    record_attempt_span,
+)
 from ._utils import PeekableAsyncStream, await_maybe, get_first_param_type, is_str_dict
 from .exceptions import (
     ContentFilterError,
@@ -452,7 +458,17 @@ async def request_stream_until_first_event(
         events: PeekableAsyncStream[ModelResponseStreamEvent, AsyncIterator[ModelResponseStreamEvent]] = (
             PeekableAsyncStream(aiter(response))
         )
-        await events.peek()
+        try:
+            await events.peek()
+        except Exception as error:
+            # The provider may have billed for the stream before it failed, like the input tokens it reported on
+            # opening it. The stream is discarded, so its usage goes on the error, for the attempt record.
+            # Best-effort: a custom `get()` that raises on a failed stream mustn't replace the error that fallback and
+            # retry decide on.
+            with suppress(Exception):
+                if (partial := response.get()).usage.has_values():
+                    carry_partial_response(error, partial)
+            raise
         # `StreamedResponse.__aiter__` hands out the iterator stored here, so the consumer gets the peeked event too.
         response._event_iterator = events  # pyright: ignore[reportPrivateUsage]
         yield response

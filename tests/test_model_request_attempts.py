@@ -20,10 +20,19 @@ from pydantic_ai.capabilities import (
     CapabilityOrdering,
     Hooks,
     ModelFallback,
+    RetryOnModelErrors,
     WrapModelRequestHandler,
     WrapperCapability,
 )
-from pydantic_ai.exceptions import ModelAPIError, ModelRetry, RetryModelRequest, UserError
+from pydantic_ai.exceptions import (
+    FallbackExceptionGroup,
+    ModelAPIError,
+    ModelHTTPError,
+    ModelOverloadedError,
+    ModelRetry,
+    RetryModelRequest,
+    UserError,
+)
 from pydantic_ai.messages import AgentStreamEvent, ModelRequest, ModelRequestAttempt, UserPromptPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.fallback import FallbackModel
@@ -31,6 +40,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
+from .capability_models import BilledThenFailsModel
 from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 
 
@@ -1009,3 +1019,192 @@ async def test_history_changes_in_prepare_model_request_persist_across_attempts(
     request = messages[0]
     assert isinstance(request, ModelRequest)
     assert request.metadata == {'attempts': [1, 2]}
+
+
+async def _answer_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    yield 'hello'
+
+
+def _answer() -> FunctionModel:
+    return FunctionModel(stream_function=_answer_stream, model_name='answer')
+
+
+_BILLED = RequestUsage(input_tokens=100, output_tokens=5)
+"""What `BilledThenFailsModel`'s failing stream reports.
+
+The tests below use that stub rather than a cassette: a provider reporting usage on opening a stream and then failing
+before any output, like Anthropic's `message_start` followed by an `overloaded_error`, depends on the provider's load,
+so it can't be recorded on demand.
+"""
+
+
+@pytest.mark.parametrize('moved_on_by', ['FallbackModel', 'ModelFallback', 'RetryOnModelErrors'])
+async def test_a_streamed_attempt_billed_before_it_failed_keeps_its_usage(moved_on_by: str):
+    """A stream that failed before its first event, after the provider reported usage, was billed for it.
+
+    The attempt moved on from records that usage, and it counts in the run's usage once. Not a VCR test: see `_BILLED`.
+    """
+    match moved_on_by:
+        case 'FallbackModel':
+            agent = Agent(FallbackModel(BilledThenFailsModel(_answer()), _answer()))
+        case 'ModelFallback':
+            agent = Agent(BilledThenFailsModel(_answer()), capabilities=[ModelFallback(_answer())])
+        case _:
+            agent = Agent(BilledThenFailsModel(_answer()), capabilities=[RetryOnModelErrors(initial_delay=0)])
+    result = await agent.run('x', event_stream_handler=_consume)
+    assert [(attempt.outcome, attempt.usage) for attempt in result.response.failed_attempts or []] == [
+        ('error', _BILLED)
+    ]
+    assert result.usage == RunUsage(
+        input_tokens=_BILLED.input_tokens + result.response.usage.input_tokens,
+        output_tokens=_BILLED.output_tokens + result.response.usage.output_tokens,
+        requests=1,
+    )
+
+
+async def _consume(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+    async for _ in events:
+        pass
+
+
+@pytest.mark.parametrize('fails_by', ['FallbackModel', 'ModelFallback'])
+async def test_streamed_attempts_billed_before_every_model_failed_are_counted(fails_by: str):
+    """When every model's stream fails after it was billed, the group lists the attempts and the run counts them.
+
+    Not a VCR test: see `_BILLED`.
+    """
+    if fails_by == 'FallbackModel':
+        # Without an error hook, the stream opens once it's iterated, and `FallbackModel` falls back then.
+        agent = Agent(FallbackModel(BilledThenFailsModel(_answer()), BilledThenFailsModel(_answer())))
+    else:
+        agent = Agent(BilledThenFailsModel(_answer()), capabilities=[ModelFallback(BilledThenFailsModel(_answer()))])
+    usage = RunUsage()
+    with pytest.raises(FallbackExceptionGroup) as exc_info:
+        await agent.run('x', usage=usage, event_stream_handler=_consume)
+    assert [attempt.usage for attempt in exc_info.value.attempts] == [_BILLED, _BILLED]
+    assert usage == RunUsage(input_tokens=200, output_tokens=10)
+
+
+@pytest.mark.parametrize('model_kind', ['FallbackModel', 'ModelFallback'])
+async def test_a_streamed_failure_billed_before_it_was_not_fallen_back_from_is_counted(model_kind: str):
+    """A billed stream failure that nothing falls back from ends the run, and what the provider billed still counts.
+
+    Not a VCR test: see `_BILLED`.
+    """
+    if model_kind == 'FallbackModel':
+        agent = Agent(FallbackModel(BilledThenFailsModel(_answer()), _answer(), fallback_on=lambda error: False))
+    else:
+        agent = Agent(
+            BilledThenFailsModel(_answer()), capabilities=[ModelFallback(_answer(), fallback_on=lambda error: False)]
+        )
+    usage = RunUsage()
+    with pytest.raises(ModelOverloadedError):
+        await agent.run('x', usage=usage, event_stream_handler=_consume)
+    assert usage == RunUsage(input_tokens=100, output_tokens=5)
+
+
+async def test_a_billed_attempt_before_a_stream_that_then_fails_is_counted_once():
+    """The stream that answers after a billed attempt carries it, and failing partway doesn't count it again.
+
+    Not a VCR test: see `_BILLED`.
+    """
+
+    async def fails_partway(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'hel'
+        raise ModelHTTPError(status_code=500, model_name='answer', body='boom')
+
+    answer = FunctionModel(stream_function=fails_partway, model_name='answer')
+    agent = Agent(BilledThenFailsModel(answer), capabilities=[ModelFallback(answer)])
+    usage = RunUsage()
+    with capture_run_messages() as messages:
+        with pytest.raises(ModelHTTPError):
+            await agent.run('x', usage=usage, event_stream_handler=_consume)
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    assert [attempt.usage for attempt in response.failed_attempts or []] == [_BILLED]
+    assert usage == RunUsage(
+        input_tokens=_BILLED.input_tokens + response.usage.input_tokens,
+        output_tokens=_BILLED.output_tokens + response.usage.output_tokens,
+        requests=1,
+    )
+
+
+async def test_a_failed_stream_whose_get_raises_still_falls_back_on_its_own_error():
+    """Carrying a failed stream's usage is best-effort: a `get()` that raises doesn't replace the error fallback sees.
+
+    Not a VCR test: see `_BILLED`.
+    """
+    agent = Agent(FallbackModel(BilledThenFailsModel(_answer(), get_raises=True), _answer()))
+    result = await agent.run('x', event_stream_handler=_consume)
+    assert [(attempt.error, attempt.usage) for attempt in result.response.failed_attempts or []] == [
+        ('ModelOverloadedError: overloaded', None)
+    ]
+
+
+@pytest.mark.parametrize('stream', ['model', 'recovered'])
+async def test_attempts_on_an_error_the_consumer_raises_through_the_stream_are_not_counted(stream: str):
+    """Only attempts that came out of the model's stream count, not those on an error the consumer raised through it.
+
+    Like another agent's `FallbackExceptionGroup`, whose rejected responses that run counted itself. That holds for the
+    model's stream and for the replay of a response an error hook recovered with. Not a VCR test: the attempts come from
+    an error the consumer raises through the stream, not from a provider exchange to record.
+    """
+    hooks = Hooks[object]()
+
+    @hooks.on.model_request_error
+    async def recover(
+        ctx: RunContext[object], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('recovered')])
+
+    model = _answer() if stream == 'model' else FunctionModel(stream_function=failure_stream)
+    group = FallbackExceptionGroup('All models from FallbackModel failed', [ModelAPIError(model_name='m', message='x')])
+    group.attempts = [
+        ModelRequestAttempt(
+            model_name='other',
+            outcome='rejected',
+            timestamp=datetime.now(UTC),
+            duration=timedelta(seconds=1),
+            usage=_BILLED,
+        )
+    ]
+    usages: list[RunUsage] = []
+    for error in (ValueError('consumer failed'), group):
+
+        async def raise_from_consumer(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+            await anext(aiter(events))
+            raise error
+
+        usage = RunUsage()
+        with pytest.raises(type(error)):
+            await Agent(model, capabilities=[hooks]).run('x', usage=usage, event_stream_handler=raise_from_consumer)
+        usages.append(usage)
+    assert usages[0] == usages[1]
+
+
+async def test_a_billed_failure_continuing_a_suspended_response_keeps_what_the_consumer_saw():
+    """A continuation that fails before its first event adds only its usage to the response it continues.
+
+    Here the continuation polls the same job, whose usage is cumulative, so the response recorded for the stopped
+    request keeps the suspended response's parts, and the run counts only the job's usage beyond what it already had.
+    Not a VCR test: see `_BILLED`.
+    """
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('x')]),
+        ModelResponse(
+            parts=[TextPart('partial')],
+            state='suspended',
+            provider_response_id='job-1',
+            usage=RequestUsage(input_tokens=40, output_tokens=2),
+        ),
+    ]
+    model = FallbackModel(BilledThenFailsModel(_answer(), job_id='job-1'), _answer(), fallback_on=lambda error: False)
+    usage = RunUsage()
+    with capture_run_messages() as messages:
+        with pytest.raises(ModelOverloadedError):
+            await Agent(model).run(message_history=history, usage=usage, event_stream_handler=_consume)
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.parts == [TextPart('partial')]
+    # The step counts, as for any resumed stream that fails: the response it records holds the resumed parts.
+    assert usage == RunUsage(input_tokens=60, output_tokens=3, requests=1)

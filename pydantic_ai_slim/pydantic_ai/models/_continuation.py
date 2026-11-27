@@ -47,11 +47,13 @@ import anyio
 
 from .. import _utils
 from .._fallback import request_stream_until_first_event
+from .._model_request_attempts import carried_attempts, carried_partial_response
 from .._run_context import RunContext
-from ..exceptions import ModelAPIError, UnexpectedModelBehavior
+from ..exceptions import FallbackExceptionGroup, ModelAPIError, UnexpectedModelBehavior
 from ..messages import (
     FinalResultEvent,
     ModelMessage,
+    ModelRequestAttempt,
     ModelResponse,
     ModelResponseState,
     ModelResponseStreamEvent,
@@ -449,6 +451,13 @@ class _ContinuationStreamedResponse(StreamedResponse):
     _primed_segment: tuple[AsyncExitStack, StreamedResponse] | None = field(default=None, init=False)
     # Whether `prime()` went on to the stitched stream's first event, as it does past a first segment without output.
     _primed_stitched: bool = field(default=False, init=False)
+    open_failure_attempts: Sequence[ModelRequestAttempt] = field(default=(), init=False)
+    """The attempts a model made at a segment it failed to open once iteration had started, like a `FallbackModel`'s.
+
+    They're on the error that ended the stream: its `FallbackExceptionGroup` when every model failed, or carried (see
+    `carry_attempts`) when another error ended the request. Kept here so the agent counts only attempts that came out
+    of this stream, and not those of an error the consumer raised through it.
+    """
     # Two independent ceilings, distinguished by the generic `merge_mode` signal (the same one that
     # drives reindexing): every *fresh-generation* re-suspension (accumulate `pause_turn`, a model
     # change, or a `FallbackModel` replace directive) risks an unbounded model spawning new segments,
@@ -544,6 +553,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
                     )
                 )
         except BaseException as error:
+            self._keep_failed_segment(seed, error)
             if seed is not None:
                 await cancel_abandoned_job(self.model, seed, error)
                 self._job_cancelled = True
@@ -602,10 +612,33 @@ class _ContinuationStreamedResponse(StreamedResponse):
                     yield sub
             return
         with self.segment_context():
-            async with self.model.request_stream(
-                messages, self.model_settings, self.model_request_parameters, self.run_context
-            ) as sub:
+            async with AsyncExitStack() as stack:
+                try:
+                    sub = await stack.enter_async_context(
+                        self.model.request_stream(
+                            messages, self.model_settings, self.model_request_parameters, self.run_context
+                        )
+                    )
+                except BaseException as error:
+                    self._keep_failed_segment(self._merged_response, error)
+                    self.open_failure_attempts = (
+                        error.attempts if isinstance(error, FallbackExceptionGroup) else carried_attempts(error)
+                    )
+                    raise
                 yield sub
+
+    def _keep_failed_segment(self, response: ModelResponse | None, error: BaseException) -> None:
+        """Keep what the provider billed for a segment that failed to open with `error`, on top of `response`.
+
+        A model that waits for a stream's first event before handing it over, like a `FallbackModel`, discards a
+        stream that fails before then, and its partial response rides on the error instead (see
+        `carry_partial_response`). `get()` keeps its usage, counted the way the segment's would be had it opened, but
+        nothing else of it: it produced nothing, so the response the consumer saw stays as it was.
+        """
+        if (partial := carried_partial_response(error)) is not None:
+            self._merged_response = (
+                partial if response is None else replace(response, usage=merge_responses(response, partial).usage)
+            )
 
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
         """Cancel-teardown errors to suppress, extended with the in-flight sub-stream's own.

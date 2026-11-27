@@ -6,8 +6,10 @@ several modules without either duplicating the stubs or importing one test modul
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel
@@ -15,22 +17,28 @@ from pydantic import BaseModel
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.exceptions import ModelOverloadedError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
+    ModelResponseStreamEvent,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
 )
 from pydantic_ai.models import (
+    Model,
     ModelRequestContext,
+    ModelRequestParameters,
+    StreamedResponse,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetFunc
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 
 def make_text_response(text: str = 'hello') -> ModelResponse:
@@ -283,3 +291,90 @@ registered_capability_context = _registered_capability_context
 
 class MyOutput(BaseModel):
     value: int
+
+
+@dataclass
+class _BilledThenFailingStream(StreamedResponse):
+    """Reports usage, as Anthropic does on `message_start`, then fails before any output, as on `overloaded_error`."""
+
+    _get_raises: bool = False
+    _job_id: str | None = None
+
+    def get(self) -> ModelResponse:
+        if self._get_raises:
+            raise RuntimeError('a custom `get()` that fails on a failed stream')
+        return super().get()
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        self._usage = RequestUsage(input_tokens=100, output_tokens=5)
+        self.provider_response_id = self._job_id
+        raise ModelOverloadedError(model_name='billed', message='overloaded')
+        yield  # pragma: no cover
+
+    @property
+    def model_name(self) -> str:
+        return 'billed'
+
+    @property
+    def provider_name(self) -> str:
+        return 'test'
+
+    @property
+    def provider_url(self) -> None:
+        return None
+
+    @property
+    def timestamp(self) -> datetime:
+        return datetime(2026, 1, 1, tzinfo=UTC)
+
+
+class BilledThenFailsModel(Model):
+    """A model whose first `fail_times` streams are billed 100 input and 5 output tokens and fail before their first event.
+
+    Later streams are `answer`'s. With `get_raises`, the failing stream's `get()` raises too. `job_id` is the failing
+    stream's `provider_response_id`, like a background job's on a poll.
+    """
+
+    def __init__(
+        self, answer: Model, *, fail_times: int = 1, get_raises: bool = False, job_id: str | None = None
+    ) -> None:
+        super().__init__()
+        self.answer = answer
+        self.fail_times = fail_times
+        self.get_raises = get_raises
+        self.job_id = job_id
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        raise NotImplementedError  # pragma: no cover
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        if self.fail_times:
+            self.fail_times -= 1
+            yield _BilledThenFailingStream(
+                model_request_parameters=model_request_parameters, _get_raises=self.get_raises, _job_id=self.job_id
+            )
+        else:
+            async with self.answer.request_stream(
+                messages, model_settings, model_request_parameters, run_context
+            ) as stream:
+                yield stream
+
+    @property
+    def model_name(self) -> str:
+        return 'billed'
+
+    @property
+    def system(self) -> str:
+        return 'test'
