@@ -614,8 +614,9 @@ successful shell rebuild, including migration from the pre-live Text-line buffer
 The suspended `chat` coroutine still holds that transcript; do not only replace
 it on the new shell or mutate it before a rebuild that can fail.
 
-Keep `ask_user` choices numbered. The effective send binding toggles choices;
+The standalone `ask_user` picker, the default, borrows the released `PromptSurface` while the editor
+is suspended. Keep its numbered choices and Enter toggles; do not switch screens inside the picker or
+reintroduce Space-to-toggle. With `input.questions=composer`, the effective send binding toggles choices;
 Ctrl+J inserts a newline in custom answers (it steers on Windows) and never confirms a choice.
-Keep question state on its `SessionRuntime`, not on the shared terminal.
+Keep composer question state on its `SessionRuntime`, not on the shared terminal.
 Generic send, steering, and remembered question routing never authorize tools.
-The standalone picker keeps its exclusive handoff and Enter toggles.

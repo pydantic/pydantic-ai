@@ -1496,11 +1496,11 @@ replacement approver should show it in full too. A replacement for this plugin t
 approvals wait in the live composer without taking focus and require explicit F2 focus before a choice
 authorizes a call. Generic
 send, steering, queue actions, custom text, and remembered question routing never
-approve tools. Each held command is printed once its own approval's choices are the
+approve tools. On that path, each held command is printed once its own approval's choices are the
 ones shown, and again after the terminal redraws the session to show it, so concurrent
-approvals never leave one command printed above another's choices. A question or approval of a session the terminal does not show waits until
-the terminal shows that session: nothing reads keys or prints a picker for it
-meanwhile, and the browser can still answer it while the `web` plugin is loaded.
+approvals never leave one command printed above another's choices, and a question or approval of a session
+the terminal does not show waits until the terminal shows that session: nothing reads keys or prints a
+picker for it meanwhile, and the browser can still answer it while the `web` plugin is loaded.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for

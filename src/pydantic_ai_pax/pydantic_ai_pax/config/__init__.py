@@ -19,7 +19,7 @@ from pydantic_ai_pax.config.input_bindings import (
     BusyDelivery,
     InputBindings,
     KeyboardLabels,
-    QuestionAnswerer,
+    QuestionPlacement,
     QuestionSubmit,
 )
 from pydantic_ai_pax.config.theme_names import names
@@ -107,7 +107,7 @@ class Settings(BaseModel):
     question_submit: QuestionSubmit = Field(
         default='ask', description='When a question waits: ask, answer it, or queue a follow-up. Never approves tools.'
     )
-    question_answerer: QuestionAnswerer = Field(
+    question_placement: QuestionPlacement = Field(
         default='picker',
         description=(
             'Where questions and tool approvals wait: picker takes the keys as each one arrives; composer keeps '
@@ -319,7 +319,7 @@ SETTING_FIELDS = {
     'input.bindings': 'input_bindings',
     'input.keyboard_labels': 'keyboard_labels',
     'input.question_submit': 'question_submit',
-    'input.questions': 'question_answerer',
+    'input.questions': 'question_placement',
     'input.busy_delivery': 'busy_delivery',
 }
 
@@ -331,7 +331,7 @@ USER_ONLY_SETTINGS = frozenset(
         'input_bindings',
         'keyboard_labels',
         'question_submit',
-        'question_answerer',
+        'question_placement',
         'busy_delivery',
         'repo_context_walk_up_roots',
         'repo_context_autoload_symlink_roots',

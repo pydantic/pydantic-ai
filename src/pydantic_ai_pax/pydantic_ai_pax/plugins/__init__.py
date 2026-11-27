@@ -1122,8 +1122,9 @@ class PluginHost(Generic[DepsT]):
 
         A session the terminal does not show keeps the request until it is shown, never answered unseen, so race
         it with another way to answer, as the web UI does, and cancel the call once that one answers. `None`
-        when no composer serves the session, as on a host built without one, before the editor opens, or in a Pax
-        with no terminal or one that reads lines: ask in a picker of your own then.
+        when no composer serves the session, as while the user keeps questions in the picker (`input.questions`,
+        the default), on a host built without one, before the editor opens, or in a Pax with no terminal or one
+        that reads lines: ask in a picker of your own then.
         """
         if self._composer is None:
             return None

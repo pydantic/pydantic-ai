@@ -220,7 +220,7 @@ async def test_input_command_resets_every_input_setting_and_hands_key_tests_to_t
         settings.input_bindings,
         settings.keyboard_labels,
         settings.question_submit,
-        settings.question_answerer,
+        settings.question_placement,
         settings.busy_delivery,
     ) == (InputBindings(), 'unset', 'ask', 'picker', 'after-turn')
     with pytest.raises(ValueError, match=r'^Usage: /input \[test\|reset\]$'):

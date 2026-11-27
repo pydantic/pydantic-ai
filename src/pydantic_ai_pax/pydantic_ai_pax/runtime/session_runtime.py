@@ -1079,7 +1079,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         keys meanwhile: a browser racing it can still answer it. `None` too unless `input.questions` chooses the
         composer, so questions and approvals keep the picker by default.
         """
-        if self.context.settings.question_answerer != 'composer':
+        if self.context.settings.question_placement != 'composer':
             return None
         if self.editor is None and (self.terminal is not None or not self.process.live.composer):
             # Shown before its editor opens, or in a Pax whose terminal, if any, never opens one.

@@ -6,7 +6,12 @@ from pydantic_ai.models import known_model_names
 from pydantic_ai_pax.cli.command_context import CommandContext
 from pydantic_ai_pax.config import SETTING_FIELDS, TOOL_CALL_DISPLAYS, UPDATE_CHANNELS, Settings
 from pydantic_ai_pax.config.api_keys import set_api_key
-from pydantic_ai_pax.config.input_bindings import BUSY_DELIVERIES, KEYBOARD_LABELS, QUESTION_ANSWERERS, QUESTION_SUBMITS
+from pydantic_ai_pax.config.input_bindings import (
+    BUSY_DELIVERIES,
+    KEYBOARD_LABELS,
+    QUESTION_PLACEMENTS,
+    QUESTION_SUBMITS,
+)
 from pydantic_ai_pax.plugins.menus import SettingsMenu
 from pydantic_ai_pax.ui.menus.dialogs import run_settings_menu
 from pydantic_ai_pax.ui.menus.field_menu import ChoicePreview, FieldMenu, FieldRow, first_error, shown
@@ -59,7 +64,7 @@ class SettingsSource:
                 case 'input.question_submit':
                     choices = QUESTION_SUBMITS
                 case 'input.questions':
-                    choices = QUESTION_ANSWERERS
+                    choices = QUESTION_PLACEMENTS
                 case _:
                     choices = ()
             rows.append(

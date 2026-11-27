@@ -122,7 +122,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `config/__init__.py` | `Settings`, `PluginSettings`, and validated ordered main-footer fields (`FooterField`, `FOOTER_FIELDS`, `DEFAULT_FOOTER_FIELDS`; `assistant_age` off by default) |
 | `config/builtins.py` | `DEFAULT_PLUGINS` and `STOCK_PLUGINS`, the shipped plugin declarations |
 | `config/theme_names.py` | theme choices shared by settings validation and the picker |
-| `config/input_bindings.py` | decoded composer bindings, alias/collision validation, keyboard labels, and question-answerer/question-routing/busy-delivery preference types |
+| `config/input_bindings.py` | decoded composer bindings, alias/collision validation, keyboard labels, and question-placement/question-routing/busy-delivery preference types |
 | `config/settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-ai-pax/`, including saved models, removal of their overrides, the contents `/plugins enable` approved for each project file (`approved_files`, `file_sha256`), the project-file values `/project approve` approved per project root (`approved_project_settings`), checkout-specific cleanup suppression (`kept_worktrees`), folder trust decisions by absolute folder (`workspace_trust`), and an isolated read of removal commands on exit |
 | `config/private_files.py` | `write_private()`, the atomic `0600` publish shared by the credential store, the workspace registry and the live-session records |
 | `config/features.py` | `SUPPORTED_FEATURES`, the feature names this build implements, and `CAPABILITY_REQUIREMENTS` for capability classes |

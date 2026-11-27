@@ -26,7 +26,7 @@ from pydantic_ai_harness.step_persistence.conversations import ConversationSumma
 from pydantic_ai_pax import chat
 from pydantic_ai_pax.builtin_plugins.web import WebPlugin
 from pydantic_ai_pax.config import PluginSettings, Settings
-from pydantic_ai_pax.config.input_bindings import QuestionAnswerer
+from pydantic_ai_pax.config.input_bindings import QuestionPlacement
 from pydantic_ai_pax.config.project_settings import ProjectSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.plugins import LiveSessions, Plugin, SessionStart
@@ -358,7 +358,7 @@ async def test_line_mode_terminal_follows_the_session_shown(tmp_path: Path) -> N
 
 
 async def test_a_line_mode_terminal_has_no_composer_for_a_hidden_session_to_wait_for(tmp_path: Path) -> None:
-    desk = Desk(tmp_path, settings=Settings(model=None, question_answerer='composer'))
+    desk = Desk(tmp_path, settings=Settings(model=None, question_placement='composer'))
     terminal = Terminal[None, str](
         console=Console(file=io.StringIO()), transcript=TranscriptBuffer(), history=InMemoryHistory()
     )
@@ -518,16 +518,16 @@ async def settle(check: Callable[[], bool]) -> None:
 
 
 async def test_a_session_shown_before_its_editor_opens_leaves_questions_to_the_picker(tmp_path: Path) -> None:
-    home = Desk(tmp_path, settings=Settings(model=None, question_answerer='composer')).home
+    home = Desk(tmp_path, settings=Settings(model=None, question_placement='composer')).home
     assert home.terminal is not None and home.editor is None
     assert await home.ask_in_composer(question_request(), approval=False, preamble=None) is None
 
 
 @pytest.mark.parametrize('answerer', ['picker', 'composer'])
 async def test_questions_keep_the_picker_unless_the_composer_is_chosen(
-    tmp_path: Path, answerer: QuestionAnswerer
+    tmp_path: Path, answerer: QuestionPlacement
 ) -> None:
-    desk = Desk(tmp_path, settings=Settings(model=None, question_answerer=answerer))
+    desk = Desk(tmp_path, settings=Settings(model=None, question_placement=answerer))
     home, terminal = desk.home, desk.terminal
 
     async def body() -> None:
@@ -569,7 +569,7 @@ async def test_a_hidden_sessions_approval_waits_to_be_shown_while_the_browser_ca
         tmp_path,
         agent=removing_agent(tmp_path, ran),
         builtin=(RECORDER, WEB),
-        settings=Settings(model=None, question_answerer='composer'),
+        settings=Settings(model=None, question_placement='composer'),
     )
     home, terminal = desk.home, desk.terminal
 
@@ -621,7 +621,7 @@ async def test_an_approval_shown_again_prints_its_held_command_after_the_redraw(
         tmp_path,
         agent=removing_agent(tmp_path, ran),
         builtin=(RECORDER, WEB),
-        settings=Settings(model=None, question_answerer='composer'),
+        settings=Settings(model=None, question_placement='composer'),
     )
     home, terminal = desk.home, desk.terminal
 
@@ -646,7 +646,7 @@ async def test_an_approval_shown_again_prints_its_held_command_after_the_redraw(
 
 
 async def test_an_approval_whose_turn_comes_while_hidden_prints_its_command_once_shown(tmp_path: Path) -> None:
-    desk = Desk(tmp_path, builtin=(RECORDER, WEB), settings=Settings(model=None, question_answerer='composer'))
+    desk = Desk(tmp_path, builtin=(RECORDER, WEB), settings=Settings(model=None, question_placement='composer'))
     home, terminal = desk.home, desk.terminal
 
     async def body() -> None:
@@ -681,7 +681,7 @@ async def test_an_approval_whose_turn_comes_while_hidden_prints_its_command_once
 
 async def test_a_pax_without_a_terminal_has_no_composer_to_ask_in(tmp_path: Path) -> None:
     runtime = Fleet(tmp_path).build(None)
-    runtime.context.settings = runtime.context.settings.model_copy(update={'question_answerer': 'composer'})
+    runtime.context.settings = runtime.context.settings.model_copy(update={'question_placement': 'composer'})
     assert runtime.terminal is None and not runtime.process.live.composer
     answers: list[AskUserResponse | None] = []
 
