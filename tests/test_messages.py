@@ -485,6 +485,9 @@ def test_audio_url_invalid():
     with pytest.raises(ValueError, match=re.escape('Could not infer media type from audio URL: foobar.potato')):
         AudioUrl('foobar.potato').media_type
 
+    with pytest.raises(ValueError, match=re.escape('Unknown media type: audio/mp4a-latm')):
+        AudioUrl('https://example.com/a', media_type='audio/mp4a-latm').format
+
 
 @pytest.mark.parametrize(
     'image_url,media_type,format',
@@ -507,6 +510,9 @@ def test_image_url_invalid():
 
     with pytest.raises(ValueError, match=re.escape('Could not infer media type from image URL: foobar.potato')):
         ImageUrl('foobar.potato').format
+
+    with pytest.raises(ValueError, match=re.escape('Unknown media type: image/bmp')):
+        ImageUrl('https://example.com/a', media_type='image/bmp').format
 
 
 _url_formats = [
@@ -699,6 +705,9 @@ def test_video_url_formats(video_url: VideoUrl, media_type: str, format: str):
 def test_video_url_invalid():
     with pytest.raises(ValueError, match=re.escape('Could not infer media type from video URL: foobar.potato')):
         VideoUrl('foobar.potato').media_type
+
+    with pytest.raises(ValueError, match=re.escape('Unknown media type: video/x-msvideo')):
+        VideoUrl('https://example.com/a', media_type='video/x-msvideo').format
 
 
 @pytest.mark.skipif(
