@@ -23,6 +23,9 @@ uv.lock                   @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
 /src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/       @DouweM @adtyavrdhn
 /src/pydantic_ai_harness/pydantic_ai_harness/pgtask/                   @DouweM @adtyavrdhn
 /src/pydantic_ai_harness/pydantic_ai_harness/render/                   @DouweM @adtyavrdhn
+/src/pydantic_ai_harness/pydantic_ai_harness/temporal/                 @DouweM @adtyavrdhn
+/src/pydantic_ai_harness/pydantic_ai_harness/dbos/                     @DouweM @adtyavrdhn
+/src/pydantic_ai_harness/pydantic_ai_harness/prefect/                  @DouweM @adtyavrdhn
 
 # Harness code that crosses durable boundaries: the shared helper and durable delegation
 /src/pydantic_ai_harness/pydantic_ai_harness/_durable.py               @DouweM @adtyavrdhn

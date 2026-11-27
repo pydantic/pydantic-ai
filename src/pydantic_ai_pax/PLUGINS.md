@@ -14,11 +14,6 @@ Pax groups its shell implementation into `cli/`, `config/`, `runtime/`,
 continue importing `PluginHost` from `pydantic_ai_pax.plugins` and `Command`
 from `pydantic_ai_pax.commands`.
 
-The package was `pydantic-clai2`. Plugins that import `pydantic_clai2.plugins` or
-`pydantic_clai2.commands` load only while the `pydantic-clai2` package is installed,
-which aliases them with a `DeprecationWarning` that `pax` does not show. Under
-`pydantic-ai-pax` alone, change those imports to `pydantic_ai_pax`.
-
 ## Startup
 
 `pax --help` parses arguments without loading the agent or plugins. Interactive
@@ -84,9 +79,10 @@ separately.
   loopback callback, behind a waiting screen that Esc cancels. Connecting never
   opens the browser. A server that is not signed in shows as `error` with
   `Not signed in to NAME. Run /mcp auth NAME to sign in.`, and the prompt goes on
-  without it. The access and refresh tokens and the registered client go to your
-  OS keyring (the `mcp-NAME` entry under `pydantic-clai2`, or a private
-  `credentials-mcp-NAME.json` when no keyring exists), so restarting Pax reuses
+  without it. The access and refresh tokens and the registered client are saved
+  encrypted in `credentials-mcp-NAME.enc`, whose key Pax keeps in your OS keyring
+  (service `pydantic-ai-pax`), or in a private `credentials-mcp-NAME.json` when no
+  keyring exists, so restarting Pax reuses
   or refreshes them instead of signing in again. Tokens belong to the URL they
   were issued for: after changing the URL, sign in again. OAuth needs `https`,
   except for loopback servers.
@@ -659,7 +655,7 @@ credentials file was found. Scripts can replace the declaration instead:
 /plugins add observability pydantic_ai_pax.builtin_plugins.logfire '{"include_content": true, "include_binary_content": true}'
 ```
 
-Options are `service_name` (default `pydantic-clai2`), `include_content` and
+Options are `service_name` (default `pydantic-ai-pax`), `include_content` and
 `include_binary_content` (both default `false`, so credentials alone never export
 prompts, results, or files; settings saved before that default that never set them
 also leave content out), `httpx` (default `false`), and `send_to_logfire` (default
@@ -1075,6 +1071,11 @@ this directory is an executable startup configuration, not a sandbox. The defaul
 Coder runs as your OS user and can modify it, just as it can modify your shell
 startup files. Use a separate OS identity or sandbox for untrusted agent work.
 
+`pax -x NAME` loads a plugin for one launch even when its declaration says
+`enabled: false`. Such a plugin sees itself in `host.plugins` as `on`, listed as
+`disabled, loaded for this launch`, and `host.save_settings` keeps its saved
+enabled flag as it was, so the next `pax` without `-x` leaves it off.
+
 Three ways to install one:
 
 1. Drop a `.py` file (or a package folder) into
@@ -1314,28 +1315,34 @@ directory browser as dialogs in the page.
 in precedence order. It defaults to `[".agents/skills", ".claude/skills",
 "~/.agents/skills", "~/.claude/skills"]`, including for saved `coder`
 declarations that omit it; `~/` means your home directory, a relative path is in
-the project, and `[]` turns skills off. Each relative folder is followed by the
-same folder in each directory above the launch directory, up to the git root,
-nearest first (`CoderSettings.skill_libraries(parents=...)`); outside a git
-repository only the launch directory is used. `coder` binds harness `Skills` with
-`missing_directories='skip'` and `duplicate_names='keep_first'`, so a missing
-folder is skipped, a folder that is a file or a single skill package is skipped
-with a notice, and the earlier of two skills with one name wins. It reads the
-folders once when it loads, in `prepare`, for the `/skill-name` commands and the
-startup notices, and harness reads them again at the start of every turn for the
-model's catalog. With a plugin's capability function in the run, the run's
-workspace is chosen after `Skills` reads its catalog, so `coder` reads the
-catalog from the project directory. In an untrusted folder, those skills are
-then offered through `list_skills` and `load_skill`, which read the project
-directory too, even when the function supplies a sandbox. A `/skill-name`
-command reads them again when it runs, so it sends the current `SKILL.md`, and
-fails with a message when the skill is gone.
+the project, and `[]` turns skills off. Relative folders are searched in the
+launch directory and then in each directory above it, up to the git root,
+nearest directory first: every relative folder in one directory comes before any
+in the next, so `src/.claude/skills` wins over the repository's `.agents/skills`
+(`CoderSettings.skill_libraries(parents=...)`). Consecutive relative folders are
+searched together, so they keep their place relative to `~/` and absolute
+folders. Outside a git repository only the launch directory is used. `coder`
+binds harness `Skills` with `missing_directories='skip'` and
+`duplicate_names='keep_first'`, so a missing folder is skipped, a folder that is
+a file, a single skill package, or unreadable is skipped with a notice, and the
+earlier of two skills with one name wins. It reads the folders once when it
+loads, in `prepare`, for the `/skill-name` commands and the startup notices, and
+harness reads them again at the start of every turn for the model's catalog.
+With a plugin's capability function in the run, the run's workspace is chosen
+after `Skills` reads its catalog, so `coder` reads the catalog from the project
+directory. In an untrusted folder, those skills are then offered through
+`list_skills` and `load_skill`, which read the project directory too, even when
+the function supplies a sandbox. A `/skill-name` command reads them again when it
+runs, so it sends the current `SKILL.md`, and fails with a message when the
+skill is gone.
 Only skills with `user_invocable` (no `user-invocable: false`) get a command;
 harness leaves skills with `disable-model-invocation: true` out of the model's
 catalog. Frontmatter fields harness ignores, such as `allowed-tools`, belong to
 other clients sharing the folders, so `coder` does not report them, and Pax
-hides harness's run-start warning about them. A folder that cannot be
-read when `coder` loads prints `Skills are off: ...` and leaves skills out. The
+hides harness's run-start warning about them. A skill directory or `SKILL.md`
+that cannot be read is skipped with a notice, and the other skills still load.
+Any other error reading the folders when `coder` loads prints
+`Skills are off: ...` and leaves skills out. The
 setting is tagged `coder-skill-folders`, so a Pax build without it
 ignores a saved value instead of failing to load `coder`.
 
@@ -1457,8 +1464,9 @@ The plugin's `render` replaces the tool's argument dump with a header that lists
 the question headers. The picker uses `host.full_screen()` only to flush streaming output and suspend
 the editor's input reader. It keeps the live panel on screen. The draft
 is restored on exit, and the question and your picks are printed to the transcript afterwards.
-Drag over the question, its header, or an option to select text; releasing copies it
-to the clipboard without choosing an answer. Transcript text remains selectable too.
+Drag over the question, its header, or an option, or double- or triple-click one, to
+select text; releasing copies it to the clipboard without choosing an answer. Transcript
+text remains selectable too.
 `/plugins disable ask_user` takes the tool away, and a session without a terminal, such as
 `pax --web` or piped output, never gets it. While the [`web` plugin](#web-this-session-in-your-browser)
 is loaded, it asks the questions instead, in the browser and this picker at once.
@@ -3222,7 +3230,8 @@ background task, and is hidden while a full-screen interface owns the terminal.
 The editor and transcript share a Termflow live cell buffer on the alternate
 screen. Only changed cells paint. PageUp/PageDown and mouse-wheel input scroll
 output without changing the draft. New output does not move a scrolled view.
-A mouse drag selects painted cells, and releasing it copies them to the clipboard.
+A mouse drag selects painted cells, a double-click a word, and a triple-click a line, and
+releasing the button copies them to the clipboard, with no line break where the panel wrapped a line.
 On exit, the retained transcript prints into native terminal scrollback.
 Resize, theme changes, and returning from a menu repaint from the transcript.
 Assistant Markdown renders again at the new width and theme once its part

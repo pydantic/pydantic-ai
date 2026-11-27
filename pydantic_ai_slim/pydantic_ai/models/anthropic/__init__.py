@@ -76,7 +76,9 @@ from ...profiles.anthropic import (
     AnthropicCodeExecutionToolVersion,
     AnthropicEffort,
     AnthropicModelProfile,
+    AnthropicThinkingDisplay,
     resolve_anthropic_effort,
+    resolve_anthropic_thinking_display,
 )
 from ...providers import Provider, infer_provider
 from ...providers._bedrock_model_names import (
@@ -454,13 +456,6 @@ _CODE_EXECUTION_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedr
 # The computer use tool has recorded runs only on the Claude API and both Bedrock APIs
 # (`tests/harness/computer_use/test_anthropic_live.py`), so these clients get the function tool.
 _COMPUTER_UNSUPPORTED_CLIENTS = (AsyncAnthropicVertex, AsyncAnthropicFoundry, AsyncAnthropicAWS)
-# Mid-conversation `{'role': 'system'}` messages are published as available on the Anthropic API,
-# Amazon Bedrock and Google Cloud, which leaves Microsoft Foundry as the only transport that has to
-# fall back to the `<system>`-tagged user rendering. Verified on Bedrock rather than assumed: with
-# `us.anthropic.claude-opus-4-8` the entry is served and acted on. An earlier version of this tuple
-# excluded Bedrock and Vertex on the strength of a Bedrock test that used `claude-sonnet-5`, a model
-# that ignores the entry on *every* transport — which measured the model, not the transport.
-_INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS = (AsyncAnthropicFoundry,)
 # Per-message effort (`mid-conversation-output-config-2026-07-01`) is documented for the Claude API, Google Cloud
 # and Amazon Bedrock. Foundry isn't listed, so it sends effort changes as the request-level setting. Both Bedrock
 # APIs serve a narrower model list, which `AnthropicModel.profile` applies. The Bedrock Messages API
@@ -596,6 +591,19 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """Determine whether the model should generate a thinking block.
 
     See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking) for more information.
+    """
+
+    anthropic_thinking_display: AnthropicThinkingDisplay
+    """Whether to receive a summary of the model's thinking or only thinking signatures.
+
+    Takes precedence over the unified [`thinking_summary`][pydantic_ai.settings.ModelSettings.thinking_summary]
+    setting, which covers the same choice portably and is what most code should set. Applied to the thinking
+    block built from the unified `thinking` setting (or, on models that think without one, to an explicit
+    adaptive block); ignored when `anthropic_thinking` is set explicitly (the raw dict wins).
+
+    The model still thinks (and is billed for) the same number of tokens either way.
+
+    See [the Anthropic docs](https://platform.claude.com/docs/en/build-with-claude/extended-thinking#summarized-thinking) for more information.
     """
 
     anthropic_cache_tool_definitions: bool | Literal['5m', '1h']
@@ -850,6 +858,28 @@ class AnthropicModelSettings(ModelSettings, total=False):
 _ResponseT = TypeVar('_ResponseT')
 
 
+def _thinking_off_config(
+    profile: AnthropicModelProfile, display: AnthropicThinkingDisplay | None, *, thinks_by_default: bool
+) -> BetaThinkingConfigParam | Omit:
+    """The `thinking` parameter for unified `thinking=False`."""
+    if profile.get('thinking_always_enabled', False):
+        # A model that can't turn thinking off thinks as little as it can: adaptively at the lowest effort,
+        # which `_build_output_config` adds. A model without an effort setting is left at its default.
+        # Summaries are only asked for here when requested, since `thinking=False` asked for no thinking.
+        if display is not None:
+            return {'type': 'adaptive', 'display': display}
+        if profile.get('anthropic_supports_effort', False):
+            return {'type': 'adaptive'}
+        return OMIT
+    # `display` is rejected on the `between_tools` and `disabled` blocks.
+    if profile.get('anthropic_disables_thinking_with_between_tools', False):
+        return {'type': 'between_tools'}
+    if thinks_by_default:
+        # Omitting `thinking` leaves it on for these models.
+        return {'type': 'disabled'}
+    return OMIT
+
+
 @dataclass(init=False)
 class AnthropicModel(Model[AsyncAnthropicClient]):
     """A model that uses the Anthropic API.
@@ -1011,9 +1041,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         Anthropic web-tool availability depends on both model support and the client/platform, so the
         profile's `supported_native_tools` and `anthropic_supports_dynamic_filtering` are narrowed here
-        for clients that don't support them (e.g. Bedrock, Vertex). `supports_inline_system_prompts` is
-        narrowed the same way, and for the same reason: serving a `{'role': 'system'}` entry is a fact
-        about the transport as much as about the model. Thinking-block binding is likewise narrowed, but
+        for clients that don't support them (e.g. Bedrock, Vertex). Thinking-block binding is likewise narrowed, but
         by client class rather than by base URL: its beta and drop-block retry are verified against
         Anthropic's Messages API, which a proxied or gateway `AsyncAnthropic` still reaches.
         """
@@ -1031,12 +1059,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
             client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
         )
-        # Narrowed rather than handled in `_map_system_prompt_part` so `Model.prepare_messages` stays the only place
-        # that knows the `<system>`-tagged fallback: where this is `False`, the mid-conversation parts are
-        # rewritten before the adapter ever sees them.
-        supports_inline_system_prompts = _profile.get('supports_inline_system_prompts', False) and not isinstance(
-            client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS
-        )
         supports_mid_conversation_effort = (
             _profile.get('supports_mid_conversation_effort', False)
             and not isinstance(client, _MID_CONVERSATION_EFFORT_UNSUPPORTED_CLIENTS)
@@ -1050,12 +1072,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             AnthropicModelProfile(
                 supported_native_tools=supported_native_tools,
                 anthropic_supports_dynamic_filtering=supports_dynamic_filtering,
-                supports_inline_system_prompts=supports_inline_system_prompts,
                 supports_mid_conversation_effort=supports_mid_conversation_effort,
-                # A request-scoped entry is a `{'role': 'system'}` entry, so it needs a transport that serves the
-                # role, but not a model whose other system messages use it: a sealed model's are `<system>` blocks.
-                supports_request_scoped_system_prompts=_profile.get('supports_request_scoped_system_prompts', False)
-                and not isinstance(client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS),
                 anthropic_binds_thinking_blocks=_profile.get('anthropic_binds_thinking_blocks', False)
                 and not isinstance(client, _THINKING_BINDING_UNSUPPORTED_CLIENTS),
                 anthropic_accepts_file_and_container_ids=_profile.get('anthropic_accepts_file_and_container_ids', True)
@@ -1179,14 +1196,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
         return profile
 
-    @property
-    def tool_addition_mode(self) -> Literal['by_reference'] | None:
-        """The effective addition mode, narrowed for transports without inline system messages."""
-        mode = super().tool_addition_mode
-        provider = self.provider
-        if provider is not None and isinstance(provider.client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS):
-            return None
-        return mode if mode == 'by_reference' else None
+    def _classifies_schema_too_complex(self) -> bool:
+        return True
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -1305,12 +1316,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         Raises:
             UserError: If the model doesn't support on-demand compaction, according to its
-                [`anthropic_supports_on_demand_compaction`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_on_demand_compaction]
+                [`supports_compaction_on_demand`][pydantic_ai.profiles.ModelProfile.supports_compaction_on_demand]
                 profile flag.
             UnexpectedModelBehavior: If Anthropic returns no summary, for example when `max_tokens` cuts it off.
         """
         check_allow_model_requests()
-        if not self.profile.get('anthropic_supports_on_demand_compaction', False):
+        if not self.profile.get('supports_compaction_on_demand', False):
             raise UserError(
                 f'{self.model_name!r} does not support on-demand compaction. '
                 'See https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand for the supported models.'
@@ -1413,6 +1424,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             overriding.append('anthropic_effort')
         return tuple(overriding)
 
+    def _settings_overriding_thinking_summary(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `_translate_thinking` sends an explicit thinking config as is, and an explicit `display` wins over the
+        # unified one.
+        overriding = [key for key in ('anthropic_thinking', 'anthropic_thinking_display') if model_settings.get(key)]
+        return tuple(overriding)
+
     def _default_structured_output_mode(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> StructuredOutputMode:
@@ -1505,33 +1522,44 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> ModelSettings | None:
         """Drop the sampling settings the model rejects alone or with the rest of the request."""
         profile = self.profile
-        if profile.get('anthropic_disallows_sampling_settings', False) or self._api_version_rejects_sampling(
-            model_settings
-        ):
+        model_rejects = profile.get('anthropic_disallows_sampling_settings', False)
+        api_version = None if model_rejects else self._sampling_rejecting_api_version(model_settings)
+        if model_rejects or api_version:
             filtered: ModelSettings = {**model_settings}
-            self._drop_unsupported_sampling_settings(filtered)
+            self._drop_unsupported_sampling_settings(filtered, api_version=api_version)
             return filtered or None
         thinking = request_thinking_type(profile, model_settings, model_request_parameters) is not None
         return drop_conflicting_sampling_settings(model_settings, profile, thinking=thinking) or None
 
-    def _api_version_rejects_sampling(self, model_settings: ModelSettings) -> bool:
-        """Whether the request's API version rejects `temperature`, `top_p` and `top_k` on every model.
+    def _sampling_rejecting_api_version(self, model_settings: ModelSettings) -> str | None:
+        """The request's API version, if it rejects `temperature`, `top_p` and `top_k` on every model.
 
         `anthropic>=2` sends `anthropic-version: 2026-10-21` by default, which rejects them even at their defaults.
         The version is the client's `default_headers` entry, unless the request's `extra_headers` sets its own.
         The legacy Bedrock client pins its own version in the request body instead.
         """
         if isinstance(self.client, AsyncAnthropicBedrock):
-            return False
+            return None
         version = ''
         headers = [*self.client.default_headers.items(), *(model_settings.get('extra_headers') or {}).items()]
         for name, value in headers:
             # The SDK folds header names case-insensitively, the last one winning, and drops one set to `omit`.
             if name.lower() == 'anthropic-version':
                 version = value if isinstance(value, str) else ''
-        return version >= _SAMPLING_REJECTED_API_VERSION
+        return version if version >= _SAMPLING_REJECTED_API_VERSION else None
 
-    def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
+    def _sampling_rejection_reason(self, api_version: str | None) -> str:
+        if api_version is None:
+            return f'are not supported by {self.model_name!r}'
+        return (
+            f'are rejected by Anthropic API version {api_version!r}; send `anthropic-version: 2023-06-01` '
+            "via the client's `default_headers` or the `extra_headers` model setting to keep them"
+        )
+
+    def _drop_unsupported_sampling_settings(
+        self, model_settings: ModelSettings, *, api_version: str | None = None
+    ) -> None:
+        """Drop the sampling settings, warning that the model, or the API version if given, rejects them."""
         dropped = {setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in model_settings}
         extra_body = model_settings.get('extra_body')
         if is_str_dict(extra_body):
@@ -1546,7 +1574,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if dropped:
             ordered = [setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in dropped]
             warnings.warn(
-                f'Sampling parameters {ordered} are not supported by {self.model_name!r}. These settings will be ignored.',
+                f'Sampling parameters {ordered} {self._sampling_rejection_reason(api_version)}. '
+                'These settings will be ignored.',
                 UserWarning,
                 stacklevel=2,
             )
@@ -1560,24 +1589,27 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if anthropic_thinking := model_settings.get('anthropic_thinking'):
             return anthropic_thinking
         thinking = model_request_parameters.thinking
+        thinks_by_default = self.profile.get('thinking_enabled_by_default', False)
+        display = resolve_anthropic_thinking_display(
+            model_settings.get('anthropic_thinking_display'), model_settings.get('thinking_summary')
+        )
         if thinking is False:
-            if self.profile.get('thinking_always_enabled', False):
-                # A model that can't turn thinking off thinks as little as it can: adaptively at the lowest effort,
-                # which `_build_output_config` adds. A model without an effort setting is left at its default.
-                if self.profile.get('anthropic_supports_effort', False):
-                    return {'type': 'adaptive'}
-                return OMIT
-            if self.profile.get('anthropic_disables_thinking_with_between_tools', False):
-                return {'type': 'between_tools'}
-            if self.profile.get('thinking_enabled_by_default', False):
-                # Omitting `thinking` leaves it on for these models.
-                return {'type': 'disabled'}
-            return OMIT
+            return _thinking_off_config(self.profile, display, thinks_by_default=thinks_by_default)
         if thinking is None:
+            if display is not None and thinks_by_default:
+                # These models think without a `thinking` parameter, so choosing what they return takes the
+                # adaptive block they'd use anyway.
+                return {'type': 'adaptive', 'display': display}
             return OMIT
+        result: BetaThinkingConfigParam
         if self.profile.get('anthropic_supports_adaptive_thinking', False):
-            return {'type': 'adaptive'}
-        return {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
+            result = {'type': 'adaptive'}
+        else:
+            result = {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
+        # Unified `thinking` asks for summaries unless told otherwise: newer models default to `'omitted'`, which
+        # returns the thinking blocks empty.
+        result['display'] = display or 'summarized'
+        return result
 
     @overload
     async def _messages_create(
@@ -3284,8 +3316,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         request_context: _MapModelRequestContext,
         map_context: _MapMessagesContext,
     ) -> None:
-        # Narrowed to transports that serve the role, like `supports_inline_system_prompts` below. Where
-        # this is `False`, `prepare_messages` has already left out every request-scoped part whose
+        # Where this is `False`, `prepare_messages` has already left out every request-scoped part whose
         # request has been answered.
         if part.scope == 'request' and self.profile.get('supports_request_scoped_system_prompts', False):
             # Its own entry, so `clear_at` covers it alone. It needs no cache-point
@@ -3394,8 +3425,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         tool_availability_blocks: list[dict[str, Any]],
         map_context: _MapMessagesContext,
     ) -> None:
-        # `tool_addition_mode` is already narrowed for transports that can't serve the `system` role, so
-        # this covers both halves of the gate — and it's the same flag the beta header is added under.
+        # The same flag the beta header is added under.
         if self.tool_addition_mode != 'by_reference':
             # `prepare_messages` projects the delta onto the local tool-search exchange
             # for every model and transport that can't render it natively, so arriving

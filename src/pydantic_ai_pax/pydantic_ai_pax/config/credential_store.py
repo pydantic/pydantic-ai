@@ -9,7 +9,7 @@ import logging
 import re
 import sqlite3
 from collections.abc import Generator
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, suppress
 from functools import cache
 from pathlib import Path
 
@@ -21,7 +21,10 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai_pax.config.private_files import write_private as _write_private
 from pydantic_ai_pax.paths import config_dir
 
-_SERVICE = 'pydantic-clai2'
+_SERVICE = 'pydantic-ai-pax'
+"""The keyring service that holds the encryption key."""
+_LEGACY_SERVICE = 'pydantic-clai2'
+"""The service before the rename: an older Pax keeps its key here, and saved each login as its own entry here before that."""
 _ACCOUNT = 'openai-codex'
 _KEY_ACCOUNT = 'encryption-key'
 _PREFIX = 'clai-chunks-v1:'
@@ -142,8 +145,19 @@ def credential_lock(*, account: str, busy: str) -> Generator[None]:
 
 @cache
 def _stored_key() -> str | None:
-    """The one keyring read a session needs. Cached, so the OS asks for permission at most once."""
-    return _get_password(service=_SERVICE, account=_KEY_ACCOUNT)
+    """The one keyring read a session needs. Cached, so the OS asks for permission at most once.
+
+    A key that only an older Pax saved, under the service's old name, is copied to the new name. The old entry
+    stays: an older Pax that is still installed shares the credential files through the folder link `pax_dir`
+    leaves, and without the key it could not decrypt them, and reconnecting there would encrypt them with a new
+    key this Pax cannot read.
+    """
+    if (key := _get_password(service=_SERVICE, account=_KEY_ACCOUNT)) is not None:
+        return key
+    if (key := _get_password(service=_LEGACY_SERVICE, account=_KEY_ACCOUNT)) is not None:
+        with suppress(KeyringError):  # The copy is tried again next session; this one already has the key.
+            _set_password(service=_SERVICE, account=_KEY_ACCOUNT, value=key)
+    return key
 
 
 def _cipher() -> Fernet | None:
@@ -195,7 +209,7 @@ def load_codex_credentials(*, account: str = _ACCOUNT, fallback: Path | None = N
     try:
         if encrypted.is_file():
             return _decrypt(encrypted)
-        root = _get_password(service=_SERVICE, account=account)
+        root = _get_password(service=_LEGACY_SERVICE, account=account)
     except _NO_KEYRING:
         root = None
     if root is not None:
@@ -274,7 +288,7 @@ def _chunk_services(*, value: str, account: str) -> list[str]:
             'Stored credentials are invalid. Reconnect through /model add; for Codex run /login openai-codex.'
         )
     generation, count = match.groups()
-    return [f'{_SERVICE}.{account}.{generation}.{index}' for index in range(int(count))]
+    return [f'{_LEGACY_SERVICE}.{account}.{generation}.{index}' for index in range(int(count))]
 
 
 def _join_chunks(*, root: str, account: str) -> str:
@@ -294,7 +308,7 @@ def _join_chunks(*, root: str, account: str) -> str:
 
 
 def _delete_keyring(*, account: str) -> None:
-    if (root := _get_password(service=_SERVICE, account=account)) is not None:
+    if (root := _get_password(service=_LEGACY_SERVICE, account=account)) is not None:
         _delete_entries(root=root, account=account)
 
 
@@ -304,7 +318,7 @@ def _delete_entries(*, root: str, account: str) -> None:
         services = _chunk_services(value=root, account=account)
     except UserError:
         services = []
-    for service in [*services, _SERVICE]:
+    for service in [*services, _LEGACY_SERVICE]:
         try:
             keyring.delete_password(service, account)
         except PasswordDeleteError:

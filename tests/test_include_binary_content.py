@@ -1,5 +1,7 @@
 """`InstrumentationSettings(include_binary_content=False)` must not leak base64 into any span.
 
+Media in tool results is recorded as the GenAI message parts a user prompt records, with or without the flag.
+
 These run against `FunctionModel` rather than a cassette: the leak is in our own OTel serialization
 of `BinaryContent`, which is provider-independent, so a recording would only add a base64 image
 payload to the repo without exercising anything the fake model doesn't.
@@ -21,6 +23,7 @@ from pydantic_ai import (
     CallDeferred,
     DeferredToolRequests,
     FilePart,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -29,8 +32,10 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.messages import ModelMessagesTypeAdapter
@@ -61,6 +66,9 @@ REDACTED_IMAGE: dict[str, Any] = {
     'identifier': '734658',
 }
 """The shape a `BinaryImage` is recorded as once its data is excluded: everything but `data`."""
+
+REDACTED_IMAGE_PART: dict[str, Any] = {'type': 'blob', 'mime_type': 'image/png', 'modality': 'image'}
+"""The GenAI message part an image in a tool result is recorded as once its data is excluded: no `content`."""
 
 
 class IsSingleEntryDict:
@@ -244,7 +252,7 @@ CASES = [
         build=image_returning_tool_agent,
         span_name='execute_tool gen_image',
         attribute='gen_ai.tool.call.result',
-        redacted=REDACTED_IMAGE,
+        redacted=REDACTED_IMAGE_PART,
     ),
     Case(
         id='tool_return_message',
@@ -265,7 +273,7 @@ CASES = [
                             'type': 'tool_call_response',
                             'id': IsStr(),
                             'name': 'gen_image',
-                            'result': REDACTED_IMAGE,
+                            'result': REDACTED_IMAGE_PART,
                         }
                     ],
                 },
@@ -282,9 +290,9 @@ CASES = [
         attribute='gen_ai.tool.call.result',
         redacted=snapshot(
             {
-                'return_value': {**REDACTED_IMAGE, 'vendor_metadata': {'thumbnail': REDACTED_IMAGE}},
-                'content': ['here it is', REDACTED_IMAGE],
-                'metadata': {'img': REDACTED_IMAGE},
+                'return_value': REDACTED_IMAGE_PART,
+                'content': ['here it is', REDACTED_IMAGE_PART],
+                'metadata': {'img': REDACTED_IMAGE_PART},
                 'tools': None,
                 'kind': 'tool-return',
             }
@@ -311,7 +319,7 @@ CASES = [
         build=image_returning_output_function_agent,
         span_name='execute_tool final_result',
         attribute='gen_ai.tool.call.result',
-        redacted=REDACTED_IMAGE,
+        redacted=REDACTED_IMAGE_PART,
     ),
     Case(
         # Reachable from the UI adapters, which rehydrate a native tool's prior result back into
@@ -331,7 +339,7 @@ CASES = [
                             'id': 'call-1',
                             'name': 'image_generation',
                             'builtin': True,
-                            'result': REDACTED_IMAGE,
+                            'result': REDACTED_IMAGE_PART,
                         }
                     ],
                 },
@@ -374,7 +382,7 @@ CASES = [
                             'type': 'tool_call_response',
                             'id': IsStr(),
                             'name': 'gen_image',
-                            'result': REDACTED_IMAGE,
+                            'result': REDACTED_IMAGE_PART,
                         }
                     ],
                 },
@@ -411,6 +419,7 @@ CASES = [
                         'args': {},
                         'tool_call_id': IsStr(),
                         'tool_kind': None,
+                        'ui_visibility': None,
                         'id': None,
                         'provider_name': None,
                         'provider_details': None,
@@ -438,6 +447,7 @@ CASES = [
                         'args': {'to': 'a'},
                         'tool_call_id': IsStr(),
                         'tool_kind': None,
+                        'ui_visibility': None,
                         'id': None,
                         'provider_name': None,
                         'provider_details': None,
@@ -536,6 +546,48 @@ async def test_output_the_walk_cannot_traverse_does_not_crash_the_run(capfire: C
     assert [span['attributes']['final_result'] for span in spans if span['name'] == 'invoke_agent agent'] == snapshot(
         ['"Unable to redact binary content: RuntimeError"']
     )
+
+
+async def test_tool_result_the_walk_cannot_traverse_is_recorded_as_before_with_binary_content(
+    capfire: CaptureLogfire,
+) -> None:
+    """With binary content included, nothing is redacted, so a value the walk can't traverse is serialized as usual.
+
+    Converting the media in a tool result walks it whatever the flag, but only an excluding walk has data to protect
+    by recording its failure in place of the value.
+    """
+
+    class Detached(Mapping[str, Any]):
+        def __iter__(self) -> Iterator[str]:
+            raise RuntimeError('cannot iterate detached rows')
+
+        def __getitem__(self, key: str) -> Any:
+            raise KeyError(key)  # pragma: no cover
+
+        def __len__(self) -> int:
+            return 0  # pragma: no cover
+
+        def __repr__(self) -> str:
+            return 'Detached()'
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('final_result', {})])
+
+    def detached() -> dict[str, Any]:
+        return {'rows': Detached()}
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_binary_content=True))],
+        output_type=detached,
+        name='agent',
+    )
+    await agent.run('make an image')
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    assert [
+        span['attributes']['gen_ai.tool.call.result'] for span in spans if span['name'] == 'execute_tool final_result'
+    ] == snapshot(['"{\'rows\': Detached()}"'])
 
 
 async def test_the_walks_own_failure_does_not_report_a_binary_carrying_message(capfire: CaptureLogfire) -> None:
@@ -663,3 +715,92 @@ def test_message_history_round_trip_preserves_binary_content() -> None:
     dumped = ModelMessagesTypeAdapter.dump_json(messages)
     assert IMAGE.base64 in dumped.decode()
     assert ModelMessagesTypeAdapter.validate_json(dumped) == messages
+
+
+@pytest.mark.parametrize('include_binary_content', [True, False])
+async def test_tool_result_media_recorded_as_message_parts(
+    capfire: CaptureLogfire, include_binary_content: bool
+) -> None:
+    """Media in a tool result is the same message part a user prompt records.
+
+    The tool span's result, and the tool response in the chat and agent run spans, carry the same parts, wherever
+    the tool put the media in the containers it returned; everything else is recorded as before. Without binary
+    content, a `blob` part keeps only its media type and modality.
+    """
+    url = ImageUrl('https://example.com/kiwi.png')
+    uploaded = UploadedFile(file_id='file_1', provider_name='anthropic', media_type='application/pdf')
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('gen_images', {})])
+        return ModelResponse(parts=[TextPart('a kiwi')])
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_binary_content=include_binary_content))],
+        name='agent',
+    )
+
+    @agent.tool_plain
+    def gen_images() -> dict[str, Any]:
+        return {'image': IMAGE, 'images': [url, IMAGE], 'file': uploaded, 'caption': 'a kiwi'}
+
+    await agent.run('make images')
+
+    spans = {
+        span['name']: span['attributes'] for span in capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    }
+    tool_result = spans['execute_tool gen_images']['gen_ai.tool.call.result']
+    [chat_response] = spans['chat function:respond:']['gen_ai.input.messages'][-1]['parts']
+    [run_response] = spans['invoke_agent agent']['pydantic_ai.all_messages'][2]['parts']
+
+    image_part = {**REDACTED_IMAGE_PART, 'content': IMAGE.base64} if include_binary_content else REDACTED_IMAGE_PART
+    assert tool_result == snapshot(
+        {
+            'image': image_part,
+            'images': [
+                {'type': 'uri', 'modality': 'image', 'mime_type': 'image/png', 'uri': 'https://example.com/kiwi.png'},
+                image_part,
+            ],
+            'file': {'type': 'file', 'modality': 'document', 'mime_type': 'application/pdf', 'file_id': 'file_1'},
+            'caption': 'a kiwi',
+        }
+    )
+    assert chat_response['result'] == tool_result
+    assert run_response['result'] == tool_result
+
+
+async def test_tool_result_media_recorded_as_pre_spec_parts_on_deprecated_versions(capfire: CaptureLogfire) -> None:
+    """On a deprecated instrumentation version, media in a tool result is the pre-spec part a user prompt records."""
+    url = ImageUrl('https://example.com/kiwi.png')
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('gen_images', {})])
+        return ModelResponse(parts=[TextPart('a kiwi')])
+
+    with pytest.warns(PydanticAIDeprecationWarning, match='Instrumentation format versions 2, 3, and 4 are deprecated'):
+        settings = InstrumentationSettings(version=3)
+    agent = Agent(FunctionModel(respond), capabilities=[Instrumentation(settings=settings)], name='agent')
+
+    @agent.tool_plain
+    def gen_images() -> dict[str, Any]:
+        return {'image': IMAGE, 'url': url}
+
+    await agent.run('make images')
+
+    spans = {
+        span['name']: span['attributes'] for span in capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    }
+    tool_result = spans['execute_tool gen_images']['gen_ai.tool.call.result']
+    [chat_response] = spans['chat function:respond:']['gen_ai.input.messages'][-1]['parts']
+    [run_response] = spans['invoke_agent agent']['pydantic_ai.all_messages'][2]['parts']
+
+    assert tool_result == snapshot(
+        {
+            'image': {'type': 'binary', 'media_type': 'image/png', 'content': IMAGE.base64},
+            'url': {'type': 'image-url', 'url': 'https://example.com/kiwi.png'},
+        }
+    )
+    assert chat_response['result'] == tool_result
+    assert run_response['result'] == tool_result

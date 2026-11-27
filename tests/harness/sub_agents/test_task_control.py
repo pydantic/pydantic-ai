@@ -100,6 +100,7 @@ from pydantic_ai_harness.sub_agents import (
     is_task_report,
     serialize_message,
 )
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.harness._rendering import sent_messages
 
 from .._deferred_tools import pending_agent
@@ -1096,6 +1097,52 @@ class TestSubAgentsTaskControl:
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
         assert '1 tasks are already running, the most allowed at once.' in tool_returns(result.all_messages())[1]
+
+    async def test_a_task_refused_by_max_running_tasks_does_not_use_a_max_calls_slot(self) -> None:
+        gate = Gate()
+        slow = Agent(scripted(call('pause'), text('first')), tools=[gate.pause])
+
+        def release(messages: list[ModelMessage]) -> ModelResponse:
+            gate.opened.set()
+            return text('Waiting.')
+
+        parent = Agent(
+            scripted(
+                call('delegate_task', agent_name='researcher', task='One.', background=True),
+                call('delegate_task', agent_name='researcher', task='Two.'),
+                release,
+                call('delegate_task', agent_name='researcher', task='Three.'),
+                echo_last_return,
+            ),
+            capabilities=[controlled(researcher(slow, max_calls=2), max_running_tasks=1)],
+        )
+        result = await parent.run('Go.')
+        returns = tool_returns(result.all_messages())
+        assert '1 tasks are already running, the most allowed at once.' in returns[1]
+        assert returns[-1].endswith('(ok):\nfirst')
+
+    async def test_a_vetoed_task_does_not_use_a_max_calls_slot(self) -> None:
+        @dataclass
+        class Policy(AbstractCapability[None]):
+            @on_event(TaskAssignedEvent)
+            async def assigned(self, ctx: RunContext[None], event: TaskAssignedEvent) -> None:
+                if event.prompt == 'Forbidden.':
+                    event.veto('not allowed')
+
+        capabilities: list[AbstractCapability[None]] = [controlled(researcher(child('done'), max_calls=1)), Policy()]
+        parent = Agent(
+            scripted(
+                call('delegate_task', agent_name='researcher', task='Forbidden.'),
+                call('delegate_task', agent_name='researcher', task='Allowed.'),
+                echo_last_return,
+            ),
+            deps_type=type(None),
+            capabilities=capabilities,
+        )
+        result = await parent.run('Go.')
+        vetoed, allowed = tool_returns(result.all_messages())
+        assert 'The task was not sent' in vetoed
+        assert allowed.endswith('(ok):\ndone')
 
     async def test_max_running_tasks_counts_the_whole_delegation_tree(self) -> None:
         # The middle task holds the only slot, so the task it starts is refused, though it started none itself.
@@ -3095,7 +3142,27 @@ class TestTaskControlBoundaries:
         assert 'outcome="cancelled"' in task_texts(result.all_messages())[-1]
         assert 'durable__capability__sub_agents.delegate' in {name for name, _ in durability.calls}
 
-    async def test_durable_tasks_get_distinct_ids_when_a_tool_call_id_is_reused(self) -> None:
+    async def test_task_ids_derive_from_the_run_and_the_tool_call(self) -> None:
+        def delegate(tool_call_id: str) -> ToolCallPart:
+            args = {'agent_name': 'researcher', 'task': 'Find x.'}
+            return ToolCallPart('delegate_task', args, tool_call_id=tool_call_id)
+
+        parent = Agent(
+            scripted(ModelResponse(parts=[delegate('call_a'), delegate('call_b')]), text('Done.')),
+            capabilities=[controlled()],
+        )
+        runs: list[list[str]] = []
+        for _ in range(2):
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                result = await parent.run('Go.', run_id='run-1')
+            runs.append(sorted(task_id_in(receipt) for receipt in tool_returns(result.all_messages())))
+        # Outside durable execution too, a rerun with the same `run_id` gives its tasks the same IDs.
+        expected = sorted(uuid5(NAMESPACE_URL, f'run-1:{tool_call_id}').hex for tool_call_id in ('call_a', 'call_b'))
+        assert runs[0] == runs[1] == expected
+        assert expected[0] != expected[1]
+
+    @pytest.mark.parametrize('durable', [False, True])
+    async def test_tasks_get_distinct_ids_when_a_tool_call_id_is_reused(self, durable: bool) -> None:
         def delegate(task: str) -> ModelResponse:
             args = {'agent_name': 'researcher', 'task': task, 'background': True}
             return ModelResponse(parts=[ToolCallPart('delegate_task', args, tool_call_id='call_0')])
@@ -3103,7 +3170,7 @@ class TestTaskControlBoundaries:
         parent = Agent(
             scripted(delegate('First.'), delegate('Second.'), text('Waiting.'), text('Done.')),
             name='durable',
-            capabilities=[controlled(), RecordingDurability()],
+            capabilities=[controlled(), *([RecordingDurability()] if durable else [])],
         )
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')

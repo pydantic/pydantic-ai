@@ -21,7 +21,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence import ContinuableSnapshot, RunRecord, StepEvent, ToolEffectRecord
-from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteSessionStore
 from pydantic_ai_pax import DEFAULT_PLUGINS, chat
 from pydantic_ai_pax.cli.command_context import CommandContext
 from pydantic_ai_pax.config import Settings
@@ -46,7 +46,7 @@ async def test_reload_keeps_saved_conversation(tmp_path: Path, monkeypatch: pyte
             console=Console(file=StringIO()),
             store=SettingsStore(tmp_path / 'settings.db'),
         )
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     summaries = await store.listing()
     assert len(summaries) == 1
     saved = await store.get(conversation_id=summaries[0].id)
@@ -64,7 +64,7 @@ def cancel_browser(browser: SessionBrowser) -> str:
 
 
 async def test_resume_command_uses_browser_and_naming_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     session = Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)
     context = CommandContext(
         settings=Settings(model=None),
@@ -113,7 +113,7 @@ async def test_opening_resume_names_only_sessions_the_naming_model_already_saw(t
 
     Choosing `sessions.naming_model` is choosing where names are made, so then every untitled session is queued.
     """
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('saved turn')])]
     local = await store.save(summary=ConversationSummary(workspace='/a', model='ollama:llama'), messages=messages)
     same = await store.save(summary=ConversationSummary(workspace='/b', model='openai:gpt-5'), messages=messages)
@@ -162,7 +162,7 @@ async def test_opening_resume_names_only_sessions_the_naming_model_already_saw(t
 
 
 async def test_browser_opened_mid_turn_defers_the_restore(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     prior = Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)
     await prior.prompt('saved turn')
     started, release = anyio.Event(), anyio.Event()
@@ -202,7 +202,7 @@ async def test_browser_resumes_other_directory_without_confirmation(
     monkeypatch.chdir(tmp_path)
     previous_workspace = tmp_path / 'previous'
     previous_workspace.mkdir()
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     agent = Agent(TestModel(call_tools=[], custom_output_text='saved answer'))
     prior = Session(agent, deps=None, conversations=store, workspace=previous_workspace)
     await prior.prompt('saved turn')
@@ -230,7 +230,7 @@ async def test_browser_resumes_other_directory_without_confirmation(
 
 
 async def test_startup_restore_and_new_session_are_persisted(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     prior = Session(Agent(TestModel()), deps=None, conversations=store)
     await prior.prompt('earlier turn')
     output = StringIO()
@@ -284,7 +284,7 @@ def test_resume_cli_errors_are_normal_parser_errors(tmp_path: Path, run_cli: Cli
 
 async def test_empty_usage_missing_model_and_recovery_preview(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     session = Session(Agent(), deps=None, conversations=store, workspace=tmp_path)
     context = CommandContext(
         settings=Settings(model=None),
@@ -360,7 +360,7 @@ async def test_simultaneous_service_failures_remain_grouped(tmp_path: Path, monk
 async def test_archived_sessions_are_hidden_and_resuming_one_lists_it_again(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     session = Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)
     context = CommandContext(
         settings=Settings(model=None, session_namer=False),

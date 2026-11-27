@@ -1,0 +1,93 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "733"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: List the 100 largest cities in the world.
+          role: user
+        tools:
+        - functionDeclarations:
+          - description: The final response which ends this conversation
+            name: final_result
+            parameters_json_schema:
+              properties:
+                cities:
+                  items:
+                    $ref: "#/$defs/City"
+                  type: array
+              required:
+              - cities
+              type: object
+              $defs:
+                City:
+                  properties:
+                    name:
+                      type: string
+                    country:
+                      type: string
+                  required:
+                  - name
+                  - country
+                  type: object
+        toolConfig:
+          functionCallingConfig:
+            mode: ANY
+        generationConfig:
+          maxOutputTokens: 300
+          responseModalities:
+          - TEXT
+          thinkingConfig:
+            include_thoughts: true
+            thinking_level: LOW
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=8246
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content: {}
+          finishReason: MAX_TOKENS
+          index: 0
+        usageMetadata:
+          promptTokenCount: 93
+          candidatesTokenCount: 296
+          totalTokenCount: 389
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 93
+          serviceTier: standard
+        modelVersion: gemini-3.8-flash
+        responseId: if8Fa47rLrGnmtkPt7uUmAE
+  recorded_at: 2026-11-24T21:20:17.813684+00:00

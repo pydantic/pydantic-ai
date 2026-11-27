@@ -1,15 +1,24 @@
-"""Wire-format utilities shared by the Google API adapters."""
+"""Utilities shared by the Google API adapters."""
+
+from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 from ..exceptions import UserError
+from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
+from ..profiles import ModelProfile, merge_profile
 from ..profiles.google import (
     GOOGLE_THINKING_LEVEL_SCALE,
     GOOGLE_THINKING_LEVELS,
     GoogleModelProfile,
     GoogleThinkingLevel,
 )
+from ..providers._model_deprecations import GEMINI_API_MODEL_DEPRECATIONS, GOOGLE_CLOUD_MODEL_DEPRECATIONS
 from ..settings import ThinkingEffort
+
+if TYPE_CHECKING:
+    from . import Model, ModelRequestParameters
 
 
 def character_index(text: str, byte_index: int) -> int | None:
@@ -112,6 +121,18 @@ def with_gemini_api_thinking_levels(model_name: str, profile: GoogleModelProfile
     return {**profile, 'google_thinking_levels': levels, 'google_supports_minimal_thinking_level': 'MINIMAL' in levels}
 
 
+def with_deprecation(model_name: str, profile: ModelProfile, *, google_cloud: bool) -> ModelProfile:
+    """`profile` with the deprecation that Google Cloud's or the Gemini API's schedule gives `model_name`, if any.
+
+    The two schedules date the same model differently. `google-genai` sends a resource name such as `models/<id>` or
+    `publishers/google/models/<id>` as is, where it would otherwise add that prefix to a bare id, so both spellings
+    reach the same model.
+    """
+    deprecations = GOOGLE_CLOUD_MODEL_DEPRECATIONS if google_cloud else GEMINI_API_MODEL_DEPRECATIONS
+    deprecation = deprecations.get(model_name.rsplit('/', 1)[-1])
+    return profile if deprecation is None else merge_profile(profile, ModelProfile(deprecation=deprecation))
+
+
 def set_server_timeout(headers: dict[str, str], client_timeout_ms: int | None) -> None:
     """Ask Google for a whole-request deadline with `X-Server-Timeout`, unless `headers` already carries one.
 
@@ -127,3 +148,17 @@ def set_server_timeout(headers: dict[str, str], client_timeout_ms: int | None) -
         headers['X-Server-Timeout'] = headers.pop(caller_name)
     elif client_timeout_ms:
         headers['X-Server-Timeout'] = str(math.ceil(max(client_timeout_ms / 1000, _LONG_DECODE_TIMEOUT)))
+
+
+def rejects_native_tool(model: Model, params: ModelRequestParameters, tool_type: type[AbstractNativeTool]) -> bool:
+    """Whether `model`'s base validation will reject a `tool_type` native tool in `params` as unsupported.
+
+    It does for one the profile's `supported_native_tools` leaves out, that isn't `optional` and has no local fallback,
+    as `Model.prepare_request` decides. The Google models check this first, to name the other Google model instead.
+    """
+    if issubclass(tool_type, tuple(model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS))):
+        return False
+    fallback_ids = {t.unless_native for t in params.function_tools if t.unless_native}
+    return any(
+        isinstance(t, tool_type) and not t.optional and t.unique_id not in fallback_ids for t in params.native_tools
+    )

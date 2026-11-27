@@ -168,12 +168,13 @@ Authenticating the endpoint settles *who* may call it, not *what caused the call
 
 The adapters apply a few defaults so that the authoritative state stays on your side:
 
-- **System prompts** — client-submitted [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s are stripped by default and replaced with the agent's configured prompt. [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s and [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart]s are stripped too, and request-level [`ModelRequest.instructions`][pydantic_ai.messages.ModelRequest.instructions] are reset to `None`. [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]s are kept, so the model still sees why it corrected itself, but the metadata marker that reloads one is echoed by the client, so a client can forge one and pick its cause. Pydantic AI's own [retry feedback](../retries.md#feedback-that-belongs-to-no-tool-call) reaches the model in the user voice, fenced, for a validation error or a `ModelRetry`, and in the system voice only for `'no_output'`, so a returned `'no_output'` part is demoted to the same fenced user text: the client can't earn the system voice by forging one. Control with [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt]; `'client'` hands over the system prompt and `'no_output'` feedback both — see each adapter's docs for details. [Request-scoped](../message-history.md#request-scoped-system-prompts) ones are left out of `dump_messages` altogether, with either setting, since they're only for the model's current request, so a history that round-trips through the frontend loses them; keep it server-side, as described below, where that matters. Persist [append-on-change instruction history](../agent.md#appending-instruction-changes) server-side as well; UI message dumps omit its operator records.
+- **System prompts** — client-submitted [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s are stripped by default and replaced with the agent's configured prompt, which also replaces the system prompt that server-side history opens with and any other copy or dynamic rendering of the agent's prompt in it. The server-side history's other system prompts are kept. [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s and [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart]s are stripped too, and request-level [`ModelRequest.instructions`][pydantic_ai.messages.ModelRequest.instructions] are reset to `None`. [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]s are kept, so the model still sees why it corrected itself, but the metadata marker that reloads one is echoed by the client, so a client can forge one and pick its cause. Pydantic AI's own [retry feedback](../retries.md#feedback-that-belongs-to-no-tool-call) reaches the model in the user voice, fenced, for a validation error or a `ModelRetry`, and in the system voice only for `'no_output'`, so a returned `'no_output'` part is demoted to the same fenced user text: the client can't earn the system voice by forging one. Control with [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt]; `'client'` hands over the system prompt and `'no_output'` feedback both — see each adapter's docs for details. [Request-scoped](../message-history.md#request-scoped-system-prompts) ones are left out of `dump_messages` altogether, with either setting, since they're only for the model's current request, so a history that round-trips through the frontend loses them; keep it server-side, as described below, where that matters. Persist [append-on-change instruction history](../agent.md#appending-instruction-changes) server-side as well; UI message dumps omit its operator records.
 - **Dangling tool calls** — if the client-submitted history ends in a [`ModelResponse`][pydantic_ai.messages.ModelResponse] with unresolved [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s and no matching `deferred_tool_results`, the tool calls are dropped with a warning, as a best-effort default so the agent doesn't execute an unresolved tool call the model never emitted. For human-in-the-loop resumption, pass explicit `deferred_tool_results` to the run method — tool calls resolved by those results are kept (see the warning below).
 - **File URL schemes** — only `http` and `https` are accepted by default for [`FileUrl`][pydantic_ai.messages.FileUrl] parts in client-submitted messages. Non-HTTP schemes like `s3://` or `gs://` are dropped, since they cause the provider to fetch the object using your server's IAM role or service account. See [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes].
 - **File URL download mode** — [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values other than `False` are reset to `False` by default on client-submitted messages. This prevents clients from forcing the server to fetch a URL, or using `'allow-local'` to opt out of the SSRF private-IP block. After auditing your frontend, opt into additional values with [`UIAdapter.allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download].
 - **Uploaded files** — client-submitted [`UploadedFile`][pydantic_ai.messages.UploadedFile] parts are dropped by default, just like non-HTTP `FileUrl`s, since the server resolves them against the provider's file storage API using its own credentials. After auditing your frontend, honor them by setting [`UIAdapter.allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files] to `True`. This is a purely inbound security setting: file content the agent produces is always serialized on the way back out to the client.
 - **Workspace references** — [`ModelResponse.workspace_ref`][pydantic_ai.messages.ModelResponse.workspace_ref] is reset to `None` on client-submitted messages by default, so a client can't point your agent at another conversation's [workspace](../workspace.md) through your server's provider credentials. As a result, a sandbox capability starts a new sandbox on every request. To keep one per conversation, save `result.workspace.ref` in `on_complete` and pass it back as `workspace=` on the next request; see [Continuing in the same workspace](../workspace.md#continuing-in-the-same-workspace). The Vercel AI and AG-UI protocols do not carry workspace references, so `strip_workspace_refs=False` only affects `sanitize_messages` and custom adapters; it cannot round-trip a ref through those protocols. Keep the saved ref server-side and authorize it before passing `workspace=`.
+- **Tool visibility stamps** — [`ui_visibility`][pydantic_ai.messages.BaseToolCallPart.ui_visibility] is reset to `None` on client-submitted tool call and return parts, so a client can't change what it's sent of a tool's result: a call the run executes from that history, such as one the user approved, is stamped again from its tool's definition. The Vercel AI and AG-UI protocols don't carry the stamp, so this only affects `sanitize_messages` and custom adapters. See [Tool visibility](#tool-visibility).
 - **Framework-reserved metadata** — the `__pydantic_ai__` key in [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] and [`ModelResponse.metadata`][pydantic_ai.messages.ModelResponse.metadata] holds state Pydantic AI and its capabilities act on in later runs, such as the file descriptions [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding] records, so it's dropped from client-submitted messages with a warning, and that state is computed again where it's needed. Your own metadata keys are kept. The UI message id the adapter keeps there is the client's own, so it survives, and `dump_messages` gives each message back under the id it was sent with.
 
 !!! warning "Tool approvals and results are submitted by the client"
@@ -283,3 +284,116 @@ With a store, the adapter also uses what the store knows that the messages don't
 After saving, the stream sends the ids of the stored [`ConversationEntry`][pydantic_ai.conversation_store.ConversationEntry]s to the client, so it can record them next to its own messages, for a rating, say: a transient Vercel AI `data-conversation-saved` part, or an AG-UI `pydantic_ai_conversation_saved` custom event, each with a `conversation_id` and a list of `entry_ids`. An adapter instance drives one run at a time, as [`from_request`][pydantic_ai.ui.UIAdapter.from_request] builds one per request.
 
 A run that fails or is stopped isn't saved, so the rules under "Runs that don't complete" above still apply.
+
+## Tool visibility
+
+By default, the adapters stream every tool call to the client, with its arguments and its full result, and `dump_messages` writes the same. A tool that reads something only the agent should see, such as internal notes, a classifier's scores or another customer's data, can keep its result on the server with [`ui_visibility`][pydantic_ai.tools.ToolDefinition.ui_visibility], one of the [`ToolUIVisibility`][pydantic_ai.tools.ToolUIVisibility] values:
+
+| `ui_visibility` | What the client is sent |
+|---|---|
+| `'public'` (default) | The call, with its arguments, and the full result. |
+| `'redacted'` | The call, with its arguments, and the placeholder `'[REDACTED]'` instead of the result, so a frontend that waits for a result to close the tool's UI still does. |
+| `'private'` | Nothing: neither the call nor the result. |
+
+Set it on a tool with the tool decorators, [`Tool`][pydantic_ai.tools.Tool] or a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], and for every tool without a setting with the adapter's [`default_ui_visibility`][pydantic_ai.ui.UIAdapter.default_ui_visibility], which [`UIAdapter.from_request()`][pydantic_ai.ui.UIAdapter.from_request] and [`UIAdapter.dispatch_request()`][pydantic_ai.ui.UIAdapter.dispatch_request] also accept. A public chat widget can then redact every tool and open up the ones the user may see:
+
+```py {title="tool_visibility.py"}
+from fastapi import FastAPI
+from starlette.requests import Request
+from starlette.responses import Response
+
+from pydantic_ai import Agent
+from pydantic_ai.conversation_store import InMemoryConversationStore
+from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+
+agent = Agent('{{ openai:medium }}')
+
+
+@agent.tool_plain
+def get_chat_insights(chat_id: str) -> dict[str, str]:
+    """Look up what the support team noted about an earlier chat."""
+    return {'sentiment': 'negative', 'agent_notes': 'Escalate to tier 2'}
+
+
+@agent.tool_plain(ui_visibility='public')
+def order_status(order_id: str) -> str:
+    """Look up an order's shipping status."""
+    return 'shipped'
+
+
+app = FastAPI()
+store = InMemoryConversationStore()
+
+
+@app.post('/chat')
+async def chat(request: Request) -> Response:
+    return await VercelAIAdapter.dispatch_request(
+        request,
+        agent=agent,
+        conversation_store=store,
+        conversation_scope='user-123',
+        default_ui_visibility='redacted',
+    )
+```
+
+Here the client sees that the agent looked up its earlier chat, but not what the notes said, and sees its order status in full. The model still gets every result, and the stored history keeps them: only what goes to the client changes.
+
+### Keep the history on the server
+
+A client that only saw the placeholder, or nothing, sends that back as the tool's result when it holds the history, so the model loses the real one. Pair visibility with [`manage_message_history='server'`](#keeping-the-history-on-the-server) or a [conversation store](#saving-to-a-conversation-store), where a client's copy of a tool result can never replace the one the server stored. Under the default client-held history, a run warns when it has a non-public `default_ui_visibility`, or when it hides or redacts a tool's call or result.
+
+### Reloading a conversation
+
+When the model calls a tool, in a run or a [realtime session](../realtime/overview.md), or a capability answers the request with a response that calls one, the call and its return are stamped with the tool's visibility ([`ToolCallPart.ui_visibility`][pydantic_ai.messages.BaseToolCallPart.ui_visibility]), and both the event streams and `dump_messages` read the stamp, never the current tool definitions. A conversation reloaded from history, whether by your own `dump_messages` call, from a conversation store or as an AG-UI `MESSAGES_SNAPSHOT`, is therefore sent the way it was streamed, even if a tool was renamed or removed since. A run's non-public `default_ui_visibility` is written onto the tools without a setting, so it ends up in their stamps too. [`AGUIAdapter.dump_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.dump_messages] and [`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] take a `default_ui_visibility` of their own, which only reaches parts without a stamp, such as those of a run with the `'public'` default or of a history from an earlier version. The protocols don't carry the stamp, and [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] resets one a client sends in Pydantic AI's own message format, so a history the client sends back has none: that's one more reason to [keep the history on the server](#keeping-the-history-on-the-server). A call from that history that the run then executes, such as one the user approved, is stamped from its tool's definition before it runs, so its result is sent the way it would have been when the call was made. A version of Pydantic AI from before `ui_visibility` loads a stamped history but ignores the stamps, so if you roll back, its adapters send the calls and results the stamps hid.
+
+### Tools that are always shown
+
+An [external tool](../deferred-tools.md#external-tool-execution), such as an AG-UI frontend tool, is always `'public'`, since its result comes from the client, and so is an [output tool](../output.md#tool-output), whose arguments are the run's answer. A `'private'` tool that [needs approval](../deferred-tools.md#human-in-the-loop-tool-approval) is shown as `'redacted'`, since the user can't approve a call they can't see. So is a `'private'` tool that defers its call while it runs, by raising [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or [`CallDeferred`][pydantic_ai.exceptions.CallDeferred]: the stream then sends the call it hid, and the response in the run's history gets a copy of the call stamped `'redacted'`.
+
+### Tools without a definition
+
+A [native tool](../native-tools.md)'s calls and results, and a call to a tool the run doesn't know, take the adapter's `default_ui_visibility`. A run stamps them with it after each model response, unless a capability's `wrap_model_request` returns a response without calling its handler, or a hook raises [`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest], which skips that step: such parts are still streamed by the default, but a later `dump_messages` without the default shows them. A tool call and result added with [`enqueue`][pydantic_ai.tools.RunContext.enqueue] are streamed by the default too, but nothing stamps them, so a later `dump_messages` sends them by its own `default_ui_visibility`. Set `ui_visibility` on the `ToolCallPart` and `ToolReturnPart` you enqueue to have them sent the same way everywhere.
+
+### What a placeholder replaces
+
+A `'redacted'` result is replaced wherever its content would reach the client: the result itself, the error text of a failed or retried call, and the retry feedback AG-UI carries with a result's outcome. The [MCP Apps](./vercel-ai.md#mcp-apps) record a tool's result carries holds the full result, so it isn't sent either. Events a tool attaches to its result's `metadata`, such as [AG-UI events](./ag-ui.md#events) and [Vercel AI data chunks](./vercel-ai.md#data-chunks), are still sent: they're the channel the tool chose for the client. Events in the result's content are dropped with it. A `'private'` tool's result isn't sent at all, so neither are the events in its `metadata`. To update the client from a `'private'` tool, such as AG-UI state, emit a [`CustomEvent`][pydantic_ai.messages.CustomEvent] with [`ctx.emit()`][pydantic_ai.tools.RunContext.emit] instead, which reaches the client as an [AG-UI event](./ag-ui.md#events) or a [Vercel AI data chunk](./vercel-ai.md#data-chunks) while the tool runs. It carries no call id unless its [`to_payload()`][pydantic_ai.messages.CustomEvent.to_payload] adds one, and it isn't kept in the history.
+
+### Tool names streamed in pieces
+
+The event streams decide what to send for a tool call from its first event, which carries the name streamed so far. A model that streams a tool's name in pieces can start a `'private'` tool's call under a partial name that isn't stamped `'private'`: the name of a tool the client is shown, such as `lookup` for `lookup_secret`, or a name no tool has, such as `look`, which takes the `default_ui_visibility`. The client is then sent that call and its arguments, though never its result, and the run's history still stamps the call `'private'`. A `'private'` default keeps a name no tool has hidden; for the rest, don't give a tool the client must not see a name that starts with another tool's name.
+
+### What it doesn't cover
+
+`ui_visibility` covers a tool's call and its return value. Content a tool sends with [`ToolReturn.content`](../tools-advanced.md#advanced-tool-returns) goes to the model as a separate user message. The event streams don't send it, but `dump_messages` sends it to the client as a user message, whatever the tool's `ui_visibility`. Put data the client must not see in the return value. A failure a tool reports with [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] or [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] is its result, so its message follows `ui_visibility`. Any other exception it raises ends the run, and like every error that ends a run, its text goes to the client as the protocol's error event (Vercel AI's `error` chunk, AG-UI's `RUN_ERROR`), whatever the tool's `ui_visibility`. To send the client something else, override [`on_error()`][pydantic_ai.ui.UIEventStream.on_error] in a subclass of the adapter's event stream. Nor does it cover what the model writes: a model that repeats a `'redacted'` result in its answer sends it to the client there. A file in the model's response is part of its answer too, such as an image that [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] generates, which can be the run's [image output](../output.md#image-output): it's sent like the response's text, even when the native tool's call and result are hidden.
+
+A tool that returns other tools' results as its own is sent by its own visibility, not theirs, so under a `'public'` default a `'private'` tool's result reaches the client through it. [Tool Bridge](../harness/tool-bridge.md)'s `tool_call` and [Code Mode](../harness/code-mode.md)'s `run_code` run other tools, and [Conversation Search](../harness/conversation-search.md)'s `search_conversation_history` returns results from earlier runs. [Tool Output Limits](../harness/tool-output-limits.md#querying-a-spill)' `read_tool_result` and `grep_tool_result` read back the results it spilled, and so do file-reading tools such as [FileSystem](../harness/filesystem.md)'s `read_file`, since Tool Output Limits' [default store](../harness/tool-output-limits.md#reading-spills-with-filesystem) writes them to the run's workspace. Keep a non-public tool out of the capability with its selector, `tools` for Tool Bridge and Code Mode or `tool_filter` for Tool Output Limits, which then doesn't spill it, or set a non-public `default_ui_visibility`, which these tools take. Conversation Search has no selector: set the default, or set `ui_visibility` on `search_conversation_history` itself, as in [Setting it in bulk](#setting-it-in-bulk).
+
+Nor does `ui_visibility` hide a tool's name, which other parts carry: a call to a tool the run doesn't know is retried with a message listing the tools the model can call, a [tool search](../capabilities/tool-search.md) result lists the tools it found, and a tool that becomes available during the run is named in the [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] the adapters send, which keeps it available in a client-held history. Under a non-public `default_ui_visibility`, the retry and the search result take the default, so only that record still names the tool.
+
+### Setting it in bulk
+
+For tools you don't define yourself, such as those of an MCP server or another toolset, set the field in a [`prepare_tools`](../tools-advanced.md#prepare-tools) function or with [`PrepareTools`][pydantic_ai.capabilities.PrepareTools]:
+
+```py {title="tool_visibility_bulk.py"}
+from dataclasses import replace
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import PrepareTools
+from pydantic_ai.tools import ToolDefinition
+
+
+def redact_crm_tools(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    return [
+        replace(tool_def, ui_visibility='redacted') if tool_def.name.startswith('crm_') else tool_def
+        for tool_def in tool_defs
+    ]
+
+
+agent = Agent('{{ openai:medium }}', capabilities=[PrepareTools(redact_crm_tools)])
+```
+
+These functions get the tools of the agent and its toolsets, not the ones a capability adds around them, such as tool search's `search_tools` or the tools of Pydantic AI Harness's [Tool Bridge](../harness/tool-bridge.md) and [Code Mode](../harness/code-mode.md): those take the adapter's `default_ui_visibility`.
+
+### Using the event stream on its own
+
+A [`UIEventStream`][pydantic_ai.ui.UIEventStream] used [without an adapter](#encoding-events-without-a-request) reads the stamps the same way, and its own [`default_ui_visibility`][pydantic_ai.ui.UIEventStream.default_ui_visibility] applies only to parts without one. Without an adapter run, nothing writes that default onto the tools or stamps external and output tools `'public'`, so the default applies to frontend and output tools too. Under a `'private'` default, a stream of its own sends nothing for an output tool's call, and sends a frontend tool's call only when the run defers it, after the model's response, rather than as it streams. Set visibility on the tools instead. An adapter's [`transform_stream()`][pydantic_ai.ui.UIAdapter.transform_stream] over the events of a run it didn't start, such as a durable run encoded in another process, works the same way: its `default_ui_visibility` applies like a stream's own, and a client-held history doesn't warn.

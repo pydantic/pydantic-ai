@@ -66,6 +66,7 @@ from ..native_tools import (
     ComputerTool,
     FileSearchTool,
     ImageGenerationTool,
+    MCPServerTool,
     WebFetchTool,
     WebSearchTool,
 )
@@ -483,6 +484,16 @@ def _http_error(
     suggested_model_id = None
     if status == 'NOT_FOUND' and isinstance(message, str) and message.startswith(f'models/{model_name} is not found '):
         suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+    hint = None
+    # The Gemini API rejects a model it serves only through Interactions, like `gemini-omni-1.1-flash`, with
+    # `400 INVALID_ARGUMENT`: "This model only supports Interactions API." (verified live 2026-11-26).
+    if (
+        status == 'INVALID_ARGUMENT'
+        and isinstance(message, str)
+        and 'only supports interactions api' in message.lower()
+    ):
+        # No `google-interactions:` prefix: it uses the Gemini API, and this function can't tell the client's transport.
+        hint = 'Use `GoogleInteractionsModel` for this model.'
     return _model_errors.google_status_error(
         model_name,
         status_code=status_code,
@@ -491,6 +502,7 @@ def _http_error(
         body=body,
         headers=headers,
         suggested_model_id=suggested_model_id,
+        hint=hint,
         in_stream=in_stream,
     )
 
@@ -591,6 +603,32 @@ _GEMINI_2_5_PRO_MIN_THINKING_BUDGET = 128
 
 See https://ai.google.dev/gemini-api/docs/thinking#set-budget.
 """
+
+
+def _still_thinking(config: ThinkingConfigDict, thinking_summary: bool | None) -> ThinkingConfigDict:
+    """A `thinking=False` config that leaves the model thinking, with thoughts only when `thinking_summary` asks."""
+    if thinking_summary:
+        config['include_thoughts'] = True
+    return config
+
+
+def _thinking_off_config(profile: GoogleModelProfile, thinking_summary: bool | None) -> ThinkingConfigDict:
+    """The thinking config for unified `thinking=False`."""
+    if not profile.get('google_supports_thinking_level', True):
+        # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget=0, which Gemini 2.5 Pro rejects
+        # ("Budget 0 is invalid. This model only works in thinking mode."), so it gets its minimum budget.
+        if profile.get('thinking_always_enabled', False):
+            return _still_thinking(
+                ThinkingConfigDict(thinking_budget=_GEMINI_2_5_PRO_MIN_THINKING_BUDGET), thinking_summary
+            )
+        return ThinkingConfigDict(thinking_budget=0)
+    if profile.get('google_disables_thinking_with_zero_budget', False):
+        return ThinkingConfigDict(thinking_budget=0)
+    # Default Gemini 3+ behaviour represents `thinking=False` as its lowest supported thinking level.
+    return _still_thinking(
+        ThinkingConfigDict(thinking_level=cast(Any, _google_common.resolve_google_thinking_level('minimal', profile))),
+        thinking_summary,
+    )
 
 
 def _batch_module():
@@ -711,7 +749,11 @@ class GoogleModel(Model[Client]):
         On the Gemini API, `gemini-2.5-flash-lite` also gets `google_minimal_thinking_budget=512`, and `gemini-2.5-flash`
         gets `thinking_always_enabled`, so `thinking=False` sends the minimum `thinking_budget` that its reroute target
         accepts instead of 0.
+
+        `deprecation` comes from the Gemini API's or Google Cloud's deprecation schedule, which date the same model
+        differently.
         """
+        profile = _google_common.with_deprecation(self._model_name, profile, google_cloud=self._is_google_cloud)
         if self._is_google_cloud:
             profile = merge_profile(
                 profile, GoogleModelProfile(google_supports_batch_api=False, google_supports_computer_use=False)
@@ -802,6 +844,7 @@ class GoogleModel(Model[Client]):
                 f'`ImageGenerationTool` is not supported by model {self.model_name!r}. '
                 "Use a model with 'image' in the name, or `ImageGeneration(local=...)` for a local fallback."
             )
+        self._reject_mcp_server_tools(model_request_parameters)
         # Count only native tools this model supports, including the settings set on them.
         # `Model.prepare_request` swaps an unsupported one for its local fallback, drops it when
         # optional, or rejects it, so it never reaches the wire beside output tools. A supported one
@@ -827,6 +870,16 @@ class GoogleModel(Model[Client]):
                     'Use `output_type=PromptedOutput(...)` instead.'
                 )
         return super().prepare_request(model_settings, model_request_parameters)
+
+    def _reject_mcp_server_tools(self, params: ModelRequestParameters) -> None:
+        """Point a remote MCP server at the Interactions API, which serves it, before base validation rejects it."""
+        if _google_common.rejects_native_tool(self, params, MCPServerTool):
+            # The `google-interactions:` prefix uses the Gemini API, so a Google Cloud model isn't pointed at it.
+            prefix = '' if self._is_google_cloud else ', with the `google-interactions:` prefix,'
+            raise UserError(
+                f'`MCPServerTool` is not supported by `GoogleModel`. Use `GoogleInteractionsModel`{prefix} '
+                'or `MCP(local=True)` for a local fallback.'
+            )
 
     async def request(
         self,
@@ -1188,6 +1241,10 @@ class GoogleModel(Model[Client]):
         # An explicit thinking config replaces the unified one in `_translate_thinking`.
         return ('google_thinking_config',) if model_settings.get('google_thinking_config') else ()
 
+    def _settings_overriding_thinking_summary(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # An explicit thinking config replaces the unified one in `_translate_thinking`, `include_thoughts` included.
+        return ('google_thinking_config',) if model_settings.get('google_thinking_config') else ()
+
     def _translate_thinking(
         self,
         model_settings: GoogleModelSettings,
@@ -1197,28 +1254,22 @@ class GoogleModel(Model[Client]):
         if config := model_settings.get('google_thinking_config'):
             return config
         thinking = model_request_parameters.thinking
+        thinking_summary = model_settings.get('thinking_summary')
         if thinking is None:
+            # Thoughts are left out unless asked for, so only `True` changes anything, and only on a model that thinks.
+            if thinking_summary and self._request_thinks(model_settings, model_request_parameters):
+                return ThinkingConfigDict(include_thoughts=True)
             return None
+        include_thoughts = thinking_summary is not False
         profile = self.profile
         supports_thinking_level = profile.get('google_supports_thinking_level', True)
         if thinking is False:
-            if not supports_thinking_level:
-                # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget=0, which Gemini 2.5 Pro rejects
-                # ("Budget 0 is invalid. This model only works in thinking mode."), so it gets its minimum budget.
-                if profile.get('thinking_always_enabled', False):
-                    return ThinkingConfigDict(thinking_budget=_GEMINI_2_5_PRO_MIN_THINKING_BUDGET)
-                return ThinkingConfigDict(thinking_budget=0)
-            if profile.get('google_disables_thinking_with_zero_budget', False):
-                return ThinkingConfigDict(thinking_budget=0)
-            # Default Gemini 3+ behaviour represents `thinking=False` as its lowest supported thinking level.
-            return ThinkingConfigDict(
-                thinking_level=cast(Any, _google_common.resolve_google_thinking_level('minimal', profile))
-            )
+            return _thinking_off_config(profile, thinking_summary)
 
         if not supports_thinking_level:
             # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget
             if thinking is True:
-                return ThinkingConfigDict(include_thoughts=True)
+                return ThinkingConfigDict(include_thoughts=include_thoughts)
             budget_map: dict[ThinkingEffort, int] = {
                 'minimal': profile.get('google_minimal_thinking_budget', _GEMINI_2_5_PRO_MIN_THINKING_BUDGET),
                 'low': 2048,
@@ -1227,13 +1278,13 @@ class GoogleModel(Model[Client]):
                 'xhigh': 24576,  # max for Flash; Pro goes to 32768 but we use a safe common max
                 'max': 24576,
             }
-            return ThinkingConfigDict(include_thoughts=True, thinking_budget=budget_map[thinking])
+            return ThinkingConfigDict(include_thoughts=include_thoughts, thinking_budget=budget_map[thinking])
 
         # Default Gemini 3+ behaviour uses thinking_level
         if thinking is True:
-            return ThinkingConfigDict(include_thoughts=True)
+            return ThinkingConfigDict(include_thoughts=include_thoughts)
         return ThinkingConfigDict(
-            include_thoughts=True,
+            include_thoughts=include_thoughts,
             thinking_level=cast(Any, _google_common.resolve_google_thinking_level(thinking, profile)),
         )
 
@@ -1430,7 +1481,7 @@ class GoogleModel(Model[Client]):
         supports_tool_combination = self.profile.get('google_supports_tool_combination', False) and not (
             self._is_google_cloud
         )
-        contents: list[ContentUnionDict] = []
+        contents: list[ContentDict] = []
         system_parts: list[PartDict] = []
         computer = _requested_native_computer(model_request_parameters)
         # Gemini's original computer use calls, by tool call ID, to send back with their results.
@@ -1454,9 +1505,7 @@ class GoogleModel(Model[Client]):
                 case _:
                     assert_never(m)
 
-        # Google GenAI requires at least one user part in the message, and that function call turns
-        # come immediately after a user turn or after a function response turn.
-        if not contents or contents[0].get('role') == 'model':  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        if _needs_leading_user_turn(contents):
             contents.insert(0, {'role': 'user', 'parts': [{'text': ''}]})
 
         if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
@@ -1464,7 +1513,7 @@ class GoogleModel(Model[Client]):
                 system_parts.append({'text': part.content})
         system_instruction = ContentDict(role='user', parts=system_parts) if system_parts else None
 
-        return system_instruction, contents
+        return system_instruction, list[ContentUnionDict](contents)
 
     def _replayed_computer_calls(
         self, m: ModelResponse, computer: _google_computer.NativeComputer | None
@@ -1762,6 +1811,8 @@ class GeminiStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         if self._provider_timestamp is not None:
             self.provider_details = {'timestamp': self._provider_timestamp}
+        # A stream that ends before a chunk reports a finish reason or a blocked prompt was cut off.
+        self.state = 'incomplete'
         try:
             async for chunk in MapStreamDecodeErrors(self._response, self._model_name, errors.UnknownApiResponseError):
                 for event in self._map_chunk(chunk):
@@ -1793,6 +1844,7 @@ class GeminiStreamedResponse(StreamedResponse):
             finish_reason, finish_details = finished
             self.provider_details = {**(self.provider_details or {}), **finish_details}
             self.finish_reason = finish_reason
+            self.state = 'complete'
 
         if candidate.grounding_metadata is not None:
             self._grounding_metadata = candidate.grounding_metadata
@@ -1839,6 +1891,7 @@ class GeminiStreamedResponse(StreamedResponse):
         self._has_content_filter = True
         self.provider_details = {**(self.provider_details or {}), **blocked_details}
         self.finish_reason = 'content_filter'
+        self.state = 'complete'
         if chunk.response_id:  # pragma: no branch
             self.provider_response_id = chunk.response_id
 
@@ -2117,6 +2170,23 @@ def _split_function_responses(message_parts: list[PartDict]) -> list[ContentDict
 
     contents.append({'role': 'user', 'parts': content_parts})
     return contents
+
+
+def _needs_leading_user_turn(contents: list[ContentDict]) -> bool:
+    """Whether `contents` must start with a synthetic user turn for Gemini to accept it.
+
+    Gemini rejects empty `contents` and a function call turn that doesn't come right after a user turn or a function
+    response turn, and some models reject a request whose only turn is a model turn. It accepts `contents` that start
+    with a model turn of only text (and thoughts) when more turns follow. Verified on 2026-11-26 against the Gemini API
+    and Vertex AI with Gemini 2.5 Flash-Lite, 2.5 Flash, 2.5 Pro, 3 Flash Preview, 3.1 Pro Preview and 3.8 Flash, and
+    on 2026-11-27 against the Gemini API with Gemma 4 31B and Gemma 4 26B A4B.
+    """
+    if not contents:
+        return True
+    first = contents[0]
+    if first.get('role') != 'model':
+        return False
+    return len(contents) == 1 or not all('text' in part for part in first.get('parts') or [])
 
 
 def _content_model_response(

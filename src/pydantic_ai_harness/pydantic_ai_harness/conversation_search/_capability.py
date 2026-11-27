@@ -14,6 +14,7 @@ from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._warn import warn_default_changed
 from pydantic_ai_harness.conversation_search._source import HistorySource
 from pydantic_ai_harness.conversation_search._toolset import (
+    DEFAULT_MAX_SCANNED_MESSAGES,
     SCOPE_DEFAULT_CHANGE_IMPACT,
     ConversationSearchToolset,
     SearchScope,
@@ -129,6 +130,14 @@ class ConversationSearch(AbstractCapability[AgentDepsT]):
     """Emit a short instruction telling the model the recall tool exists."""
 
     _: KW_ONLY
+    max_scanned_messages: int = DEFAULT_MAX_SCANNED_MESSAGES
+    """How many of the newest in-scope messages one search scores. Must be positive.
+
+    Ranking runs on the event loop, so this bounds how long one search can hold it. When the
+    corpus is larger, older messages are not searched and the tool result says so. Raise it
+    to search further back at the cost of slower searches.
+    """
+
     id: str | None = 'conversation_search'
     """Stable capability ID, so its instructions are addressable and `defer_loading=True` needs none.
 
@@ -178,6 +187,7 @@ class ConversationSearch(AbstractCapability[AgentDepsT]):
             bm25_k1=self.bm25_k1,
             bm25_b=self.bm25_b,
             scope=self.effective_scope,
+            max_scanned_messages=self.max_scanned_messages,
         )
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:

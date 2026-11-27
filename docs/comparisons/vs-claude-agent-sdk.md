@@ -33,8 +33,8 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Memory | Yes | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Yes | [Compaction](../capabilities/compaction.md) |
 | Guardrails | Yes | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
-| Code sandboxes | Yes | [Workspaces](../workspace.md#supported-workspaces) |
-| Browser use | No | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research) |
+| Code sandboxes | Yes | [Your machine, SSH and 11 sandboxes](../workspace.md#supported-workspaces), with per-path [authority](../workspace-custom.md#path-authority) |
+| Browser use | No | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research), and [computer use](../harness/computer-use.md) on a desktop in 11 sandboxes |
 
 ## FAQ
 
@@ -44,9 +44,13 @@ same [`Agent`][pydantic_ai.Agent]; the harness repository has a
 [complete coding agent](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/examples/coding_agent.py)
 built from the pieces `Coder` puts together.
 
+**Can I continue a Claude Code session in Pydantic AI?** Yes. `pax --resume-claude` imports a Claude Code session into [Pax](../harness/pax.md#pick-up-where-you-left-off-resume), tool calls and sub-agents included, and you continue it on any model.
+
 **Can I run my agents in CI?** Yes. [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) runs Pydantic AI agents
 from a Markdown workflow file in GitHub Actions, or run a Python script directly with `uv run`;
 nothing requires an Action.
+
+**Can I control which content my agent treats as instructions?** Yes. What a capability tells the model mid-conversation is a typed part that records who wrote it (you, your user, or nobody you trust), and Pydantic AI speaks it in the voice that authority allows; what a capability enqueues can be lowered, never raised, as it moves through a run. Tool results and fetched pages stay data on every provider, and text that imitates the framework's own frames is flagged to the model. A workspace's files carry your authority unless you mark them untrusted, path by path. See [Where the content came from](../capabilities/custom.md#where-the-content-came-from) for the source and authority table, [Capability parts](../message-history.md#capability-parts) for how they are stored, and [Marking who wrote the files](../workspace-custom.md#workspace-authority).
 
 For the longer argument, read [Would you deploy an agent you don't control?](https://pydantic.dev/articles/pydantic-ai-vs-claude-agent-sdk) on the Pydantic blog.
 

@@ -8,11 +8,22 @@ from __future__ import annotations
 
 import re
 import string
+from collections import deque
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from json import dumps
-from typing import TYPE_CHECKING, Literal, Protocol, Self, TypeAlias, TypeGuard, assert_never, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Literal,
+    NamedTuple,
+    Protocol,
+    Self,
+    TypeAlias,
+    TypeGuard,
+    assert_never,
+    runtime_checkable,
+)
 
 from pydantic_ai._context_size import context_input_tokens, context_tokens
 from pydantic_ai._instructions import instruction_window_start, is_loaded_block, window_boundary_index
@@ -778,6 +789,7 @@ async def compact_if_smaller(
     messages: list[ModelMessage],
     compact: Callable[[], Awaitable[list[ModelMessage]]],
     tokenizer: Callable[[str], int] | None = None,
+    skip_on: tuple[type[Exception], ...] = (),
 ) -> list[ModelMessage] | None:
     """Run *compact*, and return `None` when its result is not estimated smaller than *messages*.
 
@@ -785,11 +797,26 @@ async def compact_if_smaller(
     receipts the attempt recorded are discarded with it, and a `compact_messages` span with
     `compaction.skipped='not_smaller'` records the attempt's estimated size. A result that is smaller,
     or the unchanged history, is returned, and its receipts reach the enclosing `compact_with_span`.
+
+    An exception in *skip_on* rejects the attempt the same way, recorded as
+    `compaction.skipped='summary_failed'` with its `error.type`.
     """
     token = open_receipt_scope()
     try:
         compacted = await compact()
         receipts = drain_receipts()
+    except skip_on as error:
+        with ctx.tracer.start_as_current_span(_SPAN_NAME) as span:
+            span.set_attributes(
+                {
+                    'compaction.strategy': strategy,
+                    'compaction.skipped': 'summary_failed',
+                    'error.type': f'{type(error).__module__}.{type(error).__qualname__}',
+                    'compaction.messages_before': len(messages),
+                    'compaction.tokens_before': estimate_token_count(messages, tokenizer),
+                }
+            )
+        return None
     finally:
         reset_receipt_scope(token)
     if _history_changed(messages, compacted):
@@ -1206,41 +1233,112 @@ non-JSON placeholder would reach the provider as malformed function arguments.
 """
 
 
+PartPosition: TypeAlias = tuple[int, int]
+"""A part's `(message index, part index)` in a message history."""
+
+
+class _OpenCall(NamedTuple):
+    """A tool call waiting for its return, and where it sits in the history."""
+
+    position: PartPosition
+    call: ToolCallPart
+
+
+_OpenCalls: TypeAlias = dict[str, deque[_OpenCall]]
+"""The calls waiting for a return, by tool call ID, oldest first."""
+
+
 @dataclass(frozen=True)
 class ToolPair:
-    """A matched tool call and its return, with the order the return appeared."""
+    """A matched tool call and its return, with the order the return appeared.
+
+    The part positions -- `(message index, part index)` -- identify the exact parts that were paired.
+    A `tool_call_id` can't: providers are only required to make an id unique within one response, so a
+    later turn reusing an id (a local OpenAI-compatible server numbering calls `call_0` per request,
+    say) would otherwise select the new turn's part too.
+    """
 
     tool_call_id: str
     tool_name: str
     call_part: ToolCallPart
     order: int
+    call_position: PartPosition
+    return_position: PartPosition
 
 
 def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[ToolPair]:
     """Return matched tool-call / tool-return pairs in return-appearance order.
 
+    Matching is an ordered walk: a return answers the oldest call it can, so the calls of one response
+    pair with its returns in order, and a call is never answered by a return that precedes it. A return
+    is dropped when no call precedes it, and a call when no return answers it before a later response
+    reuses its id.
+
     A retried return (`outcome='retried'`) isn't a result: it tells the model to make the call again. It
-    is left out, so it is never cleared before the model sees the correction, doesn't count toward
-    `ClearToolResults.keep_pairs`, and doesn't supersede an earlier successful read.
+    still answers its call -- the retry re-issues it -- so its call is consumed without emitting a pair.
+    The retried return is never cleared before the model sees the correction, doesn't count toward
+    `ClearToolResults.keep_pairs`, and doesn't supersede an earlier successful read. Leaving the call
+    queued instead would mis-pair a later turn's return -- one reusing the id -- with the stale call.
+    A legacy `RetryPromptPart` that names a tool settles its call the same way, for the same reason.
     """
-    calls = {
-        part.tool_call_id: part
-        for message in messages
-        if isinstance(message, ModelResponse)
-        for part in message.parts
-        if isinstance(part, ToolCallPart) and part.tool_call_id
-    }
-    returns = [
-        part
-        for message in messages
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, ToolReturnPart) and part.outcome != 'retried' and part.tool_call_id in calls
-    ]
-    return [
-        ToolPair(part.tool_call_id, calls[part.tool_call_id].tool_name, calls[part.tool_call_id], order)
-        for order, part in enumerate(returns)
-    ]
+    open_calls: _OpenCalls = {}
+    pairs: list[ToolPair] = []
+    for message_index, message in enumerate(messages):
+        if isinstance(message, ModelResponse):
+            _queue_calls(message, message_index, open_calls)
+        else:
+            _settle_returns(message, message_index, open_calls, pairs)
+    return pairs
+
+
+def _queue_calls(
+    response: ModelResponse,
+    message_index: int,
+    open_calls: _OpenCalls,
+) -> None:
+    """Queue *response*'s calls by ID, oldest first, so a later return answers them in order.
+
+    A call is answered before the next response, so one still queued when *response* reuses its ID was
+    never answered (a run interrupted before its tools ran, say) and is dropped rather than left to pair
+    with this response's return.
+    """
+    for part_index, part in enumerate(response.parts):
+        if isinstance(part, ToolCallPart) and part.tool_call_id:
+            pending = open_calls.setdefault(part.tool_call_id, deque())
+            if pending and pending[0].position[0] != message_index:
+                pending.clear()
+            pending.append(_OpenCall((message_index, part_index), part))
+
+
+def _settle_returns(
+    request: ModelRequest,
+    message_index: int,
+    open_calls: _OpenCalls,
+    pairs: list[ToolPair],
+) -> None:
+    """Answer the oldest open call of each reply in *request*, pairing it unless it was a retry."""
+    for part_index, part in enumerate(request.parts):
+        if not _is_tool_reply(part):
+            continue
+        pending = open_calls.get(part.tool_call_id)
+        if not pending:
+            continue
+        call_position, call = pending.popleft()
+        # A legacy `RetryPromptPart` settles its call the way a retried return does: it re-issues the
+        # call rather than answering it, so the call is consumed instead of waiting for a later turn
+        # that reuses the id to pair with it.
+        if isinstance(part, RetryPromptPart) or part.outcome == 'retried':  # pyright: ignore[reportDeprecated]
+            continue
+        pairs.append(
+            ToolPair(
+                part.tool_call_id,
+                call.tool_name,
+                call,
+                len(pairs),
+                call_position,
+                (message_index, part_index),
+            )
+        )
 
 
 CLEARED_TOOL_RESULT_METADATA = 'pydantic-ai-harness.compaction.cleared-tool-result.v1'
@@ -1332,43 +1430,45 @@ def _clear_once(part: ToolReturnPart, placeholder: str | Callable[[ToolReturnPar
 
 def rebuild_with_cleared(
     messages: Sequence[ModelMessage],
-    clear_return_ids: set[str],
-    clear_input_ids: set[str],
+    clear_return_positions: set[PartPosition],
+    clear_input_positions: set[PartPosition],
     placeholder: str | Callable[[ToolReturnPart], str],
 ) -> list[ModelMessage]:
-    """Return *messages* with selected tool results (and optionally inputs) blanked.
+    """Return *messages* with the selected tool results (and optionally inputs) blanked.
+
+    The parts to blank are `(message index, part index)` positions, as produced by `iter_tool_pairs`,
+    not `tool_call_id`s: an id can be reused by a later turn, and clearing every part carrying a
+    selected id would blank the newer turn's result too.
 
     The `ToolReturnPart` / `ToolCallPart` are kept in place with placeholder content,
     so tool-call pairing is never broken.  Already-blanked parts are left untouched. A
     callable *placeholder* is called once per part it clears, with the original part. A
     `load_capability` call keeps its input: core reads which capability is loaded from it.
     """
-    contents = dict.fromkeys(clear_return_ids, placeholder)
+    contents = dict.fromkeys(clear_return_positions, placeholder)
     return [
-        _clear_returns(message, contents)
+        _clear_returns(message, lambda part_index, _: contents.get((message_index, part_index)))
         if isinstance(message, ModelRequest)
-        else _clear_inputs(message, clear_input_ids)
-        for message in messages
+        else _clear_inputs(message, message_index, clear_input_positions)
+        for message_index, message in enumerate(messages)
     ]
 
 
-def replace_returns(messages: Sequence[ModelMessage], contents: Mapping[str, str]) -> list[ModelMessage]:
-    """Return *messages* with each tool result in *contents*, keyed by tool call ID, replaced by its content.
-
-    Like `rebuild_with_cleared`, but with a replacement per result, and the tool calls left as they are.
-    """
-    return [_clear_returns(message, contents) if isinstance(message, ModelRequest) else message for message in messages]
-
-
 def _clear_returns(
-    message: ModelRequest, contents: Mapping[str, str | Callable[[ToolReturnPart], str]]
+    message: ModelRequest,
+    placeholder_for: Callable[[int, ToolReturnPart], str | Callable[[ToolReturnPart], str] | None],
 ) -> ModelRequest:
-    """*message* with the returns in *contents* replaced, or *message* itself when none changes."""
+    """*message* with each return that `placeholder_for(part_index, part)` names a placeholder for cleared once.
+
+    Returns *message* itself when no part changes.
+    """
     request_parts: list[ModelRequestPart] = []
     changed = False
-    for part in message.parts:
-        content = contents.get(part.tool_call_id) if isinstance(part, ToolReturnPart) else None
-        cleared = _clear_once(part, content) if isinstance(part, ToolReturnPart) and content is not None else None
+    for part_index, part in enumerate(message.parts):
+        placeholder = placeholder_for(part_index, part) if isinstance(part, ToolReturnPart) else None
+        cleared = (
+            _clear_once(part, placeholder) if isinstance(part, ToolReturnPart) and placeholder is not None else None
+        )
         if cleared is not None:
             request_parts.append(cleared)
             changed = True
@@ -1377,15 +1477,32 @@ def _clear_returns(
     return replace(message, parts=request_parts) if changed else message
 
 
-def _clear_inputs(message: ModelResponse, clear_input_ids: set[str]) -> ModelResponse:
-    """*message* with the call arguments in *clear_input_ids* blanked, or *message* itself when none changes."""
+def replace_returns(messages: Sequence[ModelMessage], contents: Mapping[str, str]) -> list[ModelMessage]:
+    """Return *messages* with each tool result in *contents*, keyed by tool call ID, replaced by its content.
+
+    Like `rebuild_with_cleared`, but with a replacement per result, and the tool calls left as they are.
+    """
+    return [
+        _clear_returns(message, lambda _, part: contents.get(part.tool_call_id))
+        if isinstance(message, ModelRequest)
+        else message
+        for message in messages
+    ]
+
+
+def _clear_inputs(
+    message: ModelResponse,
+    message_index: int,
+    clear_positions: set[PartPosition],
+) -> ModelResponse:
+    """*message* with the call arguments at the selected positions blanked, or *message* itself when none changes."""
     response_parts: list[ModelResponsePart] = []
     changed = False
-    for part in message.parts:
+    for part_index, part in enumerate(message.parts):
         if (
             isinstance(part, ToolCallPart)
             and not isinstance(part, LoadCapabilityCallPart)
-            and part.tool_call_id in clear_input_ids
+            and (message_index, part_index) in clear_positions
             and part.args != _CLEARED_TOOL_ARGS
         ):
             # The OpenAI Responses API resolves an item ID to its stored copy and ignores the

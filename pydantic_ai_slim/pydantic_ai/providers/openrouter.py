@@ -26,6 +26,8 @@ from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModel
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
+from ._openrouter_input_modalities import OPENROUTER_INPUT_MODALITIES
+
 try:
     from openai import AsyncOpenAI
 except ImportError as _import_error:
@@ -264,6 +266,27 @@ Mythos isn't routable on OpenRouter and is included on the strength of Anthropic
 """
 
 
+def _input_modalities_profile(model_name: str) -> ModelProfile | None:
+    """The file-input flags OpenRouter's model list gives the model, or `None` if the snapshot doesn't have it.
+
+    OpenRouter routes only to endpoints that take the request's kinds of file: an image sent to
+    `meta-llama/llama-3.1-8b-instruct` failed with a 404 "No endpoints found that support image input" (2026-11-12).
+    `file` isn't used: OpenRouter accepts a PDF on any model, and parses it to text for one that doesn't take files.
+    https://openrouter.ai/docs/guides/overview/multimodal/pdfs
+    """
+    input_modalities = OPENROUTER_INPUT_MODALITIES.get(model_name)
+    if input_modalities is None:
+        # A variant such as `:free` or `:batch` is in the snapshot only when it takes other kinds than its base model.
+        input_modalities = OPENROUTER_INPUT_MODALITIES.get(model_name.split(':', 1)[0])
+    if input_modalities is None:
+        return None
+    return ModelProfile(
+        supports_image_input='image' in input_modalities,
+        supports_audio_file_input='audio' in input_modalities,
+        supports_video_input='video' in input_modalities,
+    )
+
+
 class OpenRouterProvider(_OpenAISDKProvider):
     """Provider for OpenRouter API."""
 
@@ -310,6 +333,10 @@ class OpenRouterProvider(_OpenAISDKProvider):
                 f'{("openai/" + model_name)!r}, not {model_name!r}. '
                 'See https://openrouter.ai/models for the available model names.'
             )
+
+        # Looked up by the full model ID, as OpenRouter lists it: aliases such as `~openai/gpt-sol-latest` and
+        # variants such as `:free` are listed under their own IDs.
+        input_modalities_profile = _input_modalities_profile(model_name)
 
         # OpenRouter exposes latest-model aliases as `~provider/model`; strip the
         # alias marker before using the provider prefix for profile selection.
@@ -363,12 +390,15 @@ class OpenRouterProvider(_OpenAISDKProvider):
         supports_cache_control = provider in ('anthropic', 'google')
         supports_anthropic_cache = provider == 'anthropic'
 
-        # Three-layer merge:
+        # Four-layer merge:
         # 1. Fallback layer — `OpenAIJsonSchemaTransformer` is the default unless an upstream profile sets one explicitly
         #    (e.g. `_openrouter_google_model_profile` installs `_OpenRouterGoogleJsonSchemaTransformer`), and video input
-        #    is off unless the upstream profile turns it on.
+        #    is off unless a later layer turns it on.
         # 2. Upstream profile — model-specific traits from the lab's profile function.
-        # 3. Gateway-specific overrides — wins on every key it sets, because the upstream profile can't know what
+        # 3. OpenRouter's model list: the image, audio and video input flags from the snapshot in
+        #    `_openrouter_input_modalities`, for a model it lists. OpenRouter routes only to endpoints that take the
+        #    request's kinds of file, so what it lists beats the upstream profile, which describes the lab's own API.
+        # 4. Gateway-specific overrides — wins on every key it sets, because the upstream profile can't know what
         #    the OpenRouter gateway adds (web plugin, file URLs, custom thinking field, cache capabilities). OpenRouter
         #    accepts `reasoning` universally, so the gate also forces `supports_thinking=True` so the unified `thinking`
         #    setting is always forwarded regardless of the upstream model's own thinking support. OpenRouter only
@@ -380,10 +410,11 @@ class OpenRouterProvider(_OpenAISDKProvider):
                 json_schema_transformer=OpenAIJsonSchemaTransformer,
                 # OpenRouter answers 404 "No endpoints found that support input video" for a model without video
                 # input (checked live with Claude, GPT and DeepSeek routes, 2026-11-12), so video is off unless the
-                # upstream profile turns it on, as Google's and Amazon Nova's do.
+                # upstream profile or the model list turns it on.
                 supports_video_input=False,
             ),
             profile,
+            input_modalities_profile,
             OpenRouterModelProfile(
                 openai_chat_send_back_thinking_parts='field',
                 openai_chat_thinking_field='reasoning',

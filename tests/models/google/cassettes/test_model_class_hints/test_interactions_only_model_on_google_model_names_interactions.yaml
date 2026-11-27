@@ -1,0 +1,52 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-omni-1.1-flash:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "171"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: A red ball rolling across a plain white floor, fixed camera.
+          role: user
+        generationConfig:
+          responseModalities:
+          - TEXT
+  response:
+    status: 400
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=139
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        error:
+          code: 400
+          message: This model only supports Interactions API.
+          status: INVALID_ARGUMENT
+  recorded_at: 2026-11-26T20:12:12.292766+00:00

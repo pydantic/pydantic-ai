@@ -4,6 +4,7 @@ import ast
 import asyncio
 import dataclasses
 import importlib.util
+import json
 import os
 import re
 import secrets
@@ -176,6 +177,7 @@ if TYPE_CHECKING:
 
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.xai import XaiProvider
+    from pydantic_ai.tools import ToolUIVisibility
 
     def IsInstance(arg: type[T]) -> T: ...
     def IsDatetime(*args: Any, **kwargs: Any) -> datetime: ...
@@ -1081,6 +1083,10 @@ DEPRECATED_MODELS_IN_RECORDINGS: tuple[str, ...] = (
     'claude-opus-4-5-20251101',
     # Anthropic, no retirement date: https://github.com/pydantic/pydantic-ai/issues/14036
     'claude-mythos-preview',
+    # Google, retires 2026-10-20 on Google Cloud and 2026-12-01 on the Gemini API:
+    # https://github.com/pydantic/pydantic-ai/issues/14676
+    'gemini-2.5-pro',
+    'gemini-2.5-flash',
     # OpenAI, retires 2025-07-14: https://github.com/pydantic/pydantic-ai/issues/14037
     'gpt-4.5-preview',
     # OpenAI, retires 2025-10-27: https://github.com/pydantic/pydantic-ai/issues/14037
@@ -2060,6 +2066,25 @@ def legacy_retry_prompt_part(
     return part
 
 
+def sse_data(encoded: Sequence[str]) -> list[dict[str, Any]]:
+    """The JSON payloads of a server-sent event stream, without its closing `[DONE]`."""
+    return [
+        json.loads(line.removeprefix('data: '))
+        for line in ''.join(encoded).splitlines()
+        if line.startswith('data: ') and line != 'data: [DONE]'
+    ]
+
+
+def tool_part_stamps(messages: Sequence[ModelMessage]) -> list[tuple[str, str, ToolUIVisibility | None]]:
+    """Each tool call and return part in `messages`, as `(part kind, tool name, ui_visibility stamp)`."""
+    return [
+        (part.part_kind, part.tool_name, part.ui_visibility)
+        for message in messages
+        for part in message.parts
+        if isinstance(part, (ToolCallPart, ToolReturnPart, NativeToolCallPart, NativeToolReturnPart))
+    ]
+
+
 _RequestPartT = TypeVar(
     '_RequestPartT',
     bound=SystemPromptPart
@@ -2135,7 +2160,7 @@ def conversation_view(messages: Sequence[ModelMessage]) -> list[str]:
 
 
 def server_history_agent(
-    toolsets: Sequence[AbstractToolset[None]] = (),
+    toolsets: Sequence[AbstractToolset[None]] = (), *, system_prompt: str | Sequence[str] = ()
 ) -> tuple[Agent[None, str | DeferredToolRequests], list[list[ModelMessage]], list[str]]:
     """An agent for the UI adapters' server-held history tests, with the model requests and tool runs it records.
 
@@ -2160,6 +2185,7 @@ def server_history_agent(
         deps_type=type(None),
         output_type=[str, DeferredToolRequests],
         toolsets=toolsets,
+        system_prompt=system_prompt,
     )
 
     @agent.tool_plain(requires_approval=True)
@@ -2168,6 +2194,26 @@ def server_history_agent(
         return f'Deleted {path}'
 
     return agent, requests, deleted
+
+
+def history_with_server_system_prompts() -> list[ModelMessage]:
+    """A trusted stored history opening with a stale copy of the agent's prompt, and carrying the server's own after it.
+
+    One system prompt an earlier run enqueued, and server context in a later request.
+    """
+    return [
+        ModelRequest(parts=[SystemPromptPart('Stale prompt'), UserPromptPart('where am I?')]),
+        ModelResponse(parts=[ToolCallPart('get_location', {}, tool_call_id='loc-1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('get_location', 'Paris', tool_call_id='loc-1'),
+                SystemPromptPart('Enqueued in an earlier run'),
+            ]
+        ),
+        ModelResponse(parts=[TextPart('ok')]),
+        ModelRequest(parts=[SystemPromptPart('Server context'), UserPromptPart('hi')]),
+        ModelResponse(parts=[TextPart('ok')]),
+    ]
 
 
 # endregion

@@ -82,6 +82,7 @@ from .._cancel import (
     provide_run_deadline,
     take_run_binding,
 )
+from .._compaction_requests import RequestedCompaction, claim_compaction_only_run
 from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions, lowered_block_id
 from .._output import OutputToolset
@@ -120,7 +121,7 @@ from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..native_tools import AbstractNativeTool
 from ..native_tools._tool_search import ToolSearchTool
 from ..output import OutputDataT, OutputSpec, StructuredDict
-from ..run import AgentRun, AgentRunResult
+from ..run import AgentRun, AgentRunResult, CompactionRunResult
 from ..settings import ModelSettings, merge_model_settings
 from ..template import TemplateStr
 from ..tool_manager import ParallelExecutionMode, ToolManager
@@ -171,6 +172,7 @@ from .abstract import (
     AgentRealtime,
     AgentRetries,
     AgentRunEvents,
+    CompactionOptions,
     EventStreamHandler,
     EventStreamProcessor,
     RunOutputDataT,
@@ -203,9 +205,11 @@ __all__ = (
     'AgentModelSettings',
     'AgentRealtime',
     'AgentRetries',
+    'CompactionOptions',
     'AgentRun',
     'AgentRunEvents',
     'AgentRunResult',
+    'CompactionRunResult',
     'NativeToolFunc',
     'CallToolsNode',
     'EndStrategy',
@@ -536,6 +540,19 @@ class _ResolvedSpec:
     name: str | None
     output_retries: int | None
     tool_retries: int | None
+
+
+def _request_initial_compaction(state: _agent_graph.GraphAgentState, compact: bool | CompactionOptions) -> None:
+    """Request the compaction a run method's `compact=` asks for, served by the run's first model request attempt.
+
+    Like `RunContext.request_compaction` from a `before_run` hook.
+    """
+    if compact is False:
+        return
+    options: CompactionOptions = {} if compact is True else compact
+    state.compaction_requests.request(
+        RequestedCompaction(reason=options.get('reason', 'manual'), focus=options.get('focus'))
+    )
 
 
 @dataclasses.dataclass(init=False)
@@ -1459,6 +1476,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -1487,6 +1505,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -1515,6 +1534,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -1618,6 +1638,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             workspace: Optional [workspace](../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
+            compact: Compact the message history before the run's first model request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` and a `focus`. See [requesting compaction](../capabilities/compaction.md#requesting-compaction).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1632,34 +1653,39 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        prepared = await self._prepare_run(
-            user_prompt,
-            output_type=output_type,
-            message_history=message_history,
-            deferred_tool_results=deferred_tool_results,
-            conversation_id=conversation_id,
-            conversation_revision=conversation_revision,
-            conversation_unsaved=conversation_unsaved,
-            conversation_unchecked=conversation_unchecked,
-            conversation_deferred_tool_requests=conversation.deferred_tool_requests if conversation else None,
-            run_id=run_id,
-            model=model,
-            instructions=instructions,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            cancellation_token=cancellation_token,
-            timeout=timeout,
-            usage=usage,
-            metadata=metadata,
-            retries=retries,
-            toolsets=toolsets,
-            capabilities=capabilities,
-            workspace=workspace,
-            spec=spec,
-        )
-        async with prepared.open() as agent_run:
-            yield agent_run
+        # Claimed before any user-supplied code runs in this context, for the run's whole lifetime: a run a hook or
+        # tool starts inside it isn't compaction-only. See `AbstractAgent.compact_history`.
+        with claim_compaction_only_run() as compaction_only:
+            prepared = await self._prepare_run(
+                user_prompt,
+                output_type=output_type,
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
+                conversation_id=conversation_id,
+                conversation_revision=conversation_revision,
+                conversation_unsaved=conversation_unsaved,
+                conversation_unchecked=conversation_unchecked,
+                conversation_deferred_tool_requests=conversation.deferred_tool_requests if conversation else None,
+                run_id=run_id,
+                model=model,
+                instructions=instructions,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                cancellation_token=cancellation_token,
+                timeout=timeout,
+                usage=usage,
+                metadata=metadata,
+                retries=retries,
+                toolsets=toolsets,
+                capabilities=capabilities,
+                workspace=workspace,
+                compact=compact,
+                compaction_only=compaction_only,
+                spec=spec,
+            )
+            async with prepared.open() as agent_run:
+                yield agent_run
 
     async def _prepare_run(  # noqa: C901
         self,
@@ -1687,6 +1713,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
+        compaction_only: bool = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> _PreparedAgentRun[AgentDepsT, Any]:
         # Consume the pending `AgentRunEvents` binding before ANY user-supplied code (capability /
@@ -1848,6 +1876,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             conversation_unchecked=conversation_unchecked,
             conversation_deferred_tool_requests=conversation_deferred_tool_requests,
         )
+        _request_initial_compaction(state, compact)
 
         # The deadline is absolute wall-clock time. Inside a durable workflow or flow, the durability
         # capability supplies a replay-safe clock and start time, so a replayed or recovered run keeps
@@ -2332,6 +2361,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings=instrumentation_settings,
             cancellation=cancellation,
             deadline=deadline,
+            compaction_only=compaction_only,
         )
 
         user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](
@@ -3141,6 +3171,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_kind: _messages.ToolKind[KindArgsT, KindContentT],
         timeout: float | None = None,
         durable: bool | None = None,
+        ui_visibility: _messages.ToolUIVisibility | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> KindedToolDecorator[AgentDepsT, KindArgsT, KindContentT]: ...
@@ -3165,6 +3196,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_kind: _messages.ToolPartKind | None = None,
         timeout: float | None = None,
         durable: bool | None = None,
+        ui_visibility: _messages.ToolUIVisibility | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
@@ -3189,6 +3221,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_kind: _messages.ToolKindLike | None = None,
         timeout: float | None = None,
         durable: bool | None = None,
+        ui_visibility: _messages.ToolUIVisibility | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Any:
@@ -3256,6 +3289,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             durable: Where a [durable execution](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) engine runs this tool: `False` runs it
                 outside its durable unit, in workflow code, and `True` keeps the engine's default placement.
                 Defaults to `None`, the engine's default placement.
+            ui_visibility: What a [UI adapter](../ui/overview.md#tool-visibility) sends a client for this tool's calls
+                and returns: `'public'`, `'redacted'` or `'private'`.
+                Defaults to `None`, the adapter's `default_ui_visibility`.
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
                 or another tool's `ToolReturn.tools`. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
@@ -3285,6 +3321,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 tool_kind=tool_kind,
                 timeout=timeout,
                 durable=durable,
+                ui_visibility=ui_visibility,
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
             )
@@ -3315,6 +3352,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_kind: _messages.ToolKind[KindArgsT, KindContentT],
         timeout: float | None = None,
         durable: bool | None = None,
+        ui_visibility: _messages.ToolUIVisibility | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> KindedToolPlainDecorator[KindArgsT, KindContentT]: ...
@@ -3339,6 +3377,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_kind: _messages.ToolPartKind | None = None,
         timeout: float | None = None,
         durable: bool | None = None,
+        ui_visibility: _messages.ToolUIVisibility | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
@@ -3363,6 +3402,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_kind: _messages.ToolKindLike | None = None,
         timeout: float | None = None,
         durable: bool | None = None,
+        ui_visibility: _messages.ToolUIVisibility | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Any:
@@ -3431,6 +3471,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             durable: Where a [durable execution](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) engine runs this tool: `False` runs it
                 outside its durable unit, in workflow code, and `True` keeps the engine's default placement.
                 Defaults to `None`, the engine's default placement.
+            ui_visibility: What a [UI adapter](../ui/overview.md#tool-visibility) sends a client for this tool's calls
+                and returns: `'public'`, `'redacted'` or `'private'`.
+                Defaults to `None`, the adapter's `default_ui_visibility`.
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
                 or another tool's `ToolReturn.tools`. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
@@ -3458,6 +3501,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 tool_kind=tool_kind,
                 timeout=timeout,
                 durable=durable,
+                ui_visibility=ui_visibility,
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
             )
