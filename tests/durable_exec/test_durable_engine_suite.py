@@ -2,6 +2,7 @@
 
 `TestDBOS` (`tests/harness/test_durable_tool_io.py`) and `TestTemporal` (`tests/harness/test_durable_temporal_replay.py`)
 run the suite end to end; these check the judgements their engines don't reach, such as a `restart` recovery.
+They run a stand-in engine and scripted model, with no provider exchange to record, so none is a VCR test.
 """
 
 from __future__ import annotations
@@ -227,7 +228,10 @@ def _builds_nothing(directory: Path, /) -> Sequence[AbstractCapability[None]]:
 async def test_a_case_whose_dependency_is_missing_is_skipped(
     build: CapabilityBuilder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A case whose build can't find its optional dependency is skipped, not judged: no engine ran it."""
+    """A case whose build can't find its optional dependency is skipped, not judged: no engine ran it.
+
+    It runs a stand-in engine and build, with no provider exchange to record, so it isn't a VCR test.
+    """
     monkeypatch.delenv('PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS', raising=False)
     suite = _suite(cases={'case': Calls((('work', {}),), build=build)})
     with pytest.raises(pytest.skip.Exception, match='case needs `missing_sdk`, from an optional dependency'):
@@ -237,7 +241,10 @@ async def test_a_case_whose_dependency_is_missing_is_skipped(
 async def test_a_missing_dependency_fails_when_extras_are_required(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS` turns the skip into a failure, naming the missing module."""
+    """`PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS` turns the skip into a failure, naming the missing module.
+
+    It runs a stand-in engine and build, with no provider exchange to record, so it isn't a VCR test.
+    """
     monkeypatch.setenv('PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS', 'true')
     suite = _suite(cases={'case': Calls((('work', {}),), build=_needs_a_missing_dependency)})
     with pytest.raises(
@@ -247,7 +254,10 @@ async def test_a_missing_dependency_fails_when_extras_are_required(
 
 
 async def test_an_import_error_that_is_no_missing_module_fails(tmp_path: Path) -> None:
-    """A name a mismatched version lacks is a broken install, not a missing extra: the case fails."""
+    """A name a mismatched version lacks is a broken install, not a missing extra: the case fails.
+
+    It runs a stand-in engine and build, with no provider exchange to record, so it isn't a VCR test.
+    """
     suite = _suite(cases={'case': Calls((('work', {}),), build=_imports_a_missing_name)})
     with pytest.raises(ImportError, match="cannot import name 'gone'"):
         await suite.test_case('case', _Engine(), True, dict, tmp_path)
@@ -260,7 +270,10 @@ def _misses_its_own_module(directory: Path, /) -> Sequence[AbstractCapability[No
 async def test_a_module_missing_from_the_suites_own_packages_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A module missing from `pydantic_ai` or `pydantic_ai_harness` is a broken install, not an extra: the case fails."""
+    """A module missing from `pydantic_ai` or `pydantic_ai_harness` is a broken install, not an extra: the case fails.
+
+    It runs a stand-in engine and build, with no provider exchange to record, so it isn't a VCR test.
+    """
     monkeypatch.delenv('PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS', raising=False)
     suite = _suite(cases={'case': Calls((('work', {}),), build=_misses_its_own_module)})
     with pytest.raises(ModuleNotFoundError, match=r'pydantic_ai_harness\.gone'):
@@ -269,7 +282,10 @@ async def test_a_module_missing_from_the_suites_own_packages_fails(
 
 @pytest.mark.parametrize('value', ['0', 'false', ''])
 async def test_extras_are_optional_unless_required(value: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """`0`, `false` or an empty value leave a missing extra a skip."""
+    """`0`, `false` or an empty value leave a missing extra a skip.
+
+    It runs a stand-in engine and build, with no provider exchange to record, so it isn't a VCR test.
+    """
     monkeypatch.setenv('PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS', value)
     suite = _suite(cases={'case': Calls((('work', {}),), build=_needs_a_missing_dependency)})
     with pytest.raises(pytest.skip.Exception):
@@ -279,7 +295,10 @@ async def test_extras_are_optional_unless_required(value: str, tmp_path: Path, m
 async def test_an_unknown_value_of_the_extras_variable_is_rejected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A value the suite doesn't know, such as `yes`, is an error rather than silently leaving extras optional."""
+    """A value the suite doesn't know, such as `yes`, is an error rather than silently leaving extras optional.
+
+    It runs a stand-in engine and build, with no provider exchange to record, so it isn't a VCR test.
+    """
     monkeypatch.setenv('PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS', 'yes')
     suite = _suite(cases={'case': Calls((('work', {}),), build=_needs_a_missing_dependency)})
     with pytest.raises(ValueError, match='must be `1`, `true`, `0` or `false`'):
@@ -293,7 +312,10 @@ class _BrokenEngine(_Engine):
 
 
 async def test_a_missing_module_in_the_engine_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Only a case's build can skip it: the engine's own code failing to import fails every cell."""
+    """Only a case's build can skip it: the engine's own code failing to import fails every cell.
+
+    It runs a stand-in engine and build, with no provider exchange to record, so it isn't a VCR test.
+    """
     monkeypatch.delenv('PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS', raising=False)
     suite = _suite(cases={'case': Calls((('work', {}),), build=_builds_nothing)})
     with pytest.raises(ModuleNotFoundError, match='engine_sdk'):

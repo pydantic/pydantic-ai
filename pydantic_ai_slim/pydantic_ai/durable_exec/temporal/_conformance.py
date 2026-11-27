@@ -12,7 +12,7 @@ from .._support import Recovery, Support
 
 __all__ = ('RECOVERY', 'SUPPORT')
 
-_IN_UNIT = 'is not supported inside a durable'
+_ENQUEUE_IN_UNIT_MATCH = r'`ctx\.enqueue\(\)` is not supported inside a durable'
 _EMIT_REFUSED = 'Emitting events from a tool or event stream handler is not supported'
 _ID_LESS = Support(
     'refused',
@@ -23,7 +23,7 @@ _ID_LESS = Support(
 _ENQUEUE_IN_UNIT = Support(
     'refused',
     'a durable unit replays from its record without running the code again, so an enqueued message would be lost',
-    match=_IN_UNIT,
+    match=_ENQUEUE_IN_UNIT_MATCH,
     issue=7971,
 )
 
@@ -60,7 +60,7 @@ SUPPORT: Mapping[str, Support] = {
     'RunContext.enqueue_from_tool': Support(
         'refused',
         'Temporal runs a function tool in an activity, which refuses an enqueued message',
-        match=_IN_UNIT,
+        match=_ENQUEUE_IN_UNIT_MATCH,
         issue=7971,
     ),
     'RunContext.emit_in_unit': Support(

@@ -454,7 +454,7 @@ class TestMyEngine(DurableEngineSuite):
 - Override `expected_units` and `model_request_unit` to pin the names your engine records, which a run recorded by
   an earlier release recovers by.
 
-[`HarnessDurableEngineSuite`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/conformance.py),
+[`HarnessDurableEngineSuite`][pydantic_ai_harness.conformance.HarnessDurableEngineSuite],
 from `pydantic_ai_harness.conformance`, is the same suite with the [Pydantic AI Harness](../harness/index.md)
 capabilities' cases added. Subclass it instead to check your engine against both.
 
@@ -474,12 +474,14 @@ themselves always fails. The cases that need one are:
 | `RepairToolArguments` | `pydantic-ai-harness[repair-tool-arguments]`, or `[coder]` |
 | `Skills` | `pydantic-ai-harness[skills]` |
 
+The `Macroscope` case runs a stand-in `#!/bin/sh` script, so it needs a POSIX platform.
+
 Only a module that isn't installed skips a case. Any other `ImportError`, such as a name a mismatched version lacks,
 or one your engine's own code raises, fails it.
 
 The cases are the [`Calls`][pydantic_ai.capabilities.conformance.Calls] in
 [`pydantic_ai.capabilities.conformance.CALLS`][pydantic_ai.capabilities.conformance.CALLS] and
-`pydantic_ai_harness.conformance.CALLS`, and the scenarios are
+[`pydantic_ai_harness.conformance.CALLS`][pydantic_ai_harness.conformance.CALLS], and the scenarios are
 [`SCENARIO_RUNS`][pydantic_ai.capabilities.conformance.SCENARIO_RUNS]. To also check a capability of your own, add
 its calls to `cases`:
 

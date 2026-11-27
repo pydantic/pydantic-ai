@@ -4,11 +4,11 @@ A suite that runs every capability under some machinery, such as
 [`DurableEngineSuite`][pydantic_ai.durable_exec.conformance.DurableEngineSuite] under a durable engine, reads its
 cases from here: `CALLS` holds, by capability class name, the tool calls a scripted model makes and what they run
 against, and `SCENARIO_RUNS` holds runs that check more than one call per response.
-[`pydantic_ai_harness.conformance`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/conformance.py)
+[`pydantic_ai_harness.conformance.CALLS`][pydantic_ai_harness.conformance.CALLS]
 holds the same for the Pydantic AI Harness capabilities.
 
 `Calls`, `CapabilityBuilder`, `ScenarioRun` and `ToolCall` are stable in 2.x, and so are the case and scenario
-names, which are renamed only with a deprecation alias. Minor releases can add cases and scenarios. The stand-ins a
+names: renaming one is a breaking change. Minor releases can add cases and scenarios. The stand-ins a
 `build` uses are internal: what they are and their names can change.
 """
 

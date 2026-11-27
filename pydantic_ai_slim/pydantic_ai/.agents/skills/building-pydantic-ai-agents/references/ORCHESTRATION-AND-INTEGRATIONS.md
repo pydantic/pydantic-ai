@@ -86,6 +86,8 @@ Reach for this when there is no need for tools, retries, or agent loop state.
 
 Use the durable execution integrations when the run must survive crashes, retries, or long-lived workflows.
 
+Which capabilities and run features each engine supports, limits or refuses is in the [compatibility tables](https://pydantic.dev/docs/ai/capabilities/durable_execution/compatibility/), which each engine's tests check: prefer them over the per-engine notes below when they disagree.
+
 Temporal entry points:
 
 - `Agent(..., capabilities=[TemporalDurability(...)])`
