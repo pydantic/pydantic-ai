@@ -3416,6 +3416,41 @@ def test_priority_sla_never_judges_or_posts_on_a_pull_request(monkeypatch: pytes
     assert posted(client) == []
 
 
+def test_priority_sla_decision_does_not_depend_on_timeline_order():
+    timeline = [
+        label_event('p:2-high', created_at=days_ago(20)),
+        sla_event('commented', 'DouweM', days_ago(9)),
+        sla_event('commented', 'contributor', days_ago(1)),
+    ]
+    client = sla_client({1: list(timeline)}, assignees={1: ['DouweM']})
+    forward = decide(client)
+    client.timelines[1] = timeline[::-1]
+
+    assert decide(client) == forward
+    assert forward[0] == 'due' and 'activity for 9 days;' in forward[1]
+
+
+def test_priority_sla_modes_run_from_the_command_line(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    client = sla_client({1: [label_event('p:2-high', created_at=days_ago(30))]}, assignees={1: ['DouweM']})
+    output = tmp_path / 'github-output'
+    monkeypatch.setattr(monitor, 'GitHubClient', lambda token: client)
+    monkeypatch.setenv('GITHUB_TOKEN', 'token')
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'r')
+    monkeypatch.setenv('GITHUB_OUTPUT', str(output))
+    monkeypatch.setenv('PRIORITY_SLA_POST', 'true')
+    monkeypatch.delenv('GITHUB_STEP_SUMMARY', raising=False)
+
+    monkeypatch.setattr(sys, 'argv', ['issue_pr_attention_monitor.py', 'priority-sla'])
+    assert monitor.main() == 0
+    assert output.read_text() == 'items=[1]\npost=true\n'
+    assert posted(client) == []
+
+    monkeypatch.setenv('PRIORITY_SLA_ITEMS', '[1]')
+    monkeypatch.setattr(sys, 'argv', ['issue_pr_attention_monitor.py', 'priority-sla-post'])
+    assert monitor.main() == 0
+    assert [path for path, _ in posted(client)] == ['/repos/r/issues/1/comments']
+
+
 def test_priority_sla_workflow_plans_read_only_and_posts_only_when_enabled():
     workflow = Path(__file__).parent.parent / 'workflows' / 'priority-sla.yml'
     text = workflow.read_text()
