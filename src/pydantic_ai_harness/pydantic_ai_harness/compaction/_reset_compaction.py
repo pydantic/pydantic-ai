@@ -111,23 +111,40 @@ class ResetNotice:
 
 
 def default_reset_notice(notice: ResetNotice) -> str:
-    """The default text of the notice a reset leaves: that the conversation was cleared, and where the earlier work is."""
-    cleared = 'once' if notice.number == 1 else f'{notice.number} times'
-    log = 'the work log' if notice.work_log is None else f'the work log `{notice.work_log}`'
+    """The default text of the notice a reset leaves: that the conversation was cleared, and where the earlier work is.
+
+    The wording was measured on the first request after a reset whose next step needs a result the reset cleared.
+    Against a draft that told the model to search first, it raised how often the model looked the result up in the
+    log rather than acting without it from 77 to 88 of 96 runs across four providers, with no run crediting the
+    notice to the user. What each part is for: the first paragraph keeps the model on the task and says what is
+    still in front of it, so it doesn't search for that; "before you repeat an earlier call, look it up" is the rule
+    against running a call again, with its trigger; "read only what your next step needs" keeps the log from being
+    paged back in; the last paragraph keeps the model from editing a file from a stale copy.
+    """
+    requests = "The user's requests are" if notice.kept_user_turns else "The user's original request is"
+    calls = (
+        'your latest tool call and its result'
+        if notice.kept_tool_calls == 1
+        else f'your {notice.kept_tool_calls} latest tool calls and their results'
+    )
     if notice.kept_first_request and notice.kept_tool_calls:
-        kept = " The user's original request and your latest tool call and result are still in this conversation."
+        kept = f' {requests} still in this conversation, with {calls}.'
     elif notice.kept_first_request:
-        kept = " The user's original request is still in this conversation."
+        kept = f' {requests} still in this conversation.'
     elif notice.kept_tool_calls:
-        kept = ' Your latest tool call and result are still in this conversation.'
+        kept = f' {calls[0].upper()}{calls[1:]} are still in this conversation.'
     else:
         kept = ''
+    where = '' if notice.work_log is None else f' at `{notice.work_log}`'
     return (
-        'The conversation before this point was cleared to free context; you are continuing the same task '
-        f'(cleared {cleared} in this conversation). Your earlier tool calls with full results, including calls '
-        f'made inside code, and your earlier replies are in {log}. Search it with `{notice.search_tool}` and read '
-        f'an entry in full with `{notice.read_tool}`; both work as tools and from code. The log shows files as '
-        f'they were when read: read a file again before you edit it.{kept}'
+        'Your earlier messages in this conversation were cleared to free context. The task is unchanged: continue '
+        f'it from where you stopped.{kept}\n\n'
+        f'What was cleared is in the work log{where}: every earlier tool call with its full result, including calls '
+        'made from code, and your earlier replies. Before you repeat an earlier call, look it up: '
+        f'`{notice.search_tool}` with no query lists your most recent entries, and with keywords finds one; '
+        f'`{notice.read_tool}` returns one entry in full. Read only what your next step needs.\n\n'
+        'An entry shows things as they were when it was recorded. A file may have changed since, including by your '
+        'own edits, so read a file again before you edit it.'
     )
 
 

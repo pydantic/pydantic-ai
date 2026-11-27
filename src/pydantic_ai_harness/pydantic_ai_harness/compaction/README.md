@@ -657,11 +657,7 @@ The notice is a `ResetNoticePart`, a data
 the model on the user channel in a `<context_cleared>` frame, like a [receipt](#compaction-receipts)
 on the user channel, and a later compaction or summary doesn't take it for the user's words. Its
 typed fields `number`, `work_log` (the log's handle) and `kept_responses` are never sent to the
-model; find notices in history by the type. The default text tells the model that its earlier context was cleared and the task
-continues, how many times this conversation has been cleared, the work log's handle and the tools
-that search and read it (under the names the model sees, so a `PrefixTools` rename applies, and
-usable as tools or from code), that file contents in the log may be out of date, and what the reset
-kept. The handle is what the [store](../work_log/README.md#stores)'s `locate` returns: a file path or a workspace directory, and none for the in-memory store, whose log the agent can reach only through the tools.
+model; find notices in history by the type. The default text tells the model that its earlier messages were cleared and the task is unchanged, what the reset kept, that the work log holds what was cleared, to look an earlier call up there before repeating it, using the tools that search and read the log (under the names the model sees, so a `PrefixTools` rename applies), to read only what its next step needs, and to read a file again before editing it, since a log entry can be out of date. That wording was measured live across providers; the docstring of `default_reset_notice` records the result. The handle is what the [store](../work_log/README.md#stores)'s `locate` returns: a file path or a workspace directory, and none for the in-memory store, whose log the agent can reach only through the tools.
 
 To write your own, pass `notice=`, a function from a `ResetNotice` to the text:
 
