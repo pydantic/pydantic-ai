@@ -2909,7 +2909,7 @@ async def test_a_chain_of_empty_error_responses_raises_instead_of_the_retry_prom
     assert calls == ['primary', 'primary']
     retry_request = result.all_messages()[2]
     assert isinstance(retry_request, ModelRequest)
-    assert [type(part) for part in retry_request.parts] == [_messages.RetryPromptPart]
+    assert [type(part) for part in retry_request.parts] == [_messages.RetryFeedbackPart]
 
 
 async def test_an_error_response_with_text_is_the_output():
