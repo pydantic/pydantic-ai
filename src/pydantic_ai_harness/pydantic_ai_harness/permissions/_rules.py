@@ -324,6 +324,11 @@ def _unsplittable_rule(
     return found or (_UNSPLITTABLE_RULE if expands else None)
 
 
+_OVERSIZED_DENY_RULE = PermissionRule[Any](
+    'deny', reason='The command is too long to check against the managed deny rules; shorter commands can be checked.'
+)
+
+
 def _oversized_rule(rules: Sequence[PermissionRule[Any]], *, strict: bool) -> PermissionRule[Any] | None:
     """The rule deciding a command too long to split: it asks under ask or deny rules, and a `strict` deny refuses.
 
@@ -331,8 +336,9 @@ def _oversized_rule(rules: Sequence[PermissionRule[Any]], *, strict: bool) -> Pe
     """
     if not _restricts(rules):
         return None
-    denied = _strictest(rule for rule in rules if rule.verdict == 'deny') if strict else None
-    return denied or _UNSPLITTABLE_RULE
+    if strict and any(rule.verdict == 'deny' for rule in rules):
+        return _OVERSIZED_DENY_RULE
+    return _UNSPLITTABLE_RULE
 
 
 def _command_rule(

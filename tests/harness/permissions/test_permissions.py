@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, DeferredToolRequests, Tool
 from pydantic_ai.capabilities import (
@@ -1988,17 +1989,25 @@ class TestManagedRules:
     async def test_a_managed_deny_refuses_a_command_too_long_to_split(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A person's ask about an unsplit command could be approved without seeing the denied program in it."""
+        """A person's ask about an unsplit command could be approved without seeing the denied program in it.
+
+        The model is told the command was too long to check, not the reason of a deny it may not match.
+        """
         monkeypatch.setattr('pydantic_ai_harness.permissions._rules.COMMAND_LIMIT', 8)
         person = _Person(PermissionDecision(approved=True))
-        await _run(
+        rule = PermissionRule[None]('deny', command='curl', reason='Use the corporate proxy.')
+        agent = _agent(
             tmp_path,
-            ('run_command', {'command': 'echo hi; touch made'}),
-            permissions=Permissions(managed_rules=[PermissionRule('deny', command='touch')]),
+            _calls(('run_command', {'command': 'echo hi; touch made'})),
             person=person,
+            permissions=Permissions(managed_rules=[rule]),
         )
+        result = await agent.run('go', conversation_id='c')
         assert person.asked == []
         assert not (tmp_path / 'made').exists()
+        assert result.output == snapshot(
+            'A managed permission rule denied this command, so it did not run. Do not retry it. Reason: The command is too long to check against the managed deny rules; shorter commands can be checked.'
+        )
 
     async def test_a_persons_deny_inside_quotes_still_asks(self, tmp_path: Path) -> None:
         person = _Person(PermissionDecision(approved=True))

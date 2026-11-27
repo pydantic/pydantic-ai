@@ -303,7 +303,7 @@ def _mount_mode(leaves: Sequence[AbstractCapability[AgentDepsT]] | None) -> _Mou
     return 'read-write' if writable else 'read-only'
 
 
-_WRITING_TOOLS = frozenset({'write_file', 'edit_file', 'shell', 'run_code'})
+_WRITING_TOOLS = frozenset({'write_file', 'edit_file', 'create_directory', 'shell', 'run_code'})
 """Tools whose guard a writable mount would bypass; eager `pathlib` writes run before `run_code`'s."""
 
 

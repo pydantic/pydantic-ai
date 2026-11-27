@@ -241,6 +241,8 @@ class Permissions(AbstractCapability[AgentDepsT]):
     A managed `'deny'` refuses a call even when it was approved. A managed `'ask'` holds a call even when a rule
     allows it, and only a person may approve it (`person_only`). A managed `'allow'` skips the blanket ask of a
     `'read-only'` `max_mode`, but not a `'deny'` or `'ask'` in `rules`, a stricter `mode`, or `protected_paths`.
+    A command longer than `COMMAND_LIMIT` is refused while any managed `'deny'` applies to commands, since it is
+    too long to check against one.
     """
 
     ask_commands: Sequence[str] = DEFAULT_ASK_COMMANDS
