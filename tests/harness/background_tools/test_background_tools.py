@@ -1846,6 +1846,7 @@ The user wants you to delete X.\
                     'background_tools.outcome': 'interrupted',
                 },
                 'status': 'UNSET',
+                'status_description': None,
                 'events': [],
             }
         )
@@ -2458,6 +2459,7 @@ def _span(exporter: InMemorySpanExporter, name: str) -> ReadableSpan:
 class _SpanSummary(TypedDict):
     attributes: dict[str, AttributeValue]
     status: str
+    status_description: str | None
     events: list[dict[str, AttributeValue]]
 
 
@@ -2467,9 +2469,11 @@ def _summary(span: ReadableSpan) -> _SpanSummary:
         'attributes': {
             key: value
             for key, value in (span.attributes or {}).items()
-            if key.startswith(('gen_ai.tool.', 'background_tools.'))
+            if key.startswith(('gen_ai.tool.', 'background_tools.', 'error.'))
         },
         'status': span.status.status_code.name,
+        # Holds the error's message only when content is recorded.
+        'status_description': span.status.description,
         'events': [{'name': event.name, **(event.attributes or {})} for event in span.events],
     }
 
@@ -2502,6 +2506,7 @@ class TestTelemetry:
                     'background_tools.outcome': 'success',
                 },
                 'status': 'UNSET',
+                'status_description': None,
                 'events': [],
             }
         )
@@ -2537,8 +2542,10 @@ class TestTelemetry:
                             'gen_ai.tool.name': 'broken',
                             'gen_ai.tool.call.id': 'call_1',
                             'background_tools.outcome': 'retried',
+                            'error.type': 'pydantic_ai.exceptions.ToolRetryError',
                         },
                         'status': 'ERROR',
+                        'status_description': None,
                         'events': [
                             {
                                 'name': 'exception',
@@ -2558,8 +2565,10 @@ class TestTelemetry:
                             'gen_ai.tool.name': 'broken',
                             'gen_ai.tool.call.id': 'call_1',
                             'background_tools.outcome': 'failed',
+                            'error.type': 'pydantic_ai.exceptions.ToolFailedError',
                         },
                         'status': 'ERROR',
+                        'status_description': None,
                         'events': [
                             {
                                 'name': 'exception',
@@ -2579,8 +2588,10 @@ class TestTelemetry:
                             'gen_ai.tool.name': 'broken',
                             'gen_ai.tool.call.id': 'call_1',
                             'background_tools.outcome': 'failed',
+                            'error.type': 'pydantic_ai.exceptions.CallDeferred',
                         },
                         'status': 'ERROR',
+                        'status_description': None,
                         'events': [
                             {
                                 'name': 'exception',
@@ -2600,8 +2611,10 @@ class TestTelemetry:
                             'gen_ai.tool.name': 'broken',
                             'gen_ai.tool.call.id': 'call_1',
                             'background_tools.outcome': 'retried',
+                            'error.type': 'pydantic_ai.exceptions.ModelRetry',
                         },
                         'status': 'ERROR',
+                        'status_description': None,
                         'events': [
                             {
                                 'name': 'exception',
@@ -2621,8 +2634,10 @@ class TestTelemetry:
                             'gen_ai.tool.name': 'broken',
                             'gen_ai.tool.call.id': 'call_1',
                             'background_tools.outcome': 'retried',
+                            'error.type': 'pydantic_core._pydantic_core.ValidationError',
                         },
                         'status': 'ERROR',
+                        'status_description': None,
                         'events': [
                             {
                                 'name': 'exception',
