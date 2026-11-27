@@ -716,7 +716,7 @@ class TestPermissionRules:
         self, monkeypatch: pytest.MonkeyPatch, verdict: PermissionVerdict, expected: str
     ) -> None:
         """A huge command could block the event loop to parse: ask and deny rules make it ask, else the mode decides."""
-        monkeypatch.setattr('pydantic_ai_harness.permissions._rules._COMMAND_LIMIT', 8)
+        monkeypatch.setattr('pydantic_ai_harness.permissions._rules.COMMAND_LIMIT', 8)
 
         assert await _verdict('echo 123456789', [PermissionRule(verdict, command='curl')], 'full') == expected
 

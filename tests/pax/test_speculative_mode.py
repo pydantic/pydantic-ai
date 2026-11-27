@@ -666,6 +666,35 @@ class TestWorkspaceMount:
         assert all(f'mounted {mounted}' in (text or '') for text in instructions)
         assert secret.read_text() == ('original' if mode == 'read-only' else 'overwritten')
 
+    @pytest.mark.parametrize(('mode', 'seen'), [('auto', 'original PermissionError'), ('full', 'original')])
+    async def test_protected_paths_mount_read_only_outside_full(
+        self, tmp_path: Path, mode: PermissionMode, seen: str
+    ) -> None:
+        """`pathlib` would write a protected path without the person-only ask the file tools make."""
+        settings = tmp_path.resolve() / '.pax' / 'settings.json'
+        settings.parent.mkdir()
+        settings.write_text('original')
+        calls = iter([ToolCallPart('run_code', {'code': PATHLIB_SNIPPET.format(path=str(settings))})])
+        returned: list[object] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            returned.extend(
+                part.content
+                for message in messages
+                for part in message.parts
+                if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+            )
+            return ModelResponse(parts=[next(calls, TextPart('done'))])
+
+        file_system = FileSystem[object](read_only_patterns=[])
+        permissions = Permissions[object](mode, protected_paths=['.pax/*'])
+        sandbox = speculative_capabilities(SpeculationCounters(), (file_system, permissions))
+        await Agent(streamed(respond), capabilities=[file_system, permissions, *sandbox, LocalWorkspace(tmp_path)]).run(
+            'go'
+        )
+        assert returned == [seen]
+        assert settings.read_text() == ('original' if mode == 'auto' else 'overwritten')
+
     @pytest.mark.parametrize(
         ('table', 'expected'),
         [

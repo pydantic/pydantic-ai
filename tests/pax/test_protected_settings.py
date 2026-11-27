@@ -15,6 +15,7 @@ from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.permissions import PermissionDecision, PermissionRequest
 from pydantic_ai_pax.builtin_plugins.web.live import BrowserAnswerer
 from pydantic_ai_pax.config import PermissionMode
+from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.runtime.permissions import (
     APPROVE,
     APPROVE_SESSION,
@@ -74,7 +75,7 @@ async def run(
     workspace: Path,
     *calls: tuple[str, Mapping[str, object]],
     mode: PermissionMode = 'auto',
-    database: Path | None = None,
+    store: SettingsStore | None = None,
     extra: Sequence[AbstractCapability[None]] = (),
 ) -> Person:
     RAN.clear()
@@ -82,7 +83,7 @@ async def run(
     capabilities = [
         LocalWorkspace(workspace),
         FileSystem[None](),
-        *session_permissions(lambda: mode, database=database),
+        *session_permissions(lambda: mode, store=store),
         *extra,
         approval_handler(person),
     ]
@@ -101,6 +102,9 @@ def write(path: str) -> tuple[str, Mapping[str, object]]:
         pytest.param('xdg/pydantic-ai-pax/config.db', id='settings-database'),
         pytest.param('xdg/pydantic-ai-pax/credentials-default.json', id='credentials'),
         pytest.param('xdg/pydantic-ai-pax/plugins/mine.py', id='plugins-folder'),
+        pytest.param('xdg/pydantic-clai2/config.db', id='legacy-config-folder'),
+        pytest.param('xdg/pydantic-clai2/plugins/mine.py', id='legacy-plugins-folder'),
+        pytest.param('.PAX/settings.json', id='other-case'),
         pytest.param('.pax/settings.json', id='project-folder'),
         pytest.param('sub/.clai/settings.json', id='legacy-project-folder'),
         pytest.param('.git/hooks/pre-commit', id='git-hooks'),
@@ -110,8 +114,10 @@ def write(path: str) -> tuple[str, Mapping[str, object]]:
     ],
 )
 async def test_auto_asks_before_a_write_to_paxs_settings(tmp_path: Path, config_home: Path, path: str) -> None:
-    (tmp_path / path).parent.mkdir(parents=True)
-    person = await run(tmp_path, write(path), database=tmp_path / 'db' / 'config.db')
+    # The current folder too, as when an older Pax still uses the old one, so it isn't moved and stays protected.
+    config_home.mkdir(parents=True)
+    (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+    person = await run(tmp_path, write(path), store=SettingsStore(tmp_path / 'db' / 'config.db'))
     [asked] = person.asked
     assert asked.person_only and asked.subject == path
     assert approval_question(asked).questions[0].question == f'{PROTECTED} Write {path}?'
@@ -134,7 +140,11 @@ async def test_a_reviewer_that_says_safe_still_asks(tmp_path: Path, config_home:
     [
         'pax config set model openai:gpt-5.5',
         'uv run pax plugins enable hooks',
+        'pydantic-ai-pax config reset model',
+        'uvx pydantic-clai2 plugins add x',
+        'git config core.hooksPath /tmp/hooks',
         'echo x > .pax/settings.json',
+        'echo x > "my dir/.pax/settings.json"',
     ],
 )
 async def test_auto_asks_before_a_command_that_changes_paxs_settings(

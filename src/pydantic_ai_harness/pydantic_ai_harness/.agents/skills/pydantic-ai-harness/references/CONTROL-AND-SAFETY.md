@@ -667,8 +667,8 @@ print(agent.run_sync('Set up storage').output)
   `DeferredToolResults(calls={call.tool_call_id: ask_user_result(request, response)})`.
 - Observe with `AskUserRequestedEvent` / `AskUserAnsweredEvent`. An answerer that raises still
   emits the answered event, with `failed=True`, before its error propagates. Two `AskUser` on one agent
-  collide on the tool name. It has a spec name, but a spec cannot supply the `answerer` callable,
-  so pass it with `capabilities=` on `Agent.from_spec`/`Agent.from_file`.
+  collide on the tool name. A spec can set `answerer` only to `null`, which defers every call as above;
+  pass an `AskUser` with an answerer callable with `capabilities=` on `Agent.from_spec`/`Agent.from_file`.
 
 ## Deny Unanswered
 

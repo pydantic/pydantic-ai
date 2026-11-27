@@ -5,16 +5,23 @@ from __future__ import annotations
 import os
 import posixpath
 import re
+import shlex
 from collections.abc import Sequence
 from fnmatch import fnmatchcase
 
 from pydantic_ai.workspaces import Workspace, WorkspaceError
 from pydantic_ai_harness.permissions._rules import command_segments
 
-_WORD_SPLIT = re.compile(r'[\s;&|()<>`=]+')
-"""Where a command's text splits into words that may be paths: whitespace, operators, and `--option=value`."""
+_OPERATORS = ';&|()<>'
+"""Characters the shell reads as operators outside quotes, which split words like whitespace does."""
 
-_QUOTING = re.compile(r'[\'"\\]')
+_WORD_PARTS = re.compile(r'[`=]+')
+"""Where a word splits further into words that may be paths: a backtick substitution and `--option=value`."""
+
+_FALLBACK_SPLIT = re.compile(r'[\s;&|()<>`=]+')
+"""How a command whose quotes don't balance is split, both as written and with its quotes removed."""
+
+_QUOTES = re.compile(r'[\'"]')
 
 _READING_PROGRAMS = frozenset(
     {
@@ -43,14 +50,14 @@ _LENGTH_LIMIT = 4096
 def matches(location: str, globs: Sequence[str], *, posix: bool) -> bool:
     """Whether `location` matches one of `globs`, or a relative glob matches its end.
 
-    On Windows paths are compared case-insensitively, with `/` for separators.
+    Paths are compared case-insensitively, as macOS and Windows file systems do by default, and on Windows with
+    `/` for separators. This only adds asks: on a case-sensitive file system, `.PAX/x` asks like `.pax/x`.
     """
     if len(location) > _LENGTH_LIMIT:
         return True
-    if not posix:
-        location = location.replace('\\', '/').lower()
+    location = (location if posix else location.replace('\\', '/')).lower()
     for glob in globs:
-        pattern = glob if posix else glob.replace('\\', '/').lower()
+        pattern = (glob if posix else glob.replace('\\', '/')).lower()
         if fnmatchcase(location, pattern) or fnmatchcase(location, f'*/{pattern}'):
             return True
     return False
@@ -71,9 +78,10 @@ async def write_locations(workspace: Workspace, path: str) -> list[str]:
 async def command_locations(workspace: Workspace, command: str, *, posix: bool) -> list[str]:
     """The paths `command`'s words could name, resolved against the working directory; none for a read-only command.
 
-    Quotes are removed, `~` and environment variables are expanded as in this process, and every word counts,
-    redirection targets and `--option=value` values included. A command made only of programs that read the
-    files they name, such as `cat` or `grep`, without redirection, names none.
+    Words are split as the shell would: quotes and, on POSIX, backslash escapes keep spaces in a word, and on
+    Windows backslashes are separators. `~` and environment variables are expanded as in this process, and every
+    word counts, redirection targets and `--option=value` values included. A command made only of programs that
+    read the files they name, such as `cat` or `grep`, without redirection, names none.
     """
     if posix and _only_reads(command):
         return []
@@ -82,8 +90,24 @@ async def command_locations(workspace: Workspace, command: str, *, posix: bool) 
     except WorkspaceError:
         cwd = None
     paths = workspace.paths
-    expanded = [os.path.expanduser(os.path.expandvars(word)) for word in _WORD_SPLIT.split(_QUOTING.sub('', command))]
-    return [paths.normpath(word if cwd is None else paths.join(cwd, word)) for word in expanded if word]
+    expanded = [os.path.expanduser(os.path.expandvars(word)) for word in _words(command, posix=posix)]
+    return [paths.normpath(word if cwd is None else paths.join(cwd, word)) for word in expanded]
+
+
+def _words(command: str, *, posix: bool) -> list[str]:
+    """`command`'s words, and their parts around a backtick or `=`, without operators."""
+    try:
+        lexer = shlex.shlex(command, posix=posix, punctuation_chars=_OPERATORS)
+        lexer.whitespace_split = True
+        tokens = [token if posix else _QUOTES.sub('', token) for token in lexer]
+    except ValueError:
+        # Quotes that don't balance: every way of reading the words counts.
+        tokens = [*_FALLBACK_SPLIT.split(command), *_FALLBACK_SPLIT.split(_QUOTES.sub('', command))]
+    words: list[str] = []
+    for token in tokens:
+        if token and not set(token) <= set(_OPERATORS):
+            words += [token, *_WORD_PARTS.split(token)] if _WORD_PARTS.search(token) else [token]
+    return list(dict.fromkeys(word for word in words if word))
 
 
 def _only_reads(command: str) -> bool:
