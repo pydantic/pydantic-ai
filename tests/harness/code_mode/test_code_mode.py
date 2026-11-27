@@ -169,8 +169,9 @@ _ORCHESTRATOR_SPEC = DurabilityEngineSpec(
     durable_container_noun='workflow',
     replays_orchestrator_code=True,
     thread_wakeable_loop=False,
+    bounds_blocking_orchestrator_code=True,
 )
-"""An engine like Temporal: its workflow code replays, on a loop Monty's thread can't wake."""
+"""An engine like Temporal: its workflow code replays, on a loop Monty's thread can't wake, and it stops code that blocks."""
 
 
 def in_orchestrator_code(monkeypatch: pytest.MonkeyPatch) -> None:

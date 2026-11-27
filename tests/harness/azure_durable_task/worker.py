@@ -95,12 +95,6 @@ class InMemoryWorker(worker.TaskHubGrpcWorker):
         for action in result.actions:
             self.apply_action(instance_id, action)
 
-    def replay(self, instance_id: str) -> list[pb.OrchestratorAction]:
-        """Re-execute an instance's whole recorded history, without applying the actions it produces."""
-        executor = OrchestrationExecutor(self._registry, self._logger, data_converter=self._data_converter)
-        events = [self.event(orchestratorStarted=pb.OrchestratorStartedEvent())]
-        return list(executor.execute(instance_id, self.instances[instance_id].history, events).actions)
-
     def apply_action(self, instance_id: str, action: pb.OrchestratorAction) -> None:
         record = self.instances[instance_id]
         if action.HasField('scheduleTask'):

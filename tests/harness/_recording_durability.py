@@ -144,6 +144,8 @@ class UnwakeableLoopDurability(RecordingDurability):
 
 
 class ReplayingDurability(RecordingDurability):
-    """An engine that replays its workflow code against the recorded history."""
+    """An engine that replays its workflow code against the recorded history and, like Temporal, stops code that blocks."""
 
-    engine_spec = replace(RecordingDurability.engine_spec, replays_orchestrator_code=True)
+    engine_spec = replace(
+        RecordingDurability.engine_spec, replays_orchestrator_code=True, bounds_blocking_orchestrator_code=True
+    )

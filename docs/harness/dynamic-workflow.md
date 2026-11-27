@@ -163,7 +163,7 @@ These limits guard the orchestration script's own memory, not the sub-agents it 
 DynamicWorkflow(agents=[...], resource_limits={'max_duration_seconds': 30})
 ```
 
-`max_duration_seconds` counts sandbox execution time, excluding waits for sub-agents. There is no default duration cap. A CPU-bound loop that never awaits is not stopped by sub-agent budgets and blocks the workflow thread under Temporal. Set `max_duration_seconds` to stop such loops. It is off in Azure Durable Task orchestrator code (see [Running under other durable engines](#running-under-other-durable-engines)). A partial limits dict overrides only the named caps. Pass `'unlimited'` to remove sandbox resource limits; the separate 10 MiB print cap remains. `max_duration_secs` is the deprecated name of `max_duration_seconds` and still works, with a warning.
+`max_duration_seconds` counts sandbox execution time, excluding waits for sub-agents. There is no default duration cap. A CPU-bound loop that never awaits is not stopped by sub-agent budgets and blocks the workflow thread under Temporal. Set `max_duration_seconds` to stop such loops. A partial limits dict overrides only the named caps. Pass `'unlimited'` to remove sandbox resource limits; the separate 10 MiB print cap remains. `max_duration_secs` is the deprecated name of `max_duration_seconds` and still works, with a warning.
 
 ### Workflows do not nest
 
@@ -241,7 +241,7 @@ Before a script runs it is statically type-checked against the sub-agent signatu
 
 ## Running inside a Temporal workflow
 
-Attach `TemporalDurability` to the orchestrating agent alongside `DynamicWorkflow`, and to each sub-agent whose model requests should run as activities, then register every agent with its own `AgentPlugin`. The script runs in workflow code, like [Code Mode's `run_code`](code-mode.md#temporal-durability), and is re-executed during replay against the recorded sub-agent results. Unlike Code Mode, a `max_duration_seconds` you set still applies inside the workflow, so a script that runs close to it can stop at a different point on replay. The replay may then fail with a `NondeterminismError` or, if it diverges after the script's last sub-agent call, continue with a different tool result than the recorded run.
+Attach `TemporalDurability` to the orchestrating agent alongside `DynamicWorkflow`, and to each sub-agent whose model requests should run as activities, then register every agent with its own `AgentPlugin`. The script runs in workflow code, like [Code Mode's `run_code`](code-mode.md#temporal-durability), and is re-executed during replay against the recorded sub-agent results. Unlike Code Mode, a `max_duration_seconds` you set still applies inside the workflow, so a script that runs close to it can stop at a different point on replay and cause a `NondeterminismError`.
 
 `DynamicWorkflow` doesn't support `AzureDurableTaskDurability` yet: the script would run in orchestrator code, where nothing stops one that computes forever, so `run_workflow` raises `UserError` there ([#14974](https://github.com/pydantic/pydantic-ai/issues/14974)).
 
@@ -269,20 +269,6 @@ branch has a child context of its own, whose step IDs derive from the branch's p
 sub-agent's model requests and tool calls keep their own checkpoints. A branch's output is checkpointed
 with the `serdes` in the sub-agent's `step_config`, like its steps. Recovery returns each finished
 branch's recorded output, and an unfinished branch replays its own checkpoints and runs on from there.
-
-[`AzureDurableTaskDurability`](azure-durable-task.md) runs the script in orchestrator code, like
-Code Mode's `run_code`, and re-runs it against the recorded results each time the SDK
-replays the orchestrator, which it does after every activity. Attach it to the orchestrating agent and
-to each sub-agent whose model requests and tools should run as activities, and register every agent on
-the worker. Gathered sub-agents schedule their activities concurrently, and an `asyncio.sleep` in the
-script is a durable timer. While the script computes, the orchestrator thread waits for it.
-
-As for Code Mode, `max_duration_seconds` is off in orchestrator code, even when you set it: measuring
-elapsed time could make a replay take a different branch than the recorded run. A replay that diverges
-may fail with a `NonDeterminismError` or, after the script's last sub-agent call, continue with a
-different tool result. The sleep allowance and the memory cap still apply. A CPU-bound loop that never
-awaits therefore holds the orchestrator thread, so put heavy computation in a sub-agent's tool, which
-runs as an activity.
 
 Under other engines, sub-agents run concurrently.
 
