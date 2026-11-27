@@ -11,8 +11,8 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, SupportsIndex, TypeAlias
 
-from ._conversation_log import append_to_history
 from ._capability_parts import operator_voice_lookalike
+from ._conversation_log import append_to_history
 from ._framing import resembles_frame
 from ._utils import fill_run_metadata
 from ._uuid import uuid7

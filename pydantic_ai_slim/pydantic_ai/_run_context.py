@@ -21,9 +21,9 @@ from typing_extensions import TypeVar, deprecated
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 
 from . import _utils, messages as _messages
-from ._conversation_log import ConversationLog
 from ._cancel import current_run_clock
 from ._context_size import context_tokens
+from ._conversation_log import ConversationLog
 from ._enqueue import (
     EnqueueContent,
     EnqueueGuard,
