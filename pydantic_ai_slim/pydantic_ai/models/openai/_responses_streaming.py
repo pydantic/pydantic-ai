@@ -117,7 +117,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _raw_content_entries: dict[tuple[str, int], int] = field(default_factory=dict[tuple[str, int], int], init=False)
     _unwritten_raw_content: set[str] = field(default_factory=set[str], init=False)
     """The reasoning items whose thinking part doesn't show all of their raw CoT deltas yet."""
-    _raw_content_items: dict[int, str] = field(default_factory=dict[int, str], init=False)
+    _reasoning_ids_by_part: dict[int, str] = field(default_factory=dict[int, str], init=False)
     """The reasoning item whose raw CoT each thinking part shows, by part index."""
     _last_started_part: int = field(default=-1, init=False)
     """The index of the part the latest `PartStartEvent` started."""
@@ -749,7 +749,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 provider_details=updater,
             ):
                 assert isinstance(event, PartStartEvent | PartDeltaEvent)
-                self._raw_content_items[event.index] = chunk.item_id
+                self._reasoning_ids_by_part[event.index] = chunk.item_id
                 yield event
             return
         self._unwritten_raw_content.add(chunk.item_id)
@@ -767,7 +767,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         `StreamedResponse.__aiter__` reads that part from the parts manager for its `PartEndEvent`, as it does the last
         part once the stream ends.
         """
-        if (item_id := self._raw_content_items.get(self._last_started_part)) in self._unwritten_raw_content:
+        if (item_id := self._reasoning_ids_by_part.get(self._last_started_part)) in self._unwritten_raw_content:
             self._write_raw_content(item_id)
         self._last_started_part = event.index
 

@@ -10,7 +10,6 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
 
 import pytest
 
@@ -124,7 +123,7 @@ def _chat_refusal(copies: _Copies, n: int) -> Model:
 
 def _chat_whitespace_after_reasoning(copies: _Copies, n: int) -> Model:
     """Whitespace-only text after reasoning that interrupted a text part is held for the next text part."""
-    reasoning: Any = ChoiceDelta.model_validate({'reasoning_content': 'thinking'})
+    reasoning = ChoiceDelta.model_validate({'reasoning_content': 'thinking'})
     return _chat_model(
         [
             ChoiceDelta(content='a'),
