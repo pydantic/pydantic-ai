@@ -1117,6 +1117,8 @@ async def test_a_rubric_with_a_level_left_undescribed_warns_that_it_is_a_pick_on
     """Describing some of the levels 0 to n says a rubric was meant, so asking a pick-one instead is said out loud.
 
     A level whose docstring is missing, or could not be read, turned the rubric into a pick-one with nothing said.
+    Not a VCR test: `DecisionModel` builds its questions locally and the in-memory backend makes no HTTP request, so
+    there is no provider exchange to record.
     """
     model = InMemoryDecisionModel()
     with pytest.warns(
