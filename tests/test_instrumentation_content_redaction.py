@@ -62,7 +62,16 @@ from pydantic_ai._instrumentation import (
     serialize_any,
     span_include_content,
 )
-from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, LocalWorkspace
+from pydantic_ai._telemetry import open_ambient_span
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Capability,
+    Hooks,
+    LocalWorkspace,
+    open_span,
+    record_decision,
+    tool_call_span,
+)
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.direct import model_request
@@ -142,6 +151,8 @@ SECRETS = {
     'model_settings': 'SENTINEL-model-settings',
     'deps': 'SENTINEL-deps',
     'validation_context': 'SENTINEL-validation-context',
+    'helper_content': 'SENTINEL-helper-content',
+    'decision_content': 'SENTINEL-decision-content',
 }
 
 
@@ -1372,6 +1383,60 @@ async def test_no_content_reaches_telemetry_from_a_lowered_capabilitys_instructi
     check(exporter, include_content, {'user_prompt', 'capability_instruction', 'model_text'})
     exported = '\n'.join(_span_text(span) for span in exporter.get_finished_spans())
     assert ('capability:sentinel_lowered_block' in exported) is include_content
+
+
+def _record_without_a_context() -> None:
+    """What core code with no `RunContext`, such as a workspace, records through the run's published telemetry."""
+    with open_ambient_span('example helper', content={'example.first': SECRETS['helper_content']}):
+        pass
+
+
+def _record_with_a_context(ctx: RunContext[None]) -> str:
+    """What a tool records with the `ctx` helpers, including on its tool call's span."""
+    with open_span(ctx, 'example span', content={'example.first': SECRETS['helper_content']}):
+        pass
+    if ctx.trace_include_content:
+        tool_call_span(ctx).set_attribute('example.later', SECRETS['helper_content'])
+    record_decision(ctx, 'example decision', content={'example.reason': SECRETS['decision_content']})
+    return 'done'
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+@pytest.mark.parametrize('mode', ['run', 'realtime'])
+async def test_no_content_reaches_telemetry_from_a_helper_without_a_context(
+    include_content: bool, mode: Literal['run', 'realtime']
+) -> None:
+    """The run's content setting reaches the `ctx` helpers and core code that has no `RunContext`."""
+    settings, exporter = redacted_setup(include_content)
+
+    def lookup(ctx: RunContext[None]) -> str:
+        _record_without_a_context()
+        return _record_with_a_context(ctx)
+
+    if mode == 'run':
+        agent = Agent(
+            TestModel(call_tools=['lookup']), tools=[lookup], capabilities=[Instrumentation(settings=settings)]
+        )
+        await agent.run('go')
+    else:
+        connection = FakeRealtimeConnection(
+            [ToolCall(tool_call_id='call-1', tool_name='lookup', args='{}'), ResponseDone()]
+        )
+        realtime = Agent(capabilities=[Instrumentation(settings=settings)]).realtime(
+            FakeRealtimeModel(connection), toolsets=[FunctionToolset([lookup])]
+        )
+        async with realtime.session() as session:
+            _ = [event async for event in session]
+
+    check(exporter, include_content, {'helper_content', 'decision_content'})
+    # Each channel on its own span, so one that stops recording can't hide behind another that still does.
+    attributes = {span.name: dict(span.attributes or {}) for span in exporter.get_finished_spans()}
+    helper_content = SECRETS['helper_content'] if include_content else None
+    assert attributes['example helper'].get('example.first') == helper_content
+    assert attributes['example span'].get('example.first') == helper_content
+    assert attributes['execute_tool lookup'].get('example.later') == helper_content
+    decision_content = SECRETS['decision_content'] if include_content else None
+    assert attributes['example decision'].get('example.reason') == decision_content
 
 
 @dataclass(frozen=True)
