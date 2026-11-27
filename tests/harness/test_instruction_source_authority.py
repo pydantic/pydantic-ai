@@ -96,6 +96,9 @@ class _Seen:
                 self.places.extend(_place(part) for part in message.parts if CANARY in repr(part))
 
 
+_RANK: dict[Authority, int] = {'none': 0, 'user': 1, 'operator': 2}
+
+
 def _place(part: ModelRequestPart) -> tuple[str, Authority]:
     if isinstance(part, ToolReturnPart):
         return f'`{part.tool_name}` output', 'none'
@@ -321,4 +324,5 @@ async def test_the_same_text_from_the_operator_reaches_the_model(name: str, tmp_
     # The control for the test above: each case is wired so its source's level is what decides where the text goes.
     # For `Memory`, data at every level, it only shows the case is wired.
     places = await _reached(name, tmp_path, 'operator')
-    assert any(authority == INSTRUCTION_SOURCES[name].operator_reaches for _, authority in places), places
+    assert places, 'the canary never reached the model, so the case checks nothing'
+    assert max(_RANK[authority] for _, authority in places) == _RANK[INSTRUCTION_SOURCES[name].operator_reaches], places
