@@ -484,11 +484,15 @@ def _edit(turn: Turn, conversation: Conversation, record: Record) -> int | None:
     if turn.edit is None or not messages:
         return None
     if turn.edit == 'drop_last_turn':
+        # A turn starts at a prompt that doesn't come between a tool call and its result, like a message a hook
+        # added before a paused run was resumed, so dropping it leaves no call unanswered.
         at = max(
             (
                 i
                 for i, m in enumerate(messages)
-                if isinstance(m, ModelRequest) and any(isinstance(p, UserPromptPart) for p in m.parts)
+                if isinstance(m, ModelRequest)
+                and any(isinstance(p, UserPromptPart) for p in m.parts)
+                and not (i and isinstance(previous := messages[i - 1], ModelResponse) and previous.tool_calls)
             ),
             default=len(messages) - 1,
         )
