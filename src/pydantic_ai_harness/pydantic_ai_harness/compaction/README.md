@@ -865,7 +865,7 @@ left as they were, and a `compact_messages` span records `compaction.skipped='su
 `error.type`. `UsageLimitExceeded` and programming errors such as `UserError` still propagate. The
 summary call's usage still counts, and while the trigger stays exceeded, each next request tries
 again. A direct `compact()` or `compact_now()` on a `SummarizingCompaction`, or a `TieredCompaction`
-tier, raises the error; a `FallbackCompaction` follows its `fallback_on`, which now includes
+tier, raises the error; a `FallbackCompaction` follows its `fallback_on`, which by default includes
 `UnexpectedModelBehavior`, and re-raises the last error if every strategy fails.
 
 Under Temporal, a failed summary currently arrives as `ActivityError` wrapping an
