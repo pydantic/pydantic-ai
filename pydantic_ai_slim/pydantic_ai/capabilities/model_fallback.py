@@ -129,8 +129,9 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                 [`OutputTokenLimitExceeded`][pydantic_ai.exceptions.OutputTokenLimitExceeded] are only raised after a
                 response is accepted, so in `fallback_on` they stand for that response, and
                 [`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError] also stands for an empty
-                `finish_reason='error'` response, which the agent would otherwise send the retry prompt. Leave
-                `ContentFilterError` out to accept refusals instead: an empty one ends the run with
+                `finish_reason='error'` response, which the agent would otherwise send the retry prompt, or, when the
+                output type allows `None`, accept as `None`. Leave `ContentFilterError` out to accept refusals
+                instead: an empty one ends the run with
                 `ContentFilterError`, and one with text is the output. Leave `OutputTokenLimitExceeded` out to accept
                 cut-off responses, as when `max_tokens` is a deliberate cap: cut-off text is then the output. Accepts:
 

@@ -525,7 +525,7 @@ accept an input that overflowed another model's. It also includes a response the
 [`ModelInvalidResponseError`][pydantic_ai.exceptions.ModelInvalidResponseError]. To fall back only on some of them, pass those categories
 as `fallback_on`, e.g. `fallback_on=(ModelRateLimitError, ModelUnavailableError, ModelServerError)`. To also fall
 back on an [empty response the provider ended with an error](../capabilities/model-fallback.md#empty-error-responses),
-which the agent otherwise sends a retry prompt, name `ModelEmptyResponseError`:
+which the agent otherwise sends a retry prompt or, when the output type allows `None`, accepts as `None`, name `ModelEmptyResponseError`:
 `fallback_on=(ModelAPIError, ModelEmptyResponseError)`.
 
 This behavior is controlled by the `fallback_on` parameter (see

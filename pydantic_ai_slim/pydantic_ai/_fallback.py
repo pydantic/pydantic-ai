@@ -203,7 +203,8 @@ def _exception_types_to_handler(exception_types: tuple[type[Exception], ...]) ->
 def has_no_actionable_output(response: ModelResponse) -> bool:
     """Whether `response` has nothing the agent can act on: no parts, or only thinking and empty text.
 
-    The agent sends such a response the retry prompt, unless it ends the run first, as for a refusal.
+    Unless the agent ends the run first, as for a refusal, it sends such a response the retry prompt, or, when the
+    output type allows `None`, accepts it as `None`.
     """
     # An empty `TextPart` carries no text output: adapters keep such parts (e.g. when a gateway returns a text item
     # with `text: null`) so their IDs round-trip.
@@ -235,9 +236,10 @@ class FallbackPredicates:
     empty_error_response: bool = False
     """Whether the predicates name `ModelEmptyResponseError`, so an empty response the provider ended with an error matches.
 
-    That's a response with `finish_reason='error'` and no actionable output, which the agent would otherwise send the
-    retry prompt, such as Gemini's `MALFORMED_FUNCTION_CALL` or Bedrock's `malformed_model_output`. A response with
-    text doesn't match: that's the output. Streamed responses skip it without a warning, like refusals.
+    That's a response with `finish_reason='error'` and no actionable output, such as Gemini's `MALFORMED_FUNCTION_CALL`
+    or Bedrock's `malformed_model_output`, which the agent would otherwise send the retry prompt, or, when the output
+    type allows `None`, accept as `None`. A response with text doesn't match: that's the output. Streamed responses
+    skip it without a warning, like refusals.
     """
 
     @classmethod

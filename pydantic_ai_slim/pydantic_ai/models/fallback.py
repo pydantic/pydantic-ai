@@ -124,7 +124,8 @@ class FallbackModel(Model):
                 errors after a response is accepted, so in `fallback_on` each stands for that response. Likewise,
                 naming [`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError] also rejects an
                 empty response the provider ended with `finish_reason='error'`, which the agent would otherwise send
-                the retry prompt; the default `(ModelAPIError,)` doesn't.
+                the retry prompt, or, when the output type allows `None`, accept as `None`; the default
+                `(ModelAPIError,)` doesn't.
 
                 Response handlers only apply to non-streamed requests. A streamed request accepts
                 the response as is and emits a `UserWarning`. A request is streamed whenever

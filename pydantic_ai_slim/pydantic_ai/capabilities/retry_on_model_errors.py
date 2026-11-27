@@ -155,8 +155,9 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
                 Defaults to [`TRANSIENT_MODEL_ERRORS`][pydantic_ai.capabilities.TRANSIENT_MODEL_ERRORS], the
                 transient errors listed above. `ModelEmptyResponseError` there also stands for an empty response
                 the provider ended with `finish_reason='error'`, which the agent would otherwise send the retry
-                prompt. The default leaves a refusal, a response with `finish_reason='content_filter'`, to a
-                `ModelFallback`: the same model usually refuses again. Naming
+                prompt, or, when the output type allows `None`, accept as `None`. The default leaves a refusal, a
+                response with `finish_reason='content_filter'`, to a `ModelFallback`: the same model usually refuses
+                again. Naming
                 [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] retries a refusal, empty or with
                 partial text, as it falls back from one in `fallback_on`, and naming
                 [`OutputTokenLimitExceeded`][pydantic_ai.exceptions.OutputTokenLimitExceeded] likewise retries a

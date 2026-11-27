@@ -106,7 +106,7 @@ A run that reaches its `timeout=` stops with [`RunTimedOut`][pydantic_ai.excepti
 
 ## Falling back when the provider ends an empty response with an error {#empty-error-responses}
 
-A provider can end a response with a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `'error'` instead of raising an error: Gemini's `MALFORMED_FUNCTION_CALL`, Bedrock's `malformed_model_output` and `malformed_tool_use`, and Mistral's and OpenRouter's `'error'`. When such a response has nothing the agent can act on, no text, tool call or file, only thinking at most, the agent would send the model a retry prompt, which the same model often fails again. `ModelFallback` moves on to the next model instead. Naming [`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError] in `fallback_on`, as the default does, is what turns this on, as `ContentFilterError` does for refusals. Naming `ModelAPIError` alone doesn't.
+A provider can end a response with a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `'error'` instead of raising an error: Gemini's `MALFORMED_FUNCTION_CALL`, Bedrock's `malformed_model_output` and `malformed_tool_use`, and Mistral's and OpenRouter's `'error'`. When such a response has nothing the agent can act on, no text, tool call or file, only thinking at most, the agent would send the model a retry prompt, which the same model often fails again, or, when the output type allows `None`, accept it as a `None` output. `ModelFallback` moves on to the next model instead. Naming [`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError] in `fallback_on`, as the default does, is what turns this on, as `ContentFilterError` does for refusals. Naming `ModelAPIError` alone doesn't.
 
 ```python {title="model_fallback_on_empty_error_response.py"}
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart
@@ -139,8 +139,8 @@ A few things to know about falling back on empty error responses:
 
 - **A response with text isn't fallen back from.** A `finish_reason='error'` response with text, or a tool call, is handled as it would be without `ModelFallback`: its text can be the run's output.
 - **A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] doesn't fall back on them by default.** Name `ModelEmptyResponseError` in its `fallback_on`, as in `fallback_on=(ModelAPIError, ModelEmptyResponseError)`.
-- **Without a fallback, the agent sends the retry prompt**, which uses up the [output retry budget](../retries.md#output-retries). To retry the same model with backoff instead, add [`RetryOnModelErrors`](retry-on-model-errors.md), which retries these responses by default.
-- **A [streamed](#streaming) empty error response isn't fallen back from.** Its finish reason is only known once it has been streamed, so it's accepted, without a warning, and the agent sends it the retry prompt.
+- **Without a fallback, the agent sends the retry prompt**, which uses up the [output retry budget](../retries.md#output-retries), or, when the output type allows `None`, accepts the response as `None`. To retry the same model with backoff instead, add [`RetryOnModelErrors`](retry-on-model-errors.md), which retries these responses by default.
+- **A [streamed](#streaming) empty error response isn't fallen back from.** Its finish reason is only known once it has been streamed, so it's accepted, without a warning, and the agent sends it the retry prompt, or, when the output type allows `None`, accepts it as `None`.
 
 ## Falling back when a model refuses {#refusals}
 

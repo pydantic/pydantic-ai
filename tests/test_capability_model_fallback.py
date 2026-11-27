@@ -2887,6 +2887,29 @@ async def test_a_plain_agent_sends_an_empty_error_response_the_retry_prompt():
     assert calls == ['primary', 'primary']
 
 
+async def test_an_empty_error_response_falls_back_when_the_output_type_allows_none():
+    """With an output type that allows `None`, a plain agent accepts an empty error response as `None`.
+
+    `ModelFallback` falls back from it all the same, as it's a failure the provider reported, not a model with nothing
+    to say. The responses are scripted with `FunctionModel`, not recorded, as providers don't end a response with
+    `finish_reason='error'` on demand.
+    """
+    calls: list[str] = []
+    result = await Agent(_ends_with_error('primary', calls), output_type=str | None).run('x')
+    assert result.output is None
+    assert calls == ['primary']
+
+    calls.clear()
+    agent = Agent(
+        _ends_with_error('primary', calls),
+        output_type=str | None,
+        capabilities=[ModelFallback(_answering('backup', calls))],
+    )
+    result = await agent.run('x')
+    assert result.output == 'backup answered'
+    assert calls == ['primary', 'backup']
+
+
 async def test_only_model_empty_response_error_names_empty_error_responses():
     """A supertype of `ModelEmptyResponseError`, like `ModelAPIError`, doesn't name empty error responses."""
     calls: list[str] = []
