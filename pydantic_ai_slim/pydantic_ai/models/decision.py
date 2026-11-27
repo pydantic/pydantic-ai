@@ -579,9 +579,19 @@ class DecisionModel(Model[InterfaceClient]):
     """
 
     # A decision model writes no text and makes at most one tool call, so `max_tokens`, `stop_sequences` and
-    # `parallel_tool_calls` hold without being sent and are not listed.
+    # `parallel_tool_calls` hold without being sent and are not listed. It never cites, so `citations` is listed.
     unsupported_settings = frozenset(
-        {'frequency_penalty', 'logit_bias', 'presence_penalty', 'seed', 'service_tier', 'temperature', 'top_k', 'top_p'}
+        {
+            'citations',
+            'frequency_penalty',
+            'logit_bias',
+            'presence_penalty',
+            'seed',
+            'service_tier',
+            'temperature',
+            'top_k',
+            'top_p',
+        }
     )
 
     supports_image_input: ClassVar[bool] = False

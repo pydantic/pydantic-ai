@@ -207,7 +207,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
     _relocates_tool_files = True
 
     unsupported_settings = frozenset(
-        {'extra_headers', 'max_retries', 'parallel_tool_calls', 'service_tier', 'timeout', 'top_k'}
+        {'citations', 'extra_headers', 'max_retries', 'parallel_tool_calls', 'service_tier', 'timeout', 'top_k'}
     )
 
     _model_name: str = field(repr=False)
@@ -614,7 +614,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
 
     @staticmethod
     def _map_binary_content(item: BinaryContent) -> ChatCompletionInputMessageChunk:
-        if not item.is_image:  # pragma: no cover
+        if not item.is_image:
             raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
         url = ChatCompletionInputURL(url=item.data_uri)
         return ChatCompletionInputMessageChunk(type='image_url', image_url=url)

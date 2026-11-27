@@ -38,6 +38,7 @@ class MCPSamplingModel(Model):
 
     unsupported_settings = frozenset(
         {
+            'citations',
             'extra_body',
             'extra_headers',
             'frequency_penalty',

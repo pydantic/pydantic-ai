@@ -1227,9 +1227,12 @@ class BedrockConverseModel(Model[BaseClient]):
             )
 
     def _unsupported_settings(self) -> frozenset[str]:
-        if self.profile.get('bedrock_supports_stop_sequences', True):
-            return self.unsupported_settings
-        return self.unsupported_settings | {'stop_sequences'}
+        unsupported = self.unsupported_settings
+        if not self.profile.get('bedrock_supports_stop_sequences', True):
+            unsupported |= {'stop_sequences'}
+        if not self.profile.get('bedrock_supports_citations', False):
+            unsupported |= {'citations'}
+        return unsupported
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
         """Drop the sampling settings a flagged model rejects, warning like `AnthropicModel` does.
