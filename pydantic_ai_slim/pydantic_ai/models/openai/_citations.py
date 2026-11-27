@@ -13,6 +13,8 @@ from ... import _utils
 from ..._thinking_part import split_content_into_text_and_thinking
 from ...messages import (
     Citation,
+    CitationAnchor,
+    ContentCitationAnchor,
     DocumentCitationSource,
     MarkerCitationAnchor,
     TextPart,
@@ -46,6 +48,12 @@ def marker_citation_anchor(start: int, end: int, text: str) -> MarkerCitationAnc
     return MarkerCitationAnchor(start=start, end=end) if 0 <= start < end <= len(text) else None
 
 
+def _url_citation_anchor(start: int, end: int, text: str, *, content_offsets: bool) -> CitationAnchor | None:
+    if content_offsets:
+        return ContentCitationAnchor(start=start, end=end) if 0 <= start < end <= len(text) else None
+    return marker_citation_anchor(start, end, text)
+
+
 def responses_citation_annotations(
     annotations: Sequence[responses.response_output_text.Annotation],
 ) -> list[responses.response_output_text.AnnotationURLCitation | responses.response_output_text.AnnotationFileCitation]:
@@ -74,6 +82,8 @@ def responses_citation_annotations(
 def map_responses_citations(
     annotations: Sequence[responses.response_output_text.Annotation],
     text: str,
+    *,
+    content_offsets: bool = False,
 ) -> list[Citation] | None:
     citations: list[Citation] = []
     for annotation in responses_citation_annotations(annotations):
@@ -82,7 +92,7 @@ def map_responses_citations(
             citations.append(
                 Citation(
                     sources=[WebCitationSource(url=annotation.url, title=annotation.title)],
-                    anchor=marker_citation_anchor(start, end, text),
+                    anchor=_url_citation_anchor(start, end, text, content_offsets=content_offsets),
                 )
             )
         elif annotation.file_id or annotation.filename:  # a file citation naming no file has no source to show

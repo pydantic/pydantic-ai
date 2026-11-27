@@ -534,6 +534,12 @@ class OpenAIModelProfile(ModelProfile, total=False):
     `tool_call_ids_are_response_scoped` in the same profile wins.
     """
 
+    openai_responses_url_citation_content_offsets: bool
+    """Whether URL citation offsets identify cited text instead of an inline citation marker."""
+
+    openai_responses_deepseek_web_tools: bool
+    """Whether the endpoint uses DeepSeek Flash's signed web tool protocol."""
+
     openai_responses_supports_interleaved_function_calls: bool
     """Whether the Responses API accepts function calls interleaved with other assistant items in one
     assistant turn. Default: `True`.

@@ -142,14 +142,27 @@ def billed_web_searches(
             )
 
 
+def _web_tool_usage(
+    response: chat.ChatCompletion | ChatCompletionChunk | responses.Response | responses.CompactedResponse,
+    reported: dict[str, int] | None,
+) -> dict[str, int]:
+    if reported is not None:
+        return reported
+    count = billed_web_searches(response)
+    return {'web_search_requests': count} if count else {}
+
+
 def map_usage(
     response: chat.ChatCompletion | ChatCompletionChunk | responses.Response | responses.CompactedResponse,
     provider: str,
     provider_url: str,
     model: str,
+    *,
+    web_tool_usage: dict[str, int] | None = None,
 ) -> usage.RequestUsage:
     response_usage = response.usage
-    web_search_requests = billed_web_searches(response)
+    web_tool_usage = _web_tool_usage(response, web_tool_usage)
+    web_search_requests = web_tool_usage.get('web_search_requests', 0)
     if response_usage is None:
         if web_search_requests:
             return usage.RequestUsage(
@@ -166,6 +179,7 @@ def map_usage(
         if k not in {'prompt_tokens', 'completion_tokens', 'input_tokens', 'output_tokens', 'total_tokens'}
         if isinstance(v, int) and not isinstance(v, bool)
     }
+    details.update(web_tool_usage)
     response_data = dict(model=model, usage=usage_data)
     if isinstance(response_usage, responses.ResponseUsage):
         api_flavor = 'responses'

@@ -32,6 +32,7 @@ from ._citations import (
     responses_output_text_annotation_ta,
 )
 from ._computer import block_computer_calls, map_computer_call
+from ._deepseek_web_tools import web_tool_parts, web_tool_usage
 from ._errors import map_api_errors, response_error, response_error_type
 from ._history_digest import with_history_digest
 from ._model_names import OpenAIModelName
@@ -105,6 +106,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     """The history this response was created from, digested with its parts as `ModelResponse.history_digest`."""
     # Custom HTTP clients can return streams outside the SDK's AsyncStream class.
     _is_websocket: bool = False
+    _citation_content_offsets: bool = field(default=False, kw_only=True)
+    _deepseek_web_tools: bool = field(default=False, kw_only=True)
 
     def get(self) -> ModelResponse:
         response = super().get()
@@ -508,7 +511,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 )
 
     def _map_web_search_call_added(self, item: responses.ResponseFunctionWebSearch) -> ModelResponseStreamEvent:
-        call_part, _ = map_web_search_tool_call(item, self.provider_name)
+        if self._deepseek_web_tools and (parts := web_tool_parts(item, self.provider_name)) is not None:
+            call_part, _ = parts
+        else:
+            call_part, _ = map_web_search_tool_call(item, self.provider_name)
         return self._parts_manager.handle_part(vendor_part_id=f'{item.id}-call', part=replace(call_part, args=None))
 
     def _map_tool_search_call_added(self, item: responses.ResponseToolSearchCall) -> ModelResponseStreamEvent:
@@ -647,7 +653,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     def _map_web_search_call_done(
         self, item: responses.ResponseFunctionWebSearch
     ) -> Iterator[ModelResponseStreamEvent]:
-        call_part, return_part = map_web_search_tool_call(item, self.provider_name)
+        if self._deepseek_web_tools and (parts := web_tool_parts(item, self.provider_name)) is not None:
+            call_part, return_part = parts
+            if self._parts_manager.get_part_by_vendor_id(f'{item.id}-call') is None:
+                yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-call', part=call_part)
+                yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
+                return
+        else:
+            call_part, return_part = map_web_search_tool_call(item, self.provider_name)
 
         yield from self._parts_manager.handle_tool_call_delta_events(
             vendor_part_id=f'{item.id}-call',
@@ -789,7 +802,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         existing_part = self._parts_manager.get_part_by_vendor_id(content_key)
         # Annotation positions count into the final text, so they can't go on streamed text that differs.
         citations = (
-            map_responses_citations(annotations, chunk.text)
+            map_responses_citations(annotations, chunk.text, content_offsets=self._citation_content_offsets)
             if isinstance(existing_part, TextPart) and existing_part.content == chunk.text
             else None
         )
@@ -841,7 +854,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             self.provider_details = {**(self.provider_details or {}), 'conversation_id': response.conversation.id}
 
     def _map_usage(self, response: responses.Response) -> usage.RequestUsage:
-        return map_usage(response, self._provider_name, self._provider_url, self.model_name)
+        return map_usage(
+            response,
+            self._provider_name,
+            self._provider_url,
+            self.model_name,
+            web_tool_usage=web_tool_usage(response.usage) if self._deepseek_web_tools else None,
+        )
 
     def _record_usage(self, response: responses.Response) -> None:
         self._add_usage(self._map_usage(response), reported=response.usage is not None)
