@@ -2782,7 +2782,7 @@ class TestCompaction:
         self, checkout: Path, provider: FakeProvider, ending: str
     ) -> None:
         from pydantic_ai_harness.compaction import SlidingWindowCompaction
-        from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+        from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 
         working_dirs: list[str] = []
 
@@ -2814,7 +2814,7 @@ class TestCompaction:
             deps=None,
             plugins=[*loaded.capabilities, compaction, Probe()],
             workspace=checkout,
-            conversations=SqliteConversationStore(database=checkout.parent / 'sessions.db'),
+            conversations=SqliteSessionStore(database=checkout.parent / 'sessions.db'),
         )
         loaded.host.conversation = session
         await plugin_of(loaded).command(['fake'])

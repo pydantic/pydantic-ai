@@ -4,7 +4,8 @@ The built-in `compaction` plugin: Code Puppy's compaction chain from harness, `/
 move its trigger, and a context gauge.
 
 The chain is `FallbackCompaction` over `SummarizingCompaction` then `SlidingWindowCompaction`, so a
-failed or over-budget summary degrades to truncation. `compact_now` drives the chain for `/compact`.
+failed or over-budget summary degrades to truncation. `compact_now` drives the chain for `/compact`,
+which raises a summary the model got wrong instead, so the user sees the summarizer's error.
 """
 
 import re
@@ -25,7 +26,7 @@ from pydantic import (
 
 from pydantic_ai import ModelMessage, ModelResponse, RunContext
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, on_event
-from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, UsageLimitExceeded
+from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai_harness.compaction import (
     ContextUsageMeasuredEvent,
     FallbackCompaction,
@@ -297,11 +298,16 @@ def _trigger(settings: CompactionSettings) -> str:
     return f'above {_share(settings.threshold)} of the context window'
 
 
-def build_chain(config: CompactionSettings) -> FallbackCompaction[None]:
+def build_chain(config: CompactionSettings, *, explicit: bool = False) -> FallbackCompaction[None]:
     """Code Puppy's chain: summarise, and truncate when the summary fails or blows the usage limit.
 
-    It triggers at `threshold_tokens` when set, else at `threshold` of the window.
+    It triggers at `threshold_tokens` when set, else at `threshold` of the window. With `explicit`, for
+    `/compact`, a summary the model got wrong (`UnexpectedModelBehavior`) is raised rather than truncated,
+    so the user sees why their compaction didn't summarize.
     """
+    fallback_on: tuple[type[Exception], ...] = (ModelAPIError, FallbackExceptionGroup, UsageLimitExceeded)
+    if not explicit:
+        fallback_on = (*fallback_on, UnexpectedModelBehavior)
     sliding: SlidingWindowCompaction[None] = SlidingWindowCompaction(
         max_messages=1, keep_tokens=config.protected_tokens
     )
@@ -322,7 +328,7 @@ def build_chain(config: CompactionSettings) -> FallbackCompaction[None]:
         max_tokens=max_tokens,
         max_fraction=max_fraction,
         context_window=config.context_window,
-        fallback_on=(ModelAPIError, FallbackExceptionGroup, UsageLimitExceeded),
+        fallback_on=fallback_on,
         background_start=config.background_start if config.background_compaction else None,
     )
 
@@ -486,7 +492,7 @@ class CompactionPlugin(Plugin[CompactionSettings]):
             # would otherwise trade a sliver of its head for a summary plus the kept first prompt, and grow.
             # The kept messages can still exceed it by the whole message that crosses it.
             tail = min(self.settings.protected_tokens, tokens // 2)
-            chain = build_chain(self.settings.model_copy(update={'protected_tokens': tail}))
+            chain = build_chain(self.settings.model_copy(update={'protected_tokens': tail}), explicit=True)
             after = await compact_now(chain, before, model=model, focus=focus, tracer=tracer)
         saved = tokens - sum(estimate_message_tokens(after))
         if saved <= 0:

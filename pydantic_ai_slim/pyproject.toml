@@ -69,7 +69,8 @@ dependencies = [
     "opentelemetry-api>=1.28.0",
     "typing-inspection>=0.4.0",
     # `genai-prices>=0.2.3` has Anthropic's fast mode price variants, which `provider_details['speed'] == 'fast'` selects.
-    "genai-prices>=0.2.3",
+    # `genai-prices>=0.2.4` prices Gemini 4 Hydrogen and Carbon, so their runs report a cost.
+    "genai-prices>=0.2.4",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -187,6 +188,8 @@ dbos = ["dbos>=3.4.0"]
 prefect = ["prefect>=3.9.0"]
 # Spec (YAML agent specs)
 spec = ["pyyaml>=6.0.2", "pydantic-handlebars>=0.1.0"]
+# JSON Schema validation for `StructuredDict(validate=True)`
+jsonschema = ["jsonschema>=4.18"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
