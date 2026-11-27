@@ -55,7 +55,7 @@ Each `MCPToolset` instance is a [toolset](../toolsets.md) and can be registered 
 
 You can use [`async with agent`][pydantic_ai.agent.Agent.__aenter__] to open and close connections to all registered MCP toolsets around the context where they'll be used in agent runs. You can also use `async with toolset` to manage the lifecycle of a specific toolset directly, for example if you'd like to share it across multiple agents. If you don't explicitly enter one of these context managers, the toolset will be opened and closed automatically as needed.
 
-A stdio server's subprocess starts with the toolset's first connection. FastMCP's [`StdioTransport`](https://gofastmcp.com/clients/transports) keeps it running between connections by default, so later runs reuse it, and stops it when the transport is closed or garbage-collected, for example once the agent and its toolsets go out of scope. With `StdioTransport(..., keep_alive=False)`, the subprocess stops whenever its connection closes instead.
+A stdio server's subprocess starts with the toolset's first connection. FastMCP's [`StdioTransport`](https://gofastmcp.com/clients/transports) keeps it running between connections by default, so later runs reuse it. It stops when the transport is closed or garbage-collected, for example once an agent you entered with `async with agent:` and its toolsets go out of scope. With `StdioTransport(..., keep_alive=False)`, the subprocess stops whenever its connection closes, however the toolset is used.
 
 Note that a shared `MCPToolset` instance connects to the server as a single identity; if your users have their own credentials for the MCP server, see [per-user authentication](#per-user-authentication).
 
