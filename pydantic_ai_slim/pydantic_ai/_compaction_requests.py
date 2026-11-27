@@ -9,7 +9,7 @@ from contextvars import ContextVar
 
 from . import messages as _messages
 
-__all__ = ('CompactionRequests', 'RequestedCompaction', 'compaction_only_run', 'take_compaction_only_run')
+__all__ = ('CompactionRequests', 'RequestedCompaction', 'claim_compaction_only_run', 'compaction_only_run')
 
 
 @dataclasses.dataclass
@@ -83,9 +83,19 @@ def compaction_only_run() -> Generator[None]:
         _compaction_only.reset(token)
 
 
-def take_compaction_only_run() -> bool:
-    """Consume the pending `compaction_only_run` at most once, so a run started inside that run isn't one too."""
-    compaction_only = _compaction_only.get()
-    if compaction_only:
-        _compaction_only.set(False)
-    return compaction_only
+@contextmanager
+def claim_compaction_only_run() -> Generator[bool]:
+    """Claim the pending `compaction_only_run` for the run started in this context, until that run ends.
+
+    A run started inside that run isn't one too. The flag is restored when the run ends, rather than consumed, so
+    an engine that retries the code that started the run in the same context, like a Prefect flow retry, starts a
+    compaction-only run again.
+    """
+    if not _compaction_only.get():
+        yield False
+        return
+    token = _compaction_only.set(False)
+    try:
+        yield True
+    finally:
+        _compaction_only.reset(token)

@@ -61,6 +61,7 @@ from pydantic_ai import (
 from pydantic_ai._cancel import inherited_run_deadline
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import (
     MCP,
     BatchModelRequests,
@@ -7720,19 +7721,22 @@ async def compact_history_recovery_workflow() -> list[str]:
     return [record.handler for record in result.compactions]
 
 
-@pytest.mark.parametrize('wrapper', ['DBOSAgent', 'DBOSDurability'])
+@pytest.mark.parametrize('wrapper', ['DBOSAgent', 'WrapperAgent(DBOSAgent)', 'DBOSDurability'])
 async def test_dbos_compact_history_recovers_as_a_compaction(dbos: DBOS, wrapper: str) -> None:
     """A recovered `compact_history()` workflow compacts again, replaying the step, and never continues the conversation.
 
     `DBOSAgent` runs it in a `.compact_history` workflow of its own, whose body makes the run compaction-only: the
     `.run` workflow's recorded arguments don't say it was, so recovering that one would continue the conversation.
-    Under `DBOSDurability`, recovery re-executes the caller's workflow, which calls `compact_history()` again.
+    A `WrapperAgent` around it forwards `compact_history()` to it, so it gets the same workflow. Under
+    `DBOSDurability`, recovery re-executes the caller's workflow, which calls `compact_history()` again.
     """
     compact_history_recovery_calls.clear()
     wfid = str(uuid.uuid4())
     with SetWorkflowID(wfid), pytest.raises(_ProcessCrash):
         if wrapper == 'DBOSAgent':
             await compact_history_dbos_agent.compact_history(COMPACT_HISTORY_RECOVERY_HISTORY)
+        elif wrapper == 'WrapperAgent(DBOSAgent)':
+            await WrapperAgent(compact_history_dbos_agent).compact_history(COMPACT_HISTORY_RECOVERY_HISTORY)
         else:
             await compact_history_recovery_workflow()
     assert compact_history_recovery_calls == ['compact_messages', 'after_run']
@@ -7741,7 +7745,7 @@ async def test_dbos_compact_history_recovers_as_a_compaction(dbos: DBOS, wrapper
     result = await (await DBOS.resume_workflow_async(wfid)).get_result()
     steps = [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)]
     # No model request is sent in either case: the recovered run is still a compaction.
-    if wrapper == 'DBOSAgent':
+    if wrapper != 'DBOSDurability':
         status = await DBOS.get_workflow_status_async(wfid)
         assert status is not None and status.name == 'legacy_compact_history_recovery.compact_history'
         assert result.output is None

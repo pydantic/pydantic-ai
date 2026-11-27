@@ -26,7 +26,14 @@ from pydantic_ai import (
     usage as _usage,
 )
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
+from pydantic_ai.agent import (
+    AbstractAgent,
+    AgentRun,
+    AgentRunResult,
+    CompactionRunResult,
+    EventStreamHandler,
+    WrapperAgent,
+)
 from pydantic_ai.agent.abstract import (
     AgentMetadata,
     AgentModelSettings,
@@ -564,6 +571,56 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 compact=compact,
                 spec=spec,
             )
+
+    async def compact_history(
+        self,
+        message_history: Sequence[_messages.ModelMessage],
+        *,
+        focus: str | None = None,
+        reason: _messages.CompactionReason = 'manual',
+        conversation_id: str | None = None,
+        run_id: str | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        deps: AgentDepsT = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
+        usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
+    ) -> CompactionRunResult:
+        """Compact a message history without continuing the conversation, as a run of this agent's Temporal-wrapped run.
+
+        See [`AbstractAgent.compact_history`][pydantic_ai.agent.AbstractAgent.compact_history]. Run through this
+        agent's own `run()`, not forwarded to the wrapped agent as `WrapperAgent` does, so it gets the wrapper's model activity and toolsets inside a workflow.
+        """
+        return await super(WrapperAgent, self).compact_history(
+            message_history,
+            focus=focus,
+            reason=reason,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            model=model,
+            instructions=instructions,
+            deps=deps,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            cancellation_token=cancellation_token,
+            timeout=timeout,
+            usage=usage,
+            metadata=metadata,
+            infer_name=infer_name,
+            toolsets=toolsets,
+            event_stream_handler=event_stream_handler,
+            capabilities=capabilities,
+            spec=spec,
+        )
 
     @overload
     def run_sync(
