@@ -195,6 +195,7 @@ delegation = SubAgents(
 ```
 
 - The child's relative file paths and repository instructions use the returned workspace. Read-only restrictions from the parent or `SubAgent(read_only=True)` still apply. Limit the delegate to trusted read-only tools too, since arbitrary Python tools can bypass the workspace API. The resolver must keep any other backend restrictions the application requires.
+- The child's whole workspace gets the lowest `authority` the parent gives anything in or above that directory, `path_authority` entries included, so no file gets more authority in the child than the parent gives it. A directory outside the parent's working directory is at `'none'`, as the parent gives it, unless one of the parent's `path_authority` entries contains it: name it there, such as `{'/srv/checkouts': 'operator'}`, to let the delegate's repository instructions, skills and agent definitions reach it as instructions.
 - The caller owns the returned workspace and keeps its resources alive until background children finish.
 - Managed tasks record the resolved directory in `DelegationTask.working_directory`. A resume without the argument resolves that saved directory again, so the resolver must accept its own resolved spelling; changing it is rejected. Older tasks without this field inherit the parent workspace.
 - Remote and durable delegations reject directory overrides.
@@ -310,6 +311,8 @@ For the child run's model streaming, pass an `event_stream_handler`. See [capabi
 
 Plain delegation adds no OpenTelemetry spans: the child run's own spans nest under the parent's tool-call span.
 
+A child run has its own `conversation_id`, so adding up cost by `gen_ai.conversation.id` leaves it out of the conversation it was started for. Its spans also carry `pydantic_ai.root_conversation_id`, the `conversation_id` of the top-level run (the run that isn't inside any other run), even for a child started by another child; see [correlating runs](https://pydantic.dev/docs/ai/core-concepts/message-history/#correlating-runs-with-run_id-and-conversation_id) for how to use it and where it's missing.
+
 Task control records its own decisions, which core's spans don't show, as zero-duration spans on the delegating run's tracer. Their attributes have the `sub_agents.` prefix and include `sub_agents.agent_name` (for a created agent, whose name the model chose, only as content) and, for a task, `sub_agents.task_id`:
 
 | Span | When | Attributes |
@@ -354,6 +357,7 @@ orchestrator = Agent(
 - **Limits.** `TaskControl(auto_background_after=...)` moves a task still running after that many seconds to the background. `TaskControl(max_running_tasks=...)` caps how many tasks a conversation runs at once, across its whole delegation tree. `SubAgent(resumable=False)` makes a delegate one-shot (see [Managed delegation sessions](#managed-delegation-sessions) for `one_shot`). All are off by default.
 - **Who controls a task.** Only the run that started a task can message, answer, or resume it. Any run above it can cancel it.
 - **Each run gets an owner.** With no `DelegationTasks` bound, `SubAgents` opens one for the run and cancels the tasks still running when the run ends. Delegations then follow the owner's rules in [Managed delegation sessions](#managed-delegation-sessions), including how a delegate's `usage_limits` apply. Another agent's run that one of the run's tools starts is not a task and doesn't share the owner. Bind your own owner to keep tasks across runs, persist them, and observe them.
+- **Task IDs** derive from the run's `run_id` and the tool call that started the task, so a rerun with the same `run_id` and tool calls gets the same task IDs, and runs that share an owner or a `SubAgentWorker` need distinct `run_id`s, as [`run_id`](https://pydantic.dev/docs/ai/core-concepts/message-history/#correlating-runs-with-run_id-and-conversation_id) already requires.
 - Only one `SubAgents` on an agent can set `task_control`. The deprecated wrapper agents, such as `TemporalAgent`, give a run no durability capability, so the checks below can't catch them; don't use task control or `dynamic_agents` with them.
 - On Temporal and DBOS, task control keeps the tasks in the workflow and runs each in its own durable unit, so recovery replays a background task's events and reuses its result. On replay, a task sent to the background on request can get its `TaskBackgroundedEvent` after it settles. A durable task can't ask questions, take messages, or be resumed, `cancel_task` stops it right away, and its report reaches the model when the run would otherwise end, not at its next request. On DBOS, a replayed `list_tasks` can show a task's status as of a different moment. A durable task's history is not updated while it runs, so `check_task` shows only its status and elapsed time. Under durable execution, these raise a `UserError`:
     - task control with `include_self`, `remote_agents` or `forward_events`
@@ -588,6 +592,8 @@ orchestrator = Agent(
 ```
 
 Definitions are read at the start of every run from the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), so a sandbox's agent files are found and nothing is read from your home directory. To read them from elsewhere, such as definitions that ship with your application, pass `workspace=LocalWorkspaceBackend('/app')`.
+
+A definition file below `'operator'` [authority](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#workspace-authority) in the workspace it's read from, such as one in a repository the operator doesn't control, is not loaded, and the run warns naming it: a definition's body becomes a delegate's instructions, and its description is listed in the parent's. It's left out before names are compared, so it can't shadow an operator's definition of the same name. Read the folders from a workspace the operator controls with `workspace=` instead.
 
 `agent_folders` controls which folders are read:
 

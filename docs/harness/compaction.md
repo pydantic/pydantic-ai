@@ -7,6 +7,8 @@ description: "Keep a long Pydantic AI agent run within the context window on any
 
 Compaction keeps an agent's conversation history within a model's context window. Each strategy is a capability that edits the message history just before a model request. The edits **persist** into the run's history, so a trim, clear, or summary carries forward instead of being recomputed every turn.
 
+Across runs, the run's [`result.conversation`][pydantic_ai.agent.AgentRunResult.conversation] keeps the whole history, including what a strategy dropped, so a [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] stores every message. Carried into the next run, it is compacted again, which for `SummarizingCompaction` and `RelevanceCompaction` means another model call over the whole, growing history. To carry the compacted history instead, pass [`result.all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages] as `message_history=`.
+
 Every strategy keeps tool calls **paired** with their returns: core does not validate this, and a provider rejects an orphaned call or return. Only `SummarizingCompaction` and `RelevanceCompaction` (and `TieredCompaction` when it escalates to one) call a model.
 
 On OpenAI and Anthropic, core also ships [provider-native compaction](../capabilities/compaction.md), where the provider summarizes server-side. These strategies work with every model and keep the logic and its costs under your control.
@@ -226,11 +228,15 @@ agent = Agent(
 
 Each tier keeps some messages as they are: its `keep_tokens` or `keep_messages` tail (which holds the whole current turn), the first user message under `preserve_first_user_message`, pinned parts, and the latest response when it names a workspace (its `workspace_ref`) and only requests follow it, as the next run finds its workspace there (kept whatever its size). That sets a floor on how far the chain can shrink the history, and a `target_tokens` below it can't be reached. A `SummarizingCompaction` tier with `keep_tokens` whose only candidates are messages it keeps anyway makes no model call and leaves the history unchanged. When the last tier leaves the history above the target, the outermost `TieredCompaction` logs a warning on each attempt on the `pydantic_ai_harness.compaction._tiered_compaction` logger, and sets `compaction.target_unreached` on its [span](#tracing) when the history changes; if no tier changes it, no span is emitted, but the warning still reports the estimate and target. Pass `preserve_first_user_message=False` to a tier that may drop or summarize the first user message.
 
-On its own trigger, `TieredCompaction` skips a tier that raises one of its `skip_on` exceptions and moves on to the next. By default these are `ModelAPIError`, `FallbackExceptionGroup` and `UnexpectedModelBehavior`, such as a summarizer whose provider is down or that exhausted its retries; unlike `FallbackCompaction`'s `fallback_on`, this includes `UnexpectedModelBehavior`, because the next tier can still shrink the history without that model. The skipped tier's receipts are discarded, a warning is logged, and a `compact_messages` span records the tier as `compaction.strategy`, with `compaction.skipped='tier_failed'` and `error.type`. Other exceptions, such as programming errors and `UsageLimitExceeded`, propagate, as does every exception on a direct `compact()` call, so a `FallbackCompaction` around it still falls back. Pass `skip_on=()` to propagate every tier failure.
+On its own trigger, `TieredCompaction` skips a tier that raises one of its `skip_on` exceptions and moves on to the next. By default these are `ModelAPIError`, `FallbackExceptionGroup` and `UnexpectedModelBehavior`, such as a summarizer whose provider is down or that exhausted its retries, the same selection as `FallbackCompaction`'s `fallback_on`. The skipped tier's receipts are discarded, a warning is logged, and a `compact_messages` span records the tier as `compaction.strategy`, with `compaction.skipped='tier_failed'` and `error.type`. Other exceptions, such as programming errors and `UsageLimitExceeded`, propagate, as does every exception on a direct `compact()` call, so a `FallbackCompaction` around it still falls back. Pass `skip_on=()` to propagate every tier failure.
 
 ## `FallbackCompaction`: recover when a strategy fails
 
-`TieredCompaction` advances when a tier does not reclaim enough; `FallbackCompaction` advances when a strategy raises an exception in `fallback_on`, by default `ModelAPIError` and `FallbackExceptionGroup` (raised when every model in a `FallbackModel` fails). When its own trigger runs the chain, it also advances past a `SummarizingCompaction` whose result [isn't smaller](#a-summary-that-isnt-smaller), and leaves the history unchanged if no strategy shrinks it. Each attempt gets a fresh list of the original message objects, so a failed strategy's list changes do not reach the next; strategies must still not mutate message objects (the `CompactionStrategy` contract). If every strategy fails, the last exception is re-raised. Other exceptions, cancellation, and other `BaseException` subclasses pass through immediately; `fallback_on` accepts only `Exception` subclasses.
+!!! warning "Compatibility impact: `FallbackCompaction` falls back on `UnexpectedModelBehavior`"
+
+    `FallbackCompaction` now tries the next strategy on `UnexpectedModelBehavior` by default, such as a summary that exhausted its retries, instead of propagating it. Pass `fallback_on=(ModelAPIError, FallbackExceptionGroup)` to keep the previous selection.
+
+`TieredCompaction` advances when a tier does not reclaim enough; `FallbackCompaction` advances when a strategy raises an exception in `fallback_on`, by default `ModelAPIError`, `FallbackExceptionGroup` (raised when every model in a `FallbackModel` fails) and `UnexpectedModelBehavior`. When its own trigger runs the chain, it also advances past a `SummarizingCompaction` whose result [isn't smaller](#a-summary-that-isnt-smaller), and leaves the history unchanged if no strategy shrinks it. Each attempt gets a fresh list of the original message objects, so a failed strategy's list changes do not reach the next; strategies must still not mutate message objects (the `CompactionStrategy` contract). If every strategy fails, the last exception is re-raised. Other exceptions, cancellation, and other `BaseException` subclasses pass through immediately; `fallback_on` accepts only `Exception` subclasses.
 
 Register it with `Agent(..., capabilities=[fallback])`, here falling back from summarization to deterministic truncation:
 
@@ -480,7 +486,7 @@ agent = Agent(
 
 `model` takes a model name or `Model`; `None` inherits the agent's model. It must write text: if the agent runs one that can't, such as TypeSafe's Jev decision model, set `model=` to a language model, or the first compaction raises a `UserError` saying so.
 
-An empty or whitespace-only summary is retried within the summary run's output retries; exhausting them raises `UnexpectedModelBehavior` instead of writing an empty summary. Retries count against the nested run's [usage limits](#usage-accounting), raising `UsageLimitExceeded` if that budget runs out first. To fall back on either failure, set `FallbackCompaction`'s `fallback_on=(UnexpectedModelBehavior, UsageLimitExceeded)`, preferably with a fallback that makes no model requests. This does not increase the parent run's limits.
+An empty or whitespace-only summary is retried within the summary run's output retries; exhausting them raises `UnexpectedModelBehavior` instead of writing an empty summary. Retries count against the nested run's [usage limits](#usage-accounting), raising `UsageLimitExceeded` if that budget runs out first. On its own trigger, such a failure is [skipped](#a-summary-that-fails). To fall back when the summary run exhausts its usage limits, add `UsageLimitExceeded` to `FallbackCompaction`'s `fallback_on`, preferably with a fallback that makes no model requests. This does not increase the parent run's limits.
 
 `model_settings` merges over the summary model's defaults without mutating the model or the dictionary. `summarization_capabilities` attaches capabilities to the summary agent; the outer agent's capabilities do not run on the summary call. `incremental=True` (the default) updates the newest existing summary as an anchor (see [below](#anchored-incremental-summarization-and-the-cross-model-bridge)). `keep_messages=0` still keeps the newest message, the request being answered.
 
@@ -511,6 +517,12 @@ agent = Agent(
 ```
 
 Some endpoints reject non-streaming requests and others reject streaming ones, so this is a choice, not a default. The handler receives the summary run's own `RunContext` and event stream; the outer `Agent.run(...)` handler is not inherited and never sees the summary's token deltas.
+
+### A summary that fails
+
+On its own trigger, `SummarizingCompaction` treats a summary that fails with `UnexpectedModelBehavior` (exhausted retries, an empty or truncated summary), `ModelAPIError` or `FallbackExceptionGroup` as a skipped attempt, not a failed run: the history and its receipts are left as they were, and a `compact_messages` span records `compaction.skipped='summary_failed'` and `error.type`. `UsageLimitExceeded` and programming errors such as `UserError` still propagate. The summary call's usage still counts, and while the trigger stays exceeded, each next request tries again. A direct `compact()` or `compact_now()` on a `SummarizingCompaction`, or a `TieredCompaction` tier, raises the error; a `FallbackCompaction` follows its `fallback_on`, which by default includes `UnexpectedModelBehavior`, and re-raises the last error if every strategy fails.
+
+Under Temporal, a failed summary currently arrives as `ActivityError` wrapping an `ApplicationError`, so it still propagates ([#12291](https://github.com/pydantic/pydantic-ai/issues/12291)).
 
 ### A summary that isn't smaller
 
@@ -563,7 +575,7 @@ The `summarizer` is a `SummarizingCompaction` used for its model, prompts and se
 
 Up to `judge_concurrency` (default 8) judge requests run at once. Judgements are remembered on the instance by task and step content, so a later compaction with the same task judges only new steps. A compaction's judge requests count as one request against a `UsageLimits` request limit, checked before any is sent; their tokens are added to run usage and checked against token and cost limits on return. On a laptop running Ollama, one judge request for a step of a few thousand tokens took 5 to 10 seconds, so a long history's first compaction can take minutes.
 
-A judge error propagates, like a summary error. Wrap the strategy in `FallbackCompaction` to fall back to one that makes no model requests:
+A judge error propagates, like a summary error on an explicit call. Wrap the strategy in `FallbackCompaction` to fall back to one that makes no model requests:
 
 ```python
 from pydantic_ai_harness.compaction import FallbackCompaction, RelevanceCompaction, SlidingWindowCompaction
@@ -621,8 +633,8 @@ The span name is always `compact_messages`, with the strategy as an attribute, t
 | `compaction.tokens_after` | int | Estimated token count after compaction |
 | `compaction.model_requested` | bool | `true` when the model asked through `CompactOnRequest` or `PruneToolResults`; absent otherwise |
 | `compaction.background` | str | Only with `background_start`: `used`, `stale`, or `failed`, what became of the background result |
-| `compaction.skipped` | str | `tier_failed` when a `TieredCompaction` tier raised and was skipped, or `not_smaller` when an automatic summary was discarded for not being smaller; with `not_smaller`, the `*_after` attributes describe the discarded result. Absent otherwise |
-| `error.type` | str | With `compaction.skipped='tier_failed'`: the exception's fully qualified class name |
+| `compaction.skipped` | str | `summary_failed` when an automatic summary failed, `tier_failed` when a `TieredCompaction` tier raised and was skipped, or `not_smaller` when an automatic summary was discarded for not being smaller; with `not_smaller`, the `*_after` attributes describe the discarded result. Absent otherwise |
+| `error.type` | str | With `compaction.skipped='summary_failed'` or `'tier_failed'`: the exception's fully qualified class name |
 | `compaction.target_unreached` | bool | `TieredCompaction` only: `true` when every tier ran and the history is still estimated above the target. Absent otherwise |
 | `compaction.target_tokens` | int | With `compaction.target_unreached`: the resolved target |
 | `compaction.estimate` | int | With `compaction.target_unreached`: the estimate the stop decision used, anchored on provider-reported usage when there is any |

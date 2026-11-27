@@ -8,7 +8,7 @@ from anyio import CancelScope, create_task_group, get_cancelled_exc_class, to_th
 from rich.console import Console
 
 from pydantic_ai.usage import UsageLimits
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_ai_pax.app import STOCK_PLUGINS, create_stock_agent
 from pydantic_ai_pax.builtin_plugins.web import WebPlugin
 from pydantic_ai_pax.cli.self_update import WebHandoff
@@ -21,6 +21,7 @@ from pydantic_ai_pax.runtime.imported_sessions import ImportSource
 from pydantic_ai_pax.runtime.process import ClaiProcess
 from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_ai_pax.runtime.session_workspace import SessionWorkspace, workspace_directory
+from pydantic_ai_pax.runtime.workspace_trust import undecided_notice
 
 WEB = 'web'
 LAUNCHER_HOST = '127.0.0.1'
@@ -73,6 +74,8 @@ async def run_web(
         workspace=workspace,
         store=store,
     )
+    if (notice := undecided_notice(shell.session.trust)) is not None:
+        console.print(notice, markup=False)
     with open(os.devnull, 'w', encoding='utf-8') as sink:
         # Sessions opened from the browser log nothing: their output would interleave with this one's.
         shell.process.live.build = lambda directory: _web_session(
@@ -224,7 +227,7 @@ async def serve_again(loader: SessionPlugins[DepsT], handoff: WebHandoff) -> str
 
 async def _start_in(*, store: SettingsStore, conversation_id: str) -> tuple[Path, ProjectSettings] | None:
     """The directory a resumed session was saved in, with its project file; `None` when it is here."""
-    conversations = SqliteConversationStore(database=store.path.with_name('sessions.db'))
+    conversations = SqliteSessionStore(database=store.path.with_name('sessions.db'))
     try:
         workspace = (await conversations.get(conversation_id=conversation_id)).summary.workspace
     except LookupError:

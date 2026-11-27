@@ -301,7 +301,8 @@ def test_anthropic_claude_sonnet_4_6():
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
             'anthropic_enforces_strict_schema_limits': True,
-            'anthropic_supports_on_demand_compaction': True,
+            'supports_compaction_on_demand': True,
+            'compaction_instructions': 'replaces_prompt',
             'supports_auto_cache': True,
         }
     )
@@ -357,7 +358,8 @@ def test_anthropic_claude_opus_4_7():
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
             'anthropic_enforces_strict_schema_limits': True,
-            'anthropic_supports_on_demand_compaction': True,
+            'supports_compaction_on_demand': True,
+            'compaction_instructions': 'replaces_prompt',
             'supports_auto_cache': True,
         }
     )
@@ -403,7 +405,7 @@ def test_anthropic_claude_haiku_4_5():
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
             'anthropic_enforces_strict_schema_limits': True,
-            'anthropic_supports_on_demand_compaction': False,
+            'supports_compaction_on_demand': False,
             'supports_auto_cache': True,
         }
     )
@@ -438,7 +440,7 @@ def test_anthropic_claude_3_5_sonnet_legacy():
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
             'anthropic_enforces_strict_schema_limits': True,
-            'anthropic_supports_on_demand_compaction': False,
+            'supports_compaction_on_demand': False,
             'supports_auto_cache': True,
             'deprecation': ModelDeprecation(
                 source_url='https://platform.claude.com/docs/en/about-claude/model-deprecations#deprecation-history',
@@ -478,6 +480,9 @@ def test_openai_gpt_5_4():
             'openai_supports_minimal_reasoning_effort': False,
             'openai_responses_supports_max_reasoning_effort': False,
             'delegates_unprompted': True,
+            'reinterprets_malformed_inputs': True,
+            'omits_handoff_evidence': True,
+            'ignores_stated_runtime_constraints': True,
             'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'openai_supports_phase': True,
             'tool_addition_mode': 'with_definitions',
@@ -488,6 +493,9 @@ def test_openai_gpt_5_4():
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
             'may_tokenize_special_tokens_in_content': False,
+            'supports_compaction_on_demand': True,
+            'compaction_instructions': 'system_prompt',
+            'openai_chat_function_tools_require_reasoning_off': True,
             'rejects_unpaired_tool_calls': True,
         }
     )
@@ -553,6 +561,9 @@ def test_openai_gpt_5_6():
             'openai_supports_phase': True,
             'openai_responses_tool_choice_accepts_additional_tools': True,
             'delegates_unprompted': True,
+            'reinterprets_malformed_inputs': True,
+            'omits_handoff_evidence': True,
+            'ignores_stated_runtime_constraints': True,
             'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'openai_responses_supports_max_reasoning_effort': True,
             'openai_supports_prompt_cache_breakpoints': True,
@@ -566,6 +577,9 @@ def test_openai_gpt_5_6():
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
             'may_tokenize_special_tokens_in_content': False,
+            'supports_compaction_on_demand': True,
+            'compaction_instructions': 'system_prompt',
+            'openai_chat_function_tools_require_reasoning_off': True,
             'rejects_unpaired_tool_calls': True,
         }
     )
@@ -611,6 +625,9 @@ def test_openai_gpt_6_astra():
             'openai_responses_tool_choice_accepts_additional_tools': True,
             'openai_responses_supports_max_reasoning_effort': True,
             'delegates_unprompted': True,
+            'reinterprets_malformed_inputs': True,
+            'omits_handoff_evidence': True,
+            'ignores_stated_runtime_constraints': True,
             'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'openai_supports_prompt_cache_breakpoints': True,
             'openai_reasoning_efforts': frozenset({'high', 'low', 'max', 'medium', 'xhigh'}),
@@ -625,6 +642,8 @@ def test_openai_gpt_6_astra():
             'supports_mid_conversation_effort': True,
             'openai_supports_batch_api': True,
             'may_tokenize_special_tokens_in_content': False,
+            'supports_compaction_on_demand': True,
+            'compaction_instructions': 'system_prompt',
             'openai_chat_function_tools_require_reasoning_off': True,
             'rejects_unpaired_tool_calls': True,
         }
@@ -639,8 +658,7 @@ def test_openai_gpt_6_astra():
 def test_openai_gpt_6_sol_luna(model_name: str):
     """Pin GPT-6 Sol/Luna capabilities for base names and future dated snapshots.
 
-    They match GPT-5.6 Sol, plus the GPT-6 `configuration_update` item that changes effort mid-conversation and the
-    flag for Chat Completions rejecting tools while reasoning is on.
+    They match GPT-5.6 Sol, plus the GPT-6 `configuration_update` item that changes effort mid-conversation.
     """
 
     profile = OpenAIProvider.model_profile(model_name)
@@ -649,7 +667,6 @@ def test_openai_gpt_6_sol_luna(model_name: str):
     assert _normalize(profile) == {
         **gpt_5_6,
         'supports_mid_conversation_effort': True,
-        'openai_chat_function_tools_require_reasoning_off': True,
     }
 
 
@@ -808,6 +825,9 @@ def test_openai_gpt_4o():
             'supports_inline_system_prompts': True,
             'openai_responses_supports_max_reasoning_effort': False,
             'delegates_unprompted': True,
+            'reinterprets_malformed_inputs': True,
+            'omits_handoff_evidence': True,
+            'ignores_stated_runtime_constraints': True,
             'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
@@ -820,6 +840,8 @@ def test_openai_gpt_4o():
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
             'may_tokenize_special_tokens_in_content': False,
+            'supports_compaction_on_demand': True,
+            'compaction_instructions': 'system_prompt',
             'rejects_unpaired_tool_calls': True,
         }
     )
@@ -855,6 +877,8 @@ def test_openai_o3_mini():
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
             'may_tokenize_special_tokens_in_content': False,
+            'supports_compaction_on_demand': True,
+            'compaction_instructions': 'system_prompt',
             'rejects_unpaired_tool_calls': True,
             'deprecation': ModelDeprecation(
                 source_url='https://developers.openai.com/api/docs/deprecations#2026-04-22-legacy-gpt-model-snapshots',
@@ -888,6 +912,9 @@ def test_openai_codex_gpt_5_6():
             'openai_supports_minimal_reasoning_effort': False,
             'openai_responses_tool_choice_accepts_additional_tools': True,
             'delegates_unprompted': True,
+            'reinterprets_malformed_inputs': True,
+            'omits_handoff_evidence': True,
+            'ignores_stated_runtime_constraints': True,
             'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'openai_responses_supports_max_reasoning_effort': False,
             'supported_native_tools': frozenset(
@@ -902,10 +929,13 @@ def test_openai_codex_gpt_5_6():
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': False,
             'may_tokenize_special_tokens_in_content': False,
+            'supports_compaction_on_demand': False,
+            'compaction_instructions': 'system_prompt',
             'openai_responses_requires_streaming': True,
             'openai_responses_requires_store_false': True,
             'openai_supports_input_token_counting': False,
             'tool_deferral_mode': 'with_tool_search',
+            'openai_chat_function_tools_require_reasoning_off': True,
             'rejects_unpaired_tool_calls': True,
         }
     )
@@ -2012,6 +2042,9 @@ def test_openrouter_openai_gpt_5_4():
             'openai_chat_supports_file_urls': True,
             'openai_supports_encrypted_reasoning_content': True,
             'delegates_unprompted': True,
+            'reinterprets_malformed_inputs': True,
+            'omits_handoff_evidence': True,
+            'ignores_stated_runtime_constraints': True,
             'openai_supports_reasoning': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
@@ -2342,6 +2375,9 @@ def test_github_copilot_openai_gpt_5_4():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
             ),
             'delegates_unprompted': True,
+            'reinterprets_malformed_inputs': True,
+            'omits_handoff_evidence': True,
+            'ignores_stated_runtime_constraints': True,
             'openai_chat_supports_max_completion_tokens': True,
         }
     )
@@ -2620,7 +2656,12 @@ def test_azure_openai_gpt_5():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+            'supports_compaction_on_demand': True,
+            'compaction_instructions': 'system_prompt',
             'delegates_unprompted': True,
+            'reinterprets_malformed_inputs': True,
+            'omits_handoff_evidence': True,
+            'ignores_stated_runtime_constraints': True,
             'openai_chat_supports_document_input': False,
             'openai_responses_supports_websocket': False,
             'may_tokenize_special_tokens_in_content': False,
@@ -2819,7 +2860,6 @@ def test_groq_gpt_oss():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
-            'supports_inline_system_prompts': True,
             'default_framing_announcement': 'always',
             'supports_json_object_output': True,
             'supports_json_schema_output': True,
@@ -3052,6 +3092,23 @@ def test_vllm_qwen_hf_namespace():
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_compaction_on_demand_is_off_where_responses_compact_is_not_served():
+    """`OpenAIProvider` sets `supports_compaction_on_demand`, but neither Chat Completions nor the gateway serves it.
+
+    So `NativeCompaction` declines for them, instead of calling `compact_messages`.
+    """
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.providers.gateway import gateway_provider
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    provider = OpenAIProvider(api_key='test')
+    assert OpenAIResponsesModel('gpt-5.4', provider=provider).profile.get('supports_compaction_on_demand') is True
+    assert OpenAIChatModel('gpt-5.4', provider=provider).profile.get('supports_compaction_on_demand') is False
+    gateway = gateway_provider('openai', api_key='paig_test', base_url='https://gateway.example')
+    assert OpenAIResponsesModel('gpt-5.4', provider=gateway).profile.get('supports_compaction_on_demand') is False
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_vllm_gemma_video_is_up_to_the_model_class():
     """Gemma reads video, but neither OpenAI API has a video part, so the model class turns the flag off.
 
@@ -3174,6 +3231,9 @@ def test_litellm_openai_gpt():
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
             'delegates_unprompted': True,
+            'reinterprets_malformed_inputs': True,
+            'omits_handoff_evidence': True,
+            'ignores_stated_runtime_constraints': True,
             'may_tokenize_special_tokens_in_content': False,
         }
     )
@@ -3515,6 +3575,9 @@ def test_together_qwen():
                         }
                     ),
                     'delegates_unprompted': True,
+                    'reinterprets_malformed_inputs': True,
+                    'omits_handoff_evidence': True,
+                    'ignores_stated_runtime_constraints': True,
                     'may_tokenize_special_tokens_in_content': False,
                 }
             ),
@@ -4101,7 +4164,7 @@ def test_anthropic_unknown_model_returns_some_profile():
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
             'anthropic_enforces_strict_schema_limits': True,
-            'anthropic_supports_on_demand_compaction': False,
+            'supports_compaction_on_demand': False,
             'supports_auto_cache': True,
         }
     )
@@ -4179,6 +4242,9 @@ def test_github_openai_bare_name():
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
             'delegates_unprompted': True,
+            'reinterprets_malformed_inputs': True,
+            'omits_handoff_evidence': True,
+            'ignores_stated_runtime_constraints': True,
         }
     )
 
@@ -4304,6 +4370,9 @@ def test_vercel_openai_gpt():
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
             'delegates_unprompted': True,
+            'reinterprets_malformed_inputs': True,
+            'omits_handoff_evidence': True,
+            'ignores_stated_runtime_constraints': True,
             'may_tokenize_special_tokens_in_content': False,
         }
     )
@@ -4710,6 +4779,9 @@ def test_stav_openai():
             ),
             'openai_reasoning_efforts': frozenset({'high', 'low', 'medium', 'minimal'}),
             'delegates_unprompted': True,
+            'reinterprets_malformed_inputs': True,
+            'omits_handoff_evidence': True,
+            'ignores_stated_runtime_constraints': True,
             'may_tokenize_special_tokens_in_content': False,
         }
     )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from abc import ABC
 from collections import Counter
 from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Sequence
@@ -16,6 +17,7 @@ from pydantic_ai._instructions import (
     AgentInstruction,
     AgentInstructions,
     SourcedInstruction,
+    lowered_block_id,
     normalize_instructions,
     sourced_instruction,
 )
@@ -49,6 +51,7 @@ from ._on_event import collect_on_event_methods, marked_listens_to
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
+    from pydantic_ai.capabilities.compaction import CompactionRequest, CompactionResult
     from pydantic_ai.capabilities.prefix_tools import PrefixTools
     from pydantic_ai.models import (
         KnownModelName,
@@ -156,6 +159,7 @@ _REALTIME_UNCALLED_HOOKS: tuple[str, ...] = (
     'after_model_request',
     'wrap_model_request',
     'on_model_request_error',
+    'compact_history',
     'get_wrapper_model',
     'before_output_validate',
     'after_output_validate',
@@ -220,6 +224,20 @@ class CapabilityOrdering:
 _AUTHORITIES: Final[tuple[object, ...]] = get_args(Authority)
 
 
+@dataclass(frozen=True)
+class _LoweredInstructionSource(Generic[AgentDepsT]):
+    """A capability whose instructions are below `'operator'` authority, stated in history as one block."""
+
+    capability: AbstractCapability[AgentDepsT]
+    own: bool = True
+    """Whether the block includes the capability's own `get_instructions()`, which an overriding wrapper or container
+    replaces; its toolsets' instructions are always included."""
+
+
+_warned_replaced_instructions: set[str] = set()
+"""The overriding capabilities and lowered capabilities whose replaced instructions were warned about, as their ids."""
+
+
 class _CapabilityAuthority:
     """Declares `authority` for [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability].
 
@@ -238,8 +256,10 @@ class _CapabilityAuthority:
     content you don't fully control, such as one built from a plugin or another team's code: as a class attribute of
     a subclass, or as a field of the capability's own. To lower one instance, use
     [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority]. The ceiling covers what the
-    capability sends mid-conversation, including its tools' `ToolReturn.content`. It doesn't cap the capability's
-    instructions, its tool names and descriptions, or its tools' return values: review or leave those out yourself.
+    capability sends mid-conversation, including its tools' `ToolReturn.content`, and its instructions, which below
+    `'operator'` reach the model as [framed data](../capabilities/custom.md#lowered-instructions) instead of as
+    instructions. It doesn't cap its tool names and descriptions or its tools' return values: review or leave those
+    out yourself.
 
     For a workspace capability, such as [`LocalWorkspace`][pydantic_ai.capabilities.LocalWorkspace], it's also the
     default authority of the workspace's files. A file another capability reads through a workspace carries the
@@ -303,10 +323,10 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
     _safe_at_runtime: ClassVar[bool] = False
     """Whether this capability can be added per-run when a durability capability is bound.
 
-    Internal, in-tree only. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation]
-    is the only built-in capability that sets this to `True`; the bundled `durable_exec`
-    integrations read it to allow `Instrumentation` to attach per-run despite the
-    blanket restriction on runtime capability additions.
+    Internal, in-tree only. Built-in capabilities that are safe to attach per-run, such as
+    [`Instrumentation`][pydantic_ai.capabilities.Instrumentation], set this to `True`; the bundled
+    `durable_exec` integrations read it to allow them despite the blanket restriction on runtime
+    capability additions.
 
     A first-class extension point that derives this from a capability's overridden
     hooks (so third-party capabilities don't need to set a flag manually) is tracked
@@ -496,6 +516,17 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         return type(self).prepare_model_request is not AbstractCapability.prepare_model_request
 
     @property
+    def _has_compact_history(self) -> bool:
+        return type(self).compact_history is not AbstractCapability.compact_history
+
+    def _handles_compact_history(self, ctx: RunContext[AgentDepsT]) -> bool:
+        """Whether a `compact_history` hook can run in this run: one is overridden and, if deferred, loaded.
+
+        The agent only retries a context overflow with compaction, and primes streamed requests for it, when one can.
+        """
+        return self._has_compact_history
+
+    @property
     def has_wrap_run_event_stream(self) -> bool:
         """Whether this capability (or any sub-capability) overrides wrap_run_event_stream."""
         return type(self).wrap_run_event_stream is not AbstractCapability.wrap_run_event_stream
@@ -590,14 +621,16 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         """Prepare an emitted event synchronously before immediate listeners or stream delivery."""
 
     def with_authority(self, authority: Authority) -> Self:
-        """Return a copy of this capability whose enqueued parts carry no more than `authority`.
+        """Return a copy of this capability whose enqueued parts and instructions carry no more than `authority`.
 
         Lowers this one instance, where the [`authority`][pydantic_ai.capabilities.AbstractCapability]
         class attribute lowers every instance of a class: for example, one plugin's capability at `'none'` while
         another instance of its class keeps `'operator'`. It only ever lowers: asking for more authority than the
         capability already has leaves it where it is. Like the class attribute, it covers what the capability sends
-        mid-conversation, not its instructions or tool definitions: for an MCP server you don't trust, also pass
-        `include_instructions=False`.
+        mid-conversation and its instructions, its own and its toolsets', which then never enter the instruction
+        prefix: they're stated in history as framed data at that authority, never in the application's voice. It
+        doesn't cover its tool definitions: an MCP server's tool names and descriptions still reach the model as the
+        server wrote them.
         """
         return _utils.replace_no_init(self, _authority_ceiling=_lower_authority(self._effective_authority, authority))
 
@@ -612,6 +645,41 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         authority: Authority = self.authority if self.authority in _AUTHORITIES else 'none'
         ceiling = self._authority_ceiling
         return authority if ceiling is None else _lower_authority(authority, ceiling)
+
+    def _lowered_instruction_sources(self) -> list[_LoweredInstructionSource[AgentDepsT]]:
+        """The capabilities in this tree whose instructions are below `'operator'` authority, in dispatch order.
+
+        Their instructions, their own and their toolsets', never enter the instruction prefix: each is stated in
+        history as one block at its authority (see `LoweredInstructions`). A deferred capability's instructions are
+        delivered when it's loaded instead.
+        """
+        if self.defer_loading is True or self._effective_authority == 'operator':
+            return []
+        return [_LoweredInstructionSource(self)]
+
+    def _replace_lowered_instructions(
+        self, sources: Sequence[_LoweredInstructionSource[AgentDepsT]]
+    ) -> list[_LoweredInstructionSource[AgentDepsT]]:
+        """`sources` within this capability, whose own `get_instructions()` its override replaces.
+
+        Lowered text never rides in a capability's own instructions at a higher authority, so their own instructions
+        aren't sent at all, which a warning says once for each; their toolsets' are still stated as their blocks.
+        """
+        for source in sources:
+            capability = source.capability
+            key = f'{lowered_block_id(self)} > {lowered_block_id(capability)}'
+            if key in _warned_replaced_instructions or not source.own or not capability._collect_instructions():
+                continue
+            _warned_replaced_instructions.add(key)
+            warnings.warn(
+                f'The instructions of capability {lowered_block_id(capability)!r} are below operator authority, but '
+                f'{type(self).__name__} overrides `get_instructions()`, which replaces them, so they are not sent. To send '
+                "them as data, leave the capability's instructions to the framework rather than merging them into "
+                'the override.',
+                UserWarning,
+                stacklevel=2,
+            )
+        return [replace(source, own=False) for source in sources]
 
     def _keep_authority(self, resolved: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Carry this instance's authority to what its `for_run` or `for_agent` returned.
@@ -688,6 +756,11 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         When [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] is
         True, these instructions are resolved only after the model calls the
         `load_capability` tool for this capability.
+
+        They follow the capability's authority: below `'operator'`, set by the `authority` class
+        attribute or [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority],
+        they never enter the instructions and reach the model as framed data at that authority; see
+        [instructions below operator authority](../capabilities/custom.md#lowered-instructions).
         """
         return None
 
@@ -1243,8 +1316,10 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
     ) -> ModelRequestContext:
         """Called before each *attempt* at a model request, once the serving model is known.
 
-        This is the hook for work that depends on which model is about to run: compaction,
-        context-window fitting, per-profile message translation. Unlike
+        This is the hook for work that depends on which model is about to run: context-window fitting,
+        per-profile message translation. Compaction has a hook of its own,
+        [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history], which runs after this one.
+        Unlike
         [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request],
         which runs once per request step while the model may still change,
         `request_context.model` here is the model that will actually serve the request, and
@@ -1258,7 +1333,9 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
 
         Changes to `request_context` shape the request that goes on the wire for this attempt and are
         not persisted to the agent's message history; the next attempt starts again from what
-        `before_model_request` produced. Changes made through
+        `before_model_request` produced, also when the attempt compacts the history: see
+        [request-only changes and compaction](../capabilities/custom.md#request-only-changes-and-compaction).
+        Changes made through
         [`RunContext.messages`][pydantic_ai.tools.RunContext.messages], the run's persistent history,
         do persist, and are not rolled back for a further attempt. Use them for state that doesn't
         depend on the attempt, such as a record an attempt makes that later requests and turns should
@@ -1337,6 +1414,41 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         or [`ModelRetry`][pydantic_ai.exceptions.ModelRetry].
         """
         raise error
+
+    async def compact_history(self, ctx: RunContext[AgentDepsT], request: CompactionRequest) -> CompactionResult | None:
+        """Compact the message history for the model that will serve the next request, or return `None` to leave it to the next capability.
+
+        Called for an attempt at a model request when compaction was asked for with
+        [`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction], or with reason
+        `'context_overflow'` when the model rejected the attempt for exceeding its context window, to send it to
+        that model once more. It runs after the
+        [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] hooks, with
+        [`request.conversation_request.model`][pydantic_ai.capabilities.CompactionModelRequest.model] set to the
+        model about to serve the attempt. Capabilities are asked in order and the first result is used, so
+        capability order is the fallback chain: a capability that can't compact for this model, or this request,
+        returns `None`.
+
+        The returned [`CompactionResult.messages`][pydantic_ai.capabilities.CompactionResult.messages] are sent in
+        place of [`request.messages`][pydantic_ai.capabilities.CompactionRequest.messages], and replace the run's
+        message history once a response to them is accepted. What's committed has the persistent originals of the
+        messages it kept, and what's sent has this request's own changes to them; see
+        [`CompactionRequest.messages`][pydantic_ai.capabilities.CompactionRequest.messages]. A compaction for a model
+        that then fails is discarded, and its usage is counted like a failed attempt's. A
+        [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] raised here fails the attempt like an error from the
+        model itself, so it reaches
+        [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] and
+        [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] can move on to another model.
+
+        Core emits the [`CompactionStartEvent`][pydantic_ai.messages.CompactionStartEvent] and
+        [`CompactionEndEvent`][pydantic_ai.messages.CompactionEndEvent] around the hooks, and checks the result:
+        it has to contain its [`part`][pydantic_ai.capabilities.CompactionResult.part], with a summary or a
+        provider's encrypted content, and end with the request being answered. A summary in a `ModelRequest` has to
+        come after the standing system prompt the history it was given opens with, which the result keeps first.
+        Under durable execution this runs in workflow code; requests through
+        `request.conversation_request.model` are durable model operations, and other I/O belongs in a
+        [`durable_operation`][pydantic_ai.capabilities.durable_operation].
+        """
+        return None
 
     # --- Tool validate lifecycle hooks ---
 
@@ -1883,21 +1995,11 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     earlier, and reading "last" off the tree would turn a run-level override into the agent-level
     capability winning.
     """
-    from .wrapper import WrapperCapability
-
     # `CombinedCapability` may sort top-level branches, but it retains each branch it doesn't flatten
     # (see `_combination_roots`) as the object supplied by its source layer. Associate provenance
     # with that branch before walking its leaves: a wrapper can move ahead of an earlier layer while
     # the same leaf object appears both inside that wrapper and on its own.
-    root_locations: dict[int, list[tuple[int, dict[int, list[int]]]]] = {}
-    position = 0
-    for layer_index, layer in enumerate(layers):
-        for root in chain.from_iterable(map(_combination_roots, layer)):
-            leaf_positions: dict[int, list[int]] = {}
-            for leaf in leaf_capabilities(root):
-                leaf_positions.setdefault(id(leaf), []).append(position)
-                position += 1
-            root_locations.setdefault(id(root), []).append((layer_index, leaf_positions))
+    root_locations = _root_locations(layers)
 
     visited: list[tuple[AbstractCapability[AgentDepsT], int, int]] = []
     for root in _combination_roots(capability):
@@ -1923,32 +2025,7 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     # per visit lines the decisions up with the occurrences they were made for.
     replacements: dict[int, list[AbstractCapability[AgentDepsT] | None]] = {}
     for capability_id, duplicates in duplicate_groups.items():
-        # Only the last layer to state this id has a say; everything an earlier layer said under it
-        # is overridden, not merged in. `combine` then settles what the survivors within that one
-        # layer mean -- and with a single survivor there is nothing to settle, so it isn't called.
-        _reject_derived_id_collision(capability_id, [duplicate.capability for duplicate in duplicates])
-        last_layer = max(duplicate.layer_index for duplicate in duplicates)
-        surviving = [duplicate.capability for duplicate in duplicates if duplicate.layer_index == last_layer]
-        # Transparent wrappers name the same capability across layers, not the same mergeable class
-        # within a layer, so a group confined to one layer is compared as written: there, a wrapper
-        # and what it wraps are two capabilities claiming one id. Across layers they are one
-        # capability named twice, so the wrappers come off and the comparison is between what they
-        # hold. Explicitly renamed wrappers keep their own identity either way.
-        spans_layers = last_layer != duplicates[0].layer_index
-        identity_types: set[type[AbstractCapability[AgentDepsT]]] = set()
-        for duplicate in duplicates:
-            identity = duplicate.capability
-            while spans_layers and isinstance(identity, WrapperCapability) and identity.id == identity.wrapped.id:
-                identity = identity.wrapped
-            identity_types.add(type(identity))
-        _reject_class_crossing_id(capability_id, identity_types)
-        # With a single survivor there is nothing to settle, so `combine` isn't called.
-        combined_duplicate = surviving[-1]
-        if len(surviving) > 1:
-            _reject_class_crossing_id(capability_id, {type(survivor) for survivor in surviving})
-            if not _declares_default_id(type(combined_duplicate)):
-                raise UserError(_repeated_id_message(capability_id, surviving))
-            combined_duplicate = combined_duplicate.combine(surviving)
+        combined_duplicate = _resolve_duplicates(capability_id, duplicates)
         replacements.update(
             {id(duplicate.capability): [None] * occurrence_counts[id(duplicate.capability)] for duplicate in duplicates}
         )
@@ -1968,6 +2045,57 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     # Every duplicated id keeps one occurrence, so the tree can never be emptied.
     assert combined is not None, 'combining duplicate capabilities cannot empty the tree'
     return combined
+
+
+def _root_locations(
+    layers: Sequence[Sequence[AbstractCapability[AgentDepsT]]],
+) -> dict[int, list[tuple[int, dict[int, list[int]]]]]:
+    """Where each branch a layer supplies sits: its layer, and the application position of each of its leaves."""
+    root_locations: dict[int, list[tuple[int, dict[int, list[int]]]]] = {}
+    position = 0
+    for layer_index, layer in enumerate(layers):
+        for root in chain.from_iterable(map(_combination_roots, layer)):
+            leaf_positions: dict[int, list[int]] = {}
+            for leaf in leaf_capabilities(root):
+                leaf_positions.setdefault(id(leaf), []).append(position)
+                position += 1
+            root_locations.setdefault(id(root), []).append((layer_index, leaf_positions))
+    return root_locations
+
+
+def _resolve_duplicates(
+    capability_id: str, duplicates: Sequence[_CapabilityOccurrence[AgentDepsT]]
+) -> AbstractCapability[AgentDepsT]:
+    """The one capability the occurrences sharing `capability_id`, in application order, resolve to."""
+    from .wrapper import WrapperCapability
+
+    # Only the last layer to state this id has a say; everything an earlier layer said under it
+    # is overridden, not merged in. `combine` then settles what the survivors within that one
+    # layer mean -- and with a single survivor there is nothing to settle, so it isn't called.
+    _reject_derived_id_collision(capability_id, [duplicate.capability for duplicate in duplicates])
+    last_layer = max(duplicate.layer_index for duplicate in duplicates)
+    surviving = [duplicate.capability for duplicate in duplicates if duplicate.layer_index == last_layer]
+    # Transparent wrappers name the same capability across layers, not the same mergeable class
+    # within a layer, so a group confined to one layer is compared as written: there, a wrapper
+    # and what it wraps are two capabilities claiming one id. Across layers they are one
+    # capability named twice, so the wrappers come off and the comparison is between what they
+    # hold. Explicitly renamed wrappers keep their own identity either way.
+    spans_layers = last_layer != duplicates[0].layer_index
+    identity_types: set[type[AbstractCapability[AgentDepsT]]] = set()
+    for duplicate in duplicates:
+        identity = duplicate.capability
+        while spans_layers and isinstance(identity, WrapperCapability) and identity.id == identity.wrapped.id:
+            identity = identity.wrapped
+        identity_types.add(type(identity))
+    _reject_class_crossing_id(capability_id, identity_types)
+    # With a single survivor there is nothing to settle, so `combine` isn't called.
+    combined_duplicate = surviving[-1]
+    if len(surviving) > 1:
+        _reject_class_crossing_id(capability_id, {type(survivor) for survivor in surviving})
+        if not _declares_default_id(type(combined_duplicate)):
+            raise UserError(_repeated_id_message(capability_id, surviving))
+        combined_duplicate = combined_duplicate.combine(surviving)
+    return combined_duplicate
 
 
 def _repeated_id_message(capability_id: str, capabilities: Sequence[AbstractCapability[Any]]) -> str:

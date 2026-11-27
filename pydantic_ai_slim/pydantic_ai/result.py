@@ -23,6 +23,7 @@ from ._output import (
     OutputValidator,
     OutputValidatorFunc,
     TextOutputSchema,
+    are_tool_call_args_cut_off,
     incomplete_tool_call_message,
     is_incomplete_json,
     output_pipeline_scope,
@@ -44,6 +45,8 @@ from .usage import RunUsage, UsageLimits
 from .workspaces import Workspace, WorkspaceRef
 
 if TYPE_CHECKING:
+    from ._agent_graph import GraphAgentState
+    from ._appended_messages import AppendedMessages
     from .capabilities.abstract import AbstractCapability
     from .run import AgentRunResult
 
@@ -73,6 +76,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _event_stream_buffer_getter: Callable[[], list[AgentStreamEvent]] = field(default=list, repr=False)
     _max_tokens_getter: Callable[[], int | None] = field(default=lambda: None, repr=False)
     """The `max_tokens` the request was made with, for the error raised when the token limit cut off the output."""
+    _attempt: int = field(default=1, repr=False)
+    """The attempt at the request step that the stream came from, which its events' `origin` records."""
+    _origin: _messages.ModelResponseOrigin | None = field(default=None, init=False, repr=False)
+    """The origin the events of the current attempt are stamped with, built on its first event."""
 
     _events_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
@@ -136,11 +143,13 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
         Yields `ModelResponse` snapshots — `state='incomplete'` while streaming is in flight,
         followed by one final `state='complete'` snapshot (or `'interrupted'` if `cancel()` was
-        called). If the underlying response already has accumulated content when this is called,
-        a pre-stream yield surfaces it before iteration begins.
+        called, or `'incomplete'` if the model detected that the stream ended before the provider's
+        terminal event). If the underlying response already has accumulated content when this is
+        called, a pre-stream yield surfaces it before iteration begins.
         """
         msg = self.response
-        if msg.state == 'incomplete':
+        # A stream that ended before the provider's terminal event stays `'incomplete'`, and the final yield has it.
+        if msg.state == 'incomplete' and not self._model_stream_finished:
             for part in msg.parts:
                 if part.has_content():
                     yield msg
@@ -150,7 +159,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             async for _items in group_iter:
                 yield self.response  # state='incomplete' during streaming
 
-        yield self.response  # final state='complete' (or 'interrupted')
+        yield self.response  # final state='complete' (or 'interrupted', or 'incomplete' if cut off)
 
     async def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[str]:
         """Stream the text result as an async iterable.
@@ -311,58 +320,53 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         output_tool_name = final_result_event.tool_name
 
         try:
-            if self._output_schema.toolset and output_tool_name is not None:
-                tool_call = next(
-                    (part for part in message.tool_calls if part.tool_name == output_tool_name),
-                    None,
-                )
-                if tool_call is None:
-                    raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
-                        f'Invalid response, unable to find tool call for {output_tool_name!r}'
-                    )
-                return await self._validate_tool_output(
-                    tool_call, cut_off=message.finish_reason == 'length', allow_partial=allow_partial
-                )
-            elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
-                if not self._output_schema.allows_deferred_tools:
-                    raise exceptions.UserError(
-                        'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
-                    )
-                return cast(OutputDataT, deferred_tool_requests)
-            elif self._output_schema.allows_image and message.images:
-                return await self._validate_image_output(message.images[0], allow_partial=allow_partial)
-            elif text_processor := self._output_schema.text_processor:
-                text = ''
-                text_before_native_tool_call = ''
-                for part in message.parts:
-                    if isinstance(part, _messages.TextPart):
-                        text += part.content
-                    elif isinstance(part, _messages.NativeToolCallPart):
-                        # Text parts before a built-in tool call are essentially thoughts,
-                        # not part of the final result output, so we reset the accumulated text
-                        text_before_native_tool_call = text or text_before_native_tool_call
-                        text = ''
-                # Unless no text or function tool call follows the last native tool call (see `CallToolsNode`).
-                if not message.tool_calls:
-                    text = text or text_before_native_tool_call
-
-                return await self._validate_text_output(
-                    text_processor,
-                    text,
-                    # Only text parsed against a schema, as for `NativeOutput` and `PromptedOutput`, names the limit.
-                    cut_off=message.finish_reason == 'length' and isinstance(text_processor, BaseObjectOutputProcessor),
-                    allow_partial=allow_partial,
-                )
-            else:
-                raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
-                    'Invalid response, unable to process text output'
-                )
+            return await self._validate_output(message, output_tool_name, allow_partial=allow_partial)
         except (ValidationError, exceptions.ModelRetry) as e:
             if not allow_partial:
                 raise exceptions.UnexpectedModelBehavior(
                     'Output validation failed during streaming, and retries are not supported in `run_stream()`'
                 ) from e
             raise
+
+    async def _validate_output(
+        self, message: _messages.ModelResponse, output_tool_name: str | None, *, allow_partial: bool
+    ) -> OutputDataT:
+        """Validate `message` as the output kind it holds: an output tool call, deferred tool calls, an image or text."""
+        if self._output_schema.toolset and output_tool_name is not None:
+            tool_call = next(
+                (part for part in message.tool_calls if part.tool_name == output_tool_name),
+                None,
+            )
+            if tool_call is None:
+                raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
+                    f'Invalid response, unable to find tool call for {output_tool_name!r}'
+                )
+            return await self._validate_tool_output(
+                tool_call,
+                # As in `CallToolsNode`, only the tool call the response ended on can have been cut off.
+                cut_off=message.finish_reason == 'length' and message.parts[-1] is tool_call,
+                allow_partial=allow_partial,
+            )
+        elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
+            if not self._output_schema.allows_deferred_tools:
+                raise exceptions.UserError(
+                    'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
+                )
+            return cast(OutputDataT, deferred_tool_requests)
+        elif self._output_schema.allows_image and message.images:
+            return await self._validate_image_output(message.images[0], allow_partial=allow_partial)
+        elif text_processor := self._output_schema.text_processor:
+            return await self._validate_text_output(
+                text_processor,
+                _output_text(message),
+                # Only text parsed against a schema, as for `NativeOutput` and `PromptedOutput`, names the limit.
+                cut_off=message.finish_reason == 'length' and isinstance(text_processor, BaseObjectOutputProcessor),
+                allow_partial=allow_partial,
+            )
+        else:
+            raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
+                'Invalid response, unable to process text output'
+            )
 
     async def _validate_tool_output(
         self, tool_call: _messages.ToolCallPart, *, cut_off: bool, allow_partial: bool
@@ -377,7 +381,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             )
         except ValidationError as e:
             # Say that the token limit cut the arguments off, as `CallToolsNode` does, rather than only that they're invalid.
-            if cut_off and not allow_partial and is_incomplete_json(e):
+            if cut_off and not allow_partial and are_tool_call_args_cut_off(tool_call):
                 raise exceptions.IncompleteToolCall(incomplete_tool_call_message(self._max_tokens_getter())) from e
             raise
 
@@ -423,45 +427,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     ) -> AsyncIterator[str]:
         """Stream the response as an async iterable of text."""
 
-        # Define a "merged" version of the iterator that will yield items that have already been retrieved
-        # and items that we receive while streaming. We define a dedicated async iterator for this so we can
-        # pass the combined stream to the group_by_temporal function within `_stream_text_deltas` below.
-        async def _stream_text_deltas_ungrouped() -> AsyncIterator[tuple[str, int]]:
-            # yields tuples of (text_content, part_index)
-            # we don't currently make use of the part_index, but in principle this may be useful
-            # so we retain it here for now to make possible future refactors simpler
-            msg = self.response
-            for i, part in enumerate(msg.parts):
-                if isinstance(part, _messages.TextPart) and part.content:
-                    yield part.content, i
-
-            last_text_index: int | None = None
-            async for event in self:
-                if (
-                    isinstance(event, _messages.PartStartEvent)
-                    and isinstance(event.part, _messages.TextPart)
-                    and event.part.content
-                ):
-                    last_text_index = event.index
-                    yield event.part.content, event.index
-                elif (
-                    isinstance(event, _messages.PartDeltaEvent)
-                    and isinstance(event.delta, _messages.TextPartDelta)
-                    and event.delta.content_delta
-                ):
-                    last_text_index = event.index
-                    yield event.delta.content_delta, event.index
-                elif (
-                    isinstance(event, _messages.PartStartEvent)
-                    and isinstance(event.part, _messages.NativeToolCallPart)
-                    and last_text_index is not None
-                ):
-                    # Text parts that are interrupted by a built-in tool call should not be joined together directly
-                    yield '\n\n', event.index
-                    last_text_index = None
-
         async def _stream_text_deltas() -> AsyncGenerator[str, None]:
-            async with _utils.group_by_temporal(_stream_text_deltas_ungrouped(), debounce_by) as group_iter:
+            async with _utils.group_by_temporal(self._stream_text_deltas_ungrouped(), debounce_by) as group_iter:
                 async for items in group_iter:
                     # Note: we are currently just dropping the part index on the group here
                     yield ''.join([content for content, _ in items])
@@ -483,6 +450,44 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                         # The model stream was replaced mid-stream (see `_abandon_model_stream`), voiding its text.
                         parts = self.response.parts
                         yield ''.join(part.content for part in parts if isinstance(part, _messages.TextPart))
+
+    async def _stream_text_deltas_ungrouped(self) -> AsyncIterator[tuple[str, int]]:
+        """A "merged" iterator of the text already retrieved and the text received while streaming.
+
+        `_stream_response_text` passes it to `_utils.group_by_temporal`.
+        """
+        # yields tuples of (text_content, part_index)
+        # we don't currently make use of the part_index, but in principle this may be useful
+        # so we retain it here for now to make possible future refactors simpler
+        msg = self.response
+        for i, part in enumerate(msg.parts):
+            if isinstance(part, _messages.TextPart) and part.content:
+                yield part.content, i
+
+        last_text_index: int | None = None
+        async for event in self:
+            if (
+                isinstance(event, _messages.PartStartEvent)
+                and isinstance(event.part, _messages.TextPart)
+                and event.part.content
+            ):
+                last_text_index = event.index
+                yield event.part.content, event.index
+            elif (
+                isinstance(event, _messages.PartDeltaEvent)
+                and isinstance(event.delta, _messages.TextPartDelta)
+                and event.delta.content_delta
+            ):
+                last_text_index = event.index
+                yield event.delta.content_delta, event.index
+            elif (
+                isinstance(event, _messages.PartStartEvent)
+                and isinstance(event.part, _messages.NativeToolCallPart)
+                and last_text_index is not None
+            ):
+                # Text parts that are interrupted by a built-in tool call should not be joined together directly
+                yield '\n\n', event.index
+                last_text_index = None
 
     def __aiter__(self) -> AsyncIterator[AgentStreamEvent]:
         """Stream [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s, interleaving events emitted into the run's event buffer."""
@@ -547,8 +552,18 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 pass
         return True
 
+    def _with_origin(self, event: ModelResponseStreamEvent) -> ModelResponseStreamEvent:
+        """The event, stamped with the origin of the response it came from."""
+        if (origin := self._origin) is None:
+            run_id = self._run_ctx.run_id
+            assert run_id is not None, 'An agent run always has a `run_id`.'
+            origin = self._origin = _messages.ModelResponseOrigin(
+                run_id=run_id, run_step=self._run_ctx.run_step, attempt=self._attempt
+            )
+        return replace(event, origin=origin)
+
     async def _model_events(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        """The model stream's events, followed by its replacement's if the stream was abandoned."""
+        """The model stream's events, followed by its replacement's if the stream was abandoned, stamped with their origin."""
         events = aiter(self._raw_stream_response)
         while self._replacement_response is None:
             event: ModelResponseStreamEvent | None = None
@@ -563,15 +578,18 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             if event is None:
                 self._model_stream_finished = True
                 return
-            yield event
+            yield self._with_origin(event)
 
         response = await self._replacement_response()
         if response is not None:
+            # The replacement is another response at the request step, streamed as its next attempt.
+            self._attempt += 1
+            self._origin = None
             self._raw_stream_response = models.CompletedStreamedResponse(
                 response, model_request_parameters=self._model_request_parameters, replay_events=True
             )
             async for event in self._raw_stream_response:
-                yield event
+                yield self._with_origin(event)
 
     async def _pull_shared(self, events_iterator: AsyncIterator[AgentStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
         # Serialize access to the shared iterator. An early break from stream_text() can leave a
@@ -637,6 +655,16 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
     _run_result: AgentRunResult[OutputDataT] | None = None
 
+    _settled_from: tuple[GraphAgentState, int] | None = None
+    """The run's state, and where the messages this result adds to its copy of the history start.
+
+    Set when the stream's own response ends the run, so the settled result keeps what the run's would: what saving the
+    conversation it was given needs, and the full history when a capability dropped or rewrote messages.
+    """
+
+    _settled: AgentRunResult[OutputDataT] | None = field(default=None, init=False)
+    """The settled result `result` built, so saving it to a store updates the one every later `result` returns."""
+
     is_complete: bool = field(default=False, init=False)
     """Whether the stream has all been received.
 
@@ -654,6 +682,8 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         new_message_index: int,
         stream_response: AgentStream[AgentDepsT, OutputDataT] | None,
         on_complete: Callable[[], Awaitable[None]] | None,
+        *,
+        compactions: list[_messages.CompactionRecord] | None = None,
     ) -> None: ...
 
     @overload
@@ -672,9 +702,12 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         stream_response: AgentStream[AgentDepsT, OutputDataT] | None = None,
         on_complete: Callable[[], Awaitable[None]] | None = None,
         run_result: AgentRunResult[OutputDataT] | None = None,
+        *,
+        compactions: list[_messages.CompactionRecord] | None = None,
     ) -> None:
         self._all_messages = all_messages
         self._new_message_index = new_message_index
+        self._compactions = compactions if compactions is not None else []
 
         self._stream_response = stream_response
         self._on_complete = on_complete
@@ -709,7 +742,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         from ._agent_graph import GraphAgentState
         from .run import AgentRunResult
 
-        if (run_result := self._run_result) is not None:
+        if (run_result := self._run_result or self._settled) is not None:
             return run_result
         elif self._stream_response is not None:
             if not self.is_complete:
@@ -723,24 +756,43 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                     'until it stopped are still available from `all_messages()`.'
                 )
             output, output_tool_name = self._stream_response._settled_output()  # pyright: ignore[reportPrivateUsage]
+            state, start = self._settled_from or (GraphAgentState(), 0)
             result = AgentRunResult(
                 output=output,
                 _output_tool_name=output_tool_name,
-                _state=GraphAgentState(
+                _state=replace(
+                    state,
                     message_history=self._all_messages,
                     usage=self.usage,
                     run_id=self.run_id,
                     conversation_id=self.conversation_id,
                     metadata=self.metadata,
+                    compactions=self._compactions,
+                    appended_messages=self._settled_full_history(state.appended_messages, start),
                 ),
                 _new_message_index=self._new_message_index,
                 _traceparent_value=self._traceparent_value,
             )
             # As in AgentRun.result, this isn't a dataclass field because a live workspace can't be serialized.
             result.__dict__['_workspace'] = self.workspace
+            self._settled = result
             return result
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
+
+    def _settled_full_history(self, record: AppendedMessages, start: int) -> AppendedMessages:
+        """The full history for the settled result of a run whose history a capability rewrote, or an empty record."""
+        from ._appended_messages import AppendedMessages
+
+        if not record.full or record.messages is None:
+            return AppendedMessages()
+        # The run kept its full history when it ended, with the streamed response, which the run commits itself, but
+        # not the request with the tool returns the stream added to its copy after it. Content queued at a deferred
+        # pause is in both, recorded before the run committed the response, so the copy's order is kept for it.
+        added = [message for message in self._all_messages[start:] if isinstance(message, _messages.ModelRequest)]
+        in_copy = {id(message) for message in added}
+        kept = [message for message in record.messages if id(message) not in in_copy]
+        return AppendedMessages([*kept, *added], record.new_message_index, full=True)
 
     def all_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
         """Return the history of _messages.
@@ -868,6 +920,8 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         Each yielded `ModelResponse` is the current state of the response: `response.state` is
         `'incomplete'` while streaming is in flight and `'complete'` (or `'interrupted'` if
         [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] was called) on the final yield.
+        It stays `'incomplete'` on the final yield if the model detected that the stream ended before the
+        provider's terminal event.
 
         Args:
             debounce_by: by how much (if at all) to debounce/group the response chunks by. `None` means no debouncing.
@@ -915,6 +969,20 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             return self._stream_response.response
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
+
+    @property
+    def compactions(self) -> list[_messages.CompactionRecord]:
+        """The compactions this run kept so far, in the order it kept them.
+
+        The message history only shows the compacted history:
+        [`new_messages()`][pydantic_ai.result.StreamedRunResult.new_messages] are this run's messages still in it. Each
+        [`CompactionRecord`][pydantic_ai.messages.CompactionRecord] says what it replaced, so you can tell which
+        messages were summarized, for example to store the conversation's full log. A compaction made for an attempt
+        that then failed isn't included.
+        """
+        if self._run_result is not None:
+            return self._run_result.compactions
+        return self._compactions
 
     @property
     def metadata(self) -> dict[str, Any] | None:
@@ -1195,6 +1263,8 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
 
         Each yielded `ModelResponse` is the current state of the response: `response.state` is
         `'incomplete'` while streaming is in flight and `'complete'` on the final yield.
+        It stays `'incomplete'` on the final yield if the model detected that the stream ended before the
+        provider's terminal event.
 
         Args:
             debounce_by: by how much (if at all) to debounce/group the response chunks by. `None` means no debouncing.
@@ -1244,6 +1314,14 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
     def metadata(self) -> dict[str, Any] | None:
         """Metadata associated with this agent run, if configured."""
         return self._streamed_run_result.metadata
+
+    @property
+    def compactions(self) -> list[_messages.CompactionRecord]:
+        """The compactions this run kept so far.
+
+        See [`StreamedRunResult.compactions`][pydantic_ai.result.StreamedRunResult.compactions].
+        """
+        return self._streamed_run_result.compactions
 
     @property
     def workspace(self) -> Workspace:
@@ -1329,3 +1407,21 @@ def _get_deferred_tool_requests(
         return None
 
     return DeferredToolRequests(calls=calls, approvals=approvals)
+
+
+def _output_text(message: _messages.ModelResponse) -> str:
+    """The text of a streamed response that `AgentStream.validate_response_output` validates as output."""
+    text = ''
+    text_before_native_tool_call = ''
+    for part in message.parts:
+        if isinstance(part, _messages.TextPart):
+            text += part.content
+        elif isinstance(part, _messages.NativeToolCallPart):
+            # Text parts before a built-in tool call are essentially thoughts,
+            # not part of the final result output, so we reset the accumulated text
+            text_before_native_tool_call = text or text_before_native_tool_call
+            text = ''
+    # Unless no text or function tool call follows the last native tool call (see `CallToolsNode`).
+    if not message.tool_calls:
+        text = text or text_before_native_tool_call
+    return text

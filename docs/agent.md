@@ -297,6 +297,28 @@ if __name__ == '__main__':
 
 _(This example is complete, it can be run "as is")_
 
+#### Replaced responses {#replaced-responses}
+
+One request step can stream more than one response. A capability like [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] or [`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors] attempts the model again when the first attempt fails before streaming anything, a `wrap_model_request` hook can stop the model's stream and stream a response of its own instead, and under [durable execution](durable_execution/overview.md) the engine can run a model request again after it already streamed part of a response.
+
+Each model-stream event ([`PartStartEvent`][pydantic_ai.messages.PartStartEvent], [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent], [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] and [`FinalResultEvent`][pydantic_ai.messages.FinalResultEvent]) carries the [`ModelResponseOrigin`][pydantic_ai.messages.ModelResponseOrigin] it came from as `origin`: the run and request step, the attempt at that step, and the engine's execution of that attempt. Its [`response_id`][pydantic_ai.messages.ModelResponseOrigin.response_id] is the same for every execution of one attempt. A consumer that renders the stream keeps the latest origin it has seen for each request step and drops the events of any origin a later one [`supersedes`][pydantic_ai.messages.ModelResponseOrigin.supersedes]:
+
+```python {title="replaced_responses.py"}
+from pydantic_ai import ModelResponseOrigin
+
+latest: dict[tuple[str, int], ModelResponseOrigin] = {}
+
+
+def is_current(origin: ModelResponseOrigin) -> bool:
+    key = (origin.run_id, origin.run_step)
+    if (previous := latest.get(key)) is not None and previous.supersedes(origin):
+        return False  # a later attempt or execution replaced this response
+    latest[key] = origin
+    return True
+```
+
+Check every event, not only the first of each origin: a superseded execution's events can still arrive after its successor's. `origin` is left out of event equality and `repr()`, so read it from the event.
+
 ### Custom Events
 
 Alongside the framework's own events, a tool or code driving [`agent.iter()`](#iterating-over-an-agents-graph) can emit its own [`CustomEvent`][pydantic_ai.messages.CustomEvent]s into the same stream. This is useful for surfacing progress updates, intermediate results, or status information from long-running work to whoever is consuming the stream, without adding anything to the model's context.
@@ -1286,7 +1308,7 @@ except UsageLimitExceeded as e:
 Like `output_tokens_limit`, this is checked after each response, since a response's output cost isn't known until it arrives. Setting `count_tokens_before_request=True` additionally prices the counted input tokens and rejects the request up front when that lower bound alone exceeds the limit.
 
 !!! note
-    Cost is best-effort: it's `None` for models and providers [genai-prices](https://github.com/pydantic/genai-prices) has no pricing data for, including models released after your install unless you [keep prices up to date](#keeping-model-prices-up-to-date). With a [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit], a run that could not be priced at all emits [`CostNotFoundWarning`][pydantic_ai.exceptions.CostNotFoundWarning] rather than being silently unconstrained; an unexpected pricing failure emits [`CostCalculationFailedWarning`][pydantic_ai.exceptions.CostCalculationFailedWarning]. Usage extraction is also best-effort, and an unexpected extraction failure emits [`UsageExtractionFailedWarning`][pydantic_ai.exceptions.UsageExtractionFailedWarning]. Don't rely on `cost_limit` as a hard billing guarantee — pair it with [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit] or your provider's own spend controls.
+    Cost is best-effort: `usage.cost` is `None` for models and providers [genai-prices](https://github.com/pydantic/genai-prices) has no pricing data for, including models released after your install unless you [keep prices up to date](#keeping-model-prices-up-to-date) (calling [`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost] directly raises `LookupError` in that case). With a [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit], a run that could not be priced at all emits [`CostNotFoundWarning`][pydantic_ai.exceptions.CostNotFoundWarning] rather than being silently unconstrained; an unexpected pricing failure emits [`CostCalculationFailedWarning`][pydantic_ai.exceptions.CostCalculationFailedWarning]. Usage extraction is also best-effort, and an unexpected extraction failure emits [`UsageExtractionFailedWarning`][pydantic_ai.exceptions.UsageExtractionFailedWarning]. Don't rely on `cost_limit` as a hard billing guarantee — pair it with [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit] or your provider's own spend controls.
 
 !!! note
     Token and cost limits rely on provider-reported usage. When a completed response omits usage, [`RunUsage.unmeasured_requests`][pydantic_ai.usage.RunUsage.unmeasured_requests] counts it, and known token totals and cost remain lower bounds. Independently known costs, such as native tool fees, still contribute to the subtotal; any known token or cost subtotal that exceeds a limit still raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded]. Calling [`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost] on an individual response with no usage raises `ValueError`. If a token or cost limit is configured, Pydantic AI emits [`UsageLimitUnavailableWarning`][pydantic_ai.exceptions.UsageLimitUnavailableWarning] and returns the result by default. Request and tool-call limits do not depend on reported usage and do not emit this warning. To abort when usage is unavailable, configure Python's warning filter to treat the category as an error:
@@ -1322,7 +1344,7 @@ from pydantic_ai.models.google import GoogleModel
 
 # 1. Model-level defaults
 model = GoogleModel(
-    '{{ google:medium.name }}',
+    '{{ google:small.name }}',
     settings=ModelSettings(temperature=0.8, max_tokens=500)  # Base defaults
 )
 
@@ -1465,7 +1487,7 @@ from google.genai.types import HarmBlockThreshold, HarmCategory
 from pydantic_ai import Agent, UnexpectedModelBehavior
 from pydantic_ai.models.google import GoogleModelSettings
 
-agent = Agent('{{ google:medium }}')
+agent = Agent('{{ google:small }}')
 
 try:
     result = agent.run_sync(
@@ -1983,13 +2005,11 @@ Instructions that Pydantic AI and [Pydantic AI Harness](harness/index.md) comput
 
 Some instructions are only needed by some models, to counter something those models tend to do. An instruction function can read the model handling the request from `ctx.model`, and its [profile](models/overview.md#inspecting-a-models-profile) from `ctx.model.profile`. Instructions are resolved before every request, and again for each model the [`ModelFallback`](capabilities/model-fallback.md#instructions-for-each-model) capability moves a request on to, so the text always matches the model that receives it.
 
-A conversation can move between models: a request falls back, or a later run continues the history on another model. To keep the instructions the conversation started with and tell the model what changed, write a line only some models need as follows:
+A conversation can move between models: a request falls back, or a later run continues the history on another model. Give a line only some models need its own named block, empty for a model that doesn't need it, and leave it on the default `on_change='rewrite'`. A model the conversation moves to is then sent the instructions it would have had from the start, with or without the line, and nothing is said about the change. The new model has no cached prompt for the conversation anyway, so rewriting the instructions costs little.
 
-- Give it its own named block.
-- Contribute the block from the first request, empty for a model that doesn't need it.
-- Have it append its changes with `on_change='append'`.
+Don't append such a line's changes with [`on_change='append'`](#appending-instruction-changes): a model that doesn't need it would keep the old model's line in its instructions, followed by a note that it was withdrawn. Models tend to repeat that note to the user, as a rule they were never shown, and it doesn't restore what they would have done had the line never been sent. Keep withdrawals for instructions that really go away, like those of a capability that was removed.
 
-A model that doesn't need the line is then sent the instructions the conversation started with, followed by a note that the block was withdrawn, and a model that needs it and didn't have it is sent the line as a change.
+Gate only on behavioral traits like [`delegates_unprompted`][pydantic_ai.profiles.ModelProfile.delegates_unprompted]. Facts about what a model supports (tools, modalities, limits) belong to the framework and the profile, not to model-visible text.
 
 ```python {title="model_specific_instructions.py"}
 from pydantic_ai import Agent, ModelRequest, RunContext
@@ -2006,7 +2026,6 @@ def no_unrequested_delegation(ctx: RunContext) -> InstructionPart:
     return InstructionPart(
         "Don't spawn sub-agents unless the user asks." if delegates else '',
         name='delegation',
-        on_change='append',
     )
 
 
@@ -2029,7 +2048,7 @@ print(instructions_sent(TestModel()))
 #> Be brief.
 ```
 
-1. [`delegates_unprompted`][pydantic_ai.profiles.ModelProfile.delegates_unprompted] is set for OpenAI's GPT models. `ctx.model` can also be a [realtime model](realtime/overview.md), which has no `Model.profile`. [Pydantic AI Harness `Coder`](harness/coder.md) uses the same pattern for its own rule against unrequested delegation.
+1. [`delegates_unprompted`][pydantic_ai.profiles.ModelProfile.delegates_unprompted] is set for OpenAI's GPT models. `ctx.model` can also be a [realtime model](realtime/overview.md), which has no `Model.profile`. [Pydantic AI Harness `Coder`](harness/coder.md) uses the same pattern for its own rule against unrequested delegation. At `'max'` autonomy, it also has blocks of its own for the sentences it sends only to models with [`reinterprets_malformed_inputs`][pydantic_ai.profiles.ModelProfile.reinterprets_malformed_inputs], [`omits_handoff_evidence`][pydantic_ai.profiles.ModelProfile.omits_handoff_evidence], or [`ignores_stated_runtime_constraints`][pydantic_ai.profiles.ModelProfile.ignores_stated_runtime_constraints]. For a line whose text differs between models rather than being needed by only some, return the text each model needs from the same block.
 2. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] picks its model per request, inside the model call, so it has no profile of its own: reading `ctx.model.profile` raises `NotImplementedError`, and the line is left out. To have instructions follow the model that serves each request, use the [`ModelFallback`](capabilities/model-fallback.md) capability instead. Pydantic AI Harness `Coder` warns once when it runs on a `FallbackModel`.
 
 #### Keep untrusted text out of instructions {#untrusted-instruction-text}

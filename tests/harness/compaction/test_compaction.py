@@ -3469,13 +3469,13 @@ class TestPublicPath:
         assert _summary_text(sent[-1]) == 'the summary'
 
     async def test_retries_field_absorbs_tool_call_imitations(self):
-        """`retries` raises the summary budget so consecutive tool-call imitations don't kill the run.
+        """`retries` raises the summary budget so consecutive tool-call imitations still produce a summary.
 
         The summary agent is toolless, so an emitted call is an unknown tool, which burns core's
         retry budget in one strike; at the default of 1 the second imitation raises
-        `UnexpectedModelBehavior` that escapes and kills the parent run, naming a tool the
-        summarizer never declared. The transcript it reads is full of calls to imitate, so a weak
-        summarizer model needs the budget raised from outside.
+        `UnexpectedModelBehavior`, and the automatic attempt is discarded without a summary. The
+        transcript it reads is full of calls to imitate, so a weak summarizer model needs the budget
+        raised from outside to get a summary at all.
         """
         responses = iter(
             [
@@ -3492,7 +3492,10 @@ class TestPublicPath:
             summarizer_calls += 1
             return next(responses)
 
+        sent: list[list[ModelMessage]] = []
+
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(messages)
             return ModelResponse(parts=[TextPart(content='ok')])
 
         history: list[ModelMessage] = []
@@ -3514,34 +3517,9 @@ class TestPublicPath:
         result = await agent.run('next', message_history=history)
 
         assert result.output == 'ok'
-        # The imitations were retried within the raised budget, not fatal.
+        # The imitations were retried within the raised budget, not fatal, and the summary was committed.
         assert summarizer_calls == 4
-
-    async def test_persistently_empty_summary_raises_instead_of_replacing_history(self):
-        def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(content=' \n')])
-
-        sent: list[list[ModelMessage]] = []
-
-        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
-            sent.append(messages)  # the run must fail before this request
-            return ModelResponse(parts=[TextPart(content='ok')])
-
-        history: list[ModelMessage] = []
-        for i in range(5):
-            history += [_user(f'q{i}'), _assistant(f'a{i}')]
-        agent = Agent(
-            FunctionModel(respond),
-            capabilities=[
-                SummarizingCompaction(
-                    FunctionModel(summarize), max_messages=4, keep_messages=1, preserve_first_user_message=False
-                )
-            ],
-        )
-
-        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
-            await agent.run('next', message_history=history)
-        assert sent == []
+        assert _summary_text(sent[-1]) == 'the summary'
 
     @pytest.mark.parametrize('summary_text', ['', ' \n'])
     @pytest.mark.parametrize('request_limit', [2, 3])
@@ -3901,6 +3879,8 @@ class TestCompactionSpan:
         summary_run = next(s for s in spans if s['attributes'].get('agent_name') == 'summarizing_compaction')
         assert summary_run['attributes']['gen_ai.conversation.id'] == 'conversation-1'
         assert 'baggage_conflict.gen_ai.conversation.id' not in summary_run['attributes']
+        # It shares the parent's conversation, so it has no other top-level conversation to record.
+        assert 'pydantic_ai.root_conversation_id' not in summary_run['attributes']
 
     async def test_span_emitted_when_threshold_exceeded(self, capfire: CaptureLogfire) -> None:
 
@@ -6358,7 +6338,7 @@ class TestHarnessData:
 
         comp = SummarizingCompaction(
             model=FunctionModel(summarize_fn),
-            max_messages=3,
+            max_messages=2,
             keep_messages=1,
             keep_user_messages=True,
             bridge_prefix=False,

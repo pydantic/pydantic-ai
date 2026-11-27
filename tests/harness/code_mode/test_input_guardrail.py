@@ -13,6 +13,7 @@ import re
 from collections.abc import AsyncIterator, Callable
 
 import pytest
+from pydantic_monty import ExternalModule
 
 from pydantic_ai import Agent, ModelRequestContext, ModelRetry, RunContext
 from pydantic_ai.capabilities import AgentCapability, Hooks
@@ -84,7 +85,8 @@ class GuardedRun:
     before the stream finished.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, first_chunk: str = FIRST_CHUNK) -> None:
+        self.first_chunk = first_chunk
         self.calls: list[int] = []
         self.calls_at_verdict: list[int] | None = None
         self.call_started = asyncio.Event()
@@ -117,7 +119,7 @@ class GuardedRun:
             return
         self.requested.set()
         await self.first_chunk_released.wait()
-        yield {0: DeltaToolCall(name='run_code', json_args=FIRST_CHUNK, tool_call_id='run_code_1')}
+        yield {0: DeltaToolCall(name='run_code', json_args=self.first_chunk, tool_call_id='run_code_1')}
         await asyncio.wait_for(self.call_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
         self.calls_at_verdict = list(self.calls)
         self.verdict_due.set()
@@ -144,6 +146,41 @@ class TestCodeModeInputGuardrail:
             return GuardrailResult.block('blocked')
 
         result = await run.agent(code_mode(), InputGuardrail(guard=guard, parallel=True)).run('go')
+
+        assert result.output == 'blocked'
+        assert run.calls == []
+
+    async def test_parallel_guard_that_blocks_runs_no_module_function(self, monkeypatch: pytest.MonkeyPatch):
+        """A host module function is a side effect too, so an eager call to it waits for the verdict."""
+        # The snippet calls the module function where the tool-call tests call the `ping` tool.
+        run = GuardedRun(FIRST_CHUNK.replace('a = await ping', 'import hosted\\na = hosted.ping'))
+
+        async def allow(ctx: RunContext[object]) -> bool:
+            run.call_started.set()
+            return await input_guardrails_allow(ctx)
+
+        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.input_guardrails_allow', allow)
+
+        async def guard(prompt: str) -> GuardrailResult:
+            await run.verdict_due.wait()
+            return GuardrailResult.block('blocked')
+
+        # The blocked prompt must never reach it.
+        def ping(n: int) -> int:  # pragma: no cover
+            run.calls.append(n)
+            run.first_call_ran.set()
+            return n
+
+        hosted = ExternalModule({'ping': ping}, stubs='def ping(n: int) -> int: ...')
+        agent = Agent(
+            FunctionModel(stream_function=run.stream),
+            deps_type=type(None),
+            capabilities=[
+                CodeMode[None](eager=True, external_modules={'hosted': hosted}),
+                InputGuardrail(guard=guard, parallel=True),
+            ],
+        )
+        result = await agent.run('go')
 
         assert result.output == 'blocked'
         assert run.calls == []

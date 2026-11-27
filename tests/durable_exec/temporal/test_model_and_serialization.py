@@ -50,6 +50,7 @@ from pydantic_ai import (
 from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai._instrumentation import model_request_parameters_attributes
 from pydantic_ai._run_context import with_tool_name_layer
+from pydantic_ai._unsupported_settings import raise_warnings, warn_unsupported_settings
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     Capability,
@@ -73,15 +74,23 @@ from pydantic_ai.exceptions import (
     ModelServerError,
     ModelTimeoutError,
     RetryModelRequest,
+    UnsupportedSettingWarning,
     UserError,
 )
 from pydantic_ai.messages import (
     CUSTOM_EVENT_TYPES,
+    AgentInstructionSource,
     CapabilityEvent,
+    CapabilityInstructionSource,
+    CompactionEndEvent,
+    CompactionPart,
+    CompactionRecord,
     CustomEvent,
+    InstructionDeltaPart,
     InstructionId,
     InstructionPart,
     ModelRequestAttempt,
+    RunInstructionSource,
     ThinkingPart,
     ToolsetInstructionSource,
     UnknownCustomEvent,
@@ -1185,11 +1194,13 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'capabilities',  # live capability objects (toolsets/hooks/callables), not serializable
         'root_capability',  # live capability chain, not serializable; reattached from the bound agent by deserialize_run_context
         'pending_messages',  # live run queue, meaningless outside the running agent; replaced by an EnqueueGuard
+        '_compaction_requests',  # live run state; `request_compaction` raises inside an activity
         'messages',  # full history would be duplicated into every activity payload, against Temporal's 2MB limit
         'prompt',  # multi-modal BinaryContent would ride in every payload, against Temporal's 2MB limit; text-only subclasses can opt in
         'validation_context',  # arbitrary user object with no serialization contract
         'model_settings',  # only set for model requests, which receive it as their own typed activity param
         '_mcp_tool_defs_cache',  # run-local cache read/written in workflow code; never needed inside an activity
+        '_appended_messages',  # run-local record of the history appended to in workflow code; never needed inside an activity
         '_event_stream_buffer',  # live run event buffer, unreachable from an activity (`emit` raises there)
         '_pending_immediate_dispatches',  # live workflow-side event deduplication state
         '_event_stream_replacements',  # live workflow-side legacy-replacement state applied at stream position
@@ -1318,6 +1329,90 @@ async def test_payload_converter_rebuilds_adapter_when_an_event_class_registers_
         assert decoded.done == 1
     finally:
         CUSTOM_EVENT_TYPES.pop('temporal_late_registration', None)
+
+
+_INSTRUCTION_IDS = [
+    InstructionId(AgentInstructionSource()),
+    InstructionId(AgentInstructionSource(), name='persona'),
+    InstructionId(RunInstructionSource(), name='task'),
+    InstructionId(ToolsetInstructionSource('memory')),
+    InstructionId(ToolsetInstructionSource('memory'), name='usage'),
+    InstructionId(CapabilityInstructionSource('memory')),
+    InstructionId(CapabilityInstructionSource('memory'), name='usage'),
+]
+
+
+def test_payload_converter_round_trips_instruction_ids() -> None:
+    """Every instruction source keeps its type through the payload converter (#14492).
+
+    The converter writes an id as an object rather than its string, so the source's `kind` is what tells a
+    capability from a toolset with the same `id`, and a run from the agent.
+    """
+    converter = PydanticAIPayloadConverter()
+    request = ModelRequest(parts=[InstructionDeltaPart(id=id, content='x') for id in _INSTRUCTION_IDS])
+
+    [decoded] = converter.from_payloads(converter.to_payloads([request]), [ModelRequest])
+
+    assert [part.id for part in decoded.parts] == _INSTRUCTION_IDS
+    assert [str(part.id) for part in decoded.parts] == snapshot(
+        [
+            'agent',
+            'agent:persona',
+            'run:task',
+            'toolset:memory',
+            'toolset:memory:usage',
+            'capability:memory',
+            'capability:memory:usage',
+        ]
+    )
+
+
+def test_payload_converter_decodes_instruction_ids_without_kind() -> None:
+    """A payload written before instruction sources carried a `kind` decodes as it always has.
+
+    Those payloads can be in recorded workflow histories, and replay has to rebuild the values the workflow
+    first ran with. The source's fields alone can't tell a capability from a toolset or a run from the agent,
+    so an id-bearing source reads as a toolset and an empty one as the agent.
+    """
+    payload = temporalio.api.common.v1.Payload(
+        metadata={'encoding': b'json/plain'},
+        data=(
+            b'{"parts":['
+            b'{"id":{"source":{},"name":null},"content":"x","part_kind":"instruction-delta"},'
+            b'{"id":{"source":{},"name":"task"},"content":"x","part_kind":"instruction-delta"},'
+            b'{"id":{"source":{"id":"memory"},"name":null},"content":"x","part_kind":"instruction-delta"},'
+            b'{"id":{"source":{"id":"memory"},"name":"usage"},"content":"x","part_kind":"instruction-delta"},'
+            b'{"id":"capability:memory","content":"x","part_kind":"instruction-delta"}'
+            b'],"kind":"request"}'
+        ),
+    )
+
+    [decoded] = PydanticAIPayloadConverter().from_payloads([payload], [ModelRequest])
+
+    assert [part.id for part in decoded.parts] == [
+        InstructionId(AgentInstructionSource()),
+        InstructionId(AgentInstructionSource(), name='task'),
+        InstructionId(ToolsetInstructionSource('memory')),
+        InstructionId(ToolsetInstructionSource('memory'), name='usage'),
+        InstructionId(CapabilityInstructionSource('memory')),
+    ]
+
+
+def test_payload_converter_reads_an_unknown_instruction_source_kind_as_unaddressable() -> None:
+    """A source `kind` from a newer version leaves the id unaddressable, as an unknown string namespace does."""
+    payload = temporalio.api.common.v1.Payload(
+        metadata={'encoding': b'json/plain'},
+        data=(
+            b'{"parts":['
+            b'{"id":{"source":{"id":"x","kind":"workspace"},"name":null},"content":"x","part_kind":"instruction-delta"},'
+            b'{"id":{"source":{"id":"memory","kind":"capability"},"name":null},"content":"x","part_kind":"instruction-delta"}'
+            b'],"kind":"request"}'
+        ),
+    )
+
+    [decoded] = PydanticAIPayloadConverter().from_payloads([payload], [ModelRequest])
+
+    assert [part.id for part in decoded.parts] == [None, InstructionId(CapabilityInstructionSource('memory'))]
 
 
 async def test_unknown_custom_event_recovers_across_workers() -> None:
@@ -3782,6 +3877,33 @@ def _crossed(error: ModelAPIError) -> BaseException:
     return rebuilt.value
 
 
+def test_an_unsupported_setting_warning_raised_for_fallback_crosses_as_itself_unretried():
+    """The warning a model raises for a `fallback_on` that names it reaches the workflow as itself, never retried.
+
+    A unit test, as the `non_retryable` flag and the rebuilt error class aren't visible in a provider recording; the
+    end-to-end fallback is covered in `test_durability.py`.
+    """
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors(), raise_warnings():
+            warn_unsupported_settings('m', {'stop_sequences': ['x']}, {'stop_sequences'}, has_function_tools=False)
+    assert raised.value.non_retryable
+    with pytest.raises(UnsupportedSettingWarning, match="The `stop_sequences` setting is not supported by model 'm'"):
+        with rebuilt_model_errors():
+            raise _activity_error(raised.value)
+
+
+def test_an_unsupported_setting_warning_a_filter_raised_fails_the_activity_as_before():
+    """A warning a warnings filter turned into an error isn't translated: the activity fails, and retries, as before.
+
+    A unit test, as whether the activity translates an error isn't visible in a provider recording.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UnsupportedSettingWarning)
+        with pytest.raises(UnsupportedSettingWarning):
+            with model_errors_as_application_errors():
+                warn_unsupported_settings('m', {'stop_sequences': ['x']}, {'stop_sequences'}, has_function_tools=False)
+
+
 def test_what_a_stream_produced_before_failing_crosses_with_its_error():
     """The partial response of a stream that failed after producing output reaches the workflow unchanged.
 
@@ -4182,3 +4304,38 @@ def test_payload_converter_decodes_journal_entries_written_before_records():
 
     converter = temporal_payload_converter.PydanticAIJSONPlainPayloadConverter()
     assert converter.from_payload(payload, cast(type, CallToolResult)) == result
+
+
+def test_payload_converter_leaves_out_what_a_compaction_replaced():
+    """A `CompactionRecord`'s `replaced` history isn't written to an activity payload, alone or in its end event.
+
+    The converter serializes a value by inference, which would otherwise ignore the field's exclusion.
+    """
+    record = CompactionRecord(
+        part=CompactionPart(content='summary'),
+        handler='summarize',
+        reason='manual',
+        model_name='m',
+        provider_name='p',
+        messages_before=1,
+        messages_after=1,
+        kept_from=1,
+        part_message_index=0,
+        part_index=0,
+        replaced=[ModelRequest(parts=[UserPromptPart('the replaced history')])],
+    )
+    converter = temporal_payload_converter.PydanticAIJSONPlainPayloadConverter()
+
+    record_payload = converter.to_payload(record)
+    event_payload = converter.to_payload(CompactionEndEvent(record=record))
+    for payload in (record_payload, event_payload):
+        assert payload is not None
+        assert b'the replaced history' not in payload.data
+        assert b'"replaced"' not in payload.data
+    assert record_payload is not None and event_payload is not None
+
+    loaded_record = converter.from_payload(record_payload, CompactionRecord)
+    loaded_event = converter.from_payload(event_payload, CompactionEndEvent)
+    for loaded in (loaded_record, loaded_event.record):
+        assert loaded == record
+        assert loaded.replaced is None

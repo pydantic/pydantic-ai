@@ -36,6 +36,7 @@ from pydantic import BaseModel, TypeAdapter, ValidationInfo, field_validator
 
 from pydantic_ai import (
     Agent,
+    CompactionPart,
     Conversation,
     DeferredToolRequests,
     DeferredToolResults,
@@ -62,7 +63,14 @@ from pydantic_ai._instrumentation import (
     serialize_any,
     span_include_content,
 )
-from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, LocalWorkspace
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Capability,
+    CompactionRequest,
+    CompactionResult,
+    Hooks,
+    LocalWorkspace,
+)
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.direct import model_request
@@ -142,6 +150,7 @@ SECRETS = {
     'model_settings': 'SENTINEL-model-settings',
     'deps': 'SENTINEL-deps',
     'validation_context': 'SENTINEL-validation-context',
+    'compact': 'SENTINEL-compact-focus',
 }
 
 
@@ -1350,6 +1359,30 @@ async def test_no_content_reaches_telemetry_from_a_realtime_session(
     )
 
 
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_from_a_lowered_capabilitys_instructions(include_content: bool) -> None:
+    """A lowered capability's instructions reach the model as framed data, and with capture off no span carries them."""
+    settings, exporter = redacted_setup(include_content=include_content)
+    received: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.append(str(messages))
+        return ModelResponse(parts=[TextPart(SECRETS['model_text'])])
+
+    lowered = Capability[None](id='sentinel_lowered_block', instructions=SECRETS['capability_instruction'])
+    agent = Agent(
+        FunctionModel(respond),
+        deps_type=type(None),
+        capabilities=[lowered.with_authority('none'), Instrumentation(settings=settings)],
+    )
+    await agent.run(SECRETS['user_prompt'])
+
+    assert SECRETS['capability_instruction'] in received[-1]
+    check(exporter, include_content, {'user_prompt', 'capability_instruction', 'model_text'})
+    exported = '\n'.join(_span_text(span) for span in exporter.get_finished_spans())
+    assert ('capability:sentinel_lowered_block' in exported) is include_content
+
+
 @dataclass(frozen=True)
 class Swept:
     """A parameter a scenario in this module drives a sentinel through, so the sweep covers it."""
@@ -1421,6 +1454,30 @@ async def _probe_run_validation_context(settings: InstrumentationSettings) -> No
     )
     result = await agent.run('go')
     assert result.output.answer == 'done'
+
+
+class _ReadsCompactionFocus(AbstractCapability[Any]):
+    """Compacts the history to a fixed summary, keeping the focus it was asked for."""
+
+    def __init__(self) -> None:
+        self.focuses: list[str | None] = []
+
+    async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
+        self.focuses.append(request.focus)
+        part = CompactionPart(content='summary')
+        return CompactionResult(
+            messages=[ModelRequest(parts=[part]), request.messages[-1]], part=part, handler='reads-focus'
+        )
+
+
+async def _probe_run_compact(settings: InstrumentationSettings) -> None:
+    reads = _ReadsCompactionFocus()
+    agent = Agent(
+        FunctionModel(lambda _, __: ModelResponse(parts=[TextPart('done')])),
+        capabilities=[reads, Instrumentation(settings=settings)],
+    )
+    await agent.run('go', compact={'focus': SECRETS['compact']})
+    assert reads.focuses == [SECRETS['compact']]
 
 
 async def _probe_run_deps(settings: InstrumentationSettings) -> None:
@@ -1509,6 +1566,11 @@ ENTRY_POINT_PARAMETERS: dict[tuple[EntryPointGroup, str], Swept | NotExported | 
         _probe_run_model_settings,
         'Only numeric OTel-spec settings become `gen_ai.request.*` attributes (`model_settings_attributes`); text '
         'such as `extra_body` is recorded nowhere. The probe sends the sentinel in `extra_body`.',
+    ),
+    ('run', 'compact'): NotExported(
+        _probe_run_compact,
+        "A compaction's `focus` is handed to the `compact_history` hooks, and no span records it. The probe has a hook "
+        'read the sentinel from `CompactionRequest.focus`.',
     ),
     ('run', 'retries'): NotContent('Retry budgets: an int or `AgentRetries` counts.'),
     ('run', 'validation_context'): NotExported(

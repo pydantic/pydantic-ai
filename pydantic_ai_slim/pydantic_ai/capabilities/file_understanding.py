@@ -127,25 +127,10 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
 
         # Every file is found first, so the distinct ones can be described at once rather than one after another.
         recorded = self._recorded_descriptions([*ctx.messages, *request_context.messages])
-        descriptions: dict[str, str] = {}
-        pending: dict[str, SendableFile] = {}
-        unaccepted = False
-        for content in _file_content(request_context.messages):
-            if (item := _unaccepted_file(content, profile)) is None:
-                continue
-            unaccepted = True
-            if _is_text_bytes(item):
-                # Decoded where it is inlined: that costs nothing, so it isn't described or cached.
-                continue
-            identity = _identity(item)
-            if identity in descriptions or identity in pending:
-                continue
-            if (found := recorded.get(identity)) is not None:
-                descriptions[identity] = found
-            else:
-                pending[identity] = item
-        if not unaccepted:
+        found = _split_unaccepted_files(request_context.messages, profile, recorded)
+        if found is None:
             return request_context
+        descriptions, pending = found
 
         if pending:
             await self._describe_pending(ctx, pending, descriptions)
@@ -235,6 +220,33 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
         return result.output, result.usage
 
 
+def _split_unaccepted_files(
+    messages: list[ModelMessage], profile: ModelProfile, recorded: dict[str, str]
+) -> tuple[dict[str, str], dict[str, SendableFile]] | None:
+    """The descriptions and the files still to describe, by identity, of the files in `messages` the model doesn't accept.
+
+    A file `recorded` holds a description of is not described again. `None` when the model accepts every file.
+    """
+    descriptions: dict[str, str] = {}
+    pending: dict[str, SendableFile] = {}
+    unaccepted = False
+    for content in _file_content(messages):
+        if (item := _unaccepted_file(content, profile)) is None:
+            continue
+        unaccepted = True
+        if _is_text_bytes(item):
+            # Decoded where it is inlined: that costs nothing, so it isn't described or cached.
+            continue
+        identity = _identity(item)
+        if identity in descriptions or identity in pending:
+            continue
+        if (found := recorded.get(identity)) is not None:
+            descriptions[identity] = found
+        else:
+            pending[identity] = item
+    return (descriptions, pending) if unaccepted else None
+
+
 def _file_content(messages: list[ModelMessage]) -> Iterator[object]:
     """The items of every user prompt and of every tool result that carries files."""
     for message in messages:
@@ -270,28 +282,29 @@ def _substitute(message: ModelMessage, profile: ModelProfile, descriptions: dict
     if not isinstance(message, ModelRequest):
         return message
 
-    def text_for(content: _T) -> _T | str:
-        if (item := _unaccepted_file(content, profile)) is None:
-            return content
-        # What goes back is prose about the file, so it is text whatever the file was. A text-like document is
-        # inlined as its own content instead of described, and that one keeps the media type it came with.
-        media_type = _text_media_type(item) or 'text/plain'
-        if _is_text_bytes(item):
-            description = item.data.decode('utf-8')
-        else:
-            description = descriptions[_identity(item)]
-        return format_inlined_text_file(description, media_type=media_type, identifier=item.identifier)
-
     original_parts = list(message.parts)
     parts: list[ModelRequestPart] = []
     for part in original_parts:
         if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
-            part = replace(part, content=[text_for(item) for item in part.content])
+            part = replace(part, content=[_text_for(item, profile, descriptions) for item in part.content])
         elif isinstance(part, ToolReturnPart) and part.files:
-            items = [text_for(item) for item in part.content_items()]
+            items = [_text_for(item, profile, descriptions) for item in part.content_items()]
             part = replace(part, content=items if isinstance(part.content, list) else items[0])
         parts.append(part)
     return replace(message, parts=parts) if parts != original_parts else message
+
+
+def _text_for(content: _T, profile: ModelProfile, descriptions: dict[str, str]) -> _T | str:
+    if (item := _unaccepted_file(content, profile)) is None:
+        return content
+    # What goes back is prose about the file, so it is text whatever the file was. A text-like document is
+    # inlined as its own content instead of described, and that one keeps the media type it came with.
+    media_type = _text_media_type(item) or 'text/plain'
+    if _is_text_bytes(item):
+        description = item.data.decode('utf-8')
+    else:
+        description = descriptions[_identity(item)]
+    return format_inlined_text_file(description, media_type=media_type, identifier=item.identifier)
 
 
 def _identity(item: SendableFile) -> str:

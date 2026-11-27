@@ -124,9 +124,24 @@ REASONING_CASES = [
     ReasoningCase(model='gpt-5.3-codex', can_be_disabled=True),
     ReasoningCase(model='gpt-5.3-mini', can_be_disabled=True),
     # gpt-5.4 family: opt-in reasoning, and accepts `reasoning.context='all_turns'`
-    ReasoningCase(model='gpt-5.4', can_be_disabled=True, supports_context=True),
-    ReasoningCase(model='gpt-5.4-mini', can_be_disabled=True, supports_context=True),
-    ReasoningCase(model='gpt-5.4-nano', can_be_disabled=True, supports_context=True),
+    ReasoningCase(
+        model='gpt-5.4',
+        can_be_disabled=True,
+        supports_context=True,
+        chat_function_tools_require_reasoning_off=True,
+    ),
+    ReasoningCase(
+        model='gpt-5.4-mini',
+        can_be_disabled=True,
+        supports_context=True,
+        chat_function_tools_require_reasoning_off=True,
+    ),
+    ReasoningCase(
+        model='gpt-5.4-nano',
+        can_be_disabled=True,
+        supports_context=True,
+        chat_function_tools_require_reasoning_off=True,
+    ),
     # -pro and gpt-5.1 codex variants: always reason, no `effort='none'`
     ReasoningCase(model='gpt-5.1-codex', enabled_by_default=True),
     ReasoningCase(model='gpt-5.1-codex-max', enabled_by_default=True),
@@ -183,6 +198,7 @@ REASONING_CASES = [
         supports_minimal_reasoning_effort=False,
         supports_max_reasoning_effort=True,
         supports_context=True,
+        chat_function_tools_require_reasoning_off=True,
     ),
     ReasoningCase(
         model='gpt-5.6-terra',
@@ -192,6 +208,7 @@ REASONING_CASES = [
         supports_minimal_reasoning_effort=False,
         supports_max_reasoning_effort=True,
         supports_context=True,
+        chat_function_tools_require_reasoning_off=True,
     ),
     ReasoningCase(
         model='gpt-5.6-luna',
@@ -201,6 +218,7 @@ REASONING_CASES = [
         supports_minimal_reasoning_effort=False,
         supports_max_reasoning_effort=True,
         supports_context=True,
+        chat_function_tools_require_reasoning_off=True,
     ),
     # gpt-6-astra, gpt-6.1-sol, gpt-6.2-sol and gpt-6.2-astra: reason by default with no `effort='none'`;
     # carry over `reasoning.mode` and `reasoning.context='all_turns'` from GPT-5.6.
@@ -309,7 +327,7 @@ def test_reasoning_matrix(case: ReasoningCase):
     assert profile.get('thinking_always_enabled', False) is (case.enabled_by_default and not case.can_be_disabled)
     assert profile.get('openai_reasoning_efforts') == (None if case.efforts is None else frozenset(case.efforts))
 
-    # OpenAI-only, verified live on the GPT-6 families; gateways reuse the shared profile unverified.
+    # OpenAI-only, verified live on the GPT-5.4, GPT-5.6 and GPT-6 families; gateways reuse the shared profile unverified.
     assert profile.get('openai_chat_function_tools_require_reasoning_off', False) is False
     assert (
         provider_profile.get('openai_chat_function_tools_require_reasoning_off', False)
@@ -352,10 +370,16 @@ def test_search_api_has_no_reasoning_effort_only_on_openai_provider(model_name: 
     ],
 )
 def test_delegates_unprompted(model_name: str, delegates: bool):
-    """Only OpenAI's GPT models delegate unprompted, not gpt-oss or other models served through the OpenAI API."""
+    """Only OpenAI's GPT models delegate unprompted, not gpt-oss or other models served through the OpenAI API.
+
+    The flags behind `Coder`'s `'max'` guidance go to the same models.
+    """
     profile = OpenAIProvider.model_profile(model_name)
     assert isinstance(profile, dict)
     assert profile.get('delegates_unprompted', False) is delegates
+    assert profile.get('reinterprets_malformed_inputs', False) is delegates
+    assert profile.get('omits_handoff_evidence', False) is delegates
+    assert profile.get('ignores_stated_runtime_constraints', False) is delegates
 
 
 @pytest.mark.parametrize(

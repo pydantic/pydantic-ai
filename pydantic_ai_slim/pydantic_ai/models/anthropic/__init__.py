@@ -392,6 +392,9 @@ _BATCH_UNSUPPORTED_CLIENTS = (
 # on Google Cloud (Google managed, Vertex AI's `AsyncAnthropicVertex`) set their own:
 # https://platform.claude.com/docs/en/about-claude/model-deprecations#overview
 _OWN_DEPRECATION_SCHEDULE_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicVertex)
+_SAMPLING_REJECTED_API_VERSION = '2026-10-21'
+"""The first Messages API version that rejects `temperature`, `top_p` and `top_k` on every model:
+https://platform.claude.com/docs/en/api/migration-2026-10-21"""
 # `_THINKING_BINDING_UNSUPPORTED_CLIENTS` is a client-class boundary, not a base-URL one: a plain
 # `AsyncAnthropic` carrying a proxy or Pydantic AI Gateway base URL keeps the flag. Anthropic documents
 # the binding beta for Amazon Bedrock and Google Cloud, and the SDK carries it through the legacy
@@ -1176,6 +1179,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
         return profile
 
+    def _classifies_schema_too_complex(self) -> bool:
+        return True
+
     @property
     def tool_addition_mode(self) -> Literal['by_reference'] | None:
         """The effective addition mode, narrowed for transports without inline system messages."""
@@ -1302,12 +1308,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         Raises:
             UserError: If the model doesn't support on-demand compaction, according to its
-                [`anthropic_supports_on_demand_compaction`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_on_demand_compaction]
+                [`supports_compaction_on_demand`][pydantic_ai.profiles.ModelProfile.supports_compaction_on_demand]
                 profile flag.
             UnexpectedModelBehavior: If Anthropic returns no summary, for example when `max_tokens` cuts it off.
         """
         check_allow_model_requests()
-        if not self.profile.get('anthropic_supports_on_demand_compaction', False):
+        if not self.profile.get('supports_compaction_on_demand', False):
             raise UserError(
                 f'{self.model_name!r} does not support on-demand compaction. '
                 'See https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand for the supported models.'
@@ -1502,12 +1508,31 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> ModelSettings | None:
         """Drop the sampling settings the model rejects alone or with the rest of the request."""
         profile = self.profile
-        if profile.get('anthropic_disallows_sampling_settings', False):
+        if profile.get('anthropic_disallows_sampling_settings', False) or self._api_version_rejects_sampling(
+            model_settings
+        ):
             filtered: ModelSettings = {**model_settings}
             self._drop_unsupported_sampling_settings(filtered)
             return filtered or None
         thinking = request_thinking_type(profile, model_settings, model_request_parameters) is not None
         return drop_conflicting_sampling_settings(model_settings, profile, thinking=thinking) or None
+
+    def _api_version_rejects_sampling(self, model_settings: ModelSettings) -> bool:
+        """Whether the request's API version rejects `temperature`, `top_p` and `top_k` on every model.
+
+        `anthropic>=2` sends `anthropic-version: 2026-10-21` by default, which rejects them even at their defaults.
+        The version is the client's `default_headers` entry, unless the request's `extra_headers` sets its own.
+        The legacy Bedrock client pins its own version in the request body instead.
+        """
+        if isinstance(self.client, AsyncAnthropicBedrock):
+            return False
+        version = ''
+        headers = [*self.client.default_headers.items(), *(model_settings.get('extra_headers') or {}).items()]
+        for name, value in headers:
+            # The SDK folds header names case-insensitively, the last one winning, and drops one set to `omit`.
+            if name.lower() == 'anthropic-version':
+                version = value if isinstance(value, str) else ''
+        return version >= _SAMPLING_REJECTED_API_VERSION
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
         dropped = {setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in model_settings}
