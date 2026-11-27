@@ -17,15 +17,16 @@ have in common lives here, so a fix lands once and the two can never disagree:
 from __future__ import annotations as _annotations
 
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Literal, NoReturn, TypeGuard, assert_never, cast, get_args
+from typing import TYPE_CHECKING, Any, Literal, NoReturn, TypeGuard, TypeVar, assert_never, cast, get_args
 
 from opentelemetry.trace import Span, Tracer
 
 from . import exceptions as _exceptions
 from ._model_request_attempts import AttemptStart, carried_attempts, failed_attempt, record_attempt_span
+from ._unsupported_settings import raise_warnings as raise_unsupported_setting_warnings
 from ._utils import PeekableAsyncStream, await_maybe, get_first_param_type, is_str_dict
 from .exceptions import (
     ContentFilterError,
@@ -34,6 +35,7 @@ from .exceptions import (
     ModelAPIError,
     ModelEmptyResponseError,
     OutputTokenLimitExceeded,
+    UnsupportedSettingWarning,
     UserError,
 )
 from .messages import (
@@ -131,6 +133,7 @@ SpecModelError = Literal[
     'ModelContextWindowExceededError',
     'ModelAuthenticationError',
     'ModelNotFoundError',
+    'ModelSchemaTooComplexError',
     'ModelRequestTimeout',
     'ModelEmptyResponseError',
     'ModelInvalidResponseError',
@@ -141,6 +144,8 @@ SpecModelError = Literal[
 
 Every public `ModelAPIError` class, `ContentFilterError` and `OutputTokenLimitExceeded`.
 """
+
+_ExceptionT = TypeVar('_ExceptionT', bound=Exception)
 
 _SPEC_MODEL_ERRORS: dict[str, type[ModelAPIError | ContentFilterError | OutputTokenLimitExceeded]] = {
     name: getattr(_exceptions, name) for name in get_args(SpecModelError)
@@ -163,18 +168,26 @@ def spec_error_types(
     value: object, *, owner: str, param: str
 ) -> tuple[type[ModelAPIError | ContentFilterError | OutputTokenLimitExceeded], ...]:
     """The `ModelAPIError` classes, `ContentFilterError` or `OutputTokenLimitExceeded` a spec argument names."""
+    return spec_exception_types(value, _SPEC_MODEL_ERRORS, owner=owner, param=param)
+
+
+def spec_exception_types(
+    value: object, known: Mapping[str, type[_ExceptionT]], *, owner: str, param: str
+) -> tuple[type[_ExceptionT], ...]:
+    """The classes in `known` a spec argument names, rejecting any other name.
+
+    The error message names `ModelAPIError` classes as a group and every other known class by name.
+    """
     # Spec arguments reach here unvalidated: the annotations are what the published spec schema
     # advertises, not something that rejects other values on the way in.
     given = spec_list(value, owner=owner, param=param)
-    error_types = tuple(
-        _SPEC_MODEL_ERRORS[name] for name in given if isinstance(name, str) and name in _SPEC_MODEL_ERRORS
-    )
+    error_types = tuple(known[name] for name in given if isinstance(name, str) and name in known)
     if len(error_types) != len(given):
-        unknown = [name for name in given if not (isinstance(name, str) and name in _SPEC_MODEL_ERRORS)]
+        unknown = [name for name in given if not (isinstance(name, str) and name in known)]
+        others = [f'`{name}`' for name, cls in known.items() if not issubclass(cls, ModelAPIError)]
+        takes = ', '.join(['names of `ModelAPIError` classes', *others[:-1]]) + f' and {others[-1]}'
         raise UserError(
-            f'`{owner}` `{param}` in an agent spec takes names of `ModelAPIError` classes, `ContentFilterError` and '
-            '`OutputTokenLimitExceeded`, '
-            f'got {unknown!r}. Valid names: {", ".join(_SPEC_MODEL_ERRORS)}.'
+            f'`{owner}` `{param}` in an agent spec takes {takes}, got {unknown!r}. Valid names: {", ".join(known)}.'
         )
     return error_types
 
@@ -242,19 +255,35 @@ class FallbackPredicates:
     skip it without a warning, like refusals.
     """
 
+    unsupported_setting: bool = False
+    """Whether `fallback_on` names `UnsupportedSettingWarning`, so a model that would ignore a setting the request
+    relies on is moved on from.
+
+    The model raises the warning as the attempt's error instead of emitting it (see `judging_settings`), before
+    anything is sent, so it's recorded as a failed attempt like any other error `fallback_on` matches.
+    """
+
     @classmethod
     def parse(
-        cls, fallback_on: FallbackOn, *, owner: str, default: str, param: str = 'fallback_on'
+        cls,
+        fallback_on: FallbackOn,
+        *,
+        owner: str,
+        default: str,
+        param: str = 'fallback_on',
+        judges_settings: bool = False,
     ) -> FallbackPredicates:
         """Parse the `fallback_on` argument, or another argument of the same form, into exception and response handlers.
 
         `owner` and `param` name the class and argument in the error raised for an empty value, so the message
         points at whichever entry point the user actually called, and `default` is that class's default it suggests.
+        `judges_settings` is for the fallback owners, which move on from a model that would ignore a setting when
+        `UnsupportedSettingWarning` is named; elsewhere it's an exception type like any other.
         """
         predicates = cls(exception_handlers=[], response_handlers=[])
         if _is_exception_type(fallback_on):
             # Single exception type
-            predicates._add_exception_type(fallback_on)
+            predicates._add_exception_type(fallback_on, param=param, judges_settings=judges_settings)
         elif callable(fallback_on):
             # Single callable - auto-detect by type hints
             predicates._add_handler(fallback_on)
@@ -262,7 +291,7 @@ class FallbackPredicates:
             # Sequence of mixed handlers/types
             for item in fallback_on:
                 if _is_exception_type(item):
-                    predicates._add_exception_type(item)
+                    predicates._add_exception_type(item, param=param, judges_settings=judges_settings)
                 elif callable(item):
                     predicates._add_handler(item)
                 else:
@@ -278,7 +307,7 @@ class FallbackPredicates:
             )
         return predicates
 
-    def _add_exception_type(self, exception_type: type[Exception]) -> None:
+    def _add_exception_type(self, exception_type: type[Exception], *, param: str, judges_settings: bool) -> None:
         self.exception_handlers.append(_exception_types_to_handler((exception_type,)))
         # Only the class itself and its subclasses: `UnexpectedModelBehavior`, `ModelAPIError` or `Exception` doesn't
         # name refusals, cut-off or empty responses. `IncompleteToolCall` names only a cut-off tool call, not every
@@ -291,6 +320,19 @@ class FallbackPredicates:
             exception_type, IncompleteToolCall
         ):
             self.output_token_limit = True
+        if not judges_settings:
+            return
+        if exception_type is UnsupportedSettingWarning:
+            self.unsupported_setting = True
+        elif issubclass(exception_type, UnsupportedSettingWarning):
+            # A model raises `UnsupportedSettingWarning` itself, which a subclass's handler would never match.
+            raise UserError(
+                f'`{param}` takes `UnsupportedSettingWarning` itself, not its subclass `{exception_type.__name__}`.'
+            )
+
+    def judging_settings(self) -> AbstractContextManager[None]:
+        """Around an attempt, have the model raise the `UnsupportedSettingWarning` it would emit, if `fallback_on` names it."""
+        return raise_unsupported_setting_warnings() if self.unsupported_setting else nullcontext()
 
     def _add_handler(self, handler: Callable[..., Any]) -> None:
         """Add a handler, auto-detecting its type by inspecting type hints."""

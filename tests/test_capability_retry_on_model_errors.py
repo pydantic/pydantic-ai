@@ -46,6 +46,7 @@ from pydantic_ai.exceptions import (
     ModelUnavailableError,
     OutputTokenLimitExceeded,
     RetryModelRequest,
+    UnsupportedSettingWarning,
     UsageLimitExceeded,
     UserError,
 )
@@ -952,3 +953,12 @@ def test_from_spec_rejects_unknown_error_names():
         match="`RetryOnModelErrors` `retry_on` in an agent spec takes names of `ModelAPIError` classes, `ContentFilterError` and `OutputTokenLimitExceeded`, got \\['UserError'\\]",
     ):
         Agent.from_spec({'capabilities': [{'RetryOnModelErrors': {'retry_on': ['ModelServerError', 'UserError']}}]})
+
+
+def test_retry_on_takes_unsupported_setting_warning_subclasses_as_exception_types():
+    """Only the fallback owners treat `UnsupportedSettingWarning` specially; `retry_on` takes it like any exception."""
+
+    class MyWarning(UnsupportedSettingWarning):
+        pass
+
+    RetryOnModelErrors(retry_on=(MyWarning,))

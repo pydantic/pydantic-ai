@@ -99,7 +99,7 @@ print(dice_result.all_messages())
                 tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
-        usage=RequestUsage(cost=Decimal('0.0000480'), input_tokens=54, output_tokens=2),
+        usage=RequestUsage(cost=Decimal('0.000096'), input_tokens=54, output_tokens=2),
         model_name='{{ google:medium.name }}',
         model_id='{{ google:medium }}',
         timestamp=datetime.datetime(...),
@@ -126,9 +126,7 @@ print(dice_result.all_messages())
                 tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
-        usage=RequestUsage(
-            cost=Decimal('0.00005625'), input_tokens=55, output_tokens=4
-        ),
+        usage=RequestUsage(cost=Decimal('0.0001125'), input_tokens=55, output_tokens=4),
         model_name='{{ google:medium.name }}',
         model_id='{{ google:medium }}',
         timestamp=datetime.datetime(...),
@@ -155,7 +153,7 @@ print(dice_result.all_messages())
                 content="Congratulations Anne, you guessed correctly! You're a winner!"
             )
         ],
-        usage=RequestUsage(cost=Decimal('0.000087'), input_tokens=56, output_tokens=12),
+        usage=RequestUsage(cost=Decimal('0.000174'), input_tokens=56, output_tokens=12),
         model_name='{{ google:medium.name }}',
         model_id='{{ google:medium }}',
         timestamp=datetime.datetime(...),
@@ -498,6 +496,12 @@ generates on its own, so opting an enum in is the only thing that changes what a
 Members without a docstring keep a bare `const`, and a docstring under an alias (`urgent = 'high'` beside
 `high = 'high'`) describes the option it was written for. A `Literal` has nowhere to write a docstring, so it is
 unaffected.
+
+The docstrings are read from the enum's source, including the cell of a Jupyter or IPython notebook it was
+defined in. An opted-in enum with no source to read, such as one built by calling an opted-in enum class
+(`Priority('Urgency', {...})`), is sent as its plain list of values, with an
+[`EnumDocstringsUnavailableWarning`][pydantic_ai.exceptions.EnumDocstringsUnavailableWarning]; describe such
+options with [`Choices()`][pydantic_ai.output.Choices] instead.
 
 Wherever Pydantic AI describes an opted-in enum to a model — a tool parameter, an [output type](output.md), or a
 field of a model of your own — the descriptions come along.

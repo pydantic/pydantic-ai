@@ -60,12 +60,6 @@ def _require_sandboxd() -> None:
     pytest.skip(reason)
 
 
-def _free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(('127.0.0.1', 0))
-        return sock.getsockname()[1]
-
-
 class Daemon:
     """One `sandboxd` process, as one claimed pod runs it."""
 
@@ -73,7 +67,12 @@ class Daemon:
         assert SANDBOXD is not None
         self.root = root
         root.mkdir(parents=True)
-        self.grpc_port, rest_port = _free_port(), _free_port()
+        # Both sockets stay bound until both ports are picked: the kernel can hand a port it just
+        # released to the next bind, and sandboxd exits when its gRPC and REST ports are equal.
+        with socket.socket() as grpc_sock, socket.socket() as rest_sock:
+            grpc_sock.bind(('127.0.0.1', 0))
+            rest_sock.bind(('127.0.0.1', 0))
+            self.grpc_port, rest_port = grpc_sock.getsockname()[1], rest_sock.getsockname()[1]
         self.process = subprocess.Popen(
             [
                 SANDBOXD,
