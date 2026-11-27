@@ -46,7 +46,8 @@ from pydantic_ai.messages import ModelSettingsDeltaPart, SystemPromptPart, ToolR
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
+from pydantic_ai.toolsets import ExternalToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_graph import End
 
@@ -1875,6 +1876,82 @@ async def test_a_prompt_appended_after_stored_requests_that_merge_is_stored_once
     )
     record = await store.read_record('c')
     assert record is not None and record.branches == []
+
+
+@pytest.mark.parametrize(
+    'metadata',
+    [None, {'__pydantic_ai__': {'ui_message_id': 't1'}}],
+    ids=['no-metadata', 'ui-message-id'],
+)
+async def test_a_tool_result_appended_after_a_server_and_an_external_tool_call_is_stored_once(
+    metadata: dict[str, Any] | None,
+) -> None:
+    """The run merges the stored server tool result into the appended external one it sends, and the store gets each once.
+
+    A UI adapter gives the appended request the `ui_message_id` metadata.
+    See https://github.com/pydantic/pydantic-ai/issues/13547.
+    """
+    requests: list[list[ModelMessage]] = []
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        requests.append(messages)
+        if len(requests) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('lookup', {}, tool_call_id='srv-1'),
+                    ToolCallPart('pick_file', {}, tool_call_id='front-1'),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model),
+        toolsets=[ExternalToolset([ToolDefinition(name='pick_file')])],
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'server value'
+
+    store = InMemoryConversationStore()
+    await store.save(await agent.run('go', conversation=Conversation(conversation_id='c')))
+    loaded = await store.load('c')
+    assert loaded is not None
+    loaded.messages.append(
+        ModelRequest(parts=[ToolReturnPart('pick_file', 'a.txt', tool_call_id='front-1')], metadata=metadata)
+    )
+
+    await store.save(await agent.run(conversation=loaded))
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert conversation_view(reloaded.messages) == snapshot(
+        [
+            'user-prompt: go',
+            'call srv-1',
+            'call front-1',
+            'return srv-1: server value',
+            'return front-1: a.txt',
+            'text: done',
+        ]
+    )
+    record = await store.read_record('c')
+    assert record is not None and record.branches == []
+
+    await agent.run('and now?', conversation=reloaded)
+
+    assert conversation_view(requests[-1]) == snapshot(
+        [
+            'user-prompt: go',
+            'call srv-1',
+            'call front-1',
+            'return srv-1: server value',
+            'return front-1: a.txt',
+            'text: done',
+            'user-prompt: and now?',
+        ]
+    )
 
 
 @pytest.mark.moves_cache_prefix(reason='The appended request has other instructions than the stored one.')

@@ -584,9 +584,11 @@ sleeping in between; a read wakes it, since the work it starts animates.
 and resizes paint at once; output inside a frame interval paints when it ends
 (`PromptSurface.changed`), without waiting for a tick. Do not add a timer that
 repaints unconditionally, or one that wakes an idle editor more than once a second.
-Mouse reporting stops most terminals from selecting text, so a left-button drag
-selects painted cells in `PromptSurface` and its release copies them through
-`text_clipboard.copy_text`. Do not drop the drag modes (`?1002h`) or copy-out breaks.
+Mouse reporting stops most terminals from selecting text, so a left-button drag,
+double-click (a word) or triple-click (a line) selects painted cells in `PromptSurface`,
+and its release copies them through `text_clipboard.copy_text`. Do not drop the drag modes
+(`?1002h`) or copy-out breaks. Words, lines, and copies join rows only where
+`TranscriptView.joins` says a row wraps on; rows Rich wrapped are separate lines.
 
 Resize rebuilds from `TranscriptBuffer`, not guessed row coordinates or cursor
 reports. Never send erase-scrollback (CSI 3 J). Preserve the draft and scroll

@@ -24,6 +24,7 @@ from .messages import (
     CapabilityPart,
     CapabilitySource,
     CompactionPart,
+    DataCapabilityPart,
     EnqueuedMessagesEvent,
     InstructionBaselinePart,
     InstructionDeltaPart,
@@ -64,6 +65,17 @@ PendingMessagePriority: TypeAlias = Literal['asap', 'when_idle']
     more request.
 - `'when_idle'`: Delivered only when the agent would otherwise terminate, after
     any `'asap'` messages. Doesn't interrupt in-flight work.
+"""
+
+PendingMessagePlacement: TypeAlias = Literal['append', 'before_prompt']
+"""Where a pending message lands when it's delivered into the request being prepared.
+
+- `'append'`: after what the history already holds: as its own messages, or, for content enqueued during a tool
+    call, right after that call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart].
+- `'before_prompt'`: inside the request being sent, right before its
+    [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], so context the model should read first comes before the
+    user's question. When that request holds no user prompt, it lands as `'append'` would put it. Only for
+    [`DataCapabilityPart`][pydantic_ai.messages.DataCapabilityPart] kinds.
 """
 
 QueueChangeMethod: TypeAlias = Literal['dequeue', 'set_enqueue_priority']
@@ -325,6 +337,13 @@ class PendingMessage:
     [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] emitted when the messages
     are delivered, and returned by [`enqueue`][pydantic_ai.tools.RunContext.enqueue]."""
 
+    placement: PendingMessagePlacement = 'append'
+    """Where these messages land in the request they're delivered into:
+
+    - `'append'`: after what the history already holds.
+    - `'before_prompt'`: right before the user prompt in the request being sent, when it holds one.
+    """
+
     _tool_call: tuple[str, int] | None = field(default=None, repr=False, compare=False)
     """The `tool_call_id` and run step of the tool call whose result this content goes next to, if any.
 
@@ -340,6 +359,7 @@ class PendingMessage:
         cls,
         *content: EnqueueContent,
         priority: PendingMessagePriority = 'asap',
+        placement: PendingMessagePlacement = 'append',
         _tool_call: tuple[str, int] | None = None,
     ) -> PendingMessage | None:
         """Build a `PendingMessage` from `enqueue` arguments, or `None` when there's nothing to send.
@@ -351,7 +371,8 @@ class PendingMessage:
         Raises:
             UserError: If the assembled messages don't end in a
                 [`ModelRequest`][pydantic_ai.messages.ModelRequest] — e.g. a lone `ModelResponse` —
-                since the agent needs a request to respond to.
+                since the agent needs a request to respond to, or if content placed `'before_prompt'`
+                is anything but data capability parts.
         """
         messages = _build_enqueue_messages(content)
         if not messages:
@@ -361,9 +382,35 @@ class PendingMessage:
                 'Enqueued content must end with a `ModelRequest` (or user content / `ModelRequestPart` '
                 'items that form one), so the agent has a request to respond to.'
             )
-        if priority != 'asap' or any(isinstance(item, ModelRequest | ModelResponse) for item in content):
+        complete_messages = any(isinstance(item, ModelRequest | ModelResponse) for item in content)
+        if placement == 'before_prompt':
+            _check_before_prompt(messages, complete_messages=complete_messages)
+        if priority != 'asap' or complete_messages:
             _tool_call = None
-        return cls(messages=messages, priority=priority, _tool_call=_tool_call)
+        return cls(messages=messages, priority=priority, placement=placement, _tool_call=_tool_call)
+
+
+def _check_before_prompt(messages: Sequence[ModelMessage], *, complete_messages: bool) -> None:
+    """Raise unless `messages` is content that can go before the user's prompt: data capability parts.
+
+    Instructions and system prompts are left out: on a model with sealed system blocks, a request's own system
+    prompts are sent after the user's words on purpose (`_system_prompts_after_user_words`), so they stay with
+    `'append'`. So is plain user content, which ahead of the user's own prompt would read as the user speaking.
+    """
+    if complete_messages:
+        raise UserError(
+            "`placement='before_prompt'` puts the content inside the request being sent, so enqueue "
+            '`DataCapabilityPart`s, not a complete `ModelRequest` or `ModelResponse`.'
+        )
+    for message in messages:
+        assert isinstance(message, ModelRequest)  # Parts and user content always build one request.
+        for part in message.parts:
+            if not isinstance(part, DataCapabilityPart):
+                raise UserError(
+                    "`placement='before_prompt'` is for data the model reads before the user's question: a "
+                    f'`DataCapabilityPart` kind, not `{type(part).__name__}`. Instructions, system prompts and '
+                    "user content keep the default `placement='append'`."
+                )
 
 
 CapabilityLoadRecord: TypeAlias = CapabilityLoadDeltaPart | ToolAvailabilityDeltaPart
@@ -383,11 +430,12 @@ class PendingMessageQueue(list[PendingMessage]):
         self._capability_loads: list[CapabilityLoadRecord] = list(capability_loads)
         self._closed = False
         self._lock = threading.Lock()
-        # The request tool-call content was last put into, as `(request it replaced first, current copy)`, and
-        # the last part put next to each call's return in it, so a later delivery in the same step puts that
-        # call's content after it.
+        # The request content was last put into, as `(request it replaced first, current copy)`, and the last part
+        # put next to each call's return and before the prompt in it, so a later delivery in the same step puts its
+        # content after those.
         self._spliced_request: tuple[ModelRequest, ModelRequest] | None = None
         self._last_delivered_for_call: dict[str, ModelRequestPart] = {}
+        self._last_delivered_before_prompt: ModelRequestPart | None = None
 
     def __reduce_ex__(
         self, protocol: SupportsIndex
@@ -474,7 +522,7 @@ class PendingMessageQueue(list[PendingMessage]):
             self._closed = True
 
     def request_in_history(self, request: ModelRequest) -> ModelRequest:
-        """The copy in history of `request`, if tool-call content was put into it, else `request` itself."""
+        """The copy in history of `request`, if enqueued content was put into it, else `request` itself."""
         if self._spliced_request is not None and self._spliced_request[0] is request:
             return self._spliced_request[1]
         return request
@@ -573,6 +621,22 @@ def _splice_anchor(target: ModelRequest, tool_call_id: str, queue: PendingMessag
     return next(part for part in target.parts if isinstance(part, ToolReturnPart) and part.tool_call_id == tool_call_id)
 
 
+def _before_prompt_index(target: ModelRequest, original: ModelRequest, queue: PendingMessageQueue) -> int | None:
+    """The index in `target` that content placed before the prompt goes at, or `None` when `target` holds no prompt.
+
+    The prompt is the first [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] the request held before this
+    step's deliveries into it (`original`), so user text a tool enqueued next to its result never counts as one.
+    Content goes right after what an earlier delivery in this step put before the prompt, so deliveries keep their
+    order, as long as something still follows it, or else right before the prompt.
+    """
+    delivered = queue._last_delivered_before_prompt  # pyright: ignore[reportPrivateUsage]
+    for index, part in enumerate(target.parts):
+        if part is delivered and index + 1 < len(target.parts):
+            return index + 1
+    prompt = next((part for part in original.parts if isinstance(part, UserPromptPart)), None)
+    return next((index for index, part in enumerate(target.parts) if part is prompt), None)
+
+
 def resumes_suspended_response(request_context: ModelRequestContext) -> bool:
     """Whether the request re-sends a history ending in a suspended response, to resume it.
 
@@ -585,37 +649,39 @@ def resumes_suspended_response(request_context: ModelRequestContext) -> bool:
 def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
     """Deliver the queued `'asap'` messages into the request being prepared.
 
-    Content tied to a tool call (see `PendingMessage._tool_call`) goes into the request that carries that call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart],
-    right after it, when that request ends the history: several deliveries for the same call keep their
-    enqueue order, whatever other calls' content arrives in between. Everything else is appended as its own
-    messages, and so is anything drained after it, so content never lands ahead of what was enqueued first.
-    Either way it lands in both `request_context.messages` (so the model sees it this step) and `ctx.messages`
-    (so it persists in the agent's message history). The request the content went into is replaced by a copy,
-    which `PendingMessageQueue.request_in_history` finds.
+    Content placed `'before_prompt'` goes into the request being sent, which ends the history, right before its
+    [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], when it holds one. Content tied to a tool call (see
+    `PendingMessage._tool_call`) goes into that request when it carries that call's
+    [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], right after it. Several deliveries to the same place keep
+    their enqueue order, whatever other content arrives in between. Everything else is appended as its own
+    messages, and so is tool-call content drained after it, so that content never lands ahead of what was enqueued
+    first. Either way it lands in both `request_context.messages` (so the model sees it this step) and `ctx.messages`
+    (so it persists in the agent's message history). The request the content went into is replaced by a copy, which
+    `PendingMessageQueue.request_in_history` finds.
 
     One [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] is emitted per drained
     [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in the order the content lands in history,
     describing it exactly as delivered. A UI adapter streams them in that order and its client loads them
     back in that order, so the client's history renders like the server's.
     """
-    drained = run_queue(ctx).pop_priority('asap')
+    queue = run_queue(ctx)
+    drained = queue.pop_priority('asap')
     if not drained:
         return request_context
 
-    # Only the request about to be sent, so content arriving later (say, from a task the tool started)
-    # never rewrites history the model has already seen. It's replaced rather than mutated, since
-    # instrumentation caches each message's serialized form, so it must be in both lists to be found again.
-    target = ctx.messages[-1] if ctx.messages else None
+    target = _delivery_target(ctx, request_context, queue)
     answered_calls: set[str] = set()
-    if isinstance(target, ModelRequest) and any(message is target for message in request_context.messages):
-        answered_calls = {part.tool_call_id for part in target.parts if isinstance(part, ToolReturnPart)}
+    prompt_index: int | None = None
+    if target is not None:
+        answered_calls = {part.tool_call_id for part in target[0].parts if isinstance(part, ToolReturnPart)}
+        prompt_index = _before_prompt_index(*target, queue)
 
-    spliced, appended = _split_drained(ctx, drained, answered_calls)
+    before_prompt, spliced, appended = _split_drained(ctx, drained, answered_calls, prompt_index)
 
     events: list[EnqueuedMessagesEvent] = []
-    if spliced:
-        assert isinstance(target, ModelRequest)
-        events = _splice_into(ctx, request_context, target, spliced)
+    if before_prompt or spliced:
+        assert target is not None
+        events = _deliver_into_request(ctx, request_context, *target, prompt_index, before_prompt, spliced)
     for enqueue_id, messages in appended:
         request_context.messages = [*request_context.messages, *messages]
         append_to_history(ctx, *messages)
@@ -626,65 +692,88 @@ def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestCon
 
 
 def _split_drained(
-    ctx: RunContext[object], drained: list[PendingMessage], answered_calls: set[str]
-) -> tuple[dict[str, list[tuple[str, ModelRequest]]], list[tuple[str, list[ModelMessage]]]]:
-    """Split `drained` into the requests spliced after the tool returns they belong to, by call, and the rest."""
+    ctx: RunContext[Any], drained: list[PendingMessage], answered_calls: set[str], prompt_index: int | None
+) -> tuple[
+    list[tuple[str, ModelRequest]], dict[str, list[tuple[str, ModelRequest]]], list[tuple[str, list[ModelMessage]]]
+]:
+    """Split `drained` into content placed before the prompt, content spliced after its call's return, and the rest."""
+    before_prompt: list[tuple[str, ModelRequest]] = []
     spliced: dict[str, list[tuple[str, ModelRequest]]] = {}
     appended: list[tuple[str, list[ModelMessage]]] = []
     for pending in drained:
         messages = stamped_messages(pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id)
         tool_call = pending._tool_call  # pyright: ignore[reportPrivateUsage]
-        if (
-            tool_call is not None
+        # `from_content` only places content made of parts, which is one request, into another request.
+        request = messages[0] if len(messages) == 1 and isinstance(messages[0], ModelRequest) else None
+        if request is not None and pending.placement == 'before_prompt' and prompt_index is not None:
+            before_prompt.append((pending.enqueue_id, request))
+        elif (
+            request is not None
+            and tool_call is not None
             and tool_call[0] in answered_calls
-            # The calls `target` answers ran in the step before this one, so an older call reused the id.
+            # The calls the target answers ran in the step before this one, so an older call reused the id.
             and tool_call[1] >= ctx.run_step - 1
             # Content that came after something added as its own message stays after it.
             and not appended
-            # `from_content` only keeps the call for content made of parts, which is one request.
-            and len(messages) == 1
-            and isinstance(request := messages[0], ModelRequest)
         ):
             spliced.setdefault(tool_call[0], []).append((pending.enqueue_id, request))
         else:
             appended.append((pending.enqueue_id, messages))
-    return spliced, appended
+    return before_prompt, spliced, appended
 
 
-def _splice_into(
-    ctx: RunContext[object],
-    request_context: ModelRequestContext,
-    target: ModelRequest,
-    spliced: dict[str, list[tuple[str, ModelRequest]]],
-) -> list[EnqueuedMessagesEvent]:
-    """Splice each call's content into `target` after its return, and say what landed, in `target`'s part order."""
-    events: list[EnqueuedMessagesEvent] = []
-    queue = run_queue(ctx)
+def _delivery_target(
+    ctx: RunContext[Any], request_context: ModelRequestContext, queue: PendingMessageQueue
+) -> tuple[ModelRequest, ModelRequest] | None:
+    """The request content can go into, and that request as it was before this step's first delivery into it.
+
+    Only the request about to be sent, so content arriving later (say, from a task the tool started) never rewrites
+    history the model has already seen. It's replaced rather than mutated, since instrumentation caches each
+    message's serialized form, so it must be in both lists to be found again. `None` when the history doesn't end
+    in that request.
+    """
+    target = ctx.messages[-1] if ctx.messages else None
+    if not isinstance(target, ModelRequest) or not any(message is target for message in request_context.messages):
+        return None
     previous = queue._spliced_request  # pyright: ignore[reportPrivateUsage]
     if previous is not None and previous[1] is target:
-        original = previous[0]
-    else:
-        original = target
-        queue._last_delivered_for_call.clear()  # pyright: ignore[reportPrivateUsage]
+        return target, previous[0]
+    # A new request: what earlier deliveries put into the previous one no longer anchors anything.
+    queue._last_delivered_for_call.clear()  # pyright: ignore[reportPrivateUsage]
+    queue._last_delivered_before_prompt = None  # pyright: ignore[reportPrivateUsage]
+    return target, target
+
+
+def _deliver_into_request(
+    ctx: RunContext[Any],
+    request_context: ModelRequestContext,
+    target: ModelRequest,
+    original: ModelRequest,
+    prompt_index: int | None,
+    before_prompt: list[tuple[str, ModelRequest]],
+    spliced: dict[str, list[tuple[str, ModelRequest]]],
+) -> list[EnqueuedMessagesEvent]:
+    """Put content into `target`, the request being sent, replacing it with a copy in both message lists.
+
+    `original` is the request as it was before this step's first delivery into it. Returns an event per delivery,
+    in the order the content sits in the copy.
+    """
+    queue = run_queue(ctx)
     # Each call's content goes after its return, or after what an earlier delivery in this step put there.
     anchors = {id(_splice_anchor(target, call_id, queue)): call_id for call_id in spliced}
+    events: list[EnqueuedMessagesEvent] = []
     parts: list[ModelRequestPart] = []
-    for part in target.parts:
+    for index, part in enumerate(target.parts):
+        if index == prompt_index and before_prompt:
+            queue._last_delivered_before_prompt = _put_deliveries(parts, events, before_prompt)  # pyright: ignore[reportPrivateUsage]
         parts.append(part)
-        call_id = anchors.get(id(part))
-        if call_id is None:
-            continue
-        for enqueue_id, request in spliced.pop(call_id, ()):
-            parts.extend(request.parts)
-            queue._last_delivered_for_call[call_id] = request.parts[-1]  # pyright: ignore[reportPrivateUsage]
-            events.append(EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=(request,), parts=tuple(request.parts)))
-    spliced_target = replace(target, parts=parts)
-    queue._spliced_request = (original, spliced_target)  # pyright: ignore[reportPrivateUsage]
-    ctx.messages[-1] = spliced_target
-    ctx._appended_messages.replace(target, spliced_target)  # pyright: ignore[reportPrivateUsage]
-    request_context.messages = [
-        spliced_target if message is target else message for message in request_context.messages
-    ]
+        if (call_id := anchors.get(id(part))) is not None:
+            queue._last_delivered_for_call[call_id] = _put_deliveries(parts, events, spliced.pop(call_id))  # pyright: ignore[reportPrivateUsage]
+    replaced = replace(target, parts=parts)
+    queue._spliced_request = (original, replaced)  # pyright: ignore[reportPrivateUsage]
+    ctx.messages[-1] = replaced
+    ctx._appended_messages.replace(target, replaced)  # pyright: ignore[reportPrivateUsage]
+    request_context.messages = [replaced if message is target else message for message in request_context.messages]
     return events
 
 
@@ -863,3 +952,13 @@ class _Added:
 def _held_part(part: ModelRequestPart, capability_id: str, ceiling: Authority) -> ModelRequestPart:
     held = within_ceiling(part, capability_id, ceiling)
     return _stamped(held, capability_id, ceiling) if isinstance(held, CapabilityPart) else held
+
+
+def _put_deliveries(
+    parts: list[ModelRequestPart], events: list[EnqueuedMessagesEvent], deliveries: list[tuple[str, ModelRequest]]
+) -> ModelRequestPart:
+    """Add each delivery's parts to `parts` and its event to `events`, returning the last part added."""
+    for enqueue_id, request in deliveries:
+        parts.extend(request.parts)
+        events.append(EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=(request,), parts=tuple(request.parts)))
+    return parts[-1]

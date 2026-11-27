@@ -35,7 +35,6 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, NoReturn, T
 from weakref import WeakValueDictionary
 
 import anyio
-import pydantic_core
 from opentelemetry.trace import Tracer
 from pydantic import ValidationError
 from typing_extensions import TypeVar
@@ -1044,14 +1043,9 @@ class GraphAgentState:
             and model_response.parts
             and isinstance(tool_call := model_response.parts[-1], _messages.ToolCallPart)
             and (call is None or call.tool_call_id == tool_call.tool_call_id)
-            and isinstance(tool_call.args, str)
-            and tool_call.args
+            and _output.are_tool_call_args_cut_off(tool_call)
         ):
-            # Only JSON that doesn't parse was cut off: complete JSON the schema rejects is retried like any other.
-            try:
-                pydantic_core.from_json(tool_call.args)
-            except ValueError:
-                raise exceptions.IncompleteToolCall(_output.incomplete_tool_call_message(self.last_max_tokens))
+            raise exceptions.IncompleteToolCall(_output.incomplete_tool_call_message(self.last_max_tokens))
 
     def consume_output_retry(
         self,
@@ -2053,6 +2047,59 @@ def _keep_default_output_mode(
     return params
 
 
+def _inferred_output_params(params: models.ModelRequestParameters) -> models.ModelRequestParameters | None:
+    """`params` if the model is left to infer their output mode, as for an `output_type` that doesn't choose one."""
+    # Its own function to keep `ModelRequestNode._prepare_attempt` from growing more complex.
+    return params if params.output_mode == 'auto' else None
+
+
+def _can_switch_to_tool_output(
+    request_context: ModelRequestContext, inferred_params: models.ModelRequestParameters | None
+) -> bool:
+    """Whether a rejection of the attempt's schema as too complex can be acted on by switching to Tool Output.
+
+    That's when the attempt sends Native Output that the model inferred, now or on the run's first request to it, to
+    a model that raises `ModelSchemaTooComplexError` for such a rejection (see `_switch_to_tool_output`).
+    """
+    if inferred_params is None or not _unwrap_model(request_context.model)._classifies_schema_too_complex():  # pyright: ignore[reportPrivateUsage]
+        return False
+    params = request_context.model_request_parameters
+    if params.output_mode == 'auto':
+        with suppress_unsupported_setting_warnings():
+            _, params = request_context.model.prepare_request(request_context.model_settings, params)
+    return params.output_mode == 'native'
+
+
+def _switch_to_tool_output(
+    state: GraphAgentState,
+    request_context: ModelRequestContext,
+    inferred_params: models.ModelRequestParameters | None,
+    error: Exception,
+) -> bool:
+    """Whether to attempt the request again in Tool Output, as the run now keeps for its model.
+
+    A provider like Anthropic compiles a Native Output schema into a grammar, and can reject one as too complex
+    (`ModelSchemaTooComplexError`). When the model inferred Native Output, rather than the `output_type` choosing it,
+    Tool Output doesn't compile the schema, so the run uses it for the rest of its requests to the model: from its
+    second request on, the run sends the mode it keeps (see `_keep_default_output_mode`). The kept mode only changes
+    from Native to Tool Output, so a request is attempted again this way at most once.
+    """
+    if not isinstance(error, exceptions.ModelSchemaTooComplexError) or not _can_switch_to_tool_output(
+        request_context, inferred_params
+    ):
+        return False
+    assert inferred_params is not None
+    model = request_context.model
+    try:
+        with suppress_unsupported_setting_warnings():
+            model.prepare_request(request_context.model_settings, inferred_params.with_default_output_mode('tool'))
+    except exceptions.UserError:
+        # Tool Output isn't valid for this request either, e.g. on a model that doesn't support tools.
+        return False
+    state.default_output_modes[model.model_id] = 'tool'
+    return True
+
+
 # --- Innermost model-call helpers ---
 #
 # Both the agent graph (ModelRequestNode) and durable execution capabilities
@@ -2746,6 +2793,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """The model the latest attempt was sent to, with the capabilities' model wrappers."""
     _serving_model_id: str | None = field(default=None, init=False, repr=False)
     """The identifier of the model the latest attempt was sent to, which the response it produces records as `model_id`."""
+    _inferred_output_params: models.ModelRequestParameters | None = field(default=None, init=False, repr=False)
+    """The latest attempt's request parameters before the model inferred their output mode, if it did."""
     _resolved_loaded_parts: dict[str, list[_messages.InstructionPart]] = field(
         repr=False, init=False, default_factory=dict[str, list[_messages.InstructionPart]]
     )
@@ -3981,6 +4030,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model = request_context.model
         messages = request_context.messages
         model_settings = request_context.model_settings
+        self._inferred_output_params = _inferred_output_params(request_context.model_request_parameters)
         # Per attempt, since the default output mode a request keeps is that of the model serving it.
         model_request_parameters = models._with_framing_announcement(  # pyright: ignore[reportPrivateUsage]
             _keep_default_output_mode(ctx.state, model, model_settings, request_context.model_request_parameters),
@@ -4149,8 +4199,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     )
                 )
                 opened = sr
-                if ctx.deps.root_capability._handles_model_request_error(run_context, request_context):  # pyright: ignore[reportPrivateUsage]
-                    # Only worth opening early when a hook can act on a failure to open: otherwise the
+                if self._recovers_failure_to_open(ctx, run_context, request_context):
+                    # Only worth opening early when a failure to open can be acted on: otherwise the
                     # stream keeps opening lazily, once the consumer starts iterating it.
                     outcome: asyncio.Future[Exception | None] = asyncio.get_running_loop().create_future()
                     handoff.offers.put_nowait(_StreamOffer(sr, outcome))
@@ -4193,6 +4243,17 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             stream_stack.push_async_exit(attempt_stack)
             failed.log.attach_to_stream(sr)
             return sr, request_context, request_start, failed.log.attempts
+
+    def _recovers_failure_to_open(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        run_context: RunContext[DepsT],
+        request_context: ModelRequestContext,
+    ) -> bool:
+        """Whether a hook, or a switch to Tool Output (see `_switch_to_tool_output`), can act on a failure to open."""
+        return ctx.deps.root_capability._handles_model_request_error(  # pyright: ignore[reportPrivateUsage]
+            run_context, request_context
+        ) or _can_switch_to_tool_output(request_context, self._inferred_output_params)
 
     async def _start_next_attempt(
         self,
@@ -4321,8 +4382,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         return self._result
 
-    @staticmethod
     async def _recover_model_request_error(
+        self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         run_context: RunContext[DepsT],
         request_context: ModelRequestContext,
@@ -4338,6 +4399,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             request_context._usage_response_ledger.attempts.extend(error.attempts)  # pyright: ignore[reportPrivateUsage]
         root_capability = ctx.deps.root_capability
         try:
+            if _switch_to_tool_output(ctx.state, request_context, self._inferred_output_params, error):
+                # Before the hooks, so `ModelFallback` only moves on once the same model also failed in Tool Output.
+                raise exceptions.RetryModelRequest()
             if not root_capability._handles_model_request_error(run_context, request_context):  # pyright: ignore[reportPrivateUsage]
                 raise error
             # Before `after_model_request` and the streamed replay, as `Model.request()`'s own response is stamped.
