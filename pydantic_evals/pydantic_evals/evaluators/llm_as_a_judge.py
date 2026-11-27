@@ -580,6 +580,8 @@ async def judge_questions(
     return {name: JudgeAnswer(values[name], confidence.get(asked_as)) for name, asked_as in fields.items()}
 
 
+# Only `StructuredJudge.evaluate` in `common.py` calls this, through the lazy import `LLMJudge` and `GEval` use for
+# their helpers, and no public wrapper here does, so pyright sees it as unused.
 async def _judge_question(  # pyright: ignore[reportUnusedFunction]
     output: Any,
     question: str,
