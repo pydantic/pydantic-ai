@@ -42,6 +42,7 @@ from .caching import Caching
 from .capability import Capability
 from .citations import Citations
 from .combined import CombinedCapability
+from .compaction import COMPACTION_EVENT_NAMESPACE, CompactionEndEvent, CompactionStartEvent
 from .content_filter import RaiseContentFilterError
 from .deferred_tool_handler import HandleDeferredToolCalls
 from .durable_operation import durable_operation
@@ -152,6 +153,9 @@ __all__ = [
     'Capability',
     'Citations',
     'CAPABILITY_TYPES',
+    'COMPACTION_EVENT_NAMESPACE',
+    'CompactionEndEvent',
+    'CompactionStartEvent',
     'TRANSIENT_MODEL_ERRORS',
     'FileUnderstanding',
     'ImageGeneration',

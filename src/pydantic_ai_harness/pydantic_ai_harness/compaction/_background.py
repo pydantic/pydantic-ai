@@ -6,12 +6,13 @@ import asyncio
 import copy
 from collections.abc import Sequence
 from dataclasses import dataclass
+from functools import partial
 
 from pydantic_ai._utils import cancel_and_drain
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import AbstractModel
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness.compaction._shared import CompactionStrategy
+from pydantic_ai_harness.compaction._shared import CompactionStrategy, compact_with_events, strategy_id
 
 _SPAN_NAME = 'background_compaction'
 
@@ -73,9 +74,16 @@ async def _compact_traced(
 ) -> list[ModelMessage]:
     with ctx.tracer.start_as_current_span(
         _SPAN_NAME,
-        attributes={'compaction.strategy': type(strategy).__name__, 'compaction.messages_before': len(messages)},
+        attributes={'compaction.strategy': strategy_id(strategy), 'compaction.messages_before': len(messages)},
     ):
-        return await strategy.compact(messages, ctx)
+        # The run's event stream doesn't wait for this task, so neither it nor a tier it composes emits events.
+        return await compact_with_events(
+            ctx,
+            strategy=strategy_id(strategy),
+            messages=messages,
+            compact=partial(strategy.compact, messages, ctx),
+            emits=False,
+        )
 
 
 def _retrieve(task: asyncio.Task[list[ModelMessage]]) -> None:

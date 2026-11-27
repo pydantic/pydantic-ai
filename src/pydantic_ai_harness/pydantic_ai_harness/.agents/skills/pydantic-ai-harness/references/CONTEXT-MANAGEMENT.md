@@ -317,6 +317,15 @@ async def show(ctx, event):
 (`if event.fraction > 0.8: logger.warning(...)`). Register `ReportContextUsage` after a compaction
 capability to see post-compaction usage, before it to see what triggered compaction.
 
+Every strategy attempt inside a run emits core's `CompactionStartEvent` (immediate dispatch: a listener
+can `event.cancel(reason)` to skip this attempt; a later trigger retries) and, only when history
+changed, `CompactionEndEvent` with before/after message and token counts. `TieredCompaction` and
+`FallbackCompaction` emit an outer event plus one per tier or candidate. A cancelled fallback candidate
+stops the chain; a cancelled tier is skipped and escalation continues, so cancel the outer `tiered`
+event to hold it all. `compact_now` and `background_start` work emit nothing. Custom strategies declare
+a stable `strategy_id = '...'` class attribute, which events and the `compaction.strategy` span carry;
+without it the id is the snake-cased class name minus `Compaction`, which changes on a rename.
+
 ## Pins, receipts, and manual compaction
 
 - `pin(text)` (from `pydantic_ai_harness.compaction`) returns a `UserPromptPart` to place in a

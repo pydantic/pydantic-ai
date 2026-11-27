@@ -61,6 +61,8 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
         ```
     """
 
+    strategy_id = 'sliding_window'
+
     max_messages: int | None = None
     """Trigger trimming when message count exceeds this value. `None` disables."""
 
@@ -227,7 +229,7 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
         handle = discover_transcript_handle(ctx)
         record_receipt(
             ReceiptInfo(
-                strategy='SlidingWindowCompaction',
+                strategy=self.strategy_id,
                 dropped_messages=len(dropped),
                 dropped_tokens=dropped_tokens,
                 by='the harness',
@@ -268,7 +270,7 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
             return request_context
         compacted = await compact_with_span(
             request_ctx,
-            strategy='SlidingWindowCompaction',
+            strategy=self.strategy_id,
             messages=messages,
             compact=lambda: self.compact(messages, request_ctx),
             tokenizer=self.tokenizer,

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, Self, TypeAlias, TypeGuard,
 from pydantic_ai._context_size import context_input_tokens, context_tokens
 from pydantic_ai._instructions import instruction_window_start, is_loaded_block, window_boundary_index
 from pydantic_ai._utils import is_str_dict
+from pydantic_ai.capabilities import CompactionEndEvent, CompactionStartEvent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CapabilityLoadDeltaPart,
@@ -83,6 +84,9 @@ Keyed by the request (`run_step` advances once per model request) rather than by
 identity: strategies return `replace()` copies of the context, so an identity key would have to be
 re-attached at every hop, and a strategy that forgot would silently drop the correction.
 """
+
+_COMPACTION_EVENTS_ENABLED: ContextVar[bool] = ContextVar('pydantic_ai_harness.compaction.events_enabled', default=True)
+"""Whether nested composing strategies should emit lifecycle events."""
 
 
 def _collect_message_text(messages: Sequence[ModelMessage]) -> list[str]:
@@ -685,10 +689,11 @@ async def compact_with_span(
     messages: list[ModelMessage],
     compact: Callable[[], Awaitable[list[ModelMessage]]],
     tokenizer: Callable[[str], int] | None = None,
+    emits: bool = True,
     model_requested: bool = False,
     background: BackgroundOutcome | None = None,
 ) -> list[ModelMessage]:
-    """Run *compact* and emit a `compact_messages` span when it changes the history.
+    """Run *compact* and emit lifecycle signals when it changes the history.
 
     *compact* runs before the span so a no-op compaction (a trigger fired but the history is
     returned unchanged) emits nothing. The span is started on `ctx.tracer`, which is a no-op
@@ -702,21 +707,31 @@ async def compact_with_span(
         compact: Zero-argument async callable returning the compacted message list.
         tokenizer: Optional tokenizer for the `compaction.tokens_*` estimates. When `None`,
             uses the same text estimate as `estimate_token_count`.
+        emits: Whether to emit lifecycle events. Disable this outside an agent run.
         model_requested: Whether the model asked for this compaction, recorded as
             `compaction.model_requested` (set only when `True`).
         background: What became of a background compaction, recorded as `compaction.background`
             when there was one.
     """
+    # Snapshotted so a strategy that edits `messages` in place still gets a span.
+    before = list(messages)
     token = open_receipt_scope()
     recorded_attributes: dict[str, AttributeValue] = {}
     attributes_token = _pending_span_attributes.set(recorded_attributes)
     try:
-        compacted = await compact()
+        compacted = await compact_with_events(
+            ctx,
+            strategy=strategy,
+            messages=messages,
+            compact=compact,
+            tokenizer=tokenizer,
+            emits=emits,
+        )
         receipts = drain_receipts()
     finally:
         _pending_span_attributes.reset(attributes_token)
         reset_receipt_scope(token)
-    if not _history_changed(messages, compacted):
+    if not _history_changed(before, compacted):
         return messages
     with ctx.tracer.start_as_current_span(_SPAN_NAME) as span:
         if span.is_recording():
@@ -725,9 +740,9 @@ async def compact_with_span(
                     # GenAI semconv flag; the convention says set `true` only, never `false`.
                     'gen_ai.conversation.compacted': True,
                     'compaction.strategy': strategy,
-                    'compaction.messages_before': len(messages),
+                    'compaction.messages_before': len(before),
                     'compaction.messages_after': len(compacted),
-                    'compaction.tokens_before': estimate_token_count(messages, tokenizer),
+                    'compaction.tokens_before': estimate_token_count(before, tokenizer),
                     'compaction.tokens_after': estimate_token_count(compacted, tokenizer),
                 }
             )
@@ -747,6 +762,55 @@ async def compact_with_span(
                     attributes['compaction.receipt.handle'] = receipt.handle
                 span.add_event(RECEIPT_EVENT_NAME, attributes)
     return compacted
+
+
+async def compact_with_events(
+    ctx: RunContext[AgentDepsT],
+    *,
+    strategy: str,
+    messages: list[ModelMessage],
+    compact: Callable[[], Awaitable[list[ModelMessage]]],
+    tokenizer: Callable[[str], int] | None = None,
+    emits: bool | None = None,
+) -> list[ModelMessage]:
+    """Run one strategy attempt with a cancellable start event and a changed-only end event.
+
+    The before-state is snapshotted first: a strategy may edit the list it was handed in place
+    and return it, and the end event still has to report what that list held before the attempt.
+    """
+    enabled = _COMPACTION_EVENTS_ENABLED.get() if emits is None else emits
+    token = _COMPACTION_EVENTS_ENABLED.set(enabled)
+    try:
+        if not enabled:
+            return await compact()
+
+        before = list(messages)
+        tokens_before = estimate_token_count(before, tokenizer)
+        start_event = await ctx.emit(
+            CompactionStartEvent(
+                strategy=strategy,
+                messages_before=len(before),
+                tokens_before=tokens_before,
+            )
+        )
+        if start_event.cancelled:
+            return messages
+
+        compacted = await compact()
+        if not _history_changed(before, compacted):
+            return messages
+        await ctx.emit(
+            CompactionEndEvent(
+                strategy=strategy,
+                messages_before=len(before),
+                messages_after=len(compacted),
+                tokens_before=tokens_before,
+                tokens_after=estimate_token_count(compacted, tokenizer),
+            )
+        )
+        return compacted
+    finally:
+        _COMPACTION_EVENTS_ENABLED.reset(token)
 
 
 def record_failed_compaction(
@@ -840,6 +904,12 @@ class CompactionStrategy(Protocol[AgentDepsT]):
     capability's `before_model_request`).  A strategy that composes others may define its own
     stop condition instead -- `TieredCompaction` escalates only until the history fits its
     target.  Implementations must preserve tool-call / tool-return pairing.
+
+    A strategy may declare a `strategy_id` class attribute: the stable identifier its
+    `CompactionStartEvent`/`CompactionEndEvent` emissions and OTel span attributes carry.
+    Without one, the snake-cased class name (minus a `Compaction` suffix) is used, which
+    changes if the class is renamed -- declare an explicit id for anything consumers persist
+    or branch on.
     """
 
     async def compact(
@@ -847,6 +917,15 @@ class CompactionStrategy(Protocol[AgentDepsT]):
         messages: list[ModelMessage],
         ctx: RunContext[AgentDepsT],
     ) -> list[ModelMessage]: ...  # pragma: no cover
+
+
+def strategy_id(strategy: object) -> str:
+    """The stable identifier `strategy`'s compaction events and span attributes carry."""
+    declared = getattr(strategy, 'strategy_id', None)
+    if isinstance(declared, str) and declared:
+        return declared
+    name = type(strategy).__name__.removesuffix('Compaction') or type(strategy).__name__
+    return ''.join(f'_{c.lower()}' if c.isupper() else c for c in name).lstrip('_')
 
 
 # ---------------------------------------------------------------------------

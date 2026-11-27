@@ -10,6 +10,7 @@ from openai.types.responses.response_create_params import ContextManagement
 
 from ..._run_context import RunContext
 from ...capabilities.abstract import AbstractCapability
+from ...capabilities.compaction import CompactionEndEvent, CompactionStartEvent
 from ...exceptions import UserError
 from ...messages import ModelMessage
 from ...settings import ModelSettings
@@ -47,6 +48,11 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
       or when you need explicit out-of-band control over when compaction runs.
 
       Requires either `message_count_threshold` or a custom `trigger` callable.
+
+      Because compaction is decided client-side in this mode, the capability emits a
+      cancellable [`CompactionStartEvent`][pydantic_ai.capabilities.CompactionStartEvent]
+      before calling the endpoint and a
+      [`CompactionEndEvent`][pydantic_ai.capabilities.CompactionEndEvent] after.
 
     If `stateless` is not set, it is inferred from which parameters you
     provide: passing any stateless-only parameter (`message_count_threshold`
@@ -185,10 +191,15 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         if len(request_context.messages) < 2:  # pragma: no cover
             return request_context
 
-        # Compact all messages except the last (current) request
+        # All messages except the last (current) request are compacted; the events count that window.
+        compact_window = request_context.messages[:-1]
+        start_event = await ctx.emit(CompactionStartEvent(strategy='openai', messages_before=len(compact_window)))
+        if start_event.cancelled:
+            return request_context
+
         compact_ctx = ModelRequestContext(
             model=request_context.model,
-            messages=request_context.messages[:-1],
+            messages=compact_window,
             model_settings=request_context.model_settings,
             model_request_parameters=request_context.model_request_parameters,
         )
@@ -198,6 +209,13 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         messages = [compacted_response, request_context.messages[-1]]
         request_context.messages = messages.copy()
         ctx.messages[:] = messages
+        await ctx.emit(
+            CompactionEndEvent(
+                strategy='openai',
+                messages_before=len(compact_window),
+                messages_after=1,
+            )
+        )
         return request_context
 
     @classmethod

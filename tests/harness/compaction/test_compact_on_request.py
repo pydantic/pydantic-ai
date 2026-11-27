@@ -230,7 +230,7 @@ async def test_span_marks_the_compaction_model_requested(capfire: CaptureLogfire
 
     [span] = [s for s in capfire.exporter.exported_spans_as_dict() if s['name'] == 'compact_messages']
     attributes = span['attributes']
-    assert attributes['compaction.strategy'] == 'Tail'
+    assert attributes['compaction.strategy'] == 'tail'
     assert attributes['compaction.model_requested'] is True
     assert attributes['compaction.messages_before'] == 5
     assert attributes['compaction.messages_after'] == 2

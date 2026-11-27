@@ -1,7 +1,7 @@
 """`FallbackCompaction(background_start=...)`: summarize ahead of the trigger, swap the summary in when due."""
 
 import asyncio
-from collections.abc import Generator
+from collections.abc import AsyncIterator, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
@@ -12,7 +12,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from pydantic_ai import Agent, ModelHTTPError, RunContext, UserError
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, CompactionStartEvent, on_event
 from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
@@ -26,7 +26,12 @@ from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
-from pydantic_ai_harness.compaction import FallbackCompaction, SlidingWindowCompaction, SummarizingCompaction
+from pydantic_ai_harness.compaction import (
+    FallbackCompaction,
+    SlidingWindowCompaction,
+    SummarizingCompaction,
+    TieredCompaction,
+)
 from pydantic_ai_harness.compaction._fallback_compaction import MAX_BACKGROUND_COMPACTIONS
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 
@@ -239,7 +244,7 @@ async def test_held_summary_swaps_in_and_keeps_what_came_after_verbatim() -> Non
     assert second.usage.requests == 1
     [background] = named(spans, 'background_compaction')
     assert dict(background.attributes or {}) == {
-        'compaction.strategy': 'SummarizingCompaction',
+        'compaction.strategy': 'summarizing',
         'compaction.messages_before': 3,
     }
     [compacted] = named(spans, 'compact_messages')
@@ -503,3 +508,48 @@ def test_background_start_is_a_fraction_below_one(start: float) -> None:
 def test_background_start_needs_a_trigger() -> None:
     with pytest.raises(ValueError, match='needs a max_tokens or max_fraction trigger'):
         FallbackCompaction(fallback_chain=[SlidingWindowCompaction(max_messages=1)], background_start=0.5)
+
+
+@dataclass
+class _RecordStarts(AbstractCapability[None]):
+    strategies: list[str] = field(default_factory=list[str])
+
+    @on_event(CompactionStartEvent)
+    async def record(self, ctx: RunContext[None], event: CompactionStartEvent) -> None:
+        self.strategies.append(event.strategy)
+
+
+async def test_background_work_emits_no_compaction_events_from_a_composed_tier() -> None:
+    summarizer = Summarizer()
+    summarizer.release.set()
+    tiered = TieredCompaction[None](
+        tiers=[
+            SummarizingCompaction(
+                model=FunctionModel(summarizer, model_name='summarizer'),
+                keep_messages=1,
+                preserve_first_user_message=False,
+            )
+        ],
+        target_tokens=1,
+    )
+    compaction = FallbackCompaction[None](fallback_chain=[tiered], max_tokens=TRIGGER, background_start=0.5)
+    recorder = _RecordStarts()
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'done'
+
+    # A listener on an immediately dispatched event streams the run, so the model streams too.
+    streaming = Agent(
+        FunctionModel(stream_function=stream, model_name='main'),
+        deps_type=type(None),
+        capabilities=[recorder, compaction],
+    )
+    first = await streaming.run('next', message_history=opening(1_100), conversation_id='c')
+    await summarizer.wait_started()
+    # A streamed response reports a small estimate, so the prompt alone takes the request over the trigger.
+    second = await streaming.run(OVER * 3, message_history=first.all_messages(), conversation_id='c')
+
+    assert summaries(second.all_messages()) == ['summary 1']
+    assert summarizer.calls == 1, 'the background summary was used, not written again in the run'
+    # Only the run's own swap emits; the tiers the background work composed emitted nothing.
+    assert recorder.strategies == ['fallback']

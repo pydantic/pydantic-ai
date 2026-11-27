@@ -865,7 +865,7 @@ Say more.
 
         spans = capfire.exporter.exported_spans_as_dict()
         compact = next(span for span in spans if span['name'] == 'compact_messages')
-        assert compact['attributes']['compaction.strategy'] == 'RelevanceCompaction'
+        assert compact['attributes']['compaction.strategy'] == 'relevance'
         select = next(span for span in spans if span['name'] == 'select compaction steps')
         attributes = {key: value for key, value in select['attributes'].items() if key.startswith('relevance')}
         assert attributes == snapshot(

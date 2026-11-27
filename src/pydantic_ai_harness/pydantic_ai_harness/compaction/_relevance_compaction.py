@@ -187,6 +187,8 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
         ```
     """
 
+    strategy_id = 'relevance'
+
     model: Model | KnownModelName | str
     """The judge: the model that judges each step, a decision model or any model that supports structured output."""
 
@@ -325,7 +327,7 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
             return request_context
         compacted = await compact_with_span(
             request_ctx,
-            strategy='RelevanceCompaction',
+            strategy=self.strategy_id,
             messages=messages,
             compact=lambda: self.compact(messages, request_ctx),
             tokenizer=self.tokenizer,
@@ -539,7 +541,7 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
         handle = discover_transcript_handle(ctx)
         record_receipt(
             ReceiptInfo(
-                strategy='RelevanceCompaction',
+                strategy=self.strategy_id,
                 dropped_messages=len(removed),
                 dropped_tokens=dropped_tokens,
                 by='RelevanceCompaction',

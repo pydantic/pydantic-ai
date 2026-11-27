@@ -39,6 +39,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     BinaryContent,
     CachePoint,
+    CapabilityEvent,
     CapabilityInstructionSource,
     CapabilitySource,
     CompactionPart,
@@ -201,6 +202,11 @@ def _make_ctx(
 
         def enqueue(self, *content: Any) -> None:
             self.enqueued.extend(content)
+
+        async def emit(self, event: CapabilityEvent) -> CapabilityEvent:
+            # Like the real `RunContext.emit` with no listeners: immediate dispatch
+            # returns the (unmutated) event for the emitter to inspect.
+            return event
 
     return _FakeCtx(usage=usage, messages=list(messages or ()), usage_limits=usage_limits)
 
@@ -1546,7 +1552,6 @@ class TestExtractSystemPrompts:
 
 class TestExports:
     def test_exposed_under_submodule_and_top_level(self):
-
         names = [
             'SlidingWindowCompaction',
             'ClearToolResults',
@@ -1580,7 +1585,6 @@ class TestUserPromptMultiModal:
     """Cover `_request_part_text` and `_user_prompt_text` for non-string UserContent."""
 
     def test_estimate_with_text_content_parts(self):
-
         part = UserPromptPart(content=[TextContent(content='hello')])
         msgs: list[ModelMessage] = [ModelRequest(parts=[part])]
         # 5 chars / 4 = 1 token.
@@ -1601,7 +1605,6 @@ class TestUserPromptMultiModal:
         assert estimate_token_count(msgs) == 2
 
     def test_format_with_text_content(self):
-
         part = UserPromptPart(content=[TextContent(content='multi-part')])
         msgs: list[ModelMessage] = [ModelRequest(parts=[part])]
         text = format_transcript(msgs)
@@ -3161,7 +3164,6 @@ class TestSummarizingCompactionModel:
         assert MockAgent.call_args.kwargs['instructions'] == required
 
     def test_default_prompt_has_structured_sections(self):
-
         for heading in (
             '## Intent',
             '## Key decisions',
@@ -3324,7 +3326,6 @@ class TestClampOversizedMessages:
         assert result[0] is messages[0]
 
     async def test_request_messages_and_other_parts_untouched(self):
-
         big_user = _user('u' * 5_000)
         mixed = ModelResponse(parts=[ThinkingPart(content='t' * 5_000), TextPart(content='z' * 5_000)])
         cap = ClampOversizedMessages(max_part_chars=1_000, keep_head_chars=50, keep_tail_chars=50)
@@ -3622,7 +3623,6 @@ class TestPublicPath:
         assert summary_calls == request_limit - 1
 
     async def test_capabilities_wired_into_agent(self):
-
         agent = Agent(
             TestModel(),
             capabilities=[ClearToolResults(max_tokens=1, keep_pairs=0)],
@@ -3631,7 +3631,6 @@ class TestPublicPath:
         assert result.output is not None
 
     async def test_clamp_oversized_wired_into_agent(self):
-
         agent = Agent(
             TestModel(),
             capabilities=[ClampOversizedMessages(max_part_chars=1)],
@@ -3797,7 +3796,6 @@ class TestHelperBranchCoverage:
         assert estimate_token_count(msgs) == len('image_generation') // 4
 
     def test_user_prompt_text_skips_non_text_content(self):
-
         part = UserPromptPart(content=[ImageUrl(url='https://example.com/y.png'), 'hello'])
         msgs: list[ModelMessage] = [ModelRequest(parts=[part])]
         assert estimate_token_count(msgs) == len('hello') // 4
@@ -3905,7 +3903,6 @@ class TestCompactionSpan:
         assert 'pydantic_ai.root_conversation_id' not in summary_run['attributes']
 
     async def test_span_emitted_when_threshold_exceeded(self, capfire: CaptureLogfire) -> None:
-
         agent: Agent[None, str] = Agent(
             TestModel(),
             capabilities=[SlidingWindowCompaction(max_tokens=1, keep_messages=1)],
@@ -3921,12 +3918,11 @@ class TestCompactionSpan:
         assert len(spans) == 1
         attrs = spans[0]['attributes']
         assert attrs['gen_ai.conversation.compacted'] is True
-        assert attrs['compaction.strategy'] == 'SlidingWindowCompaction'
+        assert attrs['compaction.strategy'] == 'sliding_window'
         assert attrs['compaction.messages_before'] > attrs['compaction.messages_after']
         assert attrs['compaction.tokens_before'] > attrs['compaction.tokens_after']
 
     async def test_no_span_when_threshold_not_exceeded(self, capfire: CaptureLogfire) -> None:
-
         agent: Agent[None, str] = Agent(
             TestModel(),
             capabilities=[SlidingWindowCompaction(max_tokens=1_000_000, keep_messages=1)],
@@ -3952,7 +3948,7 @@ class TestCompactionSpan:
 
         spans = _compact_spans(capfire)
         assert len(spans) == 1
-        assert spans[0]['attributes']['compaction.strategy'] == 'SummarizingCompaction'
+        assert spans[0]['attributes']['compaction.strategy'] == 'summarizing'
 
     @pytest.mark.usefixtures('instrument_all_agents')
     async def test_summarizer_run_is_named_after_the_capability(self, capfire: CaptureLogfire) -> None:
@@ -3976,7 +3972,7 @@ class TestCompactionSpan:
         await comp.before_model_request(_make_ctx_with_tracer(oversized), _make_request_context(oversized))
         spans = _compact_spans(capfire)
         assert len(spans) == 1
-        assert spans[0]['attributes']['compaction.strategy'] == 'ClampOversizedMessages'
+        assert spans[0]['attributes']['compaction.strategy'] == 'clamp_oversized_messages'
 
     async def test_clamp_emits_span_for_oversized_tool_call_args(self, capfire: CaptureLogfire) -> None:
         comp = ClampOversizedMessages(max_part_chars=4, keep_head_chars=1, keep_tail_chars=1, clamp_tool_call_args=True)
@@ -3987,10 +3983,9 @@ class TestCompactionSpan:
 
         spans = _compact_spans(capfire)
         assert len(spans) == 1
-        assert spans[0]['attributes']['compaction.strategy'] == 'ClampOversizedMessages'
+        assert spans[0]['attributes']['compaction.strategy'] == 'clamp_oversized_messages'
 
     async def test_clamp_no_span_for_non_oversized_or_skipped_parts(self, capfire: CaptureLogfire) -> None:
-
         comp = ClampOversizedMessages(max_part_chars=1_000, clamp_tool_call_args=True)
         messages: list[ModelMessage] = [
             ModelResponse(
@@ -4023,7 +4018,22 @@ class TestCompactionSpan:
         spans = _compact_spans(capfire)
         # The orchestrator drives each tier's `compact` directly, so only one span is emitted.
         assert len(spans) == 1
-        assert spans[0]['attributes']['compaction.strategy'] == 'TieredCompaction'
+        assert spans[0]['attributes']['compaction.strategy'] == 'tiered'
+
+    async def test_span_measures_before_an_in_place_tier_edits_the_list(self, capfire: CaptureLogfire) -> None:
+        class InPlace:
+            async def compact(self, messages: list[ModelMessage], ctx: RunContext[None]) -> list[ModelMessage]:
+                messages.pop(0)
+                return messages
+
+        comp: TieredCompaction[None] = TieredCompaction(tiers=[InPlace()], target_tokens=1)
+        messages: list[ModelMessage] = [_user('first'), _assistant('a'), _user('second'), _assistant('b')]
+        await comp.before_model_request(_make_ctx_with_tracer(messages), _make_request_context(messages))
+
+        spans = _compact_spans(capfire)
+        assert len(spans) == 1
+        attrs = spans[0]['attributes']
+        assert (attrs['compaction.messages_before'], attrs['compaction.messages_after']) == (4, 3)
 
     async def test_tiered_reports_a_target_its_tiers_cannot_reach(
         self, capfire: CaptureLogfire, caplog: pytest.LogCaptureFixture
@@ -4102,15 +4112,15 @@ class TestCompactionSpan:
         assert result.messages == messages[-1:]
         skipped, tiered = (span['attributes'] for span in _compact_spans(capfire))
         assert {key: value for key, value in skipped.items() if key.startswith(('compaction.', 'error.'))} == {
-            'compaction.strategy': '_FailingTier',
+            'compaction.strategy': 'failing_tier',
             'compaction.skipped': 'tier_failed',
             'error.type': f'pydantic_ai.exceptions.{type(error).__name__}',
             'compaction.messages_before': 5,
             'compaction.tokens_before': 50,
         }
-        assert tiered['compaction.strategy'] == 'TieredCompaction'
+        assert tiered['compaction.strategy'] == 'tiered'
         assert caplog.messages == [
-            f'`TieredCompaction` skipped its `_FailingTier` tier, which raised {type(error).__name__}'
+            f'`TieredCompaction` skipped its `failing_tier` tier, which raised {type(error).__name__}'
         ]
 
     async def test_direct_tiered_compact_logs_an_unreachable_target_without_a_span_scope(
@@ -4151,7 +4161,7 @@ class TestCompactionSpan:
 
         spans = _compact_spans(capfire)
         assert len(spans) == 1
-        assert spans[0]['attributes']['compaction.strategy'] == 'DeduplicateFileReads'
+        assert spans[0]['attributes']['compaction.strategy'] == 'deduplicate_file_reads'
 
     async def test_clear_tool_results_emits_span(self, capfire: CaptureLogfire) -> None:
         # ClearToolResults is otherwise only exercised inside TieredCompaction, which reports the
@@ -4167,7 +4177,7 @@ class TestCompactionSpan:
 
         spans = _compact_spans(capfire)
         assert len(spans) == 1
-        assert spans[0]['attributes']['compaction.strategy'] == 'ClearToolResults'
+        assert spans[0]['attributes']['compaction.strategy'] == 'clear_tool_results'
 
 
 # ---------------------------------------------------------------------------
@@ -4248,6 +4258,8 @@ class TestCompactWithSpan:
 
     async def test_non_recording_tracer_skips_attributes(self):
         # A no-op tracer returns a non-recording span, so attribute computation is skipped.
+        # Events are disabled here because an emitted `CompactionStartEvent` legitimately
+        # invokes the tokenizer for its `tokens_before`.
         before: list[ModelMessage] = [_user('a'), _user('b')]
         after: list[ModelMessage] = [_user('a')]
         called = False
@@ -4261,7 +4273,7 @@ class TestCompactWithSpan:
             return after
 
         result = await compact_with_span(
-            _make_ctx(), strategy='Strat', messages=before, compact=_compact, tokenizer=_tokenizer
+            _make_ctx(), strategy='Strat', messages=before, compact=_compact, tokenizer=_tokenizer, emits=False
         )
         assert result is after
         assert called is False
@@ -4691,7 +4703,7 @@ class TestReceiptSpanEvent:
         receipt_events = [e for e in events if e['name'] == 'compaction.receipt']
         assert len(receipt_events) == 1
         attrs = receipt_events[0]['attributes']
-        assert attrs['compaction.receipt.strategy'] == 'SlidingWindowCompaction'
+        assert attrs['compaction.receipt.strategy'] == 'sliding_window'
         assert attrs['compaction.receipt.by'] == 'the harness'
         assert 'compaction.receipt.handle' not in attrs
 
@@ -4708,7 +4720,7 @@ class TestReceiptSpanEvent:
         messages: list[ModelMessage] = [_user('a' * 40), _assistant('b' * 40), _user('c' * 40), _assistant('d')]
         await tiered.before_model_request(_make_ctx_with_tracer(messages), _make_request_context(messages))
 
-        span = next(s for s in _compact_spans(capfire) if s['attributes']['compaction.strategy'] == 'TieredCompaction')
+        span = next(s for s in _compact_spans(capfire) if s['attributes']['compaction.strategy'] == 'tiered')
         assert [event['name'] for event in span['events']].count('compaction.receipt') == 1
 
     async def test_receipt_event_carries_handle(self, capfire: CaptureLogfire) -> None:
@@ -4782,7 +4794,6 @@ class TestKeepUserMessages:
         assert kept[0].content == [TextContent(content='multimodal', metadata=_KEPT_USER_MESSAGE_METADATA)]
 
     async def test_bounds_text_inside_sequence_content(self):
-
         comp = SummarizingCompaction(
             model='test:m',
             max_messages=3,
@@ -5185,7 +5196,6 @@ class TestAnchoredIncremental:
         return 'asyncio'
 
     async def test_previous_summary_fed_as_anchor_with_update_instruction(self):
-
         captured: list[str] = []
 
         def summarize_fn(messages: list[ModelMessage], _info: AgentInfo) -> _MR:
@@ -5279,7 +5289,6 @@ class TestBridgePrefix:
         assert _BRIDGE_ANCHOR not in _summary_text(result)
 
     async def test_same_fallback_model_does_not_add_a_bridge(self):
-
         fallback = FallbackModel(TestModel(), TestModel())
         ctx = _make_ctx()
         ctx.model = fallback
@@ -5341,14 +5350,12 @@ class TestPinsSurviveStrategies:
 
 class TestStepPersistenceHandle:
     async def test_handle_is_run_id_and_reaches_the_receipt(self):
-
         sp: StepPersistence[None] = StepPersistence(store=InMemoryStepStore(), run_id='libr-1')
         assert isinstance(sp, TranscriptHandleProvider)
         assert sp.compaction_transcript_handle() == 'libr-1'
         assert 'Persisted run handle: libr-1.' in await _receipt_for(_CtxWith.capabilities(sp=sp))
 
     def test_handle_none_before_materialization(self):
-
         sp: StepPersistence[None] = StepPersistence(store=InMemoryStepStore())
         assert sp.compaction_transcript_handle() is None
 

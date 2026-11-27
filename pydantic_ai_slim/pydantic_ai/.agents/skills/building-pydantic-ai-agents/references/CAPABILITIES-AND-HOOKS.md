@@ -182,7 +182,7 @@ Capability events reach the agent run event stream, and a realtime session's, bu
 
 For application-level listening, prefer `@agent.on_event(SomeEvent)` — it takes the same event classes, filtering and `timeout=` as `Hooks.on.event` without a separate capability, runs after the capabilities' own listeners, and survives an overridden root capability. Reach for a `Hooks` capability when you also want hook families other than events, or when you need to choose where it sits among the other capabilities.
 
-An event class can declare `dispatch='immediate'` when listeners must act before the emitter continues — a decision event, where a listener mutates a field the emitter then reads. Default dispatch delivers the event at its stream position instead, keeping listener work off the emitter's latency path.
+An event class can declare `dispatch='immediate'` when listeners must act before the emitter continues — a decision event, where a listener mutates a field the emitter then reads. Default dispatch delivers the event at its stream position instead, keeping listener work off the emitter's latency path. The built-in `CompactionStartEvent`, which stateless `OpenAICompaction` and the harness compaction strategies emit before compacting, is one: `event.cancel(reason)` skips that attempt.
 
 ```python
 from dataclasses import dataclass

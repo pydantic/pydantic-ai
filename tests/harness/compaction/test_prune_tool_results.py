@@ -256,7 +256,7 @@ async def test_span_marks_the_prune_model_requested(capfire: CaptureLogfire) -> 
 
     [span] = [s for s in capfire.exporter.exported_spans_as_dict() if s['name'] == 'compact_messages']
     attributes = span['attributes']
-    assert attributes['compaction.strategy'] == 'PruneToolResults'
+    assert attributes['compaction.strategy'] == 'prune_tool_results'
     assert attributes['compaction.model_requested'] is True
     assert attributes['compaction.messages_before'] == attributes['compaction.messages_after'] == 4
     assert attributes['compaction.tokens_after'] < attributes['compaction.tokens_before']
