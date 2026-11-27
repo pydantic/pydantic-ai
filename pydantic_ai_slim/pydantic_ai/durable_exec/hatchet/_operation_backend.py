@@ -164,8 +164,12 @@ def _encoded_error_message(kind: str, payload: JsonValue, message: str) -> str:
 
 def _model_error_message(error: ModelAPIError) -> str:
     """The failure message for a model error, encoded so the durable task can rebuild it, if it can be encoded."""
-    encoded = encode_model_error(error)
-    if encoded is None:
+    try:
+        encoded = encode_model_error(error)
+    except Exception:
+        # A field that can't be encoded, like a response body that isn't UTF-8, leaves the error to cross as text.
+        encoded = None
+    if encoded is None or decode_model_error(encoded) is None:
         return str(error)
     # What the stream produced before failing, which tells the run its events already went out.
     streamed = streamed_before_failing(error)
@@ -203,12 +207,15 @@ def _rebuild_error(error: TaskRunError) -> BaseException | None:
 
 async def run_operation_in_task(
     operation: DurableOperation[ParamsT, WireT, ResultT],
-    params: ParamsT,
+    input: TaskInput,
     *,
+    runtime: object,
     non_retryable_model_errors: tuple[type[ModelAPIError], ...],
 ) -> TaskOutput:
     """Run an operation's handler as a task body, raising each failure as Hatchet should treat it."""
     try:
+        # Loading can fail with a `UserError` too, e.g. for a tool removed during the run, the same way every attempt.
+        params = operation.parameter_transport.load(cast(WireT, input), runtime=runtime)
         with durable_unit_scope():
             value = await operation.handler(params)
     except RetryModelRequest as retry:
@@ -381,8 +388,9 @@ class HatchetOperationBackend(RegisteredOperationBackend[HatchetTaskConfig]):
         non_retryable_model_errors = self._non_retryable_model_errors
 
         async def operation_task(input: TaskInput, ctx: Context) -> TaskOutput:
-            params = operation.parameter_transport.load(cast(WireT, input), runtime=runtime)
-            return await run_operation_in_task(operation, params, non_retryable_model_errors=non_retryable_model_errors)
+            return await run_operation_in_task(
+                operation, input, runtime=runtime, non_retryable_model_errors=non_retryable_model_errors
+            )
 
         registration: dict[str, Any] = {key: config[key] for key in _REGISTRATION_KEYS if key in config}
         task = self._hatchet.task(name=name, input_validator=TaskInput, **registration)(operation_task)
