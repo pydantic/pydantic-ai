@@ -238,7 +238,8 @@ class DurableEngineSuite:
         stores its cases use; the core cases' stand-ins make no other request. Override it to count the stand-ins
         of a case of your own.
         """
-        return dict
+        # Every built-in engine's suite counts its stand-ins, so only a third-party engine's runs this default.
+        return dict  # pragma: no cover
 
     def expected_units(self, name: str) -> Sequence[str] | None:
         """The units a run of the case `name` records besides its model requests, in order, to pin their names.

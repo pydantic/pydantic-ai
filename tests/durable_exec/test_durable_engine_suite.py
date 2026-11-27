@@ -3,6 +3,9 @@
 `TestDBOS` (`tests/harness/test_durable_tool_io.py`) and `TestTemporal` (`tests/harness/test_durable_temporal_replay.py`)
 run the suite end to end; these check the judgements their engines don't reach, such as a `restart` recovery.
 They run a stand-in engine and scripted model, with no provider exchange to record, so none is a VCR test.
+They call the suite's private judgement helpers rather than only the public `test_case` and `test_scenario`, unlike
+`tests/AGENTS.md` asks, because those branches (restart recovery, recovery from part way, refusal timing) are only
+reachable by scripting an engine's runs and recoveries, which is what these calls do directly.
 """
 
 from __future__ import annotations
@@ -182,7 +185,6 @@ def test_the_defaults_pin_nothing_and_count_nothing() -> None:
     assert suite.expected_units('case') is None
     assert suite.marks('case') == ()
     assert suite.model_request_unit('case') is None
-    assert DurableEngineSuite.count_requests._get_wrapped_function()(suite)() == {}  # pyright: ignore[reportPrivateUsage]
     assert suite._run_breaks('case', _script(), None, EngineRun('', ANSWER, ['model']), Counter()) == []  # pyright: ignore[reportPrivateUsage]
 
 

@@ -22,7 +22,6 @@ import pytest
 
 from pydantic_ai import Agent, FunctionToolset, Tool
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls
-from pydantic_ai.durable_exec._support import INLINE_ANSWER
 from pydantic_ai.durable_exec.conformance import EngineRun, Support
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
@@ -121,8 +120,9 @@ with try_import() as render_imports:
 
 BACKGROUND = 'background result'
 """What the model says when the result arrived as a follow-up message: the bar of every scenario."""
-FOREGROUND = INLINE_ANSWER
-"""What the model says when the call returned its result inline, as a normal tool return."""
+FOREGROUND = 'inline result'
+"""What the model says when the call returned its result inline, as a normal tool return: the answer the `limited`
+cells' `ran_in_foreground` check expects."""
 
 RESULT = 'research result'
 
