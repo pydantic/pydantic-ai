@@ -441,7 +441,12 @@ the conversation established (per provider, endpoint, and model) by more than `m
 of it and at least `min_missed_tokens=2000` tokens, unless the provider's cache retention window or a
 `CompactionPart` explains it. It shares core instrumentation's detector: `warning.reason` is
 `'unexpected'` (inside the retention window) or `'unknown'` (no published window); `ttl_expired`,
-`compacted`, and `unreported` collapses don't warn. It adds no tools or instructions. Deprecated:
+`compacted`, and `unreported` collapses don't warn. It adds no tools or instructions. It also emits
+`CacheNotEnabledWarning` (a `UserWarning`) once per conversation and model when a request of at least 4,096
+input tokens goes to a model that only caches when the request asks it to (Anthropic, Bedrock's Claude and
+Nova, and OpenRouter's Anthropic routes) with no `cache` or provider-specific cache setting, no
+`CachePoint`, and no cache usage reported. Enable it with `cache=True` or the `Caching()` capability, or
+set `cache=False` to leave caching off on purpose and silence the warning. Deprecated:
 `collapse_ratio` (honored as `min_missed_ratio=1 - collapse_ratio`), `min_prefix_tokens` (honored;
 use `min_missed_tokens`), and `cache_ttl_seconds` (ignored: retention comes from the model's
 settings, its profile's `default_cache_retention`, and `CachePoint` TTLs).
