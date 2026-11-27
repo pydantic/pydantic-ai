@@ -1,0 +1,156 @@
+{
+  "pull": {
+    "base": {
+      "repo": {
+        "id": 818331198
+      },
+      "sha": "46de184b6a8ec095ffd4057c6d37e239ad839a72"
+    },
+    "changed_files": 6,
+    "head": {
+      "repo": {
+        "id": 818331198
+      },
+      "sha": "a9f901305f4ba9f622319c654167d91691db8857"
+    },
+    "html_url": "https://github.com/pydantic/pydantic-ai/pull/13615",
+    "user": {
+      "id": 5629756,
+      "login": "mpfaffenberger",
+      "type": "User"
+    },
+    "labels": [
+      {
+        "name": "feature"
+      },
+      {
+        "name": "size: S"
+      },
+      {
+        "name": "pkg:harness"
+      }
+    ],
+    "number": 13615,
+    "state": "closed"
+  },
+  "reviews": [
+    {
+      "body": "<!-- Macroscope (Approvability) review body marker -->\n<!-- MURMUR_IGNORE -->\n<!-- macroscope-meta: {\"kind\":\"approvability\"} -->",
+      "commit_id": "a9f901305f4ba9f622319c654167d91691db8857",
+      "id": 5926847052,
+      "state": "APPROVED",
+      "submitted_at": "2026-11-16T20:14:58Z",
+      "user": {
+        "id": 170038800,
+        "login": "macroscopeapp[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "",
+      "commit_id": "a9f901305f4ba9f622319c654167d91691db8857",
+      "id": 5926858391,
+      "state": "COMMENTED",
+      "submitted_at": "2026-11-16T20:15:40Z",
+      "user": {
+        "id": 224490171,
+        "login": "veria-ai[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "## PR Review Checks\n\n- `general` (complete): Reviewed all four listed files (`_pinning.py`, compaction `__init__.py`, README, and the harness skill reference), tracing `pin`/`is_pinned` through `pydantic_ai.framing`/`register_tag`/`wrap`, `framework_frame_text` provenance and lookalike handling, history sanitization, and the compaction re-injection paths; no PR-introduced security vulnerability (secret disclosure, control bypass, allocation lifetime, browser endpoint, history promotion, or super-linear cost) was found, and the remaining provenance/note asymmetry is a prompt-injection hint the threat model excludes from findings.\n- `tests-and-dependencies` (complete): Reviewed the single changed test file (`tests/harness/compaction/test_compaction.py`), its pin helpers and new tests, the production `pin()`/`is_pinned()` implementation under `pr-head/` and the agent/`prepare_messages` path they exercise, plus the root and harness testing rules; the PR changes no cassettes or dependency manifests.\n\n<details><summary>Usage</summary>\n\n| check | outcome | findings | steps | tokens | seconds |\n|---|---|---|---|---|---|\n| `general` | COMPLETE | 0 | 21 | 1,082,918 | 276 |\n| `tests-and-dependencies` | COMPLETE | 1 | 25 | 1,304,841 | 383 |\n\n</details>\n\n<!-- pr-review-checks run=43947512867 head=a9f901305f4ba9f622319c654167d91691db8857 -->",
+      "commit_id": "a9f901305f4ba9f622319c654167d91691db8857",
+      "id": 5926954585,
+      "state": "COMMENTED",
+      "submitted_at": "2026-11-16T20:21:57Z",
+      "user": {
+        "id": 41898282,
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "",
+      "commit_id": "a9f901305f4ba9f622319c654167d91691db8857",
+      "id": 5927351461,
+      "state": "COMMENTED",
+      "submitted_at": "2026-11-16T20:47:34Z",
+      "user": {
+        "id": 5629756,
+        "login": "mpfaffenberger",
+        "type": "User"
+      }
+    },
+    {
+      "body": "",
+      "commit_id": "a9f901305f4ba9f622319c654167d91691db8857",
+      "id": 5927352024,
+      "state": "COMMENTED",
+      "submitted_at": "2026-11-16T20:47:36Z",
+      "user": {
+        "id": 5629756,
+        "login": "mpfaffenberger",
+        "type": "User"
+      }
+    }
+  ],
+  "comments": [
+    {
+      "body": "**Low: Model-written pin bodies skip the lookalike-frame check**\n\nWith `author=None`, `framework_frame_body` returns `None`, and `_text_of` skips framework frames. As a result, `prepare_messages` never checks the body of a `source='model'` pin for text that looks like a frame. `wrap` only escapes literal ASCII tags, so spellings the lookalike pass is built to catch still get through: Cyrillic or small-capital letters (`<ѕystem>`), zero-width characters inside the tag name, and a full-width `＜`. These reach the model on the user channel with no note. Before this change, the same content passed to `pin()` was checked as user text.\n\nModel output can be steered by fetched pages and tool results, and the docs now tell callers to use `source='model'` for exactly that kind of content. This is a gap in a prompt-injection defense, not a confirmed bypass. You can keep the body checked by giving it an author, as `make_task_question` already does for a child model's text (or add a model/assistant `LookalikeSource` in core if the note wording matters):\n\n```suggestion\n        content=[framework_frame_text(text, metadata=metadata, author='tool')]\n```",
+      "created_at": "2026-11-16T20:15:40Z",
+      "id": 4590984127,
+      "in_reply_to_id": null,
+      "original_commit_id": "a9f901305f4ba9f622319c654167d91691db8857",
+      "pull_request_review_id": 5926858391,
+      "user": {
+        "id": 224490171,
+        "login": "veria-ai[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "**medium** · `tests-and-dependencies` check\n\n`test_user_pin_is_unchanged` compares `pin('keep me', source='user')` with `pin('keep me')`, and both calls take the same `if source == 'user'` branch in `_pinning.pin()`. The assertion therefore only pins that the new keyword's default is `'user'`; it cannot detect a change to the user-pin form itself, so it would still pass if the user branch started returning framed `<pinned source=\"user\">` content or dropped the `TextContent` pin marker, which is the backward compatibility this test's name and the PR's \"existing pins ... unchanged\" promise claim. Assert against the concrete expected part (a `UserPromptPart` holding a `TextContent` with the plain text and the existing pin marker), or add `'user'` to the parametrized `Agent`-driven test above and assert the pin reaches the model as unframed user text; if it stays a direct unit test, say why a cassette cannot cover the behavior.\n\n<!-- pr-review-checks finding=2d29919961ac2c9b9783a7d103fb829f25ed632c08e0e4808c09d2f1735bf655 -->",
+      "created_at": "2026-11-16T20:21:57Z",
+      "id": 4591054126,
+      "in_reply_to_id": null,
+      "original_commit_id": "a9f901305f4ba9f622319c654167d91691db8857",
+      "pull_request_review_id": 5926954585,
+      "user": {
+        "id": 41898282,
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "Addressed in stacked #13630.",
+      "created_at": "2026-11-16T20:47:34Z",
+      "id": 4591335751,
+      "in_reply_to_id": 4590984127,
+      "original_commit_id": "a9f901305f4ba9f622319c654167d91691db8857",
+      "pull_request_review_id": 5927351461,
+      "user": {
+        "id": 5629756,
+        "login": "mpfaffenberger",
+        "type": "User"
+      }
+    },
+    {
+      "body": "Addressed in stacked #13630.",
+      "created_at": "2026-11-16T20:47:36Z",
+      "id": 4591336193,
+      "in_reply_to_id": 4591054126,
+      "original_commit_id": "a9f901305f4ba9f622319c654167d91691db8857",
+      "pull_request_review_id": 5927352024,
+      "user": {
+        "id": 5629756,
+        "login": "mpfaffenberger",
+        "type": "User"
+      }
+    }
+  ],
+  "commits": [
+    "a9f901305f4ba9f622319c654167d91691db8857"
+  ],
+  "resolved": []
+}
