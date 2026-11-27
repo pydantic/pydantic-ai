@@ -119,7 +119,7 @@ agent = Agent(
 )
 ```
 
-There is no `Shell` and no write tool in that list, so the agent has no way to run a command or change a file: the capabilities an agent does not have are the clearest statement of what it cannot do.
+There is no `Shell` and no write tool in that list, so the agent has no way to run a command or change a file: the capabilities an agent does not have are the clearest statement of what it cannot do. The run itself still writes: [`ToolOutputLimits`](tool-output-limits.md) spills an oversized result to `.pydantic-ai-harness/` in the workspace's working directory.
 
 That is the whole pattern: pick the capabilities you want, configure them, and leave out the ones you do not. Each one is documented on its own page.
 
@@ -143,9 +143,9 @@ agent = Agent(
 )
 ```
 
-That keeps a **trusted** agent from accidentally writing outside its working directory: the file tools and commands can write only there, the rest of the host is mounted read-only, `/tmp` is private, and there is no network unless you pass `network=True`.
+That keeps a trusted agent from accidentally writing outside its working directory: the file tools and commands can write only there, the rest of the host is mounted read-only, `/tmp` is private, and there is no network unless you pass `network=True`.
 
-It is **not a security boundary, and not a sandbox for untrusted code or an untrusted agent**, which is how [`BubblewrappedWorkspace`](bubblewrap-sandbox.md) puts it itself. Commands share the host kernel and can read every file the host user can, SSH keys and cloud credentials included, and show them to the model; they can signal the user's other processes, and background jobs outlive the run. An agent you do not trust belongs on a machine that is not yours: [E2B](e2b-sandbox.md), [Modal](modal-sandbox.md) and [Smol](smol-sandbox.md) run commands in an isolated cloud sandbox, and the [workspace list](#workspaces) has the rest.
+It is not a security boundary, and not a sandbox for untrusted code or an untrusted agent, which is how [`BubblewrappedWorkspace`](bubblewrap-sandbox.md) puts it itself. Commands share the host kernel and can read every file the host user can, SSH keys and cloud credentials included, and show them to the model; they can signal the user's other processes, and background jobs outlive the run. An agent you do not trust belongs on a machine that is not yours: [E2B](e2b-sandbox.md), [Modal](modal-sandbox.md) and [Smol](smol-sandbox.md) run commands in an isolated cloud sandbox, and the [workspace list](#workspaces) has the rest.
 
 ## Workspaces
 
