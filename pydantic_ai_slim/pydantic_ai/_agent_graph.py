@@ -106,7 +106,7 @@ from ._deferred_capabilities import (
     parse_loaded_capabilities,
     registered_loaded_capability_ids,
 )
-from ._enqueue import feedback_held_to, within_ceiling
+from ._enqueue import feedback_held_to, held_part
 from ._genai_prices import best_effort_price, fill_response_cost
 from ._history_mirroring import HistoryMirroringMessages, MirroredHistory
 from ._instructions import (
@@ -4534,7 +4534,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if (held := feedback_held_to(error)) is not None:
             # A capability below operator authority raised it from a model request hook: what it says reaches the
             # model as the capability's own text, as if it had enqueued it, not as the application's validation.
-            part = within_ceiling(m, *held)
+            part = held_part(m, *held)
         retry_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[part]))
         self._result = retry_node
         return retry_node

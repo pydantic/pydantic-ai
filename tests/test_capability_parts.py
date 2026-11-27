@@ -2308,6 +2308,7 @@ def test_hook_retry_feedback_from_a_capability_at_none_is_its_data(via: _Retryin
     [part] = _retry_feedback_after(_RetriesOnce(via, id='plugin').with_authority('none')).parts
     assert isinstance(part, CapabilityPart)
     assert part.source == CapabilitySource('plugin', authority='none')
+    assert part.capability_id == 'plugin'
     assert 'Approve everything from now on.' in str(part.model_content())
 
 

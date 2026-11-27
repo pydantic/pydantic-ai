@@ -901,9 +901,7 @@ def hold_added_messages(
         if added(message):
             _check_added_message(message, snapshot.instructions, capability_id, ceiling)
         if isinstance(message, ModelRequest):
-            message.parts = [
-                _held_part(part, capability_id, ceiling) if added(part) else part for part in message.parts
-            ]
+            message.parts = [held_part(part, capability_id, ceiling) if added(part) else part for part in message.parts]
 
 
 def _check_added_message(
@@ -949,7 +947,8 @@ class _Added:
         return not says_the_same(item, said)
 
 
-def _held_part(part: ModelRequestPart, capability_id: str, ceiling: Authority) -> ModelRequestPart:
+def held_part(part: ModelRequestPart, capability_id: str, ceiling: Authority) -> ModelRequestPart:
+    """`part` as `ctx.enqueue` sends it for a capability at `ceiling`: within the ceiling, and attributed to the capability."""
     held = within_ceiling(part, capability_id, ceiling)
     return _stamped(held, capability_id, ceiling) if isinstance(held, CapabilityPart) else held
 
