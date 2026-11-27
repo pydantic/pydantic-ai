@@ -6843,7 +6843,7 @@ async def test_xai_previous_response_id_breaks_chain_on_modified_history_instruc
     """Tampered history, changed instructions, wrong digest key, or compaction forces full resend."""
     resp_1 = _with_response_id(create_response(content='First'), 'resp_1')
     resp_resend = _with_response_id(create_response(content='Resent'), 'resp_2')
-    mock_client = MockXai.create_mock([resp_1, resp_resend, resp_resend, resp_resend, resp_resend])
+    mock_client = MockXai.create_mock([resp_1, resp_resend, resp_resend, resp_resend, resp_resend, resp_resend])
     settings = XaiModelSettings(xai_store_messages=True, xai_previous_response_id='auto')
 
     m_keyed = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client), history_digest_key=b'k1')
@@ -6881,10 +6881,62 @@ async def test_xai_previous_response_id_breaks_chain_on_modified_history_instruc
         model_settings=XaiModelSettings(xai_store_messages=True, xai_previous_response_id='resp_seed'),
     ).run('After compact', message_history=compacted)
 
+    # 5. Substituted provider_response_id -> breaks chain even with matching history and key
+    resp_msg = history[1]
+    assert isinstance(resp_msg, ModelResponse)
+    swapped = [
+        history[0],
+        ModelResponse(
+            parts=resp_msg.parts,
+            usage=resp_msg.usage,
+            model_name=resp_msg.model_name,
+            timestamp=resp_msg.timestamp,
+            provider_name=resp_msg.provider_name,
+            provider_url=resp_msg.provider_url,
+            canonical_system=resp_msg.canonical_system,
+            provider_response_id='resp_other_conversation',
+            finish_reason=resp_msg.finish_reason,
+            history_digest=resp_msg.history_digest,
+        ),
+    ]
+    await Agent(
+        m_keyed,
+        instructions='Voice A',
+        model_settings=XaiModelSettings(xai_store_messages=True, xai_previous_response_id='resp_seed'),
+    ).run('Next', message_history=swapped)
+
+    # Mock client needs 6 responses: 1 initial + 5 failed continuations
     calls = get_mock_chat_create_kwargs(mock_client)
-    for idx in range(1, 5):
+    for idx in range(1, 6):
         assert 'previous_response_id' not in calls[idx], f'call {idx} should not continue'
         assert any(msg['role'] == 'ROLE_SYSTEM' for msg in calls[idx]['messages'])
+
+
+async def test_xai_previous_response_id_withdrawn_dynamic_instruction_breaks_chain(allow_model_requests: None):
+    """Changing or withdrawing a dynamic instruction breaks the chain so withdrawn context does not persist."""
+    resp_1 = _with_response_id(create_response(content='Turn 1'), 'resp_1')
+    resp_2 = _with_response_id(create_response(content='Turn 2'), 'resp_2')
+    mock_client = MockXai.create_mock([resp_1, resp_2])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    settings = XaiModelSettings(xai_store_messages=True, xai_previous_response_id='auto')
+
+    include_secret = True
+    agent = Agent(m, instructions='Static system', model_settings=settings)
+
+    @agent.instructions
+    def secret_ctx() -> str | None:
+        return 'SECRET' if include_secret else None
+
+    r1 = await agent.run('First')
+    include_secret = False
+    r2 = await agent.run('Second', message_history=r1.all_messages())
+    assert r2.output == 'Turn 2'
+
+    calls = get_mock_chat_create_kwargs(mock_client)
+    assert 'previous_response_id' not in calls[1]
+    assert [msg for msg in calls[1]['messages'] if msg['role'] == 'ROLE_SYSTEM'] == [
+        {'content': [{'text': 'Static system'}], 'role': 'ROLE_SYSTEM'}
+    ]
 
 
 async def test_xai_previous_response_id_stream_records_history_digest(allow_model_requests: None):

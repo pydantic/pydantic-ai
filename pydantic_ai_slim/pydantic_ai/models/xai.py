@@ -88,7 +88,6 @@ from ..settings import ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._history_digest import Hasher, continuation_digest, history_hasher
-from ._prompt_cache import instruction_cache_boundaries
 from ._tool_choice import resolve_tool_choice, support_tool_forcing, tool_forcing_unavailable_reason
 
 try:
@@ -516,21 +515,26 @@ class XaiModel(Model[AsyncClient]):
                 case _:
                     assert_never(message)
 
-        # Insert instructions as system messages after existing system messages if present.
-        # When continuing a server-side response, stable instructions are already stored on the server.
-        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
-            if continues_chain:
-                _, instruction_parts = self._split_stable_instructions(instruction_parts)
-            if instruction_parts:
-                system_prompt_count = next(
-                    (i for i, m in enumerate(xai_messages) if m.role != chat_types.chat_pb2.MessageRole.ROLE_SYSTEM),
-                    len(xai_messages),
-                )
-                xai_messages[system_prompt_count:system_prompt_count] = [
-                    system(part.content) for part in instruction_parts
-                ]
-
+        self._insert_instructions(xai_messages, messages, model_request_parameters, continues_chain=continues_chain)
         return xai_messages
+
+    def _insert_instructions(
+        self,
+        xai_messages: list[chat_types.chat_pb2.Message],
+        messages: list[ModelMessage],
+        model_request_parameters: ModelRequestParameters,
+        *,
+        continues_chain: bool,
+    ) -> None:
+        """Insert instructions as leading system messages unless the stored response already holds them."""
+        if continues_chain:
+            return
+        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
+            system_prompt_count = next(
+                (i for i, m in enumerate(xai_messages) if m.role != chat_types.chat_pb2.MessageRole.ROLE_SYSTEM),
+                len(xai_messages),
+            )
+            xai_messages[system_prompt_count:system_prompt_count] = [system(part.content) for part in instruction_parts]
 
     async def _map_request_parts(
         self,
@@ -965,26 +969,16 @@ class XaiModel(Model[AsyncClient]):
 
         return tool_defs, tool_choice
 
-    @staticmethod
-    def _split_stable_instructions(
-        instruction_parts: Sequence[InstructionPart],
-    ) -> tuple[list[InstructionPart], list[InstructionPart]]:
-        ordered = InstructionPart.sorted(instruction_parts)
-        _, stable_count = instruction_cache_boundaries(ordered)
-        return ordered[:stable_count], ordered[stable_count:]
-
     def _chained_instructions(
         self,
         messages: Sequence[ModelMessage],
         model_request_parameters: ModelRequestParameters,
     ) -> list[str]:
-        """Stable leading instructions stored alongside a server-side response."""
+        """All leading instructions stored alongside a server-side response."""
         if any(isinstance(part, CompactionPart) for message in messages for part in message.parts):
             return []
-        stable, _ = self._split_stable_instructions(
-            self._get_instruction_parts(messages, model_request_parameters) or ()
-        )
-        return [part.content for part in stable]
+        instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or ()
+        return [part.content for part in InstructionPart.sorted(instruction_parts)]
 
     def _history_to_record(
         self,
@@ -1010,14 +1004,14 @@ class XaiModel(Model[AsyncClient]):
             return False
         return any(
             response.history_digest
-            == continuation_digest(
+            == _response_continuation_digest(
                 history_hasher(
                     history,
                     self._history_digest_key,
                     with_instructions=with_instructions,
                     leading_instructions=chained_instructions,
                 ),
-                response.parts,
+                response,
             )
             for with_instructions in (False, True)
         )
@@ -1359,11 +1353,18 @@ class XaiModel(Model[AsyncClient]):
         return streamed_response
 
 
+def _response_continuation_digest(history: Hasher, response: ModelResponse) -> str:
+    """Bind `response.provider_response_id` into the history digest so swapped response IDs cannot pass."""
+    bound = history.copy()
+    bound.update(b'\n' + (response.provider_response_id or '').encode('utf-8'))
+    return continuation_digest(bound, response.parts)
+
+
 def _with_history_digest(response: ModelResponse, history: Hasher | None) -> ModelResponse:
     """`response` with its digest recorded, when `history` says a later request may continue from it."""
     if history is None:
         return response
-    return replace(response, history_digest=continuation_digest(history, response.parts))
+    return replace(response, history_digest=_response_continuation_digest(history, response))
 
 
 @dataclass
