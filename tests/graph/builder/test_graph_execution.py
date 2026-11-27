@@ -7,8 +7,9 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
 import anyio
+import anyio.lowlevel
 import pytest
-from anyio import Event, create_task_group, fail_after
+from anyio import CancelScope, Event, create_task_group, fail_after
 
 from pydantic_graph import GraphBuilder, StepContext
 from pydantic_graph.graph_builder import EndMarker, GraphTask, _GraphIterator  # pyright: ignore[reportPrivateUsage]
@@ -48,8 +49,13 @@ def test_run_sync_replaces_closed_event_loop(closed_event_loop: asyncio.Abstract
     assert not asyncio.all_tasks(replacement_loop)
 
 
-async def test_map_to_end_node_cancels_pending():
-    """Mapping directly to the end node ends the run with the first item to arrive, and cancels the items still running."""
+@pytest.mark.parametrize('cancel_outer', [False, True], ids=['run-cancel', 'outer-cancel'])
+async def test_map_to_end_node_cancels_pending(cancel_outer: bool):
+    """Mapping directly to the end node ends the run with the first item to arrive, and cancels the items still running.
+
+    That cancellation also reaches the caller's code inside `graph.iter()`, and the run absorbs it at exit. A cancellation
+    from an enclosing scope still propagates past the run.
+    """
     g = GraphBuilder(state_type=ExecutionState, output_type=int)
 
     pending = [2, 3, 4, 5]
@@ -86,14 +92,20 @@ async def test_map_to_end_node_cancels_pending():
     )
 
     graph = g.build()
-    async with graph.iter(state=ExecutionState()) as run:
-        async for _ in run:
-            pass
-        # An item the end left running would wait for this forever, so leaving one running fails the asserts below
-        # instead of hanging the run's exit.
-        release.set()
+    with CancelScope() as outer:
+        async with graph.iter(state=ExecutionState()) as run:
+            async for _ in run:
+                pass
+            # An item the end left running would wait for this forever, so leaving one running fails the asserts below
+            # instead of hanging the run's exit.
+            release.set()
+            assert run.output == 1
+            if cancel_outer:
+                outer.cancel()
+            # The run's cancelled scope raises here; only the enclosing scope's own cancellation may leave the run.
+            await anyio.lowlevel.checkpoint()
 
-    assert run.output == 1
+    assert outer.cancelled_caught == cancel_outer
     assert sorted(cancelled) == pending
 
 

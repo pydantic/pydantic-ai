@@ -508,7 +508,9 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any):
         try:
-            await self._run_context.__aexit__(exc_type, exc_val, exc_tb)
+            # The run's task group suppresses the cancellation it raised in the caller's block once the run ends with
+            # tasks still running; returning that suppression is what keeps the cancellation from escaping.
+            return await self._run_context.__aexit__(exc_type, exc_val, exc_tb)
         finally:
             # The run can outlive execution for result inspection; the iterator owns temporary task/reducer state.
             # Detach it after teardown, including errors and cancellation.
