@@ -17,7 +17,7 @@ from pydantic_ai_harness import DenyUnanswered
 from pydantic_ai_harness.ask_user import AskUser
 from pydantic_ai_harness.deny_unanswered import DEFAULT_QUESTION_MESSAGE
 from pydantic_ai_harness.permissions import PermissionRule, Permissions
-from pydantic_ai_harness.sub_agents import DynamicAgents, SubAgent, SubAgents, TaskControl
+from pydantic_ai_harness.sub_agents import DynamicAgents, SubAgent, SubAgents, SubAgentToolset, TaskControl
 from tests.conftest import try_import
 from tests.harness._deferred_tools import QUESTION, call_then_echo
 from tests.harness.sub_agents._background import (
@@ -266,27 +266,40 @@ async def test_the_parents_managed_permissions_reach_a_durable_child_in_the_work
 
 
 @pytest.mark.parametrize(
-    ('managed', 'wrapped'),
-    [(True, False), (True, True), (False, False)],
-    ids=['managed', 'managed_wrapped', 'unmanaged'],
+    ('managed', 'shape'),
+    [(True, 'capability'), (True, 'wrapped'), (True, 'toolset'), (False, 'capability')],
+    ids=['managed', 'managed_wrapped', 'managed_toolset', 'unmanaged'],
 )
 async def test_a_durable_delegate_with_its_own_sub_agents_is_refused_under_a_managed_layer(
-    dbos: DBOS, managed: bool, wrapped: bool
+    dbos: DBOS, managed: bool, shape: str
 ) -> None:
     """Its child-workflow delegations can't see the layer it inherited; without a layer it runs as before."""
     grandchild = Agent(FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('grandchild done')])))
     sub_agents = SubAgents[object](agents=[SubAgent(grandchild, name='grandchild')])
+    toolset = SubAgentToolset[object](
+        agents={'grandchild': SubAgent(grandchild)},
+        forward_usage=True,
+        inherit_tools=False,
+        shared_capabilities=[],
+        event_stream_handler=None,
+        tool_name='delegate_task',
+        tool_retries=1,
+        contain_errors=False,
+        call_counts={},
+    )
     child_agent = Agent(
         FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('child done')])),
-        name=f'delegating_child_{managed}_{wrapped}',
+        name=f'delegating_child_{managed}_{shape}',
+        toolsets=[toolset] if shape == 'toolset' else [],
         capabilities=[
-            PrefixTools[object](wrapped=sub_agents, prefix='team') if wrapped else sub_agents,
+            *([PrefixTools[object](wrapped=sub_agents, prefix='team')] if shape == 'wrapped' else []),
+            *([sub_agents] if shape == 'capability' else []),
             DBOSDurability[object](),
         ],
     )
     parent = Agent(
         call_then_echo('delegate_task', {'agent_name': 'child', 'task': 'go'}, 'd1', 'parent done'),
-        name=f'delegating_parent_{managed}_{wrapped}',
+        name=f'delegating_parent_{managed}_{shape}',
         capabilities=[
             *([Permissions[object](managed_rules=[PermissionRule('deny', command='rm')])] if managed else []),
             SubAgents[object](agents=[SubAgent(child_agent, name='child')]),
@@ -294,7 +307,7 @@ async def test_a_durable_delegate_with_its_own_sub_agents_is_refused_under_a_man
         ],
     )
 
-    @DBOS.workflow(name=f'delegating_parent_{managed}_{wrapped}_workflow')
+    @DBOS.workflow(name=f'delegating_parent_{managed}_{shape}_workflow')
     async def workflow() -> str:
         return (await parent.run('delegate')).output
 

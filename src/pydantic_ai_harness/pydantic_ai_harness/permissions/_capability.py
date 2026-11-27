@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Awaitable, Callable, Iterable, MutableSet, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Iterator, MutableSet, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import Any, ClassVar, Literal, NamedTuple, cast
 
@@ -750,14 +750,20 @@ def inherited_managed_permissions(ctx: RunContext[AgentDepsT]) -> list[Permissio
     Inside a durable unit, whose context carries the agent but not the run's capabilities, the agent's own
     capabilities are read: a durable engine refuses a `Permissions` added per run.
     """
-    inherited: list[Permissions[AgentDepsT]] = []
-    for capability in _run_capabilities(ctx):
-        candidate: AbstractCapability[AgentDepsT] | None = capability
-        while candidate is not None:
-            if isinstance(candidate, Permissions) and (layer := _managed_layer(candidate, ctx)) is not None:
-                inherited.append(layer)
-            candidate = candidate.wrapped if isinstance(candidate, WrapperCapability) else None
-    return inherited
+    return [
+        layer
+        for capability in _run_capabilities(ctx)
+        for candidate in wrapper_chain(capability)
+        if isinstance(candidate, Permissions) and (layer := _managed_layer(candidate, ctx)) is not None
+    ]
+
+
+def wrapper_chain(capability: AbstractCapability[AgentDepsT]) -> Iterator[AbstractCapability[AgentDepsT]]:
+    """`capability`, then each capability it wraps through a `WrapperCapability` chain."""
+    candidate: AbstractCapability[AgentDepsT] | None = capability
+    while candidate is not None:
+        yield candidate
+        candidate = candidate.wrapped if isinstance(candidate, WrapperCapability) else None
 
 
 def _run_capabilities(ctx: RunContext[AgentDepsT]) -> Iterable[AbstractCapability[AgentDepsT]]:

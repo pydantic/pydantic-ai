@@ -445,7 +445,7 @@ managed ask holds what `rules` allows. Only a managed allow skips a `'read-only'
 never loosens the person's own `rules` or `mode`. What a managed rule or `max_mode` holds is `person_only`.
 `SubAgents` adds that managed layer to its delegates' runs, and theirs, without `shared_capabilities`,
 and refuses a delegation it can't carry the layer into: to a remote sub-agent, or to a Temporal- or
-DBOS-bound delegate with its own `SubAgents` (#14944); the person's `mode` and `rules` reach a delegate only through `shared_capabilities`.
+DBOS-bound delegate with its own `SubAgents` or `SubAgentToolset` (#14944); the person's `mode` and `rules` reach a delegate only through `shared_capabilities`.
 
 ```python {test="skip"}
 from pydantic_ai import Agent

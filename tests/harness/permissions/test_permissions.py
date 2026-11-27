@@ -2288,7 +2288,8 @@ class TestInheritedBySubAgents:
             return 'auto'
 
         assert await self._delegate(tmp_path, Permissions[None]('full', max_mode=max_mode)) == (True, True)
-        assert prompts and set(prompts) == {'go'}
+        # Twice for the parent's own `delegate_task` call, in each hook, and once for the delegation.
+        assert prompts == ['go', 'go', 'go']
 
     async def test_a_delegates_inherited_ceiling_is_left_to_a_person_not_the_reviewer(self, tmp_path: Path) -> None:
         """The inherited ceiling holds the call for a person before the delegate's own `'read-only'` asks anyone, so

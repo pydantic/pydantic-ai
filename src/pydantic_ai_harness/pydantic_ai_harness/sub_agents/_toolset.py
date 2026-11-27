@@ -18,7 +18,7 @@ import anyio
 
 from pydantic_ai import AgentStreamEvent, CapabilityEvent, capture_run_messages
 from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler
-from pydantic_ai.capabilities import AbstractCapability, AgentCapability, HookTimeoutError, WrapperCapability
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, HookTimeoutError
 from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.durable_exec import BaseDurabilityCapability, DurableRunContext
 from pydantic_ai.exceptions import (
@@ -70,7 +70,7 @@ from pydantic_ai_harness._sub_agent_output import (
 )
 from pydantic_ai_harness._usage import run_with_count_tokens_fallback
 from pydantic_ai_harness.deny_unanswered._capability import find_deny_unanswered
-from pydantic_ai_harness.permissions._capability import inherited_managed_permissions
+from pydantic_ai_harness.permissions._capability import inherited_managed_permissions, wrapper_chain
 from pydantic_ai_harness.sub_agents._control import (
     DynamicAgents,
     DynamicAgentSpec,
@@ -1967,29 +1967,30 @@ def _runs_child_workflows(agent: AbstractAgent[Any, Any]) -> bool:
 
 
 def _check_durable_delegate(ctx: RunContext[Any], agent_name: str, agent: AbstractAgent[Any, Any]) -> None:
-    """Refuse a delegate that could pass this run's managed layer on through a child workflow, which drops it."""
-    # Imported here: `_capability` imports this module.
-    from pydantic_ai_harness.sub_agents._capability import SubAgents
+    """Refuse a delegate that could pass this run's managed layer on through a child workflow, which drops it.
 
-    if not inherited_managed_permissions(ctx) or not _runs_child_workflows(agent):
+    The managed layer is read last, so a `max_mode` function is read only when this refuses the delegation.
+    """
+    if not _runs_child_workflows(agent) or not _delegates(agent):
         return
-    if any(_finds(capability, SubAgents) for capability in leaf_capabilities(agent.root_capability)):
+    if inherited_managed_permissions(ctx):
         # Inside the child workflow, only the delegate agent's own capabilities can be read, not the layer it got.
         raise UserError(
-            f'Sub-agent {agent_name!r} is bound to a durable execution engine and has its own `SubAgents`: '
+            f'Sub-agent {agent_name!r} is bound to a durable execution engine and has its own `SubAgents` or `SubAgentToolset`: '
             'a delegation it makes through a child workflow would run without the `max_mode` and `managed_rules` '
             "of this run's `Permissions`, so it is refused (https://github.com/pydantic/pydantic-ai/issues/14944)."
         )
 
 
-def _finds(capability: AbstractCapability[Any], kind: type[AbstractCapability[Any]]) -> bool:
-    """Whether `capability`, or one it wraps through a `WrapperCapability` chain, is a `kind`."""
-    candidate: AbstractCapability[Any] | None = capability
-    while candidate is not None:
-        if isinstance(candidate, kind):
-            return True
-        candidate = candidate.wrapped if isinstance(candidate, WrapperCapability) else None
-    return False
+def _delegates(agent: AbstractAgent[Any, Any]) -> bool:
+    """Whether `agent` has a `SubAgents`, wrapped or not, or a `SubAgentToolset` among its toolsets."""
+    # Imported here: `_capability` imports this module.
+    from pydantic_ai_harness.sub_agents._capability import SubAgents
+
+    capabilities = leaf_capabilities(agent.root_capability)
+    if any(isinstance(found, SubAgents) for capability in capabilities for found in wrapper_chain(capability)):
+        return True
+    return any(_tree_has(toolset, lambda node: isinstance(node, SubAgentToolset)) for toolset in agent.toolsets)
 
 
 def _check_remote(ctx: RunContext[Any], agent_name: str, model: str | None) -> None:
