@@ -107,6 +107,7 @@ def _compaction(
     model_settings: ModelSettings | None = None,
     instructions: str = SummarizingCompaction.instructions,
     tokenizer: Callable[[str], int] | None = None,
+    summary_prompt: str = SummarizingCompaction.summary_prompt,
 ) -> SummarizingCompaction[None]:
     """A compaction that summarizes all of a history with *summarizer* when the next prompt is added."""
     return SummarizingCompaction(
@@ -118,6 +119,27 @@ def _compaction(
         model_settings=model_settings,
         instructions=instructions,
         tokenizer=tokenizer,
+        summary_prompt=summary_prompt,
+    )
+
+
+_TINY_WINDOW = 200
+"""A window that a handful of short turns overflows many times over, so the request bound is reached cheaply."""
+
+
+def _tiny_compaction(
+    summarizer: _Summarizer,
+    *,
+    tool_return_max_chars: int | None = 500,
+    tokenizer: Callable[[str], int] | None = None,
+) -> SummarizingCompaction[None]:
+    """A compaction with a bare prompt and instructions, leaving most of `_TINY_WINDOW` to the transcript."""
+    return _compaction(
+        summarizer,
+        tool_return_max_chars=tool_return_max_chars,
+        tokenizer=tokenizer,
+        summary_prompt='{messages}',
+        instructions='Summarize.',
     )
 
 
@@ -277,56 +299,68 @@ class TestSummarizingCompaction:
 
     async def test_a_history_estimated_over_32_requests_fails_before_any_request(self) -> None:
         """A history that needs more than 32 requests fails as an overflowing request would, without sending one."""
-        summarizer = _Summarizer()
-        agent = _agent(_compaction(summarizer))
+        summarizer = _Summarizer(window=_TINY_WINDOW)
+        history = _turns(40, size=600)
+        agent = _agent(_tiny_compaction(summarizer))
 
         with pytest.raises(ModelContextWindowExceededError, match='more than 32 summary requests'):
-            await agent.run('next', message_history=_turns(200))
+            await agent.run('next', message_history=history)
 
         assert summarizer.prompts == []
 
     async def test_a_return_over_32_requests_long_is_cut_rather_than_refused(self) -> None:
         """The bound counts a return as the request it's cut to fit, not its full length."""
-        summarizer = _Summarizer()
-        agent = _agent(_compaction(summarizer, tool_return_max_chars=None))
+        summarizer = _Summarizer(window=_TINY_WINDOW)
+        # Uncut, the return alone is more than 32 requests' worth of tokens.
+        history = _tool_turns(1, size=8_000)
+        agent = _agent(_tiny_compaction(summarizer, tool_return_max_chars=None))
 
-        result = await agent.run('next', message_history=_tool_turns(1, size=400_000))
+        result = await agent.run('next', message_history=history)
 
         assert len(summarizer.prompts) == snapshot(3)
-        assert all(tokens <= _WINDOW for tokens in summarizer.request_tokens)
+        assert all(tokens <= _TINY_WINDOW for tokens in summarizer.request_tokens)
         [prompt] = [prompt for prompt in summarizer.prompts if 'name="tool_0"' in prompt]
         assert re.search(r'<message role="tool_return" name="tool_0">\ny+\[\.\.\.\]\n</message>', prompt)
         assert _summary(result.all_messages()) == f'summary {len(summarizer.prompts)}'
 
     async def test_a_summary_never_takes_more_than_32_requests(self) -> None:
         """Chunks that hold less than the budget are caught once the rest can't fit the requests left."""
-        summarizer = _Summarizer()
-        # Each tool call and its return take about half the budget, so a chunk holds one of the 40.
-        agent = _agent(_compaction(summarizer, tool_return_max_chars=None))
+        summarizer = _Summarizer(window=_TINY_WINDOW)
+        # Each tool call and its return take over half of what a chunk can hold, so a chunk holds one of the 40.
+        history = _tool_turns(40, size=200)
+        agent = _agent(_tiny_compaction(summarizer, tool_return_max_chars=None))
 
         with pytest.raises(ModelContextWindowExceededError, match='more than 32 summary requests'):
-            await agent.run('next', message_history=_tool_turns(40, size=2_800))
+            await agent.run('next', message_history=history)
 
         assert 0 < len(summarizer.prompts) < 32
         assert all(prompt.count('role="tool_return"') == 1 for prompt in summarizer.prompts)
 
     async def test_each_message_is_measured_about_once_however_many_chunks(self) -> None:
-        """Choosing a chunk measures only its own candidates, never the rest of the history."""
-        measured: list[int] = []
+        """Choosing a chunk measures only its own candidates, never the rest of the history.
 
-        def tokenizer(text: str) -> int:
-            measured.append(len(text))
-            return len(text) // 4
+        Measured against the transcript sent, the text tokenized stays the same as the history doubles, where
+        re-measuring the rest of the history for each chunk would double it too.
+        """
+        requests: list[int] = []
+        ratios: list[float] = []
+        for turns in (6, 12, 24):
+            measured: list[int] = []
 
-        summarizer = _Summarizer(window=4_000)
-        history = _turns(200)
-        agent = _agent(_compaction(summarizer, tokenizer=tokenizer))
+            def tokenizer(text: str) -> int:
+                measured.append(len(text))
+                return len(text) // 4
 
-        await agent.run('next', message_history=history)
+            summarizer = _Summarizer(window=_TINY_WINDOW)
+            agent = _agent(_tiny_compaction(summarizer, tokenizer=tokenizer))
+            await agent.run('next', message_history=_turns(turns, size=100))
 
-        assert len(summarizer.prompts) == snapshot(25)
-        transcript_chars = sum(len(prompt) for prompt in summarizer.prompts)
-        assert sum(measured) < 12 * transcript_chars
+            requests.append(len(summarizer.prompts))
+            ratios.append(sum(measured) / sum(len(prompt) for prompt in summarizer.prompts))
+
+        assert requests == snapshot([4, 10, 22])
+        assert all(ratio < 12 for ratio in ratios)
+        assert ratios[-1] < 1.5 * ratios[0]
 
 
 def _ours_metadata() -> dict[str, object]:
