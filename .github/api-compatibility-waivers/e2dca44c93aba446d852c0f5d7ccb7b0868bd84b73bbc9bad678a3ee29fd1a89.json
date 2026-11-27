@@ -1,0 +1,5 @@
+{
+  "against": "v2.76.0",
+  "reason": "pax 0.x: adds one disabled `pydantic_ai_docs` declaration to `DEFAULT_PLUGINS`; every existing entry keeps its value and relative order, and nothing loads or runs until a user enables it.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/15064"
+}
