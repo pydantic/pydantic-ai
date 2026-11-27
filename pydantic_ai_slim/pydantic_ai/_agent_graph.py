@@ -6240,8 +6240,9 @@ def _record_appended_after(state: GraphAgentState, request: _messages.ModelReque
     may drop them.
     """
     history, recorded = state.message_history, state.appended_messages.messages
+    assert recorded is not None, 'The request step starts the record before its hooks run.'
     index = next((index for index in range(len(history) - 1, -1, -1) if history[index] is request), None)
-    if recorded is None or index is None or index == len(history) - 1:
+    if index is None or index == len(history) - 1:
         return
     known = {id(message) for message in recorded}
     recorded.extend(message for message in history[index + 1 :] if id(message) not in known)
