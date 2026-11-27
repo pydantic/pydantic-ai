@@ -64,9 +64,10 @@ on any backend, by changing into it through `sh`; a missing one raises `FileNotF
 `await workspace.read_file(path)` returns a file as `BinaryContent` (a `BinaryImage` for images), with the media type
 taken from the extension as in `BinaryContent.from_path` (`application/octet-stream` when unknown). It reads the whole
 file with no size limit; check `stat(path).size` first to refuse large ones. To get a file the agent made out after the
-run, call it on `result.workspace`. With only a stored ref, for example in a download endpoint, wrap the sandbox
-capability's `backend(ref)` (every harness sandbox has one) in `Workspace(...)`: the backend attaches on first use,
-without starting a run. Take the path from your own records, not from the client.
+run, call it on `result.workspace`. With only a stored ref, for example in a download endpoint, wrap `backend(ref)` of the
+capability that created the sandbox (`DockerContainer`, `E2BSandbox` and the other harness sandboxes that create their
+own environment; wrappers such as `BubblewrappedWorkspace` have none) in `Workspace(...)`: the backend attaches on first
+use, without starting a run. Take the path from your own records, not from the client.
 
 Pydantic AI Harness's `ComputerUse` gives the model a `computer` tool that drives the screen of the run's workspace.
 The workspace's backend must have a screen, as the harness's sandbox desktops do. The protocols a screen implements

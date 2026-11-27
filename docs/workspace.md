@@ -273,8 +273,9 @@ async def plot_sales() -> BinaryContent:
     return await result.workspace.read_file('chart.png')
 ```
 
-Later, for example when a user clicks a download link, you may have only the reference you stored. A
-sandbox capability's `backend(ref)` attaches to that sandbox without starting a run:
+Later, for example when a user clicks a download link, you may have only the reference you stored.
+`backend(ref)` on the capability that created the sandbox, such as `DockerContainer` or `E2BSandbox`,
+attaches to it without starting a run:
 
 ```python {title="download.py" names="defined"}
 from pydantic_ai_harness.docker_container import DockerContainer
