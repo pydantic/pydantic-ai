@@ -122,6 +122,8 @@ print(WebSearchTool in profile.get('supported_native_tools', frozenset()))
 #> True
 ```
 
+When a request asks for output the profile says the model can't produce, like Native Output from a model with `supports_json_schema_output=False` or Tool Output from one with `supports_tools=False`, Pydantic AI raises a [`ModelFeatureUnsupportedError`][pydantic_ai.exceptions.ModelFeatureUnsupportedError] without sending it. A [`FallbackModel`](#fallback-model) or [`ModelFallback`](../capabilities/model-fallback.md) then moves on to the next model, which may support it.
+
 The profile also says which files the model accepts: [`supports_image_input`][pydantic_ai.profiles.ModelProfile.supports_image_input], [`supports_document_input`][pydantic_ai.profiles.ModelProfile.supports_document_input], [`supports_audio_file_input`][pydantic_ai.profiles.ModelProfile.supports_audio_file_input] and [`supports_video_input`][pydantic_ai.profiles.ModelProfile.supports_video_input] for each kind of file, narrowed to particular media types by [`supported_image_media_types`][pydantic_ai.profiles.ModelProfile.supported_image_media_types], [`supported_document_media_types`][pydantic_ai.profiles.ModelProfile.supported_document_media_types], [`supported_audio_media_types`][pydantic_ai.profiles.ModelProfile.supported_audio_media_types] and [`supported_video_media_types`][pydantic_ai.profiles.ModelProfile.supported_video_media_types]. The image, audio and video sets are unset by default, so a file of those kinds is judged by its kind alone; where a profile sets one, a file of a media type outside it counts as one the model can't read. The [OpenAI](openai.md#image-input), [Anthropic](anthropic.md#image-input), [Google](google.md#document-image-audio-and-video-input) and [xAI](xai.md#image-input) pages list the formats their models read. Each model class also turns off what its API can't take, whatever the profile says: [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel], for example, reads neither audio nor video, and only PDF and plain-text documents, and [OpenAI Chat Completions](openai.md#audio-input) takes only WAV and MP3 audio. A file a tool returns that the model can't take is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance), and the [File Understanding](../capabilities/file-understanding.md) capability reads the same flags to decide which files to describe in text first.
 
 `model.profile` is usually the fully *resolved* profile: keys from [`DEFAULT_PROFILE`][pydantic_ai.profiles.DEFAULT_PROFILE] are merged with the provider's defaults, so `profile.get('supports_tools')` returns a value. If you supply `profile=` as a callable (or otherwise have a partial profile dict), pass the default as the fallback, `profile.get('supports_tools', DEFAULT_PROFILE['supports_tools'])` (after importing `DEFAULT_PROFILE`), to tolerate missing keys.
@@ -524,7 +526,11 @@ and rejected requests, including [context window overflows](#context-window-over
 accept a request, credentials or model name the first one rejected, and a model with a larger context window may
 accept an input that overflowed another model's. It also includes a response the model couldn't use, a
 [`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError] or
-[`ModelInvalidResponseError`][pydantic_ai.exceptions.ModelInvalidResponseError]. To fall back only on some of them, pass those categories
+[`ModelInvalidResponseError`][pydantic_ai.exceptions.ModelInvalidResponseError], and a request the model can't serve,
+which Pydantic AI refuses before sending it with a
+[`ModelFeatureUnsupportedError`][pydantic_ai.exceptions.ModelFeatureUnsupportedError] when the model's
+[profile](#inspecting-a-models-profile) says it doesn't support what the request asks for, like Native Output or a
+`tool_choice` that forces tool use. To fall back only on some of them, pass those categories
 as `fallback_on`, e.g. `fallback_on=(ModelRateLimitError, ModelUnavailableError, ModelServerError)`.
 
 This behavior is controlled by the `fallback_on` parameter (see
