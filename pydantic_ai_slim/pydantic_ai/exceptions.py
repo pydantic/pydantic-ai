@@ -635,11 +635,10 @@ class UnexpectedModelBehavior(AgentRunError):
 class ContentFilterError(UnexpectedModelBehavior):
     """Raised when a model provider triggers content filtering or refuses a request.
 
-    During an agent run, the agent loop raises `ContentFilterError` when a response has
-    `finish_reason='content_filter'` and no actionable output (no parts, empty text, or thinking-only). A
-    `content_filter` response that still includes text is returned as output, unless
-    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] moves on from it or you add
-    [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError].
+    During an agent run, the agent loop raises `ContentFilterError` when a response has `finish_reason='content_filter'`
+    and no actionable output (no parts, empty text, or thinking-only). A `content_filter` response that still includes
+    text is returned as output, unless [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] moves on from it or you
+    add [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError].
 
     When raised by the agent loop or `RaiseContentFilterError`, `message` includes the finish or block reason and,
     when the provider sends one, its refusal text (`provider_details['refusal']`); `body` holds a one-element JSON

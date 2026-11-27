@@ -187,19 +187,20 @@ primary = FunctionModel(refuse, model_name='primary')
 backup = FunctionModel(answer, model_name='backup')
 agent = Agent(primary)
 
-result = None
-with capture_run_messages() as messages:
-    try:
-        result = agent.run_sync('Review this transcript.')
-    except ContentFilterError:
-        pass
+def review(prompt: str) -> str:
+    with capture_run_messages() as messages:
+        try:
+            return agent.run_sync(prompt).output
+        except ContentFilterError:
+            pass
+    return agent.run_sync(message_history=messages[:-1], model=backup).output  # (1)!
 
-if result is None:
-    result = agent.run_sync(message_history=messages[:-1], model=backup)
 
-print(result.output)
+print(review('Review this transcript.'))
 #> Here is the review.
 ```
+
+1. This run starts outside the `capture_run_messages` block, since within one block `messages` holds only the first run's messages. `messages[:-1]` leaves out the refused response.
 
 See [Recovering a failed run's messages](../agent.md#recovering-a-failed-run) for more.
 
