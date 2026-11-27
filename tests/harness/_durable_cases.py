@@ -145,7 +145,8 @@ class BuiltInEngineSuite(DurableEngineSuite):
 
     def expected_units(self, name: str) -> Sequence[str] | None:
         calls = CASES[name].calls if name in CASES else None
-        return None if calls is None else getattr(calls.durable_steps, self.durable_steps)
+        steps = None if calls is None else calls.durable_steps
+        return None if steps is None else steps.dbos if self.durable_steps == 'dbos' else steps.temporal
 
     def model_request_unit(self, name: str) -> str | None:
         calls = CASES[name].calls if name in CASES else None

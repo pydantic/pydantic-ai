@@ -3,8 +3,8 @@
 They run here, where the Harness is installed, because its cases are most of what they apply to, over the public
 capabilities the suites build. A case a contract exempts must still break it, so fixing the capability fails the
 suite until the exemption is removed. The durable contracts run under their engines, in
-`tests/harness/test_durable_tool_io.py` (DBOS) and `tests/harness/test_durable_temporal_replay.py` (Temporal); how
-they read a run's journal is checked here.
+`tests/harness/test_durable_tool_io.py` (DBOS) and `tests/harness/test_durable_temporal_replay.py` (Temporal), through
+`DurableEngineSuite`; how the suite reads a run's journal is checked in `tests/durable_exec/test_durable_engine_suite.py`.
 """
 
 from __future__ import annotations

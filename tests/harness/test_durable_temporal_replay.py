@@ -73,10 +73,12 @@ def _failure(error: WorkflowFailureError) -> BaseException:
     while cause is not None:
         if isinstance(cause, ApplicationError) and cause.type == UserError.__name__:
             return UserError(cause.message)
-        messages.append(f'{type(cause).__name__}: {cause}')  # pragma: lax no cover - only a broken cell fails so
+        # Only a broken cell fails so.
+        messages.append(f'{type(cause).__name__}: {cause}')  # pragma: lax no cover
         cause = cause.__cause__ or getattr(cause, 'cause', None)
-    chain = ' <- '.join(messages)  # pragma: lax no cover - only a broken cell fails so
-    return RuntimeError(f'the workflow fails: {chain}')  # pragma: lax no cover - only a broken cell fails so
+    # Only a broken cell fails so.
+    chain = ' <- '.join(messages)  # pragma: lax no cover
+    return RuntimeError(f'the workflow fails: {chain}')  # pragma: lax no cover
 
 
 def _units(history: WorkflowHistory, prefix: str) -> tuple[list[str], list[str]]:
@@ -154,7 +156,8 @@ class TemporalEngine:
             workflow_runner=_runner(),
         )
         replay = await replayer.replay_workflow(record.history, raise_on_replay_failure=False)
-        if (failure := replay.replay_failure) is not None:  # pragma: lax no cover - only a broken cell fails so
+        # Only a broken cell fails so.
+        if (failure := replay.replay_failure) is not None:  # pragma: lax no cover
             error = RuntimeError(f'the recorded history does not replay: {failure!r}')
             return EngineRun(run.id, error, run.units, failed=run.failed)
         return EngineRun(run.id, run.output, run.units, failed=run.failed)
