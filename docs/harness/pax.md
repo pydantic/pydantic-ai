@@ -158,8 +158,8 @@ These are on from the start:
 - `notifications`: a desktop notification when a turn finishes
 - `observability`: traces to [Logfire](https://pydantic.dev/logfire), when you set a token
 
-Turn on more when you need them, such as `github`, `linear`, `notion`, `slack`,
-`google_workspace`, and `logfire_mcp`.
+Turn on more when you need them, such as `memory` (notes the model keeps for later sessions in the
+same project), `github`, `linear`, `notion`, `slack`, `google_workspace`, and `logfire_mcp`.
 
 To install a plugin, clone it from Git, name a plugin or a harness capability by its import
 path, or drop a file in `~/.config/pydantic-ai-pax/plugins/`:

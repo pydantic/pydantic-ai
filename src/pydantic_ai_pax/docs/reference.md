@@ -43,6 +43,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/mcp [...]` | Manage MCP servers (from the built-in `mcp` plugin) |
 | `/compact [FOCUS]` | Summarise older messages now (from the built-in `compaction` plugin) |
 | `/refine [FOCUS]` | Have the model review and revise its last answer (from the built-in `refinement` plugin) |
+| `/memory` | Show where this project's memory is kept (from the built-in `memory` plugin, off until enabled) |
 | `/usage` | Tokens and cost per turn |
 | `/cost` | The retained history's total cost and tokens |
 | `/resume [ID\|claude\|codex]` | Browse or restore a saved session, or import one from Claude Code or Codex |
@@ -154,6 +155,7 @@ preference, such as workspaces, is under `$XDG_STATE_HOME/pydantic-ai-pax/` (def
 | `plugins/` | Drop-in plugins; `plugins/_git/` holds plugins installed from Git |
 | `spinners.json` | Your own spinners and speeds |
 | `logfire/`, `telemetry.log` | Logfire credentials, and export warnings kept off the screen |
+| `memory/` in the state folder | Notes the model saved with the [`memory` plugin](#memory-across-sessions), a folder per project |
 | `.clai/settings.json` in a repository | [Project settings](#project-settings) |
 | `.mcp.json` or `.clai/mcp_servers.json` in a repository | Project MCP servers, loaded after `/mcp trust accept` |
 
@@ -2392,6 +2394,34 @@ at the end of the first turn after the task finishes. A summary that is never us
 it counts toward the usage of the turn that started it, even when it finishes after that turn. It
 only applies with the `summarization` strategy.
 
+### Memory across sessions
+
+The built-in `memory` plugin is off until you turn it on with `/plugins enable memory`. It gives
+the model harness [Memory](../../../docs/harness/memory.md): a `MEMORY.md` notebook it adds to
+with `write_memory`, further note files, and `read_memory`, `search_memory`, and `delete_memory`.
+A later session in the same project starts with the notebook in its conversation, so the model
+recalls what an earlier one saved.
+
+Memory is kept per project, the same way [folder trust](#folder-trust) is: inside a Git
+repository, for the repository's main checkout, so its worktrees and subfolders share one memory;
+outside one, for the folder the session works in. Two projects never see each other's notes. A
+session in your home folder or `/` is in no project and gets no memory. The notes are plain
+Markdown under `$XDG_STATE_HOME/pydantic-ai-pax/memory/` (default
+`~/.local/state/pydantic-ai-pax/memory/`), in a folder named after the project with a hash of its
+path, such as `my-app-3f2a9c1b0d4e5f67/main/`. `/memory` shows this project's folder. Edit or
+delete the notes there, or delete the folder to forget everything; the next turn reads the change.
+It is not available on Windows yet.
+
+The notebook reaches the model as data the agent wrote in an earlier run, inside a `<memory>` block
+on your side of the conversation, never as instructions, so a note can't speak for you or for
+Pax. That holds in a folder you don't trust too, but a note the model saved while reading such a
+folder's files can carry their text into later sessions of the same project. The notebook is added
+at the start of a turn only when it changed since the copy the conversation already holds, and then
+stays where it was sent, so it doesn't move the cached prompt prefix: a note saved during a turn
+reaches the model at the start of the next one. The guidance on using memory is the same in every
+request. Two sessions of one project that save a note at the same moment can lose one of the two
+writes.
+
 ### Task delegation
 
 The stock `coder` plugin exposes `delegate_task`, which starts a fresh conversation
@@ -3513,6 +3543,8 @@ again, revised, as a turn of its own. Add words to say what to look at, such as
 [Refine Output](../../../docs/harness/refine-output.md):
 `/plugins add refine_output pydantic_ai_harness.refine_output:RefineOutput`. Each turn then shows
 the first answer followed by the revised one.
+The built-in `memory` plugin, off until `/plugins enable memory`, lets the model keep notes that
+later sessions in the same project recall; see [Memory across sessions](#memory-across-sessions).
 Other harness capabilities are not listed in `/plugins`; add one on purpose with
 `/plugins add`, see [other harness capabilities](../PLUGINS.md#other-harness-capabilities).
 The disabled built-in `google_workspace` connects Gmail, Calendar, and Drive with a
