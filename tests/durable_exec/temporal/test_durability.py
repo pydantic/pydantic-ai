@@ -9546,7 +9546,8 @@ async def test_durability_file_understanding_text_downloads_have_the_per_file_li
     """Each `describe` operation runs in an activity of its own, which the request's download total doesn't reach.
 
     Eleven 1000-byte documents are downloaded past the 10 KiB total, which refuses them outside Temporal, while a
-    document over the 1 KiB per-file limit is still refused.
+    document over the 1 KiB per-file limit is still refused. Carrying the total into the activities is tracked in
+    https://github.com/pydantic/pydantic-ai/issues/14950.
     """
     sizes = {**{f'doc{i}': 1000 for i in range(11)}, 'big': 2000}
     in_flight = serve_text_files(monkeypatch, sizes)
