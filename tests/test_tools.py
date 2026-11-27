@@ -6058,6 +6058,10 @@ def test_enum_member_docstrings_do_not_need_the_enclosing_model_to_opt_in():
     )
 
 
+# The notebook-cell tests below are about capturing a class's source and generating its JSON schema, which
+# happens offline and makes no model request, so there is nothing to record and they are not VCR tests.
+
+
 def run_cell(
     source: str, monkeypatch: pytest.MonkeyPatch, *, registered: bool = True, registered_source: str | None = None
 ) -> dict[str, Any]:
