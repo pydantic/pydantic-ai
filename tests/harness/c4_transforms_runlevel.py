@@ -166,6 +166,8 @@ RUN_LEVEL_TRANSFORMS: dict[Transformation, Transform] = {
         drops=_not_standing_prompt,
         # The summary, and the receipt naming what it replaced.
         creates_part=lambda part: isinstance(part, CompactionPart) or is_receipt(part),
+        # The receipt is the harness's own note about the cut, not replaced content.
+        notes=is_receipt,
         functions=(
             'pydantic_ai_harness.compaction._summarizing_compaction.SummarizingCompaction.compact',
             'pydantic_ai_harness.compaction._summarizing_compaction.SummarizingCompaction._insert_receipt',
@@ -176,6 +178,7 @@ RUN_LEVEL_TRANSFORMS: dict[Transformation, Transform] = {
         _sliding_window,
         drops=_not_standing_prompt,
         creates_part=is_receipt,
+        notes=is_receipt,
         functions=(
             'pydantic_ai_harness.compaction._sliding_window_compaction.SlidingWindowCompaction.compact',
             'pydantic_ai_harness.compaction._sliding_window_compaction.SlidingWindowCompaction._prepend_receipt',
