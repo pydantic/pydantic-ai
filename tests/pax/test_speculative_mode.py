@@ -698,16 +698,22 @@ class TestWorkspaceMount:
     @pytest.mark.parametrize(
         ('rule', 'seen'),
         [
-            (PermissionRule('deny', args={'path': '*/.pax/*'}), 'original PermissionError'),
+            (PermissionRule('deny', args={'path': '*/.pax/*'}), 'FileNotFoundError FileNotFoundError'),
+            (PermissionRule('deny', tools=['read_file']), 'FileNotFoundError FileNotFoundError'),
             (PermissionRule('ask', tools=['write_file']), 'original PermissionError'),
+            (PermissionRule('ask', tools=['send_email']), 'original'),
             (PermissionRule('deny', command='curl'), 'original'),
         ],
-        ids=['deny_path', 'ask_tool', 'command_only'],
+        ids=['deny_path', 'deny_read', 'ask_write', 'other_tool', 'command_only'],
     )
-    async def test_a_managed_rule_about_files_mounts_read_only(
+    async def test_a_managed_rule_about_files_limits_the_mount(
         self, tmp_path: Path, rule: PermissionRule[object], seen: str
     ) -> None:
-        """`pathlib` would write a file a managed rule denies or holds; a rule only about commands keeps the mount."""
+        """`pathlib` would read or write a file a managed rule holds, so the rule's tools decide the mount.
+
+        One that may select `read_file` leaves nothing mounted, one that may select only writing tools mounts
+        read-only, and one about other tools or commands keeps the mount.
+        """
         settings = tmp_path.resolve() / '.pax' / 'settings.json'
         settings.parent.mkdir()
         settings.write_text('original')
