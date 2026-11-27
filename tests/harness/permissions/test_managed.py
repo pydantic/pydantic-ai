@@ -9,8 +9,10 @@ import pytest
 
 from pydantic_ai import Agent, DeferredToolRequests, Tool
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, LocalWorkspace, WrapperCapability
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolResults, RunContext, ToolApproved
 from pydantic_ai_harness.approval_reviewer import ApprovalReviewer
 from pydantic_ai_harness.deny_unanswered import DenyUnanswered
@@ -27,7 +29,7 @@ from pydantic_ai_harness.permissions import (
     permission_requests,
 )
 from pydantic_ai_harness.shell import Shell
-from pydantic_ai_harness.sub_agents import SubAgents
+from pydantic_ai_harness.sub_agents import SubAgent, SubAgents, SubAgentToolset
 
 MODES: tuple[PermissionMode, ...] = ('full', 'auto', 'read-only')
 _LEVEL: dict[PermissionMode, int] = {'full': 0, 'auto': 1, 'read-only': 2}
@@ -471,3 +473,84 @@ class TestInheritedBySubAgents:
     async def test_a_delegate_asks_about_the_parents_ask_commands(self, tmp_path: Path) -> None:
         permissions = Permissions[None]('full', max_mode='auto', ask_commands=[r'\btouch\b'])
         assert await self._delegate(tmp_path, permissions) == (False, False)
+
+    async def test_a_managed_ask_shared_and_inherited_asks_the_person_once(self, tmp_path: Path) -> None:
+        """The shared `Permissions` and the inherited copy both hold the call; one approval answers both."""
+        person = _Person(PermissionDecision(approved=True))
+        permissions = Permissions[None](managed_rules=[PermissionRule('ask', command='touch')])
+        handler = HandleDeferredToolCalls[None](handler=lambda ctx, requests: ask_permissions(requests, person))
+        agent = Agent[None, str](
+            _delegating('touch made'),
+            deps_type=type(None),
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                Shell(denied_commands=[]),
+                SubAgents(
+                    include_self=True, max_depth=2, agent_folders=None, shared_capabilities=[permissions, handler]
+                ),
+            ],
+        )
+        await agent.run('go', capabilities=[permissions, handler])
+        assert [request.subject for request in person.asked] == ['touch made']
+        assert (tmp_path / 'made').exists()
+
+    async def test_a_function_max_mode_is_read_with_the_parents_context(self, tmp_path: Path) -> None:
+        prompts: list[str | None] = []
+
+        def max_mode(ctx: RunContext[None]) -> PermissionMode:
+            prompts.append(ctx.prompt if isinstance(ctx.prompt, str) else None)
+            return 'auto'
+
+        assert await self._delegate(tmp_path, Permissions[None]('full', max_mode=max_mode)) == (True, True)
+        assert prompts and set(prompts) == {'go'}
+
+
+class TestInheritedInDurableUnits:
+    """A durable unit's context carries the agent but not the run's capabilities."""
+
+    def _toolset(self, worker: Agent[object, str]) -> SubAgentToolset[object]:
+        return SubAgentToolset[object](
+            agents={'worker': SubAgent(worker)},
+            forward_usage=False,
+            inherit_tools=False,
+            shared_capabilities=[],
+            event_stream_handler=None,
+            tool_name='delegate_task',
+            tool_retries=None,
+            contain_errors=False,
+            call_counts={},
+        )
+
+    async def test_the_agents_managed_permissions_hold_a_delegate(self) -> None:
+        pytest.importorskip('temporalio')
+        from pydantic_ai.durable_exec.temporal import TemporalRunContext
+
+        ran: list[str] = []
+
+        def run_command(command: str) -> str:
+            ran.append(command)
+            return 'ran'
+
+        worker = Agent[object, str](
+            _delegating('rm -rf doomed'),
+            name='worker',
+            tools=[Tool(run_command, metadata={'code_arg_language': 'shell', 'code_arg_name': 'command'})],
+        )
+        parent = Agent[object, str](
+            TestModel(), capabilities=[Permissions[object](managed_rules=[PermissionRule('deny', command='rm')])]
+        )
+        result = await self._toolset(worker).delegate_task(
+            TemporalRunContext[object](deps=None, tool_name='delegate_task', agent=parent), 'worker', 'clean up'
+        )
+        assert result == 'done'
+        assert ran == []
+
+    async def test_without_capabilities_or_an_agent_it_refuses(self) -> None:
+        pytest.importorskip('temporalio')
+        from pydantic_ai.durable_exec.temporal import TemporalRunContext
+
+        worker = Agent[object, str](TestModel(custom_output_text='worker'), name='worker')
+        with pytest.raises(UserError, match='carries neither the run'):
+            await self._toolset(worker).delegate_task(
+                TemporalRunContext[object](deps=None, tool_name='delegate_task'), 'worker', 'hello'
+            )

@@ -10,6 +10,7 @@ from typing import Any, ClassVar, Literal, NamedTuple, cast
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
+from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.exceptions import ApprovalRequired, SkipToolExecution, UserError
 from pydantic_ai.messages import ModelMessage, ToolCallPart, ToolReturn, ToolReturnPart
 from pydantic_ai.tools import (
@@ -610,30 +611,46 @@ class _InheritedPermissions(Permissions[AgentDepsT]):
 def inherited_managed_permissions(ctx: RunContext[AgentDepsT]) -> list[Permissions[AgentDepsT]]:
     """The managed layer of each `Permissions` on `ctx`'s run, for a `SubAgents` delegate to inherit.
 
-    Each is a `Permissions` holding only `max_mode`, `managed_rules` and the `ask_commands` a `'auto'` `max_mode`
-    asks about, so the person's own `mode` and `rules` reach a delegate only through `shared_capabilities`.
+    Each is a `Permissions` holding only the `max_mode` it has for `ctx`'s run, its `managed_rules`, and the
+    `ask_commands` an `'auto'` `max_mode` asks about, so the person's own `mode` and `rules` reach a delegate only
+    through `shared_capabilities`. A `PermissionRule.tools` predicate in `managed_rules` is called with the
+    delegate's run context.
+
+    Inside a durable unit, whose context carries the agent but not the run's capabilities, the agent's own
+    capabilities are read: a durable engine refuses a `Permissions` added per run. Without either, it raises
+    `UserError` rather than let a delegate run without limits it can't see.
     """
-    try:
-        capabilities = ctx.capabilities
-    except UserError:
-        # A durable-run context does not carry capabilities across the engine boundary.
-        return []
-    return managed_permissions_in(capabilities.values())
-
-
-def managed_permissions_in(capabilities: Iterable[AbstractCapability[AgentDepsT]]) -> list[Permissions[AgentDepsT]]:
-    """The managed layer of each `Permissions` in `capabilities`, unwrapped from any `WrapperCapability` chain."""
     inherited: list[Permissions[AgentDepsT]] = []
-    for capability in capabilities:
+    for capability in _run_capabilities(ctx):
         candidate: AbstractCapability[AgentDepsT] | None = capability
         while candidate is not None:
-            if isinstance(candidate, Permissions) and (candidate.max_mode != 'full' or candidate.managed_rules):
-                inherited.append(
-                    _InheritedPermissions[AgentDepsT](
-                        max_mode=candidate.max_mode,
-                        managed_rules=candidate.managed_rules,
-                        ask_commands=candidate.ask_commands,
-                    )
-                )
+            if isinstance(candidate, Permissions) and (layer := _managed_layer(candidate, ctx)) is not None:
+                inherited.append(layer)
             candidate = candidate.wrapped if isinstance(candidate, WrapperCapability) else None
     return inherited
+
+
+def _run_capabilities(ctx: RunContext[AgentDepsT]) -> Iterable[AbstractCapability[AgentDepsT]]:
+    """The run's capabilities, or inside a durable unit that doesn't carry them, the agent's own."""
+    try:
+        return ctx.capabilities.values()
+    except UserError:
+        if ctx.agent is None:
+            raise UserError(
+                "A `SubAgents` delegation ran in a context that carries neither the run's capabilities nor its "
+                'agent, so it cannot tell whether a `Permissions` with `max_mode` or `managed_rules` must hold the '
+                'delegate.'
+            ) from None
+        return leaf_capabilities(ctx.agent.root_capability)
+
+
+def _managed_layer(
+    permissions: Permissions[AgentDepsT], ctx: RunContext[AgentDepsT]
+) -> _InheritedPermissions[AgentDepsT] | None:
+    """The managed layer of `permissions`, with its `max_mode` read for `ctx`'s run, or `None` when it has none."""
+    max_mode = _read(permissions.max_mode, ctx)
+    if max_mode == 'full' and not permissions.managed_rules:
+        return None
+    return _InheritedPermissions[AgentDepsT](
+        max_mode=max_mode, managed_rules=permissions.managed_rules, ask_commands=permissions.ask_commands
+    )

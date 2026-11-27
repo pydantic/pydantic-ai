@@ -266,3 +266,21 @@ async def test_the_parents_managed_permissions_reach_a_durable_child_in_the_work
     assert await workflow() == 'parent done'
     assert ran == []
     assert observed == ['A managed permission rule denied this command, so it did not run. Do not retry it.']
+
+
+async def test_a_managed_permissions_added_per_run_is_refused_in_the_workflow(dbos: DBOS) -> None:
+    """So the agent's own capabilities, which a child-workflow delegation reads, hold every managed `Permissions`."""
+    agent = Agent(
+        FunctionModel(_delegator),
+        name='dbos_per_run_managed',
+        deps_type=type(None),
+        capabilities=[DBOSDurability[None]()],
+    )
+
+    @DBOS.workflow(name='subagents_per_run_managed')
+    async def workflow() -> str:
+        managed = Permissions[None](managed_rules=[PermissionRule('deny', command='rm')])
+        return (await agent.run('Delegate it', capabilities=[managed])).output
+
+    with SetWorkflowID(str(uuid.uuid4())), pytest.raises(UserError, match='added per-run inside a DBOS workflow'):
+        await workflow()

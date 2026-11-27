@@ -19,7 +19,6 @@ import anyio
 from pydantic_ai import AgentStreamEvent, CapabilityEvent, capture_run_messages
 from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, HookTimeoutError
-from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.durable_exec import BaseDurabilityCapability, DurableRunContext
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -70,7 +69,7 @@ from pydantic_ai_harness._sub_agent_output import (
 )
 from pydantic_ai_harness._usage import run_with_count_tokens_fallback
 from pydantic_ai_harness.deny_unanswered._capability import find_deny_unanswered
-from pydantic_ai_harness.permissions._capability import inherited_managed_permissions, managed_permissions_in
+from pydantic_ai_harness.permissions._capability import inherited_managed_permissions
 from pydantic_ai_harness.sub_agents._control import (
     DynamicAgents,
     DynamicAgentSpec,
@@ -920,7 +919,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 "`task_control`, or a delegate's `max_calls`."
             )
         # The child workflow can't receive the parent's managed `Permissions`, so it would run without them.
-        if managed_permissions_in(leaf_capabilities(ctx.agent.root_capability)):
+        if inherited_managed_permissions(ctx):
             raise UserError(
                 'A `SubAgents` delegate tool running as a child workflow does not support a `Permissions` with '
                 '`max_mode` or `managed_rules` on the parent agent: the delegate would run without them.'
