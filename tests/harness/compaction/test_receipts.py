@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
@@ -31,6 +32,7 @@ from pydantic_ai_harness.compaction import (
     SummarizingCompaction,
     TieredCompaction,
 )
+from tests.conftest import IsDatetime, IsStr
 
 _MARKER = '[History before this point'
 _RECEIPT_TEXT = (
@@ -72,13 +74,14 @@ def _user_texts(messages: list[ModelMessage]) -> list[str]:
     ]
 
 
-def _system_texts(messages: list[ModelMessage]) -> list[str]:
+def _shape(messages: list[ModelMessage]) -> list[list[str]]:
+    """Each message as its parts, each a `<part type>: <text>` label with the text cut to 60 characters."""
     return [
-        part.content
+        [
+            f'{type(part).__name__}: {str(getattr(part, "content", None) or getattr(part, "tool_name", ""))[:60]}'
+            for part in message.parts
+        ]
         for message in messages
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, SystemPromptPart)
     ]
 
 
@@ -169,19 +172,99 @@ async def test_receipt_is_an_operator_capability_part(name: str) -> None:
 
     messages = result.all_messages()
     [receipt] = _receipts(messages)
-    assert receipt.content.startswith(_MARKER)
-    assert receipt.source == OperatorSource()
-    assert receipt.scope == 'conversation'
-    assert receipt.kind == 'compaction.receipt'
-    assert receipt.capability_id == name
+    assert (
+        receipt
+        == snapshot(
+            {
+                'sliding_window': CompactionReceiptPart(
+                    source=OperatorSource(),
+                    capability_id='sliding_window',
+                    timestamp=IsDatetime(),
+                    record_id=IsStr(),
+                    content='[History before this point (4 messages, ~2000 tokens) was dropped by the harness. That context is no longer in the window; re-verify critical facts against primary sources.]',
+                ),
+                'summarizing': CompactionReceiptPart(
+                    source=OperatorSource(),
+                    capability_id='summarizing',
+                    timestamp=IsDatetime(),
+                    record_id=IsStr(),
+                    content='[History before this point (4 messages, ~2000 tokens) was summarized by the summarizer model. The summary above is secondhand; re-verify critical facts against primary sources.]',
+                ),
+                'relevance': CompactionReceiptPart(
+                    source=OperatorSource(),
+                    capability_id='relevance',
+                    timestamp=IsDatetime(),
+                    record_id=IsStr(),
+                    content='[History before this point (2 messages, ~703 tokens) was dropped by RelevanceCompaction. That context is no longer in the window; re-verify critical facts against primary sources.]',
+                ),
+            }
+        )[name]
+    )
     # Stored at the cut point in a request of its own, and nothing in the user's voice carries it.
-    [receipt_request] = [message for message in messages if receipt in message.parts]
-    assert receipt_request.parts == [receipt]
-    assert not any(_MARKER in text for text in _user_texts(messages))
-    # The model is sent it in the application's voice, never as the user's words.
+    assert (
+        _shape(messages)
+        == snapshot(
+            {
+                'sliding_window': [
+                    ['CompactionReceiptPart: [History before this point (4 messages, ~2000 tokens) was dr'],
+                    ['UserPromptPart: next please'],
+                    ['TextPart: ok'],
+                ],
+                'summarizing': [
+                    ['CompactionPart: the summary'],
+                    ['CompactionReceiptPart: [History before this point (4 messages, ~2000 tokens) was su'],
+                    ['UserPromptPart: next please'],
+                    ['TextPart: ok'],
+                ],
+                'relevance': [
+                    ['SystemPromptPart: sys', 'UserPromptPart: do the task'],
+                    ['CompactionReceiptPart: [History before this point (2 messages, ~703 tokens) was dro'],
+                    ['ToolCallPart: read'],
+                    ['ToolReturnPart: [2800 characters of this tool result were removed by compact'],
+                    ['ToolCallPart: read'],
+                    ['ToolReturnPart: junk x junk x junk x junk x junk x junk x junk x junk x junk'],
+                    ['TextPart: done'],
+                    ['UserPromptPart: next please'],
+                    ['TextPart: ok'],
+                ],
+            }
+        )[name]
+    )
+    # The model is sent it in the application's voice, in place, never as the user's words.
     [sent] = recorder.sent
-    assert [text for text in _system_texts(sent) if text.startswith(_MARKER)] == [receipt.content]
-    assert not any(_MARKER in text for text in _user_texts(sent))
+    assert (
+        _shape(sent)
+        == snapshot(
+            {
+                'sliding_window': [
+                    [
+                        'SystemPromptPart: [History before this point (4 messages, ~2000 tokens) was dr',
+                        'UserPromptPart: next please',
+                    ]
+                ],
+                'summarizing': [
+                    [
+                        'CompactionPart: the summary',
+                        'SystemPromptPart: [History before this point (4 messages, ~2000 tokens) was su',
+                        'UserPromptPart: next please',
+                    ]
+                ],
+                'relevance': [
+                    [
+                        'SystemPromptPart: sys',
+                        'UserPromptPart: do the task',
+                        'SystemPromptPart: [History before this point (2 messages, ~703 tokens) was dro',
+                    ],
+                    ['ToolCallPart: read'],
+                    ['ToolReturnPart: [2800 characters of this tool result were removed by compact'],
+                    ['ToolCallPart: read'],
+                    ['ToolReturnPart: junk x junk x junk x junk x junk x junk x junk x junk x junk'],
+                    ['TextPart: done'],
+                    ['UserPromptPart: next please'],
+                ],
+            }
+        )[name]
+    )
 
 
 @pytest.mark.parametrize('registration', ['direct', 'compact_on_request', 'tiered'])
