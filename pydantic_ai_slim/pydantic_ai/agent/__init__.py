@@ -467,6 +467,48 @@ async def _run_lifecycle_hooks(  # noqa: C901
             _restore_context_vars()
 
 
+@dataclasses.dataclass
+class _RunSuccess:
+    """Calls `on_run_success` from the exit stack of a run that ends with its result.
+
+    Pushed before the run enters its models, graph and toolsets, so it exits after them, and after the
+    run hooks, but inside the run's deadline, cancellation and error handling.
+    """
+
+    run_capability: AbstractCapability[Any]
+    cancellation: RunCancellation
+    run_ctx: RunContext[Any] | None = None
+    get_result: Callable[[], AgentRunResult[Any] | None] = lambda: None
+
+    async def __call__(self, exc_type: type[BaseException] | None, *_: object) -> None:
+        if exc_type is not None or not self.run_capability._has_on_run_success:  # pyright: ignore[reportPrivateUsage]
+            return
+        if (result := self.get_result()) is None:
+            return
+        assert self.run_ctx is not None
+        await self._raise_if_cancelled()
+        with set_current_run_context(self.run_ctx):
+            await self.run_capability.on_run_success(self.run_ctx, result=result)
+        await self._raise_if_cancelled()
+
+    async def _raise_if_cancelled(self) -> None:
+        # A cancellation that arrived as the run finished, or that a toolset's exit or a hook absorbed, still ends
+        # the run cancelled. A cancelled `anyio` scope is delivered by a checkpoint, so the scope catches it.
+        if self.cancellation.cancel_requested:
+            raise asyncio.CancelledError('pydantic-ai: re-asserting a requested run cancellation')
+        if _utils.in_cancelled_anyio_scope():
+            await anyio.lowlevel.checkpoint()
+        _utils.raise_if_cancelling()
+
+
+def _stamped_result(
+    agent_run: AgentRun[Any, Any], refresh_workspace_ref: Callable[[], None]
+) -> AgentRunResult[Any] | None:
+    """The run's result, with the workspace reference the caller gets stamped on its last response."""
+    refresh_workspace_ref()
+    return agent_run.result
+
+
 def _is_model(value: object) -> TypeIs[models.Model[Any]]:
     """Narrow a value to a concrete model without losing its client type to `Unknown`."""
     return isinstance(value, models.Model)
@@ -4402,6 +4444,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 await session_stack.enter_async_context(_translate_cancellation())
                 cancellation.bind()
                 session_stack.callback(cancellation.finish)
+                session_stack.push_async_exit(
+                    _RunSuccess(run_capability, cancellation, run_context, lifecycle_state.result)
+                )
                 lifecycle = await session_stack.enter_async_context(
                     _run_lifecycle_hooks(
                         run_capability,
@@ -5164,6 +5209,8 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                     (*_ACTIVE_AGENT_LIMITERS.get(), (task_id, self.concurrency_limiter))
                 )
                 stack.callback(_ACTIVE_AGENT_LIMITERS.reset, limiter_token)
+            run_success = _RunSuccess(self.run_capability, graph_deps.cancellation)
+            stack.push_async_exit(run_success)
             # On a stack of their own, so a model selected later in the run, whose exit is registered then, is still
             # exited after the run's pending response is settled below.
             self.model_resources.bind_stack(await stack.enter_async_context(AsyncExitStack()))
@@ -5210,6 +5257,8 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
 
             # Build RunContext for run lifecycle hooks
             run_ctx = _agent_graph.build_run_context(agent_run.ctx)
+            run_success.run_ctx = run_ctx
+            run_success.get_result = functools.partial(_stamped_result, agent_run, refresh_workspace_ref)
             if not run_ctx.in_durable_context:
                 # A model the run uses without entering it keeps its HTTP client between runs, which needs replacing
                 # when this run is on another event loop. A durable run sends its requests from the engine's

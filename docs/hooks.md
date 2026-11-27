@@ -130,10 +130,13 @@ Use on-demand hooks for optional behavior that only applies after the capability
 | `after_run` | `after_run=` | `after_run` |
 | `run` | `run=` | `wrap_run` |
 | `run_error` | `run_error=` | `on_run_error` |
+| `run_success` | `run_success=` | `on_run_success` |
 
 The run lifecycle is dispatched once per agent run. `wrap_run` (registered via `hooks.on.run`) runs once and encloses `before_run`, graph iteration with `on_run_error` recovery, and `after_run`; a wrapper that does not call its handler skips those inner hooks.
 
-A [realtime session](realtime/capabilities.md) is a run: the same four hooks fire once around the session, with `wrap_run` recovery and `after_run` result transformation applied when the session closes.
+`on_run_success` runs after all of them, once the run has its result and its toolsets and models have exited. It isn't called for a run that raises, is cancelled, or is left before it produces a result, so it's the place to commit what a successful run produced, like [saving its conversation](persistence.md#saving-from-a-capability). It still runs inside the run's `timeout=` and cancellation, but after the run's span has ended, so spans it opens aren't the run's children and a failure in it isn't recorded on the run's span. An [`AgentRunError`][pydantic_ai.exceptions.AgentRunError] it raises carries the run's `conversation`, except in a realtime session. A [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] whose failure is recovered before it streams calls it before your `async with` block.
+
+A [realtime session](realtime/capabilities.md) is a run: the same hooks fire once around the session, with `wrap_run` recovery and `after_run` result transformation applied when the session closes, and `on_run_success` once it has closed.
 
 ### Node hooks
 

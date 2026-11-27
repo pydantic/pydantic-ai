@@ -258,6 +258,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return any(c._has_on_node_run_error for c in self._dispatch)
 
     @property
+    def _has_on_run_success(self) -> bool:
+        return type(self).on_run_success is not CombinedCapability.on_run_success or any(
+            c._has_on_run_success for c in self._dispatch
+        )
+
+    @property
     def _has_wrap_model_request(self) -> bool:
         return any(c._has_wrap_model_request for c in self._dispatch)
 
@@ -664,6 +670,16 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             except BaseException as new_error:
                 error = new_error
         raise error
+
+    async def on_run_success(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        result: AgentRunResult[Any],
+    ) -> None:
+        for capability in reversed(self._dispatch):
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
+                await capability.on_run_success(cap_ctx, result=result)
 
     # --- Node run lifecycle hooks ---
 

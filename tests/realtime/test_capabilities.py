@@ -832,6 +832,89 @@ async def test_after_run_transforms_session_result() -> None:
     assert session.result.output == 'transformed: answer'
 
 
+class _SuccessRecorder(AbstractCapability[None]):
+    def __init__(self, log: list[str]) -> None:
+        self.log = log
+
+    async def on_run_success(self, ctx: RunContext[None], *, result: AgentRunResult[Any]) -> None:
+        self.log.append(f'on_run_success:{result.output}')
+
+
+class _ClosingToolset(FunctionToolset[None]):
+    def __init__(self, log: list[str]) -> None:
+        super().__init__(tools=[])
+        self.log = log
+
+    async def __aexit__(self, *args: Any) -> bool | None:
+        await super().__aexit__(*args)
+        self.log.append('toolset:exit')
+        return None
+
+
+async def test_on_run_success_runs_after_the_session_closes() -> None:
+    """`on_run_success` gets the session's result once the session and its toolset have closed."""
+    log: list[str] = []
+    agent = Agent(capabilities=[_SuccessRecorder(log)], toolsets=[_ClosingToolset(log)], deps_type=type(None))
+    model = _RecordingModel(connection_events=[OutputTranscript(text='answer', is_final=True), ResponseDone()])
+
+    async with agent.realtime(model).session() as session:
+        async for _ in session:
+            pass
+        log.append('caller:done')
+
+    assert log == ['caller:done', 'toolset:exit', 'on_run_success:answer']
+
+
+async def test_on_run_success_not_called_for_a_failed_session() -> None:
+    log: list[str] = []
+    agent = Agent(capabilities=[_SuccessRecorder(log)], deps_type=type(None))
+
+    with pytest.raises(RuntimeError, match='session failed'):
+        async with agent.realtime(_RecordingModel()).session():
+            raise RuntimeError('session failed')
+
+    assert log == []
+
+
+async def test_on_run_success_for_a_result_only_session() -> None:
+    """A short-circuited session is yielded closed and `on_run_success` follows the caller's block. One whose connect
+    failure was recovered has ended before it is yielded, so `on_run_success` comes first, as for a recovered
+    `run_stream()`."""
+
+    class ShortCircuitCapability(AbstractCapability[None]):
+        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[str]:
+            return AgentRunResult(output='short-circuited')
+
+    class _FailingConnectModel(_RecordingModel):
+        @asynccontextmanager
+        async def connect(
+            self,
+            *,
+            messages: Sequence[ModelMessage],
+            model_settings: RealtimeModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> AsyncGenerator[RealtimeConnection]:
+            raise RuntimeError('connect failed')
+            yield  # pragma: no cover
+
+    class RecoveryCapability(AbstractCapability[None]):
+        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[str]:
+            return AgentRunResult(output='recovered')
+
+    log: list[str] = []
+    agent = Agent(capabilities=[_SuccessRecorder(log), ShortCircuitCapability()], deps_type=type(None))
+    async with agent.realtime(_RecordingModel()).session() as session:
+        assert session.closed
+        log.append('caller:done')
+
+    agent = Agent(capabilities=[_SuccessRecorder(log), RecoveryCapability()], deps_type=type(None))
+    async with agent.realtime(_FailingConnectModel()).session() as session:
+        assert session.closed
+        log.append('caller:done')
+
+    assert log == ['caller:done', 'on_run_success:short-circuited', 'on_run_success:recovered', 'caller:done']
+
+
 async def test_wrap_run_short_circuits_before_session_connects() -> None:
     """A `wrap_run` short-circuit returns a closed result-only session without connecting."""
 

@@ -132,6 +132,10 @@ class OnRunErrorHookFunc(Protocol):
     """Protocol for [`on_run_error`][pydantic_ai.capabilities.AbstractCapability.on_run_error] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, error: BaseException) -> AgentRunResult[Any] | Awaitable[AgentRunResult[Any]]: ...
 
+class OnRunSuccessHookFunc(Protocol):
+    """Protocol for [`on_run_success`][pydantic_ai.capabilities.AbstractCapability.on_run_success] hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, result: AgentRunResult[Any]) -> None | Awaitable[None]: ...
+
 class BeforeNodeRunHookFunc(Protocol):
     """Protocol for [`before_node_run`][pydantic_ai.capabilities.AbstractCapability.before_node_run] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, node: AgentNode[Any]) -> AgentNode[Any] | Awaitable[AgentNode[Any]]: ...
@@ -394,6 +398,15 @@ class _HookRegistration(Generic[AgentDepsT]):
     def run_error(self, *, timeout: float | None = None) -> Callable[[OnRunErrorHookFunc], OnRunErrorHookFunc]: ...
     def run_error(self, func: OnRunErrorHookFunc | None = None, *, timeout: float | None = None) -> Any:
         return _bare_or_parameterized(self._r, 'on_run_error', func, timeout=timeout)
+
+    @overload
+    def run_success(self, func: OnRunSuccessHookFunc, /) -> OnRunSuccessHookFunc: ...
+    @overload
+    def run_success(
+        self, *, timeout: float | None = None
+    ) -> Callable[[OnRunSuccessHookFunc], OnRunSuccessHookFunc]: ...
+    def run_success(self, func: OnRunSuccessHookFunc | None = None, *, timeout: float | None = None) -> Any:
+        return _bare_or_parameterized(self._r, 'on_run_success', func, timeout=timeout)
 
     # --- Node lifecycle ---
 
@@ -815,6 +828,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
         after_run: AfterRunHookFunc | None = None,
         run: WrapRunHookFunc | None = None,
         run_error: OnRunErrorHookFunc | None = None,
+        run_success: OnRunSuccessHookFunc | None = None,
         # Node lifecycle
         before_node_run: BeforeNodeRunHookFunc | None = None,
         after_node_run: AfterNodeRunHookFunc | None = None,
@@ -871,6 +885,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
             'after_run': after_run,
             'wrap_run': run,
             'on_run_error': run_error,
+            'on_run_success': run_success,
             'before_node_run': before_node_run,
             'after_node_run': after_node_run,
             'wrap_node_run': node_run,
@@ -924,6 +939,10 @@ class Hooks(AbstractCapability[AgentDepsT]):
     @property
     def _has_on_node_run_error(self) -> bool:
         return type(self).on_node_run_error is not Hooks.on_node_run_error or bool(self._get('on_node_run_error'))
+
+    @property
+    def _has_on_run_success(self) -> bool:
+        return type(self).on_run_success is not Hooks.on_run_success or bool(self._get('on_run_success'))
 
     @property
     def _has_wrap_model_request(self) -> bool:
@@ -1012,6 +1031,10 @@ class Hooks(AbstractCapability[AgentDepsT]):
             except BaseException as new_error:
                 error = new_error
         raise error
+
+    async def on_run_success(self, ctx: RunContext[AgentDepsT], *, result: AgentRunResult[Any]) -> None:
+        for entry in self._get('on_run_success'):
+            await _call_entry(entry, 'on_run_success', ctx, result=result)
 
     async def before_node_run(
         self, ctx: RunContext[AgentDepsT], *, node: AgentNode[AgentDepsT]

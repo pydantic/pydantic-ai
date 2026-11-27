@@ -483,6 +483,10 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         return type(self).on_node_run_error is not AbstractCapability.on_node_run_error
 
     @property
+    def _has_on_run_success(self) -> bool:
+        return type(self).on_run_success is not AbstractCapability.on_run_success
+
+    @property
     def _has_wrap_model_request(self) -> bool:
         return type(self).wrap_model_request is not AbstractCapability.wrap_model_request
 
@@ -1131,6 +1135,23 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         error at the caller's `async with` boundary, after events may already have been observed.
         """
         raise error
+
+    async def on_run_success(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        result: AgentRunResult[Any],
+    ) -> None:
+        """Called once the run has ended with `result`, after its toolsets and models have exited.
+
+        Unlike [`after_run`][pydantic_ai.capabilities.AbstractCapability.after_run], which the run can
+        still fail or be cancelled after, this isn't called for a run that raises, is cancelled or is
+        left before it produces a result, so it's the place to commit what a run produced, such as
+        saving its conversation. It is called for a result `on_run_error` or `wrap_run` recovered too.
+
+        It runs inside the run's `timeout=` and cancellation, after the run's span has ended. An
+        exception raised here fails the run; what an earlier capability's hook committed stays committed.
+        """
 
     # --- Node run lifecycle hooks ---
 

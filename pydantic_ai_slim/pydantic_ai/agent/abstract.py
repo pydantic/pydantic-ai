@@ -2316,6 +2316,9 @@ class _RealtimeSessionLifecycle:
     session: RealtimeSession | None = None
     short_result: AgentRunResult[Any] | None = None
 
+    def result(self) -> AgentRunResult[Any] | None:
+        return self.session.result if self.session is not None else self.short_result
+
 
 @dataclass
 class _RealtimeSessionResolution(Generic[AgentDepsT]):

@@ -1048,6 +1048,28 @@ class WrapRunOperation(AbstractCapability[Any]):
         return ctx.run_step
 
 
+class CommitOnSuccess(AbstractCapability[Any]):
+    """Commits a run's output through a durable operation, from `on_run_success`."""
+
+    id = 'commit_on_success'
+
+    def __init__(self) -> None:
+        self.committed: list[str] = []
+
+    async def on_run_success(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
+        await self.commit(ctx, output=str(result.output))
+        await self.commit_ambient(output=str(result.output))
+
+    @durable_operation('commit')
+    async def commit(self, ctx: RunContext[Any], *, output: str) -> None:
+        self.committed.append(output)
+
+    @durable_operation('commit_ambient')
+    async def commit_ambient(self, *, output: str) -> None:
+        """Takes no context, so it dispatches through the run whose context is current."""
+        self.committed.append(f'ambient:{output}')
+
+
 class HoldsSetupContext(AbstractCapability[Any]):
     """Keeps the context `for_run` was handed and dispatches with it from a later hook."""
 
@@ -1336,6 +1358,53 @@ async def test_wrap_run_operation_dispatches_before_the_handler_is_awaited() -> 
     assert [name for name, _ in durability.calls if '__capability__' in name] == snapshot(
         ['wrap_run_operation__capability__wrap_run_operation.reserve']
     )
+
+
+async def test_on_run_success_operation_dispatches_through_the_durable_engine() -> None:
+    """`on_run_success` runs after the run has released its resources, and its durable operations still dispatch."""
+    capability = CommitOnSuccess()
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        name='commit_on_success',
+        capabilities=[capability, RecordingDurability()],
+    )
+
+    await agent.run('test')
+
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert [name for name, _ in durability.calls if '__capability__' in name] == snapshot(
+        [
+            'commit_on_success__capability__commit_on_success.commit',
+            'commit_on_success__capability__commit_on_success.commit_ambient',
+        ]
+    )
+    assert capability.committed == ['done', 'ambient:done']
+
+
+async def test_a_nested_runs_on_run_success_dispatches_on_its_own_run() -> None:
+    """A run started from a tool dispatches its `on_run_success` operations through its own run, not the enclosing one."""
+    child_capability = CommitOnSuccess()
+    child = Agent(TestModel(custom_output_text='child'), name='child', capabilities=[child_capability])
+    parent_capability = CommitOnSuccess()
+    parent = Agent(
+        TestModel(custom_output_text='parent'),
+        name='parent',
+        capabilities=[parent_capability, RecordingDurability()],
+    )
+
+    @parent.tool_plain
+    async def delegate() -> str:
+        return (await child.run('test')).output
+
+    await parent.run('test')
+
+    durability = RecordingDurability.from_agent(parent)
+    assert durability is not None
+    assert [name for name, _ in durability.calls if '__capability__' in name] == snapshot(
+        ['parent__capability__commit_on_success.commit', 'parent__capability__commit_on_success.commit_ambient']
+    )
+    assert child_capability.committed == ['child', 'ambient:child']
 
 
 async def test_operation_dispatches_with_the_context_for_run_was_handed() -> None:

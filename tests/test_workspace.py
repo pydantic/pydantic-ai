@@ -1912,6 +1912,24 @@ async def test_late_after_run_workspace_ref_is_stamped_on_latest_response(fail: 
     assert response.workspace_ref == backend.ref
 
 
+async def test_on_run_success_sees_the_late_workspace_ref_the_caller_gets() -> None:
+    backend = FakeWorkspace('late-success')
+    seen: list[WorkspaceRef | None] = []
+
+    class LateUse(AbstractCapability[Any]):
+        async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+            await ctx.workspace.run(['after-run'])
+            return result
+
+        async def on_run_success(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
+            seen.append(result.response.workspace_ref)
+
+    result = await Agent(TestModel(custom_output_text='done'), capabilities=[LateUse()]).run('go', workspace=backend)
+
+    assert seen == [backend.ref]
+    assert result.response.workspace_ref == backend.ref
+
+
 async def test_no_prompt_response_clone_gets_late_workspace_ref() -> None:
     old_response = ModelResponse(parts=[TextPart('old')], workspace_ref=WorkspaceRef(provider='fake', id='old'))
     backend = FakeWorkspace('late-no-prompt')

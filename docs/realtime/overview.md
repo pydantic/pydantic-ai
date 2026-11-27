@@ -250,7 +250,7 @@ instead of a single `user_prompt`:
 | Standard-run feature | In a realtime session |
 | --- | --- |
 | Function tools and [tool hooks](capabilities.md#capability-stages-in-a-session) | ✓ — validation, retries, and execution hooks run as in a standard run |
-| [Run hooks](capabilities.md#run-hooks) (`before_run`, `after_run`, `wrap_run`, `on_run_error`) | ✓ — once around the session |
+| [Run hooks](capabilities.md#run-hooks) (`before_run`, `after_run`, `wrap_run`, `on_run_error`, `on_run_success`) | ✓ — once around the session |
 | [Capabilities](capabilities.md), including third-party | ✓ — resolved at connect, and their instructions [before each turn](capabilities.md#instructions-that-change) |
 | [Event stream](events.md) | ✓ — iterate the session, or attach [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] |
 | `output_type` and output validators | ✗ — [delegate to a text agent](tools.md#delegating-work-during-a-call) |
