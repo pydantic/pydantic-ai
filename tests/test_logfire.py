@@ -30,7 +30,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._utils import get_traceparent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import AbstractCapability, Hooks, WrapModelRequestHandler
+from pydantic_ai.capabilities import AbstractCapability, Hooks, ProcessHistory, WrapModelRequestHandler
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.conversation import Conversation
 from pydantic_ai.exceptions import (
@@ -52,7 +52,7 @@ from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 from pydantic_ai.usage import RequestUsage
-from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
+from tests.function_model_prefix import HOOK_REWRITES_REQUEST, INSTRUCTIONS_CHANGE_MID_RUN
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsStr, strip_logfire_metrics, try_import
@@ -5604,69 +5604,172 @@ def test_a_retry_past_the_budget_records_its_cause_alone(
     }
 
 
+def _sends(messages: list[ModelMessage], prompt: str) -> bool:
+    """Whether the request being sent carries the user prompt `prompt`."""
+    return any(isinstance(part, UserPromptPart) and part.content == prompt for part in messages[-1].parts)
+
+
+def _answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if _sends(messages, 'fail'):
+        raise RuntimeError('the model failed')
+    if _sends(messages, 'call the failing tool'):
+        return ModelResponse(parts=[ToolCallPart('failing_tool')])
+    if info.output_tools:
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'response': 1})])
+    return ModelResponse(parts=[TextPart('an answer')])
+
+
+def failing_tool() -> str:
+    raise RuntimeError('the tool failed')
+
+
+def _fail_on_prompt(messages: list[ModelMessage]) -> list[ModelMessage]:
+    if _sends(messages, 'fail in the history processor'):
+        raise RuntimeError('the history processor failed')
+    return messages
+
+
+def _keep_last(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return messages[-1:]
+
+
+@dataclass(frozen=True)
+class RunSpanIndexCase:
+    id: str
+    prompts: tuple[str | None, ...]
+    """One run per prompt, each given the previous run's messages; the span checked is the last run's."""
+    expected_index: int | None
+    """`None` when the span leaves `pydantic_ai.new_message_index` out, which reads as 0."""
+    failed_run_tail: list[object] | None = None
+    """`pydantic_ai.all_messages` from the index on, for a last run that fails.
+
+    A last run that succeeds is checked against its `new_messages()` instead.
+    """
+    history: tuple[ModelMessage, ...] = ()
+    system_prompt: str | tuple[str, ...] = ()
+    output_type: type[str] | type[int] = str
+    capabilities: tuple[AbstractCapability[object], ...] = ()
+    marks: tuple[pytest.MarkDecorator, ...] = ()
+
+
+RUN_SPAN_INDEX_CASES = [
+    RunSpanIndexCase(
+        # The system prompt and the user prompt of the first request make two `all_messages` entries.
+        id='system-prompt-second-run',
+        prompts=('question 1', 'question 2'),
+        system_prompt='Be brief.',
+        expected_index=3,
+    ),
+    RunSpanIndexCase(
+        # Each run's prompt merges into the request that returned the previous run's output.
+        id='structured-output-third-run',
+        prompts=('question 1', 'question 2', 'question 3'),
+        output_type=int,
+        expected_index=5,
+    ),
+    RunSpanIndexCase(
+        # The processor drops the earlier run, so every message recorded is this run's.
+        id='history-processor-trims-earlier-runs',
+        prompts=('question 1', 'question 2'),
+        capabilities=(ProcessHistory(_keep_last),),
+        expected_index=None,
+        marks=(pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST),),
+    ),
+    RunSpanIndexCase(
+        id='resumed-without-prompt',
+        prompts=(None,),
+        history=(
+            ModelRequest(parts=[UserPromptPart('question 1')]),
+            ModelResponse(parts=[TextPart('an answer')]),
+            ModelRequest(parts=[UserPromptPart('question 2')]),
+        ),
+        expected_index=3,
+    ),
+    RunSpanIndexCase(
+        # The request sent merges this run's prompt into the previous run's output tool return, so the
+        # index points at that merged message.
+        id='structured-output-second-run-model-fails',
+        prompts=('question 1', 'fail'),
+        output_type=int,
+        expected_index=2,
+        failed_run_tail=snapshot(
+            [
+                {
+                    'role': 'user',
+                    'parts': [
+                        {
+                            'type': 'tool_call_response',
+                            'id': IsStr(),
+                            'name': 'final_result',
+                            'result': 'Final result processed.',
+                        },
+                        {'type': 'text', 'content': 'fail'},
+                    ],
+                }
+            ]
+        ),
+    ),
+    RunSpanIndexCase(
+        id='system-prompt-history-tool-fails',
+        prompts=('question 1', 'call the failing tool'),
+        system_prompt='Be brief.',
+        expected_index=3,
+        failed_run_tail=snapshot([{'role': 'user', 'parts': [{'type': 'text', 'content': 'call the failing tool'}]}]),
+    ),
+    RunSpanIndexCase(
+        id='system-prompt-history-history-processor-fails',
+        prompts=('question 1', 'fail in the history processor'),
+        system_prompt='Be brief.',
+        capabilities=(ProcessHistory(_fail_on_prompt),),
+        expected_index=3,
+        failed_run_tail=snapshot(
+            [{'role': 'user', 'parts': [{'type': 'text', 'content': 'fail in the history processor'}]}]
+        ),
+    ),
+    RunSpanIndexCase(
+        # The resumed request is the history the run was given, so the run added nothing.
+        id='resumed-without-prompt-model-fails',
+        prompts=(None,),
+        history=(
+            ModelRequest(parts=[UserPromptPart('question 1')]),
+            ModelResponse(parts=[TextPart('an answer')]),
+            ModelRequest(parts=[UserPromptPart('fail')]),
+        ),
+        expected_index=3,
+        failed_run_tail=[],
+    ),
+]
+
+
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-def test_run_span_new_message_index_matches_new_messages_multi_run(
-    get_logfire_summary: Callable[[], LogfireSummary],
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id, marks=case.marks) for case in RUN_SPAN_INDEX_CASES])
+def test_run_span_new_message_index(
+    case: RunSpanIndexCase, capfire: CaptureLogfire, get_logfire_summary: Callable[[], LogfireSummary]
 ) -> None:
-    agent = Agent(model=TestModel(), capabilities=[Instrumentation(settings=InstrumentationSettings())])
+    """`pydantic_ai.new_message_index` is where the run's own messages start in `pydantic_ai.all_messages`."""
+    settings = InstrumentationSettings()
+    agent = Agent(
+        FunctionModel(_answer),
+        system_prompt=case.system_prompt,
+        output_type=case.output_type,
+        tools=[failing_tool],
+        capabilities=[*case.capabilities, Instrumentation(settings=settings)],
+    )
+    history = list(case.history)
+    *earlier_prompts, prompt = case.prompts
+    for earlier_prompt in earlier_prompts:
+        history = agent.run_sync(earlier_prompt, message_history=history).all_messages()
+    capfire.exporter.clear()
 
-    result1 = agent.run_sync('first')
-    result2 = agent.run_sync('second', message_history=result1.all_messages())
+    if case.failed_run_tail is None:
+        result = agent.run_sync(prompt, message_history=history)
+        expected_tail = settings.messages_to_otel_messages(result.new_messages())
+    else:
+        with pytest.raises(RuntimeError):
+            agent.run_sync(prompt, message_history=history)
+        expected_tail = case.failed_run_tail
 
-    expected_index = len(result2.all_messages()) - len(result2.new_messages())
-
-    summary = get_logfire_summary()
-    run_span_attributes = summary.attributes[2]
-    index = run_span_attributes['pydantic_ai.new_message_index']
-    assert index == expected_index
-    converted = json.loads(run_span_attributes['pydantic_ai.all_messages'])
-    assert 0 < index < len(converted)
-    assert converted[index] == {'role': 'user', 'parts': [{'type': 'text', 'content': 'second'}]}
-
-
-@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-def test_run_span_new_message_index_structured_output_multi_run(
-    get_logfire_summary: Callable[[], LogfireSummary],
-) -> None:
-    @dataclass
-    class MyOutput:
-        content: str
-
-    agent = Agent(model=TestModel(), capabilities=[Instrumentation(settings=InstrumentationSettings())])
-
-    result1 = agent.run_sync('first', output_type=MyOutput)
-    result2 = agent.run_sync('second', output_type=MyOutput, message_history=result1.all_messages())
-
-    assert result2.output == MyOutput(content='a')
-    assert len(result2.new_messages()) == 3  # this run's prompt, final_result tool call, tool return
-
-    summary = get_logfire_summary()
-    run_span_attributes = summary.attributes[2]
-    index = run_span_attributes['pydantic_ai.new_message_index']
-    converted = json.loads(run_span_attributes['pydantic_ai.all_messages'])
-    assert index == len(converted) - 3
-    assert converted[index] == {'role': 'user', 'parts': [{'type': 'text', 'content': 'second'}]}
-
-
-@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-def test_failed_run_span_new_message_index_in_range(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
-    def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        raise RuntimeError('boom')
-
-    agent = Agent(FunctionModel(boom), capabilities=[Instrumentation(settings=InstrumentationSettings())])
-
-    with pytest.raises(RuntimeError, match='boom'):
-        agent.run_sync(
-            'trigger',
-            message_history=[
-                ModelRequest(parts=[UserPromptPart(content='seed')]),
-                ModelResponse(parts=[TextPart(content='ok')]),
-            ],
-        )
-
-    summary = get_logfire_summary()
-    run_span_attributes = summary.attributes[0]
-    converted = json.loads(run_span_attributes['pydantic_ai.all_messages'])
-    index = run_span_attributes['pydantic_ai.new_message_index']
-    assert 0 < index < len(converted)
-    assert converted[index] == {'role': 'user', 'parts': [{'type': 'text', 'content': 'trigger'}]}
+    run_span = get_logfire_summary().attributes[0]
+    index = run_span.get('pydantic_ai.new_message_index')
+    assert index == case.expected_index
+    assert json.loads(run_span['pydantic_ai.all_messages'])[index or 0 :] == expected_tail
