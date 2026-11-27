@@ -405,14 +405,14 @@ class StatusLine:
             await anyio.sleep(max(0, min(0.1, self.spinner().interval)))
 
 
-PERMISSION_LABELS: dict[PermissionMode, str] = {'full': 'full access', 'auto': 'auto mode', 'read-only': 'read-only'}
+_PERMISSION_LABELS: dict[PermissionMode, str] = {'full': 'full access', 'auto': 'auto mode', 'read-only': 'read-only'}
 
 
 def _permission_fragments(mode: PermissionMode | None) -> list[tuple[str, str]]:
     """The mode's label; `full access`, which runs everything without asking, in the warning colour."""
     if mode is None:
         return []
-    return [(theme.WARNING if mode == 'full' else theme.MUTED, PERMISSION_LABELS[mode])]
+    return [(theme.WARNING if mode == 'full' else theme.MUTED, _PERMISSION_LABELS[mode])]
 
 
 def _workspace_with_trust(path: str, trust: list[tuple[str, str]]) -> list[tuple[str, str]]:

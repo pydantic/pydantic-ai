@@ -59,6 +59,17 @@ from pydantic_ai_pax.ui.rendering.status import TEXT_TIME, Status, StatusLine
 from tests.pax.dialog_script import Back, Pick, ScriptedDialogs
 from tests.pax.test_live_prompt import editor
 
+REFERENCE = Path(__file__).parents[2] / 'src' / 'pydantic_ai_pax' / 'docs' / 'reference.md'
+
+
+def test_reference_lists_the_default_footer_order() -> None:
+    """Both places the reference page states the default footer layout match the shipped default."""
+    reference = REFERENCE.read_text(encoding='utf-8')
+    default_block = reference.split('The default order is:\n\n```json\n', 1)[1].split('\n```', 1)[0]
+    assert json.loads(default_block) == list(DEFAULT_FOOTER_FIELDS)
+    settings_row = next(line for line in reference.splitlines() if line.startswith('| `display.footer_fields` |'))
+    assert json.loads(settings_row.split('`')[3]) == list(DEFAULT_FOOTER_FIELDS)
+
 
 def test_default_footer_order_and_field_styles_survive_reordering() -> None:
     status = Status(

@@ -1872,7 +1872,7 @@ fields are hidden; `[]` hides the footer figures, not the prompt or task panel.
 The default order is:
 
 ```json
-["model", "workspace", "context", "output", "cost", "activity", "plugins", "updates", "live", "queued"]
+["model", "workspace", "permissions", "context", "output", "cost", "activity", "plugins", "updates", "live", "queued"]
 ```
 
 Every field is independently selectable and reorderable:
