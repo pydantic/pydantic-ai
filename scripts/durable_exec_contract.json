@@ -3924,6 +3924,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_external_events.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_mcp_toolset.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_toolset.py::<module>",
@@ -4006,6 +4007,7 @@
     "ExternalEventError": {
       "engines": [
         "aws_lambda",
+        "dbos",
         "durable_exec",
         "temporal"
       ],
@@ -4015,6 +4017,7 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/__init__.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_external_events.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_external_events.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/_capability.py::<module>"
       ]
@@ -4022,6 +4025,7 @@
     "ExternalEventWaiter": {
       "engines": [
         "aws_lambda",
+        "dbos",
         "durable_exec",
         "temporal"
       ],
@@ -4031,6 +4035,7 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/__init__.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_external_events.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_external_events.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/_capability.py::<module>"
       ]
@@ -4038,12 +4043,14 @@
     "ExternalEventWaiter.wait": {
       "engines": [
         "aws_lambda",
+        "dbos",
         "temporal"
       ],
       "kinds": [
         "override"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_external_events.py::DBOSExternalEventWaiter.wait",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_external_events.py::TemporalExternalEventWaiter.wait",
         "src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/_capability.py::_CallbackWaiter.wait"
       ]
@@ -4061,18 +4068,21 @@
     },
     "_to_json": {
       "engines": [
+        "dbos",
         "temporal"
       ],
       "kinds": [
         "import"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_external_events.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_external_events.py::<module>"
       ]
     },
     "external_event_scope": {
       "engines": [
         "aws_lambda",
+        "dbos",
         "durable_exec",
         "temporal"
       ],
@@ -4082,6 +4092,7 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/__init__.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/_capability.py::<module>"
       ]

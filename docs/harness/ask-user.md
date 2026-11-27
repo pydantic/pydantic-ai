@@ -211,7 +211,10 @@ makes the wait durable on an engine that supports it:
   `AskUserAnsweredEvent` is. Import the module that defines the agent under
   `workflow.unsafe.imports_passed_through()`, or the answerer is the workflow sandbox's copy, with its
   own copies of the clients it uses ([details](../durable_execution/temporal.md#waiting-for-approvals-and-answers)).
-- On DBOS, Prefect and other durable engines without support for waiting, the engine refuses
+- On [DBOS](../durable_execution/dbos.md#waiting-for-approvals-and-answers), the answerer runs in a step that records its response, so a
+  recovered workflow doesn't ask again, and the workflow waits for an answer sent through a resume
+  token. The same rule applies: return quickly.
+- On Prefect and other durable engines without support for waiting, the engine refuses
   the wait with a `UserError`. A wait in process would not be recorded: a replay would ask the user
   again, could get a different answer than the one the run already acted on and diverge from the
   engine's history, and a restart would lose the wait.
@@ -221,7 +224,8 @@ resume token. It can answer right away as the other forms do, or hand the token 
 Slack message, and return `None`. The answer then arrives when your code resolves the token with the
 JSON form of an `AskUserResponse`: with `resolve_external_event` from `pydantic_ai.external_events` in
 process, or through the engine's API, such as `resolve_external_event(client, token, payload)` from
-`pydantic_ai.durable_exec.temporal` or AWS Lambda's `SendDurableExecutionCallbackSuccess`.
+`pydantic_ai.durable_exec.temporal`, `resolve_external_event(token, payload)` from
+`pydantic_ai.durable_exec.dbos`, or AWS Lambda's `SendDurableExecutionCallbackSuccess`.
 
 ```python
 from pydantic import TypeAdapter

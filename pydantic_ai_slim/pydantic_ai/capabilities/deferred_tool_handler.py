@@ -68,10 +68,11 @@ class HandleDeferredToolCalls(AbstractCapability[AgentDepsT]):
       until code you write elsewhere resolves the token with the JSON form of `DeferredToolResults`.
       The wait is [`wait_for_external_event`][pydantic_ai.external_events.wait_for_external_event]:
       in a plain run it happens in this process, and in a durable run on an engine that supports it,
-      currently Temporal with [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]
-      and AWS Lambda durable functions with Pydantic AI Harness's `AWSLambdaDurability`, the engine
-      records the handler's answer and suspends the run while it waits. Other durable engines refuse
-      the wait with a [`UserError`][pydantic_ai.exceptions.UserError].
+      currently Temporal with [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability],
+      DBOS with [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] and AWS Lambda durable
+      functions with Pydantic AI Harness's `AWSLambdaDurability`, the engine records the handler's answer
+      and suspends the run while it waits. Other durable engines refuse the wait with a
+      [`UserError`][pydantic_ai.exceptions.UserError].
 
     See [Handle Deferred Tool Calls](../capabilities/handle-deferred-tool-calls.md).
 
@@ -132,6 +133,7 @@ class HandleDeferredToolCalls(AbstractCapability[AgentDepsT]):
     handler are named after it (`{agent}__external_event.{name}` and `{agent}__external_event.{name}.ask`).
     Keep it stable across deployments, since a replay matches its history by name. On Temporal, it
     summarizes the local activity that calls the handler (`ask: {name}`) and the timer that bounds the wait.
+    On DBOS, it names the step that draws the token and the step that calls the handler, as on AWS Lambda.
     """
 
     if TYPE_CHECKING:

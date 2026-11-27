@@ -22,17 +22,19 @@ import uuid
 from collections.abc import Generator
 from typing import Any
 
+import anyio
 import pytest
 from pydantic import BaseModel
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
-    from pydantic_ai.durable_exec.dbos import DBOSDurability
+    from pydantic_ai.durable_exec.dbos import DBOSDurability, resolve_external_event
 except ImportError:  # pragma: lax no cover
     pytest.skip('dbos not installed', allow_module_level=True)
 
-from pydantic_ai import Agent, ToolDefinition
+from pydantic_ai import Agent, RunContext, Tool, ToolDefinition
+from pydantic_ai.capabilities import HandleDeferredToolCalls
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelRequest,
@@ -43,9 +45,11 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import CodeMode
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.harness.code_mode.stored_sessions import stored_session_pool
 
 
@@ -211,6 +215,52 @@ gather_agent = Agent(
 @DBOS.workflow()
 def run_gather_agent(prompt: str) -> str:
     return gather_agent.run_sync(prompt).output
+
+
+_deleted: list[str] = []
+_approval_tokens: list[str] = []
+_approval_call_ids: list[list[str]] = []
+_approval_asked: list[anyio.Event] = []
+
+
+def delete(path: str) -> str:
+    """Delete a file."""
+    _deleted.append(path)
+    return f'deleted {path}'
+
+
+def _delete_in_code_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
+    last = messages[-1]
+    assert isinstance(last, ModelRequest)
+    for part in last.parts:
+        if isinstance(part, ToolReturnPart):
+            return ModelResponse(parts=[TextPart(content=f'done: {part.content}')])
+    code = "await delete(path='a.txt')"
+    return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code}, tool_call_id='code')])
+
+
+async def _hand_on_approval(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
+    _approval_tokens.append(token)
+    _approval_call_ids.append([call.tool_call_id for call in requests.approvals])
+    _approval_asked[-1].set()
+
+
+approval_agent = Agent(
+    FunctionModel(_delete_in_code_model),
+    name='code_mode_dbos_approval_agent',
+    deps_type=type(None),
+    toolsets=[FunctionToolset[None](tools=[Tool(delete, requires_approval=True)], id='files')],
+    capabilities=[
+        CodeMode[None](tools=['delete']),
+        DBOSDurability[None](),
+        HandleDeferredToolCalls[None](_hand_on_approval),
+    ],
+)
+
+
+@DBOS.workflow()
+async def run_approval_agent(prompt: str) -> str:
+    return (await approval_agent.run(prompt)).output
 
 
 def _submit_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
@@ -379,6 +429,28 @@ def test_gathered_calls_overlap_in_dbos_workflow(dbos_instance: DBOS) -> None:
         output = run_gather_agent('Gather three fetches.')
 
     assert output == "done: ['a', 'b', 'c']"
+
+
+async def test_a_nested_call_waits_for_approval_in_dbos_workflow(dbos_instance: DBOS) -> None:
+    """A tool the code calls waits durably for its approval, and a fork replaying the wait doesn't ask again."""
+    _approval_asked.append(anyio.Event())
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id):
+        handle = await DBOS.start_workflow_async(run_approval_agent, 'Delete a.txt')
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        await _approval_asked[-1].wait()
+    [token] = _approval_tokens
+    [[call_id]] = _approval_call_ids
+    assert _deleted == []
+
+    await resolve_external_event(token, {'approvals': {call_id: True}})
+    assert await handle.get_result() == 'done: deleted a.txt'
+    assert _deleted == ['a.txt']
+
+    steps = await dbos_instance.list_workflow_steps_async(workflow_id)
+    fork = await DBOS.fork_workflow_async(workflow_id, steps[-1]['function_id'])
+    assert await fork.get_result(polling_interval_sec=0.01) == 'done: deleted a.txt'
+    assert _approval_tokens == [token], 'the replay does not ask again'
 
 
 def test_code_mode_submits_final_output_in_dbos_workflow(dbos_instance: DBOS) -> None:

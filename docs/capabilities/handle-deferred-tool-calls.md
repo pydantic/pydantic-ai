@@ -1,5 +1,5 @@
 ---
-description: "Resolve deferred tool calls inside a Pydantic AI run with HandleDeferredToolCalls: approve, deny or answer them from a handler, or hand a resume token to a person and wait in process or suspended and recorded by a durable engine such as Temporal or AWS Lambda durable functions."
+description: "Resolve deferred tool calls inside a Pydantic AI run with HandleDeferredToolCalls: approve, deny or answer them from a handler, or hand a resume token to a person and wait in process or suspended and recorded by a durable engine such as Temporal, DBOS or AWS Lambda durable functions."
 ---
 
 # Handle Deferred Tool Calls
@@ -40,6 +40,7 @@ A handler that takes a token does one of two things:
 - **Hand the token on**: deliver the question and the token to where a person will see it and return `None`. That could be a Slack message with Approve and Deny buttons, an email with a link, or a row in a database table an admin UI lists. The answer comes back separately, through code you write elsewhere, such as the webhook behind the buttons, which resolves the token with it:
     - Without a durable engine, call [`resolve_external_event(token, answer)`][pydantic_ai.external_events.resolve_external_event] in the process the run is waiting in. To end the wait without an answer, call [`fail_external_event(token, reason)`][pydantic_ai.external_events.fail_external_event].
     - On Temporal, the token names the workflow: send the answer with [`resolve_external_event(client, token, answer)`][pydantic_ai.durable_exec.temporal.resolve_external_event] from `pydantic_ai.durable_exec.temporal`, or end the wait with [`fail_external_event(client, token, reason)`][pydantic_ai.durable_exec.temporal.fail_external_event]. See [The same agent on Temporal](#the-same-agent-on-temporal).
+    - On DBOS, the token names the workflow too: send the answer with [`resolve_external_event(token, answer)`][pydantic_ai.durable_exec.dbos.resolve_external_event] from `pydantic_ai.durable_exec.dbos`, or end the wait with [`fail_external_event(token, reason)`][pydantic_ai.durable_exec.dbos.fail_external_event]. See [The same agent on DBOS](#the-same-agent-on-dbos).
     - On AWS Lambda durable functions, the token is a callback ID: send the answer with `SendDurableExecutionCallbackSuccess`, or end the wait with `SendDurableExecutionCallbackFailure`. See [Approvals](../harness/aws-lambda.md#approvals).
 
 The handler can be sync or async; a sync function runs in a worker thread, like a sync tool. An answer it returns goes through its JSON form, as a resolved answer does, so the run sees the same value either way. In a durable run, the handler runs once, inside a durable unit that records its answer and isn't run again on replay. The engine can retry it when it fails, so make it return quickly and keep it idempotent, for example by keying the message or database row on the token. Anything that can take a while, such as a person, should answer through the token.
@@ -270,6 +271,52 @@ class SupportWorkflow:
 
 A token handler that answers in place works the same on Temporal: its answer is recorded, and the workflow continues without waiting. See [Waiting for approvals and answers](../durable_execution/temporal.md#waiting-for-approvals-and-answers) for what the workflow history records.
 
+## The same agent on DBOS
+
+Under DBOS, add [`DBOSDurability`](../durable_execution/dbos.md) and run the agent from a workflow. The workflow records the answer and waits for a DBOS message, for as long as the timeout allows, and a recovered workflow keeps waiting without asking again. The token names the workflow, and the approval endpoint resolves it by sending the workflow a message with [`resolve_external_event`][pydantic_ai.durable_exec.dbos.resolve_external_event] from `pydantic_ai.durable_exec.dbos`:
+
+```python {title="support_agent.py" test="skip"}
+from datetime import timedelta
+
+from dbos import DBOS
+
+from pydantic_ai import Agent, DeferredToolRequests, RunContext
+from pydantic_ai.capabilities import HandleDeferredToolCalls
+from pydantic_ai.durable_exec.dbos import DBOSDurability, resolve_external_event
+
+
+async def ask(ctx: RunContext, requests: DeferredToolRequests, token: str) -> None:
+    ...  # (1)!
+
+
+agent = Agent(
+    '{{ openai:medium }}',
+    name='support',
+    capabilities=[DBOSDurability(), HandleDeferredToolCalls(ask, timeout=timedelta(days=1))],
+)
+
+
+@agent.tool_plain(requires_approval=True)
+def issue_refund(order_id: str, amount: int) -> str:
+    return f'Refunded ${amount} for order {order_id}'
+
+
+@DBOS.workflow()
+async def support_workflow(prompt: str) -> str:
+    result = await agent.run(prompt)
+    return result.output
+
+
+async def decide(token: str, tool_call_ids: list[str], approved: bool) -> None:  # (2)!
+    decision = {'approvals': {tool_call_id: approved for tool_call_id in tool_call_ids}}
+    await resolve_external_event(token, decision)
+```
+
+1. Write the token and `requests` to where the approver will see them, such as a database table your admin UI lists, or a Slack message whose buttons carry the token. The handler runs in a DBOS step in the workflow's process, so it can do I/O, and it gets the run's own context.
+2. Runs in your approval endpoint, in a process that launched DBOS. Elsewhere, pass `client=DBOSClient(system_database_url=...)` for the application's system database.
+
+A token handler that answers in place works the same on DBOS: its answer is recorded, and the workflow continues without waiting. See [Waiting for approvals and answers](../durable_execution/dbos.md#waiting-for-approvals-and-answers) for the steps the workflow records.
+
 ## Engines
 
 How a handler that takes a token waits depends on where the run executes. A handler without a token is called the same way everywhere.
@@ -278,10 +325,11 @@ How a handler that takes a token waits depends on where the run executes. A hand
 |---|---|
 | A plain process | In the process; resolve the token with `resolve_external_event` |
 | [Temporal](../durable_execution/temporal.md#waiting-for-approvals-and-answers) | A workflow condition; resolve the token with `resolve_external_event` from `pydantic_ai.durable_exec.temporal`, which signals the workflow |
+| [DBOS](../durable_execution/dbos.md#waiting-for-approvals-and-answers) | A DBOS message the workflow receives; resolve the token with `resolve_external_event` from `pydantic_ai.durable_exec.dbos`, which sends it |
 | [AWS Lambda durable functions](../harness/aws-lambda.md#approvals) | A Lambda callback; resolve it with `SendDurableExecutionCallbackSuccess` |
-| DBOS, Prefect, and other durable engines | Not supported yet: the engine refuses the wait, so a call that needs an answer fails the run with a `UserError`. Use a handler without a token, or end the run with `DeferredToolRequests` output instead |
+| Prefect and other durable engines | Not supported yet: the engine refuses the wait, so a call that needs an answer fails the run with a `UserError`. Use a handler without a token, or end the run with `DeferredToolRequests` output instead |
 
-The engine refuses rather than waiting in process because the wait has to be recorded. When the engine replays the run, for example after a worker restart, an unrecorded handler would run again: the person would be asked a second time and could answer differently than the answer the run already acted on. The replay would then diverge from the engine's recorded history (on DBOS, for example, steps recorded after the wait would no longer match). And when the process restarts, the wait and any answer sent to it would be lost.
+The engine refuses rather than waiting in process because the wait has to be recorded. When the engine replays the run, for example after a worker restart, an unrecorded handler would run again: the person would be asked a second time and could answer differently than the answer the run already acted on. The replay would then diverge from the engine's recorded history (on an engine that replays a journal of steps, for example, steps recorded after the wait would no longer match). And when the process restarts, the wait and any answer sent to it would be lost.
 
 Engine authors can add support as [Building a durable execution backend](../durable_execution/backends.md#waiting-for-external-events) describes.
 
@@ -315,7 +363,7 @@ Answer with [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults], or r
 - `metadata` reaches the tool as [`RunContext.tool_call_metadata`][pydantic_ai.tools.RunContext.tool_call_metadata].
 - `answered_by` says who answered each call, and is reported in the run's `DeferredToolResultsEvent`.
 
-Whoever can resolve the token decides the calls. That includes their arguments, through `override_args`, the `metadata` tools read, and the `answered_by` the run reports. So a tool must not treat `metadata` or `answered_by` as proof of who approved. Pydantic AI checks only the answer's shape and that it names pending calls. In process and on AWS Lambda, treat the token as a bearer credential. On Temporal, the token is in the workflow history, so the boundary is permission to signal the workflow; see [Waiting for approvals and answers](../durable_execution/temporal.md#waiting-for-approvals-and-answers). Either way, authorize the approver in the code that resolves it.
+Whoever can resolve the token decides the calls. That includes their arguments, through `override_args`, the `metadata` tools read, and the `answered_by` the run reports. So a tool must not treat `metadata` or `answered_by` as proof of who approved. Pydantic AI checks only the answer's shape and that it names pending calls. In process and on AWS Lambda, treat the token as a bearer credential. On Temporal, the token is in the workflow history, so the boundary is permission to signal the workflow; see [Waiting for approvals and answers](../durable_execution/temporal.md#waiting-for-approvals-and-answers). On DBOS, the token is in the workflow's recorded steps, so the boundary is access to the application's system database, through which anyone can send the workflow a message; see [Waiting for approvals and answers](../durable_execution/dbos.md#waiting-for-approvals-and-answers). Either way, authorize the approver in the code that resolves it.
 
 From Python, build the answer as a `DeferredToolResults` and serialize it:
 
@@ -337,9 +385,9 @@ An answer doesn't have to cover every pending call. The calls it leaves out stay
 
 `timeout` and `name` configure the wait, so they need a handler that takes a token. Passing them with a handler that doesn't raises a [`UserError`][pydantic_ai.exceptions.UserError].
 
-`timeout` bounds the wait. The wait can end without an answer in two ways: the timeout elapses, or the token is resolved with a failure. Either way, every pending approval is denied and every pending external call fails, with the message `No decision on this tool call arrived: <reason>`. The run then continues, so the model can tell the user what happened. In process, the timeout also bounds the handler: an async handler still running when it elapses is cancelled. Without a `timeout`, an in-process wait has no limit, and a durable one lasts as long as the engine allows, which on Temporal is the workflow's execution timeout and on AWS Lambda the execution timeout.
+`timeout` bounds the wait. The wait can end without an answer in two ways: the timeout elapses, or the token is resolved with a failure. Either way, every pending approval is denied and every pending external call fails, with the message `No decision on this tool call arrived: <reason>`. The run then continues, so the model can tell the user what happened. In process, the timeout also bounds the handler: an async handler still running when it elapses is cancelled. Without a `timeout`, an in-process wait has no limit, and a durable one lasts as long as the engine allows, which on Temporal is the workflow's execution timeout, on DBOS a hundred years (its receive takes a finite timeout), and on AWS Lambda the execution timeout.
 
-`name` names the wait in a durable engine's history, `'deferred_tool_calls'` by default. On AWS Lambda, `HandleDeferredToolCalls(ask, name='approve_refund')` names the callback `{agent}__external_event.approve_refund` and the step that calls `ask` `{agent}__external_event.approve_refund.ask`. Keep it stable across deployments. On Temporal, it summarizes the local activity that calls the handler and the timer that bounds the wait.
+`name` names the wait in a durable engine's history, `'deferred_tool_calls'` by default. On AWS Lambda, `HandleDeferredToolCalls(ask, name='approve_refund')` names the callback `{agent}__external_event.approve_refund` and the step that calls `ask` `{agent}__external_event.approve_refund.ask`. Keep it stable across deployments. On Temporal, it summarizes the local activity that calls the handler and the timer that bounds the wait. On DBOS, it names the step that draws the token, `{agent}__external_event.approve_refund`, and the step that calls `ask`, `{agent}__external_event.approve_refund.ask`; DBOS raises `DBOSUnexpectedStepError` when a recovered workflow finds a step under another name.
 
 ## Composition
 
