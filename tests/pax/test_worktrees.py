@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_ai_pax.runtime.worktrees import Worktree, open_worktree
 from tests.pax.cli_runner import CliResult, CliRunner
 
@@ -40,7 +40,7 @@ def repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     repo = tmp_path / 'source repo'
     repo.mkdir()
     git(repo, 'init')
-    git(repo, 'config', 'user.name', 'CLAI Test')
+    git(repo, 'config', 'user.name', 'Pax Test')
     git(repo, 'config', 'user.email', 'clai@example.com')
     (repo / '.clai').mkdir()
     (repo / '.clai/settings.json').write_text('{"shell_lines": 7}')
@@ -157,7 +157,7 @@ def test_session_belongs_to_worktree_and_can_be_resumed(repository: Path, launch
     )
     assert result.returncode == 0, result.stderr
     workspace = repository / '.worktrees/saved'
-    store = SqliteConversationStore(database=repository / 'sessions.db')
+    store = SqliteSessionStore(database=repository / 'sessions.db')
     summaries = asyncio.run(store.listing())
     assert len(summaries) == 1
     assert summaries[0].workspace == str(workspace)

@@ -40,14 +40,16 @@ class SpritesProvider:
     title: str = 'Sprites'
     working_dir: str = '/home/sprite/workspace'
     token_in_sandbox: bool = True
+    desktop_at_create: bool = False
     _clients: 'WeakKeyDictionary[SandboxBackend, AsyncSpritesClient]' = field(
         default_factory=WeakKeyDictionary['SandboxBackend', 'AsyncSpritesClient'], init=False, compare=False, repr=False
     )
     """The client made for each backend: `SpritesSandboxBackend` leaves a client it was given open, so `close` closes it."""
 
-    def missing(self) -> str | None:
+    def missing(self, *, desktop: bool = False) -> str | None:
+        del desktop
         if find_spec('sprites') is None:
-            return "Sprites support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[sprites]'."
+            return "Sprites support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[sprites]'."
         if saved_key(KEY_NAME) is None:
             return f'Add your Sprites token in /keys as {KEY_NAME}. Make one at https://sprites.dev/account.'
         return None
@@ -58,16 +60,26 @@ class SpritesProvider:
         # The constructor reads `/proc` on Linux the first time, so async callers run it in a thread.
         return AsyncSpritesClient(token=saved_key(KEY_NAME) or '')
 
-    def _backend(self, client: 'AsyncSpritesClient', ref: WorkspaceRef | None = None) -> 'SpritesSandboxBackend':
+    def _backend(
+        self, client: 'AsyncSpritesClient', ref: WorkspaceRef | None = None, *, desktop: bool = False
+    ) -> 'SpritesSandboxBackend':
         from pydantic_ai_harness.sprites_sandbox import SpritesSandboxBackend
 
-        backend = SpritesSandboxBackend(client=client, ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV)
+        backend = SpritesSandboxBackend(
+            client=client,
+            ref=ref,
+            working_dir=self.working_dir,
+            env=SANDBOX_ENV,
+            desktop=desktop,
+        )
         self._clients[backend] = client
         return backend
 
-    async def create(self, *, github: GitHubCredential | None) -> tuple[WorkspaceRef, SandboxBackend]:
+    async def create(
+        self, *, github: GitHubCredential | None, desktop: bool = False
+    ) -> tuple[WorkspaceRef, SandboxBackend]:
         client = await to_thread.run_sync(self._client)
-        backend = self._backend(client)
+        backend = self._backend(client, desktop=desktop)
         try:
             await backend.get_sandbox()
         except BaseException:
@@ -82,10 +94,10 @@ class SpritesProvider:
         assert backend.ref is not None
         return backend.ref, backend
 
-    def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
+    def reopen(self, ref: WorkspaceRef, *, desktop: bool = False) -> SandboxBackend:
         # Built here, though it reads the key store: the token may be only in `/keys`, which a backend left to
         # open its own client would not read.
-        return self._backend(self._client(), ref)
+        return self._backend(self._client(), ref, desktop=desktop)
 
     async def close(self, backend: SandboxBackend) -> None:
         if (client := self._clients.pop(backend, None)) is not None:

@@ -1,4 +1,4 @@
-"""`.clai/settings.json`: the walk-up, the layering, the startup report, and asking before it changes how CLAI runs."""
+"""`.clai/settings.json`: the walk-up, the layering, the startup report, and asking before it changes how Pax runs."""
 
 import io
 import json
@@ -52,6 +52,7 @@ from pydantic_ai_pax.runtime.project_instructions import ProjectInstructions, Pr
 from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_ai_pax.ui.rendering.welcome import print_welcome
 from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
+from tests.pax.test_headless import untrusted_notice
 
 
 def write(directory: Path, content: dict[str, JsonValue]) -> Path:
@@ -286,7 +287,7 @@ async def test_a_relative_path_saved_before_anchoring_is_refused_until_approved_
     output = io.StringIO()
     await plugin_loader(store, load_project_settings(impostor), output).load_all()
     assert ran(tmp_path) == []
-    assert 'plugins/helper.py is relative, so it would load from whichever directory CLAI starts in.' in (
+    assert 'plugins/helper.py is relative, so it would load from whichever directory Pax starts in.' in (
         output.getvalue()
     )
 
@@ -363,7 +364,7 @@ async def test_a_project_plugin_file_that_cannot_be_read_cannot_be_approved(
 async def test_a_plugin_approval_saved_without_its_contents_is_asked_again(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An approval saved before CLAI recorded file contents covers the declaration alone, so it is asked again once."""
+    """An approval saved before Pax recorded file contents covers the declaration alone, so it is asked again once."""
     trusted = repository(tmp_path, 'trusted')
     store = SettingsStore(tmp_path / 'config.db')
     path = str(trusted / 'plugins' / 'helper.py')
@@ -426,7 +427,7 @@ def test_a_key_applies_only_once_approved_with_its_value(tmp_path: Path, key: st
     assert project.pending == {key: APPROVED_ONLY[key]}
     assert settings_for(project).model_dump()[field] == store.load().model_dump()[field]
     assert project.pending_notice == (
-        f'Project settings not applied until you approve them with /project approve in a CLAI session: {field}'
+        f'Project settings not applied until you approve them with /project approve in a Pax session: {field}'
     )
 
     other = tmp_path / 'other'
@@ -530,7 +531,7 @@ async def test_project_command_approves_applies_and_revokes(tmp_path: Path) -> N
         )
     text = output.getvalue()
     assert (
-        'Project settings not applied until you approve them with /project approve in a CLAI session: '
+        'Project settings not applied until you approve them with /project approve in a Pax session: '
         'tool_retries, permissions, model'
     ) in text
     assert '  thinking (applied): false\n' in text
@@ -568,7 +569,7 @@ async def test_project_command_without_a_file(tmp_path: Path) -> None:
             console=Console(file=output, width=300),
             store=SettingsStore(tmp_path / 'config.db'),
         )
-    assert 'No project file: CLAI looks for .clai/settings.json' in output.getvalue()
+    assert 'No project file: Pax looks for .clai/settings.json' in output.getvalue()
 
 
 def test_project_completions(tmp_path: Path) -> None:
@@ -594,7 +595,7 @@ def test_project_completions(tmp_path: Path) -> None:
 
 
 def recording(requests: list[tuple[str | None, list[ModelMessage]]]) -> FunctionModel:
-    """A model that records each request's instructions and messages; CLAI streams them all."""
+    """A model that records each request's instructions and messages; Pax streams them all."""
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         requests.append((info.instructions, messages))
@@ -676,8 +677,8 @@ async def test_headless_ignores_unapproved_keys_with_a_notice(
     captured = capsys.readouterr()
     assert captured.out == 'done\n'
     assert captured.err == (
-        'Project settings not applied until you approve them with /project approve in a CLAI session: '
-        'tool_retries, permissions\n'
+        'Project settings not applied until you approve them with /project approve in a Pax session: '
+        f'tool_retries, permissions\n{untrusted_notice(store)}'
     )
 
 
@@ -712,7 +713,7 @@ async def test_project_instructions_only_go_with_a_runs_prompt() -> None:
 
 
 def approved_project(tmp_path: Path) -> tuple[SettingsStore, Callable[[ProjectSettings], Settings], ProjectSettings]:
-    """A saved `read-only`, a project file's `full` that is approved, and the settings CLAI starts with beside it."""
+    """A saved `read-only`, a project file's `full` that is approved, and the settings Pax starts with beside it."""
     write(tmp_path, {'permissions': 'full'})
     store = SettingsStore(tmp_path / 'config.db')
     store.set('run.permissions', 'read-only')
@@ -811,7 +812,7 @@ async def test_a_headless_run_keeps_to_a_stricter_project_mode(
     assert await headless.run_headless(text='go', settings=settings_for(project), store=store, project=project) == 0
     written = {path for path in tmp_path.rglob('*') if path.is_file()} - before - {tmp_path / 'sessions.db'}
     assert bool({path for path in written if not path.name.startswith('sessions.db')}) is not declared
-    assert capsys.readouterr().err == '', 'the mode applied, so nothing is reported as left out'
+    assert capsys.readouterr().err == untrusted_notice(store), 'the mode applied, so only trust is reported'
 
 
 def shell_in(directory: Path, store: SettingsStore) -> SessionRuntime[None, str]:
@@ -974,7 +975,7 @@ def approved_then_dropped(repo: Path, store: SettingsStore) -> None:
 
 
 def restored_permissions(repo: Path, store: SettingsStore) -> str:
-    """The mode CLAI starts with once the repository sets the wider `permissions` again."""
+    """The mode Pax starts with once the repository sets the wider `permissions` again."""
     write(repo, {'permissions': 'full', 'tool_retries': 0})
     project = load_project_settings(repo, store=store)
     assert project.pending.get('run.permissions') == 'full', 'it waits for a fresh approval'

@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+import warnings
+from collections.abc import Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_args
 
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, ValidatedToolArgs
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior
-from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.messages import InstructionPart, ToolCallPart
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai_harness._warn import warn_argument_ignored
@@ -18,7 +20,7 @@ from pydantic_ai_harness.coder._instructions import (
     BENCHMARK_INSTRUCTIONS,
     Autonomy,
     coder_instructions,
-    project_instructions,
+    model_specific_instructions,
 )
 from pydantic_ai_harness.compaction import ClearToolResults
 from pydantic_ai_harness.file_system import FileSystem
@@ -113,6 +115,13 @@ class _ReportExhaustedRetries(AbstractCapability[AgentDepsT]):
 MAX_READ_CHARS = 50_000
 """Characters of complete lines per `read_file`, below the output cap."""
 
+MAX_IMAGE_SIDE = 1024
+"""Longest side, in pixels, of an image `read_file` returns; a larger one is downscaled to it.
+
+Providers reject images over their own size limits, or downscale them themselves
+after the full-size upload.
+"""
+
 MAX_OUTPUT_CHARS = 64000
 """Characters kept from any tool result."""
 
@@ -134,24 +143,42 @@ class _CoderGuidance(AbstractCapability[AgentDepsT]):
     the first dynamic part. It contributes no toolset. `id` is set on the instance, not as a class
     default, so two copies are rejected rather than merged. A delegate's text comes from
     `delegation_depth()`, which the delegating run sets before the child run is awaited, and which
-    a recorded delegation sets again on the worker.
+    a recorded delegation sets again on the worker. The text only some models get, such as the rule against
+    unrequested delegation for models whose profile sets `delegates_unprompted`, is in blocks of its own: see
+    `model_specific_instructions`.
     """
 
     guidance: str
     delegated_guidance: str
-    project: tuple[Callable[[RunContext[AgentDepsT]], Awaitable[str]], ...]
+    model_specific: tuple[Callable[[RunContext[AgentDepsT]], InstructionPart], ...] = ()
+    """The blocks from `model_specific_instructions`, resolved against the model handling each request.
+
+    When there are any, they can differ between models, so running on a `FallbackModel` gets a warning.
+    """
     delegate: bool = False
 
     def __post_init__(self) -> None:
         self.id = 'coder_instructions'
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
-        return [self.delegated_guidance if self.delegate else self.guidance, *self.project]
+        return [
+            self.delegated_guidance if self.delegate else self.guidance,
+            *self.model_specific,
+        ]
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
+        if self.model_specific and isinstance(ctx.model, FallbackModel):
+            # Python's default warning filter shows this once per process: it's raised from one line.
+            warnings.warn(_FALLBACK_MODEL_WARNING, UserWarning, stacklevel=1)
         if delegation_depth() <= 1:
             return self
         return replace(self, delegate=True)
+
+
+_FALLBACK_MODEL_WARNING = (
+    "`Coder` can't read model-specific instructions from `FallbackModel`, so every model gets the default ones; "
+    "use the `ModelFallback` capability so each attempt gets its model's instructions."
+)
 
 
 @dataclass
@@ -170,12 +197,13 @@ class BenchmarkInstructions(AbstractCapability[AgentDepsT]):
         return BENCHMARK_INSTRUCTIONS
 
 
-def _file_system(*, unrestricted: bool) -> FileSystem[AgentDepsT]:
+def _file_system(*, unrestricted: bool, max_image_side: int | None) -> FileSystem[AgentDepsT]:
     file_system = FileSystem[AgentDepsT](
         content_hashes=False,
         max_read_chars=MAX_READ_CHARS,
         tools=FILE_TOOL_NAMES,
         max_retries=MAX_FILE_TOOL_RETRIES,
+        max_image_side=max_image_side,
     )
     if unrestricted:
         # `/` is the filesystem root, or on Windows the working directory's drive.
@@ -211,8 +239,7 @@ class Coder(CombinedCapability[AgentDepsT]):
         repo_context: Include `RepoContext`. Pass `False` when the agent binds its
             own, so the instruction files are not loaded twice. Pass a
             `RepoContext` to use it in place of the bundled
-            `RepoContext(walk_up='repo_root')`, keeping the project-directory note;
-            e.g. `RepoContext()` loads only the working directory's instruction files.
+            `RepoContext(walk_up='repo_root')`; e.g. `RepoContext()` loads only the working directory's instruction files.
         sub_agents: Add `delegate_task`, which hands a self-contained sub-task to a
             fresh run of the same agent `Coder` is bound to, including capabilities
             bound next to `Coder`. This requires binding `Coder` with
@@ -231,6 +258,9 @@ class Coder(CombinedCapability[AgentDepsT]):
             which OpenAI and Gemini 2.5+ would otherwise turn on, and relies on the
             bundled `RepairToolArguments` instead. `None` leaves the choice to the
             provider. Tools bound next to `Coder` keep their own value.
+        max_image_side: Longest side, in pixels, of an image `read_file` returns; a larger
+            one is downscaled to it first. Needs Pillow, which the `coder` extra installs.
+            `None` sends images at full size and drops the Pillow requirement.
     """
 
     def __init__(
@@ -246,6 +276,7 @@ class Coder(CombinedCapability[AgentDepsT]):
         task_control: TaskControl | None = None,
         caching: bool = True,
         strict: bool | None = False,
+        max_image_side: int | None = MAX_IMAGE_SIDE,
     ) -> None:
         if autonomy not in get_args(Autonomy):
             raise ValueError(f'`autonomy` must be one of {", ".join(map(repr, get_args(Autonomy)))}, not {autonomy!r}.')
@@ -273,7 +304,6 @@ class Coder(CombinedCapability[AgentDepsT]):
         )
         guidance, delegated_guidance = coder_instructions(
             autonomy=autonomy,
-            delegate_tool=delegation.tool_name if delegation is not None else None,
             extra=instructions,
             repo_files=bundled_repo_context.filenames
             if bundled_repo_context is not None and bundled_repo_context.autoload_instructions
@@ -282,15 +312,18 @@ class Coder(CombinedCapability[AgentDepsT]):
             and bundled_repo_context.nested_traversal
             and bundled_repo_context.nested_inject == 'contents',
         )
-        # Naming the directory creates a lazily created sandbox, so it comes only with
-        # `RepoContext`, which reads the workspace at run start anyway.
-        project = (
-            [project_instructions(unrestricted=unrestricted_filesystem)] if bundled_repo_context is not None else []
-        )
         capabilities: list[AbstractCapability[AgentDepsT]] = [
             RequireWorkspace[AgentDepsT]('Coder'),
-            _CoderGuidance[AgentDepsT](guidance, delegated_guidance, tuple(project)),
-            _file_system(unrestricted=unrestricted_filesystem),
+            _CoderGuidance[AgentDepsT](
+                guidance,
+                delegated_guidance,
+                tuple(
+                    model_specific_instructions(
+                        autonomy=autonomy, delegate_tool=delegation.tool_name if delegation is not None else None
+                    )
+                ),
+            ),
+            _file_system(unrestricted=unrestricted_filesystem, max_image_side=max_image_side),
             Shell[AgentDepsT](
                 denied_commands=[],
                 default_timeout=MAX_FOREGROUND_WAIT,

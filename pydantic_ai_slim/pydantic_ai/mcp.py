@@ -7,8 +7,9 @@ import os
 import re
 import ssl
 import warnings
+import weakref
 from abc import ABC
-from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -674,7 +675,10 @@ TOOL_SCHEMA_VALIDATOR = pydantic_core.SchemaValidator(
 # Group 1: variable name
 # Group 2: the ':-' separator (to detect if default syntax is used)
 # Group 3: the default value (can be empty)
-_ENV_VAR_PATTERN = re.compile(r'\$\{([^}:]+)(:-([^}]*))?\}')
+# Group 4: the closing '}', empty when the reference is never closed. Matching an unclosed reference
+# (left unexpanded) consumes it, so a later `${` inside it isn't rescanned to the end of the string;
+# requiring the '}' makes expansion quadratic in the string's length.
+_ENV_VAR_PATTERN = re.compile(r'\$\{([^}:]+)(:-([^}]*))?(\}?)')
 
 
 _SHUTDOWN_GRACE_SECONDS = 3
@@ -942,6 +946,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     _headers_func: MCPHeadersFunc[AgentDepsT] | None = None
     _static_auth: HTTPAuth | Literal['oauth'] | str | None = None
     _static_headers: dict[str, str] | None = None
+    # Bumped by each tools `list_changed` notification, so a `tools/list` response that was in flight
+    # when it arrived isn't cached.
+    _tools_cache_generation: int = 0
 
     @functools.cached_property
     def _enter_lock(self) -> anyio.Lock:
@@ -1089,19 +1096,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 'headers': headers,
                 'http_client': http_client,
             }
-            conflicts = [name for name, value in forwarded_values.items() if value is not None]
-            # `init_timeout`/`read_timeout` use `_UNSET` as their default so we can detect "passed
-            # explicitly" vs "default" without coupling to the literal default values.
-            if init_timeout is not _UNSET:
-                conflicts.append('init_timeout')
-            if read_timeout is not _UNSET:
-                conflicts.append('read_timeout')
-            if conflicts:
-                names = ', '.join(repr(n) for n in conflicts)
-                raise ValueError(
-                    f'Cannot pass {names} alongside a pre-built `fastmcp.Client` — '
-                    'configure these on the Client itself instead.'
-                )
+            _reject_options_for_prebuilt_client(forwarded_values, init_timeout=init_timeout, read_timeout=read_timeout)
             self.client = client
             self._user_message_handler = None
             self._client_source = None
@@ -1118,20 +1113,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     '`headers` and `http_client` are mutually exclusive — set headers on the `http_client` instead.'
                 )
 
-            # A function of the run context can't be resolved until a run starts: the toolset then
-            # only acts as a template that `for_run` copies with the resolved value.
-            if callable(auth):
-                self._auth_func, static_auth = auth, None
-            else:
-                self._auth_func, static_auth = None, auth
-            if callable(headers):
-                self._headers_func, static_headers = headers, None
-            else:
-                self._headers_func, static_headers = None, headers
-            if (self._auth_func is not None or self._headers_func is not None) and not _is_url(client):
-                raise ValueError(
-                    'A function for `auth` or `headers` only applies to HTTP transports built from a URL string.'
-                )
+            static_auth, static_headers = self._set_run_context_functions(client, auth=auth, headers=headers)
 
             # Resolve sentinels to actual defaults now that the conflict check has run.
             if init_timeout is _UNSET:
@@ -1179,6 +1161,30 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self._cached_prompts = None
         self._running_count = 0
         self._exit_stack = None
+
+    def _set_run_context_functions(
+        self,
+        client: MCPToolsetClient,
+        *,
+        auth: HTTPAuth | Literal['oauth'] | str | MCPAuthFunc[AgentDepsT] | None,
+        headers: dict[str, str] | MCPHeadersFunc[AgentDepsT] | None,
+    ) -> tuple[HTTPAuth | Literal['oauth'] | str | None, dict[str, str] | None]:
+        """Keep `auth` and `headers` given as functions of the run context; return the static ones."""
+        # A function of the run context can't be resolved until a run starts: the toolset then
+        # only acts as a template that `for_run` copies with the resolved value.
+        if callable(auth):
+            self._auth_func, static_auth = auth, None
+        else:
+            self._auth_func, static_auth = None, auth
+        if callable(headers):
+            self._headers_func, static_headers = headers, None
+        else:
+            self._headers_func, static_headers = None, headers
+        if (self._auth_func is not None or self._headers_func is not None) and not _is_url(client):
+            raise ValueError(
+                'A function for `auth` or `headers` only applies to HTTP transports built from a URL string.'
+            )
+        return static_auth, static_headers
 
     @property
     def id(self) -> str | None:
@@ -1352,6 +1358,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         return self._server_capabilities is not None
 
     def _invalidate_tools_cache(self) -> None:
+        self._tools_cache_generation += 1
         self._cached_tools = None
 
     def _invalidate_resources_cache(self) -> None:
@@ -1359,6 +1366,37 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
 
     def _invalidate_prompts_cache(self) -> None:
         self._cached_prompts = None
+
+    def _server_metadata(
+        self, init_result: mcp_types.InitializeResult | None
+    ) -> tuple[mcp_types.Implementation | None, mcp_types.ServerCapabilities, str | None]:
+        """The connected server's info, capabilities and instructions, from whichever session generation it opened."""
+        if init_result is None:
+            if not _MCP_SDK_V2:
+                # FastMCP 3 always initializes on connect unless the client was built
+                # with `auto_initialize=False`, so this is an uninitialized client, not
+                # a session generation.
+                raise exceptions.UserError(
+                    'The FastMCP client connected but never initialized — was it built '
+                    'with `auto_initialize=False`? `MCPToolset` needs an initialized client.'
+                )
+            raw_server_info = getattr(self.client, 'server_info', None)
+            capabilities = getattr(self.client, 'server_capabilities', None)
+            raw_instructions = getattr(self.client, 'instructions', None)
+            if not isinstance(capabilities, mcp_types.ServerCapabilities):
+                raise exceptions.UserError(
+                    'This client opened without an `initialize` handshake and exposes no '
+                    '`server_capabilities` to read server metadata from. If the client was '
+                    'built with `auto_initialize=False`, remove that; otherwise upgrade '
+                    '`fastmcp` to a version that provides era-neutral server metadata.'
+                )
+            # On modern sessions `serverInfo` is an optional display-only stamp the
+            # server may omit, so an absent identity must not fail the connection.
+            server_info = raw_server_info if isinstance(raw_server_info, mcp_types.Implementation) else None
+            instructions = raw_instructions if isinstance(raw_instructions, str) else None
+            return server_info, capabilities, instructions
+        server_info = mcp_field(init_result, 'server_info', mcp_types.Implementation)
+        return server_info, init_result.capabilities, init_result.instructions
 
     async def __aenter__(self) -> Self:
         if self._resolves_per_run:
@@ -1378,33 +1416,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     # metadata comes from era-neutral client properties; older clients only populate
                     # `initialize_result`.
                     init_result = self.client.initialize_result
-                    if init_result is None:
-                        if not _MCP_SDK_V2:
-                            # FastMCP 3 always initializes on connect unless the client was built
-                            # with `auto_initialize=False`, so this is an uninitialized client, not
-                            # a session generation.
-                            raise exceptions.UserError(
-                                'The FastMCP client connected but never initialized — was it built '
-                                'with `auto_initialize=False`? `MCPToolset` needs an initialized client.'
-                            )
-                        raw_server_info = getattr(self.client, 'server_info', None)
-                        capabilities = getattr(self.client, 'server_capabilities', None)
-                        raw_instructions = getattr(self.client, 'instructions', None)
-                        if not isinstance(capabilities, mcp_types.ServerCapabilities):
-                            raise exceptions.UserError(
-                                'This client opened without an `initialize` handshake and exposes no '
-                                '`server_capabilities` to read server metadata from. If the client was '
-                                'built with `auto_initialize=False`, remove that; otherwise upgrade '
-                                '`fastmcp` to a version that provides era-neutral server metadata.'
-                            )
-                        # On modern sessions `serverInfo` is an optional display-only stamp the
-                        # server may omit, so an absent identity must not fail the connection.
-                        server_info = raw_server_info if isinstance(raw_server_info, mcp_types.Implementation) else None
-                        instructions = raw_instructions if isinstance(raw_instructions, str) else None
-                    else:
-                        server_info = mcp_field(init_result, 'server_info', mcp_types.Implementation)
-                        capabilities = init_result.capabilities
-                        instructions = init_result.instructions
+                    server_info, capabilities, instructions = self._server_metadata(init_result)
                     server_capabilities = ServerCapabilities.from_mcp_sdk(capabilities)
                     # `logging/setLevel` is handshake-era only: the modern protocol has no such request.
                     modern_session = init_result is None
@@ -1477,8 +1489,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         if self.cache_tools and self._cached_tools is not None:
             return self._cached_tools
         async with self._connected():
+            generation = self._tools_cache_generation
             tools = await self.client.list_tools()
-            if self.cache_tools:
+            # A `list_changed` notification that arrived while the request was in flight makes this list stale.
+            if self.cache_tools and generation == self._tools_cache_generation:
                 self._cached_tools = tools
             return tools
 
@@ -1636,38 +1650,41 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 # re-raise unchanged so a concurrent cancellation grouped alongside is never swallowed.
                 if self.tool_error_behavior == 'error':
                     raise
-                matched, rest = eg.split((ToolError, McpError))
-                if matched is None or rest is not None:
+                if (tool_error := self._tool_error_in_group(eg)) is None:
                     raise
-                # A protocol error remains retryable even when completed tool errors are configured
-                # as failed results. Prefer it over a concurrent ToolError when both are present.
-                error_group = matched
-                behavior = self.tool_error_behavior
-                if behavior == 'failed':
-                    protocol_errors, _ = matched.split(McpError)
-                    if protocol_errors is not None:
-                        error_group = protocol_errors
-                        behavior = 'retry'
-
-                # Descend through any nesting to a representative leaf.
-                error: BaseException = error_group
-                while isinstance(error, _utils.BaseExceptionGroup):
-                    error = error.exceptions[0]
+                error, behavior = tool_error
                 _raise_mcp_tool_error(str(error), behavior, cause=eg)
 
         if result.is_error:
-            if result.structured_content is None and not result.content:
-                message = f'Tool {name!r} returned an error'
-            else:
-                mapped_error = _map_mcp_call_tool_result(result, prefer_structured=True)
-                message = messages.ToolReturnPart(tool_name=name, content=mapped_error).model_response_str(
-                    wrap_if_error=False
-                )
-                if not message:
-                    message = f'Tool {name!r} returned an error'
-            _raise_mcp_tool_error(message, self.tool_error_behavior)
+            _raise_mcp_tool_error(_tool_error_result_message(name, result), self.tool_error_behavior)
 
         return result
+
+    def _tool_error_in_group(
+        self, eg: _utils.BaseExceptionGroup[BaseException]
+    ) -> tuple[BaseException, Literal['retry', 'error', 'failed']] | None:
+        """The leaf error a group of tool and protocol errors is reported by, and the behavior it gets.
+
+        `None` when the group holds anything else, which `_call_tool_checked` re-raises unchanged.
+        """
+        matched, rest = eg.split((ToolError, McpError))
+        if matched is None or rest is not None:
+            return None
+        # A protocol error remains retryable even when completed tool errors are configured
+        # as failed results. Prefer it over a concurrent ToolError when both are present.
+        error_group = matched
+        behavior = self.tool_error_behavior
+        if behavior == 'failed':
+            protocol_errors, _ = matched.split(McpError)
+            if protocol_errors is not None:
+                error_group = protocol_errors
+                behavior = 'retry'
+
+        # Descend through any nesting to a representative leaf.
+        error: BaseException = error_group
+        while isinstance(error, _utils.BaseExceptionGroup):
+            error = error.exceptions[0]
+        return error, behavior
 
     async def call_tool(
         self,
@@ -1953,19 +1970,54 @@ def _build_message_handler(toolset: MCPToolset[Any], user_handler: MessageHandle
 
     The toolset's own cache invalidation runs first, then the user-supplied handler (if any).
     """
+    # Hold the toolset weakly. FastMCP's stdio connection task keeps this handler alive while the
+    # server runs, so a strong reference would keep the toolset, its client and its transport alive
+    # too, and the transport's finalizer, which stops the server, would never run.
+    toolset_ref = weakref.ref(toolset)
 
     async def handler(message: Any) -> None:
-        notification = getattr(message, 'root', message)
-        if isinstance(notification, mcp_types.ToolListChangedNotification):
-            toolset._invalidate_tools_cache()  # pyright: ignore[reportPrivateUsage]
-        elif isinstance(notification, mcp_types.ResourceListChangedNotification):
-            toolset._invalidate_resources_cache()  # pyright: ignore[reportPrivateUsage]
-        elif isinstance(notification, mcp_types.PromptListChangedNotification):
-            toolset._invalidate_prompts_cache()  # pyright: ignore[reportPrivateUsage]
+        current_toolset = toolset_ref()
+        if current_toolset is not None:
+            notification = getattr(message, 'root', message)
+            if isinstance(notification, mcp_types.ToolListChangedNotification):
+                current_toolset._invalidate_tools_cache()  # pyright: ignore[reportPrivateUsage]
+            elif isinstance(notification, mcp_types.ResourceListChangedNotification):
+                current_toolset._invalidate_resources_cache()  # pyright: ignore[reportPrivateUsage]
+            elif isinstance(notification, mcp_types.PromptListChangedNotification):
+                current_toolset._invalidate_prompts_cache()  # pyright: ignore[reportPrivateUsage]
         if user_handler is not None:
             await user_handler(message)
 
     return handler
+
+
+def _tool_error_result_message(name: str, result: CallToolResult) -> str:
+    """The message a tool result the server flagged as an error is raised with."""
+    if result.structured_content is None and not result.content:
+        return f'Tool {name!r} returned an error'
+    mapped_error = _map_mcp_call_tool_result(result, prefer_structured=True)
+    message = messages.ToolReturnPart(tool_name=name, content=mapped_error).model_response_str(wrap_if_error=False)
+    if not message:
+        message = f'Tool {name!r} returned an error'
+    return message
+
+
+def _reject_options_for_prebuilt_client(
+    forwarded_values: Mapping[str, object], *, init_timeout: float | None, read_timeout: float | None
+) -> None:
+    """Refuse `MCPToolset` options that would only configure a default Client, alongside a pre-built one."""
+    conflicts = [name for name, value in forwarded_values.items() if value is not None]
+    # `init_timeout`/`read_timeout` use `_UNSET` as their default so we can detect "passed
+    # explicitly" vs "default" without coupling to the literal default values.
+    if init_timeout is not _UNSET:
+        conflicts.append('init_timeout')
+    if read_timeout is not _UNSET:
+        conflicts.append('read_timeout')
+    if conflicts:
+        names = ', '.join(repr(n) for n in conflicts)
+        raise ValueError(
+            f'Cannot pass {names} alongside a pre-built `fastmcp.Client` — configure these on the Client itself instead.'
+        )
 
 
 def _is_url(client: MCPToolsetClient) -> bool:
@@ -2272,6 +2324,25 @@ def _resource_content_to_pai(
         assert_never(resource)
 
 
+def _substitute_env_var(match: re.Match[str]) -> str:
+    """The replacement for one `_ENV_VAR_PATTERN` match: an unclosed reference stays as written."""
+    if not match.group(4):
+        return match.group(0)
+    var_name = match.group(1)
+    has_default = match.group(2) is not None
+    default_value = match.group(3) if has_default else None
+
+    # Check if variable exists in environment
+    if var_name in os.environ:
+        return os.environ[var_name]
+    elif has_default:
+        # Use default value if the :- syntax was present (even if empty string)
+        return default_value or ''
+    else:
+        # No default value and variable not set - raise error
+        raise ValueError(f'Environment variable ${{{var_name}}} is not defined')
+
+
 def _expand_env_vars(value: Any) -> Any:
     """Recursively expand environment variables in a JSON structure.
 
@@ -2290,22 +2361,7 @@ def _expand_env_vars(value: Any) -> Any:
     if isinstance(value, str):
         # Find all environment variable references in the string
         # Supports both ${VAR_NAME} and ${VAR_NAME:-default} syntax
-        def replace_match(match: re.Match[str]) -> str:
-            var_name = match.group(1)
-            has_default = match.group(2) is not None
-            default_value = match.group(3) if has_default else None
-
-            # Check if variable exists in environment
-            if var_name in os.environ:
-                return os.environ[var_name]
-            elif has_default:
-                # Use default value if the :- syntax was present (even if empty string)
-                return default_value or ''
-            else:
-                # No default value and variable not set - raise error
-                raise ValueError(f'Environment variable ${{{var_name}}} is not defined')
-
-        value = _ENV_VAR_PATTERN.sub(replace_match, value)
+        value = _ENV_VAR_PATTERN.sub(_substitute_env_var, value)
 
         return value
     elif isinstance(value, dict):

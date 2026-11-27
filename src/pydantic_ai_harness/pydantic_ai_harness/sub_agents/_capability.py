@@ -33,6 +33,7 @@ from pydantic_ai_harness.sub_agents._control import (
     TaskControl,
     run_owned,
 )
+from pydantic_ai_harness.sub_agents._deferred import DeferredStateStore, InMemoryDeferredStateStore
 from pydantic_ai_harness.sub_agents._disk import AgentOverride, DiskDefinition, load_definitions
 from pydantic_ai_harness.sub_agents._models import ModelOption, as_option, model_label, validate_restriction
 from pydantic_ai_harness.sub_agents._tasks import DelegationTask, DelegationTasks, enqueue_while_open, isolated
@@ -167,7 +168,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     """Where to load Markdown and standalone Codex TOML definitions from, in addition to `agents`.
     Off by default: only `agents` are exposed unless this is set. Every folder is
     read at the start of each run through the run's workspace (`ctx.workspace`),
-    or through `workspace` when set.
+    or through `workspace` when set. A definition file below `'operator'`
+    [authority][pydantic_ai.workspaces.Workspace.authority_of] in that workspace is skipped with a warning.
 
     - a folder-name `str` (`'agents'` is the conventional layout): load
       from `.agents/<name>/`, `.claude/<name>/`, and `.codex/<name>/` under the workspace's working
@@ -258,10 +260,32 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     Return the child's `Workspace`; the caller owns
     its resources, including keeping it alive for background tasks. Omission keeps the parent workspace.
     The callback validates paths and decides which delegates and backends may change directory.
-    Parent and delegate read-only restrictions still apply. Tools that bypass the workspace API need
-    their own restrictions. Remote and durable delegations cannot request another directory.
+    Parent and delegate read-only restrictions still apply, and the child's workspace gets the lowest
+    authority the parent gives anything in or above its directory: `'none'` for a directory outside the parent's
+    working directory, unless one of the parent's `path_authority` entries contains it. Tools that bypass the
+    workspace API need their own restrictions. Remote and durable delegations cannot request another directory.
     Resuming a task keeps its saved directory; the resolver is called again for that directory.
     This does not change where `agent_folders` are discovered (see `workspace`)."""
+
+    forward_deferred_calls: bool = field(default=False, kw_only=True)
+    """Pass a sub-agent's deferred tool calls to the caller of the parent run, and resume the sub-agent once they
+    are answered. Off by default: a sub-agent run that ends with `DeferredToolRequests` returns a steering message.
+
+    When on, such a run makes the delegate call raise `ApprovalRequired`, so the parent run ends with
+    `DeferredToolRequests` too (its `output_type` must include it, or a `HandleDeferredToolCalls` handler must answer
+    it through these two functions).
+    `delegated_requests()` lists the sub-agent's calls under IDs prefixed by the delegate call's, and
+    `delegated_results()` routes the answers back, so the next run resumes the sub-agent from its history rather than
+    running the task again. Approving the delegate call itself, such as through an approval gate on the delegate
+    tool, approves none of the sub-agent's calls: the delegation runs the task, and passes on the calls it stops on.
+    Not supported under durable execution or with `task_control`, which raise an error."""
+
+    deferred_state_store: DeferredStateStore | None = field(default=None, kw_only=True)
+    """Where a sub-agent's history waits while the caller answers the calls `forward_deferred_calls` passed on.
+
+    It stays on the server, and the caller only gets its ID. Unset, each `SubAgents` keeps it in memory, so the run
+    that resumes must use the same instance, in the same process. Pass the same `DeferredStateStore` to every
+    process that may resume a run another one started."""
 
     include_self: bool = False
     """If `True`, the roster also lists the running agent itself, as `self`.
@@ -324,6 +348,11 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     _delegation_off: bool = field(default=False, init=False, repr=False, compare=False)
     """Set on the instance `for_run` returns for a run at `max_depth`, which contributes nothing."""
 
+    _deferred_state_store: DeferredStateStore = field(
+        default_factory=InMemoryDeferredStateStore, init=False, repr=False, compare=False
+    )
+    """`deferred_state_store`, or an in-memory store made in `__post_init__`, shared with every per-run copy."""
+
     task_control: TaskControl | None = field(default=None, kw_only=True)
     """Let delegations outlive the tool call, and give the model tools to manage them. Off by default.
 
@@ -365,6 +394,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
                 stacklevel=3,
             )
         self._workspace = secondary_workspace(self.workspace, 'SubAgents')
+        if self.deferred_state_store is not None:
+            self._deferred_state_store = self.deferred_state_store
         self._build_roster([])
 
     def _disk_agents(self, definitions: Sequence[DiskDefinition]) -> list[SubAgent[AgentDepsT]]:
@@ -424,6 +455,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
 
     def _validate_task_control(self) -> None:
         if (control := self.task_control) is not None:
+            if self.forward_deferred_calls:
+                raise ValueError('`forward_deferred_calls` is not supported with `task_control`.')
             if self.tool_name in CONTROL_TOOL_NAMES:
                 raise ValueError(f'`tool_name` {self.tool_name!r} is the name of one of the task-control tools.')
             for remote in control.remote_agents:
@@ -505,9 +538,16 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             if isinstance(folders, str) and str(home) != await workspace.working_dir():
                 # Earlier releases also read the home folder, which the run's workspace does not reach.
                 await self._warn_host_folder_ignored(folders, [home])
-        definitions = await load_definitions(
+        definitions, lowered = await load_definitions(
             workspace, folders if isinstance(folders, str) else [_folder_path(folder) for folder in folders]
         )
+        if lowered:
+            warnings.warn(
+                f"`SubAgents` did not load the agent definitions {lowered!r}: they're below `'operator'` authority "
+                "in their workspace, and a definition becomes a delegate's instructions. Define the delegates in "
+                'code, or pass `SubAgents(workspace=...)` to read the folders from a workspace the operator controls.',
+                stacklevel=2,
+            )
         if not definitions:
             return
         self._build_roster(self._disk_agents(definitions))
@@ -563,6 +603,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             self._created.pop(ctx.run_id or '', None)
 
     def _require_durable_support(self, ctx: RunContext[AgentDepsT], owner: DelegationTasks | None) -> None:
+        if self.forward_deferred_calls:
+            raise UserError('`SubAgents(forward_deferred_calls=True)` is not supported under durable execution.')
         if self.task_control is None and self.dynamic_agents is None:
             return
         durability = BaseDurabilityCapability.from_agent(ctx.agent) if ctx.agent is not None else None
@@ -796,6 +838,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             dynamic_agents=self.dynamic_agents,
             created=self._created,
             workspace_resolver=self.workspace_resolver,
+            forward_deferred_calls=self.forward_deferred_calls,
+            deferred_state_store=self._deferred_state_store,
             _record_delegation=self._delegate
             if self.dynamic_agents is not None or self.task_control is not None
             else None,

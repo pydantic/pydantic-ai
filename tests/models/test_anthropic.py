@@ -65,6 +65,7 @@ from pydantic_ai import (
     UserContent,
     UserPromptPart,
     WebCitationSource,
+    capture_run_messages,
 )
 from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._framing import lookalike_note_announcement
@@ -79,7 +80,7 @@ from pydantic_ai.capabilities import (
     ToolSearch,
 )
 from pydantic_ai.capabilities.instrumentation import Instrumentation
-from pydantic_ai.exceptions import ContentFilterError, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ContentFilterError, IncompleteToolCall, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     CompactionPart,
     InstructionPart,
@@ -2353,6 +2354,121 @@ async def test_anthropic_sampling_settings_reach_the_wire(
     assert {key: value for key, value in body.items() if key in ('temperature', 'top_p', 'top_k')} == snapshot(
         {'temperature': 0.2, 'top_k': 40}
     )
+
+
+async def test_anthropic_thinking_drops_the_sampling_settings_it_rejects(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """With thinking, Claude rejects `temperature` other than `1`, `top_p` below `0.95` and any `top_k` with a 400.
+
+    They're dropped silently instead, as tuning knobs are, so settings chosen for another model don't fail the request.
+    """
+    agent = Agent(anthropic_model('claude-haiku-4-5', capture=True))
+
+    result = await agent.run(
+        'What is 2+2? Answer with the number only.',
+        model_settings=ModelSettings(thinking=True, temperature=0.5, top_p=0.9, top_k=40),
+    )
+
+    assert result.output.strip() == snapshot('4')
+    body = request_capture.body('/v1/messages')
+    assert {key: value for key, value in body.items() if key in ('temperature', 'top_p', 'top_k', 'thinking')} == (
+        snapshot({'thinking': {'type': 'enabled', 'budget_tokens': 10000, 'display': 'summarized'}})
+    )
+
+
+@pytest.mark.parametrize(
+    'model_settings', [pytest.param({'temperature': 1}, id='temperature'), pytest.param({'top_p': 0.97}, id='top_p')]
+)
+async def test_anthropic_thinking_keeps_the_sampling_settings_it_accepts(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    model_settings: ModelSettings,
+):
+    """With thinking, `temperature=1` and `top_p` from `0.95` are accepted, so they're still sent.
+
+    One at a time, since Claude Sonnet 4.6 takes only one of them either way.
+    """
+    agent = Agent(anthropic_model('claude-sonnet-4-6', capture=True))
+
+    await agent.run('What is 2+2? Answer with the number only.', model_settings={**model_settings, 'thinking': True})
+
+    body = request_capture.body('/v1/messages')
+    assert {key: value for key, value in body.items() if key in ('temperature', 'top_p', 'top_k')} == model_settings
+
+
+async def test_anthropic_thinking_keeps_top_p_when_it_drops_temperature(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """With thinking, a `temperature` other than `1` is dropped, so an accepted `top_p` no longer conflicts and is kept.
+
+    Claude Haiku 4.5 takes `temperature` or `top_p`, not both, but only `top_p` is left to send here.
+    """
+    agent = Agent(anthropic_model('claude-haiku-4-5', capture=True))
+
+    await agent.run(
+        'What is 2+2? Answer with the number only.',
+        model_settings=ModelSettings(thinking=True, temperature=0.5, top_p=0.97),
+    )
+
+    body = request_capture.body('/v1/messages')
+    assert {key: value for key, value in body.items() if key in ('temperature', 'top_p')} == snapshot({'top_p': 0.97})
+
+
+async def test_anthropic_drops_top_p_set_together_with_temperature(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """Claude Haiku 4.5 takes `temperature` or `top_p`, not both, so `top_p` is dropped silently."""
+    agent = Agent(anthropic_model('claude-haiku-4-5', capture=True))
+
+    await agent.run(
+        'What is 2+2? Answer with the number only.', model_settings=ModelSettings(temperature=0.5, top_p=0.9)
+    )
+
+    body = request_capture.body('/v1/messages')
+    assert {key: value for key, value in body.items() if key in ('temperature', 'top_p')} == snapshot(
+        {'temperature': 0.5}
+    )
+
+
+async def test_anthropic_thinking_keeps_sampling_settings_without_the_restriction(allow_model_requests: None):
+    """A model without `anthropic_restricts_sampling_with_thinking`, like a non-Claude model behind an
+    Anthropic-compatible endpoint, gets its sampling settings with thinking too.
+
+    A mock, since this only checks that the drop follows the profile flag, which the request shows.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    )
+    model = AnthropicModel(
+        'claude-opus-4-1',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        profile=AnthropicModelProfile(anthropic_restricts_sampling_with_thinking=False),
+    )
+
+    await Agent(model).run(
+        'What is 2+2?', model_settings=ModelSettings(thinking=True, temperature=0.5, top_p=0.9, top_k=40)
+    )
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['thinking'] == {'type': 'enabled', 'budget_tokens': 10000, 'display': 'summarized'}
+    assert kwargs['extra_body'] == {'temperature': 0.5, 'top_p': 0.9, 'top_k': 40}
+
+
+async def test_anthropic_keeps_top_p_set_together_with_temperature_where_accepted(allow_model_requests: None):
+    """Models without `anthropic_disallows_temperature_with_top_p`, like Claude Opus 4.1, get both.
+
+    A mock, since this only checks that the drop is limited to the flagged models, which the request shows.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    )
+    agent = Agent(AnthropicModel('claude-opus-4-1', provider=AnthropicProvider(anthropic_client=mock_client)))
+
+    await agent.run('What is 2+2?', model_settings=ModelSettings(temperature=0.5, top_p=0.9))
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['extra_body'] == {'temperature': 0.5, 'top_p': 0.9}
 
 
 async def test_anthropic_betas_setting(allow_model_requests: None):
@@ -6872,11 +6988,13 @@ async def test_anthropic_refusal_content_filter_error_message_streaming(allow_mo
 @pytest.mark.parametrize(
     'thinking_value,expected_thinking,expected_effort',
     [
-        pytest.param(True, {'type': 'adaptive'}, None, id='true-adaptive'),
-        pytest.param('high', {'type': 'adaptive'}, 'high', id='high-adaptive-with-effort'),
-        pytest.param('low', {'type': 'adaptive'}, 'low', id='low-adaptive-with-effort'),
-        pytest.param('medium', {'type': 'adaptive'}, 'medium', id='medium-adaptive-with-effort'),
-        pytest.param('xhigh', {'type': 'adaptive'}, 'max', id='xhigh-maps-to-max'),
+        pytest.param(True, {'type': 'adaptive', 'display': 'summarized'}, None, id='true-adaptive'),
+        pytest.param('high', {'type': 'adaptive', 'display': 'summarized'}, 'high', id='high-adaptive-with-effort'),
+        pytest.param('low', {'type': 'adaptive', 'display': 'summarized'}, 'low', id='low-adaptive-with-effort'),
+        pytest.param(
+            'medium', {'type': 'adaptive', 'display': 'summarized'}, 'medium', id='medium-adaptive-with-effort'
+        ),
+        pytest.param('xhigh', {'type': 'adaptive', 'display': 'summarized'}, 'max', id='xhigh-maps-to-max'),
     ],
 )
 async def test_anthropic_unified_thinking_adaptive_model(
@@ -6926,7 +7044,7 @@ async def test_anthropic_unified_thinking_non_adaptive_model(allow_model_request
     await agent.run('What is 2+2?')
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs['thinking'] == {'type': 'enabled', 'budget_tokens': 16384}
+    assert kwargs['thinking'] == {'type': 'enabled', 'budget_tokens': 16384, 'display': 'summarized'}
     # Non-adaptive models don't support effort
     assert kwargs.get('output_config') is None or kwargs['output_config'] is OMIT
 
@@ -7020,7 +7138,7 @@ async def test_anthropic_unified_thinking_opus_47_xhigh(allow_model_requests: No
     await agent.run('What is 2+2?')
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs['thinking'] == {'type': 'adaptive'}
+    assert kwargs['thinking'] == {'type': 'adaptive', 'display': 'summarized'}
     assert kwargs['output_config'] == {'effort': 'xhigh'}
 
 
@@ -7162,6 +7280,95 @@ async def test_anthropic_opus_47_keeps_non_sampling_extra_body(allow_model_reque
     assert kwargs['extra_body'] == {'metadata': {'keep': True}}
 
 
+@pytest.mark.parametrize('header_name', ['anthropic-version', 'Anthropic-Version'])
+@pytest.mark.parametrize('model_name', ['claude-sonnet-4-6', 'claude-haiku-4-5'])
+async def test_anthropic_api_version_2026_10_21_drops_sampling_settings(
+    allow_model_requests: None, model_name: str, header_name: str
+):
+    """`anthropic>=2` sends `2026-10-21`, which rejects sampling settings on every model, not just Opus 4.7+.
+
+    Kept as a unit test because the header under test can't be set through a recording: the locked SDK sends
+    `2023-06-01`, and the cassette hooks strip `anthropic-*` headers.
+    """
+    responses = [
+        completion_message([BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1))
+    ]
+    mock_client = cast(AsyncAnthropic, MockAnthropic(messages_=responses, default_headers={header_name: '2026-10-21'}))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings=AnthropicModelSettings(temperature=0, extra_body={'metadata': {'keep': True}}))
+
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        await agent.run('What is 2+2?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['extra_body'] == {'metadata': {'keep': True}}
+
+
+@pytest.mark.parametrize(
+    'default_headers,extra_headers',
+    [
+        pytest.param({'anthropic-version': '2023-06-01'}, None, id='client'),
+        pytest.param({'anthropic-version': '2026-10-21'}, {'Anthropic-Version': '2023-06-01'}, id='request'),
+    ],
+)
+async def test_anthropic_api_version_2023_06_01_keeps_sampling_settings(
+    allow_model_requests: None, default_headers: dict[str, str], extra_headers: dict[str, str] | None
+):
+    """`2023-06-01` accepts sampling settings, whether the client sets it or the request's `extra_headers` does.
+
+    Kept as a unit test because the header under test can't be set through a recording: the locked SDK sends
+    `2023-06-01`, and the cassette hooks strip `anthropic-*` headers.
+    """
+    responses = [
+        completion_message([BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1))
+    ]
+    mock_client = cast(AsyncAnthropic, MockAnthropic(messages_=responses, default_headers=default_headers))
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    settings = AnthropicModelSettings(temperature=0)
+    if extra_headers is not None:
+        settings['extra_headers'] = extra_headers
+    agent = Agent(m, model_settings=settings)
+
+    await agent.run('What is 2+2?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['extra_body'] == {'temperature': 0}
+
+
+async def test_anthropic_api_version_header_does_not_drop_sampling_settings_on_legacy_bedrock(
+    allow_model_requests: None,
+):
+    """The legacy Bedrock client sends its API version in the body, so its `anthropic-version` header doesn't count.
+
+    Kept as a unit test because it pins the outbound body under a client header that a recording can't set: the
+    cassette hooks strip `anthropic-*` headers.
+    """
+    bodies: list[dict[str, JsonValue]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(TypeAdapter(dict[str, JsonValue]).validate_json(request.content))
+        return httpx2.Response(400, json={'message': 'captured'})
+
+    from anthropic import AsyncAnthropicBedrock
+
+    # A bearer token skips SigV4 signing, which would need `botocore` from the `bedrock` extra.
+    async with AsyncAnthropicBedrock(
+        api_key='x',
+        aws_region='us-east-1',
+        base_url='http://localhost',
+        max_retries=0,
+        default_headers={'anthropic-version': '2026-10-21'},
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        agent = Agent(AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client)))
+        with pytest.raises(ModelHTTPError):
+            await agent.run('What is 2+2?', model_settings=AnthropicModelSettings(temperature=0))
+
+    [body] = bodies
+    assert body['temperature'] == 0
+    assert body['anthropic_version'] == 'bedrock-2023-05-31'
+
+
 async def test_anthropic_explicit_extra_body_overrides_the_sampling_setting(allow_model_requests: None):
     """A user's own `extra_body` entry wins over the `ModelSettings` field of the same name.
 
@@ -7226,7 +7433,14 @@ async def test_anthropic_adaptive_thinking_keeps_tool_output_unforced(
 
     assert result.output == snapshot(CityLocation(city='Paris', country='France'))
     assert [(body['thinking'], body['tool_choice']) for body in request_capture.bodies()] == snapshot(
-        [({'type': 'adaptive'}, {'type': 'auto'})]
+        [
+            (
+                {'type': 'adaptive', 'display': 'summarized'}
+                if not provider_specific_thinking
+                else {'type': 'adaptive'},
+                {'type': 'auto'},
+            )
+        ]
     )
 
 
@@ -17966,3 +18180,43 @@ async def test_text_plain_response_body_raises_model_api_error(allow_model_reque
 
     assert type(exc_info.value) is ModelAPIError
     assert exc_info.value.message == snapshot("Expected a JSON response, got: 'upstream connect error'")
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_anthropic_tool_output_cut_off_by_max_tokens(
+    allow_model_requests: None, anthropic_api_key: str, stream: bool
+):
+    """An output tool call the token limit cut off raises right away instead of re-prompting the model with the same limit.
+
+    Anthropic doesn't send the partial arguments: the tool call comes back with `{}` as its input, or no input when streamed.
+    """
+    model = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    class City(BaseModel):
+        name: str
+        country: str
+
+    class Cities(BaseModel):
+        cities: list[City]
+
+    agent = Agent(
+        model, output_type=ToolOutput(Cities), model_settings=AnthropicModelSettings(max_tokens=40, thinking=False)
+    )
+    prompt = 'List the 20 largest cities in the world.'
+
+    with capture_run_messages() as messages:
+        with pytest.raises(
+            IncompleteToolCall,
+            match=r'Model token limit \(40\) exceeded while generating a tool call, resulting in incomplete arguments\.',
+        ):
+            if stream:
+                async with agent.run_stream(prompt) as result:
+                    await result.get_output()
+            else:
+                await agent.run(prompt)
+
+    [response] = [message for message in messages if isinstance(message, ModelResponse)]
+    assert response.finish_reason == 'length'
+    assert response.provider_details == {'finish_reason': 'max_tokens'}
+    assert response.tool_calls == [IsInstance(ToolCallPart)]
+    assert response.tool_calls[0].args == ('' if stream else {})

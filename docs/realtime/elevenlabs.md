@@ -177,6 +177,8 @@ model = ElevenLabsAgentsRealtimeModel('agent_0101k2example', settings=settings)
 | `elevenlabs_agents_tool_sync` | How the session's tools are reconciled with the agent's client tools; see [Tool synchronization](#tool-synchronization) |
 | `elevenlabs_agents_config_override` | Raw override keys merged last as a forward-compatibility escape hatch |
 
+Instrumentation leaves `elevenlabs_agents_custom_llm_extra_body`, and the `elevenlabs_agents_dynamic_variables` entries whose names start with `secret__`, out of the `model_settings` it records.
+
 Each `elevenlabs_agents_*` override setting requires its toggle on the agent, as described above;
 `elevenlabs_agents_dynamic_variables`, `elevenlabs_agents_user_id`, `elevenlabs_agents_strip_audio_tags`, and
 `elevenlabs_agents_tool_sync` need none.
@@ -257,8 +259,10 @@ at connect time:
   deploy-time step — a warm-up connect after a tool change — rather than something a customer's
   first call should pay for: the writes run one after another, and two processes syncing the same
   agent concurrently race on the final `tool_ids` re-point, last writer wins. Synced tools get
-  ElevenLabs' default 20-second response timeout (`response_timeout_secs`); a tool that already has a
-  timeout of its own keeps it when it is updated.
+  ElevenLabs' defaults for the settings Pydantic AI has no counterpart for, such as the 20-second response
+  timeout (`response_timeout_secs`). A tool that is updated keeps the ones set on the ElevenLabs side: its
+  response timeout, pre-tool speech (`pre_tool_speech`), tool call sound, execution mode, interruption and
+  error handling, and dynamic variable assignments.
 - `'off'`: trust the agent's own tool definitions, e.g. for client tools set up on the ElevenLabs side
   with settings Pydantic AI doesn't sync. A call to a tool the session does not define reaches the tool
   manager like any other call and is answered with the standard unknown-tool error, which lands in the
@@ -303,6 +307,7 @@ parameter's description only when the local schema declares one.
 | Speech timestamps | Full feature support | Per word, see [Speech timestamps](#speech-timestamps) |
 | Native tools | Unsupported | None can be configured from the session; configure [local fallbacks](tools.md#native-tools) for web capabilities. The agent's own MCP tool calls are recorded as `NativeToolCallPart`s named `mcp_server:<server id>` |
 | Async tool calls | Unsupported | The agent waits for each tool result (see [concurrent tool execution](tools.md#concurrent-tool-execution)) |
+| Tools revealed mid-session | Unsupported | The agent's tools are configured on ElevenLabs, so [hidden tools are rejected](tools.md#tools-revealed-mid-session) before connecting |
 | Usage | Limited parameter support | Context tokens only, with `context_usage` in the agent's `client_events`; no cost (see [Usage and cost](#usage-and-cost)) |
 | Context window | Limited parameter support | Known only once the agent reports `context_usage`: `session.context_window_used` then gives the share of the LLM's context in use (see [Usage and cost](#usage-and-cost)) |
 | Session duration | Limited parameter support | Capped by the agent's [maximum conversation duration](https://elevenlabs.io/docs/eleven-agents/customization/conversation-flow) (600 s by default, up to 7,200 s, set on the agent, not per conversation); at the cap the session gets a non-recoverable `RealtimeSessionErrorEvent` and raises a [`RealtimeError`][pydantic_ai.realtime.RealtimeError] |
@@ -488,6 +493,7 @@ once the turn is committed, usually after the reply has started. It takes no mod
 | Input transcription | Limited parameter support | Always on, with whole-turn transcripts; no transcription model to choose |
 | Native tools | Unsupported | ElevenLabs offers MCP tools, which Pydantic AI does not expose yet |
 | Async tool calls | Unsupported | The model answers the user while a [tool runs](tools.md#concurrent-tool-execution), but then abandons the call, see [Provider-specific quirks](#eleven-realtime-quirks) |
+| Tools revealed mid-session | Unsupported | ElevenLabs takes new tools with `session.update`, but the replies after one don't echo the request `metadata` the session tells them apart by (checked live), so [hidden tools are rejected](tools.md#tools-revealed-mid-session) before connecting |
 | Usage | Unsupported | ElevenLabs reports no usage, so token counts are zero, [`unmeasured_requests`][pydantic_ai.usage.UsageBase.unmeasured_requests] counts these responses, and `usage.cost` is `None` |
 | Reconnection | Full feature support | Pydantic AI [replays completed local history](lifecycle.md#state-restoration) into a new session; in-flight media is lost |
 

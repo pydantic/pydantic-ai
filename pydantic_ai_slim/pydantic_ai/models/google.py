@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import base64
-import math
 import re
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Generator, Iterator, Mapping, Sequence
@@ -18,8 +17,10 @@ from .. import UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._context_size import mark_context_input_tokens
 from .._gateway_cost import fill_gateway_header_cost, gateway_reported_cost
 from .._run_context import RunContext
+from ..computer_use import COMPUTER_KIND, ComputerCallPart
 from ..exceptions import (
     ModelAPIError,
+    ModelEmptyResponseError,
     ModelHTTPError,
     UserError,
 )
@@ -62,6 +63,7 @@ from ..native_tools import (
     SUPPORTED_NATIVE_TOOLS,
     AbstractNativeTool,
     CodeExecutionTool,
+    ComputerTool,
     FileSearchTool,
     ImageGenerationTool,
     WebFetchTool,
@@ -70,10 +72,7 @@ from ..native_tools import (
 from ..output import OutputObjectDefinition
 from ..profiles import ModelProfile, ModelProfileSpec, merge_profile
 from ..profiles.google import (
-    GOOGLE_THINKING_LEVEL_SCALE,
-    GOOGLE_THINKING_LEVELS,
     GoogleModelProfile,
-    GoogleThinkingLevel,
     _with_google_cloud_media_types,  # pyright: ignore[reportPrivateUsage]
 )
 from ..providers import Provider, infer_provider
@@ -83,6 +82,7 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _google_common,
     _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
@@ -152,13 +152,13 @@ try:
         UrlContextMetadata,
         VideoMetadataDict,
     )
-
-    from ..providers.google import _LONG_DECODE_TIMEOUT  # pyright: ignore[reportPrivateUsage]
 except ImportError as _import_error:
     raise ImportError(
         'Please install `google-genai` to use the Google model, '
         'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
     ) from _import_error
+
+from . import _google_computer
 
 if TYPE_CHECKING:
     from .batch import Batch, BatchRequest, BatchResult, BatchResultStatus, EncodedBatchRequest
@@ -555,15 +555,8 @@ def _move_caller_user_agent(headers: dict[str, str], client_headers: Mapping[str
 def _request_http_options(client: Client, model_settings: ModelSettings, headers: dict[str, str]) -> HttpOptionsDict:
     """The per-request HTTP options for `client`: headers, plus the `timeout` and `max_retries` settings."""
     # The SDK sends the client's timeout, which the provider pins to the HTTP client's read timeout, as
-    # `X-Server-Timeout`: a deadline for the whole request. A read timeout only bounds the wait between bytes,
-    # so the server would cut off a response that streams for longer. The SDK leaves the header alone when
-    # it's already set (in this exact spelling), so ask for at least Google's long-decode figure instead,
-    # unless the caller sent their own in `extra_headers`.
-    if caller_name := next((name for name in headers if name.lower() == 'x-server-timeout'), None):
-        headers['X-Server-Timeout'] = headers.pop(caller_name)
-    elif client_timeout_ms := client._api_client._http_options.timeout:  # pyright: ignore[reportPrivateUsage]
-        server_timeout = max(client_timeout_ms / 1000, _LONG_DECODE_TIMEOUT)
-        headers['X-Server-Timeout'] = str(math.ceil(server_timeout))
+    # `X-Server-Timeout`, and leaves a header already set in this exact spelling alone.
+    _google_common.set_server_timeout(headers, client._api_client._http_options.timeout)  # pyright: ignore[reportPrivateUsage]
     # With no user-agent from the caller, our per-request `user-agent` replaces the client's own, so carry over
     # a value the user set on a client they built, and add ours unless the client has it.
     client_headers = client._api_client._http_options.headers or {}  # pyright: ignore[reportPrivateUsage]
@@ -593,71 +586,37 @@ def _request_http_options(client: Client, model_settings: ModelSettings, headers
     return http_options
 
 
-def _thinking_effort_to_level(thinking: ThinkingEffort) -> GoogleThinkingLevel:
-    """Normalize unified thinking effort to a Gemini thinking level."""
-    level_by_effort: dict[ThinkingEffort, GoogleThinkingLevel] = {
-        'minimal': 'MINIMAL',
-        'low': 'LOW',
-        'medium': 'MEDIUM',
-        'high': 'HIGH',
-        # Models whose level set lacks `XHIGH` snap these to `HIGH`. `google-genai`'s `ThinkingLevel` doesn't list
-        # `XHIGH` yet, so the SDK warns `XHIGH is not a valid ThinkingLevel` and sends it anyway.
-        'xhigh': 'XHIGH',
-        'max': 'XHIGH',
-    }
-    return level_by_effort[thinking]
-
-
 _GEMINI_2_5_PRO_MIN_THINKING_BUDGET = 128
 """The smallest `thinking_budget` Gemini 2.5 Pro accepts, as it can't turn thinking off.
 
 See https://ai.google.dev/gemini-api/docs/thinking#set-budget.
 """
 
-_GOOGLE_THINKING_LEVEL_ORDER: dict[GoogleThinkingLevel, int] = {
-    level: order for order, level in enumerate(GOOGLE_THINKING_LEVEL_SCALE)
-}
+
+def _still_thinking(config: ThinkingConfigDict, thinking_summary: bool | None) -> ThinkingConfigDict:
+    """A `thinking=False` config that leaves the model thinking, with thoughts only when `thinking_summary` asks."""
+    if thinking_summary:
+        config['include_thoughts'] = True
+    return config
 
 
-def _snap_thinking_level(
-    level: GoogleThinkingLevel, levels: frozenset[GoogleThinkingLevel] | None
-) -> GoogleThinkingLevel:
-    """Snap a thinking level to the nearest one the model accepts, on the `MINIMAL < LOW < MEDIUM < HIGH < XHIGH` scale.
-
-    Equidistant levels round down to the cheaper one. `None` means the model takes the default
-    `GOOGLE_THINKING_LEVELS`. Shared with the Live path, which differs only in where its level set
-    comes from.
-    """
-    if levels is None:
-        levels = GOOGLE_THINKING_LEVELS
-    if not levels:
-        raise UserError('`google_thinking_levels` must contain at least one level when `thinking` is set')
-    if unknown := levels - frozenset(GOOGLE_THINKING_LEVEL_SCALE):
-        raise UserError(
-            f'`google_thinking_levels` contains unknown levels: {sorted(unknown)!r}; '
-            f'expected a subset of {sorted(GOOGLE_THINKING_LEVEL_SCALE)!r}'
-        )
-    requested = _GOOGLE_THINKING_LEVEL_ORDER[level]
-    return min(
-        levels,
-        key=lambda candidate: (
-            abs(_GOOGLE_THINKING_LEVEL_ORDER[candidate] - requested),
-            _GOOGLE_THINKING_LEVEL_ORDER[candidate],
-        ),
+def _thinking_off_config(profile: GoogleModelProfile, thinking_summary: bool | None) -> ThinkingConfigDict:
+    """The thinking config for unified `thinking=False`."""
+    if not profile.get('google_supports_thinking_level', True):
+        # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget=0, which Gemini 2.5 Pro rejects
+        # ("Budget 0 is invalid. This model only works in thinking mode."), so it gets its minimum budget.
+        if profile.get('thinking_always_enabled', False):
+            return _still_thinking(
+                ThinkingConfigDict(thinking_budget=_GEMINI_2_5_PRO_MIN_THINKING_BUDGET), thinking_summary
+            )
+        return ThinkingConfigDict(thinking_budget=0)
+    if profile.get('google_disables_thinking_with_zero_budget', False):
+        return ThinkingConfigDict(thinking_budget=0)
+    # Default Gemini 3+ behaviour represents `thinking=False` as its lowest supported thinking level.
+    return _still_thinking(
+        ThinkingConfigDict(thinking_level=cast(Any, _google_common.resolve_google_thinking_level('minimal', profile))),
+        thinking_summary,
     )
-
-
-def _resolve_google_thinking_level(thinking: ThinkingEffort, profile: GoogleModelProfile) -> GoogleThinkingLevel:
-    """Map unified thinking to the closest thinking level the model supports."""
-    levels = profile.get('google_thinking_levels')
-    if levels is None:
-        # Sparse profile without a level set: fall back to the boolean floor flag.
-        levels = (
-            GOOGLE_THINKING_LEVELS
-            if profile.get('google_supports_minimal_thinking_level', True)
-            else GOOGLE_THINKING_LEVELS - {'MINIMAL'}
-        )
-    return _snap_thinking_level(_thinking_effort_to_level(thinking), levels)
 
 
 def _batch_module():
@@ -765,12 +724,50 @@ class GoogleModel(Model[Client]):
         return frozenset({self.system})
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Set `google_supports_batch_api` and the image media types by the client's transport, before the user's `profile=` applies.
+        """Set the profile defaults that follow the client's transport, before the user's `profile=` applies.
 
         Batch Mode is the Gemini API's: Google Cloud runs batch prediction jobs from Cloud Storage or BigQuery instead.
+
+        `google_supports_computer_use` is turned off on Google Cloud, where Google's computer use tool is unverified. A
+        user who has checked it there can turn it back on with `profile=`.
+
+        The Gemini API rejects `presence_penalty` and `frequency_penalty` for every model (verified live 2026-11-04),
+        while Google Cloud accepts them for the models `google_model_profile` says do. Google Cloud also reads more
+        image and document media types than the Gemini API.
+        On the Gemini API, `gemini-2.5-flash-lite` also gets `google_minimal_thinking_budget=512`, and `gemini-2.5-flash`
+        gets `thinking_always_enabled`, so `thinking=False` sends the minimum `thinking_budget` that its reroute target
+        accepts instead of 0.
+
+        `deprecation` comes from the Gemini API's or Google Cloud's deprecation schedule, which date the same model
+        differently.
         """
-        profile = merge_profile(profile, GoogleModelProfile(google_supports_batch_api=not self._is_google_cloud))
-        return _with_google_cloud_media_types(profile) if self._is_google_cloud else profile
+        profile = _google_common.with_deprecation(self._model_name, profile, google_cloud=self._is_google_cloud)
+        if self._is_google_cloud:
+            profile = merge_profile(
+                profile, GoogleModelProfile(google_supports_batch_api=False, google_supports_computer_use=False)
+            )
+            return _with_google_cloud_media_types(profile)
+        profile = merge_profile(
+            profile, GoogleModelProfile(google_supports_batch_api=True, google_supports_penalties=False)
+        )
+        # Verified live 2026-11-23 against the Gemini API: `gemini-2.5-flash-lite` rejects a `thinking_budget` below 512
+        # with `Please choose a value between 512 and 24576`, while `gemini-2.5-flash` accepts 128. Vertex documents the
+        # same minimum but is not probed, so it keeps 128: https://github.com/pydantic/pydantic-ai/issues/14206
+        if self._model_name == 'gemini-2.5-flash-lite':
+            profile = merge_profile(profile, GoogleModelProfile(google_minimal_thinking_budget=512))
+        # From 2026-12-01 the Gemini API routes `gemini-2.5-flash` to `gemini-3.5-flash-lite`
+        # (https://aistudio.google.com/docs/deprecations), which rejects `thinking_budget=0` with `Request contains an
+        # invalid argument` and accepts 128 (verified live 2026-11-24; `gemini-2.5-flash` accepts both). So, like
+        # Gemini 2.5 Pro, `thinking=False` sends the minimum budget. Vertex AI isn't named in the reroute and keeps 0:
+        # https://github.com/pydantic/pydantic-ai/issues/14032
+        if self._model_name == 'gemini-2.5-flash':
+            profile = merge_profile(profile, ModelProfile(thinking_always_enabled=True))
+        return profile
+
+    def _unsupported_settings(self) -> frozenset[str]:
+        if self.profile.get('google_supports_penalties', True):
+            return self.unsupported_settings
+        return self.unsupported_settings | {'frequency_penalty', 'presence_penalty'}
 
     @cached_property
     def profile(self) -> GoogleModelProfile:
@@ -786,39 +783,18 @@ class GoogleModel(Model[Client]):
         the `profile=` argument already set that flag.
 
         `ImageGenerationTool` is only supported when `supports_image_output` is true, so a text model
-        falls back to the local tool an `ImageGeneration` capability provides.
+        falls back to the local tool an `ImageGeneration` capability provides. Likewise, `ComputerTool` is only
+        supported when `google_supports_computer_use` is true, so other models get a function tool.
         """
         profile: GoogleModelProfile = cast(GoogleModelProfile, super().profile)
         if not profile.get('supports_image_output', False):
             native_tools = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {ImageGenerationTool}
             profile = {**profile, 'supported_native_tools': native_tools}
-        # Google documents only `minimal` and `high` for this model on both APIs, but the Gemini API
-        # alone enforces that: verified live 2026-09-30, the Gemini API 400s `LOW` and `MEDIUM` for this
-        # id and its `-preview`, while Vertex (`global`, `us`, `eu`) accepts them. So the level set
-        # follows the client's transport, which `google_model_profile` can't see from the model name.
-        # https://ai.google.dev/gemini-api/docs/image-generation
-        # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
-        if (
-            self._model_name.startswith('gemini-3.1-flash-image')
-            and 'google_thinking_levels' not in profile
-            and not self._is_google_cloud
-        ):
-            return {**profile, 'google_thinking_levels': frozenset(('MINIMAL', 'HIGH'))}
-        # Verified live 2026-11-18 against the Gemini API: `gemini-4-neon` accepts `LOW`, `MEDIUM`, `HIGH` and
-        # `XHIGH`, and returns 400 `Thinking level MINIMAL is not supported for this model`. Vertex is not probed and
-        # its thinking table doesn't list the model, so Vertex keeps the default levels.
-        # https://ai.google.dev/gemini-api/docs/thinking#thinking-levels
-        # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
-        if (
-            self._model_name.startswith('gemini-4-neon')
-            and 'google_thinking_levels' not in profile
-            and not self._is_google_cloud
-        ):
-            return {
-                **profile,
-                'google_thinking_levels': frozenset(('LOW', 'MEDIUM', 'HIGH', 'XHIGH')),
-                'google_supports_minimal_thinking_level': False,
-            }
+        if not profile.get('google_supports_computer_use', False):
+            native_tools = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {ComputerTool}
+            profile = {**profile, 'supported_native_tools': native_tools}
+        if not self._is_google_cloud:
+            profile = _google_common.with_gemini_api_thinking_levels(self._model_name, profile)
         # Google documents Gemini 3 Pro as unable to turn thinking off, and the Gemini API 400s
         # `thinking_budget=0` for it, but Vertex (`global`) accepts it and returns no thoughts: verified live
         # 2026-10-23 on `gemini-3.1-pro-preview` and its `-customtools` variant, 8 of 8 reasoning prompts.
@@ -833,7 +809,9 @@ class GoogleModel(Model[Client]):
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """Return the set of native tool types this model can handle."""
-        return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, WebFetchTool, ImageGenerationTool})
+        return frozenset(
+            {WebSearchTool, CodeExecutionTool, FileSearchTool, WebFetchTool, ImageGenerationTool, ComputerTool}
+        )
 
     def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
         """Return all of `native_tool`'s restricting settings, as Gemini's native tools apply none of them."""
@@ -893,7 +871,7 @@ class GoogleModel(Model[Client]):
         )
         model_settings = cast(GoogleModelSettings, model_settings or {})
         response = await self._generate_content(messages, False, model_settings, model_request_parameters)
-        return self._process_response(response, model_request_parameters)
+        return self._process_response(response, model_request_parameters, messages)
 
     @property
     def batch_max_requests(self) -> int | None:
@@ -1024,7 +1002,7 @@ class GoogleModel(Model[Client]):
         model_settings = cast(GoogleModelSettings, model_settings or {})
         response = await self._generate_content(messages, True, model_settings, model_request_parameters)
         try:
-            yield await self._process_streamed_response(response, model_request_parameters)  # pyright: ignore[reportArgumentType]
+            yield await self._process_streamed_response(response, model_request_parameters, messages)  # pyright: ignore[reportArgumentType]
         finally:
             aclose = getattr(response, 'aclose', None)
             if aclose is not None:  # pragma: no branch
@@ -1084,28 +1062,29 @@ class GoogleModel(Model[Client]):
         """
         tools: list[ToolDict] = []
         image_config: ImageConfigDict | None = None
-        if model_request_parameters.native_tools:
-            if model_request_parameters.function_tools and not self.profile.get(
-                'google_supports_tool_combination', False
-            ):
-                raise UserError('This model does not support function tools and built-in tools at the same time.')
+        # Google's computer use tool is sent with the function tools, in place of the `computer` tool.
+        other_native_tools = [t for t in model_request_parameters.native_tools if not isinstance(t, ComputerTool)]
+        if not other_native_tools:
+            return tools, image_config
+        if model_request_parameters.function_tools and not self.profile.get('google_supports_tool_combination', False):
+            raise UserError('This model does not support function tools and built-in tools at the same time.')
 
-            for tool in model_request_parameters.native_tools:
-                if isinstance(tool, WebSearchTool):
-                    tools.append(ToolDict(google_search=GoogleSearchDict()))
-                elif isinstance(tool, WebFetchTool):
-                    tools.append(ToolDict(url_context=UrlContextDict()))
-                elif isinstance(tool, CodeExecutionTool):
-                    tools.append(ToolDict(code_execution=ToolCodeExecutionDict()))
-                elif isinstance(tool, FileSearchTool):
-                    file_search_config = FileSearchDict(file_search_store_names=list(tool.file_store_ids))
-                    tools.append(ToolDict(file_search=file_search_config))
-                elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
-                    image_config = self._build_image_config(tool)
-                else:  # pragma: no cover
-                    raise UserError(
-                        f'`{tool.__class__.__name__}` is not supported by `GoogleModel`. If it should be, please file an issue.'
-                    )
+        for tool in other_native_tools:
+            if isinstance(tool, WebSearchTool):
+                tools.append(ToolDict(google_search=GoogleSearchDict()))
+            elif isinstance(tool, WebFetchTool):
+                tools.append(ToolDict(url_context=UrlContextDict()))
+            elif isinstance(tool, CodeExecutionTool):
+                tools.append(ToolDict(code_execution=ToolCodeExecutionDict()))
+            elif isinstance(tool, FileSearchTool):
+                file_search_config = FileSearchDict(file_search_store_names=list(tool.file_store_ids))
+                tools.append(ToolDict(file_search=file_search_config))
+            elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
+                image_config = self._build_image_config(tool)
+            else:  # pragma: no cover
+                raise UserError(
+                    f'`{tool.__class__.__name__}` is not supported by `GoogleModel`. If it should be, please file an issue.'
+                )
 
         return tools, image_config
 
@@ -1124,16 +1103,21 @@ class GoogleModel(Model[Client]):
         tool_defs, tool_choice_mode, allowed_function_names = _apply_tool_choice(
             model_request_parameters.declared_tool_defs, resolve_tool_choice(model_settings, model_request_parameters)
         )
+        computer = _sent_native_computer(model_request_parameters, tool_defs, tool_choice_mode, allowed_function_names)
+        if computer is not None:
+            tool_defs, allowed_function_names = _without_the_computer(computer.name, tool_defs, allowed_function_names)
 
         tool_config = ToolConfigDict()
         # A `function_calling_config` only governs function tools. Gemini rejects one that has no
         # `function_declarations` to apply to ('Function calling config is set without function_declarations'),
         # which happens when only native tools (e.g. web search) are configured, so only set it when there
-        # are function tools.
+        # are function tools. Google's computer use tool counts as function tools for `ANY`.
         if tool_defs:
             tool_config['function_calling_config'] = self._function_calling_config(
                 tool_defs, tool_choice_mode, allowed_function_names
             )
+        elif computer is not None and tool_choice_mode == 'required':
+            tool_config['function_calling_config'] = {'mode': FunctionCallingConfigMode.ANY}
 
         # `include_server_side_tool_invocations` is required on Gemini 3+ when any built-in (server-side)
         # tool is combined with function calling; pre-Gemini-3 models reject the field ('Tool call context
@@ -1155,6 +1139,8 @@ class GoogleModel(Model[Client]):
         tools: list[ToolDict] = [
             ToolDict(function_declarations=[_function_declaration_from_tool(t)]) for t in tool_defs.values()
         ]
+        if computer is not None:
+            tools.append(computer.tool_dict())
 
         tools.extend(native_tools)
 
@@ -1232,6 +1218,10 @@ class GoogleModel(Model[Client]):
         # An explicit thinking config replaces the unified one in `_translate_thinking`.
         return ('google_thinking_config',) if model_settings.get('google_thinking_config') else ()
 
+    def _settings_overriding_thinking_summary(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # An explicit thinking config replaces the unified one in `_translate_thinking`, `include_thoughts` included.
+        return ('google_thinking_config',) if model_settings.get('google_thinking_config') else ()
+
     def _translate_thinking(
         self,
         model_settings: GoogleModelSettings,
@@ -1241,41 +1231,38 @@ class GoogleModel(Model[Client]):
         if config := model_settings.get('google_thinking_config'):
             return config
         thinking = model_request_parameters.thinking
+        thinking_summary = model_settings.get('thinking_summary')
         if thinking is None:
+            # Thoughts are left out unless asked for, so only `True` changes anything, and only on a model that thinks.
+            if thinking_summary and self._request_thinks(model_settings, model_request_parameters):
+                return ThinkingConfigDict(include_thoughts=True)
             return None
+        include_thoughts = thinking_summary is not False
         profile = self.profile
         supports_thinking_level = profile.get('google_supports_thinking_level', True)
         if thinking is False:
-            if not supports_thinking_level:
-                # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget=0, which Gemini 2.5 Pro rejects
-                # ("Budget 0 is invalid. This model only works in thinking mode."), so it gets its minimum budget.
-                if profile.get('thinking_always_enabled', False):
-                    return ThinkingConfigDict(thinking_budget=_GEMINI_2_5_PRO_MIN_THINKING_BUDGET)
-                return ThinkingConfigDict(thinking_budget=0)
-            if profile.get('google_disables_thinking_with_zero_budget', False):
-                return ThinkingConfigDict(thinking_budget=0)
-            # Default Gemini 3+ behaviour represents `thinking=False` as its lowest supported thinking level.
-            return ThinkingConfigDict(thinking_level=cast(Any, _resolve_google_thinking_level('minimal', profile)))
+            return _thinking_off_config(profile, thinking_summary)
 
         if not supports_thinking_level:
             # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget
             if thinking is True:
-                return ThinkingConfigDict(include_thoughts=True)
+                return ThinkingConfigDict(include_thoughts=include_thoughts)
             budget_map: dict[ThinkingEffort, int] = {
-                'minimal': _GEMINI_2_5_PRO_MIN_THINKING_BUDGET,
+                'minimal': profile.get('google_minimal_thinking_budget', _GEMINI_2_5_PRO_MIN_THINKING_BUDGET),
                 'low': 2048,
                 'medium': 8192,
                 'high': 24576,
                 'xhigh': 24576,  # max for Flash; Pro goes to 32768 but we use a safe common max
                 'max': 24576,
             }
-            return ThinkingConfigDict(include_thoughts=True, thinking_budget=budget_map[thinking])
+            return ThinkingConfigDict(include_thoughts=include_thoughts, thinking_budget=budget_map[thinking])
 
         # Default Gemini 3+ behaviour uses thinking_level
         if thinking is True:
-            return ThinkingConfigDict(include_thoughts=True)
+            return ThinkingConfigDict(include_thoughts=include_thoughts)
         return ThinkingConfigDict(
-            include_thoughts=True, thinking_level=cast(Any, _resolve_google_thinking_level(thinking, profile))
+            include_thoughts=include_thoughts,
+            thinking_level=cast(Any, _google_common.resolve_google_thinking_level(thinking, profile)),
         )
 
     async def _build_content_and_config(
@@ -1314,6 +1301,7 @@ class GoogleModel(Model[Client]):
             gla_service_tier = _resolve_gla_service_tier(model_settings)
 
         http_options = _request_http_options(self.client, model_settings, headers)
+        supports_penalties = 'presence_penalty' not in self._unsupported_settings()
 
         # See `GoogleModelSettings.google_cached_content` for why these three fields are stripped.
         _warn_on_cached_content_strips(cached_content, system_instruction, tools)
@@ -1326,8 +1314,8 @@ class GoogleModel(Model[Client]):
             top_k=model_settings.get('top_k'),
             max_output_tokens=model_settings.get('max_tokens'),
             stop_sequences=model_settings.get('stop_sequences'),
-            presence_penalty=model_settings.get('presence_penalty'),
-            frequency_penalty=model_settings.get('frequency_penalty'),
+            presence_penalty=model_settings.get('presence_penalty') if supports_penalties else None,
+            frequency_penalty=model_settings.get('frequency_penalty') if supports_penalties else None,
             seed=model_settings.get('seed'),
             safety_settings=model_settings.get('google_safety_settings'),
             thinking_config=self._translate_thinking(model_settings, model_request_parameters),
@@ -1377,7 +1365,10 @@ class GoogleModel(Model[Client]):
         return None, None
 
     def _process_response(
-        self, response: GenerateContentResponse, model_request_parameters: ModelRequestParameters
+        self,
+        response: GenerateContentResponse,
+        model_request_parameters: ModelRequestParameters,
+        messages: Sequence[ModelMessage] = (),
     ) -> ModelResponse:
         candidate = response.candidates[0] if response.candidates else None
 
@@ -1412,6 +1403,7 @@ class GoogleModel(Model[Client]):
             finish_reason=finish_reason,
             url_context_metadata=url_context_metadata,
             file_search_enabled=_file_search_enabled(model_request_parameters),
+            computer=_requested_native_computer(model_request_parameters, messages),
         )
         model_response.canonical_system = self._canonical_system_stamp
         if (initial_input_tokens := _initial_input_tokens(response)) is not None:
@@ -1422,7 +1414,10 @@ class GoogleModel(Model[Client]):
         return model_response
 
     async def _process_streamed_response(
-        self, response: AsyncIterator[GenerateContentResponse], model_request_parameters: ModelRequestParameters
+        self,
+        response: AsyncIterator[GenerateContentResponse],
+        model_request_parameters: ModelRequestParameters,
+        messages: Sequence[ModelMessage] = (),
     ) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response: _utils.PeekableAsyncStream[
@@ -1437,7 +1432,7 @@ class GoogleModel(Model[Client]):
         except (errors.APIError, httpx2.TransportError, httpx2.HTTPStatusError) as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
         if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
+            raise ModelEmptyResponseError(self.model_name, 'Streamed response ended without content or tool calls')
 
         streamed_response = GeminiStreamedResponse(
             model_request_parameters=model_request_parameters,
@@ -1448,6 +1443,7 @@ class GoogleModel(Model[Client]):
             _provider_url=self._provider.base_url,
             _provider_timestamp=first_chunk.create_time,
             _web_search_billed_per_prompt=self.profile.get('google_web_search_billed_per_prompt', False),
+            _computer=_requested_native_computer(model_request_parameters, messages),
         )
         streamed_response.canonical_system = self._canonical_system_stamp
         return streamed_response
@@ -1464,14 +1460,22 @@ class GoogleModel(Model[Client]):
         )
         contents: list[ContentUnionDict] = []
         system_parts: list[PartDict] = []
+        computer = _requested_native_computer(model_request_parameters)
+        # Gemini's original computer use calls, by tool call ID, to send back with their results.
+        gemini_calls_by_id: dict[str, _google_computer.GeminiFunctionCall] = {}
 
         for m in messages:
             match m:
                 case ModelRequest():
-                    contents.extend(await self._map_model_request(m, system_parts))
+                    contents.extend(await self._map_model_request(m, system_parts, gemini_calls_by_id))
                 case ModelResponse():
+                    replayed = self._replayed_computer_calls(m, computer)
+                    gemini_calls_by_id.update(replayed)
                     maybe_content = _content_model_response(
-                        m, self.accepts_stateless_artifacts, supports_tool_combination=supports_tool_combination
+                        m,
+                        self.accepts_stateless_artifacts,
+                        supports_tool_combination=supports_tool_combination,
+                        gemini_calls_by_id=replayed,
                     )
                     if maybe_content:
                         contents.append(maybe_content)
@@ -1490,7 +1494,26 @@ class GoogleModel(Model[Client]):
 
         return system_instruction, contents
 
-    async def _map_model_request(self, m: ModelRequest, system_parts: list[PartDict]) -> list[ContentDict]:
+    def _replayed_computer_calls(
+        self, m: ModelResponse, computer: _google_computer.NativeComputer | None
+    ) -> dict[str, _google_computer.GeminiFunctionCall]:
+        """Gemini's original computer use calls behind the `computer` calls of `m` that go back unchanged."""
+        if computer is None:
+            return {}
+        return {
+            part.tool_call_id: call
+            for part in m.parts
+            if isinstance(part, ToolCallPart)
+            and self.accepts_stateless_artifacts(m, part)
+            and (call := computer.stored_computer_call(part)) is not None
+        }
+
+    async def _map_model_request(
+        self,
+        m: ModelRequest,
+        system_parts: list[PartDict],
+        gemini_calls_by_id: Mapping[str, _google_computer.GeminiFunctionCall],
+    ) -> list[ContentDict]:
         """Map a request to user contents, and add its system prompts to `system_parts`."""
         message_parts: list[PartDict] = []
         # Held back so the split below can't leave framed tool media sharing a `Content` with
@@ -1504,7 +1527,9 @@ class GoogleModel(Model[Client]):
             elif isinstance(part, UserPromptPart):
                 message_parts.extend(await self._map_user_prompt(part))
             elif isinstance(part, ToolReturnPart):
-                function_response_part, framed_media = await self._map_tool_return(part)
+                function_response_part, framed_media = await self._map_tool_return(
+                    part, gemini_calls_by_id.get(part.tool_call_id)
+                )
                 message_parts.append(function_response_part)
                 tool_return_media.extend(framed_media)
             elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
@@ -1528,7 +1553,9 @@ class GoogleModel(Model[Client]):
 
         return _split_function_responses(message_parts)
 
-    async def _map_tool_return(self, part: ToolReturnPart) -> tuple[PartDict, list[PartDict]]:
+    async def _map_tool_return(
+        self, part: ToolReturnPart, computer_call: _google_computer.GeminiFunctionCall | None = None
+    ) -> tuple[PartDict, list[PartDict]]:
         """Map a `ToolReturnPart` to Google API format, handling multimodal content.
 
         Returns the `function_response` part and, separately, any files this model can't carry
@@ -1538,6 +1565,9 @@ class GoogleModel(Model[Client]):
         those after every `function_response` in the request, which is why they carry the framing
         rather than relying on sitting next to the call they belong to.
         See: https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#multimodal
+
+        A result of Gemini's computer use call goes back under that call's function name, with the
+        `safety_acknowledgement` Gemini asked for, if any.
         """
         supported_mime_types = self.profile.get('google_supported_mime_types_in_tool_returns', ())
 
@@ -1573,8 +1603,12 @@ class GoogleModel(Model[Client]):
             if fallback_refs:
                 response = {'output': [response, *fallback_refs]}
 
+        name = part.tool_name
+        if computer_call is not None:
+            name = computer_call['name']
+            response = _google_computer.map_computer_result(response, computer_call, part)
         function_response_dict: FunctionResponseDict = {
-            'name': part.tool_name,
+            'name': name,
             'response': response,
             'id': part.tool_call_id,
         }
@@ -1720,6 +1754,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _provider_timestamp: datetime | None = None
     _web_search_billed_per_prompt: bool = False
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _computer: _google_computer.NativeComputer | None = None
     _usage_received: bool | None = field(default=False, init=False)
     _file_search_tool_call_ids: list[str] = field(default_factory=list[str], init=False)
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
@@ -1755,6 +1790,8 @@ class GeminiStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         if self._provider_timestamp is not None:
             self.provider_details = {'timestamp': self._provider_timestamp}
+        # A stream that ends before a chunk reports a finish reason or a blocked prompt was cut off.
+        self.state = 'incomplete'
         try:
             async for chunk in MapStreamDecodeErrors(self._response, self._model_name, errors.UnknownApiResponseError):
                 for event in self._map_chunk(chunk):
@@ -1786,6 +1823,7 @@ class GeminiStreamedResponse(StreamedResponse):
             finish_reason, finish_details = finished
             self.provider_details = {**(self.provider_details or {}), **finish_details}
             self.finish_reason = finish_reason
+            self.state = 'complete'
 
         if candidate.grounding_metadata is not None:
             self._grounding_metadata = candidate.grounding_metadata
@@ -1832,6 +1870,7 @@ class GeminiStreamedResponse(StreamedResponse):
         self._has_content_filter = True
         self.provider_details = {**(self.provider_details or {}), **blocked_details}
         self.finish_reason = 'content_filter'
+        self.state = 'complete'
         if chunk.response_id:  # pragma: no branch
             self.provider_response_id = chunk.response_id
 
@@ -1880,6 +1919,8 @@ class GeminiStreamedResponse(StreamedResponse):
 
         if part.text is not None:
             yield from self._map_text(part.text, part.thought, provider_details)
+        elif part.function_call and (computer_call := _map_computer_call(part, self._computer, self.provider_name)):
+            yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=computer_call)
         elif part.function_call:
             yield from self._parts_manager.handle_tool_call_delta_events(
                 vendor_part_id=uuid4(),
@@ -2111,7 +2152,11 @@ def _split_function_responses(message_parts: list[PartDict]) -> list[ContentDict
 
 
 def _content_model_response(
-    m: ModelResponse, accepts: _StatelessArtifactPredicate, *, supports_tool_combination: bool = False
+    m: ModelResponse,
+    accepts: _StatelessArtifactPredicate,
+    *,
+    supports_tool_combination: bool = False,
+    gemini_calls_by_id: Mapping[str, _google_computer.GeminiFunctionCall] | None = None,
 ) -> ContentDict | None:
     # `accepts` is `GoogleModel.accepts_stateless_artifacts`: thought signatures, and the native tool parts that
     # carry them, only go back to the transport that issued them, as the Gemini API and Google Cloud reject each
@@ -2135,7 +2180,12 @@ def _content_model_response(
         part: PartDict | None
         match item:
             case ToolCallPart():
-                part = _function_call_part_dict(item, item_signature, needs_signature=needs_function_call_signature)
+                part = _function_call_part_dict(
+                    item,
+                    item_signature,
+                    needs_signature=needs_function_call_signature,
+                    computer_call=(gemini_calls_by_id or {}).get(item.tool_call_id),
+                )
                 needs_function_call_signature = False
             case TextPart():
                 part = _attach_signature({'text': item.content}, item_signature)
@@ -2146,11 +2196,17 @@ def _content_model_response(
                 part = _thinking_part_dict(item, item_signature)
             case NativeToolCallPart():
                 part = _native_tool_call_part_dict(
-                    item, accepts(m, item), item_signature, supports_tool_combination=supports_tool_combination
+                    item,
+                    accepts(m, item) and not _is_interactions_step(item),
+                    item_signature,
+                    supports_tool_combination=supports_tool_combination,
                 )
             case NativeToolReturnPart():
                 part = _native_tool_return_part_dict(
-                    item, accepts(m, item), item_signature, supports_tool_combination=supports_tool_combination
+                    item,
+                    accepts(m, item) and not _is_interactions_step(item),
+                    item_signature,
+                    supports_tool_combination=supports_tool_combination,
                 )
             case FilePart():
                 inline_data_dict: BlobDict = {'data': item.content.data, 'mime_type': item.content.media_type}
@@ -2203,10 +2259,18 @@ def _thinking_part_dict(item: ThinkingPart, signature: bytes | None) -> PartDict
     return _attach_signature({'text': item.content, 'thought': True}, signature)
 
 
-def _function_call_part_dict(item: ToolCallPart, signature: bytes | None, *, needs_signature: bool) -> PartDict:
-    part: PartDict = {
-        'function_call': FunctionCallDict(name=item.tool_name, args=item.args_as_dict(), id=item.tool_call_id),
-    }
+def _function_call_part_dict(
+    item: ToolCallPart,
+    signature: bytes | None,
+    *,
+    needs_signature: bool,
+    computer_call: _google_computer.GeminiFunctionCall | None = None,
+) -> PartDict:
+    """A function call, or Gemini's original computer use call behind a `computer` call."""
+    name, args = (
+        (computer_call['name'], computer_call['args']) if computer_call else (item.tool_name, item.args_as_dict())
+    )
+    part: PartDict = {'function_call': FunctionCallDict(name=name, args=args, id=item.tool_call_id)}
     part = _attach_signature(part, signature)
     if signature is None and needs_signature:
         # Per https://ai.google.dev/gemini-api/docs/thought-signatures#faqs and
@@ -2216,6 +2280,15 @@ def _function_call_part_dict(item: ToolCallPart, signature: bytes | None, *, nee
         # both reject a first function call without one (verified live, 2026-10-27).
         part['thought_signature'] = b'skip_thought_signature_validator'
     return part
+
+
+def _is_interactions_step(item: NativeToolCallPart | NativeToolReturnPart) -> bool:
+    """Whether `item` came from `GoogleInteractionsModel`, which shares the `google` canonical system.
+
+    Interactions native steps include tools and result shapes GenerateContent can't replay, such as remote MCP calls
+    or a string code execution result, so they're omitted, as Interactions omits GenerateContent's native parts.
+    """
+    return 'google_interactions_step_index' in (item.provider_details or {})
 
 
 def _native_tool_call_part_dict(
@@ -2308,7 +2381,12 @@ def _thought_signature_details(part: Part) -> dict[str, Any] | None:
 
 
 def _process_part(
-    part: Part, code_execution_tool_call_id: str | None, provider_name: str, *, file_search_enabled: bool = False
+    part: Part,
+    code_execution_tool_call_id: str | None,
+    provider_name: str,
+    *,
+    file_search_enabled: bool = False,
+    computer: _google_computer.NativeComputer | None = None,
 ) -> tuple[ModelResponsePart | None, str | None]:
     """Process a Google Part and return the corresponding ModelResponsePart.
 
@@ -2324,6 +2402,8 @@ def _process_part(
     elif part.code_execution_result is not None:
         assert code_execution_tool_call_id is not None
         item = _map_code_execution_result(part.code_execution_result, provider_name, code_execution_tool_call_id)
+    elif computer_call := _map_computer_call(part, computer, provider_name):
+        item = computer_call
     elif (item := _map_response_part(part, provider_name)) is None:
         return None, code_execution_tool_call_id
 
@@ -2332,6 +2412,72 @@ def _process_part(
         item.provider_name = provider_name
 
     return item, code_execution_tool_call_id
+
+
+def _map_computer_call(
+    part: Part, computer: _google_computer.NativeComputer | None, provider_name: str
+) -> ComputerCallPart | None:
+    """Gemini's call to Google's computer use tool as a `computer` call, or `None` for any other part."""
+    call = part.function_call
+    if computer is None or call is None or not computer.is_computer_call(call.name) or call.name is None:
+        return None
+    item = computer.to_call_part(call.name, call.args or {}, call.id, provider_name)
+    if provider_details := _thought_signature_details(part):
+        item.provider_details = {**(item.provider_details or {}), **provider_details}
+    return item
+
+
+def _requested_native_computer(
+    model_request_parameters: ModelRequestParameters, messages: Sequence[ModelMessage] = ()
+) -> _google_computer.NativeComputer | None:
+    """For a `ComputerTool`, Google's computer use tool, holding the keys Gemini held after `messages`."""
+    tool = next((t for t in model_request_parameters.native_tools if isinstance(t, ComputerTool)), None)
+    if tool is None:
+        return None
+    # The request keeps a `ComputerTool` only beside a `computer` tool to run its calls.
+    name = model_request_parameters.available_tool_names_for_kind(COMPUTER_KIND)[0]
+    if clashing := sorted(_google_computer.COMPUTER_FUNCTIONS & model_request_parameters.declared_tool_defs.keys()):
+        if tool.optional:
+            # Left out like any optional native tool that can't be sent: the `computer` function tool goes instead.
+            return None
+        raise UserError(
+            f"Google's computer use tool has predefined functions named {', '.join(map(repr, clashing))}, "
+            "so a function tool can't have those names beside it. Rename the function tool."
+        )
+    computer = _google_computer.NativeComputer(name, tool.display_size)
+    computer.restore_held_keys(messages)
+    return computer
+
+
+def _without_the_computer(
+    name: str, tool_defs: dict[str, ToolDefinition], allowed_function_names: list[str]
+) -> tuple[dict[str, ToolDefinition], list[str]]:
+    """The function tools and allowed names to send beside Google's computer use tool, which replaces `name`."""
+    if allowed_function_names == [name]:
+        # Forced to the computer alone: `ANY` with only Google's tool sent makes Gemini call it.
+        return {}, []
+    # Gemini rejects a predefined function's name in `allowed_function_names`, and keeps its computer functions
+    # callable beside the names it lists (both checked live on gemini-3.8-flash, 2026-11-20).
+    return (
+        {tool_name: t for tool_name, t in tool_defs.items() if tool_name != name},
+        [tool_name for tool_name in allowed_function_names if tool_name != name],
+    )
+
+
+def _sent_native_computer(
+    model_request_parameters: ModelRequestParameters,
+    tool_defs: Mapping[str, ToolDefinition],
+    tool_choice_mode: ToolChoiceScalar,
+    allowed_function_names: list[str],
+) -> _google_computer.NativeComputer | None:
+    """Google's computer use tool, if this request sends it: not when `tool_choice` leaves out the `computer` tool."""
+    computer = _requested_native_computer(model_request_parameters)
+    if computer is None or computer.name not in tool_defs or tool_choice_mode == 'none':
+        return None
+    if allowed_function_names and computer.name not in allowed_function_names:
+        # Gemini keeps its computer functions callable beside the names `allowedFunctionNames` lists.
+        return None
+    return computer
 
 
 def _map_response_part(part: Part, provider_name: str) -> ModelResponsePart | None:
@@ -2374,21 +2520,10 @@ def _map_inline_data_part(inline_data: Blob, thought: bool | None) -> FilePart |
     return FilePart(content=BinaryContent.narrow_type(content))
 
 
-def _character_index(text: str, byte_index: int) -> int | None:
-    """Convert a Gemini UTF-8 byte offset to a Python string index."""
-    encoded = text.encode()
-    if not 0 <= byte_index <= len(encoded):
-        return None
-    try:
-        return len(encoded[:byte_index].decode())
-    except UnicodeDecodeError:
-        return None
-
-
 def _segment_anchor(text: str, segment: Segment, byte_offset: int = 0) -> ContentCitationAnchor | None:
     """Return the anchor of a segment's offsets in `text`, if they select the segment text Google reports for them."""
-    start = _character_index(text, (segment.start_index or 0) - byte_offset)
-    end = _character_index(text, (segment.end_index or 0) - byte_offset)
+    start = _google_common.character_index(text, (segment.start_index or 0) - byte_offset)
+    end = _google_common.character_index(text, (segment.end_index or 0) - byte_offset)
     if start is not None and end is not None and start < end and text[start:end] == segment.text:
         return ContentCitationAnchor(start=start, end=end)
     return None
@@ -2645,6 +2780,7 @@ def _process_response_from_parts(
     finish_reason: FinishReason | None = None,
     url_context_metadata: UrlContextMetadata | None = None,
     file_search_enabled: bool = False,
+    computer: _google_computer.NativeComputer | None = None,
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
     has_native_tool_invocations = _has_native_tool_invocations(parts)
@@ -2660,7 +2796,11 @@ def _process_response_from_parts(
     grounding_citations = _map_citations(parts, grounding_metadata)
     for part_index, part in enumerate(parts):
         item, code_execution_tool_call_id = _process_part(
-            part, code_execution_tool_call_id, provider_name, file_search_enabled=file_search_enabled
+            part,
+            code_execution_tool_call_id,
+            provider_name,
+            file_search_enabled=file_search_enabled,
+            computer=computer,
         )
         if item is None:
             continue

@@ -549,7 +549,7 @@ def model_settings_summary(*, store: SettingsStore, model: str, settings_as: str
     """Preview effective settings without mutating the model or its saved overrides."""
     saved = store.model_settings(model)
     values = {**model_defaults(model=settings_as or model, saved=saved), **chosen_codex_speed(saved)}
-    # Never empty: every model has at least CLAI's prompt caching default.
+    # Never empty: every model has at least Pax's prompt caching default.
     lines = [model, '', 'Configured settings:']
     lines.extend(f'{setting_label(key)}: {shown(value)}' for key, value in values.items())
     return '\n'.join(lines)

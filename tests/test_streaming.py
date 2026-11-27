@@ -2676,6 +2676,46 @@ class TestStreamingCachedOutput:
         # Second output should be the original cached value (not mutated)
         assert output2 == Foo(a=42, b='FOO')
 
+    @pytest.mark.parametrize(
+        'reads',
+        [
+            pytest.param(('get_output',), id='get_output'),
+            pytest.param(('get_output', 'get_output'), id='get_output_twice'),
+            pytest.param(('stream_output',), id='stream_output'),
+            pytest.param(('stream_output', 'stream_output'), id='stream_output_twice'),
+            pytest.param(('stream_output', 'get_output'), id='stream_output_then_get_output'),
+            pytest.param(('get_output', 'stream_output'), id='get_output_then_stream_output'),
+        ],
+    )
+    async def test_none_output_validated_once(self, reads: tuple[Literal['get_output', 'stream_output'], ...]):
+        """A final output of `None` runs the output function and each validator once, however it is read.
+
+        Not a VCR test: how often they run is local and provider-independent, and a cassette records none of it.
+        """
+        final_calls: list[str] = []
+
+        def lookup(ctx: RunContext, key: int) -> int | None:
+            if not ctx.partial_output:
+                final_calls.append('function')
+            return None
+
+        agent: Agent[None, int | None] = Agent(TestModel(), output_type=lookup)
+
+        @agent.output_validator
+        def check(ctx: RunContext, value: int | None) -> int | None:
+            if not ctx.partial_output:
+                final_calls.append('validator')
+            return value
+
+        async with agent.run_stream('test') as result:
+            for read in reads:
+                if read == 'get_output':
+                    assert await result.get_output() is None
+                else:
+                    assert [output async for output in result.stream_output(debounce_by=None)][-1] is None
+
+        assert final_calls == ['function', 'validator']
+
 
 class OutputType(BaseModel):
     """Result type used by multiple tests."""

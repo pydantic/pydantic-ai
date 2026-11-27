@@ -36,7 +36,7 @@ from pydantic_ai_harness.artifact_scanning import DEFAULT_ARTIFACT_PATTERNS
 from pydantic_ai_harness.guardrails.detectors import DEFAULT_PII_PATTERNS, DEFAULT_SECRET_PATTERNS
 from pydantic_ai_harness.require_verification import DEFAULT_EDIT_COMMANDS, DEFAULT_VERIFICATION_COMMANDS
 
-from ._regex_steps import Shape, StepCounter, linearity_failure, shape
+from ._regex_steps import GROWTH_LIMIT, Shape, StepCounter, linearity_failure, shape
 
 _PACKAGE = Path(pydantic_ai_harness.__file__).parent
 _FLAGS_ARGUMENT = {
@@ -79,6 +79,9 @@ RUNTIME_PATTERNS: dict[str, tuple[str, ...]] = {
         "a `DEFAULT_SECRET_PATTERNS` or `DEFAULT_PII_PATTERNS` entry, or the user's `extra`",
     ),
     'permissions/_capability.py::Permissions.__post_init__': ("the user's `ask_commands`",),
+    'playwright/_toolset.py::_without_endpoint_credentials': (
+        'an alternation of the escaped `cdp_url` credential values',
+    ),
     'require_verification/_capability.py::RequireVerification.__post_init__': (
         "a `DEFAULT_VERIFICATION_COMMANDS` entry, or the user's `verification_commands`",
         "a `DEFAULT_EDIT_COMMANDS` entry, or the user's `edit_commands`",
@@ -371,6 +374,25 @@ def test_scanning_is_linear(pattern: str, flags: int):
     assert linearity_failure(pattern, flags) is None
 
 
+@pytest.mark.parametrize(
+    ('prefix', 'repeated', 'suffix'),
+    [
+        pytest.param('', 'black/', 'black x', id='tool-path'),
+        pytest.param('uv run ', '-a/black ', 'x', id='runner-flags'),
+    ],
+)
+def test_the_default_formatter_check_is_linear(prefix: str, repeated: str, suffix: str):
+    """`DEFAULT_VERIFICATION_COMMANDS[0]` stays linear on two formatter commands `linearity_failure` doesn't build.
+
+    A tool name repeated through a path or through runner flags gives the formatter alternative's prefix a place to
+    end at each `/` or flag, and the `--check` lookahead must not re-read the rest of the step from each one.
+    """
+    counter = StepCounter(DEFAULT_VERIFICATION_COMMANDS[0])
+    steps = [counter.scan(prefix + repeated * n + suffix, budget=1_000_000).steps for n in (32, 64, 128)]
+
+    assert steps[2] - steps[1] <= GROWTH_LIMIT * (steps[1] - steps[0])
+
+
 def test_every_runtime_pattern_says_where_it_comes_from():
     """Each call whose pattern only exists at runtime has an entry, and each entry still has its call."""
     unresolved = Counter(site.location for site in _CALL_SITES if site.patterns is None)
@@ -477,6 +499,22 @@ def test_the_hidden_use_scan():
         pytest.param(r'\s*\s*x', snapshot("'\\t' * 19: over 1600 steps"), id='adjacent-repeats'),
         pytest.param(r'(a+)+b', snapshot("'a' * 18: over 1140 steps"), id='nested-repeats'),
         pytest.param(r'(?:a|a){0,20}b', snapshot("'a' * 37: over 13376 steps"), id='bounded-alternation'),
+        # A one-character lookbehind only lets an attempt start after a character it admits, so its pump unit carries
+        # one. `DEFAULT_VERIFICATION_COMMANDS[0]`, before its formatter alternative was split out, restarts at each
+        # `black` of `  black  black`, and `blackblack` would never find that.
+        pytest.param(
+            r'(?<!\S)(?:(?:uv|poetry|pipenv|hatch|pdm)\s+run(?:\s+-\S+)*\s+)?(?:(?<!\S)(?:\S*/)?python3?\s+-m\s+)?'
+            r'(?<!\S)(?:\S*/)?'
+            r'(?:pytest|py\.test|unittest|tox|nox|mypy|pyright|basedpyright|ty\s+check|ruff\s+check'
+            r'|(?:ruff\s+format|black|isort)(?=[^;&|\n]*\s--(?:check|diff)))\b',
+            snapshot("'  black' * 10, 20, 40: [2358, 6973, 23103] steps"),
+            id='restart-at-each-character-a-lookbehind-admits',
+        ),
+        pytest.param(
+            r'(?<!\S)(?:ab)*(?:ab)*c',
+            snapshot("'ab' * 11, 22, 44: [382, 1240, 4408] steps"),
+            id='adjacent-repeats-after-a-lookbehind',
+        ),
     ],
 )
 def test_a_super_linear_pattern_fails(pattern: str, failure: str):
@@ -548,8 +586,13 @@ def test_the_step_counter_refuses_a_construct_it_does_not_model():
         ),
         pytest.param(
             r'(?<!-)(?=\w)(?>ab|c)(?i:d){1,3}',
-            snapshot(Shape(units=['-', 'a', 'ab', 'c', 'd'], reach=6, unbounded=False, nodes=12)),
+            snapshot(Shape(units=['-', 'a', 'aab', 'ab', 'ac', 'c', 'd'], reach=6, unbounded=False, nodes=12)),
             id='groups-and-lookarounds',
+        ),
+        pytest.param(
+            r'(?<!\S)a(?<!\S)b',
+            snapshot(Shape(units=[' a b', 'a', 'a b', 'ab'], reach=2, unbounded=False, nodes=6)),
+            id='admitting-from-each-lookbehind-on',
         ),
     ],
 )

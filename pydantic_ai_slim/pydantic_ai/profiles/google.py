@@ -36,6 +36,19 @@ _GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES: tuple[str, ...] = (
     'text/plain',
 )
 
+_INTERACTIONS_NATIVE_TOOL_RETURN_MIME_TYPES: tuple[str, ...] = (
+    *_GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES,
+    'audio/mpeg',
+    'video/mp4',
+)
+_INTERACTIONS_TOOL_RETURN_MIME_TYPES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ('gemini-3.8-flash', _INTERACTIONS_NATIVE_TOOL_RETURN_MIME_TYPES),
+    ('gemini-4-argon', _INTERACTIONS_NATIVE_TOOL_RETURN_MIME_TYPES),
+    # Verified live 2026-11-18 on the Gemini API: PDF, MP3 and MP4 `function_result` items are read natively.
+    ('gemini-4-carbon', _INTERACTIONS_NATIVE_TOOL_RETURN_MIME_TYPES),
+    ('gemini-4-hydrogen', _INTERACTIONS_NATIVE_TOOL_RETURN_MIME_TYPES),
+)
+
 _SCHEMA_VALUED_KEYWORDS = frozenset({'items', 'additionalProperties'})
 _SCHEMA_LIST_KEYWORDS = frozenset({'anyOf'})
 _SCHEMA_MAP_KEYWORDS = frozenset({'properties'})
@@ -143,7 +156,8 @@ class GoogleModelProfile(ModelProfile, total=False):
     """
 
     google_supported_mime_types_in_tool_returns: tuple[str, ...]
-    """MIME types supported in native FunctionResponseDict.parts. Default: `()`.
+    """MIME types supported in native tool results: GenerateContent's `FunctionResponseDict.parts`
+    or Interactions' `function_result`. Default: `()`.
     See https://ai.google.dev/gemini-api/docs/function-calling#multimodal-function-responses"""
 
     google_supports_thinking_level: bool
@@ -168,6 +182,14 @@ class GoogleModelProfile(ModelProfile, total=False):
     When disabled, `thinking=False` on such a model sends its lowest thinking level instead. `GoogleModel` enables it
     for `gemini-3.1-pro-preview` on Vertex AI, which accepts `thinking_budget=0` and then doesn't think, while the
     Gemini API rejects it for that model ("Budget 0 is invalid. This model only works in thinking mode.").
+    """
+
+    google_minimal_thinking_budget: int
+    """The `thinking_budget` that unified `thinking='minimal'` sends on a model that takes `thinking_budget`.
+    Default: `128`, the smallest budget Gemini 2.5 Pro accepts.
+
+    `GoogleModel` sets 512 for `gemini-2.5-flash-lite` on the Gemini API, which rejects budgets below 512 there.
+    See https://ai.google.dev/gemini-api/docs/thinking#set-budget.
     """
 
     google_thinking_levels: frozenset[GoogleThinkingLevel]
@@ -201,6 +223,14 @@ class GoogleModelProfile(ModelProfile, total=False):
     See <https://ai.google.dev/gemini-api/docs/google-search#pricing>.
     """
 
+    google_supports_penalties: bool
+    """Whether the model accepts `presence_penalty` and `frequency_penalty`. Default: `True`.
+
+    The Gemini API rejects them for every model, so `GoogleModel` turns this off when its client talks to the Gemini
+    API. On Google Cloud (Vertex AI), Gemini 3.5 Flash-Lite, Gemini 3.6 Flash and newer, and the Gemini 3 image models
+    reject them with a 400.
+    """
+
     google_supports_batch_api: bool
     """Whether the endpoint serves the Gemini API's [Batch Mode](https://ai.google.dev/gemini-api/docs/batch-api).
     Default: `False`.
@@ -211,13 +241,25 @@ class GoogleModelProfile(ModelProfile, total=False):
     or BigQuery rather than the uploaded files `GoogleModel` submits.
     """
 
+    google_supports_computer_use: bool
+    """Whether the model takes Google's [computer use tool](https://ai.google.dev/gemini-api/docs/computer-use).
+    Default: `False`.
+
+    Without it, `GoogleModel` leaves [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] out of
+    `supported_native_tools`, so a computer tool goes to the model as a function tool. `google_model_profile` sets it for
+    the models Google lists, and `GoogleModel` turns it off on Google Cloud (Vertex AI), where the tool is unverified.
+    Set it with `profile=` for a model you have checked.
+    """
+
+
+_COMPUTER_USE_MODEL_PREFIXES = ('gemini-4-', 'gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3-flash-preview')
+"""The models Google lists for computer use: https://ai.google.dev/gemini-api/docs/computer-use#model-versions."""
 
 _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] = (
     # Documented per-model thinking levels, most specific prefix first. Gemini 3+ models not
-    # listed support the default `GOOGLE_THINKING_LEVELS`, except where a level set holds on one
-    # API only: `GoogleModel.profile` applies that set by the client's transport, as it does on the
-    # Gemini API for `gemini-3.1-flash-image`, which only that API enforces, and for `gemini-4-neon`,
-    # which Vertex's thinking table doesn't list.
+    # listed support the default `GOOGLE_THINKING_LEVELS`, except where a level set holds on the Gemini
+    # API only: `_google_common.GEMINI_API_THINKING_LEVELS` lists those, and both Google models apply them
+    # by the client's transport.
     # https://ai.google.dev/gemini-api/docs/thinking
     ('gemini-3.1-flash-lite-image', frozenset(('MINIMAL', 'HIGH'))),
     ('gemini-3.7-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
@@ -255,6 +297,21 @@ _REALTIME_MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]
 """Live model name prefixes mapped to the thinking levels they accept."""
 
 
+_GOOGLE_CLOUD_PENALTY_REJECTING_MODELS = ('gemini-3.5-flash-lite', 'gemini-3.6', 'gemini-3.7', 'gemini-3.8', 'gemini-4')
+"""The models Google Cloud rejects `presence_penalty` and `frequency_penalty` for (verified live 2026-11-04).
+
+They answer `Penalty is not enabled for this model`, as do the Gemini 3 image models. The Gemini API answers that for
+every model. Other models, including ones this doesn't recognize, like a tuned model's endpoint, keep sending them.
+"""
+
+
+def _google_cloud_supports_penalties(model_name: str) -> bool:
+    """Whether Google Cloud accepts penalties for the model; apart from `google_model_profile` to keep it simple enough."""
+    if model_name.startswith(_GOOGLE_CLOUD_PENALTY_REJECTING_MODELS):
+        return False
+    return not ('image' in model_name and model_name.startswith('gemini-3'))
+
+
 _GEMINI_IMAGE_MEDIA_TYPES = KNOWN_IMAGE_MEDIA_TYPES | {'image/heic', 'image/heif', 'image/avif', 'image/bmp'}
 """Images Gemini reads, as checked live on the Gemini API and Vertex AI (2026-11-04).
 
@@ -270,6 +327,20 @@ _OFFICE_DOCUMENT_MEDIA_TYPES = frozenset(
         'application/vnd.ms-excel',
     }
 )
+
+
+def _thinks_by_default(
+    model_name: str, *, supports_thinking: bool, thinking_always_enabled: bool, is_gemma: bool, is_image_model: bool
+) -> bool:
+    """Whether a model thinks when the request doesn't configure thinking.
+
+    Verified live 2026-10-22 against the Gemini API, by the thinking tokens a request without `thinking_config`
+    reports: Gemini 2.5 Flash and Pro, Gemini 3 Flash, Gemini 3.5 Flash and Gemini 3 Pro Image think, while the
+    Flash-Lite and Flash Image models don't. Whether Gemma 4 thinks by default depends on the host, so it's left out.
+    """
+    if thinking_always_enabled:
+        return True
+    return supports_thinking and not is_gemma and not is_image_model and 'flash-lite' not in model_name
 
 
 def google_model_profile(model_name: str) -> ModelProfile | None:
@@ -313,6 +384,13 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     # Pro models have always-on thinking: Gemini 2.5 Pro rejects budget=0, Gemini 3+ Pro rejects MINIMAL
     is_pro = 'pro' in model_name and 'flash' not in model_name
     thinking_always_enabled = supports_thinking and is_pro
+    thinking_enabled_by_default = _thinks_by_default(
+        model_name,
+        supports_thinking=supports_thinking,
+        thinking_always_enabled=thinking_always_enabled,
+        is_gemma=is_gemma,
+        is_image_model=is_image_model,
+    )
     thinking_levels = next(
         (levels for prefix, levels in _MODEL_THINKING_LEVELS if model_name.startswith(prefix)),
         None,
@@ -330,6 +408,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         supports_video_input=not is_image_model,
         supports_thinking=supports_thinking,
         thinking_always_enabled=thinking_always_enabled,
+        thinking_enabled_by_default=thinking_enabled_by_default,
         google_supports_tool_combination=is_modern_gemini,
         google_supports_server_side_tool_invocations=is_modern_gemini,
         google_supported_mime_types_in_tool_returns=_GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES if is_modern_gemini else (),
@@ -337,6 +416,8 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         google_supports_minimal_thinking_level=thinking_levels is None or 'MINIMAL' in thinking_levels,
         google_supports_strict_tool_definition=supports_strict_tool_definition,
         google_web_search_billed_per_prompt=is_older_gemini,
+        google_supports_penalties=_google_cloud_supports_penalties(model_name),
+        google_supports_computer_use=model_name.startswith(_COMPUTER_USE_MODEL_PREFIXES),
     )
     if thinking_levels is not None:
         profile['google_thinking_levels'] = thinking_levels
@@ -364,6 +445,18 @@ def _set_gemini_file_input(profile: ModelProfile, *, is_gemma: bool, is_gemini_2
         # Gemini 2.5 answers Word and Excel files with a 500 on the Gemini API and Vertex AI alike, where
         # Gemini 3 reads them (checked live 2026-11-04).
         profile['supported_document_media_types'] = KNOWN_DOCUMENT_MEDIA_TYPES - _OFFICE_DOCUMENT_MEDIA_TYPES
+
+
+def google_interactions_model_profile(model_name: str) -> GoogleModelProfile:
+    """Profile overrides for Google's Interactions API, independent of GenerateContent."""
+    profile = GoogleModelProfile(supports_tool_return_schema=False)
+    model_name = model_name.rsplit('/', 1)[-1]
+    mime_types = next(
+        (types for prefix, types in _INTERACTIONS_TOOL_RETURN_MIME_TYPES if model_name.startswith(prefix)), None
+    )
+    if mime_types is not None:
+        profile['google_supported_mime_types_in_tool_returns'] = mime_types
+    return profile
 
 
 _REALTIME_MODELS_MISSING_VIDEO_IN_TEXT_TURNS = (

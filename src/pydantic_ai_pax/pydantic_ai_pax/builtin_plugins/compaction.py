@@ -3,7 +3,8 @@
 The built-in `compaction` plugin: Code Puppy's compaction chain from harness, `/compact`, and a context gauge.
 
 The chain is `FallbackCompaction` over `SummarizingCompaction` then `SlidingWindowCompaction`, so a
-failed or over-budget summary degrades to truncation. `compact_now` drives the chain for `/compact`.
+failed or over-budget summary degrades to truncation. `compact_now` drives the chain for `/compact`,
+which raises a summary the model got wrong instead, so the user sees the summarizer's error.
 """
 
 from collections.abc import Sequence
@@ -22,8 +23,7 @@ from pydantic import (
 
 from pydantic_ai import ModelMessage, ModelResponse, RunContext
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, on_event
-from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, UsageLimitExceeded
-from pydantic_ai.workspaces import WorkspaceRef
+from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai_harness.compaction import (
     ContextUsageMeasuredEvent,
     FallbackCompaction,
@@ -37,7 +37,6 @@ from pydantic_ai_pax.commands import Command
 from pydantic_ai_pax.plugins import ConversationChanged, Plugin, PluginHost, SessionEnd, TurnEnd
 from pydantic_ai_pax.plugins.menus import FieldRow, SettingsMenu
 from pydantic_ai_pax.runtime import agent_instrumentation
-from pydantic_ai_pax.runtime.session import local_workspace_provider
 from pydantic_ai_pax.ui.menus.field_menu import first_error, shown
 from pydantic_ai_pax.ui.rendering.status import Status
 
@@ -165,8 +164,15 @@ class CompactionSource:
         return f'Reset {row.label}.'
 
 
-def build_chain(config: CompactionSettings) -> FallbackCompaction[None]:
-    """Code Puppy's chain: summarise, and truncate when the summary fails or blows the usage limit."""
+def build_chain(config: CompactionSettings, *, explicit: bool = False) -> FallbackCompaction[None]:
+    """Code Puppy's chain: summarise, and truncate when the summary fails or blows the usage limit.
+
+    With `explicit`, for `/compact`, a summary the model got wrong (`UnexpectedModelBehavior`) is raised
+    rather than truncated, so the user sees why their compaction didn't summarize.
+    """
+    fallback_on: tuple[type[Exception], ...] = (ModelAPIError, FallbackExceptionGroup, UsageLimitExceeded)
+    if not explicit:
+        fallback_on = (*fallback_on, UnexpectedModelBehavior)
     sliding: SlidingWindowCompaction[None] = SlidingWindowCompaction(
         max_messages=1, keep_tokens=config.protected_tokens
     )
@@ -181,7 +187,7 @@ def build_chain(config: CompactionSettings) -> FallbackCompaction[None]:
         fallback_chain=[summarizer, sliding],
         max_fraction=config.threshold,
         context_window=config.context_window,
-        fallback_on=(ModelAPIError, FallbackExceptionGroup, UsageLimitExceeded),
+        fallback_on=fallback_on,
         background_start=config.background_start if config.background_compaction else None,
     )
 
@@ -254,7 +260,7 @@ class CompactionPlugin(Plugin[CompactionSettings]):
 
         Only the conversation shown and its running delegated tasks, each a conversation of its own
         under the task's ID, can still use theirs; a conversation left with `/new` or `/resume` and a
-        finished task would keep theirs, with a copy of their history, until CLAI exits.
+        finished task would keep theirs, with a copy of their history, until Pax exits.
         """
         keep: set[str | None] = {self.host.conversation.conversation_id}
         if (tasks := self.host.tasks) is not None:
@@ -293,30 +299,10 @@ class CompactionPlugin(Plugin[CompactionSettings]):
             # would otherwise trade a sliver of its head for a summary plus the kept first prompt, and grow.
             # The kept messages can still exceed it by the whole message that crosses it.
             tail = min(self.settings.protected_tokens, tokens // 2)
-            chain = build_chain(self.settings.model_copy(update={'protected_tokens': tail}))
+            chain = build_chain(self.settings.model_copy(update={'protected_tokens': tail}), explicit=True)
             after = await compact_now(chain, before, model=model, focus=focus, tracer=tracer)
-        after = _keeping_workspace(before, after)
         saved = tokens - sum(estimate_message_tokens(after))
         if saved <= 0:
             return 'Nothing to compact: compacting would not make the conversation smaller.'
         await conversation.commit_messages(after)
         return f'Compacted {len(before)} messages down to {len(after)}; about {saved:,} of {tokens:,} tokens saved.'
-
-
-def _keeping_workspace(before: Sequence[ModelMessage], after: list[ModelMessage]) -> list[ModelMessage]:
-    """`after`, still naming the workspace `before` last worked in when compacting dropped every response naming it.
-
-    A run works in the workspace its history's latest response names, so a conversation in a `/sandbox` would
-    otherwise continue on this machine. The name goes on an empty response, as core records for a turn that ended
-    unanswered: providers send no message for it, so the model is not made to have said anything. A local folder
-    is left alone, as the session works in its own anyway.
-    """
-    ref = _latest_workspace(before)
-    if ref is None or ref.provider == local_workspace_provider() or _latest_workspace(after) == ref:
-        return after
-    return [*after, ModelResponse(parts=[], workspace_ref=ref)]
-
-
-def _latest_workspace(messages: Sequence[ModelMessage]) -> WorkspaceRef | None:
-    response = next((message for message in reversed(messages) if isinstance(message, ModelResponse)), None)
-    return response.workspace_ref if response is not None else None

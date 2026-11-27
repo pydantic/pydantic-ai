@@ -8,10 +8,12 @@ from typing import TypeAlias, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._http import AsyncHTTPClient, create_async_httpx2_client
+from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.anthropic import (
     _COUNTING_STRICT_SCHEMAS,  # pyright: ignore[reportPrivateUsage]
     _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
+    AnthropicComputerToolVersion,
     AnthropicModelProfile,
     anthropic_model_profile,
 )
@@ -124,6 +126,50 @@ and Microsoft Foundry are documented as supported, but weren't reachable with ou
 """
 
 
+_COMPUTER_TOOLSET_MODEL_PREFIXES = (
+    'claude-fable-5',
+    'claude-mythos-5',
+    'claude-opus-5',
+    'claude-sonnet-5',
+    'claude-haiku-5',
+    'claude-opus-4-8',
+)
+"""The models that take Anthropic's `computer_toolset_20260801`."""
+
+
+def _computer_tool_version(model_name: str) -> AnthropicComputerToolVersion | None:
+    """The model's computer use tool from Anthropic's compatibility table, or `None` if it gets the function tool.
+
+    Claude 5.5 and later take only the toolset. Retired and retiring models (Opus 4 and 4.1, Sonnet 4 and 4.5) get the
+    function tool.
+    https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#earlier-tool-versions
+    """
+    if model_name.startswith(_COMPUTER_TOOLSET_MODEL_PREFIXES):
+        return 'computer_toolset_20260801'
+    if model_name.startswith(('claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-opus-4-5')):
+        return 'computer_20251124'
+    if model_name.startswith('claude-haiku-4-5'):
+        return 'computer_20250124'
+    return None
+
+
+def _computer_use_profile(model_name: str, profile: ModelProfile | None) -> AnthropicModelProfile:
+    """The computer use facts to merge onto `profile`, the model's profile from `anthropic_model_profile()`.
+
+    Only `AnthropicProvider` adds these, since the tool is part of Anthropic's own request format. The Bedrock Converse
+    API and OpenAI-compatible gateways that share `anthropic_model_profile()` get the `computer` function tool.
+    """
+    computer_tool_version = _computer_tool_version(model_name)
+    if computer_tool_version is None:
+        return AnthropicModelProfile()
+    # `anthropic_model_profile()` always sets `supported_native_tools`, so the empty fallback is never used.
+    supported_native_tools = (profile or {}).get('supported_native_tools', frozenset())
+    return AnthropicModelProfile(
+        supported_native_tools=supported_native_tools | {ComputerTool},
+        anthropic_computer_tool_version=computer_tool_version,
+    )
+
+
 class AnthropicProvider(Provider[AsyncAnthropicClient]):
     """Provider for Anthropic API."""
 
@@ -193,10 +239,15 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             # Verified live on the Messages API and both Bedrock transports; `AnthropicModel` narrows it per client.
             AnthropicModelProfile(anthropic_enforces_strict_schema_limits=True),
             # On-demand compaction is likewise a Messages API feature, so the Bedrock Converse API and the
-            # OpenAI-compatible gateways that share `anthropic_model_profile()` don't get it.
+            # OpenAI-compatible gateways that share `anthropic_model_profile()` don't get it. Its `instructions`
+            # replace Anthropic's summarization prompt.
             AnthropicModelProfile(
-                anthropic_supports_on_demand_compaction=model_name.startswith(_ON_DEMAND_COMPACTION_MODEL_PREFIXES)
-            ),
+                supports_compaction_on_demand=True,
+                compaction_instructions='replaces_prompt',
+            )
+            if model_name.startswith(_ON_DEMAND_COMPACTION_MODEL_PREFIXES)
+            else AnthropicModelProfile(supports_compaction_on_demand=False),
+            _computer_use_profile(model_name, profile),
             AnthropicModelProfile(
                 # Anthropic-managed caches have a 5-minute minimum TTL refreshed on use across the direct,
                 # Bedrock, and Vertex SDK paths. Paid 1-hour cache points are handled by `prompt_cache_outlook`.

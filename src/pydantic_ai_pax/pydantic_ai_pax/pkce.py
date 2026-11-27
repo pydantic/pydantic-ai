@@ -3,7 +3,7 @@
 For services that need a registered app but accept PKCE in place of a client secret, such as Slack once an
 app enables PKCE, or any MCP server without Dynamic Client Registration. Core's `OAuthFlow` supplies `state`, the
 PKCE pair, and the one-shot localhost callback. This module adds the RFC 6749 token exchange and refresh, and
-keeps the tokens in CLAI's credential store under one account, never in settings.
+keeps the tokens in Pax's credential store under one account, never in settings.
 
 A plugin describes its client once and asks for a token per run:
 
@@ -272,7 +272,9 @@ class PKCESignIn:
         save_codex_credentials(account=self.account, value=tokens.stored())
 
     def _lock(self) -> AbstractContextManager[None]:
-        return credential_lock(account=self.account, busy=f'Another CLAI is refreshing the {self.service} sign-in.')
+        return credential_lock(
+            account=self.account, busy=f'Another Pax process is refreshing the {self.service} sign-in.'
+        )
 
     def signed_in(self) -> bool:
         """Whether this client has tokens that are live or refreshable. Reads the keyring; call it off the loop."""

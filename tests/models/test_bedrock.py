@@ -3083,7 +3083,7 @@ async def test_bedrock_adaptive_thinking_keeps_tool_output_unforced(
 
     assert len(sent_requests) == 1
     sent = sent_requests[0]
-    assert sent['additionalModelRequestFields']['thinking'] == {'type': 'adaptive'}
+    assert sent['additionalModelRequestFields']['thinking'] == {'type': 'adaptive', 'display': 'summarized'}
     assert sent['toolConfig']['toolChoice'] == {'auto': {}}
     assert output == 42
 
@@ -3103,7 +3103,7 @@ async def test_bedrock_opus_5_thinking_uses_native_output(
     assert len(sent_requests) == 1
     sent = sent_requests[0]
     assert sent.get('additionalModelRequestFields', {}) == (
-        {'thinking': {'type': 'adaptive'}} if model_settings else {}
+        {'thinking': {'type': 'adaptive', 'display': 'summarized'}} if model_settings else {}
     )
     assert 'toolConfig' not in sent
     assert sent['outputConfig']['textFormat']['type'] == 'json_schema'
@@ -3143,7 +3143,7 @@ async def test_bedrock_anthropic_unified_max_effort(allow_model_requests: None, 
 
     assert result.output
     assert [sent['additionalModelRequestFields'] for sent in sent_requests] == snapshot(
-        [{'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'max'}}]
+        [{'thinking': {'type': 'adaptive', 'display': 'summarized'}, 'output_config': {'effort': 'max'}}]
     )
 
 
@@ -9207,7 +9207,12 @@ async def test_bedrock_default_output_mode_stays_put_when_thinking_toggles_per_s
     assert [tool['toolSpec']['name'] for tool in first['toolConfig']['tools']] == ['get_population', 'final_result']
     assert [
         (kwargs['toolConfig']['toolChoice'], kwargs.get('additionalModelRequestFields')) for kwargs in (first, second)
-    ] == snapshot([({'any': {}}, None), ({'auto': {}}, {'thinking': {'type': 'enabled', 'budget_tokens': 10000}})])
+    ] == snapshot(
+        [
+            ({'any': {}}, None),
+            ({'auto': {}}, {'thinking': {'type': 'enabled', 'budget_tokens': 10000, 'display': 'summarized'}}),
+        ]
+    )
 
 
 async def test_bedrock_default_output_mode_resolves_again_where_the_kept_one_is_invalid(
@@ -9509,6 +9514,43 @@ async def test_bedrock_non_flagged_model_keeps_sampling_settings(
     sent = single_request_body(vcr)
     assert sent['inferenceConfig'] == snapshot({'maxTokens': 16, 'temperature': 0.2})
     assert sent['additionalModelRequestFields'] == snapshot({'top_k': 5})
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_bedrock_claude_thinking_drops_the_sampling_settings_it_rejects(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """With thinking, Claude on Bedrock rejects `temperature` other than `1`, `top_p` below `0.95` and any `top_k`.
+
+    They're dropped silently, as on the Anthropic API, instead of failing the request with a 400.
+    """
+    settings = BedrockModelSettings(thinking=True, temperature=0.5, top_p=0.9, top_k=5)
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=settings)
+
+    result = await agent.run('What is 2+2? Answer with the number only.')
+
+    assert result.output.strip() == snapshot('4')
+    sent = single_request_body(vcr)
+    assert sent.get('inferenceConfig') == snapshot({'maxTokens': 64000})
+    assert sent['additionalModelRequestFields'] == snapshot(
+        {'thinking': {'type': 'enabled', 'budget_tokens': 10000, 'display': 'summarized'}}
+    )
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_bedrock_claude_drops_top_p_set_together_with_temperature(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """Claude Haiku 4.5 on Bedrock takes `temperature` or `top_p`, not both, so `top_p` is dropped silently."""
+    settings = BedrockModelSettings(max_tokens=16, temperature=0.2, top_p=0.3)
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=settings)
+
+    await agent.run('What is 2+2? Answer with the number only.')
+
+    sent = single_request_body(vcr)
+    assert sent['inferenceConfig'] == snapshot({'maxTokens': 16, 'temperature': 0.2})
 
 
 BEDROCK_OPENAI_CONVERSE_MODELS_WITHOUT_SAMPLING_SETTINGS = [

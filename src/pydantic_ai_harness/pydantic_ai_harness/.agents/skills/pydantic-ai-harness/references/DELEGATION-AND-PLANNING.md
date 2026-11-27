@@ -137,7 +137,9 @@ max_calls=None, on_failure=None, contain_errors=None, on_model_error=None)` sets
   order) from the run's workspace. TOML needs `name`, `description`, and `developer_instructions`;
   unknown keys, including sandbox or permission settings, skip the file with a warning. A run without
   a workspace skips it. A sequence of paths reads exactly those (and fails at run start without a workspace).
-  Pass `workspace=LocalWorkspaceBackend('/app')` to read definitions from elsewhere.
+  Pass `workspace=LocalWorkspaceBackend('/app')` to read definitions from elsewhere. A definition file below
+  `'operator'` workspace authority (`authority_of(path)`) is skipped with a warning before name collisions, so it
+  can't shadow an operator one; read operator-owned ones through `workspace=`.
 - `forward_usage=True`: children share the parent's usage, so a parent `usage_limits` bounds the tree.
   A `SubAgent.usage_limits` gives that child isolated accounting (its tokens stop aggregating).
 - `inherit_tools=False`: `True` is deprecated. Bind tools directly to explicit child agents, use
@@ -150,7 +152,9 @@ max_calls=None, on_failure=None, contain_errors=None, on_model_error=None)` sets
   callback enables `delegate_task(working_directory=...)`. Import `DelegationWorkspaceRequest` from
   `pydantic_ai_harness.sub_agents`. Validate permitted delegates and paths in the callback.
   Keep returned workspaces alive until background children finish. Parent/delegate read-only restrictions
-  still apply; supply trusted read-only tools too. Managed tasks save the resolved directory and reject
+  still apply, and the delegate's workspace gets the lowest authority the parent gives anything in or above
+  that directory: `'none'` for a directory outside the parent's working directory unless a parent
+  `path_authority` entry contains it; supply trusted read-only tools too. Managed tasks save the resolved directory and reject
   directory changes on resume. Remote and durable delegations reject this argument.
 - `include_self=False`: `True` lists the running agent as delegate `self` (fresh run with all bound
   capabilities). `max_depth=3` caps nesting, counting the top-level run.
@@ -175,15 +179,29 @@ Gotchas:
   keeps the `ModelRetry` even with `on_failure` set. If it's unset, setting `on_failure` returns that message alone,
   without the error. Other
   crashes abort the parent unless `contain_errors=True`.
+- `SubAgents(forward_deferred_calls=True)` instead passes a child's `DeferredToolRequests` to the parent run's
+  caller (outcome `failed`; the parent's `output_type` must include `DeferredToolRequests`). Show them with
+  `delegated_requests(result.output)` (IDs `'<delegate call>:<child call>'`, metadata `agent_path`), answer every
+  call, and resume with `deferred_tool_results=delegated_results(result.output, answers)`: the child continues from
+  its history. Approving the delegate call itself approves none of the child's calls: it reruns the task. The child's history waits
+  server-side in `deferred_state_store` (in memory per instance when unset; pass a shared store to resume in
+  another process). Durable
+  execution and `task_control` refuse it.
 - `SubAgent(keep_partial_output=True)` appends the child's last text response, framed as
   `<partial_output>`, to the steering message when its timeout or own usage budget stops it. The text
   has not passed output validation and can be text the child rejected; leave it off for a child whose
   guardrails keep content from its parent.
 - A locally run child inheriting `count_tokens_before_request=True` from the run's limits that
   raises `NotImplementedError` before a request is counted in its `usage` (such as a model with no
-  `count_tokens`) is started once more without it (under a new run ID when recorded as a task). A
-  `SubAgent.usage_limits` that sets the flag itself is kept and fails like a top-level run, and a
-  remote worker applies the announced limits as received.
+  `count_tokens`, or an `openai-codex:` or `openai-chatgpt:` model) is started once more without it
+  (under a new run ID when recorded as a task). Under durable execution, a delegation to `self` can
+  count through the engine, where an `openai-codex:` or `openai-chatgpt:` child's count fails as a
+  `UserError` and is not retried: on DBOS and Prefect always, on Temporal when `self` is the only
+  delegate or `dynamic_agents` or `task_control` is set
+  ([#14194](https://github.com/pydantic/pydantic-ai/issues/14194)). A `SubAgent.usage_limits` that
+  sets the flag itself is kept and fails like a top-level run, and a remote worker applies the
+  announced limits as received.
+- Each child run has its own `conversation_id`, so its spans' `gen_ai.conversation.id` differs from the parent's. When the child is instrumented and runs in the parent's process, its spans also carry `pydantic_ai.root_conversation_id`, the top-level run's `conversation_id`. To add up a chat's cost including its children, group spans by `pydantic_ai.root_conversation_id`, and use `gen_ai.conversation.id` for spans without it. A child on a remote `SubAgentWorker` doesn't get the attribute, and neither do model requests that Temporal runs as activities, so those costs still count under the child's own conversation.
 - `include_self=True` passed in `agent.run(capabilities=...)` raises `UserError`; bind it on the `Agent`.
 - Not agent-spec serializable (holds live agents). Events: `DelegationStartedEvent` (not
   `DelegationStartEvent`) and `DelegationFinishedEvent` (not `DelegationEndEvent`), whose `outcome`
@@ -435,8 +453,9 @@ Gotchas:
   deps or tools. Its usage counts toward parent limits. A failed consultation still counts toward
   `max_uses`. A parent `count_tokens_before_request=True` is kept on an advisor model that implements
   `count_tokens` and retried once without the up-front count (limits checked after the response) on any
-  pre-request `NotImplementedError`, unless a request was counted in the shared `usage` since the
-  consultation started, in which case the error propagates.
+  pre-request `NotImplementedError` (`openai-codex:` and `openai-chatgpt:` models raise one), unless a
+  request was counted in the shared `usage` since the consultation started, in which case the error
+  propagates.
 - Two `Advisor`s with the same `id` merge, a `None` option taking the other instance's value, two
   list `output_type`s combining, and any other option the later one's. With different `id`s, their
   built `advisor` tools conflict.

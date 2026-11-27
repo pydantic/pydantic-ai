@@ -101,7 +101,41 @@ async def test_unsuccessful_write_does_not_render_diff(tmp_path: Path, conflict:
     await renderer.finish()
 
     assert path.read_text() == ('external\n' if conflict else 'old\n')
-    assert output.getvalue() == '● write_file file.txt\n\ndone\n\n'
+    # A conflict fails the call; a cancelled write reports its own reason.
+    if conflict:
+        assert output.getvalue().startswith("● write_file file.txt\n  ⎿ Conflict: file 'file.txt' has changed")
+        assert output.getvalue().endswith('\n\ndone\n\n')
+        assert 'old' not in output.getvalue() and 'new' not in output.getvalue()
+    else:
+        assert output.getvalue() == '● write_file file.txt\n  ⎿ refused: not approved\n\ndone\n\n'
+
+
+async def test_a_refused_edit_is_marked(tmp_path: Path) -> None:
+    path = tmp_path / 'file.txt'
+    path.write_text('old\n')
+    edit = json.dumps({'path': 'file.txt', 'old_text': 'old', 'new_text': 'new'})
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            yield 'done'
+        else:
+            yield {0: DeltaToolCall(name='edit_file', json_args=edit)}
+
+    agent = Agent(FunctionModel(stream_function=stream), capabilities=[FileSystem()])
+
+    @agent.on_event(FileChangeRequestedEvent)
+    async def refuse(ctx: RunContext[None], event: FileChangeRequestedEvent) -> None:
+        event.cancel('Protected file.\nAsk the owner first.')
+
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None)
+    session = Session(agent, deps=None, workspace=tmp_path, on_stream_event=renderer.on_stream_event)
+    await session.prompt('edit the file')
+    await renderer.finish()
+
+    assert path.read_text() == 'old\n'
+    assert output.getvalue() == '● edit_file file.txt\n  ⎿ refused: Protected file.\n\ndone\n\n'
+    assert 'old' not in output.getvalue() and 'new' not in output.getvalue()
 
 
 async def test_write_file_shows_truncation_in_compact_mode(tmp_path: Path) -> None:

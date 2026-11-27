@@ -75,24 +75,38 @@ CODING_PLAN_HANDOVER_ERRORS = frozenset({'provider.quota', 'provider.rate-limit'
 # The GLM Coding Plan, on its own coding endpoint. OpenCode 2.2.5 reads its key from `ZHIPU_API_KEY` only.
 ZAI = Provider(
     'zai-coding-plan',
-    'zai-coding-plan/glm-5.3-flash',
+    'zai-coding-plan/glm-5.4',
     'ZHIPU_API_KEY',
     'ZAI_API_KEY',
     'the primary Coding Plan',
     'opencode-zai',
     CODING_PLAN_HANDOVER_ERRORS,
     restart_on_rate_limit=True,
+    declares_model=True,
 )
 ZAI_BACKUP = Provider(
     'zai-coding-plan',
-    'zai-coding-plan/glm-5.3-flash',
+    'zai-coding-plan/glm-5.4',
     'ZHIPU_API_KEY',
     'ZAI_BACKUP_API_KEY',
     'the backup Coding Plan',
     'opencode-zai',
     CODING_PLAN_HANDOVER_ERRORS,
     restart_on_rate_limit=True,
+    declares_model=True,
 )
+# The entry a run's config declares for a model, when its provider declares the model. OpenCode 2.2.5's bundled catalog
+# lacks GLM-5.4 and gives a declared model it lacks a 200,000-token context and a 32,000-token output limit, so this
+# entry restores the limits https://models.dev/api.json lists for `zai-coding-plan/glm-5.4`. Its settings are the ones
+# OpenCode 2.2.5 spells for the `low` variant of a Coding Plan model (`zaiChat` in packages/core/src/variant.ts), which
+# send Z.AI `reasoning_effort: "low"`. Set on the model rather than chosen as a variant, they also reach the agents
+# that title, compact and summarize the run.
+MODEL_DECLARATIONS: dict[str, dict[str, object]] = {
+    'zai-coding-plan/glm-5.4': {
+        'limit': {'context': 1_000_000, 'output': 131_072},
+        'settings': {'thinking': {'type': 'enabled', 'clear_thinking': False}, 'reasoningEffort': 'low'},
+    },
+}
 # OpenCode Zen's free models, with no key: OpenCode 2.2.5 then sends Zen the key `public`. Zen reports a spent free
 # allowance as `FreeUsageLimitError`, which OpenCode 2.2.5 types `provider.free-limit`: `toSessionError` in
 # https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/to-session-error.ts
@@ -127,6 +141,10 @@ class ChainEntry(BaseModel):
 _CHAIN = TypeAdapter(Annotated[list[ChainEntry], Field(min_length=1)])
 
 
+class AnswerRejected(ValueError):
+    """A caller's `validate` rejected the answer a run served; its message names why without repeating the answer."""
+
+
 @dataclass
 class Attempt:
     """One run of the fallback chain. A run whose process failed also records its stream's last `error` event."""
@@ -150,6 +168,8 @@ class Attempt:
     """The milliseconds OpenCode Go's `Retry-After` asked a `provider.go-limit` refusal to wait, from `retryAfterMs`."""
     finished: bool | None = None
     """Whether the failed run's stream holds a `step_finish` event; `None` while the run has not failed."""
+    rejected: bool = False
+    """Whether the caller's `validate` rejected the answer the run served."""
 
 
 def step_tokens(line: str) -> Counter[str] | None:
@@ -286,7 +306,8 @@ def read_only_config(*, agent: str, provider: Provider, steps: int | None = None
     }
     if provider.declares_model:
         # An empty entry leaves a model the catalog already has as it is.
-        config['providers'] = {provider.name: {'models': {provider.model.partition('/')[2]: {}}}}
+        declaration = MODEL_DECLARATIONS.get(provider.model, {})
+        config['providers'] = {provider.name: {'models': {provider.model.partition('/')[2]: declaration}}}
     return config
 
 
@@ -319,6 +340,7 @@ def _export_run(
         'limit_name': attempt.limit_name,
         'retry_after_ms': attempt.retry_after_ms,
         'step_finish': attempt.finished,
+        'rejected': attempt.rejected or None,
     }
     values = {
         **resource,
@@ -395,6 +417,21 @@ def _has_key(provider: Provider) -> bool:
     return provider.secret_variable is None or bool(os.environ.get(provider.secret_variable))
 
 
+def _handover(attempt: Attempt, go_restart_errors: frozenset[str]) -> str | None:
+    """Why the chain hands a run whose process failed to the next link, or `None` when the failure ends the chain."""
+    provider = attempt.provider
+    # OpenCode 2.2.5 does not retry a quota rejection. It writes `step_start`, then an `error` event whose type
+    # `toSessionError` sets, and no `step_finish`:
+    # https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/to-session-error.ts
+    if not attempt.finished and attempt.error_type in provider.handover_errors:
+        return f'{provider.model} refused the run before its first step; retrying'
+    if attempt.finished and provider.restart_on_rate_limit and attempt.error_type == 'provider.rate-limit':
+        return f'{provider.model} rate-limited the run after it took steps; restarting the run'
+    if provider.name == OPENCODE_GO.name and attempt.error_type in go_restart_errors:
+        return f'{provider.model} failed the run with {attempt.error_type}; restarting the run'
+    return None
+
+
 def run_with_fallback(
     launch: Callable[[list[str], dict[str, str], TextIO], T],
     *,
@@ -407,6 +444,8 @@ def run_with_fallback(
     trace_id: str | None = None,
     parent_id: str | None = None,
     configured_chain: str = '',
+    go_restart_errors: frozenset[str] = frozenset(),
+    validate: Callable[[T], object] = lambda result: None,
 ) -> tuple[T, Provider]:
     """Launch OpenCode on Go, then on one Z.AI Coding Plan account, then on the other, while each refuses the run.
 
@@ -414,16 +453,18 @@ def run_with_fallback(
     `CHAIN_LINKS` running its entry's model. A link whose secret is empty is left out. A value that is invalid, or
     leaves no link, warns and leaves the chain as it is. A provider hands the run to the next link only when it refused
     the run with one of its `handover_errors` before the run finished a step, or, with `restart_on_rate_limit`,
-    rate-limited it after. The next link runs it from scratch, and each link runs it at most once. The workflow's run
-    number plus `matrix_index`, the run's place in its job matrix, rotates each run of consecutive links on one model,
-    so the Coding Plan account tried first is the primary when the sum is even and the backup when it is odd. `launch`
-    runs the command in the environment it is given and writes the event stream to the stream it is given, which
-    `output` holds after each run. Each run gets a config that allows only its provider, and an environment whose only
-    provider key is that account's. A run whose process fails prints its model, OpenCode error type, status and provider
-    code, and for a `provider.go-limit` the Go usage window and its retry-after. Each run appends an `Attempt` to
-    `attempts`, so a caller can report a chain that raised. The returned result and `output` come from the run that
-    served, so a run the chain moved past shows only as its `Attempt` and its span, which count that run's own steps and
-    tokens.
+    rate-limited it after. An OpenCode Go link also hands it on after an error in `go_restart_errors`, whether or not
+    the run finished a step. Every link but the last passes the result it served to `validate`, which raises
+    `AnswerRejected` to hand the run on too; the caller checks the last link's result itself. The next link runs the
+    run from scratch, and each link runs it at most once. The workflow's run number plus `matrix_index`, the run's
+    place in its job matrix, rotates each run of consecutive links on one model, so the Coding Plan account tried first
+    is the primary when the sum is even and the backup when it is odd. `launch` runs the command in the environment it
+    is given and writes the event stream to the stream it is given, which `output` holds after each run. Each run gets a
+    config that allows only its provider, and an environment whose only provider key is that account's. A run whose
+    process fails prints its model, OpenCode error type, status and provider code, and for a `provider.go-limit` the Go
+    usage window and its retry-after. Each run appends an `Attempt` to `attempts`, so a caller can report a chain that
+    raised. The returned result and `output` come from the run that served, so a run the chain moved past shows only as
+    its `Attempt` and its span, which count that run's own steps and tokens.
 
     With `LOGFIRE_TOKEN` set, OpenCode exports its spans and logs to Logfire over OTLP/HTTP. Their resource attributes
     name the repository, the workflow run, its attempt and job, then `attributes`, then the run's plan and its place in
@@ -435,7 +476,7 @@ def run_with_fallback(
     attempts = [] if attempts is None else attempts
     trace_id = trace_id or secrets.token_hex(16)
 
-    def run_on(provider: Provider) -> tuple[T, Provider]:
+    def run_on(provider: Provider, check: Callable[[T], object]) -> tuple[T, Provider]:
         attempt = Attempt(provider)
         attempts.append(attempt)
         resource = (
@@ -496,13 +537,17 @@ def run_with_fallback(
                 ]
                 try:
                     result = launch(command, env, stream)
-                    served = True
                 finally:
                     # The next run overwrites the stream, and a failed run's usage is recorded nowhere else.
                     stream.flush()
                     attempt.steps, attempt.tokens = _stream_usage(output)
+                check(result)
+                served = True
         except subprocess.CalledProcessError:
             _report_failure(attempt, output)
+            raise
+        except AnswerRejected:
+            attempt.rejected = True
             raise
         finally:
             attempt.ended = time.time_ns()
@@ -544,25 +589,14 @@ def run_with_fallback(
         chain += pool[start:] + pool[:start]
     for provider, successor in zip(chain, chain[1:]):
         try:
-            return run_on(provider)
+            return run_on(provider, validate)
+        except AnswerRejected as rejection:
+            print(f'{rejection}, from {provider.model}; restarting the run on {successor.model} on {successor.plan}.')
         except subprocess.CalledProcessError:
-            attempt = attempts[-1]
-            # OpenCode 2.2.5 does not retry a quota rejection. It writes `step_start`, then an `error` event whose
-            # type `toSessionError` sets, and no `step_finish`:
-            # https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/to-session-error.ts
-            if not attempt.finished and attempt.error_type in provider.handover_errors:
-                print(
-                    f'{provider.model} refused the run before its first step; '
-                    f'retrying on {successor.model} on {successor.plan}.'
-                )
-            elif attempt.finished and provider.restart_on_rate_limit and attempt.error_type == 'provider.rate-limit':
-                print(
-                    f'{provider.model} rate-limited the run after it took steps; '
-                    f'restarting the run on {successor.model} on {successor.plan}.'
-                )
-            else:
+            if (handover := _handover(attempts[-1], go_restart_errors)) is None:
                 raise
-    return run_on(chain[-1])
+            print(f'{handover} on {successor.model} on {successor.plan}.')
+    return run_on(chain[-1], lambda result: None)
 
 
 def run_read_only(

@@ -89,7 +89,12 @@ export function PluginsPanel({
         <aside className="plugin-list">
           <label className="search">
             <SearchIcon size={14} />
-            <input value={query} placeholder="Search plugins" onChange={(event) => setQuery(event.target.value)} />
+            <input
+              value={query}
+              placeholder="Search plugins"
+              aria-label="Search plugins"
+              onChange={(event) => setQuery(event.target.value)}
+            />
           </label>
           <nav>
             {rows === null && <div className="empty-list">Loading plugins…</div>}
@@ -244,7 +249,7 @@ function Detail({
   )
 }
 
-/** Where the plugin's own menu, for sign-ins, keys, and the like, opens: the terminal, which `clai2 --web` lacks. */
+/** Where the plugin's own menu, for sign-ins, keys, and the like, opens: the terminal, which `pax --web` lacks. */
 function MenuNote({ row }: { row: PluginRow }) {
   return (
     <p className="plugin-note">
@@ -254,7 +259,7 @@ function MenuNote({ row }: { row: PluginRow }) {
         </>
       ) : (
         <>
-          Sign-ins, keys, and other steps live in its own menu, which needs CLAI running in a terminal: start CLAI
+          Sign-ins, keys, and other steps live in its own menu, which needs Pax running in a terminal: start Pax
           there and run <code>/plugins configure {row.name}</code>, or open this page with <code>/web</code>.
         </>
       )}

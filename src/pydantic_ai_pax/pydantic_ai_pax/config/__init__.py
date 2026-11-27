@@ -26,6 +26,7 @@ STORED_MAIN_CHANNEL = 'bleeding'
 """`main`'s former name, still what is saved for it: older builds accept only this name."""
 ToolCallDisplay = Literal['detailed', 'grouped']
 TOOL_CALL_DISPLAYS: tuple[ToolCallDisplay, ...] = get_args(ToolCallDisplay)
+TrustLevel = Literal['trusted', 'untrusted']
 FooterField = Literal[
     'model',
     'workspace',
@@ -117,7 +118,7 @@ class Settings(BaseModel):
     instructions: str = Field(
         default='',
         description=(
-            "Your own instructions, sent after CLAI's built-in, AGENTS.md, and plugin instructions. "
+            "Your own instructions, sent after Pax's built-in, AGENTS.md, and plugin instructions. "
             '/system_prompt edits them.'
         ),
     )
@@ -143,7 +144,8 @@ class Settings(BaseModel):
         default=None, description='Naming model override; null uses the current model.'
     )
     theme: str = Field(
-        default='default', description='Keep CLAI colours, or select a bundled Termflow palette with /theme.'
+        default='default',
+        description='Keep Pax colours, readable on light and dark terminals, or select a bundled Termflow palette with /theme.',
     )
     spinner: str = Field(
         default='working',
@@ -202,7 +204,7 @@ class Settings(BaseModel):
     )
     update_channel: UpdateChannel = Field(
         default='stable',
-        description='Where /update looks: stable PyPI releases, or main for the newest CLAI commit on main.',
+        description='Where /update looks: stable PyPI releases, or main for the newest Pax commit on main.',
     )
     worktree_remove_commands: dict[str, list[str]] = Field(
         default={},

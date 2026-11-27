@@ -1,4 +1,4 @@
-"""`/sandbox PROVIDER`: run a new conversation in a cloud sandbox holding a copy of this checkout.
+"""`/sandbox PROVIDER`: run a new conversation in a sandbox, local or in the cloud, holding a copy of this checkout.
 
 The sandbox gets the branch, its unpushed commits, and the uncommitted files (`seed`). Its `git` and `gh`
 act as the user's `gh` login. Where the provider's proxy can add the token to requests for GitHub, the token
@@ -8,20 +8,32 @@ The conversation's history records its sandbox: `/sandbox` saves an exchange who
 (`ModelResponse.workspace_ref`), as every later response does. Each run is handed that reference by Pydantic
 AI, so a forked, resumed, or background conversation opens its own sandbox, whichever one is on screen.
 A sandbox stays until `/sandbox delete`, which keeps the history: a copy of the conversation may still use it.
+
+`/computer-use` lets the model see and control the sandbox's desktop. The history records whether it is on
+(`computer_use_on`). `/computer-use` before `/sandbox` makes
+the sandbox with a desktop. In a running sandbox it adds one where the provider can; where it cannot, it says how
+to start a sandbox with one. The status row's `watch live ↗` opens the provider's own link to watch the desktop,
+where it has one (`SupportsDesktopUrl`).
 """
 
+import asyncio
+import logging
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from time import monotonic
 
 import anyio
 import anyio.lowlevel
 from anyio import to_thread
+from rich.console import RenderableType
 
-from pydantic_ai import RunContext
+from pydantic_ai import AgentStreamEvent, RunContext
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import (
@@ -32,19 +44,40 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WrapperWorkspace,
 )
+from pydantic_ai_pax.builtin_plugins.sandbox.computer_use import (
+    COMPUTER_USE,
+    DesktopComputerUse,
+    computer_use_on,
+    computer_use_state,
+    render_computer_event,
+)
 from pydantic_ai_pax.builtin_plugins.sandbox.providers import PROVIDERS, GitHubCredential, SandboxProvider
-from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, give_github_login
+from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import (
+    SANDBOX_ENV,
+    SupportsDesktopUrl,
+    give_github_login,
+    ref_provider,
+)
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend, Snapshot, seed, snapshot
 from pydantic_ai_pax.commands import Command
+from pydantic_ai_pax.config import PERMISSIONS_SETTING
 from pydantic_ai_pax.config.api_keys import load_keys
 from pydantic_ai_pax.gh_cli import gh_token, gh_user
 from pydantic_ai_pax.models.profiles import KEY_NAME
-from pydantic_ai_pax.plugins import NoSettings, Plugin, PluginHost, SessionEnd
+from pydantic_ai_pax.plugins import (
+    ConversationChanged,
+    NoSettings,
+    Plugin,
+    PluginHost,
+    SessionEnd,
+    TurnStart,
+)
 from pydantic_ai_pax.plugins.keys import choose_key
 from pydantic_ai_pax.runtime.imported_history import imported_context
 from pydantic_ai_pax.runtime.session import ConversationWorkspace, ShellLineWorkspace
 from pydantic_ai_pax.ui.menus.dialogs import RUNNERS, TerminalDialogs
-from pydantic_ai_pax.ui.rendering.status import StatusSegment
+from pydantic_ai_pax.ui.rendering import theme
+from pydantic_ai_pax.ui.rendering.status import StatusLink, StatusSegment
 from pydantic_ai_pax.ui.rendering.tool_output import terminal_text
 
 __all__ = ('SandboxPlugin',)
@@ -57,7 +90,18 @@ def history_sandbox(messages: Sequence[ModelMessage]) -> WorkspaceRef | None:
 
 
 def _owned(ref: WorkspaceRef | None) -> WorkspaceRef | None:
-    return ref if ref is not None and ref.provider in PROVIDERS else None
+    return ref if ref is not None and _owner(ref) is not None else None
+
+
+def _owner(ref: WorkspaceRef) -> SandboxProvider | None:
+    """The provider whose sandbox `ref` names; none for a `local` ref, this machine's own folder."""
+    return next((provider for name, provider in PROVIDERS.items() if ref_provider(name) == ref.provider), None)
+
+
+logger = logging.getLogger(__name__)
+
+MINT_AHEAD = 10 * 60
+"""How long before an expiring `watch live` link stops opening a new one is minted, so a click never meets a 401."""
 
 
 @dataclass(kw_only=True)
@@ -68,8 +112,24 @@ class _Sandbox:
     ref: WorkspaceRef
     env: dict[str, str] = field(default_factory=dict[str, str], repr=False)
     """What `request_env` gave while this session holds the sandbox, added to every command; kept out of `repr`."""
+    desktop: bool = False
+    """Whether `open` attaches the sandbox's desktop too, as `ComputerUse` needs."""
     backend: SandboxBackend | None = None
     deleted: bool = False
+    watch_url: str | None = None
+    """The provider's link to watch the desktop, which the status row shows; minted outside painting, never by it."""
+    watch_expires: float | None = None
+    """When `watch_url` stops opening, on the `monotonic` clock; `None` for a link that does not expire."""
+    _detached: list[SandboxBackend] = field(default_factory=list[SandboxBackend], repr=False)
+    """Backends `add_desktop` replaced, which `close` closes."""
+
+    def add_desktop(self) -> None:
+        """Attach the desktop from the next `open` on, also when a history without one opened the sandbox first."""
+        if not self.desktop:
+            self.desktop = True
+            if self.backend is not None:
+                self._detached.append(self.backend)
+                self.backend = None
 
     def open(self) -> SandboxBackend:
         """The workspace, attached on first use; `UserError` when it cannot be, so the run fails closed."""
@@ -78,15 +138,16 @@ class _Sandbox:
                 f"This conversation's {self.provider.title} sandbox was deleted. Run /new to start another."
             )
         if self.backend is None:
-            if (missing := self.provider.missing()) is not None:
+            if (missing := self.provider.missing(desktop=self.desktop)) is not None:
                 raise UserError(f'This conversation runs in a {self.provider.title} sandbox. {missing}')
-            self.backend = self.provider.reopen(self.ref)
+            self.backend = self.provider.reopen(self.ref, desktop=self.desktop)
         return self.backend
 
     async def close(self) -> None:
         """Close what the provider opened for the workspace; the next `open` reopens it."""
-        if (backend := self.backend) is not None:
-            self.backend = None
+        backends = [*self._detached, *([self.backend] if self.backend is not None else [])]
+        self.backend, self._detached = None, []
+        for backend in backends:
             await self.provider.close(backend)
 
 
@@ -105,7 +166,15 @@ class _ConversationSandbox(ConversationWorkspace[None]):
     def _instructions(self, ctx: RunContext[None]) -> str:
         if (ref := _owned(ctx.workspace.ref)) is None:
             return ''
-        provider = PROVIDERS[ref.provider]
+        provider = self.plugin.sandbox(ref, ctx.messages).provider
+        desktop = ''
+        if computer_use_on(ctx.messages):
+            desktop = (
+                ' The sandbox also has a desktop, which you see and control with the `computer` tool.'
+                if self.plugin.full_access()
+                else ' The sandbox also has a desktop, but you get the `computer` tool for it only once the user '
+                'runs /permissions full.'
+            )
         return (
             f'Your shell and file tools run in a {provider.title} sandbox. {provider.working_dir} '
             "is a copy of the user's checkout, made when this conversation started; the user sees changes there "
@@ -118,6 +187,7 @@ class _ConversationSandbox(ConversationWorkspace[None]):
                 'which the proxy replaces. '
             )
             + 'Otherwise the copy has no GitHub access and no origin remote. Never run `gh auth login`.'
+            + desktop
         )
 
     def get_toolset(self) -> FunctionToolset[None] | None:
@@ -142,7 +212,7 @@ class _ConversationSandbox(ConversationWorkspace[None]):
         if re.fullmatch(KEY_NAME, name) is None:
             return f'{name!r} is not an environment variable name: use capitals, digits, and underscores.'
         if name in _SET_BY_CLAI:
-            return f'CLAI sets {name} in the sandbox itself, so it cannot be replaced.'
+            return f'Pax sets {name} in the sandbox itself, so it cannot be replaced.'
         ref = _owned(ctx.workspace.ref)
         assert ref is not None  # `_in_sandbox` offers the tool only there.
         async with self.plugin.host.full_screen():
@@ -158,38 +228,61 @@ class _ConversationSandbox(ConversationWorkspace[None]):
         saved = (await to_thread.run_sync(load_keys)).get(key.name)
         if saved is None:  # Deleted in `/keys` since the picker showed it.
             return f'The user did not give {name}.'
-        self.plugin.sandbox(ref).env[name] = saved.get_secret_value()
+        self.plugin.sandbox(ref, ctx.messages).env[name] = saved.get_secret_value()
         return (
-            f'{name} is set for every command started from now on, until CLAI restarts; ask again if a command '
+            f'{name} is set for every command started from now on, until Pax restarts; ask again if a command '
             'then finds it missing. Restart a server started before it.'
         )
 
     def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         conversation = self.plugin.host.conversation
+        messages = ctx.messages
         if ref is None and ctx.conversation_id == conversation.conversation_id:
             # A run of the conversation on screen without its history, such as a Monty cell or a task prompt.
-            ref = history_sandbox(conversation.messages)
-        return None if (ref := _owned(ref)) is None else self._workspace(ref)
+            messages = conversation.messages
+            ref = history_sandbox(messages)
+        return None if (ref := _owned(ref)) is None else self._workspace(ref, messages)
+
+    async def after_model_request(
+        self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        """Carry `COMPUTER_USE` to each new response, so the latest one always says whether it is on."""
+        del request_context
+        if _owned(ctx.workspace.ref) is None or (state := computer_use_state(ctx.messages)) is None:
+            return response
+        return replace(response, metadata={**(response.metadata or {}), COMPUTER_USE: state})
 
     def shell_line_workspace(self, messages: Sequence[ModelMessage]) -> ShellLineWorkspace | None:
         if (ref := history_sandbox(messages)) is None:
             return None
-        return ShellLineWorkspace(workspace=self._workspace(ref), name=f'the {PROVIDERS[ref.provider].title} sandbox')
+        return ShellLineWorkspace(
+            workspace=self._workspace(ref, messages),
+            name=f'the {self.plugin.sandbox(ref, messages).provider.title} sandbox',
+        )
 
-    def _workspace(self, ref: WorkspaceRef) -> WorkspaceBackend:
+    def _workspace(self, ref: WorkspaceRef, messages: Sequence[ModelMessage]) -> WorkspaceBackend:
         """The sandbox `ref` names, with the variables `request_env` gave it; agent runs and `!` lines both use it."""
-        sandbox = self.plugin.sandbox(ref)
+        sandbox = self.plugin.sandbox(ref, messages)
         # The provider's backend stays unwrapped on `_Sandbox`, as `provider.close` keys its clients by it.
-        return _EnvWorkspace(Workspace(sandbox.open()), env=sandbox.env)
+        return _EnvWorkspace(Workspace(sandbox.open()), env=sandbox.env, ref=sandbox.ref)
 
 
 class _EnvWorkspace(WrapperWorkspace):
-    """Adds the variables `request_env` gave the sandbox to every command, read as each one starts."""
+    """Adds the variables `request_env` gave the sandbox to every command, read as each one starts.
 
-    def __init__(self, wrapped: Workspace, *, env: Mapping[str, str]) -> None:
+    It reports the sandbox's ref as `/sandbox` recorded it, which responses carry, so `/sandbox local`'s VMs stay
+    apart from the harness's own `smol` and `boxlite` ones.
+    """
+
+    def __init__(self, wrapped: Workspace, *, env: Mapping[str, str], ref: WorkspaceRef) -> None:
         super().__init__(wrapped)
         self._env = env
         """The sandbox's own `env`, not a copy, so a grant mid-run reaches the run's later commands."""
+        self._ref = ref
+
+    @property
+    def ref(self) -> WorkspaceRef:
+        return self._ref
 
     async def run(
         self,
@@ -205,46 +298,140 @@ class _EnvWorkspace(WrapperWorkspace):
 
 
 class SandboxPlugin(Plugin):
-    """`/sandbox PROVIDER` moves a new conversation into a cloud sandbox; `/sandbox` says where it runs."""
+    """`/sandbox PROVIDER` moves a new conversation into a sandbox; `/sandbox` says where it runs."""
 
     def __init__(self, host: PluginHost[None], settings: NoSettings) -> None:
         super().__init__(host, settings)
         self._sandboxes: dict[WorkspaceRef, _Sandbox] = {}
         """Each sandbox this session made or opened."""
+        self._armed_for: str | None = None
+        """The conversation whose next `/sandbox PROVIDER` gets a desktop, as `/computer-use` ran before it."""
+        self._minting: dict[WorkspaceRef, asyncio.Task[None]] = {}
+        """Each sandbox's background mint, so neither a resume nor a turn waits for its desktop to boot."""
 
-    def get_capabilities(self) -> Sequence[_ConversationSandbox]:
-        return (_ConversationSandbox(self),)
+    def get_capabilities(self) -> Sequence[AbstractCapability[None]]:
+        return (
+            _ConversationSandbox(self),
+            DesktopComputerUse(full_access=self.full_access),
+        )
+
+    def full_access(self) -> bool:
+        """Whether `/permissions` is `full`, which the `computer` tool needs."""
+        return self.host.setting(PERMISSIONS_SETTING) == 'full'
+
+    def _needs_full(self) -> str:
+        return '' if self.full_access() else ' The model gets the computer tool only under /permissions full.'
 
     def get_commands(self) -> Sequence[Command]:
         return (
             Command(
                 name='sandbox',
-                description=f'Run a new conversation in a cloud sandbox ({", ".join(PROVIDERS)}), or show where it runs',
+                description=(
+                    f'Run a new conversation in a sandbox ({", ".join(PROVIDERS)}; local ones run a VM on this '
+                    'machine), or show where it runs'
+                ),
                 handler=self.command,
                 complete=self.complete,
+            ),
+            Command(
+                name='computer-use',
+                description="Let the model see and control the sandbox's desktop",
+                handler=self.computer_use_command,
+                complete=lambda args: ('on', 'off') if len(args) <= 1 else (),
             ),
         )
 
     def get_status_segments(self) -> Sequence[StatusSegment]:
-        return (self._segment,)
+        return (self._segment, self._watch_segment)
 
     def _segment(self) -> str:
         sandbox = self.current()
-        return '' if sandbox is None else f'{sandbox.provider.name} sandbox'
+        if sandbox is None:
+            return 'computer-use' if self._armed() else ''
+        computer_use = self._on() and not self._watch_segment()
+        return f'{sandbox.provider.name} sandbox{" (computer-use)" if computer_use else ""}'
 
-    def sandbox(self, ref: WorkspaceRef) -> _Sandbox:
-        """The sandbox `ref` names, which a `/sandbox` provider owns."""
+    def _watch_segment(self) -> StatusLink | str:
+        """`watch live ↗` while the desktop is on; it runs every frame, so it only reads the link minted earlier."""
+        sandbox = self.current()
+        if sandbox is None or sandbox.deleted or sandbox.watch_url is None or not self._on():
+            return ''
+        if sandbox.watch_expires is not None and monotonic() >= sandbox.watch_expires:
+            return ''
+        return StatusLink(text='watch live', url=sandbox.watch_url)
+
+    async def _mint_watch_link(self, sandbox: _Sandbox) -> None:
+        """Get the link `watch live` opens when the conversation shown has the desktop on and none is fresh."""
+        provider = sandbox.provider
+        if sandbox.deleted or not self._on() or not isinstance(provider, SupportsDesktopUrl):
+            return
+        if not self.full_access():
+            # Getting the link starts the desktop, which only `/permissions full` lets the model use.
+            return
+        expires = sandbox.watch_expires
+        if sandbox.watch_url is not None and (expires is None or monotonic() < expires - MINT_AHEAD):
+            return
+        seconds, minted = provider.desktop_link_seconds, monotonic()
+        try:
+            url = await provider.desktop_url(sandbox.open())
+        except Exception as exc:  # noqa: BLE001 -- the link is extra; the command or turn goes on without it.
+            # A link not yet expired keeps showing until it does.
+            logger.warning('Could not get the link to watch the %s desktop: %s', provider.title, exc)
+            return
+        sandbox.watch_url, sandbox.watch_expires = url, None if seconds is None else minted + seconds
+
+    def _mint_in_background(self, *, reached_only: bool = True) -> None:
+        """Mint without holding up the prompt or turn; the row repaints each second, so the link shows once it arrives."""
+        sandbox = self.current()
+        # Only for a sandbox this session already reached, unless a turn is about to reach it: reaching one starts
+        # it if it is stopped, which a conversation opened only to read must not do.
+        if sandbox is None or (reached_only and sandbox.backend is None):
+            return
+        # One mint per sandbox: another conversation's still running must not stop this one's.
+        running = self._minting.get(sandbox.ref)
+        if running is None or running.done():
+            self._minting[sandbox.ref] = asyncio.create_task(self._mint_watch_link(sandbox), name='pax-watch-live')
+
+    async def on_conversation_changed(self, event: ConversationChanged) -> None:
+        del event
+        self._mint_in_background()
+
+    async def on_turn_start(self, event: TurnStart) -> None:
+        del event
+        self._mint_in_background(reached_only=False)
+
+    def render(self, event: AgentStreamEvent) -> RenderableType | None:
+        return render_computer_event(event)
+
+    def sandbox(self, ref: WorkspaceRef, messages: Sequence[ModelMessage] = ()) -> _Sandbox:
+        """The sandbox `ref` names, which a `/sandbox` provider owns; `messages`, a history naming it, says if it has a desktop."""
         if (sandbox := self._sandboxes.get(ref)) is None:
-            sandbox = self._sandboxes[ref] = _Sandbox(provider=PROVIDERS[ref.provider], ref=ref)
+            provider = _owner(ref)
+            assert provider is not None
+            sandbox = self._sandboxes[ref] = _Sandbox(provider=provider, ref=ref)
+        if computer_use_state(messages) is not None:
+            sandbox.add_desktop()
         return sandbox
 
     def current(self) -> _Sandbox | None:
         """The sandbox the conversation on screen runs in; `None` when it runs on this machine."""
-        ref = history_sandbox(self.host.conversation.messages)
-        return None if ref is None else self.sandbox(ref)
+        messages = self.host.conversation.messages
+        ref = history_sandbox(messages)
+        return None if ref is None else self.sandbox(ref, messages)
+
+    def _on(self) -> bool:
+        """Whether computer use is on in the conversation on screen."""
+        return computer_use_on(self.host.conversation.messages)
+
+    def _armed(self) -> bool:
+        return self._armed_for == self.host.conversation.conversation_id
 
     def complete(self, args: list[str]) -> Iterable[str]:
-        return (*PROVIDERS, 'delete') if len(args) <= 1 else ()
+        words = [name.split() for name in PROVIDERS]
+        if len(args) <= 1:
+            return (*dict.fromkeys(first for first, *_ in words), 'delete')
+        # The second word of a provider such as `local smol`.
+        return [second for first, *rest in words for second in rest if first == args[0]] if len(args) == 2 else ()
 
     async def command(self, args: list[str]) -> str:
         match args:
@@ -252,22 +439,83 @@ class SandboxPlugin(Plugin):
                 return self._where()
             case ['delete']:
                 return await self._delete()
-            case [name] if name in PROVIDERS:
+            case ['local']:
+                return _local_choice(desktop=self._armed())
+            case [*words] if (name := ' '.join(words)) in PROVIDERS:
                 return await self._start(PROVIDERS[name])
             case _:
                 raise ValueError(f'Usage: /sandbox [{" | ".join(PROVIDERS)} | delete]')
+
+    async def computer_use_command(self, args: list[str]) -> str:
+        match args:
+            case []:
+                on = self._armed() if self.current() is None else self._on()
+                return await self._computer_use(on=not on)
+            case ['on']:
+                return await self._computer_use(on=True)
+            case ['off']:
+                return await self._computer_use(on=False)
+            case _:
+                raise ValueError('Usage: /computer-use [on | off]')
 
     def _where(self) -> str:
         sandbox = self.current()
         if sandbox is None:
             offer = ' or '.join(f'/sandbox {name}' for name in PROVIDERS)
-            return f'This conversation runs on this machine. {offer} moves a new conversation into a cloud sandbox.'
+            return f'This conversation runs on this machine. {offer} moves a new conversation into a sandbox.'
         if sandbox.deleted:
             return f'This conversation ran in {sandbox.provider.title} sandbox {sandbox.ref.id}, now deleted. Run /new.'
+        computer_use = ' with computer use on' if self._on() else ''
         return (
-            f'This conversation runs in {sandbox.provider.title} sandbox {sandbox.ref.id}, '
+            f'This conversation runs in {sandbox.provider.title} sandbox {sandbox.ref.id}{computer_use}, '
             f'in {sandbox.provider.working_dir}. /sandbox delete deletes it.'
         )
+
+    async def _computer_use(self, *, on: bool) -> str:
+        sandbox = self.current()
+        if sandbox is None:
+            if on and self.host.conversation.messages:
+                # `/sandbox PROVIDER` refuses a conversation that has run here, so arming it would promise nothing.
+                raise ValueError(
+                    'This conversation has already run on this machine. Run /new, then /computer-use and /sandbox PROVIDER.'
+                )
+            self._armed_for = self.host.conversation.conversation_id if on else None
+            if on:
+                return 'Computer use is on: /sandbox PROVIDER now makes a sandbox with a desktop.' + self._needs_full()
+            return 'Computer use is off.'
+        if sandbox.deleted:
+            raise ValueError(f"This conversation's {sandbox.provider.title} sandbox was deleted. Run /new.")
+        if on == self._on():
+            return f'Computer use is already {"on" if on else "off"}.'
+        if not on:
+            await self._record_computer_use(sandbox, on=False)
+            return f'Computer use is off. {sandbox.provider.title} sandbox {sandbox.ref.id} keeps running.'
+        if (missing := sandbox.provider.missing(desktop=True)) is not None:
+            raise ValueError(missing)
+        if sandbox.provider.desktop_at_create and computer_use_state(self.host.conversation.messages) is None:
+            # Replacing the sandbox would lose any work a fork or copy of the conversation did in it.
+            raise ValueError(
+                f'{sandbox.provider.title} gives a desktop only to a new sandbox. '
+                f'Run /sandbox delete, /new, /computer-use, then /sandbox {sandbox.provider.name}.'
+            )
+        sandbox.add_desktop()
+        await self._record_computer_use(sandbox, on=True)
+        self._mint_in_background(reached_only=False)
+        return 'Computer use is on: the model can see and control the desktop.' + self._needs_full()
+
+    async def _record_computer_use(self, sandbox: _Sandbox, *, on: bool) -> None:
+        """Save `/computer-use on|off` as an exchange, as `/sandbox` saves its own."""
+        state = 'on' if on else 'off'
+        request = imported_context(
+            f'The user ran /computer-use {state}.', source='clai', kind=f'computer-use-{state}', at=datetime.now(UTC)
+        )
+        response = ModelResponse(parts=[], workspace_ref=sandbox.ref, metadata={COMPUTER_USE: on})
+        await self.host.conversation.commit_messages(
+            [*self.host.conversation.messages, ModelRequest(parts=[request]), response]
+        )
+
+    def _progress(self, text: str) -> None:
+        self.host.console.print(text, style=theme.color(theme.MUTED), markup=False)
 
     async def _start(self, provider: SandboxProvider) -> str:
         current = self.current()
@@ -283,25 +531,28 @@ class SandboxPlugin(Plugin):
                 'This conversation has already run on this machine, and its history refers to files here. '
                 f'Run /new, then /sandbox {provider.name}, to start one in {provider.title}.'
             )
-        if (missing := provider.missing()) is not None:
+        desktop = self._armed()
+        if (missing := provider.missing(desktop=desktop)) is not None:
             raise ValueError(missing)
         github = await to_thread.run_sync(_github)
         checkout = await to_thread.run_sync(snapshot, self.host.workspace)
-        ref, backend = await _create(provider, github)
+        # A command runs with the editor and status row put away, so these lines are all the user sees meanwhile.
+        self._progress(f'Starting the sandbox in {provider.title}...')
+        ref, backend = await _create(provider, github, desktop=desktop)
         try:
-            # Saved before seeding, which can take minutes, so a CLAI that dies meanwhile leaves a conversation
-            # naming the sandbox, which `/sandbox delete` can delete. The request is CLAI's, not a prompt the user
+            # Saved before seeding, which can take minutes, so a Pax that dies meanwhile leaves a conversation
+            # naming the sandbox, which `/sandbox delete` can delete. The request is Pax's, not a prompt the user
             # typed, so `/rewind` cannot cut the history back to before it. The response only names the sandbox:
             # it is empty, so providers send nothing for it, and the run's instructions say where the tools run.
             request = imported_context(
                 f'The user ran /sandbox {provider.name}.', source='clai', kind='sandbox', at=datetime.now(UTC)
             )
-            await conversation.commit_messages(
-                [ModelRequest(parts=[request]), ModelResponse(parts=[], workspace_ref=ref)]
-            )
+            response = ModelResponse(parts=[], workspace_ref=ref, metadata={COMPUTER_USE: True} if desktop else None)
+            await conversation.commit_messages([ModelRequest(parts=[request]), response])
             if github is not None and provider.token_in_sandbox:
                 # After the commit, so a sandbox holding the token is named for `/sandbox delete` even if this fails.
                 await give_github_login(backend, github)
+            self._progress('Copying your checkout into it...')
             # Without a login the sandbox cannot clone from GitHub, so the whole history goes over in the bundle.
             await seed(backend, checkout if github is not None else replace(checkout, clone_url=None))
         except BaseException:
@@ -313,8 +564,10 @@ class SandboxPlugin(Plugin):
                 finally:
                     await provider.close(backend)
             raise
-        self._sandboxes[ref] = _Sandbox(provider=provider, ref=ref, backend=backend)
-        return _started(provider, ref, checkout, github=github)
+        self._armed_for = None
+        self._sandboxes[ref] = _Sandbox(provider=provider, ref=ref, desktop=desktop, backend=backend)
+        self._mint_in_background()
+        return _started(provider, ref, checkout, github=github, desktop=desktop, needs_full=self._needs_full())
 
     async def _delete(self) -> str:
         sandbox = self.current()
@@ -326,6 +579,10 @@ class SandboxPlugin(Plugin):
         return f'Deleted {sandbox.provider.title} sandbox {sandbox.ref.id}. Run /new to start another conversation.'
 
     async def on_session_end(self, event: SessionEnd) -> None:
+        if self._minting:
+            for task in self._minting.values():
+                task.cancel()
+            await asyncio.wait(self._minting.values())
         # Only closed: a sandbox is deleted only when the user says so, as its conversation can be resumed.
         for sandbox in list(self._sandboxes.values()):
             with anyio.CancelScope(shield=True):
@@ -333,7 +590,7 @@ class SandboxPlugin(Plugin):
 
 
 _SET_BY_CLAI = frozenset({'GH_TOKEN', *SANDBOX_ENV})
-"""What `request_env` refuses: `GH_TOKEN` is CLAI's GitHub login (a proxy's stand-in, or unset so the saved token is used)."""
+"""What `request_env` refuses: `GH_TOKEN` is Pax's GitHub login (a proxy's stand-in, or unset so the saved token is used)."""
 
 
 async def _in_sandbox(ctx: RunContext[None], tool: ToolDefinition) -> ToolDefinition | None:
@@ -341,7 +598,9 @@ async def _in_sandbox(ctx: RunContext[None], tool: ToolDefinition) -> ToolDefini
     return tool if _owned(ctx.workspace.ref) is not None else None
 
 
-async def _create(provider: SandboxProvider, github: GitHubCredential | None) -> tuple[WorkspaceRef, SandboxBackend]:
+async def _create(
+    provider: SandboxProvider, github: GitHubCredential | None, *, desktop: bool
+) -> tuple[WorkspaceRef, SandboxBackend]:
     """`provider.create`, seen through even when `/sandbox` is cancelled meanwhile, so the sandbox is deleted, not lost.
 
     A provider may go on creating after its caller is cancelled, as E2B's backend does, so the call is shielded and
@@ -349,7 +608,7 @@ async def _create(provider: SandboxProvider, github: GitHubCredential | None) ->
     """
     created = None
     with anyio.CancelScope(shield=True):
-        created = await provider.create(github=github)
+        created = await provider.create(github=github, desktop=desktop)
     assert created is not None  # A shielded scope is never cancelled, so the call above finished.
     ref, backend = created
     try:
@@ -379,16 +638,37 @@ def _github() -> GitHubCredential | None:
     return None if token is None or login is None else GitHubCredential(login=login, token=token)
 
 
+def _local_choice(*, desktop: bool) -> str:
+    """What `/sandbox local` says: which engine to run the VM with, and what each still needs here."""
+    local = [provider for name, provider in PROVIDERS.items() if name.startswith('local ')]
+    offer = ' or '.join(f'/sandbox {provider.name} ({provider.title})' for provider in local)
+    lines = [f'/sandbox local runs a new conversation in a VM on this machine. Pick its engine: {offer}.']
+    lines += [
+        f'{provider.title}: {missing}'
+        for provider in local
+        if (missing := provider.missing(desktop=desktop)) is not None
+    ]
+    return '\n'.join(lines)
+
+
 def _started(
-    provider: SandboxProvider, ref: WorkspaceRef, checkout: Snapshot, *, github: GitHubCredential | None
+    provider: SandboxProvider,
+    ref: WorkspaceRef,
+    checkout: Snapshot,
+    *,
+    github: GitHubCredential | None,
+    desktop: bool,
+    needs_full: str,
 ) -> str:
-    """What `/sandbox PROVIDER` says once the sandbox holds the checkout."""
+    """What `/sandbox PROVIDER` says once the sandbox holds the checkout; `needs_full` follows the desktop line."""
     if checkout.head is None and checkout.work is None:
         holds = 'an empty folder: this folder is not in a Git repository with files'
     else:
         at = f'{checkout.branch} at {checkout.head[:7]}' if checkout.branch and checkout.head else 'this checkout'
         holds = f'{at}{", with your uncommitted changes" if checkout.changed else ""}'
     lines = [f'This conversation now runs in {provider.title} sandbox {ref.id}. {provider.working_dir} holds {holds}.']
+    if desktop:
+        lines.append('Computer use is on: the model can see and control its desktop.' + needs_full)
     if github is None:
         lines.append(
             'gh has no GitHub login here, so the sandbox cannot push or reach private repositories. '

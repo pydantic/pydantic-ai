@@ -19,8 +19,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from pydantic_ai_pax.config.credential_store import write_private
 from pydantic_ai_pax.config.project_settings import find_project_file
-from pydantic_ai_pax.config.settings_store import config_dir
 from pydantic_ai_pax.mcp.settings import HTTPServer, Server, Servers, SSEServer, StdioServer
+from pydantic_ai_pax.paths import config_dir
 
 PROJECT_MCP_FILE = Path('.clai') / 'mcp_servers.json'
 CLAUDE_MCP_FILE = Path('.mcp.json')
@@ -68,7 +68,7 @@ class MCPStore:
     """Read and write the user file; find and gate the project file."""
 
     def __init__(self, directory: Path | None = None, *, workspace: Path | None = None) -> None:
-        """`directory` defaults to the CLAI config folder, `workspace` to the current directory."""
+        """`directory` defaults to the Pax config folder, `workspace` to the current directory."""
         directory = directory or config_dir()
         self.path = directory / 'mcp.json'
         self.logs = directory / 'mcp_logs'

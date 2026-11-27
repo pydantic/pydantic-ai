@@ -123,6 +123,7 @@ from .conftest import (
     IsSameStr,
     IsStr,
     conversation_view,
+    history_with_server_system_prompts,
     iter_message_parts,
     legacy_retry_prompt_part,
     message,
@@ -2785,6 +2786,52 @@ def test_load_dump_message_id_on_merged_and_split_messages() -> None:
     ]
     uuid.UUID(dumped[0].id)
     uuid.UUID(dumped[3].id)
+
+
+def test_load_dump_message_id_skips_activity_messages() -> None:
+    """The kept id goes on the last chat message dumped from a `ModelMessage`, never on a trailing activity.
+
+    A run records a `ModelSettingsDeltaPart` behind the user prompt that set a thinking effort, and a
+    `CompactionPart` in the response that compacted; both dump as activity messages after the chat message
+    the client sent. `@ag-ui/client` doesn't send activity messages back, so the id has to stay on the user
+    message for a regenerate or edit after a reload to find the stored turn. A message that dumps to
+    activities alone keeps the id on the last of them. Loading the dump again keeps every id: an activity
+    merged after a chat message doesn't replace the id the chat message kept.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/12691
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart('Think about it.'),
+                ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True),
+            ],
+            metadata={'__pydantic_ai__': {'ui_message_id': 'usr-1'}},
+        ),
+        ModelResponse(
+            parts=[TextPart('Done.'), CompactionPart(content='Summary of the conversation so far.')],
+            metadata={'__pydantic_ai__': {'ui_message_id': 'asst-1'}},
+        ),
+        ModelRequest(
+            parts=[ModelSettingsDeltaPart(settings={'thinking': 'high'})],
+            metadata={'__pydantic_ai__': {'ui_message_id': 'act-1'}},
+        ),
+    ]
+
+    dumped = AGUIAdapter.dump_messages(messages)
+
+    assert [(type(m).__name__, m.id) for m in dumped] == [
+        ('UserMessage', 'usr-1'),
+        ('ActivityMessage', IsStr()),
+        ('AssistantMessage', 'asst-1'),
+        ('ActivityMessage', IsStr()),
+        ('ActivityMessage', 'act-1'),
+    ]
+    uuid.UUID(dumped[1].id)
+    uuid.UUID(dumped[3].id)
+
+    reloaded = AGUIAdapter.load_messages(dumped)
+    assert [m.metadata for m in reloaded] == [m.metadata for m in messages]
 
 
 def test_dump_load_roundtrip_drops_message_level_recovery_metadata() -> None:
@@ -9754,6 +9801,11 @@ async def test_frontend_tool_calls_are_pending_on_success(
         pytest.param('next', {'type': 'cancelled'}, id='unreadable'),
         pytest.param('0.9-next', {'type': 'cancelled'}, id='suffixed'),
         pytest.param('1.1', {'type': 'cancelled'}, id='newer'),
+        pytest.param('0001.0', {'type': 'cancelled'}, id='leading-zeros'),
+        pytest.param('\u0661.\u0660', {'type': 'cancelled'}, id='non-ascii-digits'),
+        # Past the 4,300 digits `int()` converts.
+        pytest.param('0' * 4301 + '.9', None, id='long-older'),
+        pytest.param('1' + '0' * 4300 + '.0', {'type': 'cancelled'}, id='long-newer'),
     ],
 )
 async def test_client_protocol_version_decides_1_0_outcomes(
@@ -9761,7 +9813,7 @@ async def test_client_protocol_version_decides_1_0_outcomes(
 ) -> None:
     """A client declaring no version, or one before 1.0, gets the pre-1.0 shapes. One newer than the SDK speaks, or outside the
     `MAJOR.MINOR` grammar, is handled like a newer one, as the spec requires, and gets the 1.0 shapes without a warning:
-    the server operator can't change what the client declares."""
+    the server operator can't change what the client declares. The numbers compare by value, however many digits they have."""
     agent = _cancelling_agent()
 
     events = await _collect_adapter_events(
@@ -12140,6 +12192,38 @@ async def test_server_message_history_drops_client_supplied_capability_loads():
     assert not any(isinstance(part, CapabilityLoadDeltaPart) for message in persisted for part in message.parts)
 
 
+async def test_server_message_history_regenerate_after_reload_with_settings_delta():
+    """A reload through `dump_messages` followed by a resend of the user message still replaces the turn.
+
+    The run records a `ModelSettingsDeltaPart` behind the first user prompt when the agent sets a thinking
+    effort, and it dumps as an activity message after the user message. The stored id has to stay on the
+    user message: the client resends it with the id it reloaded, and the server replaces the stored turn
+    only when that id matches, so a misplaced id appends the turn a second time instead.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/12691
+    """
+    agent = Agent(
+        FunctionModel(stream_function=simple_stream),
+        deps_type=type(None),
+        output_type=[str, DeferredToolRequests],
+        model_settings={'thinking': 'low'},
+    )
+    stored = await _server_history_turn(agent, create_input(UserMessage(id='u1', content='hi')), None)
+
+    reloaded = AGUIAdapter.dump_messages(stored)
+    assert [(type(m).__name__, m.id) for m in reloaded] == [
+        ('UserMessage', 'u1'),
+        ('ActivityMessage', IsStr()),
+        ('AssistantMessage', IsStr()),
+    ]
+
+    [user_message] = [m for m in reloaded if isinstance(m, UserMessage)]
+    persisted = await _server_history_turn(agent, create_input(user_message), stored)
+
+    prompts = [part for message in persisted for part in message.parts if isinstance(part, UserPromptPart)]
+    assert len(prompts) == 1
+
+
 @pytest.mark.parametrize('with_follow_up', [False, True])
 async def test_server_message_history_frontend_tool_result_from_a_new_turn_only_client(with_follow_up: bool):
     """A client that sends only its new messages returns a frontend tool's result without the call it answers.
@@ -12179,6 +12263,65 @@ async def test_server_message_history_drops_a_tool_result_for_no_pending_call():
         await _server_history_turn(agent, run_input, stored)
 
     assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
+
+
+@pytest.mark.parametrize('held', ['message_history', 'server message_history', 'conversation_store'])
+async def test_server_system_prompt_keeps_trusted_history_system_prompts(held: str):
+    """`manage_system_prompt='server'` replaces only the stale prompt opening the trusted history (#13768).
+
+    The server's other system prompts reach the model, and the client's is still stripped.
+    """
+    agent, requests, _ = server_history_agent(system_prompt='Server prompt')
+    stored = history_with_server_system_prompts()
+    run_input = create_input(
+        SystemMessage(id='s1', content='Client prompt'), UserMessage(id='u2', content='and now?'), thread_id='chat'
+    )
+    message_history: list[ModelMessage] | None = stored
+    if held == 'conversation_store':
+        store = InMemoryConversationStore()
+        await store.save(Conversation(messages=stored, conversation_id='chat'))
+        adapter = AGUIAdapter(agent, run_input, conversation_store=store)
+        message_history = None
+    elif held == 'server message_history':
+        adapter = AGUIAdapter(agent, run_input, manage_message_history='server')
+    else:
+        adapter = AGUIAdapter(agent, run_input)
+    results: list[AgentRunResult[Any]] = []
+
+    with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
+        async for _ in adapter.run_stream(message_history=message_history, on_complete=results.append):
+            pass
+
+    [result] = results
+    assert conversation_view(requests[-1]) == snapshot(
+        [
+            'system-prompt: Server prompt',
+            'user-prompt: where am I?',
+            'call loc-1',
+            'return loc-1: Paris',
+            'user-prompt: <system>Enqueued in an earlier run</system>',
+            'text: ok',
+            'user-prompt: <system>Server context</system>',
+            'user-prompt: hi',
+            'text: ok',
+            'user-prompt: and now?',
+        ]
+    )
+    assert conversation_view(result.all_messages()) == snapshot(
+        [
+            'system-prompt: Server prompt',
+            'user-prompt: where am I?',
+            'call loc-1',
+            'return loc-1: Paris',
+            'system-prompt: Enqueued in an earlier run',
+            'text: ok',
+            'system-prompt: Server context',
+            'user-prompt: hi',
+            'text: ok',
+            'user-prompt: and now?',
+            'text: ok',
+        ]
+    )
 
 
 async def test_server_message_history_frontend_tool_result():
@@ -12333,6 +12476,68 @@ async def test_conversation_store_rejects_a_resume_for_a_call_not_pending():
     assert [event.message for event in events if isinstance(event, RunErrorEvent)] == snapshot(
         [
             "The request answers 1 tool call(s) that the stored conversation is not waiting on: 'del-2'. An approval, denial or deferred tool result can only answer a tool call that is still waiting for that kind of answer at the end of the stored conversation. If the conversation changed since the client loaded it, reload it from the server."
+        ]
+    )
+
+
+async def test_conversation_store_saves_each_tool_return_once_after_a_frontend_tool_result():
+    """A response calls a server tool and a frontend tool; the store gets each return once after the client sends the frontend result.
+
+    See https://github.com/pydantic/pydantic-ai/issues/13547.
+    """
+    requests: list[list[ModelMessage]] = []
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        requests.append(messages)
+        if len(requests) == 1:
+            yield {0: DeltaToolCall(name='lookup', json_args='{}', tool_call_id='srv-1')}
+            yield {1: DeltaToolCall(name='pick_file', json_args='{}', tool_call_id='front-1')}
+        else:
+            yield 'ok'
+
+    agent: Agent[None, str | DeferredToolRequests] = Agent(
+        FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
+    )
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'server value'
+
+    store = InMemoryConversationStore()
+    tools = [Tool(name='pick_file', description='Pick a file.', parameters={'type': 'object', 'properties': {}})]
+    await _stored_turn(agent, store, create_input(UserMessage(id='u1', content='go'), tools=tools, thread_id='thread'))
+    called = AssistantMessage(
+        id='a1', tool_calls=[ToolCall(id='front-1', function=FunctionCall(name='pick_file', arguments='{}'))]
+    )
+    picked = ToolMessage(id='t1', tool_call_id='front-1', content='a.txt')
+    await _stored_turn(agent, store, create_input(called, picked, tools=tools, thread_id='thread'))
+
+    conversation = await store.load('thread')
+    assert conversation is not None
+    assert conversation_view(conversation.messages) == snapshot(
+        [
+            'user-prompt: go',
+            'call srv-1',
+            'call front-1',
+            'return srv-1: server value',
+            'return front-1: a.txt',
+            'text: ok',
+        ]
+    )
+
+    await _stored_turn(
+        agent, store, create_input(UserMessage(id='u2', content='and now?'), tools=tools, thread_id='thread')
+    )
+
+    assert conversation_view(requests[-1]) == snapshot(
+        [
+            'user-prompt: go',
+            'call srv-1',
+            'call front-1',
+            'return srv-1: server value',
+            'return front-1: a.txt',
+            'text: ok',
+            'user-prompt: and now?',
         ]
     )
 

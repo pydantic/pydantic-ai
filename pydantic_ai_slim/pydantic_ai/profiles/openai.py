@@ -33,7 +33,7 @@ _OPENAI_BASE_BUILTINS = frozenset(
 )
 """Builtin tool types OpenAI supports — the union of what `OpenAIChatModel` and
 `OpenAIResponsesModel` can handle. `ToolSearchTool` is gated per-model in the
-profile below."""
+profile below. `OpenAIProvider` adds `ComputerTool` for the models that OpenAI offers it on."""
 
 OpenAIReasoningEffort = Literal['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 """A `reasoning_effort` value accepted by the OpenAI API, from least to most reasoning."""
@@ -133,14 +133,15 @@ _CHAT_LATEST_REASONING = _ReasoningSupport(
 _GPT_5_PRO_EFFORTS: frozenset[OpenAIReasoningEffort] = frozenset(('medium', 'high', 'xhigh'))
 """The efforts GPT-5.2+ -pro models accept (live-verified for gpt-5.2-pro, gpt-5.4-pro and gpt-5.5-pro, 2026-10)."""
 
+_GPT_6_2_MODEL_PREFIXES = ('gpt-6.2-sol', 'gpt-6.2-astra')
+
 _GPT_6_MODEL_PREFIXES = (
     'gpt-6-astra',
     'gpt-6-sol',
     'gpt-6-luna',
     'gpt-6.1-sol',
     'gpt-6.1-terra',
-    'gpt-6.2-sol',
-    'gpt-6.2-astra',
+    *_GPT_6_2_MODEL_PREFIXES,
 )
 
 _GPT_6_ALWAYS_ON_REASONING = _ReasoningSupport(
@@ -354,6 +355,27 @@ class OpenAIModelProfile(ModelProfile, total=False):
     [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], instead of treating the response as a `'stop'`.
     This defaults to `False` because OpenAI-compatible APIs do not consistently guarantee the field."""
 
+    openai_chat_streaming_repeats_usage_totals: bool
+    """Whether every streamed Chat Completions chunk repeats the running usage totals unprompted. Default: `False`.
+
+    When enabled, each chunk's usage replaces the usage recorded so far instead of adding to it, as
+    [`openai_continuous_usage_stats`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_continuous_usage_stats]
+    does, without sending `stream_options.continuous_usage_stats`.
+
+    [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] enables it for `gemini*` model names, including
+    through a custom `base_url`. A server that serves these names and reports per-chunk deltas instead would have its
+    usage under-reported, so turn this off in the model's profile."""
+
+    openai_chat_completion_tokens_omit_reasoning: bool
+    """Whether Chat Completions `usage` leaves reasoning tokens out of `completion_tokens` and counts them only in `total_tokens`. Default: `False`.
+
+    When enabled and `usage` carries no `completion_tokens_details`, the amount by which `total_tokens` exceeds
+    `prompt_tokens + completion_tokens` counts as output and reasoning tokens, in each streamed chunk too.
+
+    [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] enables it for `gemini*` model names, including
+    through a custom `base_url`. A server that serves these names and counts anything else in that gap would have its
+    output tokens over-reported, so turn this off in the model's profile."""
+
     openai_chat_supports_web_search: bool
     """Whether the model supports web search in Chat Completions API. Default: `False`."""
 
@@ -403,6 +425,15 @@ class OpenAIModelProfile(ModelProfile, total=False):
     See https://developers.openai.com/api/docs/guides/latest-model.
     Explicit `openai_reasoning_effort='minimal'` settings are still passed through unchanged.
 
+    `OpenAIProvider` also disables it for the GPT-5.1 through GPT-5.5 families, which OpenAI's API answers with a 400
+    for `minimal` (verified live on gpt-5.1, gpt-5.2, gpt-5.3-codex, gpt-5.4, gpt-5.4-mini, gpt-5.4-nano, gpt-5.5
+    and their dated snapshots). gpt-5.5-cyber-preview and gpt-5.3-codex-spark are covered by the prefix only. The
+    `-pro` and `-chat` variants set `openai_reasoning_efforts`, which decides instead; the other ids under these
+    prefixes return 404 (shut down or nonexistent). `openai_model_profile` leaves it on,
+    because OpenRouter accepts `minimal` for these models. `OpenAIProvider(base_url=...)` keeps the flag off, as a
+    proxy to OpenAI should; for another server that serves these model names and accepts `minimal`, pass
+    `profile=OpenAIModelProfile(openai_supports_minimal_reasoning_effort=True)`.
+
     Ignored when `openai_reasoning_efforts` is set."""
 
     openai_reasoning_efforts: frozenset[OpenAIReasoningEffort]
@@ -418,7 +449,13 @@ class OpenAIModelProfile(ModelProfile, total=False):
     `openai_supports_reasoning_effort_none` and `openai_supports_minimal_reasoning_effort`. When unset, unified
     levels map one-to-one (see `openai_supports_minimal_reasoning_effort`), and `thinking=False` sends nothing on a
     model that always reasons.
-    Explicit `openai_reasoning_effort` settings are passed through unchanged."""
+    Explicit `openai_reasoning_effort` settings are passed through unchanged.
+
+    `OpenAIProvider` sets an empty set for `gpt-5-search-api`, which OpenAI's API answers with a 400 for any
+    `reasoning_effort` (verified live, 2026-11). `openai_model_profile` keeps the `'gpt-5'` efforts, as the
+    restriction is unverified on the OpenAI-compatible endpoints that share it. `OpenAIProvider(base_url=...)` keeps
+    the empty set, as a proxy to OpenAI should; for another server that serves this model name and accepts an effort,
+    pass `profile=OpenAIModelProfile(openai_reasoning_efforts=...)` with the efforts it accepts."""
 
     openai_chat_supports_max_reasoning_effort: bool
     """Whether the Chat Completions API accepts `reasoning_effort='max'` for this model. Default: `False`.
@@ -432,9 +469,12 @@ class OpenAIModelProfile(ModelProfile, total=False):
 
     When enabled, `OpenAIChatModel` raises a `ModelRequestRejectedError` for a request that sends tools, output tools
     included, with reasoning on, before anything is sent: the API rejects the combination with a 400 pointing at
-    `/v1/responses` or `reasoning_effort='none'`. `OpenAIProvider` enables it for the GPT-6 families (verified live on
-    gpt-6-luna, gpt-6-sol, gpt-6.1-terra, gpt-6-astra, gpt-6.1-sol, gpt-6.2-sol and gpt-6.2-astra). `openai_model_profile` leaves it off,
-    because the restriction is unverified on the OpenAI-compatible endpoints that share that profile.
+    `/v1/responses` or `reasoning_effort='none'`. `OpenAIProvider` enables it for the GPT-5.4, GPT-5.6 and GPT-6
+    families (verified live on gpt-5.4, gpt-5.4-mini, gpt-5.4-nano, gpt-5.6, gpt-5.6-sol, gpt-5.6-luna,
+    gpt-5.6-terra, gpt-6-luna, gpt-6-sol, gpt-6.1-terra, gpt-6-astra, gpt-6.1-sol, gpt-6.2-sol and gpt-6.2-astra).
+    GPT-5.4 reasons only when asked, so its tool requests are rejected only with reasoning turned on.
+    `openai_model_profile` leaves it off, because the restriction is unverified on the OpenAI-compatible endpoints
+    that share that profile.
     `OpenAIProvider(base_url=...)` keeps the flag, as a proxy to OpenAI should; for another server that serves
     these model names, pass `profile=OpenAIModelProfile(openai_chat_function_tools_require_reasoning_off=False)`.
     On models that pin `openai_reasoning_efforts` (e.g. gpt-6-astra), `thinking=False` maps to the lowest
@@ -449,6 +489,14 @@ class OpenAIModelProfile(ModelProfile, total=False):
     `{'thinking': {'type': 'disabled'}}` on Kimi K2.5 and K2.6, and to `{'reasoning_effort': 'low'}` on Kimi K3,
     which always reasons. The fields go out through `extra_body`, where keys the caller set in `extra_body` win,
     and nothing is added when `openai_reasoning_effort` is set explicitly."""
+
+    openai_chat_thinking_summary_false_body: dict[str, Any]
+    """Request body fields that unified `thinking_summary=False` sends on the Chat Completions API, to ask it not to
+    return the model's thinking. Default: unset.
+
+    Unset for an API with no such switch, where `thinking_summary=False` is ignored. Set by OpenAI-compatible
+    providers that have one, such as vLLM (`{'include_reasoning': False}`). The fields go out through `extra_body`,
+    where keys the caller set in `extra_body` win."""
 
     openai_responses_supports_max_reasoning_effort: bool
     """Whether the Responses API accepts `reasoning.effort='max'` for this model. Default: `False`.
@@ -555,6 +603,25 @@ class OpenAIModelProfile(ModelProfile, total=False):
     Responses APIs. When disabled, `CachePoint` markers are filtered out.
     """
 
+    openai_responses_stable_instructions_as_input: bool
+    """Whether the Responses API gets the instructions that keep the prompt prefix stable as leading input messages.
+    Default: `False`.
+
+    Those are the literal instructions and the [`on_change='append'`](../agent.md#appending-instruction-changes)
+    blocks, whose changes are appended to the history. The instructions that rewrite the prefix when they change stay
+    in the top-level `instructions` field, and with
+    [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_cache_instructions]
+    too. All of them stay there on a request that sets a concrete `openai_previous_response_id` or
+    `openai_conversation_id`, continues a compacted history, has a dynamic system prompt, or uses the `'user'` system
+    prompt role. With `openai_previous_response_id='auto'` (which `openai_transport='websocket'` sets by default), they
+    lead the input when the chain starts or resends the history, and are left out while it continues: each response's
+    history digest records them, so a request with different ones resends the history.
+
+    Set by `OpenAIProvider` for `gpt-6.2-sol` and `gpt-6.2-astra`, which put the top-level `instructions` after
+    `input` and bill them at the uncached rate on every request:
+    https://developers.openai.com/api/docs/guides/prompt-caching#how-prefix-matching-works.
+    """
+
     openai_responses_tool_choice_accepts_additional_tools: bool
     """Whether the Responses API accepts a `tool_choice` naming a tool that only an `additional_tools` input item
     declares. Default: `False`.
@@ -622,7 +689,8 @@ class OpenAIModelProfile(ModelProfile, total=False):
     openai_supports_input_token_counting: bool
     """Whether the provider exposes server-side input-token counting (`responses/input_tokens`). Default: `True`.
 
-    When `False`, `count_tokens()` raises a `UserError` instead of calling a missing endpoint.
+    When `False`, `count_tokens()` raises a `UserError` that is also a `NotImplementedError` instead of calling a
+    missing endpoint.
     """
 
     openai_supports_batch_api: bool
@@ -726,6 +794,12 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         # it gets the announcement from the first request (see the field's docstring). Here rather than in
         # `harmony_model_profile`, which builds on this one, because not every host of gpt-oss uses that.
         profile['default_framing_announcement'] = 'always'
+    elif model_name.startswith('gpt-'):
+        # OpenAI's own GPT models, not other models served through an OpenAI-compatible API (see the fields' docstrings).
+        profile['delegates_unprompted'] = True
+        profile['reinterprets_malformed_inputs'] = True
+        profile['omits_handoff_evidence'] = True
+        profile['ignores_stated_runtime_constraints'] = True
     return profile
 
 
@@ -744,6 +818,18 @@ def is_openai_live_model(model_name: str) -> bool:
     them — see [`OpenAILiveModel`][pydantic_ai.realtime.openai_live.OpenAILiveModel].
     """
     return model_name.startswith('gpt-live')
+
+
+def is_openai_computer_use_model(model_name: str) -> bool:
+    """Whether OpenAI offers its native computer tool on this model.
+
+    GPT-5.4 (with mini and pro), GPT-5.5 (with pro), GPT-5.6 and GPT-6 accept it. GPT-5.4 nano, GPT-5.3 Codex and
+    GPT-5.2 reject it, though they accept tool search. A new model family gets the `computer` function tool until it
+    is added here.
+    """
+    return model_name.startswith(
+        ('gpt-5.4', 'gpt-5.5', 'gpt-5.6', *_GPT_6_MODEL_PREFIXES)
+    ) and not model_name.startswith('gpt-5.4-nano')
 
 
 def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
@@ -766,11 +852,16 @@ def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
         'supports_system_messages': True,
         'supports_seeding_images': False,
         'supports_seeding_audio': False,
+        # The agent's instructions are the backend's; the voice model's own prompt can be added to mid-session.
+        'supports_appending_voice_instructions': True,
         # A server relays the browser's offer and attaches a sideband. Live has no client secrets.
         'supports_webrtc': True,
         # Speech and delegated work run independently: the Live model can keep the conversation going
         # while the backend works, so a tool call doesn't hold up speech, and there's no mode that waits.
         'async_tool_call_mode': 'always',
+        # The tools are the backend's, and a `session.update` of `delegation.responses.tools` replaces them
+        # mid-session: the backend calls a tool it adds from its next response on (checked live).
+        'supports_tool_updates': True,
         # The backend runs web search; Live refuses every other native Responses tool (checked live).
         'supported_native_tools': frozenset({WebSearchTool}),
         # The delegated backend does the reasoning, so `thinking` sets its effort. Whether a given backend
@@ -811,6 +902,9 @@ def openai_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # wire flag to set, unlike Gemini. The session already runs tools in the background and
         # defers `response.create` while a response is active, so this is true end to end.
         'async_tool_call_mode': 'always',
+        # A `session.update` with a new `tools` array mid-session takes effect: a tool it adds is called from the next
+        # response on, and the conversation so far is kept (checked live on `gpt-realtime`, and on Azure).
+        'supports_tool_updates': True,
         'emits_input_speech_events': True,
         'audio_input_sample_rate': 24000,
         'audio_output_sample_rate': 24000,

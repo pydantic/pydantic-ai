@@ -46,11 +46,12 @@ def main() -> None:
         print(f'Ignoring `.env` at {dotenv_path!r}: {exc}', file=sys.stderr)
 
     # Splash imports configuration, which must see the loaded environment.
+    from pydantic_ai_pax.paths import config_dir
     from pydantic_ai_pax.ui.rendering.splash import Splash
 
     os.environ['PYDANTIC_AI_NO_BANNER'] = '1'
     enabled = len(sys.argv) == 1 and not os.getenv('CLAI_NO_SPLASH')
-    database = Path(os.getenv('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'pydantic-clai2/config.db'
+    database = config_dir() / 'config.db'
     if enabled and database.exists():
         try:
             connection = sqlite3.connect(f'{database.as_uri()}?mode=ro', uri=True)

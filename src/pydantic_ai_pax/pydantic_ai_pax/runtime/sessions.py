@@ -17,11 +17,11 @@ from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai_harness.step_persistence import StepPersistence
 from pydantic_ai_harness.step_persistence.conversations import (
-    ConversationConflict,
     ConversationOrder,
     ConversationSummary,
     SavedConversation,
-    SqliteConversationStore,
+    SessionConflict,
+    SqliteSessionStore,
     conversation_text,
     ensure_inactive,
 )
@@ -57,7 +57,7 @@ class Sessions(Generic[DepsT, OutputT]):
         self,
         *,
         session: Session[DepsT, OutputT],
-        store: SqliteConversationStore,
+        store: SqliteSessionStore,
         context: CommandContext,
         launched: str | None = None,
         namer: SessionNamer | None = None,
@@ -112,7 +112,7 @@ class Sessions(Generic[DepsT, OutputT]):
         With `relocate`, the session first moves into the directory it was saved in, unless the
         `/resume` browser confirmed continuing it here; one that no longer exists raises `ValueError`.
         `unarchive=False` leaves an archived session archived, for a restore that continues in a fork.
-        One another live session of this CLAI holds raises `ValueError`: a conversation is live in one session.
+        One another live session of this Pax holds raises `ValueError`: a conversation is live in one session.
         In the terminal, that session is shown instead, and this one stays live as it is.
         """
         if (shown := await self.show_live(conversation_id)) is not None:
@@ -179,7 +179,7 @@ class Sessions(Generic[DepsT, OutputT]):
             return True
         if summary.model != self.session.model:
             return False
-        # No recorded model means CLAI's default, unless the session came from another agent: an import, or a
+        # No recorded model means Pax's default, unless the session came from another agent: an import, or a
         # fork of one, which leads its tags with the source and whose model is unknown.
         return summary.model is not None or not (summary.tags and import_source(summary.tags[0]))
 
@@ -232,7 +232,7 @@ class Sessions(Generic[DepsT, OutputT]):
         return self.launched == self.session.conversation_id
 
     async def import_session(self, source: ImportSource, native_id: str) -> str:
-        """Copy a Claude Code or Codex session into the store by its own ID, returning its CLAI ID.
+        """Copy a Claude Code or Codex session into the store by its own ID, returning its Pax ID.
 
         As with a saved session's ID, one from another directory is refused, before anything is saved.
         """
@@ -301,12 +301,12 @@ class Sessions(Generic[DepsT, OutputT]):
         """Hide a saved conversation from listings, deleting nothing; not the current one, nor one running elsewhere."""
         if conversation_id == self.session.conversation_id:
             raise ValueError('The current session cannot be archived. Switch to another one first.')
-        # Reserved throughout, so no other live session of this CLAI opens it meanwhile; one holding it refuses.
+        # Reserved throughout, so no other live session of this Pax opens it meanwhile; one holding it refuses.
         with self.session.claim(conversation_id):
             source = (await self.store.get(conversation_id=conversation_id)).summary
             try:
                 await run_sync(ensure_inactive, source)
-            except ConversationConflict as busy:
+            except SessionConflict as busy:
                 raise ValueError(f'{busy} A running session cannot be archived.') from busy
             return await self.store.set_archived(conversation_id=conversation_id, archived=True)
 
@@ -331,7 +331,7 @@ class Sessions(Generic[DepsT, OutputT]):
         return await self.browse(source, unarchive=unarchive)
 
     async def browse(self, source: ImportSource | None, *, unarchive: bool = True) -> str:
-        """Pick from CLAI's sessions and not-yet-imported ones, or from one agent's sessions only."""
+        """Pick from Pax's sessions and not-yet-imported ones, or from one agent's sessions only."""
         entries: list[ConversationSummary] = [] if source else await self.store.listing(archived=None)
         self.namer.backfill([entry for entry in entries if entry.archived_at is None], client=self.naming)
         imports = await run_sync(ImportCatalog, (source,) if source else IMPORT_SOURCES)

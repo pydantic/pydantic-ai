@@ -68,13 +68,21 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessHistory
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    CompactionModelRequest,
+    CompactionRequest,
+    CompactionResult,
+    NativeTool,
+    ProcessHistory,
+)
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import (
     ContentFilterError,
     IncompleteToolCall,
     ModelAPIError,
     ModelContextWindowExceededError,
+    ModelEmptyResponseError,
     ModelHTTPError,
     ModelRateLimitError,
     ModelRequestRejectedError,
@@ -95,11 +103,13 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models._continuation import merge_responses
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
-from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles import CompactionInstructionsMode, ModelProfile, merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
@@ -174,6 +184,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_chatgpt import OpenAIChatGPTProvider
     from pydantic_ai.providers.openai_codex import OpenAICodexProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
@@ -1096,6 +1107,24 @@ async def test_openai_responses_gpt_5_6_minimal_thinking_uses_low_effort(
     prove Pydantic AI maps its provider-agnostic `thinking='minimal'` level to `'low'` before sending it.
     """
     model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(thinking='minimal'))
+
+    result = await agent.run('What is the capital of France? Answer in one word.')
+
+    assert result.output == snapshot('Paris')
+    assert single_request_body(vcr)['reasoning'] == snapshot({'effort': 'low', 'context': 'all_turns'})
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_openai_responses_gpt_5_4_minimal_thinking_uses_low_effort(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette
+):
+    """VCR test: unified minimal thinking falls back to `low` on GPT-5.4, which rejects `minimal`.
+
+    OpenAI's API answers `reasoning.effort='minimal'` on gpt-5.4 with a 400 listing `none`, `low`, `medium`,
+    `high` and `xhigh`. A successful request and the body assertion prove Pydantic AI sends `'low'` instead.
+    """
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(thinking='minimal'))
 
     result = await agent.run('What is the capital of France? Answer in one word.')
@@ -18397,6 +18426,128 @@ async def test_openai_responses_compact_stateful_mode(allow_model_requests: None
     assert 'encrypted_content' in compaction.provider_details
 
 
+@dataclass
+class _RequestCompactionOnce(AbstractCapability[Any]):
+    """Requests compaction for the run's first request."""
+
+    async def before_run(self, ctx: RunContext[Any]) -> None:
+        ctx.request_compaction(reason='threshold')
+
+
+@dataclass
+class _Summarize(AbstractCapability[Any]):
+    """The next capability in the chain: compacts any request into a summary of its own."""
+
+    async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
+        part = CompactionPart(content='summarized')
+        return CompactionResult(
+            messages=[ModelRequest(parts=[part]), request.messages[-1]], part=part, handler='summarize'
+        )
+
+
+def _compaction_history() -> list[ModelMessage]:
+    return [ModelRequest(parts=[UserPromptPart('My name is Bob.')]), ModelResponse(parts=[TextPart('Hi Bob!')])]
+
+
+@pytest.mark.moves_cache_prefix(reason='compaction replaces the history the next request is built on')
+async def test_openai_responses_stateless_compaction_without_the_profile_flag(
+    allow_model_requests: None, openai_api_key: str
+):
+    """`OpenAICompaction(stateless=True)` compacts on a Responses model whatever its profile's generic flag says.
+
+    An OpenAI-compatible provider may not set `supports_compaction_on_demand`, which `NativeCompaction` relies on.
+    """
+    from pydantic_ai.models.openai import OpenAICompaction
+
+    model = OpenAIResponsesModel(
+        'gpt-5.4-nano',
+        provider=OpenAIProvider(api_key=openai_api_key),
+        profile={'supports_compaction_on_demand': False},
+    )
+    agent = Agent(
+        model, instructions='Answer in one short sentence.', capabilities=[OpenAICompaction(message_count_threshold=2)]
+    )
+    first = await agent.run('My name is Bob and my favorite color is teal.')
+    second = await agent.run('What is my favorite color?', message_history=first.all_messages())
+
+    assert 'teal' in second.output.lower()
+    compacted = second.all_messages()[0]
+    assert isinstance(compacted, ModelResponse)
+    [part] = compacted.parts
+    assert isinstance(part, CompactionPart) and part.provider_name == 'openai'
+    assert [record.handler for record in second.compactions] == ['native']
+
+
+async def test_openai_responses_stateful_compaction_leaves_requested_compaction_to_the_next_capability():
+    """Only `OpenAICompaction`'s stateless mode compacts on request: the stateful one leaves it to OpenAI.
+
+    Not a VCR test: which capability handles the request is decided before any provider request is made.
+    """
+    from pydantic_ai.models.openai import OpenAICompaction
+
+    model = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('ok')]))
+    agent = Agent(model, capabilities=[_RequestCompactionOnce(), OpenAICompaction(), _Summarize()])
+    result = await agent.run('hi', message_history=_compaction_history())
+
+    assert result.compactions[0].handler == 'summarize'
+
+
+@pytest.mark.parametrize('instructions_mode', ['system_prompt', None])
+async def test_openai_responses_stateless_compaction_drops_a_focus_it_cannot_send(
+    instructions_mode: CompactionInstructionsMode | None,
+):
+    """A focus merged in from elsewhere doesn't stop stateless `OpenAICompaction` compacting at its own trigger.
+
+    Not a VCR test: the claim is about which instructions the capability passes to the model's `compact_messages`,
+    which a stub records and a recorded provider response doesn't show.
+    """
+    from pydantic_ai.models.openai import OpenAICompaction
+
+    compacted: list[str | None] = []
+
+    class Responses(OpenAIResponsesModel):
+        async def compact_messages(
+            self, request_context: ModelRequestContext, *, instructions: str | None = None
+        ) -> ModelResponse:
+            compacted.append(instructions)
+            return ModelResponse(parts=[CompactionPart(content='summary')])
+
+    model = Responses(
+        'gpt-5.4-nano',
+        provider=OpenAIProvider(api_key='test'),
+        profile=ModelProfile(compaction_instructions=instructions_mode),
+    )
+    request = CompactionRequest(
+        reason='threshold',
+        messages=[*_compaction_history(), ModelRequest(parts=[UserPromptPart('What is my name?')])],
+        conversation_request=CompactionModelRequest(model=model, settings=None, parameters=ModelRequestParameters()),
+        focus='the name',
+    )
+    ctx = RunContext[None](deps=None, model=model, usage=RunUsage())
+
+    result = await OpenAICompaction(message_count_threshold=2).compact_history(ctx, request)
+
+    assert result is not None and result.handler == 'native'
+    assert compacted == [None]
+
+
+async def test_openai_responses_stateless_compaction_leaves_another_model_to_the_next_capability():
+    """Stateless `OpenAICompaction` serves only an OpenAI Responses model, however it's wrapped.
+
+    Not a VCR test: the claim is about capability routing for a non-OpenAI model, which makes no provider request.
+    """
+    from pydantic_ai.models.openai import OpenAICompaction
+
+    model = WrapperModel(FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('ok')])))
+    agent = Agent(
+        model,
+        capabilities=[_RequestCompactionOnce(), OpenAICompaction(message_count_threshold=100), _Summarize()],
+    )
+    result = await agent.run('hi', message_history=_compaction_history())
+
+    assert result.compactions[0].handler == 'summarize'
+
+
 async def test_openai_responses_phase_non_streamed(allow_model_requests: None):
     """`phase` on ResponseOutputMessage is captured into TextPart.provider_details."""
     c = response_message(
@@ -20323,6 +20474,108 @@ async def test_openai_responses_function_call_grouping_profile_on_off() -> None:
     )
 
 
+_PROMOTED_SEARCH_ITEM: dict[str, object] = {
+    'type': 'tool_search_call',
+    'execution': 'client',
+    'arguments': {'queries': ['weather']},
+    'call_id': 'call_1',
+    'status': 'completed',
+}
+
+
+@pytest.mark.parametrize(
+    ('tool_call_id', 'item_id', 'send_item_ids', 'expected'),
+    [
+        pytest.param('call_1', 'tsc_abc', True, {**_PROMOTED_SEARCH_ITEM, 'id': 'tsc_abc'}, id='tsc-preserved'),
+        pytest.param('call_1', 'opaque_1', True, {**_PROMOTED_SEARCH_ITEM, 'id': 'opaque_1'}, id='opaque-preserved'),
+        pytest.param('call_1', 'fc_123', True, _PROMOTED_SEARCH_ITEM, id='fc-omitted'),
+        pytest.param('call_1|fc_123', None, True, _PROMOTED_SEARCH_ITEM, id='legacy-combined-fc-omitted'),
+        pytest.param('call_1', 'tsc_abc', False, _PROMOTED_SEARCH_ITEM, id='send-item-ids-off'),
+    ],
+)
+async def test_promoted_tool_search_replay_item_id(
+    tool_call_id: str, item_id: str | None, send_item_ids: bool, expected: dict[str, object]
+) -> None:
+    """A promoted `tool_search_call` item never carries a function-call (`fc_*`) item ID.
+
+    A local `search_tools` call made on a model without native tool search carries one, and the
+    Responses API rejects it on a `tool_search_call` item. Every other item ID, including the one
+    split from a legacy combined `call_id|id`, follows the `openai_send_reasoning_ids` gate.
+    `test_live_local_tool_search_replays_on_native_tool_search_model` in `tests/test_tool_search.py`
+    records the `fc_*` case; the other cases have no live producer to record.
+    """
+    model_request_parameters = ModelRequestParameters(native_tools=[ToolSearchTool(optional=True)])
+    history = [
+        ModelResponse(
+            parts=[ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id=tool_call_id, id=item_id)],
+            provider_name='openai',
+        ),
+        ModelRequest(parts=[ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='call_1')]),
+    ]
+    input_items = await _replay_input(
+        history,
+        group_function_calls=False,
+        model_request_parameters=model_request_parameters,
+        model_settings=OpenAIResponsesModelSettings(openai_send_reasoning_ids=send_item_ids),
+    )
+
+    assert input_items[0] == expected
+
+
+@pytest.mark.parametrize(
+    ('call', 'expected_id'),
+    [
+        pytest.param(
+            ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='call_1', id='tsc_abc'),
+            None,
+            id='tsc-omitted',
+        ),
+        pytest.param(
+            ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='call_1|tsc_abc'),
+            None,
+            id='legacy-combined-tsc-omitted',
+        ),
+        pytest.param(
+            ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='call_1', id='fc_123'),
+            'fc_123',
+            id='fc-preserved',
+        ),
+        pytest.param(
+            ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='call_1', id='opaque_1'),
+            'opaque_1',
+            id='opaque-preserved',
+        ),
+        pytest.param(
+            ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_1', id='tsc_abc'),
+            'tsc_abc',
+            id='ordinary-call-unchanged',
+        ),
+    ],
+)
+async def test_unpromoted_tool_search_replay_item_id(call: ToolCallPart, expected_id: str | None) -> None:
+    """A tool search replayed as a `function_call` never carries a `tool_search_call` (`tsc_*`) item ID.
+
+    The Responses API rejects that prefix on a `function_call` item. Every other item ID, and every
+    ordinary function call, is sent unchanged. This pins the mapped item directly because cassette
+    replay does not compare request bodies.
+    """
+    history = [
+        ModelResponse(parts=[call], provider_name='openai'),
+        ModelRequest(parts=[ToolReturnPart(tool_name=call.tool_name, content='result', tool_call_id='call_1')]),
+    ]
+    input_items = await _replay_input(
+        history,
+        group_function_calls=False,
+        model_settings=OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+    )
+
+    assert (input_items[0]['type'], input_items[0]['call_id'], input_items[0].get('id')) == (
+        'function_call',
+        'call_1',
+        expected_id,
+    )
+
+
 async def test_openai_responses_function_call_grouping_preserves_active_tool_search() -> None:
     """Active tool search uses its specialized client-executed protocol, whose order is preserved."""
     history = [
@@ -20891,11 +21144,26 @@ async def test_openai_responses_malformed_tool_args_degraded_on_the_wire(allow_m
 # OAuth/credential unit tests stay in `tests/providers/codex/`.
 
 
-async def test_codex_count_tokens_raises_user_error(allow_model_requests: None):
-    mock_client = cast(AsyncOpenAI, MockOpenAIResponses())
-    model = OpenAICodexModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=mock_client))
-    with pytest.raises(UserError, match='Server-side token counting is not available'):
+@pytest.mark.parametrize('provider', ['openai-codex', 'openai-chatgpt'])
+async def test_codex_and_chatgpt_count_tokens_raise_user_error(
+    allow_model_requests: None, provider: Literal['openai-codex', 'openai-chatgpt']
+):
+    """Neither provider serves `responses/input_tokens`, so `count_tokens` raises before any request.
+
+    The error is a `UserError` that is also a `NotImplementedError`, the error a caller that falls back when a model
+    can't count catches, as Pydantic AI Harness does for a nested agent's run.
+    """
+    mock_client = MockOpenAIResponses()
+    client = cast(AsyncOpenAI, mock_client)
+    model = (
+        OpenAICodexModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=client))
+        if provider == 'openai-codex'
+        else OpenAIResponsesModel('gpt-5.6-luna', provider=OpenAIChatGPTProvider(openai_client=client))
+    )
+    with pytest.raises(UserError, match='Server-side token counting is not available') as exc_info:
         await model.count_tokens([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
+    assert isinstance(exc_info.value, NotImplementedError)
+    assert mock_client.count_kwargs == []
 
 
 _MINIMAL_RESPONSE: dict[str, Any] = {
@@ -21100,7 +21368,7 @@ async def test_forced_stream_without_events_raises(allow_model_requests: None):
     # The nested-list form is how the shared mock represents a single, empty stream.
     mock_client = MockOpenAIResponses.create_mock_stream([[]])
     model = OpenAICodexModel('gpt-5.6-luna', provider=OpenAICodexProvider(openai_client=mock_client))
-    with pytest.raises(UnexpectedModelBehavior, match='without content'):
+    with pytest.raises(ModelEmptyResponseError, match='without content'):
         await model.request([ModelRequest(parts=[UserPromptPart('hi')])], None, ModelRequestParameters())
 
 

@@ -11,13 +11,18 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import gc
+import itertools
 import json
+import os
 import re
 import subprocess
 import sys
 import warnings
-from collections.abc import Generator
+import weakref
+from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -65,9 +70,11 @@ from pydantic_ai.toolsets._instruction_collection import (
     make_contribution,
 )
 from pydantic_ai.usage import RunUsage
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
 
 from .conftest import IsStr, try_import
+from .harness._regex_steps import linearity_failure
 
 with try_import() as logfire_imports_successful:
     import logfire
@@ -86,6 +93,8 @@ with try_import() as imports_successful:
     from fastmcp.exceptions import McpError, ToolError
     from fastmcp.prompts import Message
     from fastmcp.server.dependencies import get_http_request
+    from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
+    from fastmcp.tools import Tool as FastMCPTool
 
     # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
     from mcp import types as mcp_types
@@ -94,6 +103,8 @@ with try_import() as imports_successful:
 
     from pydantic_ai import _mcp, mcp as mcp_module
     from pydantic_ai.models.mcp_sampling import MCPSamplingModel
+
+    from .mcp_server import parameterized_prompt
 
     Annotations = mcp_types.Annotations
     AudioContent = mcp_types.AudioContent
@@ -108,6 +119,7 @@ with try_import() as imports_successful:
     from pydantic_ai import _mcp_compat
     from pydantic_ai._mcp_compat import wire_name
     from pydantic_ai.mcp import (
+        _ENV_VAR_PATTERN,  # pyright: ignore[reportPrivateUsage]
         MCPError,
         MCPToolset,
         Prompt,
@@ -117,6 +129,7 @@ with try_import() as imports_successful:
         ResourceAnnotations,
         ResourceTemplate,
         ServerCapabilities,
+        _expand_env_vars,  # pyright: ignore[reportPrivateUsage]
         _make_httpx_client_factory,  # pyright: ignore[reportPrivateUsage]
         load_mcp_toolsets,
     )
@@ -594,10 +607,10 @@ def _register_prompts(server: FastMCP[None]) -> None:
         """A simple prompt template."""
         return 'This is a simple prompt'
 
-    @server.prompt()
-    def parameterized_prompt(name: str, topic: str) -> str:
-        """A prompt template with parameters."""
-        return f"Hello {name}, let's talk about {topic}!"
+    # Defined in `tests/mcp_server.py`, which doesn't postpone annotations: before 4.2.6, FastMCP
+    # reads a postponed `str` annotation as the string `'str'` and appends a JSON-schema hint to the
+    # argument's description (https://github.com/PrefectHQ/fastmcp/issues/5318).
+    server.prompt(parameterized_prompt)
 
     @server.prompt()
     def annotated_text_prompt() -> list[Message]:
@@ -773,6 +786,33 @@ class TestMCPToolsetIntegration:
         with pytest.raises(ValueError, match='called more times than'):
             await toolset.__aexit__(None, None, None)
 
+    @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
+    async def test_stdio_server_stops_once_agent_and_toolset_are_dropped(self):
+        """A stdio connection outlives `async with agent` while the toolset is held, and ends once the toolset is dropped.
+
+        FastMCP's `StdioTransport` keeps its server running between connections and stops it from its finalizer,
+        so the connection task that outlives the exit must not keep the toolset, and with it the transport, alive.
+        """
+        tasks_before = asyncio.all_tasks()
+        toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
+        # A name skips the agent's name inference, which reads this frame's `f_locals`. Before Python 3.13, that
+        # read leaves a snapshot of the locals on the frame, which would still hold `toolset` after the `del` below.
+        agent = Agent(TestModel(call_tools=[]), name='stdio_agent', toolsets=[toolset])
+        async with agent:
+            await agent.run('Hello')
+
+        # The connection tasks own the server process. They're still pending, so the next run can reuse the server.
+        connection_tasks = asyncio.all_tasks() - tasks_before
+        assert connection_tasks
+
+        toolset_ref = weakref.ref(toolset)
+        del agent, toolset
+        gc.collect()
+        assert toolset_ref() is None
+        # The transport's finalizer stops the server, and the connection tasks end once the process has exited.
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            await asyncio.wait(connection_tasks)
+
     async def test_get_tools_caches_and_lists(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         toolset = MCPToolset(fastmcp_server, include_instructions=True)
         async with toolset:
@@ -781,6 +821,61 @@ class TestMCPToolsetIntegration:
             assert {'echo', 'add', 'boom'} <= set(tools_first)
             # Second call should hit the cache (covers the cached-return branch).
             assert tools_first['echo'].tool_def.description == tools_second['echo'].tool_def.description
+
+    async def test_tools_list_changed_during_list_tools_is_not_lost(self):
+        """A tools `list_changed` notification that arrives while `tools/list` is in flight isn't lost.
+
+        The response was produced before the change, so caching it would keep the old tool list until the
+        next notification. The in-flight caller still gets that response, and the next `list_tools()` fetches
+        the changed list.
+        """
+        server: FastMCP[None] = FastMCP('list_changed_server')
+        list_produced = anyio.Event()
+        release_list = anyio.Event()
+
+        class HoldListTools(Middleware):
+            async def on_list_tools(
+                self,
+                context: MiddlewareContext[mcp_types.ListToolsRequest],
+                call_next: CallNext[mcp_types.ListToolsRequest, Sequence[FastMCPTool]],
+            ) -> Sequence[FastMCPTool]:
+                tools = await call_next(context)
+                # Hold only the first listing: the server also lists its tools to handle the tool call below.
+                if not list_produced.is_set():
+                    list_produced.set()
+                    await release_list.wait()
+                return tools
+
+        server.add_middleware(HoldListTools())
+
+        async def added_tool() -> None:
+            """Added while the first listing is in flight."""
+
+        @server.tool()
+        async def add_tool(ctx: Context) -> str:
+            server.add_tool(added_tool)
+            await ctx.send_notification(mcp_types.ToolListChangedNotification())
+            return 'done'
+
+        toolset = MCPToolset(server)
+        in_flight: list[list[str]] = []
+
+        async def list_tools_in_flight() -> None:
+            in_flight.append([tool.name for tool in await toolset.list_tools()])
+
+        async with toolset:
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(list_tools_in_flight)
+                try:
+                    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                        await list_produced.wait()
+                    assert await toolset.direct_call_tool('add_tool', {}) == 'done'
+                finally:
+                    # Unblock the held listing even when the test fails, so the task group can drain.
+                    release_list.set()
+            assert in_flight == [['add_tool']]
+
+            assert [tool.name for tool in await toolset.list_tools()] == ['add_tool', 'added_tool']
 
     async def test_get_tools_hides_app_only_tools(self, run_context: RunContext):
         """MCP Apps (SEP-1865) tools whose `_meta.ui.visibility` leaves out `"model"` are hidden from the model."""
@@ -1668,20 +1763,8 @@ A later <pyai:context> element with the same id replaces the earlier one and sta
                     name='parameterized_prompt',
                     description='A prompt template with parameters.',
                     arguments=[
-                        PromptArgument(
-                            name='name',
-                            # FastMCP generates this text and has reworded it across releases; pin only
-                            # that the argument's JSON schema is conveyed.
-                            description=IsStr(regex=r'.*\{"type":"string"\}.*'),
-                            required=True,
-                        ),
-                        PromptArgument(
-                            name='topic',
-                            # FastMCP generates this text and has reworded it across releases; pin only
-                            # that the argument's JSON schema is conveyed.
-                            description=IsStr(regex=r'.*\{"type":"string"\}.*'),
-                            required=True,
-                        ),
+                        PromptArgument(name='name', description='Who to greet.', required=True),
+                        PromptArgument(name='topic', description='What to talk about.', required=True),
                     ],
                     metadata={'fastmcp': {'tags': []}},
                 ),
@@ -1988,6 +2071,34 @@ A later <pyai:context> element with the same id replaces the earlier one and sta
 
         toolset = MCPToolset(fastmcp_server)
         handler = _build_message_handler(toolset, user_handler=user_handler)
+        notification = wrap_server_notification(
+            mcp_types.ToolListChangedNotification(method='notifications/tools/list_changed')
+        )
+        await handler(notification)
+        assert seen == [notification]
+
+    async def test_message_handler_forwards_to_user_handler_after_toolset_is_collected(
+        self, fastmcp_server: FastMCP[None]
+    ):
+        """The handler holds the toolset weakly and keeps forwarding messages once it is collected.
+
+        A unit test: a connection only outlives its toolset over stdio, where a notification arriving after the
+        toolset is collected can't be triggered on demand.
+        """
+        from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
+
+        seen: list[Any] = []
+
+        async def user_handler(message: Any) -> None:
+            seen.append(message)
+
+        toolset = MCPToolset(fastmcp_server)
+        handler = _build_message_handler(toolset, user_handler=user_handler)
+        toolset_ref = weakref.ref(toolset)
+        del toolset
+        gc.collect()
+        assert toolset_ref() is None
+
         notification = wrap_server_notification(
             mcp_types.ToolListChangedNotification(method='notifications/tools/list_changed')
         )
@@ -2868,13 +2979,22 @@ class TestLoadMCPToolsets:
 
     async def test_load_mcp_toolsets_expands_env_vars(self, monkeypatch: pytest.MonkeyPatch):
         """`${VAR_NAME}` references in the config are resolved from `os.environ`; default-syntax
-        (`${VAR_NAME:-fallback}`) returns the fallback when unset; missing required vars raise."""
+        (`${VAR_NAME:-fallback}`) returns the fallback when unset; missing required vars raise. A reference that's
+        never closed or is malformed stays as written, and doesn't stop a closed one after it from expanding."""
         monkeypatch.setenv('MCP_TEST_TOKEN', 'secret-value')
         config = {
             'mcpServers': {
                 'alpha': {
                     'url': 'https://${MCP_TEST_HOST:-localhost:8000}/mcp',
-                    'headers': {'Authorization': 'Bearer ${MCP_TEST_TOKEN}'},
+                    'headers': {
+                        'Authorization': 'Bearer ${MCP_TEST_TOKEN}',
+                        'X-Unclosed': '${MCP_TEST_TOKEN',
+                        'X-Unclosed-Then-Closed': '${a:b ${MCP_TEST_TOKEN}',
+                        'X-Unclosed-Default': '${MCP_TEST_HOST:-x',
+                        'X-Empty-Default': '${MCP_TEST_HOST:-}',
+                        'X-Malformed-Then-Closed': '${:-x} ${MCP_TEST_TOKEN:x} ${MCP_TEST_TOKEN}',
+                        'X-Default-Then-Unclosed': '${MCP_TEST_UNSET:-$5} ${MCP_TEST_TOKEN',
+                    },
                 },
                 # `args` is the list-valued field, so it covers expansion inside a list.
                 'beta': {'command': 'python', 'args': ['-m', '${MCP_TEST_TOKEN}']},
@@ -2888,7 +3008,15 @@ class TestLoadMCPToolsets:
         wrapped = toolsets[0].wrapped  # type: ignore[attr-defined]
         assert isinstance(wrapped, MCPToolset)
         assert isinstance(wrapped.client.transport, StreamableHttpTransport)
-        assert wrapped.client.transport.headers == {'Authorization': 'Bearer secret-value'}
+        assert wrapped.client.transport.headers == {
+            'Authorization': 'Bearer secret-value',
+            'X-Unclosed': '${MCP_TEST_TOKEN',
+            'X-Unclosed-Then-Closed': '${a:b secret-value',
+            'X-Unclosed-Default': '${MCP_TEST_HOST:-x',
+            'X-Empty-Default': '',
+            'X-Malformed-Then-Closed': '${:-x} ${MCP_TEST_TOKEN:x} secret-value',
+            'X-Default-Then-Unclosed': '$5 ${MCP_TEST_TOKEN',
+        }
         assert str(wrapped.client.transport.url) == 'https://localhost:8000/mcp'
 
         stdio = toolsets[1].wrapped  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
@@ -3014,6 +3142,43 @@ class TestLoadMCPToolsets:
             config_path.write_text(json.dumps(config), encoding='utf-8')
             toolsets = load_mcp_toolsets(config_path)
         assert len(toolsets) == 1
+
+    def test_env_var_expansion_expands_exactly_the_closed_references(self, monkeypatch: pytest.MonkeyPatch):
+        """On every short string, expansion gives what substituting each closed `${...}` reference gives, so `$`, `{` and
+        `:` in a name or default, an undefined variable and `${VAR:-}` behave as before, and an unclosed one stays as is.
+
+        It calls `_expand_env_vars` directly: loading tens of thousands of configs through `load_mcp_toolsets` would make
+        it expensive, and `test_load_mcp_toolsets_expands_env_vars` pins the cases users write through that API."""
+        monkeypatch.setenv('a', 'A')
+        closed_reference = re.compile(r'\$\{([^}:]+)(:-([^}]*))?\}')
+
+        def substitute(match: re.Match[str]) -> str:
+            name, separator, default = match.groups()
+            if name in os.environ:
+                return os.environ[name]
+            if separator is None:
+                raise ValueError(f'Environment variable ${{{name}}} is not defined')
+            return default
+
+        def outcome(expand: Callable[[str], object], value: str) -> object:
+            try:
+                return expand(value)
+            except ValueError as error:
+                return error.args
+
+        for length in range(7):
+            for characters in itertools.product('${}:-a', repeat=length):
+                value = ''.join(characters)
+                assert outcome(_expand_env_vars, value) == outcome(partial(closed_reference.sub, substitute), value), (
+                    value
+                )
+
+    def test_env_var_expansion_takes_linear_time(self):
+        """A `${` that's never closed doesn't make each `${` after it rescan the rest of the string.
+
+        The step counter bounds the pattern's scan itself; through `load_mcp_toolsets` only a huge input on the wall
+        clock would show it, which "Test cost" in `tests/AGENTS.md` rules out."""
+        assert linearity_failure(_ENV_VAR_PATTERN.pattern, _ENV_VAR_PATTERN.flags) is None
 
 
 def test_construction_does_not_emit_warnings(recwarn: Any) -> None:

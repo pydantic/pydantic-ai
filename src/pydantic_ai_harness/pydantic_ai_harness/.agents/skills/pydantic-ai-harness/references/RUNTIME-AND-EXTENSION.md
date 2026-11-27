@@ -13,6 +13,7 @@ Agentic Workflow.
 |---|---|
 | Let another model choose the main agent's model from a named menu | `ModelRouter` |
 | Resume, continue, or fork a run from saved history; audit tool side effects after a crash | `StepPersistence` |
+| Store a whole `Conversation` between runs, each message once, in SQLite, Postgres, or MongoDB | `pydantic_ai_harness.conversation_store`: `SqliteConversationStore`, `PostgresConversationStore`, `MongoConversationStore` (see [Conversation stores](#conversation-stores)) |
 | Survive worker crashes with automatic replay (Temporal, DBOS, Prefect) | core durability capability; most harness capabilities work inside it |
 | Checkpoint every model/tool step on AWS Lambda durable functions | `AWSLambdaDurability` |
 | Checkpoint every model/tool step in Postgres with Absurd | `AbsurdDurability` |
@@ -101,7 +102,7 @@ You continue a run by passing a snapshot's messages to `Agent.run(message_histor
 
 It is not the recommended session store: to store conversations, use core's `ConversationStore`
 (`pydantic_ai.conversation_store`), which also keeps usage and deferred tool requests. To move sessions
-already stored with `StepPersistence`, save each `SqliteConversationStore` head, or else each session
+already stored with `StepPersistence`, save each `SqliteSessionStore` head, or else each session
 ID's newest `complete` snapshot, as a `Conversation`, skipping conversations the store already has.
 Settle a session whose newest run ends on unanswered tool calls (a pending approval or deferred result)
 first: its last `complete` snapshot leaves that turn out (see "Moving sessions to a `ConversationStore`"
@@ -215,6 +216,30 @@ Gotchas:
 - Spec form: `{'StepPersistence': {'backend': 'memory' | 'file' | 'sqlite', 'directory': ..., 'database':
   ..., 'max_snapshots_per_run': ...}}`. Any other `backend` raises `ValueError`. Mongo is Python-only.
 
+## Conversation stores
+
+`pydantic_ai_harness.conversation_store` stores whole conversations between runs, not run checkpoints. Each
+store takes the same connection arguments as the matching step store and can share its database.
+
+| Store | Connection |
+| --- | --- |
+| `SqliteConversationStore` | `database=` path or `connection=` |
+| `PostgresConversationStore` | asyncpg-compatible `pool` |
+| `MongoConversationStore` | `client=` or `db_url=`, plus `database=`; needs `[mongodb]` |
+
+- They implement core's `pydantic_ai.conversation_store.ConversationStore`. Use them to keep a conversation between runs:
+  `conversation = await store.load(id) or Conversation(conversation_id=id)`, run with
+  `conversation=conversation`, then `await store.save(result.conversation)`.
+- `save` raises `ConversationConflict` when the conversation was saved by someone else since it was loaded
+  (it checks `Conversation.revision`, which `load` sets and a run carries through). Load it again, and run the
+  turn again only if repeating its tool calls is safe.
+  `save` advances that revision on the conversation it's given, so keep that object to save again.
+- `list_conversations(scope=..., limit=...)` lists the most recently saved first.
+- `fork(conversation_id, at=...)` starts a new conversation sharing the kept history. `delete` also removes
+  the entries no other conversation's history or branches use on SQLite and Postgres; MongoDB keeps them.
+- The browser-oriented store Pax uses is `step_persistence.conversations.SqliteSessionStore`, formerly
+  `SqliteConversationStore` there.
+
 ## Harness capabilities under core durable execution
 
 Most harness capabilities run under core `TemporalDurability`, `DBOSDurability`, and
@@ -225,7 +250,7 @@ Most harness capabilities run under core `TemporalDurability`, `DBOSDurability`,
   `YouResearch`, `Researcher`, `PydanticAIDocs`, `LocalStack`, `Macroscope`, and `BrowserUse` (either
   `session_scope`): their toolsets carry
   no stable id, and passing `id=` to the capability does not reach the toolset.
-- `PlaywrightBrowser` raises `UserError` at `Agent(...)` with any durability capability (a live
+- `PlaywrightBrowser` and `CDPBrowser` raise `UserError` at `Agent(...)` with any durability capability (a live
   browser cannot survive replay); a `TrajectoryJudge` without an `id` raises at run start inside a durable
   workflow.
 - `CodeMode` runs but skips its `speculate=` early tool launches. `BackgroundTools`, guardrails,
@@ -584,8 +609,9 @@ agent = Agent.from_spec(spec, custom_capability_types=[Planning, StepPersistence
 or `{Name: {kwargs}}`, and each class's `from_spec` builds the instance. Opted out (they hold callables
 or live agents, and raise `ValueError` if listed): `AWSLambdaDurability`, `AbsurdDurability`,
 `PGTaskDurability`, `CapabilityCreation`, `DynamicWorkflow`, `InputGuardrail`, `OutputGuardrail`, `SubAgents`,
-`SystemReminders`, `ToolGuardrail`, `TrajectoryJudge`. `AskUser` has a spec name but needs an
-`answerer` callable, so in practice it is passed in code too. `CompactOnRequest`, `DeduplicateFileReads`,
+`SystemReminders`, `ToolGuardrail`, `TrajectoryJudge`. A spec can set `AskUser`'s
+`answerer`, and with it `timeout`, only to `null`, which pauses the run for the host's answer; an
+`AskUser` with an answerer callable is passed in code. `CompactOnRequest`, `DeduplicateFileReads`,
 `FallbackCompaction` and `TieredCompaction` have spec names too, but each requires strategies or a
 `file_key` callable that JSON cannot express, so the spec schema leaves them out and they are
 Python-only. Pass those instances with the

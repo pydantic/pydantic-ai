@@ -39,7 +39,7 @@ HELP = (
     ' Only on this machine, not in a sandbox'
 )
 
-# Matches `subprocess.run`: a Ctrl-C'd child gets this long to exit on its own SIGINT before it is killed.
+# Matches `subprocess.run`: a Ctrl+C'd child gets this long to exit on its own SIGINT before it is killed.
 _INTERRUPT_GRACE = 0.25
 _OUTPUT_DRAIN_GRACE = 0.1
 _MAX_OUTPUT_CHARS = 100_000
@@ -92,8 +92,8 @@ class _ShellOutput(asyncio.SubprocessProtocol):
 
 
 def _interrupt(process: asyncio.SubprocessTransport) -> None:
-    """Forward Ctrl-C, which the terminal delivers to CLAI but not to a command in its own session."""
-    # The Windows console delivers Ctrl-C to every attached process.
+    """Forward Ctrl+C, which the terminal delivers to Pax but not to a command in its own session."""
+    # The Windows console delivers Ctrl+C to every attached process.
     if sys.platform != 'win32':  # pragma: no branch
         signal_process_group(process.get_pid(), signal.SIGINT)
 
@@ -114,10 +114,10 @@ def shell_command(text: str) -> str | None:
 async def run_shell_command(command: str, *, console: Console, interrupts: Interrupts, cwd: Path) -> str:
     """Run locally in `cwd`, the session's directory, and return context for the next model request.
 
-    Output streams to the transcript and is saved. On CLAI's terminal the command runs on a
+    Output streams to the transcript and is saved. On Pax's terminal the command runs on a
     pseudo-terminal (`PtyRun`), and a full-screen program gets the terminal itself, saving only its
     exit status. A leading `!` (typed as `!!command`) gives the command the terminal from the start
-    (`run_in_terminal`). Ctrl-C cancels only this command, not CLAI; cancellation terminates the
+    (`run_in_terminal`). Ctrl+C cancels only this command, not Pax; cancellation terminates the
     shell's process tree.
     """
     if command.startswith('!'):
@@ -167,7 +167,7 @@ async def run_workspace_command(
     """Run in `place`, such as the conversation's sandbox, and return context for the next model request.
 
     The workspace returns the output once the command exits, so it shows then, not as it arrives.
-    Ctrl-C cancels the command, read as a key (`ctrl_c_as_key`) as for a local one. A `!!command` needs
+    Ctrl+C cancels the command, read as a key (`ctrl_c_as_key`) as for a local one. A `!!command` needs
     this terminal, so it is refused and `None` returned.
     """
     if command.startswith('!'):
@@ -230,7 +230,7 @@ async def _execute(command: str, *, output: _ShellOutput, cwd: Path) -> None:
     pty = output.pty
     loop = asyncio.get_running_loop()
     # A new POSIX session gives the command a process group to kill; `start_new_session` is
-    # ignored on Windows, where `taskkill /T` follows parent PIDs and the console's Ctrl-C
+    # ignored on Windows, where `taskkill /T` follows parent PIDs and the console's Ctrl+C
     # still reaches the command.
     # A child can signal us before asyncio returns its process handle. Keep spawning shielded so we can reap it.
     spawn_task = asyncio.create_task(
@@ -284,9 +284,9 @@ async def _execute(command: str, *, output: _ShellOutput, cwd: Path) -> None:
 async def run_in_terminal(command: str, *, console: Console, cwd: Path) -> str:
     """Hand the terminal to a command in `cwd` from the start; return context naming it and its exit status.
 
-    The live panel leaves the screen, the command inherits CLAI's standard streams, and the panel
-    repaints once it exits. The command stays in CLAI's process group, in the terminal's foreground,
-    so it gets Ctrl-C and window size changes itself. Its output is never captured.
+    The live panel leaves the screen, the command inherits Pax's standard streams, and the panel
+    repaints once it exits. The command stays in Pax's process group, in the terminal's foreground,
+    so it gets Ctrl+C and window size changes itself. Its output is never captured.
     """
     console.print(Text.assemble(('$ ', theme.color(theme.ACCENT)), command))
     console.print(
@@ -331,16 +331,16 @@ def _interactive_context(command: str, status: str) -> str:
 
 
 async def _wait_in_terminal(command: str, *, cwd: Path) -> int:
-    """Run `command` with CLAI's standard streams and return its exit status; cancellation kills it."""
+    """Run `command` with Pax's standard streams and return its exit status; cancellation kills it."""
     # Spawning is shielded, so a cancellation that arrives meanwhile still finds the process to kill.
     spawn = asyncio.create_task(asyncio.create_subprocess_shell(command, stderr=terminal_stderr(), cwd=cwd))
     try:
         process = await asyncio.shield(spawn)
         return await process.wait()
     except asyncio.CancelledError:
-        # Only the shell is killed, not a process tree: the command shares CLAI's process group, which
-        # keeps it in the terminal's foreground for Ctrl-C, Ctrl-Z, and resizes, so `killpg` would kill
-        # CLAI too. Ctrl-C is the command's, so this runs only when CLAI's own task is cancelled; a
+        # Only the shell is killed, not a process tree: the command shares Pax's process group, which
+        # keeps it in the terminal's foreground for Ctrl+C, Ctrl+Z, and resizes, so `killpg` would kill
+        # Pax too. Ctrl+C is the command's, so this runs only when Pax's own task is cancelled; a
         # terminal hangup still signals the whole group. Nothing is left to kill when spawning failed
         # or the process was already reaped.
         with contextlib.suppress(OSError, ValueError):
@@ -366,12 +366,12 @@ def terminal_modes_kept(fd: int = 0) -> Generator[None]:
 
 
 def _ignore(signum: int, frame: FrameType | None) -> None:
-    """Ctrl-C belongs to the command that has the terminal."""
+    """Ctrl+C belongs to the command that has the terminal."""
 
 
 @contextlib.contextmanager
 def _ctrl_c_ignored() -> Generator[None]:
-    """Leave Ctrl-C to the command, which the terminal signals along with CLAI.
+    """Leave Ctrl+C to the command, which the terminal signals along with Pax.
 
     A handler that does nothing, not `SIG_IGN`, which the command would inherit.
     """

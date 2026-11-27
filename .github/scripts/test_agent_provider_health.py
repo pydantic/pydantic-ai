@@ -2372,6 +2372,7 @@ def test_scope_rules_for_typed_and_untyped_failures() -> None:
 
 _SCHEDULED_RUN = ('Pydantic AI Stale Issues Finder', 'Stale Issues:schedule:main:abc123:', 'schedule')
 _CREDENTIAL_REJECTED = health.Quota('unknown', diagnostic='http_error', http_status=401)
+_FORBIDDEN = health.Quota('unknown', diagnostic='http_error', http_status=403)
 _PLAN_EXHAUSTED = health.Quota('exhausted', '2026-10-22T18:00:00Z')
 
 
@@ -2412,6 +2413,21 @@ def _record(
 
 def _zai_error(status: int, code: str) -> ModelHTTPError:
     return ModelHTTPError(status, 'glm-5.3', {'error': {'code': code, 'message': 'provider detail'}})
+
+
+# The 403 body in the agent log of https://github.com/pydantic/pydantic-ai/actions/runs/45107391472.
+_AWF_CACHE_MISS_REFUSAL = ModelHTTPError(
+    403,
+    'glm-5.3-flash',
+    {
+        'error': {
+            'type': 'max_cache_misses_exceeded',
+            'message': 'Maximum consecutive cache misses exceeded (5 / 5).',
+            'consecutive_cache_misses': 5,
+            'max_cache_misses': 5,
+        }
+    },
+)
 
 
 @pytest.mark.parametrize(
@@ -2470,6 +2486,11 @@ def test_record_confirms_a_provider_failure_only_when_its_own_zai_check_observes
         pytest.param(None, None, id='success'),
         pytest.param(
             _zai_error(429, '1302'), {'kind': 'rate_limit', 'http_status': 429, 'retry_at': None}, id='rate-limit'
+        ),
+        pytest.param(
+            _AWF_CACHE_MISS_REFUSAL,
+            {'kind': 'cache_miss_limit', 'http_status': 403, 'retry_at': None},
+            id='awf-cache-miss-refusal',
         ),
     ],
 )
@@ -2552,6 +2573,15 @@ def _monitor_scheduled_run(
     ('error', 'quota', 'kind'),
     [
         pytest.param(_zai_error(401, '1000'), _CREDENTIAL_REJECTED, 'authentication', id='credential'),
+        pytest.param(_zai_error(403, '1000'), _FORBIDDEN, 'authentication', id='forbidden'),
+        pytest.param(
+            ModelHTTPError(
+                403, 'glm-5.3', {'error': {'type': 'permission_denied_limit_exceeded', 'message': 'proxy detail'}}
+            ),
+            _FORBIDDEN,
+            'authentication',
+            id='other-awf-refusal',
+        ),
         pytest.param(_zai_error(429, '1310'), _PLAN_EXHAUSTED, 'plan_limit', id='plan-limit'),
     ],
 )
@@ -2581,6 +2611,82 @@ def test_provider_incident_opens_only_from_a_host_confirmed_record(
         'Pydantic AI Bug Hunter', 'other-task', 'schedule', 1, health.Quota('healthy'), client.issues
     )
     assert blocked.ready is not confirmed
+
+
+@pytest.mark.parametrize(
+    'host_quota',
+    [
+        pytest.param(health.Quota('healthy'), id='host-check-passed'),
+        # A host check that rejects the key would otherwise confirm a provider incident.
+        pytest.param(_FORBIDDEN, id='host-check-rejected'),
+    ],
+)
+def test_awf_cache_miss_refusal_opens_no_incident(
+    host_quota: health.Quota, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AWF's API proxy refusing a run at its consecutive cache-miss cap stays local to that run."""
+    session = _agent_session(tmp_path, monkeypatch, _AWF_CACHE_MISS_REFUSAL)
+    record, _ = _record(session, tmp_path, monkeypatch, host_quota)
+
+    client = _monitor_scheduled_run(tmp_path, monkeypatch, agent_session=session, run_result=record)
+
+    assert client.posts == []
+    assert 'Transient request failure remains local to this attempt' in capsys.readouterr().out
+
+
+def test_awf_cache_miss_refusal_without_a_host_record_opens_no_task_incident(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Read from the agent artifact alone, the refusal still opens no incident, even with a failed inference step."""
+    workflow = 'CI Review'
+    task_key = 'CI Review:workflow_run:pr-123:head-a1b2'
+    monkeypatch.setenv('GITHUB_WORKFLOW', workflow)
+    monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', task_key)
+    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'workflow_run')
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
+    shim.emit_result('agent run failed', usage=None, session_id='s', is_error=True, error=_AWF_CACHE_MISS_REFUSAL)
+    agent_artifact = tmp_path / 'agent-stdio.log'
+    agent_artifact.write_text(capsys.readouterr().out)
+    assert health.parse_run_result(agent_artifact) == health.RunResult(
+        workflow, task_key, 'workflow_run', 1, health.Failure('cache_miss_limit', 403, None)
+    )
+    health_artifact = tmp_path / 'provider-health.json'
+    _write_health(
+        health_artifact,
+        health.Health(
+            workflow,
+            task_key,
+            'workflow_run',
+            1,
+            True,
+            'Provider health check passed',
+            '2026-10-01T12:00:00Z',
+            health.Quota('healthy'),
+        ),
+    )
+    client = FakeGitHub()
+    # Without the typed result, this failed inference step would open a task incident.
+    client.jobs[('70', 1)] = _FAILED_INFERENCE_JOBS
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'token')
+
+    _monitor_command(
+        argparse.Namespace(
+            repository=None,
+            run_id=70,
+            run_attempt=1,
+            conclusion='failure',
+            health_artifact=health_artifact,
+            run_result=None,
+            agent_artifact=agent_artifact,
+            dry_run=False,
+            recover_issue=None,
+        )
+    )
+
+    assert client.posts == []
+    assert 'Transient request failure remains local to this attempt' in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
@@ -3474,11 +3580,23 @@ def test_named_workflow_and_task_recovery_refuses_quota_only_closure(
     assert client.closed == []
 
 
-def test_marker_from_body_rejects_deeply_nested_json() -> None:
-    """Malformed nested issue markers cannot abort monitoring."""
-    body = health.MARKER_PREFIX + '{"nested":' + '[' * 10_000 + '0' + ']' * 10_000 + '} -->'
+def test_marker_from_body_rejects_deeply_nested_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Malformed nested issue markers cannot abort monitoring.
 
-    assert _marker_from_body(body) is None
+    From Python 3.14, whether `json.loads` raises `RecursionError` at this depth depends on the stack size.
+    The marker's parse is replaced with one that raises it, to reach that case on any stack.
+    """
+    marker = '{"nested":' + '[' * 10_000 + '0' + ']' * 10_000 + '}'
+    loads = json.loads
+
+    def loads_marker_too_deep(s: str) -> object:
+        if s == marker:
+            raise RecursionError('maximum recursion depth exceeded while decoding a JSON array from a unicode string')
+        return loads(s)
+
+    monkeypatch.setattr(json, 'loads', loads_marker_too_deep)
+
+    assert _marker_from_body(health.MARKER_PREFIX + marker + ' -->') is None
 
 
 def test_monitor_ignores_successful_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

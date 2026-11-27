@@ -22,7 +22,7 @@ from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.ask_user import AskUser, AskUserRequest, AskUserResponse
-from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteSessionStore
 from pydantic_ai_pax.app import DEFAULT_PLUGINS
 from pydantic_ai_pax.builtin_plugins import aoe
 from pydantic_ai_pax.config import PluginSettings, Settings
@@ -42,7 +42,7 @@ from pydantic_ai_pax.runtime.session import Session
 from pydantic_ai_pax.runtime.session_runtime import create_shell
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 
-# AoE only starts CLAI in a tmux pane on a POSIX system; the fakes and hook-file checks assume one too.
+# AoE only starts Pax in a tmux pane on a POSIX system; the fakes and hook-file checks assume one too.
 pytestmark = pytest.mark.skipif(sys.platform == 'win32', reason='AoE and its hook files are POSIX-only')
 
 INSTANCE = 'abcd1234ef567890'
@@ -169,14 +169,14 @@ async def env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Fixture:
 
     monkeypatch.setattr(aoe.Mappings, 'write', remembering)
     return Fixture(
-        system=system, hooks=tmp_path / 'hooks', state=tmp_path / 'state' / 'pydantic-clai2' / 'aoe', writes=writes
+        system=system, hooks=tmp_path / 'hooks', state=tmp_path / 'state' / 'pydantic-ai-pax' / 'aoe', writes=writes
     )
 
 
 def make_session(
     tmp_path: Path, model: FunctionModel | TestModel | None = None, *, workspace: Path | None = None
 ) -> Session[None, str]:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     return Session(
         Agent(model or TestModel(call_tools=[])), deps=None, conversations=store, workspace=workspace or tmp_path
     )
@@ -325,7 +325,7 @@ async def test_states_session_and_title(env: Fixture, tmp_path: Path) -> None:
         await env.status('waiting')
         return AskUserResponse(cancelled=True)
 
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     agent = Agent(
         QuestionModel(call_tools=['ask_user_question']),
         deps_type=type(None),
@@ -683,17 +683,17 @@ async def test_stop_tolerates_a_removed_directory(
 
 
 def test_commands_that_cannot_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    result = aoe.run_command('true')
+    assert result is not None and result.returncode == 0
     assert aoe.run_command('/nonexistent/aoe-binary') is None
     monkeypatch.setattr(aoe, '_COMMAND_TIMEOUT', 0.01)
     assert aoe.run_command('sleep', '1') is None
-    result = aoe.run_command('true')
-    assert result is not None and result.returncode == 0
 
 
 def test_state_directory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv('XDG_STATE_HOME', 'relative')
     monkeypatch.setenv('HOME', str(tmp_path))
-    assert aoe.state_directory() == tmp_path / '.local' / 'state' / 'pydantic-clai2' / 'aoe'
+    assert aoe.state_directory() == tmp_path / '.local' / 'state' / 'pydantic-ai-pax' / 'aoe'
     assert aoe.hooks_base() == Path(f'/tmp/aoe-hooks-{os.geteuid()}')
 
 
@@ -706,7 +706,7 @@ async def test_unreadable_mapping_leaves_the_plugin_quiet(env: Fixture, tmp_path
 
 
 async def test_an_id_aoe_would_reject_is_only_mapped(env: Fixture, tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     session = Session(
         Agent(TestModel()),
         deps=None,

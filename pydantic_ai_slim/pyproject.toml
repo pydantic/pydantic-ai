@@ -61,12 +61,16 @@ dependencies = [
     "anyio>=4.7.0",
     "griffelib>=2.0",
     "httpx2>=2.7",
+    # `httpx2` verifies TLS with `truststore` by default; 0.10.5 locks `SSLContext.wrap_bio`, which anyio runs in
+    # worker threads, so concurrent first requests no longer configure the shared context at once and crash (#12530).
+    "truststore>=0.10.5; sys_platform != 'emscripten'",
     "pydantic>=2.12",
     "pydantic-graph=={{ version }}",
     "opentelemetry-api>=1.28.0",
     "typing-inspection>=0.4.0",
     # `genai-prices>=0.2.3` has Anthropic's fast mode price variants, which `provider_details['speed'] == 'fast'` selects.
-    "genai-prices>=0.2.3",
+    # `genai-prices>=0.2.4` prices Gemini 4 Hydrogen and Carbon, so their runs report a cost.
+    "genai-prices>=0.2.4",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -75,7 +79,10 @@ logfire = ["logfire[httpx]>=4.39.0", "opentelemetry-instrumentation-httpx>=0.65b
 # Models
 # Provider SDKs are capped below the next major we haven't tested (#11919); raise a cap once a new major has been
 # tested.
-openai = ["openai>=3.31.0,<4", "tiktoken>=0.12.0"]
+# `openai>=3.50.0` is the first release that types `Response.input_transformations`, which the Responses model
+# reports in `provider_details`. Every extra below that installs `openai` shares this floor, since importing any
+# OpenAI model class imports that type.
+openai = ["openai>=3.50.0,<4", "tiktoken>=0.12.0"]
 cohere = ["cohere>=5.20.6,<8; platform_system != 'Emscripten'"]
 # `google-genai>=2.30.0` continues a long decode past the per-request output cap itself (`automatic_continuation`)
 # and reports the first request's prompt size (`initial_prompt_token_count`). Google's long-decode page names 2.30.1,
@@ -94,17 +101,17 @@ anthropic = ["anthropic>=1.15.0,<3"]
 # `kubernetes`) require, so the lowest-versions CI job can still install this floor.
 xai = ["xai-sdk>=1.21.0,<2"]
 groq = ["groq>=0.25.0,<2"]
-openrouter = ["openai>=3.31.0,<4"]
+openrouter = ["openai>=3.50.0,<4"]
 # `mistralai>=3.0` is built on `httpx2` only; 3.1.0 adds the `ResourceChunk` and `ResourceLinkChunk` content types `_map_content` imports.
 mistral = ["mistralai>=3.1.0,<4"]
 bedrock = ["boto3>=1.42.63,<2"]
 # Amazon Bedrock Mantle serves OpenAI models through an OpenAI-compatible API via `AsyncBedrockOpenAI`,
 # which needs `openai` and (for AWS SigV4 auth) `botocore`; the bearer-token path needs `openai` alone.
-bedrock-mantle = ["openai>=3.31.0,<4", "botocore>=1.42.63,<2"]
-zai = ["openai>=3.31.0,<4"]
-snowflake = ["openai>=3.31.0,<4"]
-crusoe = ["openai>=3.31.0,<4"]
-cerebras = ["openai>=3.31.0,<4"]
+bedrock-mantle = ["openai>=3.50.0,<4", "botocore>=1.42.63,<2"]
+zai = ["openai>=3.50.0,<4"]
+snowflake = ["openai>=3.50.0,<4"]
+crusoe = ["openai>=3.50.0,<4"]
+cerebras = ["openai>=3.50.0,<4"]
 typesafe = ["typesafe-sdk>=0.6.0,<1"]
 huggingface = [
     "huggingface-hub>=1.3.4,<2.0.0",
@@ -181,6 +188,8 @@ dbos = ["dbos>=3.4.0"]
 prefect = ["prefect>=3.9.0"]
 # Spec (YAML agent specs)
 spec = ["pyyaml>=6.0.2", "pydantic-handlebars>=0.1.0"]
+# JSON Schema validation for `StructuredDict(validate=True)`
+jsonschema = ["jsonschema>=4.18"]
 
 [tool.hatch.metadata]
 allow-direct-references = true

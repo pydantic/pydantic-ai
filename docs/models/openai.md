@@ -40,7 +40,7 @@ agent = Agent('{{ openai:medium }}')
     For voice agents, use a GPT-Live or `gpt-realtime` model with a [realtime session](../realtime/openai.md) instead.
 
 To pin to the legacy [Chat Completions API](https://platform.openai.com/docs/api-reference/chat) instead, use the `'openai-chat:'` prefix, which resolves to [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel].
-GPT-6 models reject tools, output tools included, on Chat Completions while reasoning is on, so `OpenAIChatModel` raises a [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] before it sends such a request, which [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] falls back on as it would on the API's 400. Use Responses whenever you need reasoning and tools together. `gpt-6-sol`, `gpt-6-luna` and `gpt-6.1-terra` also take tools on Chat Completions with reasoning off: `thinking=False` sends `reasoning_effort='none'`, although [OpenAI documents tool calling for `gpt-6.1-terra` through Responses only](https://developers.openai.com/api/docs/models/gpt-6.1-terra). `gpt-6.2-sol`, `gpt-6.2-astra`, `gpt-6.1-sol` and `gpt-6-astra` don't accept `'none'`, so use the Responses API for tool calling with them. [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] sets [`openai_chat_function_tools_require_reasoning_off`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_function_tools_require_reasoning_off] for these models, including through a custom `base_url`, as a proxy to OpenAI needs. Another server that serves these model names and accepts tools with reasoning turns it off with `openai_chat_function_tools_require_reasoning_off=False` in the model's [profile](overview.md#models-and-providers).
+GPT-5.4, GPT-5.6 and GPT-6 models reject tools, output tools included, on Chat Completions while reasoning is on, so `OpenAIChatModel` raises a [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] before it sends such a request, which [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] falls back on as it would on the API's 400. GPT-5.4 reasons only when you turn reasoning on, so it takes tools by default. Use Responses whenever you need reasoning and tools together. GPT-5.4, GPT-5.6, `gpt-6-sol`, `gpt-6-luna` and `gpt-6.1-terra` also take tools on Chat Completions with reasoning off: `thinking=False` sends `reasoning_effort='none'`, although [OpenAI documents tool calling for `gpt-6.1-terra` through Responses only](https://developers.openai.com/api/docs/models/gpt-6.1-terra). `gpt-6.2-sol`, `gpt-6.2-astra`, `gpt-6.1-sol` and `gpt-6-astra` don't accept `'none'`, so use the Responses API for tool calling with them. [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] sets [`openai_chat_function_tools_require_reasoning_off`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_function_tools_require_reasoning_off] for these models, including through a custom `base_url`, as a proxy to OpenAI needs. Another server that serves these model names and accepts tools with reasoning turns it off with `openai_chat_function_tools_require_reasoning_off=False` in the model's [profile](overview.md#models-and-providers).
 
 Or initialise the model directly with just the model name:
 
@@ -270,10 +270,17 @@ The breakpoint is placed after the last static instruction, so dynamic [instruct
 
 On the Responses API the top-level `instructions` field cannot carry a breakpoint, so the instructions are sent as leading input messages instead. Because a stored response keeps its input and replays it to the request that continues it, this has some limits:
 
-- It only happens on requests that don't continue server-side state. When [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id] or [`openai_conversation_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_conversation_id] is set, or the history has been [compacted](../capabilities/compaction.md), the setting leaves the instructions where they would otherwise go (normally the top-level field) and adds no breakpoint.
+- It only happens on requests that don't use server-side state. When [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id] or [`openai_conversation_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_conversation_id] is set (as [`openai_transport='websocket'`](#responses-websockets) does by default, and even on a request that ends up resending the full history), or the history has been [compacted](../capabilities/compaction.md), the setting leaves the instructions where they would otherwise go (normally the top-level field) and adds no breakpoint.
 - With `openai_previous_response_id='auto'`, that includes the first request, which has no response to continue yet. Otherwise its relocated instructions would be replayed next to every later request's own [instructions](../agent.md#instructions), which may belong to a different agent.
-- Don't continue a response created with `openai_cache_instructions` (which `cache=True` turns on) through `openai_previous_response_id` later on, since its stored input includes the instructions it was created with.
-- Requests that continue server-side state still get OpenAI's implicit breakpoint with the default `mode='implicit'`. What they give up is a breakpoint at the end of the instructions, which lets separate conversations share the cached instructions. Agent runs send the full message history by default, so this only affects runs that opt into server-side state.
+- Don't continue a response created with `openai_cache_instructions` (which `cache=True` turns on), or on `gpt-6.2-sol` or `gpt-6.2-astra` (see below), through a concrete `openai_previous_response_id` without its `message_history`, since its stored input includes the instructions it was created with ([ways to avoid it](#referencing-earlier-responses)). With the `message_history`, the request [sends the full history](#referencing-earlier-responses) instead, because such a response has no digest, or one that records instructions this request keeps in the top-level field. It keeps the instructions in the top-level field, so on `gpt-6.2-sol` and `gpt-6.2-astra` neither it nor the requests that continue from it read them from the cache.
+- Requests that use server-side state still get OpenAI's implicit breakpoint with the default `mode='implicit'`. What they give up is a breakpoint at the end of the instructions, which lets separate conversations share the cached instructions. Agent runs send the full message history by default, so this only affects runs that opt into server-side state.
+
+On `gpt-6.2-sol` and `gpt-6.2-astra`, OpenAI [puts the top-level `instructions` after `input` and bills them at the uncached rate](https://developers.openai.com/api/docs/guides/prompt-caching#how-prefix-matching-works) on every request. So with no setting, the static instructions and the [`on_change='append'`](../agent.md#appending-instruction-changes) instructions go out as leading input messages, where they're cached along with the conversation, and the model reads an appended change after them. Dynamic instructions that rewrite the prefix stay in the top-level field, with `openai_cache_instructions` too: the model reads them after the conversation, and a change to them leaves the cached conversation intact. That holds after an `on_change='append'` instruction has changed too, because the request keeps the leading messages and the recorded change. To keep all instructions in the top-level field, pass `profile=OpenAIModelProfile(openai_responses_stable_instructions_as_input=False)` to the model (see [`openai_responses_stable_instructions_as_input`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_stable_instructions_as_input]).
+
+The limits above apply the same way, except with `openai_previous_response_id='auto'`, which [`openai_transport='websocket'`](#responses-websockets) also uses by default. There the request that starts the chain or resends the history sends these instructions as leading input messages, with `openai_cache_instructions` adding its breakpoint after the static ones, and a request that continues the chain leaves them out, since the stored response already holds them. Each response's [history digest](#referencing-earlier-responses) records them, so a request with different ones, such as after a handoff to another agent, resends the history with its own.
+
+!!! note
+    A change to an instruction that rewrites the prefix, after an `on_change='append'` instruction has changed, moves the latest appended values into the leading messages on two kinds of request: one sent through a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], and one whose instructions a [`before_model_request`](../capabilities/custom.md#model-request-hooks) hook changed. On the default settings, such a request misses the cache.
 
 Caching requires a prefix of at least 1024 tokens; shorter prefixes are not cached even when explicitly marked. With `mode='implicit'` (the default), OpenAI may write one implicit and up to three explicit breakpoints. With `mode='explicit'`, it may write up to four explicit breakpoints and no implicit breakpoint. If a request sets more breakpoints than that, OpenAI writes only the last four, and the instruction breakpoint is the earliest one in a request, so it is the first to be dropped. The TTL is request-wide, configured through [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_options]: `'30m'` (the default) or, on the Responses API only, `'12h'`. Chat Completions rejects `'12h'` with a 400. Pydantic AI ignores the generic per-marker [`CachePoint.ttl`][pydantic_ai.messages.CachePoint.ttl] value on OpenAI.
 
@@ -353,6 +360,16 @@ agent = Agent(model, model_settings=settings)
 
 `auto` and `current_turn` are sent to any model that supports reasoning. `all_turns` is sent only to models whose profile sets [`OpenAIModelProfile.openai_responses_supports_reasoning_context`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_reasoning_context] (currently the GPT-5.4, GPT-5.5, GPT-5.6, and GPT-6 families); on other models it is ignored.
 
+### Reasoning after history edits {#reasoning-after-history-edits}
+
+On newer OpenAI models, the Responses API [drops replayed reasoning items](https://developers.openai.com/api/docs/guides/keep-prefix-unchanged) that follow a change to the earlier conversation, so the model may have to redo that reasoning. In testing, `gpt-6.2-sol` did this, and reasoning was also dropped after some model switches. When the API reports a drop, Pydantic AI puts the report in the response's [`provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under `'input_transformations'`, as OpenAI returns it, such as `[{'id': 'rs_…', 'action': 'removed', 'reason': 'prefix_mismatch', 'type': 'reasoning'}]`. With [instrumentation](../logfire.md) on, it also adds the report to the model request's span as an `openai.input_transformations` event.
+
+What happened to earlier reasoning in testing:
+
+- **History edits:** [history processors](../message-history.md#processing-message-history) and [Pydantic AI Harness compaction](../harness/compaction.md) strategies that edit or drop earlier messages, such as clearing old tool results or dropping the oldest messages, dropped the reasoning after the edit. [OpenAI's own compaction](#message-compaction) [keeps it](https://developers.openai.com/api/docs/guides/keep-prefix-unchanged). To shorten a large tool result, shorten it before it's first sent.
+- **Tool changes:** removing a tool between requests, or changing [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice] between requests, including narrowing it to a subset of the tools, dropped the reasoning after the change. Tools added partway through a run kept it.
+- **Model switches:** switching from `gpt-6.2-astra` to `gpt-6.2-sol`, or from `gpt-6.2-sol` to `gpt-6.1-sol`, dropped every earlier reasoning item, with `'reason': 'model_mismatch'`. Switching from `gpt-6.2-sol` to `gpt-6.2-astra` kept it. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or a run-level `model=` that makes such a switch continues without that reasoning.
+
 ### Native tools
 
 The Responses API has native tools that you can use instead of building your own:
@@ -365,27 +382,25 @@ The Responses API has native tools that you can use instead of building your own
 
 Web search, Code interpreter, Image generation, and File search are natively supported through the [Native tools](../native-tools.md) feature.
 
-Computer use can be enabled by passing an [`openai.types.responses.ComputerToolParam`](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/computer_tool_param.py) in the `openai_native_tools` setting on [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]. It doesn't currently generate [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] or [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] parts in the message history, or streamed events; please submit an issue if you need native support for this native tool.
+#### Computer use {#computer-use}
 
-```python {title="computer_use_tool.py" test="skip"}
-from openai.types.responses import ComputerToolParam
+To let a model use a computer, add the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability. On
+`OpenAIResponsesModel` with `OpenAIProvider` or `BedrockMantleProvider`, these models get OpenAI's own computer tool:
 
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+- GPT-5.4, except GPT-5.4 nano
+- GPT-5.5
+- GPT-5.6
+- GPT-6
 
-model_settings = OpenAIResponsesModelSettings(
-    openai_native_tools=[
-        ComputerToolParam(
-            type='computer',
-        )
-    ],
-)
-model = OpenAIResponsesModel('{{ openai:medium.name }}')
-agent = Agent(model=model, model_settings=model_settings)
+Other models and providers, including Azure, and any model with `ComputerUse(native=False)`, get a regular function
+tool. OpenAI's tool can't zoom, triple-click, hold a key down, press or release a mouse button on its own, or read the
+pointer position; the function tool can.
 
-result = agent.run_sync('Open a new browser tab')
-print(result.output)
-```
+Pydantic AI picks the tool by provider class, not by the server it calls. If `OpenAIProvider(base_url=...)` points at
+a server without the computer tool, remove it in the model's `profile=` argument:
+`profile=lambda p: {**p, 'supported_native_tools': p['supported_native_tools'] - {ComputerTool}}`. Use
+`| {ComputerTool}` instead to send it through another provider whose server supports it. Setting it in the provider's
+profile has no effect.
 
 #### Referencing earlier responses
 
@@ -394,7 +409,7 @@ The Responses API supports referencing earlier model responses in a new request 
 
 When the field is set to `'auto'`, Pydantic AI automatically selects the most recent `provider_response_id` from the message history and omits messages that came before it, letting the OpenAI API reconstruct them from server-side state. The same chaining is applied inside a run across tool-call continuations and retries, so OpenAI never sees duplicate copies of the same messages.
 
-A response is only continued from while it and the messages before it are unchanged. Each response created with the setting, or with [`openai_transport='websocket'`](#responses-websockets), records a digest of its parts and the history it was created from as [`ModelResponse.history_digest`][pydantic_ai.messages.ModelResponse.history_digest]. If the response or those messages have changed since, because a [history processor](../message-history.md#processing-message-history), [compaction](../capabilities/compaction.md) or your own code redacted, trimmed or rewrote them, the request sends the full history instead, so the model sees the change rather than the server's copy. A response without a digest, created without either setting or before digests were recorded, is treated the same way: the next request sends the full history, which costs no extra tokens, and records a digest that later requests can continue from.
+A response is only continued from while it and the messages before it are unchanged. Each response created with the setting, or with [`openai_transport='websocket'`](#responses-websockets), records a digest of its parts and the history it was created from as [`ModelResponse.history_digest`][pydantic_ai.messages.ModelResponse.history_digest]. If the response or those messages have changed since, because a [history processor](../message-history.md#processing-message-history), [compaction](../capabilities/compaction.md) or your own code redacted, trimmed or rewrote them, the request sends the full history instead, so the model sees the change rather than the server's copy. A response without a digest, created without either setting or before digests were recorded, is treated the same way: the next request sends the full history, which adds no extra tokens, and records a digest that later requests can continue from. On `gpt-6.2-sol` and `gpt-6.2-astra`, the digest also records the static and `on_change='append'` instructions an `'auto'` chain [sends as leading input messages](#prompt-caching), so a request with different ones sends the full history too.
 
 !!! note "Clear the ID when you edit a response's text"
     The Responses API uses its stored copy of an item sent with its ID and ignores the text sent alongside, so a [history processor](../message-history.md#processing-message-history) that changes a [`TextPart`][pydantic_ai.messages.TextPart]'s `content` needs to set its [`id`][pydantic_ai.messages.TextPart.id] to `None` too. This applies whether or not you use `openai_previous_response_id`.
@@ -447,6 +462,8 @@ result = agent.run_sync('What is the secret code?', model_settings=model_setting
 print(result.output)
 #> 1234
 ```
+
+On `gpt-6.2-sol` and `gpt-6.2-astra`, a response created without server-side state, or with `'auto'`, [stores its static and `on_change='append'` instructions in its input](#prompt-caching), so a seed without `message_history` sends them again: twice for the same agent, and the previous agent's for a different one. To avoid that, pass the `message_history` with the seed, continue with `openai_previous_response_id='auto'` and the `message_history` instead of a concrete seed, or pass `profile=OpenAIModelProfile(openai_responses_stable_instructions_as_input=False)` to the model.
 
 An encrypted [`CompactionPart`][pydantic_ai.messages.CompactionPart] ends the response-ID chain, even with a concrete seed, when it was produced by [another compatible provider](#message-compaction) (such as the [Codex backend](openai-codex.md#continuing-on-the-openai-api)) or by an endpoint that doesn't share server state with this one. The next request sends the compaction item and later messages instead of continuing the older stored response. Inline compactions from an endpoint that shares server state remain chainable.
 
@@ -530,7 +547,7 @@ agent = Agent(
 )
 ```
 
-As an alternative, `OpenAICompaction` supports a **stateless mode** (`stateless=True`) that calls the stateless `/responses/compact` endpoint via a `before_model_request` hook. Use this in [ZDR](https://openai.com/enterprise-privacy/) environments where OpenAI must not retain conversation data, when using [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store], when you need explicit out-of-band control over when compaction runs, or when the per-request cost of stateful mode matters. Stateful mode sends `context_management` on every `/responses` request, not only once the conversation nears the threshold; in our measurements, that added roughly 50 ms of server processing time per request, and setting `token_threshold` didn't reduce it. Stateless mode sends no `context_management`, and instead makes a separate `/responses/compact` request before the model request whenever its trigger fires. Stateless mode requires you to specify either a [`message_count_threshold`][pydantic_ai.models.openai.OpenAICompaction] or a custom `trigger` callable:
+As an alternative, `OpenAICompaction` supports a **stateless mode** (`stateless=True`) that calls the stateless `/responses/compact` endpoint when your trigger condition is met. Use this in [ZDR](https://openai.com/enterprise-privacy/) environments where OpenAI must not retain conversation data, when using [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store], when you need explicit out-of-band control over when compaction runs, or when the per-request cost of stateful mode matters. Stateful mode sends `context_management` on every `/responses` request, not only once the conversation nears the threshold; in our measurements, that added roughly 50 ms of server processing time per request, and setting `token_threshold` didn't reduce it. Stateless mode sends no `context_management`, and instead makes a separate `/responses/compact` request before the model request whenever its trigger fires. Stateless mode requires you to specify either a [`message_count_threshold`][pydantic_ai.models.openai.OpenAICompaction] or a custom `trigger` callable:
 
 ```python {title="openai_compaction_stateless.py" test="skip"}
 from pydantic_ai import Agent
@@ -544,10 +561,12 @@ agent = Agent(
 
 The mode is inferred from which parameters you pass: supplying `message_count_threshold` or `trigger` implies stateless mode, otherwise stateful mode is used. You can also pass `stateless=True` or `stateless=False` explicitly. Mixing parameters from different modes raises [`UserError`][pydantic_ai.exceptions.UserError].
 
+Stateless mode [requests compaction](../capabilities/compaction.md#the-compaction-hook) when the trigger is met, and serves it like [`NativeCompaction`][pydantic_ai.capabilities.NativeCompaction], on any `OpenAIResponsesModel` whatever its [`supports_compaction_on_demand`][pydantic_ai.profiles.ModelProfile.supports_compaction_on_demand] profile flag says, so it also serves compaction other capabilities request, emits the [compaction events](../capabilities/compaction.md#compaction-events), and under [`ModelFallback`](../capabilities/model-fallback.md) is redone for the model that serves the request. To compact on demand with any model that supports it, Anthropic's included, use [`NativeCompaction`](../capabilities/compaction.md#compacting-on-demand) with a trigger of your own, or `compact=` on the run method to [compact before a run's first request](../capabilities/compaction.md#requesting-compaction). On OpenAI, `NativeCompaction` leaves a request with a focus to the next capability by default, as the compaction request's `instructions` replace the agent's and lose the cached prefix.
+
 !!! tip
     Stateful compaction pairs especially well with [`openai_previous_response_id='auto'`](#referencing-earlier-responses) or [`openai_conversation_id`](#using-durable-conversations). Both rely on OpenAI's server-side conversation state, so OpenAI can use a previously compacted context as the starting point for the next turn without you having to resend it.
 
-For lower-level use cases, you can call [`compact_messages`][pydantic_ai.models.openai.OpenAIResponsesModel.compact_messages] directly on the model.
+For lower-level use cases, you can call [`compact_messages`][pydantic_ai.models.openai.OpenAIResponsesModel.compact_messages] directly on the model. Its `instructions` replace the agent's instructions for the compaction request.
 
 ### Text phases
 

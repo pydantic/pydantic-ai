@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import json
 import uuid
@@ -119,6 +120,7 @@ from .conftest import (
     IsSameStr,
     IsStr,
     conversation_view,
+    history_with_server_system_prompts,
     iter_message_parts,
     legacy_retry_prompt_part,
     message,
@@ -8713,6 +8715,102 @@ async def test_adapter_load_messages_uploaded_file_with_vendor_metadata():
     )
 
 
+@pytest.mark.parametrize(
+    'item',
+    [
+        pytest.param(BinaryContent(data=b'abc', media_type='application/pdf', identifier='custom'), id='binary'),
+        pytest.param(BinaryContent(data=b'abc', media_type='image/png', identifier='custom'), id='binary-image-type'),
+        pytest.param(BinaryImage(data=b'abc', media_type='image/png', identifier='custom'), id='binary-image'),
+        pytest.param(
+            BinaryImage(data=b'abc', media_type='image/png', identifier='custom', vendor_metadata={'detail': 'low'}),
+            id='binary-image-vendor-metadata',
+        ),
+        pytest.param(ImageUrl(url='https://example.com/x.png', identifier='custom'), id='image-url'),
+        pytest.param(DocumentUrl(url='https://example.com/x.pdf', identifier='custom'), id='document-url'),
+    ],
+)
+def test_user_file_custom_identifier_round_trip(item: BinaryContent | ImageUrl | DocumentUrl):
+    """A custom identifier survives dump and load, and is written to the UI part's `provider_metadata`."""
+    dumped = VercelAIAdapter.dump_messages([ModelRequest(parts=[UserPromptPart(content=[item])])])
+    file_part = dumped[0].parts[0]
+    assert isinstance(file_part, FileUIPart)
+    assert file_part.provider_metadata is not None
+    assert file_part.provider_metadata['pydantic_ai']['identifier'] == 'custom'
+
+    [message] = VercelAIAdapter.load_messages(dumped)
+    assert isinstance(message, ModelRequest)
+    part = message.parts[0]
+    assert isinstance(part, UserPromptPart)
+    assert not isinstance(part.content, str)
+    loaded = part.content[0]
+    assert isinstance(loaded, BinaryContent | ImageUrl | DocumentUrl)
+    assert loaded.identifier == 'custom'
+    assert loaded.vendor_metadata == item.vendor_metadata
+    if isinstance(item, BinaryContent) and item.is_image:
+        assert isinstance(loaded, BinaryImage)
+
+    # A second round trip keeps writing the same key.
+    assert VercelAIAdapter.dump_messages([message])[0].parts == [file_part]
+
+
+@pytest.mark.parametrize(
+    'item',
+    [
+        pytest.param(BinaryContent(data=b'abc', media_type='application/pdf'), id='binary'),
+        pytest.param(BinaryContent.from_data_uri('data:image/png;base64,YWJj'), id='narrowed-image'),
+        pytest.param(BinaryContent(data=b'abc', media_type='application/pdf', identifier=''), id='empty'),
+        pytest.param(ImageUrl(url='https://example.com/x.png'), id='image-url'),
+    ],
+)
+@pytest.mark.parametrize('reload_from_json', [False, True])
+def test_user_file_computed_identifier_is_not_dumped(
+    item: BinaryContent | ImageUrl,
+    reload_from_json: bool,
+):
+    """A computed identifier stays off the wire, even where `narrow_type` or a JSON reload stored it in `_identifier`."""
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[item])])]
+    if reload_from_json:
+        messages = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+    file_part = VercelAIAdapter.dump_messages(messages)[0].parts[0]
+    assert isinstance(file_part, FileUIPart)
+    assert file_part.provider_metadata is None
+
+
+@pytest.mark.parametrize(
+    'url',
+    [
+        pytest.param('data:application/pdf;base64,YWJj', id='binary'),
+        pytest.param('https://example.com/x.pdf', id='url'),
+    ],
+)
+@pytest.mark.parametrize(
+    'identifier',
+    [pytest.param({'not': 'a string'}, id='non-string'), pytest.param('', id='empty')],
+)
+def test_user_file_unusable_identifier_falls_back_to_computed(url: str, identifier: object):
+    """`provider_metadata` is client-supplied, so an empty or non-string identifier gives way to the computed one."""
+    ui_message = UIMessage(
+        id='msg1',
+        role='user',
+        parts=[
+            FileUIPart(
+                url=url,
+                media_type='application/pdf',
+                provider_metadata={'pydantic_ai': {'identifier': identifier}},
+            )
+        ],
+    )
+    [message] = VercelAIAdapter.load_messages([ui_message])
+    assert isinstance(message, ModelRequest)
+    part = message.parts[0]
+    assert isinstance(part, UserPromptPart)
+    assert not isinstance(part.content, str)
+    loaded = part.content[0]
+    assert isinstance(loaded, BinaryContent | DocumentUrl)
+    source = loaded.data if isinstance(loaded, BinaryContent) else loaded.url.encode()
+    assert loaded.identifier == hashlib.sha1(source, usedforsecurity=False).hexdigest()[:6]
+
+
 async def test_adapter_load_messages_file_url_without_metadata():
     """Test loading FileUIPart without provider_metadata falls back to URL-based detection."""
     ui_messages = [
@@ -14073,6 +14171,64 @@ async def test_server_message_history_follow_up(client_sends: str):
     assert conversation_view(stored) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?', 'text: ok'])
 
 
+@pytest.mark.parametrize('held', ['message_history', 'server message_history', 'conversation_store'])
+async def test_server_system_prompt_keeps_trusted_history_system_prompts(held: str):
+    """`manage_system_prompt='server'` replaces only the stale prompt opening the trusted history (#13768).
+
+    The server's other system prompts reach the model, and the client's is still stripped.
+    """
+    agent, requests, _ = server_history_agent(system_prompt='Server prompt')
+    stored = history_with_server_system_prompts()
+    client_prompt = UIMessage(id='s1', role='system', parts=[TextUIPart(text='Client prompt')])
+    run_input = SubmitMessage(id='chat', messages=[client_prompt, _AND_NOW])
+    message_history: list[ModelMessage] | None = stored
+    if held == 'conversation_store':
+        store = InMemoryConversationStore()
+        await store.save(Conversation(messages=stored, conversation_id='chat'))
+        adapter = VercelAIAdapter(agent, run_input, conversation_store=store)
+        message_history = None
+    elif held == 'server message_history':
+        adapter = VercelAIAdapter(agent, run_input, manage_message_history='server')
+    else:
+        adapter = VercelAIAdapter(agent, run_input)
+    results: list[AgentRunResult[Any]] = []
+
+    with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
+        async for _ in adapter.run_stream(message_history=message_history, on_complete=results.append):
+            pass
+
+    [result] = results
+    assert conversation_view(requests[-1]) == snapshot(
+        [
+            'system-prompt: Server prompt',
+            'user-prompt: where am I?',
+            'call loc-1',
+            'return loc-1: Paris',
+            'user-prompt: <system>Enqueued in an earlier run</system>',
+            'text: ok',
+            'user-prompt: <system>Server context</system>',
+            'user-prompt: hi',
+            'text: ok',
+            'user-prompt: and now?',
+        ]
+    )
+    assert conversation_view(result.all_messages()) == snapshot(
+        [
+            'system-prompt: Server prompt',
+            'user-prompt: where am I?',
+            'call loc-1',
+            'return loc-1: Paris',
+            'system-prompt: Enqueued in an earlier run',
+            'text: ok',
+            'system-prompt: Server context',
+            'user-prompt: hi',
+            'text: ok',
+            'user-prompt: and now?',
+            'text: ok',
+        ]
+    )
+
+
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
 async def test_server_message_history_stale_regenerate_is_an_error_event():
     """A regenerate of a message the server doesn't have, as a retry after a failed run, reaches `useChat` as an error.
@@ -14486,6 +14642,8 @@ async def _answer_ok(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIte
 @pytest.mark.parametrize(
     ('prompt', 'trim', 'efforts', 'added'),
     [
+        # The system prompt the UI adapter reinjects goes on the trimmed history's first request, a copy of the turn
+        # that only adds to it, so the turn is stored as the history holds it, with the system prompt.
         pytest.param('system_prompt', True, [None, None, None], SystemPromptPart, id='trimmed'),
         pytest.param('instructions', True, ['low', 'low', 'low'], ModelSettingsDeltaPart, id='trimmed-effort'),
         pytest.param('system_prompt', False, ['low', 'low', 'high'], ModelSettingsDeltaPart, id='effort-change'),
@@ -14531,6 +14689,9 @@ async def test_conversation_store_appends_a_turn_the_run_adds_parts_to(
     last_turn = conversation.messages[-2]
     assert isinstance(last_turn, ModelRequest)
     assert any(isinstance(part, added) for part in last_turn.parts) if added else len(last_turn.parts) == 1
+    head = conversation.messages[0]
+    assert isinstance(head, ModelRequest)
+    assert isinstance(head.parts[0], SystemPromptPart) == (prompt == 'system_prompt')
 
 
 @pytest.mark.parametrize(

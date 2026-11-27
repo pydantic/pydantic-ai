@@ -14,30 +14,36 @@ import pytest
 from pydantic_ai import (
     Agent,
     AgentStreamEvent,
+    FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
     ModelResponse,
+    ModelResponseOrigin,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     RunContext,
     RunUsage,
+    TextPart,
 )
-from pydantic_ai.capabilities import Hooks, ProcessEventStream
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.capabilities import Hooks, ModelFallback, ProcessEventStream
+from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 
 try:
-    from temporalio import workflow
+    from temporalio import activity, workflow
     from temporalio.client import Client, WorkflowFailureError, WorkflowHandle
+    from temporalio.common import RetryPolicy
     from temporalio.contrib.pydantic import pydantic_data_converter
     from temporalio.contrib.workflow_streams import WorkflowStreamItem
     from temporalio.exceptions import ApplicationError
     from temporalio.service import RPCError, RPCStatusCode
     from temporalio.testing import ActivityEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
+    from temporalio.workflow import ActivityConfig
 
     from pydantic_ai.durable_exec.temporal import (
         AgentEventStream,
@@ -67,7 +73,7 @@ if sys.version_info >= (3, 14):  # pragma: lax no cover
 with workflow.unsafe.imports_passed_through():
     from ._shared import BASE_ACTIVITY_CONFIG, TASK_QUEUE
 
-pytestmark = [pytest.mark.xdist_group(name='temporal-durability')]
+pytestmark = [pytest.mark.xdist_group(name='temporal-workflow-streams')]
 
 TOPIC = 'agent_events'
 
@@ -240,6 +246,149 @@ async def test_a_late_consumer_still_gets_the_whole_run(client: Client) -> None:
     assert output == 'Streamed response'
     assert len(received) == 10
     assert isinstance(received[-1], AgentRunResultEvent)
+
+
+# --- A model-request activity that Temporal retries after it streamed ------------------------------
+
+
+async def _stream_failing_on_the_first_activity_attempt(
+    messages: list[ModelMessage], info: AgentInfo
+) -> AsyncIterator[str]:
+    if activity.info().attempt == 1:
+        yield 'Hel'
+        raise RuntimeError('connection lost')
+    yield 'Hello'
+
+
+_retried_durability = TemporalDurability(
+    activity_config=BASE_ACTIVITY_CONFIG,
+    model_activity_config=ActivityConfig(
+        start_to_close_timeout=timedelta(seconds=60),
+        retry_policy=RetryPolicy(maximum_attempts=2, initial_interval=timedelta(milliseconds=10)),
+    ),
+    event_stream_topic=TOPIC,
+)
+_retried_agent = Agent(
+    FunctionModel(_tool_calling_model, stream_function=_stream_failing_on_the_first_activity_attempt),
+    name='retried_stream_agent',
+    capabilities=[_retried_durability],
+)
+
+
+@workflow.defn
+class RetriedStreamWorkflow:
+    @workflow.init
+    def __init__(self, prompt: str) -> None:
+        self.events = AgentEventStream()
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        async with self.events:
+            result = await _retried_agent.run(prompt)
+        return result.output
+
+
+async def test_a_retried_activity_streams_a_later_execution_of_the_same_response(client: Client) -> None:
+    """A retried model-request activity republishes its response under the same `response_id`, one execution later.
+
+    Both executions' events reach the topic, so the consumer drops those of the execution the later one supersedes.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RetriedStreamWorkflow],
+        plugins=[AgentPlugin(_retried_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            RetriedStreamWorkflow.run,
+            args=['Hello'],
+            id=f'{RetriedStreamWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        received = await _collect(
+            _retried_durability.stream_agent_events(client, handle, poll_cooldown=timedelta(milliseconds=50))
+        )
+        assert await handle.result() == 'Hello'
+
+    run_id = cast(AgentRunResultEvent[str], received.pop()).result.run_id
+    first = ModelResponseOrigin(run_id=run_id, run_step=1)
+    second = ModelResponseOrigin(run_id=run_id, run_step=1, execution_attempt=2)
+    assert received == [
+        PartStartEvent(index=0, part=TextPart(content='Hel')),
+        FinalResultEvent(tool_name=None, tool_call_id=None),
+        PartStartEvent(index=0, part=TextPart(content='Hello')),
+        FinalResultEvent(tool_name=None, tool_call_id=None),
+        PartEndEvent(index=0, part=TextPart(content='Hello')),
+    ]
+    origins: list[ModelResponseOrigin] = [event.origin for event in received]
+    assert origins == [first, first, second, second, second]
+    assert second.supersedes(first)
+    assert second.response_id == first.response_id
+
+    # Dropping the events of every origin a later one supersedes leaves the response the run ended with.
+    assert [
+        event for event, origin in zip(received, origins) if not any(later.supersedes(origin) for later in origins)
+    ] == received[2:]
+
+
+async def _stream_failing_before_output(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    raise ModelAPIError(model_name='failing', message='boom')
+    yield ''  # pragma: no cover
+
+
+async def _fallback_target_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    yield 'Hello'
+
+
+_fallback_stream_durability = TemporalDurability(
+    activity_config=BASE_ACTIVITY_CONFIG,
+    models={'fallback_target': FunctionModel(stream_function=_fallback_target_stream, model_name='fallback_target')},
+    event_stream_topic=TOPIC,
+)
+_fallback_stream_agent = Agent(
+    FunctionModel(_tool_calling_model, stream_function=_stream_failing_before_output, model_name='failing'),
+    name='fallback_stream_agent',
+    capabilities=[ModelFallback('fallback_target'), _fallback_stream_durability],
+)
+
+
+@workflow.defn
+class FallbackStreamWorkflow:
+    @workflow.init
+    def __init__(self, prompt: str) -> None:
+        self.events = AgentEventStream()
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        async with self.events:
+            result = await _fallback_stream_agent.run(prompt)
+        return result.output
+
+
+async def test_a_fallback_streams_the_next_attempt_from_its_own_activity(client: Client) -> None:
+    """The attempt the workflow counts reaches the activity that streams it, so its events carry it."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[FallbackStreamWorkflow],
+        plugins=[AgentPlugin(_fallback_stream_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            FallbackStreamWorkflow.run,
+            args=['Hello'],
+            id=f'{FallbackStreamWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        received = await _collect(
+            _fallback_stream_durability.stream_agent_events(client, handle, poll_cooldown=timedelta(milliseconds=50))
+        )
+        assert await handle.result() == 'Hello'
+
+    run_id = cast(AgentRunResultEvent[str], received.pop()).result.run_id
+    assert _kinds(received) == ['PartStartEvent', 'FinalResultEvent', 'PartEndEvent']
+    assert {event.origin for event in received} == {ModelResponseOrigin(run_id=run_id, run_step=1, attempt=2)}
 
 
 _impatient_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, event_stream_topic=TOPIC)

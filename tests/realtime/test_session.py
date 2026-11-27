@@ -55,6 +55,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
+    OperatorSource,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -111,6 +112,7 @@ from pydantic_ai.realtime._utils import (
     session_instructions,
 )
 from pydantic_ai.realtime.codec import (
+    AppendVoiceInstructions,
     AudioDelta,
     CancelResponse,
     ClearAudio,
@@ -5375,6 +5377,28 @@ async def test_send_respond_rejects_audio_and_unsupported_image_response() -> No
     assert conn.sent == []
 
 
+async def test_append_voice_instructions_needs_a_voice_model_with_instructions_of_its_own() -> None:
+    """Voice instructions go only to a model whose voice model takes instructions apart from the agent's; elsewhere the
+    agent's instructions are the voice model's, and the method raises before sending anything.
+
+    A unit test for the flag-off side, which no provider takes to the wire. History never records the instructions.
+    """
+    conn = FakeRealtimeConnection([])
+    unsupported = RealtimeSession(conn, _noop_runner, profile=_profile())
+    with pytest.raises(
+        UserError,
+        match=r'does not support voice instructions of its own, so `session\.append_voice_instructions\(\)` is unavailable',
+    ):
+        await unsupported.append_voice_instructions('Speak slowly.')
+    assert conn.sent == []
+
+    profile: RealtimeModelProfile = {**_profile(), 'supports_appending_voice_instructions': True}
+    supported = RealtimeSession(conn, _noop_runner, profile=profile)
+    await supported.append_voice_instructions('Speak slowly.')
+    assert conn.sent == [AppendVoiceInstructions('Speak slowly.')]
+    assert supported.all_messages() == []
+
+
 async def test_send_respond_sequence_can_lead_with_audio() -> None:
     """Non-last items are sent as context, so audio ahead of the text turn is fine with an explicit `respond`."""
     conn = FakeRealtimeConnection([])
@@ -8838,6 +8862,27 @@ async def test_session_enqueue_records_system_prompts_alone_as_system_prompts() 
     )
 
 
+async def test_session_enqueue_before_prompt_is_delivered_as_append_delivers_it() -> None:
+    """A session has no prompt request to place data in, so `'before_prompt'` content is its own turn, as with `'append'`.
+
+    The restriction to data capability parts holds here too.
+    """
+    conn = FakeRealtimeConnection([ResponseDone()])
+    agent: Agent[None, str] = Agent()
+    report = _LiveReportPart(content='found it', source=OperatorSource())
+
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        with pytest.raises(UserError, match="placement='before_prompt'"):
+            session.enqueue('plain text', placement='before_prompt')
+        assert session.enqueue(report, placement='before_prompt') is not None
+        _ = [event async for event in session]
+
+    assert [item for item in conn.sent if isinstance(item, str)] == ['<report>\nfound it\n</report>']
+    assert session.new_messages()[-1] == ModelRequest(
+        parts=[report], timestamp=IsDatetime(), conversation_id=IsStr(), run_id=IsStr()
+    )
+
+
 async def test_session_replays_a_system_prompt_sent_first_where_it_was_sent() -> None:
     """A system prompt sent before anything else isn't the standing one a replay leaves to the instructions.
 
@@ -9240,10 +9285,14 @@ async def test_tool_completion_drains_messages_deferred_until_usage_arrives(monk
         response_continues: bool,
         run_step: int,
         reserved_budget: bool,
-    ) -> tuple[ToolReturnPart, None]:
+    ) -> tuple[ToolReturnPart, None, list[str]]:
         del validation_done, execution_prerequisites, response_usage_follows, response_continues
         del run_step, reserved_budget
-        return ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id), None
+        return (
+            ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id),
+            None,
+            [],
+        )
 
     monkeypatch.setattr(session, '_execute_tool', complete_after_usage)
     completion = asyncio.Event()
@@ -9298,10 +9347,14 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(
         response_continues: bool,
         run_step: int,
         reserved_budget: bool,
-    ) -> tuple[ToolReturnPart, None]:
+    ) -> tuple[ToolReturnPart, None, list[str]]:
         del validation_done, execution_prerequisites, response_usage_follows, response_continues
         del run_step, reserved_budget
-        return ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id), None
+        return (
+            ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id),
+            None,
+            [],
+        )
 
     monkeypatch.setattr(session, '_execute_tool', complete_after_usage)
 

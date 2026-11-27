@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import subprocess
@@ -11,7 +12,7 @@ import uuid
 import warnings
 from collections import Counter, deque
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -31,6 +32,8 @@ from pydantic_ai import (
     CapabilityEvent,
     CapabilityInstructionSource,
     CapabilityLoadDeltaPart,
+    CompactionPart,
+    CompactionStartEvent,
     CustomEvent,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -41,6 +44,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseOrigin,
     ModelSettings,
     PartDeltaEvent,
     PartStartEvent,
@@ -62,11 +66,20 @@ from pydantic_ai.capabilities import (
     MCP,
     BatchModelRequests,
     Capability,
+    CompactionRequest,
+    CompactionResult,
     DynamicCapability,
     Hooks,
     ModelFallback,
+    NativeCompaction,
+    PrepareTools,
     SetToolMetadata,
+    ToolSearch,
+    ValidatedToolArgs,
     WrapperCapability,
+    WrapToolExecuteHandler,
+    durable_operation,
+    on_event,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
@@ -76,10 +89,12 @@ from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     ModelAPIError,
+    ModelContextWindowExceededError,
     ModelHTTPError,
     ModelRateLimitError,
     ModelRequestTimeout,
     ModelRetry,
+    ModelSchemaTooComplexError,
     RunCancelled,
     RunTimedOut,
     ToolFailed,
@@ -97,10 +112,11 @@ from pydantic_ai.models import (
     StreamedResponse,
 )
 from pydantic_ai.models._batch_model import BatchPool
-from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel, StreamFunctionDef
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel, StreamFunctionDef
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.realtime import (
     RealtimeModel,
     RealtimeModelProfile,
@@ -111,16 +127,20 @@ from pydantic_ai.realtime import (
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 from ..conftest import IsDatetime, IsNow, IsStr
 from ..realtime_connections import InferredConnection
+from ..schema_too_complex_utils import CompilingModel
+from .override_rebind_cases import REBIND_CASES, RebindCase
+from .parallel_step_scenarios import VARIANTS, StepState, Variant, parallel_calls_agent
 from .span_utils import drop_fastmcp_client_spans
 
 # Skips only when `dbos` itself is missing, so an import below that a supported `dbos` version lacks fails loudly.
 pytest.importorskip('dbos')
 
-from dbos import DBOS, DBOSConfig, SetWorkflowID
+from dbos import DBOS, DBOSConfig, SetWorkflowID, StepInfo
 from dbos._core import DEFAULT_STEP_OPTIONS
 from dbos._error import DBOSAwaitedWorkflowCancelledError, DBOSMaxStepRetriesExceeded, DBOSPatchNondeterminismError
 
@@ -150,10 +170,11 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
-    from fastmcp.client.transports import StdioTransport
+    from fastmcp.client.transports import FastMCPTransport, StdioTransport
 
     from pydantic_ai._mcp_compat import MCP_SDK_V2
     from pydantic_ai.mcp import MCPToolset
+    from tests.mcp_server import mcp as test_mcp_server
     from tests.mcp_task_server import TASK_SERVER_UNAVAILABLE
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
@@ -598,22 +619,22 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"index": 0, "part": {"tool_name": "get_country", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
+                                            content='{"index": 0, "part": {"tool_name": "get_country", "args": "", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
                                         ),
                                         BasicSpan(
                                             content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "{}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index": 0, "part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": "tool-call", "canonical_system": null, "event_kind": "part_end"}'
+                                            content='{"index": 0, "part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": "tool-call", "canonical_system": null, "event_kind": "part_end"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": "tool-call", "canonical_system": null, "event_kind": "part_start"}'
+                                            content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": "tool-call", "canonical_system": null, "event_kind": "part_start"}'
                                         ),
                                         BasicSpan(
                                             content='{"index": 1, "delta": {"tool_name_delta": null, "args_delta": "{}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
+                                            content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
                                         ),
                                     ],
                                 )
@@ -624,7 +645,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=1'),
                                 BasicSpan(
-                                    content='{"part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
+                                    content='{"part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
                                 ),
                             ],
                         ),
@@ -633,7 +654,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=1'),
                                 BasicSpan(
-                                    content='{"part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
+                                    content='{"part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
                                 ),
                             ],
                         ),
@@ -652,7 +673,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=1'),
                                 BasicSpan(
-                                    content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                    content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                 ),
                             ],
                         ),
@@ -661,7 +682,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=1'),
                                 BasicSpan(
-                                    content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                    content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                 ),
                             ],
                         ),
@@ -673,7 +694,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"index": 0, "part": {"tool_name": "get_weather", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
+                                            content='{"index": 0, "part": {"tool_name": "get_weather", "args": "", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
                                         ),
                                         BasicSpan(
                                             content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "{\\"", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
@@ -694,7 +715,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                             content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "\\"}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index": 0, "part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
+                                            content='{"index": 0, "part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
                                         ),
                                     ],
                                 )
@@ -705,7 +726,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=2'),
                                 BasicSpan(
-                                    content='{"part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
+                                    content='{"part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
                                 ),
                             ],
                         ),
@@ -715,7 +736,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=2'),
                                 BasicSpan(
-                                    content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                    content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                 ),
                             ],
                         ),
@@ -727,7 +748,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                     children=[
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
-                                            content='{"index": 0, "part": {"tool_name": "final_result", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
+                                            content='{"index": 0, "part": {"tool_name": "final_result", "args": "", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
                                         ),
                                         BasicSpan(
                                             content='{"tool_name": "final_result", "tool_call_id": null, "event_kind": "final_result"}'
@@ -853,7 +874,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                             content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "]}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index": 0, "part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
+                                            content='{"index": 0, "part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
                                         ),
                                     ],
                                 )
@@ -864,7 +885,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=3'),
                                 BasicSpan(
-                                    content='{"part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "output_tool_call"}'
+                                    content='{"part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "output_tool_call"}'
                                 ),
                             ],
                         ),
@@ -873,7 +894,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=3'),
                                 BasicSpan(
-                                    content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
+                                    content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
                                 ),
                             ],
                         ),
@@ -2880,6 +2901,61 @@ async def test_dbos_durability_model_error_reaches_workflow_with_its_type(dbos: 
     assert await run_durable_agent() == 'ModelHTTPError 503 7.0'
 
 
+async def test_dbos_durability_submit_output_from_a_function_tool(dbos: DBOS) -> None:
+    """DBOS runs function tools in workflow code, so `submit_output()` from one ends the run."""
+
+    async def finish(ctx: RunContext[None]) -> str:
+        await ctx.submit_output('final_result', {'response': 'submitted'})
+        return 'done'
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('finish', {})])
+
+    agent = Agent(
+        FunctionModel(model),
+        name='durability_submit_output',
+        deps_type=type(None),
+        tools=[finish],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('Finish')).output
+
+    assert await run_durable_agent() == 'submitted'
+
+
+@DBOS.step()
+async def _submit_output_in_a_step(ctx: RunContext[None]) -> None:
+    await ctx.submit_output('final_result', {'response': 'submitted'})
+
+
+async def test_dbos_durability_submit_output_refused_in_a_users_step(dbos: DBOS) -> None:
+    """A step the tool's own code runs records its result, and recovery wouldn't submit again, so it's refused."""
+
+    async def finish(ctx: RunContext[None]) -> None:
+        await _submit_output_in_a_step(ctx)
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('finish', {})])
+
+    agent = Agent(
+        FunctionModel(model),
+        name='durability_submit_output_in_a_step',
+        deps_type=type(None),
+        tools=[finish],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('Finish')).output
+
+    with pytest.raises(UserError, match='cannot be called from a tool that runs as a durable step or task'):
+        await run_durable_agent()
+
+
 def _retry_after_model(*errors: ModelHTTPError | None) -> tuple[FunctionModel, list[float]]:
     """A model that raises `errors` in turn, then answers, recording when each attempt started."""
     attempts: list[float] = []
@@ -2978,6 +3054,62 @@ async def test_dbos_durability_model_error_retry_after_continues_the_backoff(
     # The backoff is 40 seconds, then 80: the first wait gets the one-minute floor.
     assert waits == [60.0, 80.0]
     assert intervals == [80.0, 160.0]
+
+
+@pytest.mark.parametrize(
+    'error',
+    [
+        pytest.param(RuntimeError('connection lost'), id='step-retry'),
+        pytest.param(_rate_limited(0.01), id='retry-after-wait'),
+    ],
+)
+async def test_dbos_durability_retried_model_step_streams_a_later_execution(dbos: DBOS, error: Exception) -> None:
+    """A model step that fails after it streamed runs again as a later execution of the same response.
+
+    DBOS retries a failure in the step itself, while a model error's `retry_after` makes workflow code run the step
+    again after a durable wait; the execution attempt goes on counting either way.
+    """
+    executions = 0
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal executions
+        executions += 1
+        if executions == 1:
+            yield 'Hel'
+            raise error
+        yield 'Hello'
+
+    origins: list[ModelResponseOrigin | None] = []
+
+    async def handler(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in events:
+            if isinstance(event, PartStartEvent):
+                origins.append(event.origin)
+
+    agent = Agent(
+        FunctionModel(stream_function=stream),
+        name=f'durability_retried_stream_{uuid.uuid4().hex[:8]}',
+        deps_type=type(None),
+        capabilities=[
+            DBOSDurability(
+                event_stream_handler=handler,
+                model_step_config=StepConfig(retries_allowed=True, max_attempts=2, interval_seconds=0.01),
+            )
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('Hello DBOS')).output
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await run_durable_agent() == 'Hello'
+
+    first, second = origins
+    assert first is not None and second is not None
+    assert (first.execution_attempt, second.execution_attempt) == (1, 2)
+    assert first.response_id == second.response_id
+    assert second.supersedes(first)
 
 
 async def test_dbos_durability_model_error_retry_after_caps_at_dbos_maximum_backoff(
@@ -3115,6 +3247,36 @@ async def test_dbos_durability_sticky_fallback_goes_straight_to_the_candidate(db
 
     assert await run_durable_agent() == ['sticky_target'] * 4
     assert calls == ['primary', 'target', 'target', 'target', 'target']
+
+
+async def test_dbos_durability_fallback_on_unsupported_setting_warning(dbos: DBOS) -> None:
+    """A model that would ignore a setting the request relies on is moved on from inside a DBOS workflow too."""
+    calls: list[str] = []
+
+    class IgnoresStopSequences(FunctionModel):
+        unsupported_settings = frozenset({'stop_sequences'})
+
+    def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('called')
+        return ModelResponse(parts=[TextPart('answered')])
+
+    agent = Agent(
+        IgnoresStopSequences(answer, model_name='primary'),
+        name='durability_unsupported_setting_fallback',
+        model_settings={'stop_sequences': ['STOP']},
+        capabilities=[
+            ModelFallback('backup', fallback_on=(ModelAPIError, UnsupportedSettingWarning)),
+            DBOSDurability(models={'backup': FunctionModel(answer, model_name='backup')}),
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> tuple[str | None, list[str]]:
+        result = await agent.run('Hello DBOS')
+        return result.response.model_id, [f'{a.model_name} {a.outcome}' for a in result.response.failed_attempts or []]
+
+    assert await run_durable_agent() == ('backup', ['primary error'])
+    assert calls == ['called']
 
 
 async def test_dbos_durability_rejects_a_live_workspace_workflow_input(dbos: DBOS, tmp_path: Path) -> None:
@@ -4165,6 +4327,29 @@ async def test_dbos_step_wrapped_tool_rejects_cancel_in_workflow(dbos: DBOS) -> 
         await agent.run('run')
 
 
+async def test_dbos_step_wrapped_tool_rejects_request_compaction_in_workflow(dbos: DBOS) -> None:
+    """`ctx.request_compaction()` inside a step-wrapped tool raises: a replayed step wouldn't request it again."""
+
+    async def compact(ctx: RunContext[object]) -> str:
+        ctx.request_compaction()
+        return 'requested'  # pragma: no cover
+
+    agent = Agent(
+        TestModel(),
+        deps_type=object,
+        name='dbos_request_compaction_dynamic',
+        toolsets=[DynamicToolset(lambda ctx: FunctionToolset([compact]), id='compact_dynamic')],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    with pytest.raises(UserError, match='`request_compaction` is not supported inside a durable step'):
+        await run_workflow()
+
+
 async def test_dbos_step_wrapped_sub_agent_self_cancel_is_a_failed_tool_return(dbos: DBOS) -> None:
     """A sub-agent that cancels itself inside a step-wrapped (dynamic) tool fails that tool call, as it does in-process.
 
@@ -4277,14 +4462,15 @@ async def test_dbos_dynamic_get_tools_rejects_enqueue_in_workflow(dbos: DBOS) ->
     )
 
 
-@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_dbos_mcp_get_tools_and_instructions_reject_enqueue_in_workflow(
     dbos: DBOS, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The MCP discovery steps guard enqueue too, like the MCP call step."""
     enqueue_errors: list[str] = []
+    # The default 5 s init_timeout is shorter than a stalled CI worker can take to finish the initialize handshake.
     mcp_toolset = MCPToolset(
-        StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+        FastMCPTransport(test_mcp_server),
+        init_timeout=READINESS_WAIT_TIMEOUT,
         id='enqueue_mcp_discovery',
         include_instructions=True,
     )
@@ -5119,6 +5305,139 @@ async def test_dbos_durability_event_stream_handler(dbos: DBOS) -> None:
     assert 'durability_handler__event_stream_handler' in step_names
 
 
+# `ToolAvailabilityDeltaEvent` for a mid-run tool population change (2.60, #9405) and `ModelSettingsDeltaEvent` for a
+# named `thinking` level (2.62, #11111) are dispatched to the durability's `event_stream_handler` like any other
+# workflow-side event, so each takes a step that workflows recorded before those releases don't have.
+
+_delta_handler_events: list[str] = []
+
+
+async def _delta_event_handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        _delta_handler_events.append(type(event).__name__)
+
+
+async def _done_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    yield 'done'
+
+
+async def _population_change_stream_fn(
+    messages: list[ModelMessage], info: AgentInfo
+) -> AsyncIterator[str | DeltaToolCalls]:
+    """Call `unlock`, then `later` once it is advertised, then finish."""
+    returned = {part.tool_name for message in messages for part in message.parts if isinstance(part, ToolReturnPart)}
+    if 'unlock' not in returned:
+        yield {0: DeltaToolCall(name='unlock', json_args='{}', tool_call_id='c1')}
+    elif 'later' not in returned and any(tool.name == 'later' for tool in info.function_tools):
+        yield {0: DeltaToolCall(name='later', json_args='{}', tool_call_id='c2')}
+    else:
+        yield 'done'
+
+
+async def _admit_later_from_step_two(ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    # Workflow-side and derived from the run step, so recovery resolves the same population.
+    return [tool_def for tool_def in tool_defs if tool_def.name != 'later' or ctx.run_step > 1]
+
+
+def _unlock() -> str:
+    return 'unlocked'
+
+
+def _later() -> str:
+    return 'later ran'
+
+
+thinking_level_handler_agent = Agent(
+    FunctionModel(stream_function=_done_stream_fn),
+    name='durability_thinking_level_handler',
+    model_settings={'thinking': 'low'},
+    capabilities=[DBOSDurability(event_stream_handler=_delta_event_handler)],
+)
+
+population_change_handler_agent = Agent(
+    FunctionModel(stream_function=_population_change_stream_fn),
+    name='durability_population_change_handler',
+    toolsets=[
+        FunctionToolset(tools=[Tool(_unlock, name='unlock'), Tool(_later, name='later')], id='population_change')
+    ],
+    capabilities=[
+        PrepareTools(_admit_later_from_step_two),
+        DBOSDurability(event_stream_handler=_delta_event_handler),
+    ],
+)
+
+
+@pytest.mark.parametrize(
+    ('agent', 'steps', 'handled_events'),
+    [
+        pytest.param(
+            thinking_level_handler_agent,
+            snapshot(
+                [
+                    'durability_thinking_level_handler__event_stream_handler',
+                    'durability_thinking_level_handler__model.request_stream',
+                ]
+            ),
+            snapshot(['ModelSettingsDeltaEvent', 'PartStartEvent', 'FinalResultEvent', 'PartEndEvent']),
+            id='thinking-level',
+        ),
+        pytest.param(
+            population_change_handler_agent,
+            snapshot(
+                [
+                    'durability_population_change_handler__model.request_stream',
+                    'durability_population_change_handler__event_stream_handler',
+                    'durability_population_change_handler__event_stream_handler',
+                    'durability_population_change_handler__event_stream_handler',
+                    'durability_population_change_handler__model.request_stream',
+                    'durability_population_change_handler__event_stream_handler',
+                    'durability_population_change_handler__event_stream_handler',
+                    'durability_population_change_handler__model.request_stream',
+                ]
+            ),
+            snapshot(
+                [
+                    'PartStartEvent',
+                    'PartEndEvent',
+                    'FunctionToolCallEvent',
+                    'FunctionToolResultEvent',
+                    'ToolAvailabilityDeltaEvent',
+                    'PartStartEvent',
+                    'PartEndEvent',
+                    'FunctionToolCallEvent',
+                    'FunctionToolResultEvent',
+                    'PartStartEvent',
+                    'FinalResultEvent',
+                    'PartEndEvent',
+                ]
+            ),
+            id='tool-population-change',
+        ),
+    ],
+)
+async def test_dbos_delta_events_take_an_event_stream_handler_step(
+    dbos: DBOS, agent: Agent[None, str], steps: list[str], handled_events: list[str]
+) -> None:
+    """A delta event takes an `__event_stream_handler` step of its own, ahead of the model request that follows it.
+
+    Pins the step sequence these events produce today. DBOS recovery matches recorded steps by position and name, so
+    a workflow recorded before the event existed has a model-request step where recovery now starts a handler step,
+    and changing this sequence again breaks recovery the same way; `docs/durable_execution/dbos.md` documents it for
+    the upgrades that introduced them.
+    """
+    _delta_handler_events.clear()
+    wfid = str(uuid.uuid4())
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('go')).output
+
+    with SetWorkflowID(wfid):
+        assert await run_durable_agent() == 'done'
+    assert [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)] == steps
+    assert _delta_handler_events == handled_events
+
+
 async def test_dbos_durability_event_stream_handler_rejects_enqueue(dbos: DBOS) -> None:
     """An `event_stream_handler` that enqueues inside a durable step raises, like a tool would.
 
@@ -5431,6 +5750,30 @@ async def test_dbos_durability_routes_concurrent_calls_to_same_dynamic_operation
     assert await run_agent() == ['{"read_route":"left"}', '{"read_route":"right"}']
 
 
+@pytest.mark.parametrize('variant', VARIANTS)
+async def test_dbos_durability_parallel_calls_use_their_own_step_of_run_held_dynamic_toolset(
+    dbos: DBOS, variant: Variant
+) -> None:
+    """Parallel tool-call units list and call their tools through the toolset prepared once for the step.
+
+    A `per_run_step=False` `DynamicToolset` is resolved once per run and shared by every durable unit, as a
+    non-durable run shares it. `FunctionModel` drives it rather than a cassette: the race is between the
+    tool-call units, after the model response that requests both calls.
+    """
+    state = StepState()
+    agent = parallel_calls_agent(f'dbos_parallel_run_held_dynamic_{variant}', variant, state, DBOSDurability())
+
+    @DBOS.workflow(name=f'dbos_parallel_run_held_dynamic_workflow_{variant}')
+    async def run_agent() -> str:
+        return (await agent.run('go')).output
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await run_agent() == 'done'
+    assert state.listed.keys() == {'call-a', 'call-b'}
+    assert state.called == state.listed
+    assert len(set(state.listed.values())) == 1
+
+
 async def test_dbos_durability_nested_agent_in_tool_routes_to_inner_registrations(dbos: DBOS) -> None:
     """A workflow-level function tool can run another durable agent without ambient registry routing."""
 
@@ -5704,6 +6047,261 @@ async def test_dbos_durability_allows_per_run_capabilities_outside_workflow(dbos
     agent = Agent(_durability_fn_model, name='durability_per_run_cap_outside', capabilities=[DBOSDurability()])
     result = await agent.run('Hello', capabilities=[Toolset(FunctionToolset(id='per_run_fn'))])
     assert result.output == snapshot('Echo: Hello')
+
+
+async def test_dbos_durability_override_capabilities_keeps_the_registered_steps(
+    dbos: DBOS, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Stacking onto `root_capability.capabilities` keeps the bound `DBOSDurability` instead of re-binding it.
+
+    Re-binding would register the agent's steps with DBOS a second time, under the same names.
+    """
+    agent = Agent(_durability_fn_model, name='durability_override_stack', capabilities=[DBOSDurability()])
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    dbos_logger = logging.getLogger('dbos')
+    dbos_logger.addHandler(caplog.handler)
+    try:
+        with agent.override(
+            capabilities=[*agent.root_capability.capabilities, Instrumentation(InstrumentationSettings())]
+        ):
+            wfid = str(uuid.uuid4())
+            with SetWorkflowID(wfid):
+                output = await run_agent()
+    finally:
+        dbos_logger.removeHandler(caplog.handler)
+
+    assert output == snapshot('Echo: Hello')
+    assert [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)] == snapshot(
+        ['durability_override_stack__model.request']
+    )
+    assert not [record for record in caplog.records if 'Duplicate registration' in record.getMessage()]
+
+
+class _OverrideAddedOperation(AbstractCapability[object]):
+    id = 'override_added_operation'
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def before_run(self, ctx: RunContext[object]) -> None:
+        await self._count(ctx)
+
+    @durable_operation('count')
+    async def _count(self, ctx: RunContext[object]) -> None:
+        self.calls += 1
+
+
+@dataclass
+class _ChecksTheResponseDurably(AbstractCapability[object]):
+    """Rewrites the model's response from an `after_model_request` that runs as a durable step."""
+
+    @durable_operation('after_model_request')
+    async def after_model_request(
+        self, ctx: RunContext[object], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        return replace(response, parts=[TextPart(f'Checked: {response.text}')])
+
+
+@dataclass
+class _HandsOnTheResponseDurably(AbstractCapability[object]):
+    """Hands the model's response on unchanged from an `after_model_request` that runs as a durable step."""
+
+    @durable_operation('after_model_request')
+    async def after_model_request(
+        self, ctx: RunContext[object], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        return response
+
+
+@dataclass
+class _UnannotatedChecksTheResponseDurably(AbstractCapability[object]):
+    """A durable `after_model_request` override that doesn't annotate what it returns."""
+
+    @durable_operation('after_model_request')
+    async def after_model_request(
+        self, ctx: RunContext[object], *, request_context: ModelRequestContext, response: ModelResponse
+    ):
+        return replace(response, parts=[TextPart(f'Checked: {response.text}')])
+
+
+@durable_operation('after_model_request')
+async def _check_the_response(
+    self: AbstractCapability[object],
+    ctx: RunContext[object],
+    *,
+    request_context: ModelRequestContext,
+    response: ModelResponse,
+):
+    return replace(response, parts=[TextPart(f'Checked: {response.text}')])
+
+
+@dataclass
+class _AliasedChecksTheResponseDurably(AbstractCapability[object]):
+    """An unannotated durable `after_model_request` override written under another name and set as the hook."""
+
+    after_model_request = _check_the_response
+
+
+@pytest.mark.parametrize('capability', [_UnannotatedChecksTheResponseDurably, _AliasedChecksTheResponseDurably])
+async def test_dbos_durability_an_unannotated_durable_after_model_request_returns_its_response(
+    dbos: DBOS, capability: type[_UnannotatedChecksTheResponseDurably | _AliasedChecksTheResponseDurably]
+) -> None:
+    """An override returns what the hook it overrides returns, so that, not its own annotation, decides how it's sent."""
+    agent = Agent(
+        _durability_fn_model,
+        name=f'durability_unannotated_after_model_request_{capability.__name__.lower()}',
+        capabilities=[capability(id='unannotated_after'), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await run_agent() == 'Checked: Echo: Hello'
+
+
+async def test_dbos_durability_a_durable_after_model_request_returns_its_response(dbos: DBOS) -> None:
+    """The step takes the request context but returns a response, which comes back as the response."""
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_after_model_request_rewrites',
+        capabilities=[_ChecksTheResponseDurably(id='checks_the_response'), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await run_agent() == snapshot('Checked: Echo: Hello')
+
+
+async def test_dbos_durability_a_lowered_durable_after_model_request_can_hand_on_the_response(dbos: DBOS) -> None:
+    """A capability below operator authority whose durable `after_model_request` hands the response on unchanged."""
+    capability = _HandsOnTheResponseDurably(id='hands_on_the_response').with_authority('user')
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_after_model_request_hands_on',
+        capabilities=[capability, DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await run_agent() == snapshot('Echo: Hello')
+
+
+async def test_dbos_durability_override_capabilities_follow_the_per_run_rules(dbos: DBOS) -> None:
+    """A capability an override adds has no registered steps, so inside a workflow it is refused like a per-run one."""
+    agent = Agent(_durability_fn_model, name='durability_override_added', capabilities=[DBOSDurability()])
+    added = _OverrideAddedOperation()
+
+    @DBOS.workflow()
+    async def run_agent() -> None:
+        await agent.run('Hello')
+
+    with agent.override(capabilities=[*agent.root_capability.capabilities, added]):
+        result = await agent.run('Hello')
+        assert result.output == snapshot('Echo: Hello')
+        assert added.calls == 1
+
+        with workflow_raises(
+            UserError,
+            snapshot(
+                'Capabilities added per-run inside a DBOS workflow are not supported: _OverrideAddedOperation. DBOS '
+                'registers durable steps when a capability is bound to the agent, before the workflow starts. A '
+                'capability added per-run therefore has no registered durable steps for the toolsets it contributes '
+                'or its own `@durable_operation` methods. Attach all capabilities at agent construction time so '
+                '`DBOSDurability.for_agent()` can register their durable steps.'
+            ),
+        ):
+            await run_agent()
+    assert added.calls == 1
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in REBIND_CASES])
+async def test_dbos_durability_override_capabilities_refuses_a_list_that_would_bind_it_again(
+    dbos: DBOS, caplog: pytest.LogCaptureFixture, case: RebindCase
+) -> None:
+    """The bound `DBOSDurability` held other than by an item of `root_capability.capabilities` is refused unbound.
+
+    Nested in a new container, wrapped again, or taken from `from_agent()` out of its wrapper, it would go through
+    `for_agent` again and register the agent's steps with DBOS a second time, under the same names.
+    """
+    durability = DBOSDurability()
+    agent = Agent(
+        _durability_fn_model,
+        name=f'durability_override_{case.id}',
+        capabilities=[WrapperCapability(wrapped=durability) if case.wrap_durability else durability],
+    )
+    bound = DBOSDurability.from_agent(agent)
+    assert bound is not None
+    capabilities = case.capabilities(agent, bound)
+
+    dbos_logger = logging.getLogger('dbos')
+    dbos_logger.addHandler(caplog.handler)
+    try:
+        with pytest.raises(UserError, match='must keep, unchanged, the item'):
+            with agent.override(capabilities=capabilities):
+                pass
+    finally:
+        dbos_logger.removeHandler(caplog.handler)
+
+    assert not [record for record in caplog.records if 'Duplicate registration' in record.getMessage()]
+
+
+async def test_dbos_durability_override_capabilities_entered_inside_a_workflow(dbos: DBOS) -> None:
+    """An override entered inside a workflow follows the per-run rules there, as one carried in from outside does.
+
+    A list of just the bound `DBOSDurability` and `Instrumentation` runs: the auto-injected capabilities the override
+    builds afresh for a list without them are infrastructure, not additions. A `ToolSearch` the list supplies itself
+    is an addition, refused like `run(capabilities=[ToolSearch(...)])`.
+    """
+    agent = Agent(_durability_fn_model, name='durability_override_inside', capabilities=[DBOSDurability()])
+    bound = DBOSDurability.from_agent(agent)
+    assert bound is not None
+
+    @DBOS.workflow()
+    async def run_with_instrumentation() -> str:
+        with agent.override(capabilities=[bound, Instrumentation(InstrumentationSettings())]):
+            return (await agent.run('Hello')).output
+
+    @DBOS.workflow()
+    async def run_with_operation() -> None:
+        with agent.override(capabilities=[*agent.root_capability.capabilities, _OverrideAddedOperation()]):
+            await agent.run('Hello')
+
+    @DBOS.workflow()
+    async def run_with_tool_search() -> None:
+        with agent.override(capabilities=[bound, ToolSearch(strategy='keywords')]):
+            await agent.run('Hello')
+
+    assert await run_with_instrumentation() == snapshot('Echo: Hello')
+    with workflow_raises(
+        UserError,
+        snapshot(
+            'Capabilities added per-run inside a DBOS workflow are not supported: _OverrideAddedOperation. DBOS '
+            'registers durable steps when a capability is bound to the agent, before the workflow starts. A '
+            'capability added per-run therefore has no registered durable steps for the toolsets it contributes '
+            'or its own `@durable_operation` methods. Attach all capabilities at agent construction time so '
+            '`DBOSDurability.for_agent()` can register their durable steps.'
+        ),
+    ):
+        await run_with_operation()
+    with workflow_raises(
+        UserError,
+        snapshot(
+            'Capabilities added per-run inside a DBOS workflow are not supported: ToolSearch. DBOS registers durable steps when a capability is bound to the agent, before the workflow starts. A capability added per-run therefore has no registered durable steps for the toolsets it contributes or its own `@durable_operation` methods. Attach all capabilities at agent construction time so `DBOSDurability.for_agent()` can register their durable steps.'
+        ),
+    ):
+        await run_with_tool_search()
 
 
 @pytest.mark.parametrize('kind', ['mcp', 'dynamic'])
@@ -6659,20 +7257,33 @@ async def child_workflow_lead_workflow() -> str:
     return (await child_workflow_lead.run('Explain tides.', timeout=3600)).output
 
 
-async def test_dbos_child_workflow_tool_survives_recovery(dbos: DBOS) -> None:
-    """A tool with `child_workflow` metadata runs in its own child workflow, which recovery resumes from its steps."""
+@pytest.mark.parametrize('positional_child_id', [False, True])
+async def test_dbos_child_workflow_tool_survives_recovery(dbos: DBOS, positional_child_id: bool) -> None:
+    """A tool with `child_workflow` metadata runs in its own child workflow, which recovery resumes from its steps.
+
+    With `positional_child_id`, the child was started before child IDs were derived from the tool call, under the
+    positional ID DBOS assigns, and recovery still reuses it.
+    """
     child_workflow_calls.clear()
     child_workflow_deadlines.clear()
     workflow_id = f'child-wf-{uuid.uuid4()}'
-    with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
+    with (
+        SetWorkflowID(workflow_id),
+        pytest.raises(_ProcessCrash),
+        patch('pydantic_ai.durable_exec.dbos._durability.SetWorkflowID', return_value=nullcontext())
+        if positional_child_id
+        else nullcontext(),
+    ):
         await child_workflow_lead_workflow()
+    child_suffix = '-4' if positional_child_id else f'-{workflow_id}:1-2-0-research'
 
     # Recovery resumes every pending workflow, the child as well as its parent.
     workflows = await DBOS.list_workflows_async(workflow_id_prefix=workflow_id)
     child_name = 'child_wf_lead__function_toolset__<agent>.call_tool__child_workflow'
     assert sorted((w.workflow_id.removeprefix(workflow_id), w.name, w.status) for w in workflows) == [
         ('', 'child_workflow_lead_workflow', 'PENDING'),
-        ('-4', child_name, 'PENDING'),
+        # The child's ID derives from the run ID, run step and tool call ID.
+        (child_suffix, child_name, 'PENDING'),
     ]
     [child] = [w for w in workflows if w.workflow_id != workflow_id]
     await DBOS.resume_workflow_async(child.workflow_id)
@@ -6700,7 +7311,7 @@ async def test_dbos_child_workflow_tool_survives_recovery(dbos: DBOS) -> None:
             'DBOS.getResult',
             'child_wf_lead__model.request',
         ],
-        '-4': ['child_wf_researcher__model.request'],
+        child_suffix: ['child_wf_researcher__model.request'],
     }
 
 
@@ -6731,8 +7342,210 @@ async def test_dbos_child_workflow_via_set_tool_metadata(dbos: DBOS) -> None:
 
     workflow_id = f'child-wf-metadata-{uuid.uuid4()}'
     with SetWorkflowID(workflow_id):
-        assert await run_agent() == f'{{"delegate":"deps in {workflow_id}-2"}}'
+        child_id = f'{workflow_id}-{workflow_id}:1-1-0-pyd_ai_tool_call_id__delegate'
+        assert await run_agent() == f'{{"delegate":"deps in {child_id}"}}'
     assert (await agent.run('Go.', deps='deps')).output == '{"delegate":"deps in None"}'
+
+
+async def test_dbos_child_workflow_tool_executed_again_by_capability(dbos: DBOS) -> None:
+    """A capability that executes a tool call again gets a new child workflow, not the first one's result."""
+    attempts: list[str | None] = []
+
+    async def flaky() -> str:
+        attempts.append(DBOS.workflow_id)
+        if len(attempts) == 1:
+            raise ValueError('Try again.')
+        return 'ok'
+
+    class RetryOnce(AbstractCapability[object]):
+        async def wrap_tool_execute(
+            self,
+            ctx: RunContext[object],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: ValidatedToolArgs,
+            handler: WrapToolExecuteHandler,
+        ) -> Any:
+            try:
+                return await handler(args)
+            except ValueError:
+                return await handler(args)
+
+    agent = Agent(
+        TestModel(),
+        name='child_wf_retried',
+        tools=[Tool(flaky, metadata={'dbos': {'child_workflow': {}}})],
+        capabilities=[RetryOnce(), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('Go.')).output
+
+    workflow_id = f'child-wf-retried-{uuid.uuid4()}'
+    with SetWorkflowID(workflow_id):
+        assert await run_agent() == '{"flaky":"ok"}'
+    assert attempts == [
+        f'{workflow_id}-{workflow_id}:1-1-0-pyd_ai_tool_call_id__flaky',
+        f'{workflow_id}-{workflow_id}:1-1-1-pyd_ai_tool_call_id__flaky',
+    ]
+
+
+@dataclass
+class _ReorderChildStarts(AbstractCapability[object]):
+    """Orders two parallel `research` calls: `call-a`'s child starts first, and on recovery `call-b` arrives first."""
+
+    crash: str
+    recovering: bool = False
+    arrived: set[str | None] = field(default_factory=set[str | None])
+    both_arrived: asyncio.Event = field(default_factory=asyncio.Event)
+    call_b_arrived: asyncio.Event = field(default_factory=asyncio.Event)
+    moon_researched: asyncio.Event = field(default_factory=asyncio.Event)
+
+    async def before_tool_execute(
+        self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
+        self.arrived.add(call.tool_call_id)
+        if len(self.arrived) == 2:
+            self.both_arrived.set()
+        if call.tool_call_id == 'call-a':
+            if self.recovering and self.crash != 'after_both_children_then_run_id_changes':
+                # On recovery, `call-b` reaches its child workflow first, when the next step position holds the
+                # child `call-a` started there.
+                async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+                    await self.call_b_arrived.wait()
+            return args
+        self.call_b_arrived.set()
+        if not self.recovering and self.crash != 'after_both_children_started_together':
+            # `call-a`'s child starts first. With `before_second_child`, the process then dies before `call-b`'s
+            # child starts.
+            async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+                await self.moon_researched.wait()
+            if self.crash == 'before_second_child':
+                raise _ProcessCrash
+        return args
+
+    async def on_tool_execute_error(
+        self,
+        ctx: RunContext[object],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        error: Exception,
+    ) -> Any:
+        return f'failed: {error}'
+
+
+@pytest.mark.parametrize(
+    ('crash', 'moon_fails'),
+    [
+        ('after_both_children', False),
+        ('after_both_children', True),
+        ('before_second_child', False),
+        ('after_both_children_then_run_id_changes', False),
+        ('after_both_children_started_together', False),
+    ],
+)
+async def test_dbos_child_workflows_keep_their_tool_calls_when_starts_reorder(
+    dbos: DBOS, crash: str, moon_fails: bool
+) -> None:
+    """A recovered run whose parallel child workflows start in another order still gets each tool call its own child's result.
+
+    With `after_both_children_then_run_id_changes`, the explicit `run_id=` differs on recovery, so the recorded
+    children aren't the recovered calls': recovery keeps DBOS's positional match instead of waiting for them.
+    With `after_both_children_started_together`, both children start before either one's body runs.
+    """
+    run_id_changes = crash == 'after_both_children_then_run_id_changes'
+    reorder = _ReorderChildStarts(crash)
+    researched: list[str] = []
+
+    def lead_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('Done.')])
+        return ModelResponse(
+            parts=[
+                ToolCallPart('research', {'topic': 'moon'}, tool_call_id='call-a'),
+                ToolCallPart('research', {'topic': 'sun'}, tool_call_id='call-b'),
+            ]
+        )
+
+    async def research(topic: str) -> str:
+        if crash == 'after_both_children_started_together':
+            async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+                await reorder.both_arrived.wait()
+        researched.append(topic)
+        if topic == 'moon':
+            reorder.moon_researched.set()
+            if moon_fails:
+                raise ValueError('No moon tonight.')
+        return topic
+
+    agent = Agent(
+        FunctionModel(lead_model),
+        name='child_wf_reordered',
+        tools=[Tool(research, metadata={'dbos': {'child_workflow': {}}})],
+        capabilities=[reorder, DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> list[str]:
+        result = await agent.run('Research.', run_id=f'run-{reorder.recovering}' if run_id_changes else None)
+        if not reorder.recovering:
+            raise _ProcessCrash
+        # The model's final response replays from its step, so check what each tool call returned to it.
+        return [
+            f'{part.tool_call_id}={part.content}'
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+
+    workflow_id = f'child-wf-reordered-{uuid.uuid4()}'
+    with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
+        await run_agent()
+    assert sorted(researched) == (['moon'] if crash == 'before_second_child' else ['moon', 'sun'])
+    recorded = [
+        (s['function_id'], s['function_name'], s['child_workflow_id'])
+        for s in await dbos.list_workflow_steps_async(workflow_id)
+    ]
+
+    reorder.recovering = True
+    reorder.call_b_arrived.clear()
+    handle = await DBOS.resume_workflow_async(workflow_id)
+    returned = await handle.get_result()
+    # Recovery reuses the children that finished before the crash.
+    assert sorted(researched) == ['moon', 'sun']
+    # Recovery keeps every step the parent recorded before the crash, so a later recovery replays the same history.
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    assert [(s['function_id'], s['function_name'], s['child_workflow_id']) for s in steps][: len(recorded)] == recorded
+    if run_id_changes:
+        # The positional match hands each call whichever child is recorded at the position it reaches.
+        assert sorted(part.split('=')[1] for part in returned) == ['moon', 'sun']
+        return
+    moon = 'failed: No moon tonight.' if moon_fails else 'moon'
+    assert sorted(returned) == [f'call-a={moon}', 'call-b=sun']
+    await _assert_children_at_own_positions(workflow_id, steps)
+
+
+async def _assert_children_at_own_positions(workflow_id: str, steps: list[StepInfo]) -> None:
+    """Each call's child is a child of the parent at a start and `getResult` position pair of its own.
+
+    DBOS takes a child's `getResult` position together with its start, even when both children start together.
+    """
+    child_name = 'child_wf_reordered__function_toolset__<agent>.call_tool__child_workflow'
+    child_prefix = f'{workflow_id}-{workflow_id}:1-1-0-'
+    child_steps = [(step['function_name'], step['child_workflow_id']) for step in steps if step['child_workflow_id']]
+    assert child_steps in (
+        [(name, f'{child_prefix}{call}') for call in calls for name in (child_name, 'DBOS.getResult')]
+        for calls in (['call-a', 'call-b'], ['call-b', 'call-a'])
+    )
+    children = await DBOS.list_workflows_async(workflow_id_prefix=f'{workflow_id}-')
+    assert {w.workflow_id.removeprefix(child_prefix): w.parent_workflow_id for w in children} == {
+        'call-a': workflow_id,
+        'call-b': workflow_id,
+    }
 
 
 @pytest.mark.parametrize(
@@ -7082,6 +7895,177 @@ def test_dbos_records_what_a_stream_produced_before_failing(error: ModelAPIError
     assert streamed_before_failing(replayed) == partial
 
 
+async def test_dbos_durability_compaction_runs_model_calls_as_steps(dbos: DBOS) -> None:
+    """A `compact_history` hook runs in the workflow, and its call through `request.conversation_request.model` is a DBOS step.
+
+    The model rejects the first attempt for exceeding its context window, so the overflow is compacted and retried
+    within the same attempt; a listener cancels the requested compaction of the following step.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if not info.function_tools:
+            # The compaction's own request, which offers no tools.
+            return ModelResponse(parts=[TextPart('a summary')])
+        if not any(isinstance(part, CompactionPart) for message in messages for part in message.parts):
+            raise ModelContextWindowExceededError('model', 'context_length_exceeded')
+        if sum(isinstance(message, ModelResponse) for message in messages) == 0:
+            return ModelResponse(parts=[ToolCallPart('compact_again', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        # A run with an event listener streams its requests.
+        response = model_fn(messages, info)
+        part = response.parts[0]
+        if isinstance(part, ToolCallPart):
+            yield {0: DeltaToolCall(name=part.tool_name, json_args='{}')}
+        else:
+            yield response.text or ''
+
+    class Summarize(AbstractCapability[None]):
+        async def compact_history(self, ctx: RunContext[None], request: CompactionRequest) -> CompactionResult | None:
+            summary = await request.conversation_request.model.request(
+                [ModelRequest(parts=[UserPromptPart('Summarize the conversation.')])],
+                None,
+                ModelRequestParameters(),
+            )
+            part = CompactionPart(content=summary.text)
+            return CompactionResult(
+                messages=[ModelRequest(parts=[part]), request.messages[-1]], part=part, handler='summarize', kept_from=1
+            )
+
+    cancelled: list[str] = []
+
+    class HoldRequested(AbstractCapability[None]):
+        @on_event(CompactionStartEvent)
+        async def _hold(self, ctx: RunContext[None], event: CompactionStartEvent) -> None:
+            if event.reason != 'context_overflow':
+                cancelled.append(event.reason)
+                event.cancel()
+
+    agent = Agent(
+        FunctionModel(model_fn, stream_function=stream_fn),
+        name='durability_compaction',
+        deps_type=type(None),
+        capabilities=[HoldRequested(), Summarize(), DBOSDurability()],
+    )
+
+    @agent.tool
+    def compact_again(ctx: RunContext[None]) -> str:
+        ctx.request_compaction(reason='threshold')
+        return 'requested'
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> tuple[str, list[str]]:
+        result = await agent.run('Hello DBOS')
+        return result.output, [record.reason for record in result.compactions]
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        output, reasons = await run_durable_agent()
+    assert (output, reasons, cancelled) == ('done', ['context_overflow'], ['threshold'])
+    steps = await dbos.list_workflow_steps_async(wfid)
+    assert [step['function_name'] for step in steps] == snapshot(
+        [
+            'durability_compaction__model.request_stream',
+            'durability_compaction__model.request',
+            'durability_compaction__model.request_stream',
+            'durability_compaction__model.request_stream',
+        ]
+    )
+
+
+async def test_dbos_run_compact_runs_the_compaction_as_a_step(dbos: DBOS) -> None:
+    """`run(compact=...)` in a workflow compacts through the durable model, so the provider call is a DBOS step."""
+
+    class CompactingModel(FunctionModel):
+        async def compact_messages(
+            self, request_context: ModelRequestContext, *, instructions: str | None = None
+        ) -> ModelResponse:
+            return ModelResponse(
+                parts=[CompactionPart(content=f'a summary of {len(request_context.messages)}, about {instructions}')]
+            )
+
+    def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        [summary] = messages[0].parts
+        assert isinstance(summary, CompactionPart)
+        return ModelResponse(parts=[TextPart(f'answered from {summary.content}')])
+
+    model = CompactingModel(
+        answer, profile=ModelProfile(supports_compaction_on_demand=True, compaction_instructions='replaces_prompt')
+    )
+    agent = Agent(model, name='durability_run_compact', capabilities=[NativeCompaction(), DBOSDurability()])
+
+    @DBOS.workflow()
+    async def compact_durably() -> tuple[str, list[str]]:
+        result = await agent.run(
+            'What did I say?',
+            message_history=[
+                ModelRequest(parts=[UserPromptPart('Hello DBOS')]),
+                ModelResponse(parts=[TextPart('Hello!')]),
+            ],
+            compact={'focus': 'the greeting'},
+        )
+        return result.output, [record.handler for record in result.compactions]
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        output, handlers = await compact_durably()
+    assert output == 'answered from a summary of 2, about the greeting'
+    assert handlers == ['native']
+    steps = await dbos.list_workflow_steps_async(wfid)
+    assert [step['function_name'] for step in steps] == snapshot(
+        ['durability_run_compact__model.compact_messages', 'durability_run_compact__model.request']
+    )
+
+
+class _Survey(BaseModel):
+    answer: int
+
+
+@pytest.mark.moves_cache_prefix(
+    reason="the Tool Output attempt sends the output tool, which the rejected Native Output attempt, that nothing cached, didn't"
+)
+async def test_dbos_too_complex_inferred_native_output_is_attempted_in_tool_output(dbos: DBOS) -> None:
+    """The rejected attempt fails its step, and workflow code attempts the request again in Tool Output in another.
+
+    Each workflow's first request infers Native Output again, as the run, not the process, keeps the switch.
+    """
+    modes: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        mode = info.model_request_parameters.output_mode
+        modes.append(mode)
+        if mode == 'native':
+            raise ModelHTTPError.for_category(ModelSchemaTooComplexError, status_code=400, model_name='compiler')
+        if not any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[ToolCallPart('look_up', {})])
+        return ModelResponse(parts=[ToolCallPart('final_result', {'answer': 1})])
+
+    def look_up() -> str:
+        return 'found'
+
+    model = CompilingModel(
+        respond,
+        model_name='compiler',
+        profile=ModelProfile(supports_json_schema_output=True, default_structured_output_mode='native'),
+    )
+    agent = Agent(
+        model,
+        name='dbos_schema_too_complex',
+        output_type=_Survey,
+        tools=[look_up],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> _Survey:
+        return (await agent.run('Answer the survey.')).output
+
+    assert await run_workflow() == _Survey(answer=1)
+    assert await run_workflow() == _Survey(answer=1)
+    assert modes == ['native', 'tool', 'tool'] * 2
+
+
 # --- `FunctionToolset` defaults on `Tool` instances, across the upgrade that applied them ---
 
 tool_instances_crash_armed = threading.Event()
@@ -7388,3 +8372,84 @@ async def test_dbos_tool_instance_defaults_patch_cache_holds_its_result_after_ca
     monkeypatch.setitem(_cancelled_probe_events, 'release', release)
     with SetWorkflowID(f'tool-instances-cancelled-run-{uuid.uuid4()}'):
         await cancelled_tool_instances_run_workflow()
+
+
+async def compaction_event_stream_handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for _ in stream:
+        pass
+
+
+@pytest.mark.parametrize('threshold', [2, 100], ids=['compacting', 'not-compacting'])
+@pytest.mark.parametrize('with_handler', [False, True], ids=['without-handler', 'with-handler'])
+async def test_dbos_stateless_openai_compaction_events_are_steps(
+    dbos: DBOS, with_handler: bool, threshold: int
+) -> None:
+    """Stateless `OpenAICompaction` compacts through `compact_history`, so its compaction events reach the handler.
+
+    With an `event_stream_handler`, the `CompactionStartEvent` and `CompactionEndEvent` it handles are two steps of
+    their own, which a workflow started before the upgrade didn't record. Without one, or without a compaction, the
+    steps are the ones it always had.
+    """
+    from pydantic_ai.models.openai import OpenAICompaction, OpenAIResponsesModel
+
+    class Responses(OpenAIResponsesModel):
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('answered')], model_name=self.model_name)
+
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: RunContext[Any] | None = None,
+        ) -> AsyncGenerator[StreamedResponse]:
+            async with stand_in.request_stream(
+                messages, model_settings, model_request_parameters, run_context
+            ) as stream:
+                yield stream
+
+        async def compact_messages(
+            self, request_context: ModelRequestContext, *, instructions: str | None = None
+        ) -> ModelResponse:
+            return ModelResponse(parts=[CompactionPart(content='summary', provider_name='openai')])
+
+    async def answer(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'answered'
+
+    stand_in = FunctionModel(stream_function=answer)
+    name = f'stateless_openai_compaction_{with_handler}_{threshold}'
+    agent = Agent(
+        Responses('gpt-5.4-nano', provider=OpenAIProvider(api_key='test')),
+        name=name,
+        capabilities=[
+            OpenAICompaction(message_count_threshold=threshold),
+            DBOSDurability(event_stream_handler=compaction_event_stream_handler if with_handler else None),
+        ],
+    )
+
+    @DBOS.workflow(name=f'{name}_workflow')
+    async def compact_durably() -> list[str]:
+        result = await agent.run(
+            'And now?',
+            message_history=[ModelRequest(parts=[UserPromptPart('Hi')]), ModelResponse(parts=[TextPart('Hello!')])],
+        )
+        return [record.handler for record in result.compactions]
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        assert await compact_durably() == (['native'] if threshold == 2 else [])
+    steps = [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)]
+    handled = [f'{name}__event_stream_handler'] * 2
+    expected = {
+        (False, 2): [f'{name}__model.compact_messages', f'{name}__model.request'],
+        (True, 2): [f'{name}__model.compact_messages', f'{name}__model.request_stream', *handled],
+        (False, 100): [f'{name}__model.request'],
+        (True, 100): [f'{name}__model.request_stream'],
+    }
+    assert steps == expected[with_handler, threshold]

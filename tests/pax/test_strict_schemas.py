@@ -1,4 +1,4 @@
-"""Strict mode stays off for every tool and output schema CLAI sends, whatever the provider."""
+"""Strict mode stays off for every tool and output schema Pax sends, whatever the provider."""
 
 import io
 from pathlib import Path

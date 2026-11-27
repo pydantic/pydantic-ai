@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from copy import deepcopy
@@ -48,7 +49,7 @@ from pydantic_ai import (
     exceptions,
     messages as _messages,
 )
-from pydantic_ai._fallback import SpecModelError
+from pydantic_ai._fallback import FALLBACK_MODEL_PIN_KEY, SpecModelError, stamp_continuation_pin
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import (
     AbstractCapability,
@@ -62,11 +63,13 @@ from pydantic_ai.capabilities import (
     WrapModelRequestHandler,
     WrapperCapability,
 )
+from pydantic_ai.capabilities.model_fallback import _SpecFallbackError  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.exceptions import (
     ContentFilterError,
     FallbackExceptionGroup,
     IncompleteToolCall,
     ModelAPIError,
+    ModelEmptyResponseError,
     ModelRateLimitError,
     ModelRetry,
     OutputTokenLimitExceeded,
@@ -74,6 +77,7 @@ from pydantic_ai.exceptions import (
     RunCancelled,
     RunTimedOut,
     UnexpectedModelBehavior,
+    UnsupportedSettingWarning,
     UsageLimitExceeded,
     UserError,
 )
@@ -85,7 +89,8 @@ from pydantic_ai.models import (
     ModelResolutionContext,
     StreamedResponse,
 )
-from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.batch import BatchRequest, EncodedBatchRequest
+from pydantic_ai.models.fallback import FallbackModel, FallbackOn
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -170,6 +175,21 @@ async def success_stream(messages: list[ModelMessage], info: AgentInfo) -> Async
 async def test_streaming_open_failure_falls_back():
     agent = Agent(
         FunctionModel(stream_function=failure_stream),
+        capabilities=[ModelFallback(FunctionModel(stream_function=success_stream))],
+    )
+    async with agent.run_stream('x') as stream:
+        assert await stream.get_output() == 'hello'
+
+
+async def test_streaming_empty_response_falls_back_by_default():
+    """A stream that ends before its first event, which adapters raise as `ModelEmptyResponseError`, falls back."""
+
+    async def empty_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        raise ModelEmptyResponseError('primary', 'Streamed response ended without content or tool calls')
+        yield ''  # pragma: no cover
+
+    agent = Agent(
+        FunctionModel(stream_function=empty_stream),
         capabilities=[ModelFallback(FunctionModel(stream_function=success_stream))],
     )
     async with agent.run_stream('x') as stream:
@@ -2574,11 +2594,17 @@ async def test_spec_fallback_on_names_only_fall_back_on_those_errors(fallback_on
 
 
 def test_spec_fallback_on_names_every_public_model_api_error():
-    """Every public `ModelAPIError` class, `ContentFilterError` and `OutputTokenLimitExceeded` can be named in a spec."""
+    """Every public `ModelAPIError` class, `ContentFilterError`, `OutputTokenLimitExceeded` and `UnsupportedSettingWarning`
+    can be named in a spec."""
     public_errors = {
         name
         for name in exceptions.__all__
         if isinstance(cls := getattr(exceptions, name), type) and issubclass(cls, ModelAPIError)
+    }
+    assert set(get_args(_SpecFallbackError)) == public_errors | {
+        'ContentFilterError',
+        'OutputTokenLimitExceeded',
+        'UnsupportedSettingWarning',
     }
     assert set(get_args(SpecModelError)) == public_errors | {'ContentFilterError', 'OutputTokenLimitExceeded'}
 
@@ -2589,7 +2615,8 @@ def test_spec_fallback_on_names_every_public_model_api_error():
         pytest.param(
             {'ModelFallback': {'models': ['working'], 'fallback_on': ['ModelRateLimitError', 'UserError']}},
             '`ModelFallback` `fallback_on` in an agent spec takes names of `ModelAPIError` classes, '
-            "`ContentFilterError` and `OutputTokenLimitExceeded`, got ['UserError']. Valid names: ModelAPIError, ",
+            "`ContentFilterError`, `OutputTokenLimitExceeded` and `UnsupportedSettingWarning`, got ['UserError']. "
+            'Valid names: ModelAPIError, ',
             id='not-a-model-api-error',
         ),
         pytest.param(
@@ -2971,6 +2998,240 @@ async def test_spec_falls_back_on_cut_off_responses_by_default_and_can_opt_out()
         capabilities=[resolve],
     )
     assert (await agent.run('x')).output == 'backup answered'
+
+
+# --- Settings a model would ignore ---
+
+
+class _IgnoresStopSequences(FunctionModel):
+    """A model that ignores `stop_sequences`, so a request setting them warns with `UnsupportedSettingWarning`."""
+
+    unsupported_settings = frozenset({'stop_sequences'})
+
+
+def _ignoring_stop(name: str, calls: list[str]) -> FunctionModel:
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append(name)  # pragma: no cover
+        return ModelResponse(parts=[TextPart(f'{name} answered')])  # pragma: no cover
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        calls.append(name)  # pragma: no cover
+        yield f'{name} answered'  # pragma: no cover
+
+    return _IgnoresStopSequences(respond, stream_function=stream, model_name=name)
+
+
+def _answering_streams(name: str, calls: list[str]) -> FunctionModel:
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append(name)
+        return ModelResponse(parts=[TextPart(f'{name} answered')])
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        calls.append(name)
+        yield f'{name} answered'
+
+    return FunctionModel(respond, stream_function=stream, model_name=name)
+
+
+_SKIPS_IGNORING = (ModelAPIError, UnsupportedSettingWarning)
+
+
+def _skipping_agent(
+    owner: str, primary: Model, backup: Model, fallback_on: FallbackOn = _SKIPS_IGNORING
+) -> Agent[None, str]:
+    if owner == 'ModelFallback':
+        return Agent(primary, capabilities=[ModelFallback(backup, fallback_on=fallback_on)])
+    return Agent(FallbackModel(primary, backup, fallback_on=fallback_on))
+
+
+_OWNERS = pytest.mark.parametrize('owner', ['ModelFallback', 'FallbackModel'])
+
+_STOP = ModelSettings(stop_sequences=['STOP'])
+
+_IGNORED_STOP = "The `stop_sequences` setting is not supported by model 'function:primary' and will be ignored."
+
+
+@_OWNERS
+async def test_unsupported_setting_warning_moves_on_from_a_model_that_would_ignore_a_setting(owner: str):
+    """Named in `fallback_on`, the warning is raised as the attempt's error instead, before anything is sent."""
+    calls: list[str] = []
+    agent = _skipping_agent(owner, _ignoring_stop('primary', calls), _answering_streams('backup', calls))
+
+    result = await agent.run('x', model_settings=_STOP)
+
+    assert result.output == 'backup answered'
+    assert calls == ['backup']
+    assert [(a.model_name, a.outcome, a.error) for a in result.response.failed_attempts or []] == [
+        ('primary', 'error', f'UnsupportedSettingWarning: {_IGNORED_STOP}')
+    ]
+
+
+@_OWNERS
+async def test_unsupported_setting_warning_moves_on_from_a_streamed_request(owner: str):
+    calls: list[str] = []
+    agent = _skipping_agent(owner, _ignoring_stop('primary', calls), _answering_streams('backup', calls))
+
+    async with agent.run_stream('x', model_settings=_STOP) as result:
+        assert await result.get_output() == 'backup answered'
+
+    assert calls == ['backup']
+
+
+@_OWNERS
+async def test_a_model_that_honors_the_settings_is_not_moved_on_from(owner: str):
+    calls: list[str] = []
+    agent = _skipping_agent(owner, _answering_streams('primary', calls), _ignoring_stop('backup', calls))
+
+    assert (await agent.run('x', model_settings=_STOP)).output == 'primary answered'
+    assert calls == ['primary']
+
+
+def _pinned_history(owner: str, model: Model) -> list[ModelMessage]:
+    """A suspended response pinned to `model` the way `owner` pins it: `FallbackModel` in the response's metadata."""
+    history = _suspended_history(model.model_id)
+    if owner == 'FallbackModel':
+        response = history[-1]
+        assert isinstance(response, ModelResponse)
+        stamp_continuation_pin(response, model.model_id, key=FALLBACK_MODEL_PIN_KEY)
+    return history
+
+
+@_OWNERS
+async def test_a_continuation_pinned_to_a_model_that_would_ignore_a_setting_moves_on(owner: str):
+    """Resuming a suspended response doesn't send it to the pinned model without a setting it would ignore."""
+    calls: list[str] = []
+    primary = _ignoring_stop('primary', calls)
+    agent = _skipping_agent(owner, primary, _answering_streams('backup', calls))
+
+    result = await agent.run(message_history=_pinned_history(owner, primary), model_settings=_STOP)
+
+    assert result.output == 'backup answered'
+    assert calls == ['backup']
+
+
+@_OWNERS
+async def test_a_streamed_continuation_pinned_to_a_model_that_would_ignore_a_setting_moves_on(owner: str):
+    calls: list[str] = []
+    primary = _ignoring_stop('primary', calls)
+    agent = _skipping_agent(owner, primary, _answering_streams('backup', calls))
+
+    async with agent.run_stream(message_history=_pinned_history(owner, primary), model_settings=_STOP) as result:
+        assert await result.get_output() == 'backup answered'
+
+    assert calls == ['backup']
+
+
+class _IgnoresStopSequencesInBatches(SlowBatchTestModel):
+    """A batch model that ignores `stop_sequences`, preparing each request when it's encoded, as providers do."""
+
+    unsupported_settings = frozenset({'stop_sequences'})
+
+    async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
+        self.prepare_request(request.model_settings, request.model_request_parameters)
+        return await super().batch_encode(request)  # pragma: no cover
+
+
+async def test_a_batched_request_moves_on_from_a_model_that_would_ignore_a_setting():
+    """Under `BatchModelRequests`, the warning is raised when the request is encoded, so nothing is submitted."""
+    primary = _IgnoresStopSequencesInBatches(model_name='primary')
+    backup = SlowBatchTestModel(model_name='backup')
+    agent = Agent(
+        primary,
+        capabilities=[ModelFallback(backup, fallback_on=_SKIPS_IGNORING), BatchModelRequests(**FAST_BATCH_SETTINGS)],
+    )
+
+    # The suite's `error` warnings filter would raise the warning even without `ModelFallback`, hiding the gap.
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', UnsupportedSettingWarning)
+        result = await agent.run('x', model_settings=_STOP)
+
+    assert (len(primary.created), len(backup.created)) == (0, 1)
+    assert [(a.model_name, a.outcome, a.error) for a in result.response.failed_attempts or []] == [
+        (
+            'primary',
+            'error',
+            "UnsupportedSettingWarning: The `stop_sequences` setting is not supported by model 'test:primary' and will be ignored.",
+        )
+    ]
+
+
+@_OWNERS
+async def test_every_model_ignoring_a_setting_raises_the_group(owner: str):
+    calls: list[str] = []
+    agent = _skipping_agent(owner, _ignoring_stop('primary', calls), _ignoring_stop('backup', calls))
+
+    with pytest.raises(FallbackExceptionGroup) as exc_info:
+        await agent.run('x', model_settings=_STOP)
+
+    assert calls == []
+    assert [type(error) for error in exc_info.value.exceptions] == [UnsupportedSettingWarning] * 2
+    assert [(a.model_name, a.outcome) for a in exc_info.value.attempts] == [('primary', 'error'), ('backup', 'error')]
+
+
+@_OWNERS
+@pytest.mark.parametrize('fallback_on', [(ModelAPIError,), (Exception,)], ids=['default', 'supertype'])
+async def test_a_model_that_would_ignore_a_setting_still_answers_unless_named(owner: str, fallback_on: FallbackOn):
+    """Without `UnsupportedSettingWarning` itself in `fallback_on`, the model answers and warns, as before."""
+    calls: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('primary')
+        return ModelResponse(parts=[TextPart('primary answered')])
+
+    agent = _skipping_agent(
+        owner,
+        _IgnoresStopSequences(respond, model_name='primary'),
+        _answering_streams('backup', calls),
+        fallback_on=fallback_on,
+    )
+
+    with pytest.warns(UnsupportedSettingWarning, match=re.escape(_IGNORED_STOP)):
+        result = await agent.run('x', model_settings=_STOP)
+
+    assert result.output == 'primary answered'
+    assert calls == ['primary']
+
+
+async def test_a_nested_fallback_model_is_moved_on_from_as_a_whole():
+    """The outer `fallback_on` applies to the whole nested chain, whose own `fallback_on` doesn't name the warning."""
+    calls: list[str] = []
+    nested = FallbackModel(_ignoring_stop('primary', calls), _answering_streams('honors', calls))
+    agent = Agent(
+        nested, capabilities=[ModelFallback(_answering_streams('backup', calls), fallback_on=_SKIPS_IGNORING)]
+    )
+
+    result = await agent.run('x', model_settings=_STOP)
+
+    assert result.output == 'backup answered'
+    assert calls == ['backup']
+
+
+@_OWNERS
+def test_a_subclass_of_unsupported_setting_warning_in_fallback_on_is_refused(owner: str):
+    """A model raises `UnsupportedSettingWarning` itself, so a subclass in `fallback_on` could never match."""
+
+    class CustomWarning(UnsupportedSettingWarning):
+        pass
+
+    with pytest.raises(UserError, match='not its subclass `CustomWarning`'):
+        _skipping_agent(owner, TestModel(), TestModel(), fallback_on=(CustomWarning,))
+
+
+async def test_spec_fallback_on_names_unsupported_setting_warning():
+    calls: list[str] = []
+    models = {'primary': _ignoring_stop('primary', calls), 'backup': _answering_streams('backup', calls)}
+    agent = Agent.from_spec(
+        {
+            'model': 'primary',
+            'capabilities': [
+                {'ModelFallback': {'models': ['backup'], 'fallback_on': ['ModelAPIError', 'UnsupportedSettingWarning']}}
+            ],
+        },
+        capabilities=[ResolveModelId(lambda ctx, model_id: models.get(model_id))],
+    )
+
+    assert (await agent.run('x', model_settings=_STOP)).output == 'backup answered'
+    assert calls == ['backup']
 
 
 @dataclass

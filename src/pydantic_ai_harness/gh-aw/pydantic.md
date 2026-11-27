@@ -10,22 +10,22 @@ pre-agent-steps:
       # sys.path, so a repo-local pip.py or pydantic_ai_harness/ cannot be
       # imported in place of the installed packages.
       #
-      # CLAI 2.0's published `-p` command is the headless interface used by this
+      # Pax's published `-p` command is the headless interface used by this
       # engine. The agent hooks and MCP composition require Pydantic AI 2.54, and
       # GITHUB_COPILOT_INTEGRATION_ID below requires 2.59.
-      python3 -P -m pip install --quiet --user --disable-pip-version-check "pydantic-ai-harness[coder]==${GH_AW_ENGINE_VERSION}" "pydantic-clai2==${GH_AW_ENGINE_VERSION}" "pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0" "cryptography>=48.0.1"
+      python3 -P -m pip install --quiet --user --disable-pip-version-check "pydantic-ai-harness[coder]==${GH_AW_ENGINE_VERSION}" "pydantic-ai-pax==${GH_AW_ENGINE_VERSION}" "pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0" "cryptography>=48.0.1"
       # Logfire 4.39.0 is pydantic-ai-slim's compatibility floor. Install it only
       # when gh-aw supplies an OTLP endpoint, so other runs pay no installation cost.
       if [ -n "${OTEL_EXPORTER_OTLP_ENDPOINT:-}" ]; then
         python3 -P -m pip install --quiet --user --disable-pip-version-check "logfire>=4.39.0"
       fi
-      "$HOME/.local/bin/clai2" --help
+      "$HOME/.local/bin/pax" --help
       python3 -P -c "from pydantic_ai_harness import Coder"
 engine:
   id: pydantic-ai
-  version: "0.71.0"
+  version: "0.76.0"
   display-name: Pydantic AI
-  description: CLAI 2 headless runner for Pydantic AI agents with MCP tool support
+  description: Pax headless runner for Pydantic AI agents with MCP tool support
   mcp: true
   # gh-aw's threat-detection job runs only on its built-in engines, so a custom engine
   # names the one it runs on. Without this key gh-aw falls back to `copilot` anyway
@@ -61,7 +61,7 @@ engine:
         openai: api.openai.com
         codex: api.openai.com
     execution:
-      command-name: clai2
+      command-name: pax
       step-name: Execute Pydantic AI CLI
       model-env-var: PAI_MODEL
       write-timestamp: true
@@ -137,7 +137,7 @@ engine:
           sequence += 1
       `;
 
-      // `clai2 -a` takes one target, either an import path or a JSON/YAML agent
+      // `pax -a` takes one target, either an import path or a JSON/YAML agent
       // spec, and the spec format resolves capability names through a closed
       // registry that the harness capabilities are not part of, so the coder
       // composition cannot be expressed as a spec. It is written as a Python
@@ -434,7 +434,7 @@ engine:
       const DEFAULT_AGENT = "gh_aw_agent:agent";
 
       // Preload the installed runner before the wrapper resolves PAI_AGENT, which
-      // can append the checkout to sys.path. The wrapper is cached before CLAI 2
+      // can append the checkout to sys.path. The wrapper is cached before Pax
       // resolves -a, so agent code imports once and import failures retain their
       // traceback.
       const LAUNCHER = `import importlib
@@ -468,7 +468,7 @@ engine:
       telemetry_enabled = False
       metadata = None
       try:
-          importlib.import_module('pydantic_clai2')
+          importlib.import_module('pydantic_ai_pax')
           telemetry_path = os.environ.get('PAI_OTEL_EXPORT_PATH')
           if telemetry_path or os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT'):
               import atexit
@@ -526,8 +526,8 @@ engine:
                   raise TypeError('PAI_RESULT_METADATA must refer to a dictionary with string keys')
               metadata = loaded_metadata
           # Read in-process: workflow context can exceed the OS argv limit.
-          sys.argv = ['clai2', *cli_args, '-p', Path(prompt_file).read_text(encoding='utf-8')]
-          runpy.run_module('pydantic_clai2', run_name='__main__', alter_sys=True)
+          sys.argv = ['pax', *cli_args, '-p', Path(prompt_file).read_text(encoding='utf-8')]
+          runpy.run_module('pydantic_ai_pax', run_name='__main__', alter_sys=True)
       except SystemExit as exc:
           if isinstance(exc.code, int):
               exit_code = exc.code
@@ -632,7 +632,7 @@ engine:
 
         const env = { ...process.env };
         delete env.GH_AW_SESSION_CAPTURE_FD;
-        // `pip install --user` puts `clai2` here. The runner tool cache that holds
+        // `pip install --user` puts `pax` here. The runner tool cache that holds
         // `uv` and the interpreter's own bin directory is under /opt, which the
         // sandbox exposes read-only, but the home directory is where the CLI and
         // its user site-packages actually live.
@@ -996,7 +996,7 @@ engine:
 <!--
 # Pydantic AI
 
-Shared engine definition for CLAI 2 headless execution. Import this file and set
+Shared engine definition for Pax headless execution. Import this file and set
 `engine: id: pydantic-ai`; gh-aw v1.0.1 or newer with the protected session capture
 contract described in `README.md` is required.
 

@@ -67,7 +67,7 @@ where it can't run commands, they walk its files instead, as `find_files` and
 
 | Tool | Purpose |
 |---|---|
-| `read_file` | Read a text file with line numbers and a content hash. An image (PNG, JPEG, GIF, WebP) or PDF up to 5 MB is returned as the file itself, so a model that takes files sees it; other binary files are described by size, media type and their first 64 bytes in hex. Supports `offset`/`limit` paging, at most `max_read_lines` lines per call; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. A file over 64 MiB is described by its size, not read. |
+| `read_file` | Read a text file with line numbers and a content hash. An image (PNG, JPEG, GIF, WebP) or PDF up to 5 MB is returned as the file itself, so a model that takes files sees it. With `max_image_side` set (`Coder` sets 1024), a larger image is downscaled to fit first. Other binary files are described by size, media type and their first 64 bytes in hex. Supports `offset`/`limit` paging, where `offset` is the 1-indexed line to start from, at most `max_read_lines` lines per call; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. A file over 64 MiB is described by its size, not read. |
 | `write_file` | Create or overwrite a file. Optional `expected_hash` rejects stale writes (optimistic concurrency). |
 | `edit_file` | Exact-string replacement: one `old_text`/`new_text` pair, or a `replacements` batch applied in order. Each `old_text` must match exactly once; a batch is checked in memory and written only if every replacement matches. Optional `expected_hash`. |
 | `list_directory` | List a directory's entries with type indicators and sizes. |
@@ -86,7 +86,7 @@ For remote workspaces, use the file tools (`grep`, `find_files`, `read_file`) ra
 
 Without `rg`, command-capable POSIX workspaces use one in-sandbox git/grep/find command for `grep`, `list_files`, and `search_files` (after an initial `rg` probe).
 
-Filesystem-only and read-only workspaces use slower, bounded file walks in Python, whose regex engine has no time limit, so they refuse a regex that repeats a repeating group, such as `(a+)+`: that shape can take exponential time. A bounded repeat of a bounded group, such as `([0-9]{1,3}[.]){3}`, is allowed. The check is a heuristic for that shape, not a time limit: other slow shapes, such as overlapping alternatives (`(a|aa)+`) or runs of quantifiers (`a*a*a*a*b`), still run.
+Filesystem-only and read-only workspaces use slower, bounded file walks in Python. They match the regex with a linear-time engine (pydantic-core's Rust regex), so no pattern, such as `(a+)+$` or `a*a*a*a*b`, can stall the run. That engine doesn't support some of Python's syntax, such as lookarounds (`(?=`, `(?<!`), backreferences (`\1`), `\Z`, atomic groups and possessive quantifiers, and limits how large a compiled pattern can be, so such a pattern is refused there with a message asking the model to rewrite it.
 
 The POSIX fallback honors nested `.gitignore` in repositories and search-root `.ignore` with git available; nested `.ignore` rules are not applied by the POSIX fallback, and rg-specific regex features require `rg`. Without git, the POSIX fallback cannot apply ignore files. With git, it also searches files git tracks even though `.gitignore` lists them, which `rg` skips. The first search that falls back in a workspace logs one debug message saying so.
 
@@ -137,6 +137,9 @@ higher, such as a parent holding sibling projects, to let the model reach
 beyond the project directory without spelling out absolute paths. `root_dir`
 must contain the working directory. To work in a subdirectory, set it on the
 workspace instead (`LocalWorkspace('./repo')`).
+
+The instructions name the working directory through [`AnnounceWorkingDirectory`](../announce_working_directory/), which states it once however
+many capabilities bring it, and starts a sandbox that isn't running to ask for it.
 
 [`PrefixTools`](https://pydantic.dev/docs/ai/capabilities/prefix-tools/) renames the tools so the model can tell two
 `FileSystem`s apart (`FileSystem().prefix_tools('wiki')` offers `wiki_read_file`), but it
@@ -365,8 +368,14 @@ applies the same rule to absolute symlink targets.
   a model without vision, or a PDF on Groq), Pydantic AI raises when it builds
   the next request, which ends the run
   ([input support by model](https://pydantic.dev/docs/ai/core-concepts/input/)).
-  A file over 5 MB, the strictest mainstream per-image limit, is described
-  instead, as is any other binary file.
+  With `max_image_side` set (`Coder` sets 1024), an image larger than that on
+  its longest side is downscaled to it first, in its own format and aspect
+  ratio, and the header names both sizes; the hash is still that of the file.
+  An image over 25 megapixels (for a baseline JPEG, at the 1/2 to 1/8 scale it
+  decodes at) is described instead of decoded.
+  Downscaling needs Pillow, which the `coder` extra installs; setting
+  `max_image_side` without it raises an `ImportError`. A file still over 5 MB after that, the strictest mainstream per-image
+  limit, is described instead, as is any other binary file.
 - **Optimistic concurrency.** `write_file`/`edit_file` accept an
   `expected_hash` so an agent operating on a stale read is told to re-read
   rather than overwriting newer content.
@@ -466,6 +475,7 @@ FileSystem(
     read_only_patterns=[...],      # read-only globs (defaults to secrets/.git)
     max_read_lines=2000,           # most lines one read_file returns, and its default limit
     max_read_chars=50_000,         # cap on a whole read_file result, ending on a complete line
+    max_image_side=None,           # downscale images read_file returns to this longest side (needs Pillow; Coder sets 1024)
     max_list_results=1000,         # cap for list_directory
     max_search_results=1000,       # cap for search_files and grep
     max_find_results=1000,         # cap for find_files and list_files

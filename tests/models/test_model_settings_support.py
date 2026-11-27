@@ -36,6 +36,9 @@ that records only path, body and headers on a live transport, while `timeout` is
 - `cache` is excluded for the same reason as `thinking`: it is gated per model name via
   `supports_cache`, and a provider that caches implicitly (OpenAI's automatic caching; Google,
   which warns instead) supports it while sending nothing at all.
+- `thinking_summary` is excluded for the same reason too: whether it moves the payload depends on the
+  model's reasoning support and on `thinking`, and some classes take only one of its two values
+  (OpenAI's Responses API sends `True`, Cerebras and OpenRouter only `False`).
 
 `max_retries` leaves the request it governs unchanged and changes only how many times it is sent, so it
 has its own probe at the end of this file, which answers with a retryable error and counts the attempts.
@@ -78,6 +81,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import try_import
+from .conftest import anthropic_2023_06_01_client
 
 with try_import() as openai_available:
     from pydantic_ai.models.bedrock_mantle import BedrockMantleChatModel, BedrockMantleResponsesModel
@@ -114,7 +118,9 @@ with try_import() as google_available:
 
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.google_decisions import GoogleDecisionsModel
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel
     from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 with try_import() as groq_available:
     from pydantic_ai.models.groq import GroqModel
@@ -166,7 +172,7 @@ WARNED_SETTINGS = frozenset(
 )
 """The settings a model warns with `UnsupportedSettingWarning` about ignoring, rather than ignoring silently."""
 
-HAND_MAINTAINED = frozenset({'citations', 'tool_choice', 'thinking', 'cache'})
+HAND_MAINTAINED = frozenset({'citations', 'tool_choice', 'thinking', 'thinking_summary', 'cache'})
 """Fields a payload diff cannot adjudicate; see the module docstring."""
 
 FRAMEWORK_ENFORCED = frozenset({'request_timeout', 'first_event_timeout', 'framing_announcement'})
@@ -527,7 +533,8 @@ def xai_sdk_probe(build: Callable[[AsyncXaiClient], Model]) -> Probe:
     return probe
 
 
-xai_probe = xai_sdk_probe(lambda client: XaiModel('grok-4', provider=XaiProvider(xai_client=client)))
+# Grok 4.20's non-reasoning models are the only ones that accept `stop_sequences`.
+xai_probe = xai_sdk_probe(lambda client: XaiModel('grok-4.20-non-reasoning', provider=XaiProvider(xai_client=client)))
 
 
 async def mcp_sampling_probe(settings: ModelSettings) -> ProbeResult:
@@ -691,7 +698,8 @@ def _bedrock_mantle_responses(client: httpx2.AsyncClient) -> Model:
 
 
 def _anthropic(client: httpx2.AsyncClient) -> Model:
-    return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=PROBE_KEY, http_client=client))
+    provider = AnthropicProvider(anthropic_client=anthropic_2023_06_01_client(PROBE_KEY, client))
+    return AnthropicModel('claude-sonnet-4-5', provider=provider)
 
 
 def _groq(client: httpx.AsyncClient) -> Model:
@@ -707,11 +715,16 @@ def _cohere(client: httpx.AsyncClient) -> Model:
 
 
 def _google(client: httpx2.AsyncClient) -> Model:
-    return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=PROBE_KEY, http_client=client))
+    # Google Cloud, since the Gemini API rejects `presence_penalty` and `frequency_penalty` for every model.
+    return GoogleModel('gemini-2.5-flash', provider=GoogleCloudProvider(api_key=PROBE_KEY, http_client=client))
 
 
 def _google_decisions(client: httpx2.AsyncClient) -> Model:
     return GoogleDecisionsModel('gemini-decision-1', provider=GoogleProvider(api_key=PROBE_KEY, http_client=client))
+
+
+def _google_interactions(client: httpx2.AsyncClient) -> Model:
+    return GoogleInteractionsModel('gemini-3.8-flash', provider=GoogleProvider(api_key=PROBE_KEY, http_client=client))
 
 
 def _typesafe(client: httpx2.AsyncClient) -> Model:
@@ -777,7 +790,13 @@ CASES = [
     Case('GroqModel', ('Groq',), legacy_http_probe(_groq), _needs(groq_available, 'groq')),
     Case('MistralModel', ('Mistral',), http_probe(_mistral), _needs(mistral_available, 'mistral')),
     Case('CohereModel', ('Cohere',), legacy_http_probe(_cohere), _needs(cohere_available, 'cohere')),
-    Case('GoogleModel', ('Google',), http_probe(_google), _needs(google_available, 'google')),
+    Case(
+        'GoogleInteractionsModel',
+        ('Google', 'Google Interactions'),
+        http_probe(_google_interactions),
+        _needs(google_available, 'google'),
+    ),
+    Case('GoogleModel', ('Google', 'Google GenerateContent'), http_probe(_google), _needs(google_available, 'google')),
     Case('BedrockConverseModel', ('Bedrock',), bedrock_probe, _needs(bedrock_available, 'bedrock')),
     Case('HuggingFaceModel', ('HuggingFace',), huggingface_probe, _needs(huggingface_available, 'huggingface')),
     Case('XaiModel', ('xAI',), xai_probe, _needs(xai_available, 'xai')),
@@ -869,6 +888,21 @@ async def test_supported_by_lists_match_the_wire(case: Case, allow_model_request
 
     warned |= (await case.probe({'max_retries': 0})).observed.warned
     assert warned == unsupported & WARNED_SETTINGS
+
+
+@pytest.mark.parametrize(
+    'case',
+    [
+        pytest.param(case, id=case.id, marks=case.marks)
+        for case in CASES
+        if case.id in {'CerebrasModel', 'OpenRouterModel', 'SnowflakeModel', 'ZaiModel'}
+    ],
+)
+async def test_extra_body_none_sends_the_same_request(case: Case, allow_model_requests: None):
+    """`extra_body=None` means no extra body on the models whose converters merge their own fields into it."""
+    baseline = (await case.probe({})).payload
+    assert baseline is not None
+    assert (await case.probe({'extra_body': None})).payload == baseline
 
 
 def test_hand_maintained_fields_are_the_only_unprobed_ones():
@@ -1098,7 +1132,7 @@ RETRY_CASES = [
     # Without the provider's `retry_options`, the SDK's default delays apply, starting at a second.
     RetryCase(
         'GoogleModel',
-        ('Google',),
+        ('Google GenerateContent',),
         _google,
         (1, 1, 2),
         sdk_patches=(('google.genai._api_client._RETRY_MAX_DELAY', 0.001),),
@@ -1108,7 +1142,7 @@ RETRY_CASES = [
     # because the provider's `retry_options` say so.
     RetryCase(
         'GoogleModel[retry_options]',
-        ('Google',),
+        ('Google GenerateContent',),
         _google_with_client_retries,
         (4, 1, 2),
         status=418,

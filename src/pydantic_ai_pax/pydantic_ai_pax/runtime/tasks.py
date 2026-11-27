@@ -1,4 +1,4 @@
-"""CLAI's presentation and specialist roster for harness-owned child tasks."""
+"""Pax's presentation and specialist roster for harness-owned child tasks."""
 
 import asyncio
 import copy
@@ -39,6 +39,7 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
 )
 from pydantic_ai.workspaces.workspace import workspace_layers
+from pydantic_ai_harness.coder import MAX_IMAGE_SIDE
 from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_ai_harness.sub_agents import (
@@ -76,7 +77,7 @@ def specialists() -> dict[str, SubAgent[object]]:
                 name=name,
                 description=description,
                 instructions=f'{description} Return evidence with paths and line numbers. Do not modify files.',
-                capabilities=[FileSystem(read_only=True), NON_STRICT_SCHEMAS],
+                capabilities=[FileSystem(read_only=True, max_image_side=MAX_IMAGE_SIDE), NON_STRICT_SCHEMAS],
             ),
             read_only=True,
         )
@@ -91,7 +92,9 @@ async def review_workspace(ctx: RunContext[object], request: DelegationWorkspace
     """Only the isolated Review specialist may leave a local session's directory.
 
     Its workspace carries the parent's authority, never more: the model picks the directory, so its
-    instruction files are no more the operator's than the parent's own are.
+    instruction files are no more the operator's than the parent's own are. `SubAgents` puts a directory
+    outside the parent's working directory at `'none'`, so another checkout's instruction files reach
+    Review as data.
     """
     if request.agent_name != REVIEW_AGENT_NAME:
         raise ModelRetry('Only Review accepts `working_directory`; omit it for other delegates.')
@@ -240,7 +243,7 @@ class TaskRouter:
                         try:
                             await self._stack.aclose()
                         except RuntimeError:
-                            # The owner's drain timeout: a task that ignores cancellation must not crash CLAI.
+                            # The owner's drain timeout: a task that ignores cancellation must not crash Pax.
                             logging.getLogger(__name__).exception('Delegated tasks did not close cleanly')
                 if not last:
                     for record in [record for record in self.owner.records.values() if view.runs(record)]:
@@ -617,7 +620,7 @@ class Tasks:
     async def resume(self, task_id: str) -> None:
         record = self._record(task_id)
         if self.send_input is None:
-            raise RuntimeError('This CLAI has no prompt to ask the agent to resume a task at.')
+            raise RuntimeError('This Pax has no prompt to ask the agent to resume a task at.')
         stopped = record.user_stopped
         await self.owner.allow_resume(record.id)
         try:
@@ -635,7 +638,7 @@ class Tasks:
         if not text:
             raise ValueError('Type a message for the task.')
         if self.prompt_task is None:
-            raise RuntimeError('This CLAI cannot prompt a task on its own.')
+            raise RuntimeError('This Pax cannot prompt a task on its own.')
         # It reads `finished` until its run starts it, so `allow_resume` cannot tell a second prompt meanwhile.
         if record.id in self._starting:
             raise ValueError('This task is starting from a prompt already; wait for it to run.')
@@ -657,7 +660,7 @@ class Tasks:
         # From here the run settles the prompt, also once this caller is cancelled, as a dropped request is.
         run = self._prompts[record.id] = asyncio.create_task(
             self._run_prompt(self.prompt_task, record, text, starting, stopped=stopped),
-            name=f'clai2-task-prompt-{record.id}',
+            name=f'pax-task-prompt-{record.id}',
         )
         started = asyncio.create_task(starting.wait())
         try:

@@ -22,7 +22,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_ai_pax import DEFAULT_PLUGINS, chat
 from pydantic_ai_pax.builtin_plugins import logfire_session
 from pydantic_ai_pax.cli import headless
@@ -90,7 +90,7 @@ async def test_session_root_groups_turns_tools_and_nested_runs(
     assert trace.get_current_span() is original
 
     spans = recorder.exporters[-1].get_finished_spans()
-    root = next(span for span in spans if span.name == 'CLAI session')
+    root = next(span for span in spans if span.name == 'Pax session')
     assert root.parent is None
     assert root.context is not None
     assert (root.attributes or {})['agent_session_id'] == 'session-123'
@@ -103,9 +103,9 @@ async def test_session_root_groups_turns_tools_and_nested_runs(
     assert all(span.context is not None and span.context.trace_id == root.context.trace_id for span in children)
     assert all(span.parent is not None for span in children)
     # Only the root and the log announcing it carry the identity; that log is queryable before the root ends.
-    opened = [span for span in children if span.name == 'CLAI session opened']
+    opened = [span for span in children if span.name == 'Pax session opened']
     assert [(span.attributes or {}).get('user.email') for span in opened] == [email] * len(opened)
-    children = [span for span in children if span.name != 'CLAI session opened']
+    children = [span for span in children if span.name != 'Pax session opened']
     assert all({'logfire.tags', 'user.email'}.isdisjoint(span.attributes or {}) for span in children)
     if email:
         assert email not in json.dumps([dict(span.attributes or {}) for span in children])
@@ -165,11 +165,11 @@ async def test_user_tag_chooses_the_root_email_and_only_git_email_runs_git(
     await plugin.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings()))
     await close(plugin)
     assert looked_up is (settings.get('user_tag') == 'git-email')
-    root = next(span for span in recorder.spans() if span.name == 'CLAI session')
+    root = next(span for span in recorder.spans() if span.name == 'Pax session')
     assert (root.attributes or {})['logfire.tags'] == ((email,) if email else ())
     assert (root.attributes or {}).get('user.email') == email
     # The root is exported only at exit, so a log under it carries the identity while the session runs.
-    [opened] = [span for span in recorder.spans() if span.name == 'CLAI session opened']
+    [opened] = [span for span in recorder.spans() if span.name == 'Pax session opened']
     assert opened.parent is not None and root.context is not None
     assert opened.parent.span_id == root.context.span_id
     assert (opened.attributes or {})['agent_session_id'] == (root.attributes or {})['agent_session_id']
@@ -213,7 +213,7 @@ async def test_clear_resume_and_reload_follow_saved_conversation_ids(recorder: R
     finally:
         await shell.loader.close('exit')
     assert trace.get_current_span() is original
-    roots = [span for span in recorder.spans() if span.name == 'CLAI session']
+    roots = [span for span in recorder.spans() if span.name == 'Pax session']
     runs = [span for span in recorder.spans() if operation(span) == 'invoke_agent']
     assert len(roots) == 4
     assert len(runs) == 5
@@ -248,7 +248,7 @@ async def test_startup_resume_opens_only_the_saved_conversation_root(
     monkeypatch.chdir(tmp_path)
     agent = Agent(TestModel(call_tools=[], custom_output_text='answer'))
     saved = Session(
-        agent, deps=None, conversations=SqliteConversationStore(database=tmp_path / 'sessions.db'), workspace=tmp_path
+        agent, deps=None, conversations=SqliteSessionStore(database=tmp_path / 'sessions.db'), workspace=tmp_path
     )
     await saved.prompt('saved')
 
@@ -258,7 +258,7 @@ async def test_startup_resume_opens_only_the_saved_conversation_root(
     monkeypatch.setattr(SessionBrowser, 'run', select)
 
     def announced() -> list[object]:
-        opened = [span for span in recorder.spans() if span.name == 'CLAI session opened']
+        opened = [span for span in recorder.spans() if span.name == 'Pax session opened']
         return [(span.attributes or {})['agent_session_id'] for span in opened]
 
     store = SettingsStore(tmp_path / 'config.db')
@@ -302,7 +302,7 @@ async def test_startup_resume_opens_only_the_saved_conversation_root(
             )
         # Announced again with the saved ID as soon as startup selects it, before the first prompt is handled.
         assert idle[-1] == saved.summary.id
-    roots = [span for span in recorder.spans() if span.name == 'CLAI session']
+    roots = [span for span in recorder.spans() if span.name == 'Pax session']
     assert [(span.attributes or {})['agent_session_id'] for span in roots] == [saved.summary.id]
     assert announced()[-1] == saved.summary.id
     root_context = roots[0].context
@@ -365,7 +365,7 @@ async def test_fork_turn_end_stays_under_its_saved_conversation_root(
         assert current_session_id() is None
     finally:
         await shell.loader.close('exit')
-    roots = [span for span in recorder.spans() if span.name == 'CLAI session']
+    roots = [span for span in recorder.spans() if span.name == 'Pax session']
     assert len(roots) == 2
     child_root = next(span for span in roots if (span.attributes or {})['agent_session_id'] == fork.session_id)
     finished = next(span for span in recorder.spans() if span.name == 'turn {outcome}')
@@ -399,7 +399,7 @@ async def test_background_run_keeps_nested_agents_and_threaded_ui_in_its_convers
     finally:
         await close(plugin)
     spans = recorder.spans()
-    roots = [span for span in spans if span.name == 'CLAI session']
+    roots = [span for span in spans if span.name == 'Pax session']
     assert [(span.attributes or {})['agent_session_id'] for span in roots] == [
         'foreground',
         background_session.summary.id,
@@ -433,7 +433,7 @@ async def test_roots_end_within_their_lifetime_even_when_idle_until_exit(
     nested = Agent(TestModel(), deps_type=type(None), name='child')
 
     def roots() -> list[ReadableSpan]:
-        return [span for span in recorder.spans() if span.name == 'CLAI session']
+        return [span for span in recorder.spans() if span.name == 'Pax session']
 
     async def ended(count: int) -> None:
         with anyio.fail_after(5):
@@ -466,7 +466,7 @@ async def test_roots_end_within_their_lifetime_even_when_idle_until_exit(
     assert [(span.attributes or {})['agent_session_id'] for span in (run_root, later)] == ['session-1', 'session-2']
     assert (provisional.attributes or {})['agent_session_id'] not in {'session-1', 'session-2'}
     assert all('reason' not in (span.attributes or {}) for span in roots())
-    opened = [span for span in spans if span.name == 'CLAI session opened']
+    opened = [span for span in spans if span.name == 'Pax session opened']
     assert [span.parent for span in opened] == [span.context for span in roots()]
     tool = next(span for span in spans if operation(span) == 'execute_tool')
     child_run, parent_run = [span for span in spans if operation(span) == 'invoke_agent']

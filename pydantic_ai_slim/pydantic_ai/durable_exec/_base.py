@@ -49,13 +49,17 @@ from pydantic_ai.capabilities.abstract import (
 )
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.wrapper import WrapperCapability
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import (
+    UserError,
+    _TokenCountingUnavailableError,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.external_events import _refuse_unsupported_external_events  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     AgentStreamEvent,
     ModelRequest,
     ModelResponse,
+    ModelResponseOrigin,
     ModelResponseStreamEvent,
 )
 from pydantic_ai.models import (
@@ -80,6 +84,7 @@ from pydantic_ai.workspaces import Workspace
 from pydantic_ai.workspaces.workspace import workspace_layers
 
 from .. import _usage_attribution
+from .._run_context import durable_unit_scope, in_durable_unit
 from ..models.wrapper import serving_wrapper_scope
 from ._capability_operation import (
     CapabilityBoundOperation,
@@ -103,6 +108,7 @@ from ._operation import (
     DynamicToolsetCallToolParams,
     EventStreamHandlerId,
     EventStreamHandlerParams,
+    IdentityParameterTransport,
     ModelCancelSuspendedResponseId,
     ModelCancelSuspendedResponseParams,
     ModelCompactMessagesId,
@@ -123,8 +129,6 @@ from ._operation_backend import (
     BoundDurableOperation,
     DurableOperationBackend,
     RegisteredOperationBackend,
-    durable_unit_scope,
-    in_durable_unit,
 )
 from ._runtime_toolsets import (
     cancellation_token_unsupported_error,
@@ -336,6 +340,20 @@ def _as_capability(value: object, capability: AbstractCapability[Any]) -> object
     if isinstance(value, RunContext):
         return replace(cast(RunContext[Any], value), _capability=capability)
     return value
+
+
+def _project_request_context(args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    """Replace a model request context among the arguments with its projection, which can cross a durable boundary."""
+    request_context = next(
+        (value for value in (*args, *kwargs.values()) if isinstance(value, ModelRequestContext)), None
+    )
+    if request_context is None:
+        return args, kwargs
+    projection = ModelRequestContextProjection.from_context(request_context)
+    return (
+        tuple(projection if value is request_context else value for value in args),
+        {key: projection if value is request_context else value for key, value in kwargs.items()},
+    )
 
 
 def _operation_capability_id(capability: AbstractCapability[Any]) -> str | None:
@@ -676,9 +694,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                                 params=semantic_params,
                                 model_request_context=request_context,
                             )
-                            operation_result = ModelRequestContextProjection.from_context(result)
-                            if result.model is not model:
-                                operation_result.model_id = self._find_registered_model_id_for_hook(result.model)
+                            operation_result = self._model_request_hook_result(declaration, result, model)
                         return CapabilityOperationResult(
                             value=operation_result, usage_delta=durable_ctx.usage - usage_before
                         )
@@ -777,13 +793,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             kwargs = {key: _as_capability(value, capability) for key, value in kwargs.items()}
             return await bind_declaration_body(declaration, capability)(*args, **kwargs)
 
-        request_context = next(
-            (value for value in (*args, *kwargs.values()) if isinstance(value, ModelRequestContext)), None
-        )
-        if request_context is not None:
-            projection = ModelRequestContextProjection.from_context(request_context)
-            args = tuple(projection if value is request_context else value for value in args)
-            kwargs = {key: projection if value is request_context else value for key, value in kwargs.items()}
+        args, kwargs = _project_request_context(args, kwargs)
         arguments = bind_arguments(declaration, ctx=ctx, args=args, kwargs=kwargs)
         model = ctx.model
         if not isinstance(model, Model):
@@ -796,23 +806,46 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 CapabilityOperationParams(run_context=ctx, arguments=arguments, model_id=model_id)
             ),
         )
-        if declaration.model_request_parameter is not None:
-            projection = cast(ModelRequestContextProjection, result.value)
-            inbound = cast(ModelRequestContextProjection, arguments[declaration.model_request_parameter])
-            resolved_model = None
-            if projection.model_id != inbound.model_id:
-                resolved_model = await self._resolve_model_for_request(projection.model_id, ctx)
-                registered, _ = self._registered_model_id(resolved_model)
-                self._record_resolved_request_model(resolved_model, projection.model_id, registered=registered)
-            value: Any = _ResolvedModelRequestContext(projection=projection, model=resolved_model)
-        else:
-            value = result.value
+        value = await self._operation_value(declaration, arguments, result.value, ctx)
         usage_delta = ctx.usage - usage_before
         if not usage_delta.has_values() and not usage_delta.unmeasured_requests:
             # Recorded, not incremented: the operation accumulated this delta across the durable
             # boundary, where the activity's context can't reach the spans open back here.
             _usage_attribution.record_usage(ctx.usage, result.usage_delta)
         return value
+
+    def _model_request_hook_result(self, declaration: CapabilityMethodDeclaration, result: Any, model: Model) -> Any:
+        """What a durable model request hook sends back across the boundary.
+
+        The request context it returned, projected, or any other value, such as the response `after_model_request`
+        returns, as it is.
+        """
+        if not declaration.returns_model_request_context:
+            return result
+        projection = ModelRequestContextProjection.from_context(result)
+        if result.model is not model:
+            projection.model_id = self._find_registered_model_id_for_hook(result.model)
+        return projection
+
+    async def _operation_value(
+        self,
+        declaration: CapabilityMethodDeclaration,
+        arguments: dict[str, Any],
+        value: Any,
+        ctx: RunContext[AgentDepsT],
+    ) -> Any:
+        """The value a durable operation returned, with a request context it returned resolved back to its model."""
+        parameter = declaration.model_request_parameter
+        if parameter is None or not declaration.returns_model_request_context:
+            return value
+        projection = cast(ModelRequestContextProjection, value)
+        inbound = cast(ModelRequestContextProjection, arguments[parameter])
+        resolved_model = None
+        if projection.model_id != inbound.model_id:
+            resolved_model = await self._resolve_model_for_request(projection.model_id, ctx)
+            registered, _ = self._registered_model_id(resolved_model)
+            self._record_resolved_request_model(resolved_model, projection.model_id, registered=registered)
+        return _ResolvedModelRequestContext(projection=projection, model=resolved_model)
 
     def _check_bindable(self) -> None:
         """Validate that the capability can be bound in the current context."""
@@ -906,6 +939,30 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             f'time so `{type(self).__name__}.for_agent()` can register their durable {self.durable_unit_plural}.'
         )
 
+    def _validate_override_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
+        """Validate what `override(capabilities=...)` keeps of the agent's own capabilities.
+
+        `capabilities` are the leaves of the list's items taken unchanged from `root_capability.capabilities`.
+        A durability capability refuses a list that doesn't pass its bound copy through: dropping it would run
+        the agent without durability, and reaching it any other way, as a copy you constructed or inside
+        another capability, would bind it again and register this engine's durable units a second time.
+        Checked wherever the override is entered, inside or outside a durable container, because DBOS and
+        Prefect carry an override entered outside a workflow or flow into it.
+        """
+        for capability in capabilities:
+            while isinstance(capability, WrapperCapability):
+                capability = capability.wrapped
+            if capability is self:
+                return
+        name = type(self).__name__
+        raise UserError(
+            "`override(capabilities=...)` replaces the agent's capabilities, so the list must keep, unchanged, "
+            f'the item of `agent.root_capability.capabilities` that holds the bound `{name}` the agent registered '
+            f'its durable {self.durable_unit_plural} with. A `{name}` you construct, or the bound one inside '
+            'another capability, would be bound again. Build the list from `agent.root_capability.capabilities`, '
+            'for example `agent.override(capabilities=[*agent.root_capability.capabilities, extra])`.'
+        )
+
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         # A `CancellationToken` is a same-process handle that cannot cross the durable execution
         # boundary, and firing it inside a workflow/flow would cancel the durable task out of band
@@ -975,6 +1032,15 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     @abstractmethod
     def in_durable_context(self) -> bool:
         """Whether execution is currently inside this engine's durable container (workflow or flow)."""
+
+    @property
+    def in_durable_unit(self) -> bool:
+        """Whether execution is currently inside a unit whose result this engine records, like a step or task.
+
+        Engines whose units the user can also create around a tool, like a DBOS step or Prefect task,
+        check for those too.
+        """
+        return in_durable_unit()
 
     def _register_toolsets(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         """Wrap the agent's leaf toolsets in engine wrappers and index them by toolset `id`."""
@@ -1522,6 +1588,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             resolve_tool_config=resolve_tool_config,
             resolve_validation_config=resolve_validation_config,
             lifecycle=self.engine_spec.toolset_lifecycles['dynamic'],
+            # Identity transports hand every unit the run's own `RunContext`, so the units reach a
+            # toolset the run holds. Transports that carry the context in another form mean the
+            # units run elsewhere and resolve their own.
+            units_share_run_context=all(
+                isinstance(operation.parameter_transport, IdentityParameterTransport)
+                for operation in (get_tools.operation, call_operation)
+            ),
             durable_registrations=self._bound_operation_registrations(get_tools, call_tool, validate_args),
             durable_config=base_config,
         )
@@ -1778,6 +1851,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     model_settings=request.model_settings,
                     model_request_parameters=request.model_request_parameters,
                     run_context=ctx,
+                    attempt=request.attempt,
                 )
             )
 
@@ -1789,6 +1863,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     model_settings=request.model_settings,
                     model_request_parameters=request.model_request_parameters,
                     run_context=ctx,
+                    attempt=request.attempt,
                 )
             )
 
@@ -1931,11 +2006,23 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         streamed: StreamedResponse | None = None
         produced_output = False
 
+        run_id = params.run_context.run_id
+        origin = (
+            None
+            if run_id is None
+            else ModelResponseOrigin(
+                run_id=run_id,
+                run_step=params.run_context.run_step,
+                attempt=params.attempt,
+                execution_attempt=self.get_durable_operation_backend().execution_attempt(),
+            )
+        )
+
         async def events(stream: StreamedResponse) -> AsyncIterator[ModelResponseStreamEvent]:
             nonlocal produced_output
             async for event in stream:
                 produced_output = True
-                yield event
+                yield event if origin is None else replace(event, origin=origin)
 
         try:
             async with self._durable_model_scope(params.model_id, params.run_context, serving=True) as (
@@ -2004,6 +2091,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     params.messages, params.model_settings, params.model_request_parameters
                 )
             except NotImplementedError as error:
+                # A provider that serves no token counting raises a `UserError` that is also a `NotImplementedError`:
+                # it's recorded as the `UserError` it's documented as, so it fails the run instead of being retried.
+                # Any other error with both bases is recorded as a `NotImplementedError`.
+                if isinstance(error, _TokenCountingUnavailableError):
+                    return CountTokensResult(error=('UserError', str(error)))
                 return CountTokensResult(error=('NotImplementedError', str(error)))
             except UserError as error:
                 # A subclass carries more than its message, so it fails the unit as the engine fails any error.

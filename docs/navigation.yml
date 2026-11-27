@@ -362,7 +362,6 @@ navigation:
       - page: "Building Custom Capabilities"
         path: "capabilities/custom.md"
         slug: "capabilities/custom"
-      # harness/clai2.md is intentionally unpublished; see UNPUBLISHED_PAGES in tests/test_docs_navigation.py.
       - page: "Pydantic AI Harness"
         path: "harness/index.md"
         slug: "harness"
@@ -433,6 +432,9 @@ navigation:
           - page: "Shell"
             path: "harness/shell.md"
             slug: "harness/shell"
+          - page: "Announce Working Directory"
+            path: "harness/announce-working-directory.md"
+            slug: "harness/announce-working-directory"
       - section: "Tools & Native Abilities"
         slug: ""
         contents:
@@ -517,9 +519,15 @@ navigation:
           - page: "Browser Use"
             path: "harness/browser-use.md"
             slug: "harness/browser-use"
+          - page: "CDP Browser"
+            path: "harness/cdp-browser.md"
+            slug: "harness/cdp-browser"
           - page: "Playwright Browser"
             path: "harness/playwright.md"
             slug: "harness/playwright"
+          - page: "Computer Use"
+            path: "harness/computer-use.md"
+            slug: "harness/computer-use"
       - section: "Reasoning, Planning & Delegation"
         slug: ""
         contents:
@@ -702,6 +710,9 @@ navigation:
           - page: "Media Stores"
             path: "harness/media.md"
             slug: "harness/media"
+          - page: "Conversation Stores"
+            path: "harness/conversation-store.md"
+            slug: "harness/conversation-store"
           - page: "Managed Prompt"
             path: "harness/managed-prompt.md"
             slug: "harness/managed-prompt"
@@ -759,6 +770,19 @@ navigation:
       - page: "Third-Party Capabilities"
         path: "capabilities/third-party.md"
         slug: "capabilities/third-party"
+  - section: "Pax TUI"
+    slug: ""
+    contents:
+      - page: "Overview"
+        path: "harness/pax.md"
+        slug: "pax"
+        aliases:
+          - "harness/pax"
+      - page: "Legacy CLI"
+        path: "cli.md"
+        slug: "integrations/cli"
+        aliases:
+          - "cli"
   - section: "Realtime (speech-to-speech)"
     slug: ""
     contents:
@@ -840,11 +864,6 @@ navigation:
           - page: "Vercel AI"
             path: "ui/vercel-ai.md"
             slug: "integrations/ui/vercel-ai"
-      - page: "Command Line Interface (CLI)"
-        path: "cli.md"
-        slug: "integrations/cli"
-        aliases:
-          - "cli"
       - page: "GitHub Agentic Workflows"
         path: "harness/gh-aw.md"
         slug: "harness/gh-aw"
@@ -1106,6 +1125,9 @@ navigation:
             slug: "examples/realtime/realtime-webrtc"
             aliases:
               - "examples/realtime-webrtc"
+          - page: "Twilio Phone Calls"
+            path: "examples/realtime-twilio.md"
+            slug: "examples/realtime/realtime-twilio"
       - section: "Complex Workflows"
         slug: ""
         contents:
@@ -1267,6 +1289,11 @@ navigation:
             slug: "api/pydantic-ai/common_tools"
             aliases:
               - "api/common_tools"
+          - page: "computer_use"
+            path: "api/computer_use.md"
+            slug: "api/pydantic-ai/computer_use"
+            aliases:
+              - "api/computer_use"
           - page: "concurrency"
             path: "api/concurrency.md"
             slug: "api/pydantic-ai/concurrency"

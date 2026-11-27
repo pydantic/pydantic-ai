@@ -17,6 +17,7 @@ from rich.console import Console
 from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent, ModelHTTPError, capture_run_messages
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
@@ -39,7 +40,7 @@ from pydantic_ai_harness.compaction import (
     SummarizingCompaction,
     estimate_message_tokens,
 )
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_ai_pax import DEFAULT_PLUGINS, Session, chat
 from pydantic_ai_pax.builtin_plugins.compaction import (
     CompactionPlugin,
@@ -63,7 +64,6 @@ from pydantic_ai_pax.plugins import (
     load_plugin,
 )
 from pydantic_ai_pax.plugins.loader import PluginLoader
-from pydantic_ai_pax.runtime.session import local_workspace_provider
 from pydantic_ai_pax.runtime.session_runtime import create_shell
 from pydantic_ai_pax.ui.menus import dialogs
 from tests._timeouts import READINESS_WAIT_TIMEOUT
@@ -249,6 +249,50 @@ async def test_summariser_failure_falls_back_to_truncation() -> None:
     assert_truncated_without_a_summary(transcript)
 
 
+def summarise_badly(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Answer the conversation, but write only whitespace when asked for a summary, until retries run out."""
+    if '<messages>' in str(messages[0]):
+        return ModelResponse(parts=[TextPart(' \n')])
+    return ModelResponse(parts=[TextPart('reply')])
+
+
+async def stream_badly(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    [part] = summarise_badly(messages, info).parts
+    assert isinstance(part, TextPart)
+    yield part.content
+
+
+async def test_automatic_compaction_truncates_when_the_summary_fails() -> None:
+    """#12307: a summary the model gets wrong degrades to truncation instead of ending the turn."""
+    session = Session(Agent(FunctionModel(summarise_badly, stream_function=stream_badly)), deps=None)
+    plugin = make_plugin(session, context_window=1000, protected_tokens=0)
+    session.plugins = plugin.capabilities
+    session.replace_messages(
+        [
+            ModelRequest.user_text_prompt('first'),
+            ModelResponse(parts=[TextPart('reply')]),
+            ModelRequest.user_text_prompt('old ' * 1000),
+            ModelResponse(parts=[TextPart('reply')]),
+        ]
+    )
+    await session.prompt('new')
+    assert not any(
+        isinstance(part, UserPromptPart) and part.content == 'old ' * 1000
+        for message in session.messages
+        for part in message.parts
+    )
+    assert not any(isinstance(part, CompactionPart) for message in session.messages for part in message.parts)
+
+
+async def test_compact_raises_when_the_summary_fails() -> None:
+    """`/compact` shows the summariser's error rather than quietly truncating."""
+    before = two_turns()
+    transcript = Transcript(messages=before, model=FunctionModel(summarise_badly))
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
+        await make_plugin(transcript, protected_tokens=0).commands.execute_async('/compact')
+    assert transcript.messages == before
+
+
 def protected_tails(chain: FallbackCompaction[None]) -> list[int | None]:
     """The `keep_tokens` of each strategy in the chain, in fallback order."""
     tails: list[int | None] = []
@@ -340,7 +384,7 @@ async def test_unloading_clears_the_context_window_and_alert() -> None:
 
 @pytest.mark.parametrize('strategy', ['summarization', 'truncation'])
 async def test_compact_is_saved_without_another_turn(tmp_path: Path, strategy: str) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     agent = Agent(TestModel(custom_output_text='the gist'))
     session = Session(agent, deps=None, conversations=store, workspace=tmp_path)
     await session.prompt('first')
@@ -358,31 +402,23 @@ async def test_compact_is_saved_without_another_turn(tmp_path: Path, strategy: s
 
 
 @pytest.mark.parametrize('strategy', ['summarization', 'truncation'])
-async def test_compact_keeps_naming_a_workspace_other_than_this_machine(strategy: str) -> None:
-    # A `!command` saves a request with no response after it, so compacting can keep that request alone.
-    log = ModelRequest(parts=[UserPromptPart('ran cat log: ' + 'a log line\n' * 2000)])
-
-    async def compact(ref: WorkspaceRef) -> list[ModelMessage]:
-        history = [
-            ModelRequest(parts=[UserPromptPart('first question')]),
-            ModelResponse(parts=[TextPart('first answer ' * 500)], workspace_ref=ref),
-            log,
-        ]
-        transcript = Transcript(messages=history, model=TestModel(custom_output_text='the gist'))
-        notice = await make_plugin(transcript, strategy=strategy, protected_tokens=0).commands.execute_async('/compact')
-        assert notice.startswith('Compacted 3 messages down to ')
-        return transcript.messages
-
-    # This machine's folder: saved as compacted, as the session works in its own folder anyway.
-    local = await compact(WorkspaceRef(provider=local_workspace_provider(), id='/repo'))
-    assert all(isinstance(message, ModelRequest) for message in local)
-    # A sandbox: still named after the compacted history, so the next turn runs there.
+async def test_compact_keeps_the_latest_workspace_response(strategy: str) -> None:
+    # A `!command` saves a request with no response after it, so the kept tail can be that request alone.
     sandbox = WorkspaceRef(provider='e2b', id='sbx-1')
-    *compacted, named = await compact(sandbox)
-    assert (len(compacted), compacted[-1]) == (len(local), local[-1]) == (len(local), log)
-    # With no parts, providers send nothing for it, so the model is not made to have said anything.
-    assert isinstance(named, ModelResponse)
-    assert (named.parts, named.workspace_ref) == ([], sandbox)
+    workspace_response = ModelResponse(parts=[TextPart('second answer')], workspace_ref=sandbox)
+    log = ModelRequest(parts=[UserPromptPart('ran cat log: ' + 'a log line\n' * 2000)])
+    history = [
+        ModelRequest(parts=[UserPromptPart('first question')]),
+        ModelResponse(parts=[TextPart('first answer ' * 500)], workspace_ref=sandbox),
+        ModelRequest(parts=[UserPromptPart('second question')]),
+        workspace_response,
+        log,
+    ]
+    transcript = Transcript(messages=history, model=TestModel(custom_output_text='the gist'))
+    notice = await make_plugin(transcript, strategy=strategy, protected_tokens=0).commands.execute_async('/compact')
+    assert notice.startswith('Compacted 5 messages down to ')
+    # The next turn finds its sandbox from this response, so it stays.
+    assert transcript.messages[-2:] == [workspace_response, log]
 
 
 async def test_gauge_marks_its_reading_estimated_until_a_response_reports_usage(

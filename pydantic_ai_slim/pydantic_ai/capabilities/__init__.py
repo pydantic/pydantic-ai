@@ -1,6 +1,7 @@
 from typing import Any, TypeAlias
 
 from pydantic_ai._history_processor import HistoryProcessor
+from pydantic_ai._instructions import AgentInstructions, SourcedInstruction
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.native_tools._tool_search import (
     ToolSearchFunc as ToolSearchFunc,
@@ -41,6 +42,7 @@ from .caching import Caching
 from .capability import Capability
 from .citations import Citations
 from .combined import CombinedCapability
+from .compaction import CompactionModelRequest, CompactionRequest, CompactionResult
 from .content_filter import RaiseContentFilterError
 from .deferred_tool_handler import HandleDeferredToolCalls
 from .durable_operation import durable_operation
@@ -52,6 +54,7 @@ from .instrumentation import Instrumentation
 from .local_workspace import LocalWorkspace
 from .mcp import MCP, MCPAuthorizationTokenFunc
 from .model_fallback import ModelFallback
+from .native_compaction import NativeCompaction
 from .native_or_local import NativeOrLocalTool
 from .native_tool import NativeTool
 from .prefix_tools import PrefixTools
@@ -96,6 +99,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         LocalWorkspace,
         MCP,
         ModelFallback,
+        NativeCompaction,
         PrefixTools,
         PrepareTools,
         ProcessHistory,
@@ -120,6 +124,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
 __all__ = [
     'AbstractCapability',
     'AgentCapability',
+    'AgentInstructions',
     'AgentModel',
     'AgentNode',
     'CapabilityDescription',
@@ -169,6 +174,7 @@ __all__ = [
     'ModelFallback',
     'SelectModel',
     'SetToolMetadata',
+    'SourcedInstruction',
     'Thinking',
     'ToolSearch',
     'ToolSearchFunc',
@@ -184,6 +190,10 @@ __all__ = [
     'WrapperCapability',
     'XSearch',
     'CombinedCapability',
+    'CompactionModelRequest',
+    'CompactionRequest',
+    'CompactionResult',
+    'NativeCompaction',
     'DynamicCapability',
     'durable_operation',
     'RequestInput',

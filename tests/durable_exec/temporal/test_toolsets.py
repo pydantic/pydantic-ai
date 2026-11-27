@@ -13,7 +13,7 @@ from typing import Annotated, Any, cast
 from unittest.mock import patch
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, Json, computed_field
 from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import (
@@ -24,6 +24,7 @@ from pydantic_ai import (
     DocumentUrl,
     ExternalToolset,
     FunctionToolset,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -502,6 +503,72 @@ async def test_dynamic_toolset_outside_workflow():
         'Get the weather for Paris', deps=DynamicToolsetDeps(user_name='Bob')
     )
     assert result.output == snapshot('{"get_dynamic_weather":"Weather in a for Bob: sunny."}')
+
+
+# --- A `per_run_step=False` dynamic toolset's result is prepared in activities, not in the workflow ---
+
+
+class _PreparedOffThreadToolset(FunctionToolset[None]):
+    """Prepares itself with off-thread work in `for_run`, which Temporal's workflow event loop refuses."""
+
+    async def for_run(self, ctx: RunContext[None]) -> _PreparedOffThreadToolset:
+        await asyncio.get_running_loop().run_in_executor(None, lambda: None)
+        return self
+
+
+def _prepared_greet(name: str) -> str:
+    return f'hi {name}'
+
+
+def _call_greet_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('_prepared_greet', {'name': 'x'})])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+prepared_in_activity_agent = Agent(
+    FunctionModel(_call_greet_then_finish),
+    deps_type=type(None),
+    name='prepared_in_activity_agent',
+    toolsets=[
+        DynamicToolset(
+            lambda ctx: _PreparedOffThreadToolset([_prepared_greet], id='prepared-inner'),
+            per_run_step=False,
+            id='prepared_in_activity',
+        )
+    ],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class PreparedInActivityWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await prepared_in_activity_agent.run(prompt)).output
+
+
+async def test_per_run_step_false_dynamic_toolset_result_is_prepared_in_activities(client: Client):
+    """The toolset a `per_run_step=False` factory returns is prepared inside activities, never in the workflow.
+
+    Temporal activities can run in another process, so no activity can reach a toolset the workflow
+    resolved: each one resolves its own. The workflow must not resolve one too, or the result's
+    `for_run` runs in workflow code, where off-thread work like an `auth` function's I/O fails.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[PreparedInActivityWorkflow],
+        plugins=[AgentPlugin(prepared_in_activity_agent)],
+    ):
+        output = await client.execute_workflow(
+            PreparedInActivityWorkflow.run,
+            args=['go'],
+            id='test_per_run_step_false_dynamic_toolset_result_is_prepared_in_activities',
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+    assert output == 'done'
 
 
 # --- DynamicToolset.get_instructions test (issue #5282) ---
@@ -1349,6 +1416,116 @@ async def test_aliased_args_reach_the_activity(client: Client, path: str):
     assert _received_bookings == [('Ada', Place(cityName='Paris'), Revision(draftNumber=0, draft=7))]
 
 
+class Batch(BaseModel):
+    nums: Json[list[int]]
+
+
+class Line(BaseModel):
+    image: ImageUrl
+    nums: Json[list[int]] | None = None
+
+    @computed_field
+    @property
+    def count(self) -> int:
+        return len(self.nums or [])
+
+
+_received_json_args: list[tuple[str, object]] = []
+"""The arguments `sum_nums`, `sum_batch` and `tally` ran with, recorded in the activity."""
+
+
+def sum_nums(nums: Json[list[int]]) -> int:
+    """Sum numbers."""
+    _received_json_args.append(('sum_nums', nums))
+    return sum(nums)
+
+
+def sum_batch(batch: Batch) -> int:
+    """Sum a batch."""
+    _received_json_args.append(('sum_batch', batch.nums))
+    return sum(batch.nums)
+
+
+def tally(lines: list[Line], label: str) -> int:
+    """Tally lines."""
+    _received_json_args.append(('tally', ([(line.image.media_type, line.nums) for line in lines], label)))
+    return len(lines)
+
+
+def _json_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(
+            parts=[
+                ToolCallPart('sum_nums', {'nums': '[1, 2]'}, tool_call_id='c1'),
+                ToolCallPart('sum_batch', {'nums': '[3, 4]'}, tool_call_id='c2'),
+                ToolCallPart(
+                    'tally',
+                    {
+                        'lines': [
+                            {'image': {'url': 'https://example.com/a', 'media_type': 'image/png'}, 'nums': '[7]'},
+                            {'image': {'url': 'https://example.com/b', 'media_type': 'image/gif'}},
+                        ],
+                        'label': 'images',
+                    },
+                    tool_call_id='c3',
+                ),
+            ]
+        )
+    return ModelResponse(parts=[TextPart('Done.')])
+
+
+_json_args_durable_agent = Agent(
+    FunctionModel(_json_args_model),
+    name='json_args_durable',
+    tools=[sum_nums, sum_batch, tally],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+_json_args_wrapped_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    Agent(FunctionModel(_json_args_model), name='json_args_wrapped', tools=[sum_nums, sum_batch, tally]),
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class JsonArgsWorkflow:
+    @workflow.run
+    async def run(self, path: str) -> str:
+        agent = _json_args_durable_agent if path == 'durability' else _json_args_wrapped_agent
+        result = await agent.run('Sum the numbers.')
+        return result.output
+
+
+@pytest.mark.parametrize('path', ['durability', 'temporal_agent'])
+async def test_json_args_reach_the_activity(client: Client, path: str):
+    """`Json` arguments run in the activity with the values the workflow validated.
+
+    A validated `Json` value is the parsed list, which the tool's schema rejects with `json_type` when the
+    activity validates it again, so the workflow ships it as a JSON string again, at the top level and nested in
+    a model. The rest of the argument ships as before, so the `ImageUrl` media types, computed fields that
+    `round_trip=True` would leave out, still reach the tool.
+    """
+    _received_json_args.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[JsonArgsWorkflow],
+        plugins=[AgentPlugin(_json_args_durable_agent if path == 'durability' else _json_args_wrapped_agent)],
+    ):
+        output = await client.execute_workflow(
+            JsonArgsWorkflow.run,
+            args=[path],
+            id=f'{JsonArgsWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == 'Done.'
+    assert sorted(_received_json_args, key=lambda call: call[0]) == [
+        ('sum_batch', [3, 4]),
+        ('sum_nums', [1, 2]),
+        ('tally', ([('image/png', [7]), ('image/gif', None)], 'images')),
+    ]
+
+
 def _tool_return_metadata_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     if len(messages) == 1:
         return ModelResponse(parts=[ToolCallPart('analyze_data', {})])
@@ -1634,6 +1811,8 @@ def test_resolve_tool_activity_config_reads_metadata():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'UsageLimitExceeded',
+        'SuspendedResponseExpired',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
         'WorkspaceReadOnlyError',
@@ -1712,6 +1891,8 @@ def test_resolve_tool_activity_config_restores_round_tripped_types():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'UsageLimitExceeded',
+        'SuspendedResponseExpired',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
         'WorkspaceReadOnlyError',
@@ -2080,6 +2261,8 @@ async def test_every_registered_activity_heartbeats(allow_model_requests: None):
             activity_name = ActivityDefinition.must_from_callable(activity_fn).name  # pyright: ignore[reportUnknownMemberType]
             assert activity_name is not None
             activities_by_name[activity_name] = activity_fn
+        # Temporal runs it as a local activity, which doesn't heartbeat.
+        del activities_by_name[f'{prefix}__external_event_ask']
         assert activities_by_name.keys() == args_by_activity_name.keys()
 
         for name, activity_fn in activities_by_name.items():

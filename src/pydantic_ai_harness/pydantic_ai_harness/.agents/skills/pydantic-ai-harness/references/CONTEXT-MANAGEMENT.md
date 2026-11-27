@@ -8,6 +8,9 @@ wrote), and the media stores `StepPersistence` uses. None needs an extra, except
 which needs `pydantic-ai-harness[mongodb]` (`PostgresMediaStore` takes your own `asyncpg` pool and
 needs no harness extra). All compaction strategies keep tool-call / tool-return pairs intact, and
 their edits persist into the run's message history.
+Across runs, `result.conversation` holds the uncompacted history (so a `ConversationStore` keeps every
+message) and is compacted again on the next run, an extra summarizer call for LLM-backed strategies;
+`result.all_messages()` holds the compacted one, to carry with `message_history=` when that isn't wanted.
 
 ## Pick a capability
 
@@ -125,12 +128,24 @@ that may drop or summarize the first user message.
 
 ### `ClearToolResults`
 
-`ClearToolResults(max_messages=None, max_tokens=None, keep_pairs=3, placeholder='[tool result cleared]', exclude_tools=frozenset(), clear_tool_inputs=False, min_clear_tokens=None)`:
-blanks old tool results, keeping the newest `keep_pairs`. `min_clear_tokens` skips clears too
-small to be worth a cache bust. Core `search_tools` / `load_capability` returns are never cleared.
-`max_messages` counts from the last cleared result, so clears come in batches about
-`(max_messages - 2 * keep_pairs) / 2` tool steps apart; at or below `2 * keep_pairs` it clears on
-every request.
+`ClearToolResults(max_messages=None, max_tokens=None, keep_pairs=3, placeholder='[tool result cleared]', exclude_tools=frozenset(), clear_tool_inputs=False, min_clear_tokens=None, *, tools=None, keep_turns=None)`:
+blanks old tool results, keeping the newest `keep_pairs`. `keep_turns=N` replaces that count: it
+keeps the results of the last N completed user turns plus the current one, which is never cleared;
+`keep_turns=0` clears every earlier turn's. Only genuine user prompts start a turn, not pinned
+messages, receipts, other harness-added prompts, or a `ToolReturn`'s `content` sent with a tool
+result. `tools=[...]` clears only those tools' results, and `keep_pairs` then counts only their
+pairs (shared across the listed tools), so `tools=['retrieve'], keep_pairs=2` keeps the newest two
+`retrieve` results whatever else ran; `exclude_tools` never clears them, and their pairs still count
+toward `keep_pairs`. Setting `tools` with `exclude_tools`, or a non-default `keep_pairs` with
+`keep_turns`, raises `UserError`. `placeholder` can be a function of the `ToolReturnPart` (e.g.
+`lambda part: part.model_response_str().partition('\n')[0]` keeps the first line, so ids survive).
+It runs when a result is cleared (again on a later request when `min_clear_tokens` drops a clear
+that reclaims too little), must be deterministic so the cache prefix stays stable, skips results
+whose `metadata` isn't `None` or a `dict`, and can't be set from an agent spec (strings only).
+`min_clear_tokens` skips clears too small to be worth a cache bust. Core `search_tools` /
+`load_capability` returns are never cleared. `max_messages` counts from the last cleared result, so
+clears come in batches about `(max_messages - 2 * keep_pairs) / 2` tool steps apart; at or below
+`2 * keep_pairs` it clears on every request.
 
 ### `DeduplicateFileReads`
 
@@ -159,8 +174,15 @@ inside tool results aren't the user's, so include your own), `instructions`, `br
 On its own trigger, a summary whose compacted history is not estimated smaller than the original
 is discarded and the history left unchanged (a `compact_messages` span with
 `compaction.skipped='not_smaller'` records it); direct `compact()`/`compact_now()` calls return it
-anyway. Usage (tokens and the request) folds into the run's `ctx.usage`, so `UsageLimits` sees it. Keep
-the default `id='summarizing_compaction'` under durable execution.
+anyway. On its own trigger, `UnexpectedModelBehavior`, `ModelAPIError` and `FallbackExceptionGroup`
+leave the history unchanged and discard the attempt's receipts, with `compaction.skipped='summary_failed'`
+and `error.type` on the span. Explicit `compact()`/`compact_now()` calls still raise. Usage limits and
+programming errors propagate on both paths. A failed automatic summary is retried on the next request
+while the trigger stays exceeded. Usage (tokens and the request) folds into the run's `ctx.usage`,
+so `UsageLimits` sees it. Keep the default `id='summarizing_compaction'` under durable execution.
+Under Temporal, failed summary operations still propagate as `ActivityError` wrapping an
+`ApplicationError`: capability operations do not yet rebuild the model errors this recovery path
+catches. This gap is tracked in [#12291](https://github.com/pydantic/pydantic-ai/issues/12291).
 
 ### `RelevanceCompaction`
 
@@ -185,7 +207,7 @@ returns or user prompts.
 
 ### `FallbackCompaction`
 
-`FallbackCompaction(fallback_chain, fallback_on=(ModelAPIError, FallbackExceptionGroup), *, max_tokens=None, max_fraction=None, background_start=None)`:
+`FallbackCompaction(fallback_chain, fallback_on=(ModelAPIError, FallbackExceptionGroup, UnexpectedModelBehavior), *, max_tokens=None, max_fraction=None, background_start=None)`:
 tries the next strategy when one raises a `fallback_on` exception, re-raising the last one if all
 fail. When its trigger runs the chain, it also skips a `SummarizingCompaction` result that isn't
 smaller than the history, and leaves the history unchanged if nothing shrinks it. With no trigger,
@@ -317,8 +339,10 @@ capability to see post-compaction usage, before it to see what triggered compact
   Provider-native compaction still unloads them.
 - The same strategies keep tool search discoveries (a `search_tools` exchange, a native search result or a
   `ToolReturn.tools` reveal) by recording them again after the summary as a `ToolAvailabilityDeltaPart`.
-- `receipts=True` on `SlidingWindowCompaction` / `SummarizingCompaction` appends a note saying
-  history was compacted; with `StepPersistence` attached it includes the run handle.
+- `receipts=True` on `SlidingWindowCompaction` / `SummarizingCompaction` / `RelevanceCompaction` appends
+  a note saying history was compacted; with `StepPersistence` attached it includes the run handle. It's a
+  `CompactionReceiptPart` in the application's voice, not a user prompt, so it never starts a user turn;
+  find receipts by that type.
 - `await compact_now(strategy, history, model=..., focus=..., conversation_id=...)` (plus `deps=` for typed deps) runs a
   strategy between runs (for a `/compact` command). It applies no trigger of its own.
 

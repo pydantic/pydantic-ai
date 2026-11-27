@@ -15,7 +15,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ThinkingLevel
-from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteSessionStore
 from pydantic_ai_pax.runtime.session import Session
 from pydantic_ai_pax.runtime.session_naming import NamingClient, NamingResult, SessionName, SessionNamer, generate_name
 
@@ -63,7 +63,7 @@ async def test_a_reasoning_model_is_asked_for_no_reasoning_and_has_room_to_answe
 
 
 async def test_naming_uses_revision_and_bounded_tail(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     summary = await store.save(
         summary=ConversationSummary(workspace='/a', title='Fallback'),
         messages=[ModelRequest(parts=[UserPromptPart('old' * 2000 + ' fix renderer')])],
@@ -91,7 +91,7 @@ async def test_naming_uses_revision_and_bounded_tail(tmp_path: Path) -> None:
 
 
 async def test_empty_missing_model_and_late_result(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     first = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])
 
     async def no_model(prompt: str) -> None:
@@ -111,7 +111,7 @@ async def test_empty_missing_model_and_late_result(tmp_path: Path) -> None:
 
 
 async def test_worker_is_bounded_single_flight_and_drained(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     summary = await store.save(
         summary=ConversationSummary(workspace='/a'), messages=[ModelRequest(parts=[UserPromptPart('hello')])]
     )
@@ -147,7 +147,7 @@ async def test_worker_is_bounded_single_flight_and_drained(tmp_path: Path) -> No
 
 
 async def test_backfill_disabled_and_failure_containment(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     summary = await store.save(
         summary=ConversationSummary(workspace='/a'), messages=[ModelRequest(parts=[UserPromptPart('hello')])]
     )
@@ -171,7 +171,7 @@ async def test_backfill_disabled_and_failure_containment(tmp_path: Path) -> None
 
 
 async def test_queued_work_disabled_before_execution(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     checked = anyio.Event()
 
     async def generate(prompt: str) -> NamingResult:
@@ -194,7 +194,7 @@ async def test_queued_work_disabled_before_execution(tmp_path: Path) -> None:
 
 async def test_a_slow_notice_outlives_the_naming_timeout(tmp_path: Path) -> None:
     """The shell may hold the notice until a long turn ends; the saved name still reaches it."""
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     summary = await store.save(
         summary=ConversationSummary(workspace='/a'), messages=[ModelRequest(parts=[UserPromptPart('fix renderer')])]
     )
@@ -234,7 +234,7 @@ async def test_one_worker_names_each_conversation_with_the_model_of_the_session_
     tmp_path: Path,
 ) -> None:
     """The process's one namer uses the asking session's model, and tells every live session the title."""
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     first, second = [
         await store.save(
             summary=ConversationSummary(workspace='/a'), messages=[ModelRequest(parts=[UserPromptPart(text)])]
@@ -277,7 +277,7 @@ async def test_one_worker_names_each_conversation_with_the_model_of_the_session_
 
 async def test_a_session_waiting_to_hear_a_title_holds_up_no_other_naming(tmp_path: Path) -> None:
     """A listener waits for its terminal; meanwhile the next conversation is named, and a failing one is logged."""
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     first, second = [
         await store.save(
             summary=ConversationSummary(workspace='/a'), messages=[ModelRequest(parts=[UserPromptPart(text)])]
@@ -316,14 +316,14 @@ async def test_a_session_waiting_to_hear_a_title_holds_up_no_other_naming(tmp_pa
 
 
 async def test_naming_keeps_where_an_imported_session_came_from(tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     summary = await store.save(
         summary=ConversationSummary(
             id=str(uuid5(UUID(int=0), 'claude:session')), workspace='/a', title='Fallback', tags=('claude',)
         ),
         messages=[ModelRequest(parts=[UserPromptPart('fix renderer')])],
     )
-    # A fork of an import has an ID of its own, so it is CLAI's, whatever tag it copied.
+    # A fork of an import has an ID of its own, so it is Pax's, whatever tag it copied.
     native = await store.save(
         summary=ConversationSummary(workspace='/a', title='Fallback', tags=('claude',)),
         messages=[ModelRequest(parts=[UserPromptPart('ask claude')])],
@@ -342,7 +342,7 @@ async def test_naming_keeps_where_an_imported_session_came_from(tmp_path: Path) 
 
 async def test_templated_sessions_get_their_own_titles_not_the_prompt_prefix(tmp_path: Path) -> None:
     """The prompt-prefix fallback is a placeholder, not a previous title to keep."""
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     # Long enough that the issue number, past the fallback's cut, also leaves the naming tail.
     template = (
         'You are fixing GitHub issue https://github.com/pydantic/pydantic-ai/issues/{} ' + 'Follow the steps. ' * 200
@@ -377,7 +377,7 @@ async def test_templated_sessions_get_their_own_titles_not_the_prompt_prefix(tmp
 
 async def test_a_generated_title_survives_later_unrelated_turns(tmp_path: Path) -> None:
     """Later renames refresh only the detail, so a session stays findable under the title it was given."""
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     saved = await store.save(
         summary=ConversationSummary(workspace='/a'),
         messages=[ModelRequest(parts=[UserPromptPart('Reply with just the word OK.')])],
@@ -409,7 +409,7 @@ async def test_a_generated_title_survives_later_unrelated_turns(tmp_path: Path) 
 
 async def test_templated_sessions_in_one_workspace_get_titles_that_differ_beyond_case(tmp_path: Path) -> None:
     """Prompts differing only in their last word must not end up with titles differing only in case."""
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     template = 'Templated stress prompt for round three of the web UI test, please answer with exactly one word: {}'
     elsewhere = await store.save(
         summary=ConversationSummary(workspace='/elsewhere'),
@@ -450,7 +450,7 @@ async def test_templated_sessions_in_one_workspace_get_titles_that_differ_beyond
 
 async def test_naming_shows_only_sessions_the_naming_model_may_see(tmp_path: Path) -> None:
     """A session, or a sibling's title, the client rules out never reaches the prompt; its title is still taken."""
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('fix renderer')])]
     hidden = await store.save(
         summary=ConversationSummary(workspace='/a', title='Fix renderer', model='ollama:llama'), messages=messages
@@ -479,7 +479,7 @@ async def test_naming_shows_only_sessions_the_naming_model_may_see(tmp_path: Pat
 
 async def test_titles_stay_distinct_behind_many_newer_sessions_elsewhere(tmp_path: Path) -> None:
     """A workspace's siblings are found however many newer sessions other workspaces have."""
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     messages = [ModelRequest(parts=[UserPromptPart('fix renderer')])]
     first = await store.save(summary=ConversationSummary(workspace='/a'), messages=messages)
     second = await store.save(summary=ConversationSummary(workspace='/a'), messages=messages)

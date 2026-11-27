@@ -27,6 +27,7 @@ from pydantic_core import PydanticCustomError, PydanticSerializationError, to_js
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai._agent_graph import build_validation_context
 from pydantic_ai._cancel import RunCancellation
+from pydantic_ai._compaction_requests import CompactionRequests, RequestedCompaction
 from pydantic_ai._enqueue import EnqueueGuard
 from pydantic_ai._run_context import ToolNamePath, with_tool_name_path, without_tool_name_path
 from pydantic_ai._utils import is_str_dict
@@ -53,6 +54,7 @@ from pydantic_ai.toolsets.function import FunctionToolsetTool
 from ._operation import ToolsetCallToolParams
 
 if TYPE_CHECKING:
+    from pydantic_ai._function_schema import FunctionSchema
     from pydantic_ai.agent.abstract import AbstractAgent
     from pydantic_ai.mcp import MCPToolset
 
@@ -156,15 +158,18 @@ class RunHeldToolset(Generic[AgentDepsT]):
     A toolset attached to the agent is the same object in the container and in the unit, so the run
     holds that toolset itself. A [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset] built with
     `per_run_step=False` is resolved once by the run, which then holds what it resolved: resolving is
-    not connecting — an `MCPToolset` opens nothing until it is entered — but the factory is arbitrary
-    user code that runs in the durable container rather than in a unit, so I/O inside it is not
-    checkpointed and re-runs when the container replays. Like the capability factories that have
-    always run there, it has to be deterministic given the run's dependencies and leave its I/O to
-    the units — which is what the engine docs tell users.
+    not connecting — an `MCPToolset` opens nothing until it is entered — but the factory, and the
+    `for_run` of the toolset it returns, are arbitrary user code that runs in the durable container
+    rather than in a unit, so I/O inside them is not checkpointed and re-runs when the container
+    replays. Like the capability factories that have always run there, they have to be deterministic
+    given the run's dependencies and leave their I/O to the units — which is what the engine docs
+    tell users.
 
     Only used where the durable unit runs in the same process as the container. Engines that
     serialize the run context across the boundary never see one and each unit enters its own, as
-    they always have.
+    they always have. A dynamic toolset is held only when its operations use the default
+    [`ParameterTransports`][pydantic_ai.durable_exec.ParameterTransports] transports, which hand each
+    unit the run's own context.
     """
 
     def __init__(self, id: str, toolset: AbstractToolset[AgentDepsT]):
@@ -172,6 +177,7 @@ class RunHeldToolset(Generic[AgentDepsT]):
         """The toolset `id` a durable unit looks it up by."""
         self.toolset = toolset
         self._entered = False
+        self._step: tuple[int, AbstractToolset[AgentDepsT]] | None = None
 
     @functools.cached_property
     def _lock(self) -> anyio.Lock:
@@ -189,6 +195,20 @@ class RunHeldToolset(Generic[AgentDepsT]):
                 self._entered = True
             return self.toolset
 
+    async def stepped(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        """Return the toolset the run holds, entered and prepared for `ctx`'s run step.
+
+        The first unit of a step prepares it, from what the previous step prepared, and the step's other
+        units reuse that: a non-durable run prepares its toolsets once per step, and parallel tool-call
+        units must not prepare one shared toolset over each other's preparation.
+        """
+        toolset = await self.entered()
+        async with self._lock:
+            if self._step is None or self._step[0] != ctx.run_step:
+                previous = toolset if self._step is None else self._step[1]
+                self._step = (ctx.run_step, await previous.for_run_step(ctx))
+            return self._step[1]
+
     async def aclose(self, *args: Any) -> None:
         """Exit the toolset at the end of the run, if any unit entered it.
 
@@ -199,6 +219,7 @@ class RunHeldToolset(Generic[AgentDepsT]):
         async with self._lock:
             if self._entered:
                 self._entered = False
+                self._step = None
                 await self.toolset.__aexit__(*args)
 
 
@@ -233,14 +254,25 @@ async def toolset_for_unit(
         yield run_toolset
 
 
+@asynccontextmanager
+async def stepped_toolset_for_unit(
+    toolset: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]
+) -> AsyncGenerator[AbstractToolset[AgentDepsT]]:
+    """Yield the toolset to run one durable unit against, prepared for the unit's run step."""
+    if (held := _run_held_toolset(toolset, ctx)) is not None:
+        yield await held.stepped(ctx)
+        return
+    async with toolset_for_unit(toolset, ctx) as run_toolset:
+        yield await run_toolset.for_run_step(ctx)
+
+
 async def get_dynamic_tools(toolset: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]) -> DynamicToolsResult:
     """Resolve a dynamic toolset and collect its tools and instructions in a single entry.
 
     Falls back to resolving the toolset for this unit alone when the run's own resolved toolset
     isn't reachable, so replay/recovery in a fresh process stays deterministic.
     """
-    async with toolset_for_unit(toolset, ctx) as run_toolset:
-        run_toolset = await run_toolset.for_run_step(ctx)
+    async with stepped_toolset_for_unit(toolset, ctx) as run_toolset:
         tools = await run_toolset.get_tools(ctx)
         instructions = await run_toolset.get_instructions(without_tool_name_path(ctx))
         return DynamicToolsResult(
@@ -299,8 +331,7 @@ async def call_dynamic_tool(
     The args were only parsed (not validated) on the workflow/flow side, where the real tool
     isn't available; validation happens here against the resolved tool's own validator.
     """
-    async with toolset_for_unit(toolset, ctx) as run_toolset:
-        run_toolset = await run_toolset.for_run_step(ctx)
+    async with stepped_toolset_for_unit(toolset, ctx) as run_toolset:
         tool = await _dynamic_tool(toolset, run_toolset, name, tool_def, ctx)
         tool_ctx = without_tool_name_path(ctx)
         args = tool.args_validator.validate_python(tool_args, context=unit_validation_context(tool_ctx))
@@ -316,8 +347,7 @@ async def validate_dynamic_tool_args(
     tool_def: ToolDefinition | None = None,
 ) -> None:
     """Resolve a dynamic toolset and validate arguments against its real tool."""
-    async with toolset_for_unit(toolset, ctx) as run_toolset:
-        run_toolset = await run_toolset.for_run_step(ctx)
+    async with stepped_toolset_for_unit(toolset, ctx) as run_toolset:
         tool = await _dynamic_tool(toolset, run_toolset, name, tool_def, ctx)
         await validate_tool_args(tool, tool_args, without_tool_name_path(ctx))
 
@@ -549,14 +579,46 @@ def revalidate_function_args(
     toolset: FunctionToolset[Any], tool: ToolsetTool[Any], tool_args: dict[str, Any], *, context: Any = None
 ) -> dict[str, Any]:
     """Validate a function tool's already-validated arguments again after they crossed a durable boundary as JSON."""
+    if (function_schema := _validating_function_schema(toolset, tool)) is not None:
+        return function_schema.revalidate(tool_args, context=context)
+    return tool.args_validator.validate_python(tool_args, context=context)
+
+
+def dump_json_function_args(
+    toolset: FunctionToolset[Any],
+    tool: ToolsetTool[Any],
+    tool_args: dict[str, Any],
+    *,
+    by_alias: bool | None,
+    round_trip: bool = False,
+) -> dict[str, Any]:
+    """Prepare a function tool's validated arguments to cross a durable boundary as JSON.
+
+    A validated `Json` value is the parsed value, which the tool's schema rejects when
+    `revalidate_function_args` validates it again. So each argument whose parameter takes a `Json`
+    value is dumped by that parameter's schema in JSON mode, with those values as JSON strings again.
+    Pass the `by_alias` and `round_trip` the engine dumps the arguments with, so the rest of the
+    argument dumps as it did. Every other argument is returned as it is, so what the engine journals
+    for it doesn't change.
+    """
+    function_schema = _validating_function_schema(toolset, tool)
+    return (
+        tool_args
+        if function_schema is None
+        else function_schema.dump_json_parameters(tool_args, by_alias=by_alias, round_trip=round_trip)
+    )
+
+
+def _validating_function_schema(toolset: FunctionToolset[Any], tool: ToolsetTool[Any]) -> FunctionSchema | None:
+    """The function schema whose validator produced `tool`'s arguments, if `tool` is one of `toolset`'s functions."""
     if (
         isinstance(tool, FunctionToolsetTool)
         and (source := toolset.tools.get(tool.original_name or tool.tool_def.name)) is not None
         # Only the source's own validator produced arguments in the shape `revalidate` expects.
         and tool.args_validator is source.function_schema.validator
     ):
-        return source.function_schema.revalidate(tool_args, context=context)
-    return tool.args_validator.validate_python(tool_args, context=context)
+        return source.function_schema
+    return None
 
 
 @dataclass
@@ -576,6 +638,30 @@ class DispatchSnapshots:
     active_capability_ids: set[str] = field(repr=False)
     _deferred_capability_ids: set[str] = field(repr=False)
     _tool_names_by_kind: dict[str, str] = field(repr=False)
+
+
+class CompactionRequestGuard(CompactionRequests):
+    """Replaces the run's compaction requests inside a durable unit, where `ctx.request_compaction()` can't be supported.
+
+    Like an enqueue, a request made inside a unit whose recorded result is replayed without re-running its code
+    would be silently dropped on recovery, so it raises an explanatory `UserError` instead.
+    """
+
+    def __init__(self, message: str):
+        super().__init__()
+        self._message = message
+
+    def request(self, requested: RequestedCompaction) -> None:
+        raise UserError(self._message)
+
+
+def compaction_request_not_supported_message(unit_noun: str, container_noun: str) -> str:
+    """The shared `ctx.request_compaction()` error, worded for one engine's durable unit and container."""
+    return (
+        f'`request_compaction` is not supported inside a durable {unit_noun}: the durable runtime replays '
+        f"the {unit_noun}'s recorded result without re-running your code, so the request would be dropped "
+        f'on recovery. Request compaction from a capability hook, which runs in {container_noun}-level code.'
+    )
 
 
 class CancelGuard(RunCancellation):
@@ -606,7 +692,7 @@ def cancel_not_supported_message(unit_noun: str, container_noun: str) -> str:
 
 
 def guard_run_context(ctx: RunContext[AgentDepsT], *, unit_noun: str, container_noun: str) -> RunContext[AgentDepsT]:
-    """Return a copy of `ctx` whose `enqueue()` and `cancel()` raise, for user code in a durable unit.
+    """Return a copy of `ctx` whose `enqueue()`, `request_compaction()` and `cancel()` raise, for user code in a durable unit.
 
     Every engine's durable units go through it: on the live context for the in-process engines
     (DBOS steps, Prefect tasks), and on the reconstructed context for Temporal activities and
@@ -618,6 +704,9 @@ def guard_run_context(ctx: RunContext[AgentDepsT], *, unit_noun: str, container_
     return replace(
         ctx,
         pending_messages=EnqueueGuard(unit_noun, container_noun),
+        _compaction_requests=CompactionRequestGuard(
+            compaction_request_not_supported_message(unit_noun, container_noun)
+        ),
         _cancellation=CancelGuard(cancel_not_supported_message(unit_noun, container_noun)),
     )
 
@@ -881,6 +970,7 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
         call_tool_operation: CallToolOperation,
         resolve_tool_config: ResolveToolConfig,
         lifecycle: Lifecycle,
+        units_share_run_context: bool,
         validate_args_operation: CallToolOperation | None = None,
         resolve_validation_config: ResolveToolConfig | None = None,
         durable_registrations: list[Any] | None = None,
@@ -894,6 +984,7 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
             durable_config=durable_config,
         )
         self._dynamic_toolset = wrapped
+        self._units_share_run_context = units_share_run_context
         self._get_tools_operation = get_tools_operation
         self._call_tool_operation = call_tool_operation
         self._resolve_tool_config = resolve_tool_config
@@ -916,21 +1007,30 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
         run_copy._run_instructions = None
         run_copy._run_tool_name_path = ()
         run_copy._run_held = None
-        if not self._dynamic_toolset.per_run_step and (toolset_id := self._dynamic_toolset.id) is not None:
+        if (
+            self._units_share_run_context
+            and not self._dynamic_toolset.per_run_step
+            and (toolset_id := self._dynamic_toolset.id) is not None
+        ):
             # `per_run_step=False` is the factory's own statement that one resolution covers the
             # run, so resolve it here like a non-durable run does, leaving entry to the first
-            # durable unit that needs the toolset. This runs the factory in container code, where
-            # it must be deterministic and leave its I/O to the units. A `per_run_step=True`
-            # factory is re-evaluated per unit as before: its `for_run_step` swaps the inner
-            # toolset in place, which parallel tool-call units must not share.
+            # durable unit that needs the toolset. This runs the factory and the `for_run` of the
+            # toolset it returns in container code, where both must be deterministic and leave
+            # their I/O to the units, which use the toolset as `RunHeldToolset.stepped` prepares it
+            # once per run step. Only units handed the run's own `RunContext` can reach what the run
+            # holds; where the engine's transports carry the context to the unit in another form,
+            # every unit resolves its own, so nothing is resolved here. A `per_run_step=True`
+            # factory is re-evaluated per unit as before: its `for_run_step` swaps the inner toolset
+            # in place, which parallel tool-call units must not share.
             run_copy._run_held = RunHeldToolset(toolset_id, await self._dynamic_toolset.for_run(ctx))
         return run_copy
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         # The per-run copy is stable across steps: a `per_run_step=True` factory is re-evaluated
         # inside the durable units, not in workflow/flow code here, and a `per_run_step=False` one
-        # was resolved once in `for_run`. (Outside the durable context this wrapper isn't in the
-        # run's tree at all — `for_run` above replaced it with the resolved toolset.)
+        # was resolved once in `for_run` or is resolved by each unit. (Outside the durable context
+        # this wrapper isn't in the run's tree at all — `for_run` above replaced it with the
+        # resolved toolset.)
         return self
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
