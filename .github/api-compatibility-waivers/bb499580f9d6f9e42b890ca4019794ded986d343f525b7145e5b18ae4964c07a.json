@@ -1,0 +1,5 @@
+{
+  "against": "v2.75.0",
+  "reason": "pax 0.x: `Selection.text` takes the frame's soft-wrap `joins`, so a copy joins wrapped rows without a newline. Only `PromptSurface` calls it; `pydantic_ai_pax.ui.prompt.prompt_selection` is pax-internal, outside the documented plugin-author paths (`pydantic_ai_pax.plugins`, `pydantic_ai_pax.commands`).",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/14558"
+}

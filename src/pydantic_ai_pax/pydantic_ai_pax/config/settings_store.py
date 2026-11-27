@@ -15,6 +15,12 @@ from pydantic import JsonValue, TypeAdapter, ValidationError
 from pydantic_ai_pax.config import SETTING_FIELDS, STORED_MAIN_CHANNEL, PluginSettings, Settings, resolve_settings
 from pydantic_ai_pax.config.plugin_requirements import Requirements, merged_requirements
 
+# Re-exported: plugins imported them from here before `paths` existed.
+from pydantic_ai_pax.paths import (
+    config_dir as config_dir,
+    state_dir as state_dir,
+)
+
 _JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 _JSON_OBJECT: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
 _CHAIN: TypeAdapter[list[str]] = TypeAdapter(list[str])
@@ -85,18 +91,6 @@ def file_sha256(path: Path) -> str:
 def setting_json(value: JsonValue) -> str:
     """A setting value as the JSON text the store keeps, so two values compare by their exact JSON."""
     return _JSON.dump_json(value).decode()
-
-
-def config_dir() -> Path:
-    """The user's Pax folder, honouring `XDG_CONFIG_HOME`."""
-    return Path(os.getenv('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'pydantic-clai2'
-
-
-def state_dir() -> Path:
-    """Where Pax keeps state that is not a preference, honouring an absolute `XDG_STATE_HOME`."""
-    root = os.environ.get('XDG_STATE_HOME', '')
-    state = Path(root) if os.path.isabs(root) else Path.home() / '.local' / 'state'
-    return state / 'pydantic-clai2'
 
 
 class SettingsStore:
