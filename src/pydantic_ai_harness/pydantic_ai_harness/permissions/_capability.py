@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable, MutableSet, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import Any, Literal, NamedTuple, cast
 
+from opentelemetry.trace import NoOpTracer, get_current_span
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai.capabilities import AbstractCapability
@@ -26,7 +27,7 @@ from pydantic_ai.tools import (
 from pydantic_ai_harness._durable import in_durable_context
 from pydantic_ai_harness._shell_command import shell_command, shell_command_arg
 from pydantic_ai_harness.file_system._tool_kinds import CREATE_DIRECTORY_KIND, EDIT_FILE_KIND, WRITE_FILE_KIND
-from pydantic_ai_harness.permissions._rules import PermissionRule, PermissionRuleSpec, decide
+from pydantic_ai_harness.permissions._rules import PermissionRule, PermissionRuleSpec, PermissionVerdict, decide
 
 PermissionMode = Literal['full', 'auto', 'read-only']
 """How much the agent may do without asking.
@@ -61,6 +62,13 @@ class _Asked(BaseModel):
     action: PermissionAction
     subject: str
     reason: str
+
+
+class _Decision(NamedTuple):
+    verdict: PermissionVerdict
+    source: Literal['rule', 'mode', 'approved', 'remembered']
+    asked: _Asked | None = None
+    reason: str | None = None
 
 
 class _AskedMetadata(BaseModel):
@@ -230,22 +238,33 @@ class Permissions(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
     ) -> dict[str, Any]:
         """Refuse a call a rule denies, and hold one asked about until it is approved, unless remembered."""
-        asked = await self._asks(ctx, tool_def=tool_def, args=args)
-        if asked is None:
+        mode = self.mode_for(ctx)
+        decision = self._settle(ctx, call.tool_name, await self._decide(ctx, mode, tool_def=tool_def, args=args))
+        _trace(ctx, mode, decision)
+        if decision.verdict == 'allow':
             return args
+        raise _refusal(decision)
+
+    def _settle(self, ctx: RunContext[AgentDepsT], tool_name: str, decision: _Decision) -> _Decision:
+        """Allow a call asked about that was approved, remembering it if asked to, or was remembered before."""
+        asked = decision.asked
+        if decision.verdict != 'ask':
+            return decision
         if ctx.tool_call_approved:
-            if not in_durable_context(ctx) and _remember(ctx.tool_call_metadata):
-                self.remembered.add(RememberedApproval(ctx.conversation_id, call.tool_name, asked.subject))
-            return args
+            if asked is not None and not in_durable_context(ctx) and _remember(ctx.tool_call_metadata):
+                self.remembered.add(RememberedApproval(ctx.conversation_id, tool_name, asked.subject))
+            return decision._replace(verdict='allow', source='approved')
+        if asked is not None and self._remembered(ctx, tool_name, asked.subject):
+            return decision._replace(verdict='allow', source='remembered')
+        return decision
+
+    def _remembered(self, ctx: RunContext[AgentDepsT], tool_name: str, subject: str) -> bool:
         if in_durable_context(ctx):
             # In-process memory would not survive a replay or a move to another worker; history does.
-            if _remembered_in(
-                ctx.messages, _Remembered(conversation_id=ctx.conversation_id, subject=asked.subject), call.tool_name
-            ):
-                return args
-        elif RememberedApproval(ctx.conversation_id, call.tool_name, asked.subject) in self.remembered:
-            return args
-        raise ApprovalRequired(metadata=_AskedMetadata(permissions=asked).model_dump())
+            return _remembered_in(
+                ctx.messages, _Remembered(conversation_id=ctx.conversation_id, subject=subject), tool_name
+            )
+        return RememberedApproval(ctx.conversation_id, tool_name, subject) in self.remembered
 
     async def after_tool_execute(
         self,
@@ -259,7 +278,7 @@ class Permissions(AbstractCapability[AgentDepsT]):
         """Inside a durable run, record a call approved with `remember=True` in its `ToolReturnPart`'s metadata."""
         if not (ctx.tool_call_approved and in_durable_context(ctx) and _remember(ctx.tool_call_metadata)):
             return result
-        asked = await self._asks(ctx, tool_def=tool_def, args=args)
+        asked = (await self._decide(ctx, self.mode_for(ctx), tool_def=tool_def, args=args)).asked
         if asked is None or _nests_tool_return(result):
             return result
         tool_return = cast(ToolReturn[Any], result) if isinstance(result, ToolReturn) else ToolReturn[Any](result)
@@ -271,19 +290,20 @@ class Permissions(AbstractCapability[AgentDepsT]):
         )
         return replace(tool_return, metadata={**existing, **remembered.model_dump()})
 
-    async def _asks(
-        self, ctx: RunContext[AgentDepsT], *, tool_def: ToolDefinition, args: dict[str, Any]
-    ) -> _Asked | None:
-        """What to ask about this call, or `None` to run it; raises `SkipToolExecution` when a rule denies it."""
+    async def _decide(
+        self, ctx: RunContext[AgentDepsT], mode: PermissionMode, *, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> _Decision:
+        """Whether the rules or the mode allow, ask about, or deny this call, before approvals and memory."""
         command = shell_command(tool_def, args)
         rules = [rule for rule in self.rules if await matches_tool_selector(rule.tools, ctx, tool_def)]
         posix = ctx.workspace.platform != 'windows'
         rule = decide(rules, command=command, command_arg=shell_command_arg(tool_def), args=args, posix=posix)
         if rule is not None and rule.verdict != 'allow':
-            return _rule_asks(ctx, rule, _subject(tool_def, args, command))
-        return self._mode_asks(
-            self.mode_for(ctx), tool_def=tool_def, args=args, command=command, allowed=rule is not None
-        )
+            return _Decision(rule.verdict, 'rule', _rule_asks(rule, _subject(tool_def, args, command)), rule.reason)
+        asked = self._mode_asks(mode, tool_def=tool_def, args=args, command=command, allowed=rule is not None)
+        if asked is not None:
+            return _Decision('ask', 'mode', asked, asked.reason)
+        return _Decision('allow', 'mode' if rule is None else 'rule')
 
     def _mode_asks(
         self,
@@ -329,21 +349,37 @@ def _subject(
     return None
 
 
-def _rule_asks(
-    ctx: RunContext[AgentDepsT], rule: PermissionRule[Any], subject: tuple[PermissionAction, str] | None
-) -> _Asked | None:
-    """What an `'ask'` rule asks about a call; raises `SkipToolExecution` for a `'deny'` rule."""
-    what = 'tool call' if subject is None else _WHAT[subject[0]]
-    if rule.verdict == 'deny':
-        message = f'A permission rule denied this {what}, so it did not run. Do not retry it.'
-        raise SkipToolExecution(ToolDenied(f'{message} Reason: {rule.reason}' if rule.reason else message))
+def _rule_asks(rule: PermissionRule[Any], subject: tuple[PermissionAction, str] | None) -> _Asked | None:
+    """What a rule asks about a call that runs a command or writes a file; `None` for any other call."""
     if subject is None:
-        # Not a command or file write, so it takes the plain approval flow, like `requires_approval=True`.
-        if ctx.tool_call_approved:
-            return None
-        raise ApprovalRequired(metadata={'reason': rule.reason} if rule.reason else None)
-    reason = rule.reason or f'A permission rule asks before this {what}.'
+        return None
+    reason = rule.reason or f'A permission rule asks before this {_WHAT[subject[0]]}.'
     return _Asked(action=subject[0], subject=subject[1], reason=reason)
+
+
+def _refusal(decision: _Decision) -> SkipToolExecution | ApprovalRequired:
+    """The exception that refuses a call `decision` denies, or holds one it asks about."""
+    asked, reason = decision.asked, decision.reason
+    if decision.verdict == 'deny':
+        what = 'tool call' if asked is None else _WHAT[asked.action]
+        message = f'A permission rule denied this {what}, so it did not run. Do not retry it.'
+        return SkipToolExecution(ToolDenied(f'{message} Reason: {reason}' if reason else message))
+    if asked is None:
+        # Not a command or file write, so it takes the plain approval flow, like `requires_approval=True`.
+        return ApprovalRequired(metadata={'reason': reason} if reason else None)
+    return ApprovalRequired(metadata=_AskedMetadata(permissions=asked).model_dump())
+
+
+def _trace(ctx: RunContext[Any], mode: PermissionMode, decision: _Decision) -> None:
+    """Record the decision on the open `execute_tool` span; the reason only with `trace_include_content`."""
+    span = get_current_span()
+    if isinstance(ctx.tracer, NoOpTracer) or not span.is_recording():
+        return
+    span.set_attributes(
+        {'permissions.decision': decision.verdict, 'permissions.source': decision.source, 'permissions.mode': mode}
+    )
+    if decision.reason is not None and ctx.trace_include_content:
+        span.set_attribute('permissions.reason', decision.reason)
 
 
 def _nests_tool_return(result: object) -> bool:
