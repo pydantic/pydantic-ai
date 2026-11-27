@@ -1,13 +1,14 @@
-"""Publish size-dependent review statuses, and the `.github/` change gate, from trusted default-branch code."""
+"""Publish the review statuses and the `.github/` change gate from trusted default-branch code."""
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, Protocol
 
@@ -22,18 +23,46 @@ from publish_douwebot_review import (
 from publish_pr_review_checks import MARKER as PR_REVIEW_CHECKS_MARKER
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
-ReviewGate = Literal['douwebot', 'github-dir']
+ReviewGate = Literal['douwebot', 'github-dir', 'dispositions']
 Size = Literal['size: S', 'size: M', 'size: L', 'size: XL']
 CommitStatus = Literal['pending', 'success', 'failure']
 REVIEW_CONTEXTS: dict[ReviewGate, str] = {
     'douwebot': 'Gate: clean douwebot approval',
     'github-dir': 'Gate: .github changes by a maintainer',
+    'dispositions': 'Gate: review findings dispositioned',
 }
 # Dependabot owns the action-pin bumps in `.github/workflows/` and holds no repository permission of its own.
 # Exact logins, not a `*[bot]` glob: `pydanty[bot]` builds branches out of outside text.
 GITHUB_DIR_BOTS = frozenset({'dependabot[bot]'})
 # The douwebot prompt in `bots.yml` asks for this prefix on every optional finding.
 OPTIONAL_FINDING_PREFIX = 'Optional:'
+# Review bots by REST login. `finding_reviewer` tells the `github-actions[bot]` reviewers apart by receipt.
+REVIEWER_LOGINS: dict[str, str] = {
+    'chatgpt-codex-connector[bot]': 'Codex',
+    'claude[bot]': 'Claude',
+    'coderabbitai[bot]': 'CodeRabbit',
+    'Copilot': 'Copilot',
+    'cursor[bot]': 'Cursor',
+    'devin-ai-integration[bot]': 'Devin',
+    'github-advanced-security[bot]': 'CodeQL',
+    'macroscopeapp[bot]': 'Macroscope',
+    'pydanty[bot]': 'pydanty',
+    'veria-ai[bot]': 'Veria',
+}
+# gh-aw reviews share `github-actions[bot]`; each run's receipt names its workflow.
+GH_AW_REVIEWERS: dict[str, str] = {
+    'pydantic/pydantic-ai/pydantic-ai-pr-review': 'CI Review',
+    # Retired, but an open PR's head can still carry its comments.
+    'pydantic/pydantic-ai/pydantic-ai-ui-security-review': 'UI security review',
+}
+# Resolving a thread settled a finding started before this time. GitHub records no resolution time.
+# Delete this baseline once no open PR has a bot thread started before it.
+RESOLVED_THREADS_STARTED_BEFORE = datetime(2026, 11, 27, 2, tzinfo=UTC)
+# A reply's first line in this form answers its finding; the reply can open with an attribution line.
+DISPOSITION = re.compile(
+    r'^(?:Fixed in (?P<sha>[0-9a-f]{7,40})\b|Tracked in #(?P<number>[1-9][0-9]{0,8})\b|(?P<declined>Declined: \S))',
+    re.MULTILINE,
+)
 
 
 class ReviewUser(BaseModel):
@@ -58,6 +87,8 @@ class ReviewPullRequest(BaseModel):
     """The live head, base, and labels that determine the review bar."""
 
     state: Literal['open', 'closed']
+    number: int
+    html_url: str
     user: ReviewUser
     head: _Branch
     base: _Branch
@@ -81,8 +112,11 @@ class ReviewComment(BaseModel):
 
     id: int
     pull_request_review_id: int
+    # REST omits it on a thread's first comment and points every reply at that comment.
+    in_reply_to_id: int | None = None
     user: ReviewUser
     original_commit_id: str
+    created_at: datetime
     body: str
 
 
@@ -161,6 +195,8 @@ class ReviewGitHub(Protocol):
     def review_comments(self) -> list[ReviewComment]: ...
     def resolved_comment_ids(self) -> set[int]: ...
     def verified_review_run(self, run_id: int, head: str) -> bool: ...
+    def own_commits(self, base: str, head: str, shas: set[str]) -> set[str]: ...
+    def issue_created_at(self, number: int) -> datetime | None: ...
     def status(self, head: str, gate: ReviewGate, state: CommitStatus, description: str, url: str) -> None: ...
 
 
@@ -293,16 +329,130 @@ def other_review_receipt(comment: ReviewComment, parent: Review | None) -> bool:
     """gh-aw and PR Review Checks give their reviews separate receipts despite sharing the account."""
     if parent and PR_REVIEW_CHECKS_MARKER.search(parent.body):
         return True
+    return gh_aw_reviewer(comment, parent) is not None
+
+
+def gh_aw_reviewer(comment: ReviewComment, parent: Review | None) -> str | None:
+    """Name the gh-aw workflow whose receipt the comment or its parent review carries."""
     receipt = f'{parent.body if parent else ""}\n{comment.body}'
-    return any(
-        f'<!-- gh-aw-workflow-call-id: {workflow} -->' in receipt
-        or f'[gh-aw-workflow-call-id]: # "{workflow.replace("/", "%2F")}"' in receipt
-        for workflow in (
-            'pydantic/pydantic-ai/pydantic-ai-pr-review',
-            # Retired, but an open PR's head can still carry its comments.
-            'pydantic/pydantic-ai/pydantic-ai-ui-security-review',
-        )
+    return next(
+        (
+            reviewer
+            for workflow, reviewer in GH_AW_REVIEWERS.items()
+            if f'<!-- gh-aw-workflow-call-id: {workflow} -->' in receipt
+            or f'[gh-aw-workflow-call-id]: # "{workflow.replace("/", "%2F")}"' in receipt
+        ),
+        None,
     )
+
+
+def finding_reviewer(comment: ReviewComment, parent: Review | None) -> str | None:
+    """Name the registered reviewer that started a thread, or `None` for a bot nobody registered."""
+    if comment.user.login != 'github-actions[bot]':
+        return REVIEWER_LOGINS.get(comment.user.login)
+    if parent and DOUWEBOT_MARKER.search(parent.body):
+        return 'douwebot'
+    if parent and PR_REVIEW_CHECKS_MARKER.search(parent.body):
+        return 'PR Review Checks'
+    return gh_aw_reviewer(comment, parent)
+
+
+def _rejection(
+    login: str,
+    line: re.Match[str],
+    finding: ReviewComment,
+    reviewer: str | None,
+    pull: ReviewPullRequest,
+    writers: set[str],
+    own: set[str],
+    opened: dict[str, datetime],
+) -> str | None:
+    """Why a disposition reply does not answer its finding, or `None` when it does."""
+    writer = login in writers
+    if reviewer is None and not writer:
+        return f'only write access answers a thread no registered reviewer started, and `{login}` has none'
+    if not writer and login != pull.user.login:
+        return f'`{login}` is neither the PR author nor a user with write access'
+    if sha := line['sha']:
+        return None if sha in own else f'`{sha}` is not a commit of this PR'
+    if number := line['number']:
+        if (at := opened.get(number)) is None:
+            return f'#{number} is not another issue or PR'
+        return None if writer or at >= finding.created_at else f'#{number} was opened before the finding'
+    optional = reviewer == 'douwebot' and finding.body.startswith(OPTIONAL_FINDING_PREFIX)
+    return None if writer or optional else '`Declined:` needs write access'
+
+
+def finding_dispositions(
+    github: ReviewGitHub,
+    pull: ReviewPullRequest,
+    reviews: list[Review],
+    comments: list[ReviewComment],
+    resolved: set[int],
+) -> Verdict:
+    """Every inline thread a review bot started, on any head, needs a person's recorded answer.
+
+    A reply counts from the PR author or from write access. A reply line `Fixed in <sha>` names a commit of this PR,
+    and `Tracked in #N` another issue or PR, opened at or after the finding unless the replier has write access.
+    `Declined: <reason>` counts from write access, and from the author on a douwebot `Optional:` finding.
+    On a thread no registered reviewer started, only a reply from write access counts.
+    A resolved thread started before `RESOLVED_THREADS_STARTED_BEFORE` is settled, whatever bot started it.
+    """
+    parents = {review.id: review for review in reviews}
+    findings = [comment for comment in comments if comment.in_reply_to_id is None and comment.user.type == 'Bot']
+    answers: dict[int, list[tuple[str, re.Match[str]]]] = {}
+    finding_ids = {finding.id for finding in findings}
+    for comment in comments:
+        if (
+            comment.in_reply_to_id in finding_ids
+            and comment.user.type == 'User'
+            and (line := DISPOSITION.search(comment.body))
+        ):
+            answers.setdefault(comment.in_reply_to_id, []).append((comment.user.login, line))
+    lines = [line for replies in answers.values() for _, line in replies]
+    own = github.own_commits(pull.base.sha, pull.head.sha, {line['sha'] for line in lines if line['sha']})
+    tracked = {number for line in lines if (number := line['number']) and int(number) != pull.number}
+    opened = {number: at for number in tracked if (at := github.issue_created_at(int(number)))}
+    repliers = {login for replies in answers.values() for login, _ in replies}
+    writers = {login for login in repliers if github.permission(login) in {'write', 'admin'}}
+    unanswered: list[str] = []
+    unregistered: list[str] = []
+    for finding in findings:
+        if finding.created_at < RESOLVED_THREADS_STARTED_BEFORE and finding.id in resolved:
+            continue
+        url = f'{pull.html_url}#discussion_r{finding.id}'
+        reviewer = finding_reviewer(finding, parents.get(finding.pull_request_review_id))
+        name = f'the {reviewer} finding' if reviewer else f'the `{finding.user.login}` thread'
+        if reviewer is None:
+            unregistered.append(f'{url}: no registered reviewer started this `{finding.user.login}` thread.')
+        rejections = [
+            _rejection(login, line, finding, reviewer, pull, writers, own, opened)
+            for login, line in answers.get(finding.id, [])
+        ]
+        if None in rejections:
+            continue
+        reasons = '; '.join(reason for reason in rejections if reason)
+        unanswered.append(
+            f'{url}: {name} has no accepted disposition reply: {reasons}.'
+            if reasons
+            else f'{url}: {name} has no disposition reply.'
+        )
+    summary = [f'{len(findings)} review bot findings.']
+    if unregistered:
+        summary += [
+            f'{len(unregistered)} review bot threads have no registered reviewer, so only a reply from write access '
+            'answers them. Register the bot in `REVIEWER_LOGINS`, or see #14014 for a `github-actions[bot]` thread '
+            'without a receipt.',
+            *unregistered,
+        ]
+    failures: list[str] = []
+    if unanswered:
+        failures += [
+            f'{len(unanswered)} of {len(findings)} review bot findings need a reply: '
+            '`Fixed in <sha>`, `Tracked in #N` or `Declined: <reason>`.',
+            *unanswered,
+        ]
+    return Verdict(summary=summary, failures=failures)
 
 
 def settled_optional_finding(comment: ReviewComment, parent: Review | None, resolved: set[int]) -> bool:
@@ -318,6 +468,20 @@ def settled_optional_finding(comment: ReviewComment, parent: Review | None, reso
 def review_order(review: Review) -> tuple[float, int]:
     """Order submitted decisions chronologically, including reviews created as drafts."""
     return (review.submitted_at.timestamp() if review.submitted_at else 0, review.id)
+
+
+def _disposition_verdict(
+    github: ReviewGitHub,
+    pull: ReviewPullRequest,
+    reviews: list[Review],
+    comments: list[ReviewComment],
+    resolved: set[int],
+) -> tuple[Verdict, bool]:
+    """A failed disposition lookup fails only its own status and the job; the douwebot verdict stands."""
+    try:
+        return finding_dispositions(github, pull, reviews, comments, resolved), False
+    except (GateError, ValidationError, OSError) as error:
+        return Verdict(failures=[f'{type(error).__name__}: {error}']), True
 
 
 def reconcile_reviews(github: ReviewGitHub, env: Mapping[str, str]) -> int:
@@ -343,6 +507,7 @@ def reconcile_reviews(github: ReviewGitHub, env: Mapping[str, str]) -> int:
             comments = github.review_comments()
             resolved = github.resolved_comment_ids()
             verdicts = review_verdicts(github, pull, reviews, comments, resolved)
+            verdicts['dispositions'], failed = _disposition_verdict(github, pull, reviews, comments, resolved)
             # A push, relabel or thread resolution during the API reads must not publish an old snapshot.
             if (
                 github.pull_request() == pull
@@ -377,7 +542,17 @@ class _Permission(BaseModel):
     permission: str
 
 
+class _CommitComparison(BaseModel):
+    status: str
+
+
+class _Issue(BaseModel):
+    created_at: datetime
+
+
 _PERMISSION = TypeAdapter(_Permission)
+_ISSUE = TypeAdapter(_Issue)
+_COMMIT_PAGES = TypeAdapter(list[list[Commit]])
 _SIZED_FILE_PAGES = TypeAdapter(list[list[_SizedFile]])
 _SIZED_FILES = TypeAdapter(list[_SizedFile])
 _REVIEW_PAGES = TypeAdapter(list[list[Review]])
@@ -495,6 +670,42 @@ class ReviewGhCli(GhCli):
         )
         jobs: dict[str, str | None] = {job.name: job.conclusion for page in pages for job in page.jobs}
         return jobs.get('douwebot') == 'success' and jobs.get('Publish douwebot review') == 'success'
+
+    def own_commits(self, base: str, head: str, shas: set[str]) -> set[str]:
+        """Return the given SHAs, full or abbreviated, that name a commit this PR adds to its base."""
+        if not shas:
+            return set()
+        pages = _COMMIT_PAGES.validate_json(self._api('--paginate', '--slurp', f'{self._pull}/commits?per_page=100'))
+        listed = [commit.sha for page in pages for commit in page]
+        own = {sha for sha in shas if any(commit.startswith(sha) for commit in listed)}
+        # The endpoint lists at most 250 commits; past that, compare each unmatched SHA with both ends.
+        if len(listed) < 250:
+            return own
+        for sha in shas - own:
+            try:
+                # The compare endpoint finds a fork's commit only by its full SHA.
+                full = Commit.model_validate_json(self._api(f'{self._repo}/commits/{sha}')).sha
+                after_base = self._api(f'{self._repo}/compare/{base}...{full}?per_page=1')
+                in_head = self._api(f'{self._repo}/compare/{full}...{head}?per_page=1')
+            except GateError as error:
+                if 'HTTP 404' in str(error) or 'HTTP 422' in str(error):
+                    continue
+                raise
+            if _CommitComparison.model_validate_json(after_base).status in {'ahead', 'diverged'} and (
+                _CommitComparison.model_validate_json(in_head).status in {'ahead', 'identical'}
+            ):
+                own.add(sha)
+        return own
+
+    def issue_created_at(self, number: int) -> datetime | None:
+        """The issues endpoint also serves pull requests; `None` when the number names neither."""
+        try:
+            issue = _ISSUE.validate_json(self._api(f'{self._repo}/issues/{number}'))
+        except GateError as error:
+            if 'HTTP 404' in str(error) or 'HTTP 410' in str(error):
+                return None
+            raise
+        return issue.created_at
 
     def status(self, head: str, gate: ReviewGate, state: CommitStatus, description: str, url: str) -> None:
         """Latest-per-context commit statuses replace a previous failing verdict."""
