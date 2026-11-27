@@ -67,10 +67,10 @@ def _code_model(*snippets: str) -> FunctionModel:
     return FunctionModel(model)
 
 
-def _agent(*snippets: str, monty_sandbox: str | None = None) -> Agent[None, str]:
+def _agent(*snippets: str, monty_sandbox: str | None = None, tools: bool = True) -> Agent[None, str]:
     return Agent(
         _code_model(*snippets),
-        tools=[echo],
+        tools=[echo] if tools else [],
         capabilities=[CodeMode(external_modules={'warehouse': WAREHOUSE}, monty_sandbox=monty_sandbox)],
     )
 
@@ -126,7 +126,8 @@ async def test_wrong_arguments_to_an_async_function_are_raised_at_the_call_site(
 
 
 async def test_stubs_type_check_the_snippet_and_describe_the_module() -> None:
-    result = await _agent('import warehouse\nwarehouse.total(region=1)').run('go')
+    # No tools: the module's stubs alone switch the type check on.
+    result = await _agent('import warehouse\nwarehouse.total(region=1)', tools=False).run('go')
     (returned,) = [p.content for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
     assert isinstance(returned, str) and 'Type error in code' in returned and 'invalid-argument-type' in returned
 

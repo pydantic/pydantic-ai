@@ -361,7 +361,7 @@ Resource limits still apply, but `max_duration_seconds` and the sleep allowance 
 Limitations:
 
 - Side effects from code that already ran can't be undone.
-- With a [parallel `InputGuardrail`](guardrails.md#parallel-input-guards), nested calls from eager statements wait for its verdict, so a blocked prompt runs no tool.
+- With a [parallel `InputGuardrail`](guardrails.md#parallel-input-guards), nested calls and host module calls from eager statements wait for its verdict, so a blocked prompt runs no tool or module function.
 - If the model later requests `restart: true`, some work may run again.
 - If the model changes an earlier line while streaming, `CodeMode` resets the REPL and asks it to resend the code.
 - Eager mode trusts the provider to keep the streamed `run_code` part and its tool name; if a provider removes or renames it, work already run can't be undone.
@@ -789,7 +789,8 @@ from pydantic_ai import Agent
 from pydantic_monty import ExternalModule
 from pydantic_ai_harness import CodeMode
 
-db = sqlite3.connect('sales.db', check_same_thread=False)
+# Read-only, so model-written SQL can't change the data.
+db = sqlite3.connect('file:sales.db?mode=ro', uri=True, check_same_thread=False)
 
 
 def query(sql: str) -> list[dict[str, object]]:

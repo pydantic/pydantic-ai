@@ -1590,7 +1590,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         # Type-check only the first executed snippet. Monty's checker can reject valid later
         # snippets that reuse imports or pass a runtime-validated dict to a TypedDict parameter.
-        type_check = fresh_repl and bool(callable_defs)
+        type_check = fresh_repl and bool(callable_defs or self.external_modules)
         type_check_stubs = self._build_type_check_stubs(callable_defs) if type_check else None
 
         # One collector is reused across eager feeds. This keeps the same output cap and error
@@ -1617,6 +1617,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # Already converted in `__post_init__`; this narrows the field's type.
             os_handler=as_os_handler(self.os_access),
             module_functions=self._module_functions,
+            # Eager statements run while the model streams; a host function waits for a parallel input guard too.
+            module_calls_allowed=partial(input_guardrails_allow, ctx),
         )
 
         async def run_feed() -> MontyComplete | TurnComplete:

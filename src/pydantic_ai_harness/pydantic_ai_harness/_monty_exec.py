@@ -533,6 +533,8 @@ class MontyExecutor:
     # Functions of the session's `external_modules`, by dotted name (see `module_functions`). Called
     # here rather than by Monty, so their async calls are deferred and settled like parallel tool calls.
     module_functions: Mapping[str, Callable[..., object]] = field(default_factory=dict[str, Callable[..., object]])
+    # Awaited before each module function runs; `False` raises at the call site instead, as a blocked tool call does.
+    module_calls_allowed: Callable[[], Awaitable[bool]] | None = None
     # Awaited before deferred calls are resolved. Every call dispatched so far has started by then, so
     # a host can run the calls it collected from them as one batch, in dispatch order. That holds for
     # parallel dispatch only: under `global_sequential`, calls start after this.
@@ -649,9 +651,15 @@ class MontyExecutor:
 
         An exception it raises is raised at the sandbox call site, where the code can catch it.
         """
+        if self.module_calls_allowed is not None and not await self.module_calls_allowed():
+            return await self._raise_in_sandbox(
+                snapshot,
+                RuntimeError(f'{snapshot.function_name!r} did not run: an input guardrail did not allow the prompt.'),
+            )
         context = snapshot.trace_context()
         if not is_async_callable(function):
-            call = run_in_executor(function, *snapshot.args, **snapshot.kwargs)
+            # Bound first, so a host keyword such as `func` can't collide with `run_in_executor`'s own.
+            call = run_in_executor(partial(function, *snapshot.args, **snapshot.kwargs))
             return await call_monty(self.portal, snapshot.resume, await _await_external(PendingCall(call, context)))
         token = otel_context.attach(context)
         try:

@@ -426,8 +426,8 @@ Memory is shared by the session.
 Limitations:
 
 - Side effects from code that already ran can't be undone.
-- With a parallel `InputGuardrail`, nested calls from eager statements wait for its verdict, so a
-  blocked prompt runs no tool.
+- With a parallel `InputGuardrail`, nested calls and host module calls
+  from eager statements wait for its verdict, so a blocked prompt runs no tool or module function.
 - If the model later requests `restart: true`, some work may run again.
 - If the model changes an earlier line while streaming, `CodeMode` resets the REPL and asks it to
   resend the code.
@@ -1008,7 +1008,8 @@ from pydantic_ai import Agent
 from pydantic_monty import ExternalModule
 from pydantic_ai_harness import CodeMode
 
-db = sqlite3.connect('sales.db', check_same_thread=False)
+# Read-only, so model-written SQL can't change the data.
+db = sqlite3.connect('file:sales.db?mode=ro', uri=True, check_same_thread=False)
 
 
 def query(sql: str) -> list[dict[str, object]]:
