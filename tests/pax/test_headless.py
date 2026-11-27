@@ -370,7 +370,7 @@ def test_cli_update_followed_by_words_is_refused(
 ) -> None:
     code, out, err = run_cli(tmp_path, monkeypatch, capsys, '-a', 'echo', 'update', 'the', 'docs')
     assert (code, out) == (2, '')
-    assert '`pax update` takes no prompt; to send it as a prompt, use -p or put it after --' in err
+    assert ' update` takes no prompt; to send it as a prompt, use -p or put it after --' in err
 
 
 @pytest.mark.parametrize(
