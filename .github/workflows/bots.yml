@@ -916,7 +916,9 @@ jobs:
           python3 "$RUNNER_TEMP/publish_douwebot_review.py"
 
       - name: Remove douwebot label
-        if: always() && github.event.action == 'labeled' && github.event.label.name == 'douwebot'
+        # A push cancels this run (`cancel-in-progress` for `synchronize`). Keep the label then, so the
+        # run for the new head still reviews: consuming it here loses the review with no verdict.
+        if: always() && github.event.action == 'labeled' && github.event.label.name == 'douwebot' && needs.review.result != 'cancelled'
         run: gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/douwebot" --method DELETE 2>/dev/null || true
         env:
           GH_TOKEN: ${{ github.token }}
