@@ -47,7 +47,6 @@ from pydantic_ai_pax.mcp import OAuthSignIn, SignIn as MCPSignIn, TokenStore
 from pydantic_ai_pax.plugins import PluginHost, SessionStart
 from pydantic_ai_pax.plugins.loader import PluginError, PluginLoader, PluginSettingsError
 from pydantic_ai_pax.plugins.menus import Option, SettingsMenu
-from pydantic_ai_pax.runtime.session import WorkspacelessCapability
 from pydantic_ai_pax.ui.menus import dialogs
 from pydantic_ai_pax.ui.menus.field_menu import CUSTOM
 from pydantic_ai_pax.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
@@ -127,7 +126,7 @@ class Shell:
         assert entry.loaded is not None
         plugin = entry.loaded.plugin
         assert isinstance(plugin, posthog.PostHogPlugin)
-        assert self.loader.capabilities() == [WorkspacelessCapability(plugin.for_run)]
+        assert self.loader.capabilities() == [plugin.for_run]
         capability = await plugin.for_run(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
         assert capability is None or capability.defer_loading
         return capability

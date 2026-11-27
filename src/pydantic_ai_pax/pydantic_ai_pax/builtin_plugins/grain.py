@@ -29,7 +29,6 @@ from pydantic_ai_pax.plugins import Plugin, PluginHost, SessionStart
 from pydantic_ai_pax.plugins.keys import choose_key
 from pydantic_ai_pax.plugins.menus import Dialogs, FieldRow, Option, SettingsMenu
 from pydantic_ai_pax.plugins.sign_in import SUBCOMMANDS, run_subcommand, sign_in_now, warn_if_signed_out
-from pydantic_ai_pax.runtime.session import WorkspacelessCapability
 from pydantic_ai_pax.ui.menus import dialogs as terminal
 from pydantic_ai_pax.ui.rendering import theme
 
@@ -152,7 +151,7 @@ class GrainPlugin(Plugin[GrainSettings]):
         self.connection = GrainConnection(host)
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
-        return (WorkspacelessCapability[None](self.connection.capability),)
+        return (self.connection.capability,)
 
     def get_commands(self) -> Sequence[Command]:
         return (

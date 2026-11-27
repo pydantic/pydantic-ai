@@ -43,7 +43,6 @@ from pydantic_ai_pax.runtime.session import (
     ModelDefaults,
     SessionModels,
     StockAgent,
-    WorkspacelessCapability,
     local_workspace,
     resolve_model_name,
 )
@@ -70,7 +69,7 @@ def _resumed_docs(ctx: RunContext[None]) -> ClaiDocs | None:
 
 def create_agent(model: str | None = None) -> Agent[None, str]:
     """Build the base Pax agent. The coding tools come from the built-in `coder` plugin, not from here."""
-    return Agent(model, deps_type=type(None), capabilities=[PaxDocs(), WorkspacelessCapability(_resumed_docs)])
+    return Agent(model, deps_type=type(None), capabilities=[PaxDocs(), _resumed_docs])
 
 
 def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str]:
@@ -82,7 +81,7 @@ def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str
         model,
         deps_type=type(None),
         output_type=str,
-        capabilities=[PaxDocs(), WorkspacelessCapability(_resumed_docs)],
+        capabilities=[PaxDocs(), _resumed_docs],
         name='clai2',
     )
 

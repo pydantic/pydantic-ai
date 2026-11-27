@@ -40,7 +40,6 @@ from pydantic_ai_pax.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
 from tests.pax.conftest import stored_accounts
 from tests.pax.dialog_script import Answer, Asked, Back, Confirm, Finish, Pick, ScriptedDialogs, Type
 from tests.pax.menu_script import UNTIL_CLOSED, Script, pick, typed
-from tests.pax.test_workspace_defaults import per_run
 
 Vault = dict[tuple[str, str], str]
 BUILTIN = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'notion')
@@ -123,7 +122,8 @@ class Shell:
     async def capability(self) -> Notion[None] | None:
         """What a run gets from the per-run factory the plugin registers."""
         [capability] = self.loader.capabilities()
-        result = per_run(capability)(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
+        assert callable(capability)
+        result = capability(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
         assert inspect.isawaitable(result)
         connected = await result
         assert connected is None or (isinstance(connected, Notion) and connected.defer_loading)

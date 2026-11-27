@@ -2658,14 +2658,7 @@ skill mid-session is left out of the next turn's catalog.
 
 Skill commands are read on this machine. With a plugin that runs the agent in a
 sandbox, the model's catalog is read from the sandbox's workspace instead, so the
-two can differ. A plugin that adds a per-run capability function, such as
-`posthog` with browser sign-in, could supply a sandbox only after the catalog is
-read, so with one loaded the catalog is read from the project directory. In an
-untrusted folder ([Folder trust](#folder-trust)), those skills are then offered
-through `list_skills` and `load_skill`, which read the project directory even when
-the plugin runs the agent in a sandbox. In a trusted folder, if that plugin does run
-the agent in a sandbox, the skills' directories are paths on this machine that the
-sandbox may not reach.
+two can differ.
 
 ### Ask Pax about itself
 

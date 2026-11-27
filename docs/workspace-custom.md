@@ -48,6 +48,9 @@ environment](workspace.md#continuing-in-the-same-workspace) taken from `workspac
   operation instead.
 - A capability that supplies a workspace can't use `defer_loading=True`, because the workspace is chosen
   when the run starts.
+- A [capability function](capabilities/custom.md#dynamically-building-a-capability) can return a
+  workspace capability, say to choose a sandbox from `deps`. When no other capability supplies the
+  workspace, the run calls the function before `for_run`, so `for_run` can use the workspace it supplies.
 
 A capability that needs a workspace can fail at run start, naming what to attach, instead of on the first
 tool call. [`ctx.workspace.attached`][pydantic_ai.workspaces.Workspace.attached] is `False` when nothing

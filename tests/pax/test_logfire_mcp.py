@@ -49,7 +49,6 @@ from pydantic_ai_pax.ui.menus.field_menu import FieldMenu, Runners, is_save_and_
 from pydantic_ai_pax.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
 from tests.pax.dialog_script import Answer, Asked, Back, Confirm, Pick, ScriptedDialogs, Type
 from tests.pax.menu_script import UNTIL_CLOSED, Script, pick, typed
-from tests.pax.test_workspace_defaults import per_run
 
 BUILTIN = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'logfire_mcp')
 CLOSE = MenuResult(cancelled=True)
@@ -80,8 +79,7 @@ class Shell:
 
     def capability(self) -> LogfireMCP[None]:
         """The connection chosen at session start, before a run resolves its saved key."""
-        [capability] = self.loader.capabilities()
-        factory = per_run(capability)
+        [factory] = self.loader.capabilities()
         assert inspect.ismethod(factory)
         plugin = factory.__self__
         assert isinstance(plugin, LogfireMCPPlugin) and plugin.capability is not None
@@ -89,8 +87,7 @@ class Shell:
 
     async def run_capability(self) -> LogfireMCP[None] | None:
         """What a run gets."""
-        [capability] = self.loader.capabilities()
-        factory = per_run(capability)
+        [factory] = self.loader.capabilities()
         assert inspect.ismethod(factory)
         plugin = factory.__self__
         assert isinstance(plugin, LogfireMCPPlugin)

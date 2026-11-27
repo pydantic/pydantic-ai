@@ -64,14 +64,9 @@ they agree in the same PR.
   waits for its tools, so neither may open a browser or wait on a sign-in. Use
   `plugins/sign_in.py`: a `SignInMethod` (`mcp.OAuthSignIn` for MCP OAuth),
   `sign_in_now` from a menu or `/NAME login`, and no tools while signed out.
-- **A built-in's per-run capability is a `WorkspacelessCapability`.** A bare
-  capability function might return a sandbox, so `local_workspace()` attaches the
-  launch directory only after every `for_run`, and harness `Skills` (which reads its
-  libraries in `for_run`) fails the turn. Wrap a function that never returns a
-  workspace in `runtime/session.py`'s `WorkspacelessCapability`.
-  The one exception is a built-in that moves some conversations elsewhere, as
-  `sandbox` does: subclass `ConversationWorkspace` and answer `supplies` from the
-  run's own history, the same history `get_workspace` resolves from. Answer
+- **A built-in that moves some conversations elsewhere, as `sandbox` does,
+  subclasses `ConversationWorkspace`** and answers `supplies` from the run's own
+  history, the same history `get_workspace` resolves from. It answers
   `shell_line_workspace` from that history too, so `!` lines run where the runs do.
 - **Pax moments are `on_<subject>_<moment>`** (`on_turn_start`). Core hooks stay
   core's, reached through a `Hooks` capability. Do not wrap a core hook in a

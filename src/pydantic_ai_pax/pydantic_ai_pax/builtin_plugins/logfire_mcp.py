@@ -42,7 +42,6 @@ from pydantic_ai_pax.plugins import Plugin, PluginHost, SessionStart
 from pydantic_ai_pax.plugins.keys import choose_key
 from pydantic_ai_pax.plugins.menus import Dialogs, FieldRow, SettingsMenu
 from pydantic_ai_pax.plugins.sign_in import SUBCOMMANDS, run_subcommand, warn_if_signed_out
-from pydantic_ai_pax.runtime.session import WorkspacelessCapability
 from pydantic_ai_pax.ui.menus.field_menu import first_error
 from pydantic_ai_pax.ui.rendering import theme
 
@@ -91,7 +90,7 @@ class LogfireMCPPlugin(Plugin[LogfireMCPSettings]):
         """Built by `on_session_start`; runs that start earlier get no Logfire tools."""
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
-        return (WorkspacelessCapability[None](self._for_run),)
+        return (self._for_run,)
 
     def get_commands(self) -> Sequence[Command]:
         async def command(args: list[str]) -> str:

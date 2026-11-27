@@ -38,7 +38,6 @@ from pydantic_ai_pax.mcp import OAuthSignIn, TokenStore, http_client
 from pydantic_ai_pax.plugins import SessionStart
 from pydantic_ai_pax.plugins.loader import PluginError, PluginLoader
 from pydantic_ai_pax.plugins.menus import Option, SettingsMenu
-from pydantic_ai_pax.runtime.session import WorkspacelessCapability
 from pydantic_ai_pax.ui.menus import dialogs
 from tests.pax.conftest import stored_accounts
 from tests.pax.dialog_script import Answer, Back, Confirm, Finish, Pick, ScriptedDialogs, Type
@@ -146,7 +145,7 @@ async def for_run(loader: PluginLoader[None]) -> Linear[None] | None:
     assert entry.loaded is not None
     plugin = entry.loaded.plugin
     assert isinstance(plugin, linear.LinearPlugin)
-    assert loader.capabilities() == [WorkspacelessCapability(plugin.for_run)]
+    assert loader.capabilities() == [plugin.for_run]
     capability = await plugin.for_run(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
     assert capability is None or capability.defer_loading
     return capability

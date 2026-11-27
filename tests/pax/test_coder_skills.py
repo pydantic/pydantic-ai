@@ -15,7 +15,6 @@ from rich.console import Console
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import (
     AgentCapability,
-    Capability,
     CombinedCapability,
     LocalWorkspace,
     WrapperCapability,
@@ -516,11 +515,11 @@ class TestSkillCatalog:
     async def test_skills_load_beside_a_plugin_capability_function(
         self, tmp_path: Path, project: Path, supplies_workspace: bool
     ) -> None:
-        # Such a plugin may supply a sandbox, so Pax attaches the project directory only once the run's
-        # capability functions resolve: after `Skills` reads its catalog.
+        # Such a plugin may supply a sandbox, so Pax attaches the project directory from a capability
+        # function of its own, which core asks before `Skills` reads its catalog in `for_run`.
         write_skill(project / '.agents' / 'skills', 'review', description='Project review.')
         sandbox = tmp_path / 'sandbox'
-        sandbox.mkdir()
+        write_skill(sandbox / '.agents' / 'skills', 'review', description='Sandbox review.')
 
         class PerRun(Plugin[NoSettings, None]):
             def get_capabilities(self) -> Sequence[AgentCapability[None]]:
@@ -543,8 +542,10 @@ class TestSkillCatalog:
 
         request = result.all_messages()[0]
         assert isinstance(request, ModelRequest)
-        assert '- review: Project review.' in (request.instructions or '')
-        # A sandbox the capability function supplies still wins over the project directory.
+        # A sandbox the capability function supplies still wins over the project directory, and the
+        # catalog is read from it, as from a sandbox a plugin supplies up front.
+        description = 'Sandbox review.' if supplies_workspace else 'Project review.'
+        assert f'- review: {description}' in (request.instructions or '')
         expected = (sandbox if supplies_workspace else project).resolve()
         assert result.response.workspace_ref == WorkspaceRef(provider='local', id=str(expected))
 
@@ -584,26 +585,13 @@ class TestSkillCatalog:
     async def test_skill_catalog_with_a_plugin_capability_function_that_supplies_a_sandbox(
         self, tmp_path: Path, project: Path
     ) -> None:
-        write_skill(project / '.agents' / 'skills', 'review', description='Project review.', body='Review it.')
+        # The sandbox is attached before `Skills` reads its catalog, so the untrusted project's skills are never read.
+        write_skill(project / '.agents' / 'skills', 'review', description='Project review.')
         sandbox = tmp_path / 'sandbox'
-        sandbox.mkdir()
-        returns: dict[str, object] = {}
-
-        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-            request = messages[-1]
-            assert isinstance(request, ModelRequest)
-            if parts := [part for part in request.parts if isinstance(part, ToolReturnPart)]:
-                returns.update({part.tool_name: part.content for part in parts})
-                yield 'done'
-            else:
-                yield {
-                    0: DeltaToolCall(name='list_skills', json_args='{}', tool_call_id='list'),
-                    1: DeltaToolCall(name='load_skill', json_args='{"name": "review"}', tool_call_id='load'),
-                }
-
+        write_skill(sandbox / '.agents' / 'skills', 'review', description='Sandbox review.')
         coder, _ = await load_coder()
         session = Session(
-            create_stock_agent(FunctionModel(stream_function=stream)),
+            create_stock_agent(TestModel(call_tools=[], custom_output_text='done')),
             deps=None,
             workspace=project,
             plugins=[*coder.capabilities, *per_run_plugin(sandbox).capabilities],
@@ -613,9 +601,7 @@ class TestSkillCatalog:
 
         instructions = first_instructions(result.new_messages())
         assert '- review: Project review.' not in instructions
-        assert 'call `list_skills`' in instructions
-        assert returns['list_skills'] == {'skills': {'review': 'Project review.'}}
-        assert 'Review it.' in str(returns['load_skill'])
+        assert '- review: Sandbox review.' in instructions
         assert result.response.workspace_ref == WorkspaceRef(provider='local', id=str(sandbox.resolve()))
 
     @pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
@@ -686,51 +672,6 @@ class TestSkillCatalog:
         await session.prompt('go')
 
         assert read == ['Sandbox guide.']
-
-    @pytest.mark.parametrize(
-        ('inner', 'lowered'),
-        [('other', False), ('project/sub', False), ('project', True)],
-        ids=['another-folder', 'a-subfolder', 'the-sessions-folder'],
-    )
-    async def test_skill_catalog_of_an_agent_a_session_tool_runs(
-        self, tmp_path: Path, project: Path, monkeypatch: pytest.MonkeyPatch, inner: str, lowered: bool
-    ) -> None:
-        folder = tmp_path / inner
-        write_skill(folder / '.agents' / 'skills', 'inner', description='Inner skill.')
-        sandbox = tmp_path / 'sandbox'
-        sandbox.mkdir()
-        # `load_coder`'s host works in the current directory.
-        monkeypatch.chdir(folder)
-        inner_coder, _ = await load_coder()
-        monkeypatch.chdir(project)
-        inner_requests: list[ModelMessage] = []
-
-        def inner_respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            inner_requests.append(messages[-1])
-            return ModelResponse(parts=[TextPart('done')])
-
-        inner_agent = Agent(FunctionModel(inner_respond), deps_type=type(None))
-
-        async def run_inner(ctx: RunContext[None]) -> str:
-            """Run the inner agent."""
-            await inner_agent.run(
-                'inner', capabilities=[*inner_coder.capabilities, *per_run_plugin(sandbox).capabilities]
-            )
-            return 'ran'
-
-        coder, _ = await load_coder()
-        session = Session(
-            create_stock_agent(TestModel(call_tools=['run_inner'], custom_output_text='done')),
-            deps=None,
-            workspace=project,
-            plugins=[*coder.capabilities, Capability[None](tools=[run_inner])],
-        )
-        session.trust = WorkspaceTrust(scope=trust_scope(project))
-        await session.prompt('go')
-
-        instructions = first_instructions(inner_requests)
-        assert ('- inner: Inner skill.' in instructions) is not lowered
-        assert ('call `list_skills`' in instructions) is lowered
 
     @pytest.mark.parametrize('first', ['coder', 'own'])
     async def test_another_skills_on_the_agent_combines_with_coders(self, project: Path, first: str) -> None:

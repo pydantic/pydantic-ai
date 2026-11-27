@@ -32,7 +32,6 @@ from pydantic_ai_pax.plugins import DepsT, Plugin, PluginHost, SessionStart
 from pydantic_ai_pax.plugins.keys import choose_key
 from pydantic_ai_pax.plugins.menus import Dialogs, FieldRow, Option, SettingsMenu
 from pydantic_ai_pax.plugins.sign_in import sign_in_command, sign_in_now, warn_if_signed_out
-from pydantic_ai_pax.runtime.session import WorkspacelessCapability
 from pydantic_ai_pax.ui.menus.field_menu import shown
 from pydantic_ai_pax.ui.rendering import theme
 
@@ -85,7 +84,7 @@ class LinearPlugin(Plugin[LinearSettings, DepsT]):
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
         settings = self.settings
         if settings.auth == 'oauth':
-            return (WorkspacelessCapability[DepsT](self.for_run),)
+            return (self.for_run,)
 
         def token(ctx: RunContext[DepsT]) -> str:
             return saved_key()(ctx)

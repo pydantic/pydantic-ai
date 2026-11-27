@@ -1,5 +1,6 @@
 """Pax lists its docs as one deferred capability, then reads them only on demand."""
 
+import inspect
 from collections.abc import AsyncIterator
 from importlib.resources import files
 from pathlib import Path
@@ -10,7 +11,7 @@ import pytest
 from rich.console import Console
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import LocalWorkspace, WindowsWorkspace
+from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, WindowsWorkspace
 from pydantic_ai.messages import (
     InstructionDeltaPart,
     ModelMessage,
@@ -22,13 +23,15 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import RunContext
+from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_pax import Session
 from pydantic_ai_pax.app import create_agent
 from pydantic_ai_pax.builtin_plugins.repo_context import RepoContextPlugin
 from pydantic_ai_pax.customization import customization_guide
 from pydantic_ai_pax.pax_docs import CAPABILITY_ID, PaxDocs
 from pydantic_ai_pax.plugins import PluginHost, load_plugin
-from pydantic_ai_pax.runtime.session import WorkspacelessCapability
 
 DOC_TOOLS = {'search_pax_docs', 'read_pax_docs'}
 CATALOG_LINE = f'- {CAPABILITY_ID}: Use when asked to customize Pax itself'
@@ -58,7 +61,15 @@ async def test_workspace_defaults_follow_platform_support(supported: bool, monke
     assert 'OPENAI_API_KEY' not in workspace.env
 
     loaded = load_plugin(RepoContextPlugin, PluginHost[None](name='repo_context', console=Console(), settings={}))
-    assert any(isinstance(capability, WorkspacelessCapability) for capability in loaded.capabilities) is supported
+    if not supported:
+        assert loaded.capabilities == ()
+        return
+    # A plain capability function: core asks the workspace it might supply before any `for_run`.
+    [factory] = loaded.capabilities
+    assert not isinstance(factory, AbstractCapability)
+    capability = factory(RunContext(deps=None, model=TestModel(), usage=RunUsage()))
+    assert inspect.isawaitable(capability)
+    assert isinstance(await capability, RepoContext)
 
 
 def tool_returns(messages: list[ModelMessage]) -> list[object]:

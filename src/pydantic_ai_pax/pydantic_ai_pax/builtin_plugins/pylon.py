@@ -37,7 +37,6 @@ from pydantic_ai_pax.plugins import DepsT, Plugin, PluginHost, SessionStart
 from pydantic_ai_pax.plugins.keys import choose_key
 from pydantic_ai_pax.plugins.menus import Dialogs, FieldRow, Option, SettingsMenu
 from pydantic_ai_pax.plugins.sign_in import SUBCOMMANDS, run_subcommand, sign_in_now, status, warn_if_signed_out
-from pydantic_ai_pax.runtime.session import WorkspacelessCapability
 from pydantic_ai_pax.ui.menus import dialogs as menu_dialogs
 from pydantic_ai_pax.ui.menus.field_menu import first_error
 
@@ -201,7 +200,7 @@ class PylonPlugin(Plugin[PylonSettings, DepsT]):
         self.config = PylonSource(settings, host.save_settings)
 
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
-        return (WorkspacelessCapability[DepsT](self._for_run),)
+        return (self._for_run,)
 
     def get_commands(self) -> Sequence[Command]:
         return (

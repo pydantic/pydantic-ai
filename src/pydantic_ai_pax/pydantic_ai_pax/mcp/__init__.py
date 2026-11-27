@@ -31,7 +31,6 @@ from pydantic_ai_pax.mcp.settings import (
 from pydantic_ai_pax.mcp.store import CLAUDE_MCP_FILE, PROJECT_MCP_FILE, PROJECT_MCP_FILES, MCPStore, UserFile
 from pydantic_ai_pax.mcp.tokens import OAuthSignIn, TokenStore
 from pydantic_ai_pax.plugins import Plugin, PluginHost, SessionEnd
-from pydantic_ai_pax.runtime.session import WorkspacelessCapability
 
 if TYPE_CHECKING:
     from pydantic_ai_pax.mcp.client import SignIn, http_client
@@ -103,7 +102,7 @@ class MCPPlugin(Plugin[MCPSettings]):
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         return (
             Toolset(DynamicToolset(self.servers.toolset, per_run_step=False)),
-            WorkspacelessCapability[None](self.servers.capability),
+            self.servers.capability,
         )
 
     def get_commands(self) -> Sequence[Command]:

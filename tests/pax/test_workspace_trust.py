@@ -23,6 +23,7 @@ from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.config.project_settings import ProjectSettings, load_project_settings
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.runtime.process import ClaiProcess
+from pydantic_ai_pax.runtime.session import Session, folder_authority
 from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_ai_pax.runtime.session_workspace import SessionWorkspace
 from pydantic_ai_pax.runtime.workspace_trust import (
@@ -631,3 +632,21 @@ async def test_concurrent_trust_lookups_and_updates_share_one_instance(tmp_path:
     assert child_resolved[0].trusted is True
     await process.decide_trust(found[0], trusted=False)
     assert child_resolved[0].trusted is False
+
+
+async def test_folder_authority_is_the_session_folder_s_trust_during_a_run(tmp_path: Path) -> None:
+    """`folder_authority` answers with the session folder's trust inside a run, and `'operator'` elsewhere."""
+    (tmp_path / 'sub').mkdir()
+    seen: list[Authority] = []
+
+    class FolderProbe(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            seen.extend([await folder_authority(tmp_path), await folder_authority(tmp_path / 'sub')])
+
+    agent = Agent(TestModel(call_tools=[]), deps_type=type(None), output_type=str)
+    session = Session(agent, deps=None, plugins=[FolderProbe()], workspace=tmp_path)
+    session.trust = WorkspaceTrust(scope=trust_scope(tmp_path))
+    await session.prompt('go')
+
+    assert seen == ['none', 'operator']
+    assert await folder_authority(tmp_path) == 'operator'

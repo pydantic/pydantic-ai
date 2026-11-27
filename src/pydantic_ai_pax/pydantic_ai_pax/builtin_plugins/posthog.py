@@ -47,7 +47,6 @@ from pydantic_ai_pax.plugins.sign_in import (
     status as sign_in_status,
     warn_if_signed_out,
 )
-from pydantic_ai_pax.runtime.session import WorkspacelessCapability
 from pydantic_ai_pax.ui.menus.field_menu import first_error
 from pydantic_ai_pax.ui.rendering import theme
 
@@ -182,7 +181,7 @@ class PostHogPlugin(Plugin[PostHogSettings]):
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         if self.settings.auth == 'browser':
-            return (WorkspacelessCapability[None](self.for_run),)
+            return (self.for_run,)
         return (
             PostHog[None](
                 defer_loading=True,

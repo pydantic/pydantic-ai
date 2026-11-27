@@ -1318,13 +1318,8 @@ folder is skipped, a folder that is a file or a single skill package is skipped
 with a notice, and the earlier of two skills with one name wins. It reads the
 folders once when it loads, in `prepare`, for the `/skill-name` commands and the
 startup notices, and harness reads them again at the start of every turn for the
-model's catalog. With a plugin's capability function in the run, the run's
-workspace is chosen after `Skills` reads its catalog, so `coder` reads the
-catalog from the project directory. In an untrusted folder, those skills are
-then offered through `list_skills` and `load_skill`, which read the project
-directory too, even when the function supplies a sandbox. A `/skill-name`
-command reads them again when it runs, so it sends the current `SKILL.md`, and
-fails with a message when the skill is gone.
+model's catalog. A `/skill-name` command reads them again when it runs, so it
+sends the current `SKILL.md`, and fails with a message when the skill is gone.
 Only skills with `user_invocable` (no `user-invocable: false`) get a command;
 harness leaves skills with `disable-model-invocation: true` out of the model's
 catalog. Frontmatter fields harness ignores, such as `allowed-tools`, belong to
@@ -3120,6 +3115,14 @@ class Words(Plugin):
 An entry may also be a function that takes a `RunContext` and returns a
 capability (or `None`), for tools that should only exist in some runs, or that
 read settings saved since the plugin loaded.
+
+Such a function may return a workspace of its own, such as a sandbox, so Pax
+lets a workspace it returns take over from the session's directory. If yours
+never does, you can say so by wrapping it in `WorkspacelessCapability` from
+`pydantic_ai_pax.runtime.session`. Pax then attaches the session's directory up
+front, and a run whose function returns a workspace anyway fails instead of
+running somewhere else. A plain function works too; the wrapper only rules that
+case out.
 
 Markdown in streamed answers and thinking uses OSC 8 hyperlinks for link labels
 when writing to a terminal. The URL is also shown as text. Transcript replay keeps

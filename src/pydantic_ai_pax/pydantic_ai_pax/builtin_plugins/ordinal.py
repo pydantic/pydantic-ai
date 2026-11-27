@@ -46,7 +46,6 @@ from pydantic_ai_pax.plugins.sign_in import (
     status as sign_in_status,
     warn_if_signed_out,
 )
-from pydantic_ai_pax.runtime.session import WorkspacelessCapability
 from pydantic_ai_pax.ui.menus.field_menu import first_error
 from pydantic_ai_pax.ui.rendering import theme
 
@@ -157,7 +156,7 @@ class OrdinalPlugin(Plugin[OrdinalSettings, DepsT]):
         self.auth = OrdinalAuth[DepsT](settings)
 
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
-        return (WorkspacelessCapability[DepsT](self.auth),)
+        return (self.auth,)
 
     def get_commands(self) -> Sequence[Command]:
         return (

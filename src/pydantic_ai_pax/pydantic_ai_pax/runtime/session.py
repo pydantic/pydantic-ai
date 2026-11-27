@@ -280,12 +280,11 @@ def shell_line_workspace(
 
 
 class WorkspacelessCapability(DynamicCapability[DepsT]):
-    """A capability function that never supplies the run's workspace, such as a built-in plugin's MCP server.
+    """A capability function that never supplies the run's workspace.
 
-    A plain capability function might return a sandbox, so Pax attaches the session's directory (`Session.workspace`) only once the
-    run's capability functions have resolved, after every `for_run`; harness `Skills` reads its libraries
-    there and finds no workspace. For this one, Pax attaches it before `for_run`, and a
-    run whose function does return a workspace fails.
+    Pax attaches the session's directory up front, beside it, rather than deferring to what the
+    function returns, and a run whose function does return a workspace fails. A plain capability
+    function works too: core asks the workspace it supplies before any `for_run`.
     """
 
 
@@ -293,8 +292,8 @@ class WorkspacelessCapability(DynamicCapability[DepsT]):
 class _LocalFallback(LocalWorkspace[DepsT]):
     """The session directory, for a run whose capability functions turn out to supply no workspace.
 
-    Returned from a capability function itself, so core asks it only after the run's capability functions
-    have resolved, alongside whatever workspace they supplied, which it defers to.
+    Returned from a capability function itself, so core asks it once the run's capability functions have
+    been called, before `for_run`, alongside whatever workspace they supplied, which it defers to.
     """
 
     _asking: bool = field(default=False, init=False, repr=False)

@@ -15,7 +15,7 @@ from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_pax.plugins import DepsT, Plugin
-from pydantic_ai_pax.runtime.session import WorkspacelessCapability, supports_local_workspace
+from pydantic_ai_pax.runtime.session import supports_local_workspace
 
 _PATHS = TypeAdapter(list[str])
 
@@ -53,7 +53,7 @@ class RepoContextPlugin(Plugin[RepoContextSettings, DepsT]):
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
         if not supports_local_workspace():
             return ()
-        return (WorkspacelessCapability(self._for_run),)
+        return (self._for_run,)
 
     async def _for_run(self, _ctx: RunContext[DepsT]) -> RepoContext[DepsT]:
         # Read once per run: settings edits apply to the next run, not its cached instructions.

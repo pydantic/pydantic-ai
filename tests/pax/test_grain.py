@@ -43,7 +43,6 @@ from pydantic_ai_pax.mcp import OAuthSignIn, SignIn as MCPSignIn, TokenStore, ht
 from pydantic_ai_pax.plugins import LoadedPlugin, PluginHost, SessionStart, load_plugin
 from pydantic_ai_pax.plugins.loader import PluginLoader
 from pydantic_ai_pax.plugins.menus import Option
-from pydantic_ai_pax.runtime.session import WorkspacelessCapability
 from pydantic_ai_pax.runtime.session_runtime import create_shell
 from pydantic_ai_pax.ui.menus import dialogs as terminal_dialogs
 from pydantic_ai_pax.ui.menus.field_menu import FieldMenu
@@ -117,7 +116,7 @@ async def for_run(plugin: LoadedPlugin[None]) -> Grain[None] | None:
     """What the plugin gives the next run, from its per-run factory."""
     grain_plugin = plugin.plugin
     assert isinstance(grain_plugin, GrainPlugin)
-    assert list(plugin.capabilities) == [WorkspacelessCapability(grain_plugin.connection.capability)]
+    assert list(plugin.capabilities) == [grain_plugin.connection.capability]
     capability = await grain_plugin.connection.capability(run_context())
     assert capability is None or capability.defer_loading
     return capability
