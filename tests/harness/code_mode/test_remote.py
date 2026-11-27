@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -39,7 +39,6 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai_harness import CodeMode, HarnessDeprecationWarning
-from pydantic_ai_harness._monty_exec import MontySandbox
 from pydantic_ai_harness.code_mode import CodeModeResourceLimits, CodeModeToolset
 from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow
 from tests.harness.code_mode.grpc_relay import MontyRelay, serve_monty_relay
@@ -70,6 +69,8 @@ def _sub_agent(name: str = 'sub') -> Agent[object, str]:
     return Agent(FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('ok')])), name=name)
 
 
+# What `monty_sandbox` accepts, spelled out: the alias in `_monty_exec` is private.
+MontySandbox = str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]]
 # Code Mode's limits; Dynamic Workflow's accept the subset of keys it has.
 _Limits = CodeModeResourceLimits | Literal['unlimited'] | None
 
@@ -160,13 +161,9 @@ async def test_remote_sandbox_url_accepted(capability: _MontyCapability, url: st
 
 
 async def test_unsupported_scheme_rejected(capability: _MontyCapability) -> None:
-    """A URL Monty's remote client cannot dial fails before any code runs.
-
-    Code Mode raises when the run starts, Dynamic Workflow when it is built.
-    """
+    """A URL Monty's remote client cannot dial fails when the capability is built."""
     with pytest.raises(UserError, match='must be an `http://`') as exc_info:
-        agent = capability.agent(monty_sandbox='sk-live-abc123:x@sandbox.example.com')
-        await agent.run('never dials')
+        capability.agent(monty_sandbox='sk-live-abc123:x@sandbox.example.com')
     assert 'sk-live-abc123' not in str(exc_info.value)
 
 
@@ -303,11 +300,10 @@ async def test_failing_monty_sandbox_reaches_caller(
 
 
 async def test_pool_instead_of_function_rejected(capability: _MontyCapability) -> None:
-    """The pool itself, instead of a function that returns it, fails before any code runs."""
+    """The pool itself, instead of a function that returns it, fails when the capability is built."""
+    pool = AsyncMontyRemote('https://sandbox.example.com')
     with pytest.raises(UserError, match='not the pool itself'):
-        pool = AsyncMontyRemote('https://sandbox.example.com')
-        agent = capability.agent('1 + 1', monty_sandbox=pool)  # pyright: ignore[reportArgumentType]
-        await agent.run('dial')
+        capability.agent('1 + 1', monty_sandbox=pool)  # pyright: ignore[reportArgumentType]
 
 
 def test_deprecated_sandbox_url_becomes_monty_sandbox() -> None:
@@ -346,7 +342,7 @@ async def test_disconnect_mid_snippet_reports_started_calls(monty_relay: MontyRe
     result = await agent.run('lose the worker mid-snippet')
 
     (retry,) = _retries(result.all_messages())
-    assert 'sandbox connection' in str(retry.content)
+    assert 'sandbox connection was lost' in str(retry.content)
     assert 'drop_connection({}) did not finish' in str(retry.content)
 
 
@@ -366,7 +362,7 @@ async def test_dynamic_workflow_disconnect_lists_completed_calls(monty_relay: Mo
     result = await agent.run('lose the worker mid-script')
 
     (retry,) = _retries(result.all_messages())
-    assert 'sandbox connection' in str(retry.content)
+    assert 'lost its sandbox connection' in str(retry.content)
     assert 'sub(task="a") -> "ok"' in str(retry.content)
 
 
@@ -528,8 +524,8 @@ class TestCodeModeErrorRouting:
             (_DisconnectError('turn_timeout', _SECRET), 'ran longer than its time limit'),
             (_DisconnectError('session_timeout', _SECRET), 'session ended; state is lost'),
             (_DisconnectError('idle_timeout', _SECRET), 'session ended; state is lost'),
-            (_DisconnectError(None, _SECRET), 'sandbox connection'),
-            (_DisconnectError('unknown', _SECRET), 'sandbox connection'),
+            (_DisconnectError(None, _SECRET), 'sandbox connection was lost'),
+            (_DisconnectError('unknown', _SECRET), 'sandbox connection was lost'),
             (RuntimeError(_SECRET), 'Code execution failed and the session was reset'),
         ],
     )

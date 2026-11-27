@@ -510,7 +510,7 @@ agent = Agent(
 )
 ```
 
-Each worker is a gRPC stream calling a fixed method at the server root, so a URL with a path, query, or fragment raises a `UserError` when the run starts. Earlier releases' `ws://` and `wss://` URLs still work (Monty reads them as `http://` and `https://`) once any path, such as `/monty`, is removed.
+Each worker is a gRPC stream calling a fixed method at the server root, so a URL with a path, query, or fragment raises a `UserError` when `CodeMode` is built. Earlier releases' `ws://` and `wss://` URLs still work (Monty reads them as `http://` and `https://`) once any path, such as `/monty`, is removed.
 
 A URL connects without a key. To send metadata such as an `authorization` header, or set other pool options, pass a sync or async function returning a `pydantic_monty.AsyncMontyRemote`; Code Mode builds a pool from it each run. Put credentials there, not in the model's instructions or tool arguments:
 
