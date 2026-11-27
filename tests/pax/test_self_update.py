@@ -24,7 +24,7 @@ from packaging.requirements import Requirement
 from rich.console import Console
 from termflow.tui.menu import MenuResult
 
-from pydantic_ai import Agent, _version_check as version_check
+from pydantic_ai import Agent, _display as display, _version_check as version_check
 from pydantic_ai._version_check import VERSION_CHECK_URL
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
@@ -212,8 +212,9 @@ def _registry(request: httpx.Request) -> httpx.Response:
     )
 
 
-def test_latest_stable_asks_the_version_check_once_a_day(announced: Path) -> None:
+def test_latest_stable_asks_the_version_check_once_a_day(announced: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Not a VCR test: the endpoint's answer is pinned to show what Pax reads and what it keeps for the banner."""
+    monkeypatch.setattr(display, 'known_coding_agent', lambda: 'codex')
     seen: list[httpx.Request] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
@@ -225,8 +226,9 @@ def test_latest_stable_asks_the_version_check_once_a_day(announced: Path) -> Non
     [request] = seen
     assert str(request.url) == VERSION_CHECK_URL
     pax = f'pydantic-ai-pax/{metadata.version("pydantic-ai-pax")}'
-    assert pax in request.headers['user-agent'].split()
     assert request.headers['user-agent'].startswith('pydantic-ai/')
+    # Pax's own product goes before the coding agent's, which always ends the header.
+    assert request.headers['user-agent'].split()[-2:] == [pax, 'agent/codex']
     # The banner reads what Pax found, and counts Pax's request as the day's check.
     cache = json.loads(announced.read_text(encoding='utf-8'))
     assert cache['latest'] == {'pydantic-ai': '99.0.0', 'pydantic-ai-harness': '98.0.0'}
@@ -461,6 +463,7 @@ def test_segment_is_quiet_offline_and_outside_uv_tool() -> None:
 
 @pytest.mark.parametrize('variable', ['PYDANTIC_AI_NO_VERSION_CHECK', 'DO_NOT_TRACK'])
 def test_segment_never_checks_when_the_version_check_is_off(monkeypatch: pytest.MonkeyPatch, variable: str) -> None:
+    """Not a VCR test: the opt-out is set in the environment, and the point is that no lookup is made at all."""
     fetched: list[UpdateChannel] = []
 
     def fetch(channel: UpdateChannel) -> str:
