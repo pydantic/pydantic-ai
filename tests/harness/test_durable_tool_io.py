@@ -46,7 +46,7 @@ from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ..append_only import skip_unless_installed
 from ..capability_cases import DURABLE_DBOS, DURABLE_TEMPORAL, ID_LESS_TOOLSETS
-from ._contracts import CASES, assert_holds, contract_cases
+from ._contracts import CASES, assert_cell_holds, contract_cases
 from ._durable_cases import build_case, counting_requests, installed, journal_breaks, one_call_per_response
 
 # Module scope builds the agents and registers their DBOS workflows, which DBOS requires before launch.
@@ -148,7 +148,7 @@ async def test_dbos_recovery_does_not_repeat_tool_requests(
         expected=calls.durable_steps.dbos,
         engine='dbos',
     )
-    assert_holds(DURABLE_DBOS, name, breaks)
+    assert_cell_holds('dbos', DURABLE_DBOS, name, breaks)
 
 
 _SHELL_DIRECTORY = Path(tempfile.mkdtemp(prefix='harness_durable_tool_io_shell_'))

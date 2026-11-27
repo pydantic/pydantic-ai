@@ -30,7 +30,7 @@ from tests.temporal_utils import temporal_dev_server_cache_dir
 
 from ..append_only import skip_unless_installed
 from ..capability_cases import DURABLE_TEMPORAL
-from ._contracts import CASES, assert_holds, contract_cases
+from ._contracts import CASES, assert_cell_holds, contract_cases
 from ._durable_cases import PROMPT, build_case, counting_requests, installed, journal_breaks, one_call_per_response
 
 pytest.importorskip('temporalio')
@@ -113,6 +113,16 @@ async def temporal(tmp_path_factory: pytest.TempPathFactory) -> AsyncIterator[_T
     _AGENTS.clear()
 
 
+def _causes(error: BaseException) -> str:
+    """The messages of `error`'s cause chain: the workflow's failure wraps the activity's, which wraps the error."""
+    messages: list[str] = []
+    cause: BaseException | None = error.__cause__ or getattr(error, 'cause', None)
+    while cause is not None:
+        messages.append(f'{type(cause).__name__}: {cause}')
+        cause = cause.__cause__ or getattr(cause, 'cause', None)
+    return ' <- '.join(messages)
+
+
 async def _breaks(name: str, temporal: _Temporal, count_requests: Callable[[], Counter[str]]) -> list[str]:
     """How the case of `name` breaks `DURABLE_TEMPORAL`."""
     if (refusal := temporal.refused.get(name)) is not None:
@@ -129,7 +139,7 @@ async def _breaks(name: str, temporal: _Temporal, count_requests: Callable[[], C
             execution_timeout=timedelta(seconds=READINESS_WAIT_TIMEOUT),
         )
     except WorkflowFailureError as error:
-        return [f'the workflow fails: {error.cause!r}']
+        return [f'the workflow fails: {_causes(error)}']
     assert output == 'done'
     history = await temporal.client.get_workflow_handle(workflow_id).fetch_history()
 
@@ -165,4 +175,4 @@ async def test_a_case_replays_equal_under_temporal(
 ) -> None:
     skip_unless_installed(name, CASES[name].requires)
     count_requests = counting_requests(monkeypatch, tmp_path)
-    assert_holds(DURABLE_TEMPORAL, name, await _breaks(name, temporal, count_requests))
+    assert_cell_holds('temporal', DURABLE_TEMPORAL, name, await _breaks(name, temporal, count_requests))

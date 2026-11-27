@@ -25,7 +25,7 @@ import warnings
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, TypeGuard
+from typing import Any, Literal, TypeGuard, get_args
 from unittest.mock import patch
 
 from pydantic_ai.capabilities import (
@@ -883,32 +883,131 @@ vacuously. An exemption says why the tools can't run offline; one whose reason s
 case still to be backfilled, which `test_pending_calls_backfill` counts.
 """
 
-DURABLE_DBOS = Contract('durable_dbos', applies=lambda _, case: case.calls is not None)
-"""D1: in a DBOS workflow, a case's calls record the steps its `durable_steps.dbos` lists, and re-executing the
-workflow from after its last step, as recovering a committed run does, makes none of their requests again.
+Engine = Literal['dbos', 'temporal', 'prefect', 'aws_lambda', 'absurd', 'pgtask', 'azure_durable_task', 'render']
+"""A durable execution engine, core or Harness."""
 
-DBOS runs a function tool in workflow code, so a request the tool makes outside a `durable_operation` or a
-workspace call is made again on every recovery.
-"""
+ENGINES: tuple[Engine, ...] = get_args(Engine)
+
+ENGINE_CAPABILITIES: Mapping[Engine, str] = {
+    'dbos': 'DBOSDurability',
+    'temporal': 'TemporalDurability',
+    'prefect': 'PrefectDurability',
+    'aws_lambda': 'AWSLambdaDurability',
+    'absurd': 'AbsurdDurability',
+    'pgtask': 'PGTaskDurability',
+    'azure_durable_task': 'AzureDurableTaskDurability',
+    'render': 'RenderWorkflows',
+}
+"""The durability capability of each engine: every public `BaseDurabilityCapability` must be one of them."""
+
+SupportLevel = Literal['supported', 'limited', 'refused', 'broken', 'untested']
+
+
+@dataclass(frozen=True)
+class Support:
+    """How a durable engine runs something: a case's calls here, a workspace backend's calls in W1.
+
+    - `supported`: a suite runs it under the engine and checks what the engine records.
+    - `limited`: the same, and `reason` names the limit, which the suite also asserts.
+    - `refused`: the engine raises, matching the `raises` regex, and the suite checks it does.
+    - `broken`: the engine runs it and gets it wrong. `issue` tracks the bug, and the suite checks it still
+      reproduces, so the cell fails once the bug is fixed.
+    - `untested`: no suite runs it under the engine yet; `issue` tracks adding one.
+    """
+
+    level: SupportLevel
+    reason: str = ''
+    raises: str | None = None
+    issue: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.level != 'supported' and not self.reason:
+            raise ValueError(f'a `{self.level}` cell needs a `reason`')
+        if (self.level == 'refused') != (self.raises is not None):
+            raise ValueError('a `refused` cell, and only one, names what the engine raises in `raises`')
+        if self.level in ('broken', 'untested') and self.issue is None:
+            raise ValueError(f'a `{self.level}` cell needs the `issue` that tracks it')
+
+    @property
+    def exempt(self) -> Exempt:
+        """Why a suite exempts the cell from its contract: the engine doesn't run it right."""
+        return Exempt(self.reason if self.issue is None else f'{self.reason}: {_ISSUES}{self.issue}')
+
+
+UNTESTED_ENGINES_ISSUE = 12291
+"""Tracks running the cases under every engine, and enforcing what each cell says."""
+
+SUITE_ENGINES: tuple[Engine, ...] = ('dbos', 'temporal')
+"""The engines a suite runs every case with `calls` under: a cell `ENGINE_SUPPORT` doesn't list is `supported`
+there, and `untested` under the others."""
 
 ID_LESS_TOOLSETS = ('BrowserUse', 'PydanticAIDocs')
 """The cases whose toolset has no id, which Temporal and Prefect refuse."""
 
-DURABLE_TEMPORAL = Contract(
-    'durable_temporal',
-    applies=lambda _, case: case.calls is not None,
-    exempt={
-        **dict.fromkeys(ID_LESS_TOOLSETS, Exempt(_TOOLSET_WITHOUT_ID)),
-        'CompactOnRequest': Exempt(
-            f'its `for_run` copy builds a new toolset, which Temporal refuses as one added at run time: {_ISSUES}14403'
-        ),
-        'Planning': Exempt(
-            f'its tools emit plan events, which Temporal cannot deliver from an activity yet: {_ISSUES}7971'
-        ),
+ENGINE_SUPPORT: Mapping[str, Mapping[Engine, Support]] = {
+    **{
+        name: {
+            'temporal': Support(
+                'refused',
+                'its toolset has no id, which Temporal names the activity of a function tool after',
+                raises='need to have a unique `id` in order to be used with Temporal',
+                issue=9233,
+            )
+        }
+        for name in ID_LESS_TOOLSETS
     },
+    'CompactOnRequest': {
+        'temporal': Support(
+            'broken',
+            'its `for_run` copy builds a new toolset, which Temporal refuses as one added at run time',
+            issue=14403,
+        )
+    },
+    'Planning': {
+        'temporal': Support(
+            'refused',
+            'its tools emit plan events, which Temporal refuses from an activity',
+            raises='Emitting events from a tool or event stream handler is not supported',
+            issue=7971,
+        )
+    },
+}
+"""The cells of the engine x case table that differ from the default `engine_support` gives, by case name."""
+
+
+def engine_support(name: str, engine: Engine) -> Support:
+    """How `engine` runs the calls of the case of `name`."""
+    if (cell := ENGINE_SUPPORT.get(name, {}).get(engine)) is not None:
+        return cell
+    if engine in SUITE_ENGINES:
+        return Support('supported')
+    return Support('untested', f'no suite runs the cases under {engine} yet', issue=UNTESTED_ENGINES_ISSUE)
+
+
+def _not_run_right(engine: Engine) -> dict[str, Exempt]:
+    """The cases `engine` refuses or gets wrong, which its suite's contract exempts."""
+    return {
+        name: cell.exempt
+        for name, cells in ENGINE_SUPPORT.items()
+        if (cell := cells.get(engine)) is not None and cell.level in ('refused', 'broken')
+    }
+
+
+DURABLE_DBOS = Contract('durable_dbos', applies=lambda _, case: case.calls is not None, exempt=_not_run_right('dbos'))
+"""D1: in a DBOS workflow, a case's calls record the steps its `durable_steps.dbos` lists, and re-executing the
+workflow from after its last step, as recovering a committed run does, makes none of their requests again.
+
+DBOS runs a function tool in workflow code, so a request the tool makes outside a `durable_operation` or a
+workspace call is made again on every recovery. Its exemptions are the cells `ENGINE_SUPPORT` marks `refused` or
+`broken` under DBOS.
+"""
+
+DURABLE_TEMPORAL = Contract(
+    'durable_temporal', applies=lambda _, case: case.calls is not None, exempt=_not_run_right('temporal')
 )
 """D1: in a Temporal workflow, a case's calls schedule the activities its `durable_steps.temporal` lists, and a
-`Replayer` replays the recorded history equal, without a request.
+`Replayer` replays the recorded history equal, without a request. Its exemptions are the cells `ENGINE_SUPPORT`
+marks `refused` or `broken` under Temporal.
 
 Temporal runs a function tool in an activity named after its toolset's `id`, so an agent with an id-less toolset is
 refused, and what replays is the workflow code around it: hooks, instructions and workflow-side tools.
