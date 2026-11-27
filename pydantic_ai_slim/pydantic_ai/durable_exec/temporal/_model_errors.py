@@ -215,11 +215,17 @@ def _retry_policy_type(error: ModelAPIError) -> str:
     `UnexpectedModelBehavior`, and reports that name, which `with_non_retryable_errors` adds to every retry policy.
     So Temporal doesn't retry it as often as the policy allows (by default, without limit), and the workflow rebuilds
     it for the agent's `ModelFallback` or retry capability to handle, as they run in the workflow.
+
+    Likewise, a [`ModelFeatureUnsupportedError`][pydantic_ai.exceptions.ModelFeatureUnsupportedError], which the
+    model raises before sending a request it can't serve, is also a `UserError` and reports that name, so it stays
+    non-retryable whatever `non_retryable_model_errors` says, as it was when it was a plain `UserError`.
     """
     if type(error).__module__ != ModelAPIError.__module__:
         return type(error).__name__
     if isinstance(error, UnexpectedModelBehavior):
         return UnexpectedModelBehavior.__name__
+    if isinstance(error, UserError):
+        return UserError.__name__
     if isinstance(error, ModelHTTPError):
         return 'ModelHTTPError'
     if isinstance(error, _ERROR_CATEGORIES):

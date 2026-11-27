@@ -597,6 +597,114 @@ async def test_durability_fallback_attempts_run_as_activities(client: Client):
     assert _scheduled_activity_count(history) == 2
 
 
+# --- Durability when a model's profile can't serve the request ---
+
+
+_feature_unsupported_calls: list[str] = []
+
+
+def _feature_unsupported_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+    _feature_unsupported_calls.append('incapable')
+    return ModelResponse(parts=[TextPart('unreachable')])
+
+
+def _feature_capable_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    params = info.model_request_parameters
+    if params.output_tools:
+        return ModelResponse(parts=[ToolCallPart(params.output_tools[0].name, {'label': 'city', 'answer': 'Paris'})])
+    return ModelResponse(parts=[TextPart('{"label": "city", "answer": "Paris"}')])
+
+
+def _feature_fallback_agent(name: str, output_type: Any, incapable_profile: ModelProfile) -> Agent[None, Answer]:
+    return Agent(
+        FunctionModel(_feature_unsupported_fn, model_name='incapable', profile=incapable_profile),
+        name=name,
+        output_type=output_type,
+        capabilities=[
+            ModelFallback('capable'),
+            TemporalDurability(
+                # A retry policy that would retry, and no model errors listed as non-retryable: the error is still
+                # never retried, as it's also a `UserError`, which every retry policy lists.
+                activity_config=ActivityConfig(
+                    start_to_close_timeout=timedelta(seconds=60),
+                    retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+                ),
+                non_retryable_model_errors=(),
+                models={
+                    'capable': FunctionModel(
+                        _feature_capable_fn,
+                        model_name='capable',
+                        profile=ModelProfile(supports_json_schema_output=True),
+                    )
+                },
+            ),
+        ],
+    )
+
+
+_feature_fallback_agents = {
+    # Refused only in the model request activity, by the concrete model's `prepare_request`.
+    'native_output': _feature_fallback_agent(
+        'durability_native_output_unsupported',
+        NativeOutput(Answer),
+        ModelProfile(supports_json_schema_output=False),
+    ),
+    # Refused first in the workflow, where the run resolves the inferred output mode with `TemporalModel.prepare_request`,
+    # and then in the activity, when the request is attempted.
+    'inferred_tool_output': _feature_fallback_agent(
+        'durability_inferred_tool_output_unsupported', Answer, ModelProfile(supports_tools=False)
+    ),
+}
+
+
+@workflow.defn
+class FeatureUnsupportedFallbackWorkflow:
+    @workflow.run
+    async def run(self, case: str) -> tuple[str, str | None, list[str | None]]:
+        result = await _feature_fallback_agents[case].run('Which city?')
+        return (
+            result.output.answer,
+            result.response.model_name,
+            [attempt.error for attempt in result.response.failed_attempts or []],
+        )
+
+
+@pytest.mark.parametrize('case', list(_feature_fallback_agents))
+async def test_durability_fallback_moves_past_a_model_that_cant_serve_the_request(client: Client, case: str):
+    """The `ModelFeatureUnsupportedError` the incapable model raises in its activity reaches the workflow as itself,
+    so `ModelFallback` moves on to the next model without the activity being retried or the model being called."""
+    _feature_unsupported_calls.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[FeatureUnsupportedFallbackWorkflow],
+        plugins=[AgentPlugin(_feature_fallback_agents[case])],
+    ):
+        wf = await client.start_workflow(
+            FeatureUnsupportedFallbackWorkflow.run,
+            args=[case],
+            id=f'{FeatureUnsupportedFallbackWorkflow.__name__}-{case}',
+            task_queue=TASK_QUEUE,
+        )
+        output = await wf.result()
+        history = await wf.fetch_history()
+
+    message = (
+        'Native structured output is not supported by this model.'
+        if case == 'native_output'
+        else 'Tool output is not supported by this model.'
+    )
+    assert output == ('Paris', 'capable', [f'ModelFeatureUnsupportedError: {message}'])
+    # One attempt on the incapable model, which isn't retried, then the capable one.
+    assert _scheduled_activity_count(history) == 2
+    assert [
+        event.activity_task_started_event_attributes.attempt
+        for event in history.events
+        if event.HasField('activity_task_started_event_attributes')
+    ] == [1, 1]
+    assert _feature_unsupported_calls == []
+
+
 # --- Durability when the provider can't compile an inferred Native Output schema ---
 
 
@@ -4492,7 +4600,8 @@ async def test_durability_streamed_request_the_model_rejects_fails_in_the_activi
     """A streamed request the model rejects fails in the activity, as a request that isn't streamed does.
 
     The workflow prepares the request again for the replay only once the activity has returned, so
-    `prepare_request` rejecting native output for this model reaches the workflow as an `ActivityError`.
+    `prepare_request` rejecting native output for this model fails the activity, and the workflow raises the
+    `ModelFeatureUnsupportedError` it rebuilds from that failure.
     """
     async with Worker(
         client,
@@ -4507,9 +4616,12 @@ async def test_durability_streamed_request_the_model_rejects_fails_in_the_activi
                 task_queue=TASK_QUEUE,
             )
 
-    activity_error = exc_info.value.cause
-    assert isinstance(activity_error, ActivityError)
-    assert str(activity_error.cause) == snapshot('UserError: Native structured output is not supported by this model.')
+    failure = exc_info.value.cause
+    assert isinstance(failure, ApplicationError)
+    assert (failure.type, failure.message) == snapshot(
+        ('ModelFeatureUnsupportedError', 'Native structured output is not supported by this model.')
+    )
+    assert isinstance(failure.cause, ActivityError)
 
 
 async def test_durability_run_stream_events_in_workflow(client: Client) -> None:
