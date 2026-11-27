@@ -1136,6 +1136,7 @@ class TestSubAgentsTaskControl:
                 call('delegate_task', agent_name='researcher', task='Allowed.'),
                 echo_last_return,
             ),
+            deps_type=type(None),
             capabilities=capabilities,
         )
         result = await parent.run('Go.')
