@@ -9517,12 +9517,11 @@ async def test_realtime_session_with_durability_outside_workflow_does_not_warn()
 # --- `FileUnderstanding`'s text downloads ---
 
 
-def _text_only_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    return ModelResponse(parts=[TextPart('ok')])
-
-
 _file_understanding_agent = Agent(
-    FunctionModel(_text_only_model_fn, profile=ModelProfile(supports_document_input=False)),
+    FunctionModel(
+        lambda messages, info: ModelResponse(parts=[TextPart('ok')]),
+        profile=ModelProfile(supports_document_input=False),
+    ),
     name='file_understanding_text',
     capabilities=[
         FileUnderstanding(fallback_subagent_model=TestModel()),
