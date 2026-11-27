@@ -2,7 +2,6 @@ import asyncio
 import json
 import re
 import sys
-import time
 from collections import defaultdict
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, nullcontext
@@ -3106,7 +3105,7 @@ def test_output_type_structured_dict_refuses_non_finite_numbers():
     def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
         if len(messages) == 1:
-            args: dict[str, Any] = {'score': float('nan')}
+            args = {'score': float('nan')}
         else:
             retry = messages[-1].parts[-1]
             assert isinstance(retry, ToolReturnPart)
@@ -3125,27 +3124,29 @@ def test_output_type_structured_dict_refuses_non_finite_numbers():
 
 
 def test_structured_dict_validate_checks_patterns_in_linear_time():
-    """A backtracking-prone pattern is checked in linear time, so crafted output is refused quickly instead of stalling.
+    """Patterns that backtrack exponentially in Python's `re` refuse crafted output instead of stalling the run.
 
-    It feeds deliberately crafted output, which no provider sends on demand, so this is a unit test.
+    With Python's `re`, these 30-character inputs would take far longer than the test's timeout, so a regression hangs
+    the test rather than flaking. It feeds deliberately crafted output, which no provider sends on demand, so this is a
+    unit test.
     """
     Code = StructuredDict(
         {
             'type': 'object',
-            'properties': {'code': {'type': 'string', 'pattern': '^(a+)+$'}},
+            'properties': {'code': {'type': 'string', 'pattern': '^(a+)+$'}, 'default': {'pattern': '^(b+)+$'}},
             'patternProperties': {'^(x+)+$': {'type': 'integer'}},
             'additionalProperties': False,
         },
         validate=True,
     )
     agent = Agent(
-        TestModel(custom_output_args={'code': 'a' * 5000 + '!', 'x' * 5000: 1, 'y': 2}), output_type=Code, retries=0
+        TestModel(custom_output_args={'code': 'a' * 30 + '!', 'default': 'b' * 30 + '!', 'x' * 30 + '!': 1}),
+        output_type=Code,
+        retries=0,
     )
 
-    start = time.perf_counter()
     with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
         agent.run_sync('Code')
-    assert time.perf_counter() - start < 2
 
 
 def test_structured_dict_validate_refuses_lookaround_patterns():
@@ -3157,6 +3158,29 @@ def test_structured_dict_validate_refuses_lookaround_patterns():
         StructuredDict(
             {'type': 'object', 'properties': {'code': {'type': 'string', 'pattern': '(?=a)a'}}}, validate=True
         )
+
+
+def test_structured_dict_validate_refuses_unevaluated_properties_with_patterns():
+    """`jsonschema` matches `patternProperties` with Python's `re` for `unevaluatedProperties`, so the pair is refused.
+
+    It checks a configuration error raised before any request, so this is a unit test.
+    """
+    with pytest.raises(UserError, match='does not support `unevaluatedProperties` together with `pattern`'):
+        StructuredDict(
+            {'type': 'object', 'patternProperties': {'^x+$': True}, 'unevaluatedProperties': False}, validate=True
+        )
+
+
+def test_output_type_structured_dict_refuses_nan_under_multiple_of():
+    """NaN is refused before keywords like `multipleOf`, which would raise on it, are evaluated.
+
+    It feeds deliberately invalid output, which no provider sends on demand, so this is a unit test.
+    """
+    Step = StructuredDict({'type': 'object', 'properties': {'step': {'multipleOf': 0.5}}}, validate=True)
+    agent = Agent(TestModel(custom_output_args={'step': float('nan')}), output_type=Step, retries=0)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
+        agent.run_sync('Step')
 
 
 def test_structured_dict_validate_does_not_fetch_remote_refs():

@@ -514,45 +514,73 @@ def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, 
     # An empty registry resolves references inside the schema and never fetches a remote one.
     validator: Any = validator_class(json_schema, registry=Registry())
 
-    def error_path(error: Any) -> list[str]:
-        return [str(part) for part in error.absolute_path]
-
     def validate(value: dict[str, Any]) -> dict[str, Any]:
-        # JSON has no NaN or infinity, and they pass `minimum`/`maximum` checks, so they're refused first.
+        # JSON has no NaN or infinity, and they pass `minimum`/`maximum` checks, so they're refused first. Some
+        # keywords, like `multipleOf`, would raise on NaN instead of reporting an error.
         problems = [f'at `{path}`: {number!r} is not a finite number' for path, number in _non_finite_numbers(value)]
-        try:
-            errors: list[Any] = sorted(validator.iter_errors(value), key=error_path)
-        except Unresolvable as e:
-            raise exceptions.UserError(
-                f'`StructuredDict(validate=True)` can only resolve references inside the schema, not {e.ref!r}.'
-            ) from e
-        problems.extend(
-            f'at `{".".join(str(part) for part in error.absolute_path)}`: {error.message}'
-            if error.absolute_path
-            else error.message
-            for error in errors
-        )
+        if not problems:
+            try:
+                problems = [_error_message(error) for error in sorted(validator.iter_errors(value), key=_error_path)]
+            except Unresolvable as e:
+                raise exceptions.UserError(
+                    f'`StructuredDict(validate=True)` can only resolve references inside the schema, not {e.ref!r}.'
+                ) from e
         if problems:
-            raise PydanticCustomError(
-                'json_schema_mismatch',
-                'Output does not match the JSON schema: {problems}',
-                {'problems': '; '.join(problems)},
-            )
+            raise _schema_mismatch(problems)
         return value
 
     return validate
 
 
-_NON_SCHEMA_KEYWORDS = frozenset({'enum', 'const', 'default', 'examples'})
+def _error_path(error: Any) -> list[str]:
+    return [str(part) for part in error.absolute_path]
+
+
+def _error_message(error: Any) -> str:
+    """A `jsonschema` validation error as one line, prefixed with where it is unless it's at the top level."""
+    path = '.'.join(_error_path(error))
+    return f'at `{path}`: {error.message}' if path else error.message
+
+
+def _schema_mismatch(problems: list[str]) -> PydanticCustomError:
+    return PydanticCustomError(
+        'json_schema_mismatch', 'Output does not match the JSON schema: {problems}', {'problems': '; '.join(problems)}
+    )
+
+
+_DATA_KEYWORDS = frozenset({'enum', 'const', 'default', 'examples'})
 """Keywords whose values are data rather than subschemas, so a `pattern` key inside them isn't a pattern."""
 
+_SCHEMA_MAP_KEYWORDS = frozenset({'properties', 'patternProperties', '$defs', 'definitions', 'dependentSchemas'})
+"""Keywords whose values map names to subschemas, so their keys are names, not keywords."""
 
-def _compile_schema_patterns(json_schema: JsonSchemaValue) -> dict[str, Callable[[str], bool]]:
+
+class _PatternMatchers(dict[str, Callable[[str], bool]]):
+    """Matchers for a schema's patterns, compiled with pydantic-core's linear-time regex engine.
+
+    A pattern the schema walk missed is compiled the first time it's needed.
+    """
+
+    def __missing__(self, pattern: str) -> Callable[[str], bool]:
+        matcher = self[pattern] = _compile_pattern(pattern)
+        return matcher
+
+
+def _compile_schema_patterns(json_schema: JsonSchemaValue) -> _PatternMatchers:
     """Compile every `pattern` and `patternProperties` key in `json_schema` with pydantic-core's Rust regex engine.
 
-    Raises a `UserError` naming the pattern when the engine can't compile it, such as a lookaround or a backreference.
+    Raises a `UserError` naming the pattern when the engine can't compile it, such as a lookaround or a backreference,
+    and when `unevaluatedProperties` is used with `patternProperties`, which `jsonschema` matches with Python's `re`.
     """
-    return {pattern: _compile_pattern(pattern) for pattern in _schema_patterns(json_schema)}
+    matchers = _PatternMatchers()
+    for pattern in _schema_patterns(json_schema):
+        matchers[pattern] = _compile_pattern(pattern)
+    if matchers and _uses_keyword(json_schema, 'unevaluatedProperties'):
+        raise exceptions.UserError(
+            '`StructuredDict(validate=True)` does not support `unevaluatedProperties` together with `pattern` or '
+            '`patternProperties`, because it could not check their property names in linear time.'
+        )
+    return matchers
 
 
 def _compile_pattern(pattern: str) -> Callable[[str], bool]:
@@ -566,25 +594,41 @@ def _compile_pattern(pattern: str) -> Callable[[str], bool]:
     return validator.isinstance_python
 
 
-def _schema_patterns(node: Any) -> Iterator[str]:
-    """Every `pattern` and `patternProperties` key in a JSON schema, skipping keywords whose values are data."""
-    if isinstance(node, list):
-        for item in cast(list[Any], node):
-            yield from _schema_patterns(item)
+def _subschemas(schema: dict[str, Any]) -> Iterator[Any]:
+    """The subschemas directly inside `schema`, skipping keywords whose values are data."""
+    for key, value in schema.items():
+        if key in _DATA_KEYWORDS:
+            continue
+        if key in _SCHEMA_MAP_KEYWORDS and isinstance(value, dict):
+            yield from cast(dict[str, Any], value).values()
+        elif isinstance(value, list):
+            yield from cast(list[Any], value)
+        elif isinstance(value, dict):
+            yield value
+
+
+def _schema_patterns(schema: Any) -> Iterator[str]:
+    """Every `pattern` and `patternProperties` key in a JSON schema."""
+    if not isinstance(schema, dict):
         return
-    if not isinstance(node, dict):
-        return
-    node = cast(dict[str, Any], node)
-    if isinstance(pattern := node.get('pattern'), str):
+    schema = cast(dict[str, Any], schema)
+    if isinstance(pattern := schema.get('pattern'), str):
         yield pattern
-    if isinstance(pattern_properties := node.get('patternProperties'), dict):
+    if isinstance(pattern_properties := schema.get('patternProperties'), dict):
         yield from cast(dict[str, Any], pattern_properties)
-    for key, value in node.items():
-        if key not in _NON_SCHEMA_KEYWORDS:
-            yield from _schema_patterns(value)
+    for subschema in _subschemas(schema):
+        yield from _schema_patterns(subschema)
 
 
-def _pattern_keyword(matchers: dict[str, Callable[[str], bool]]) -> Callable[..., Iterator[Any]]:
+def _uses_keyword(schema: Any, keyword: str) -> bool:
+    """Whether `keyword` appears as a keyword anywhere in a JSON schema."""
+    if not isinstance(schema, dict):
+        return False
+    schema = cast(dict[str, Any], schema)
+    return keyword in schema or any(_uses_keyword(subschema, keyword) for subschema in _subschemas(schema))
+
+
+def _pattern_keyword(matchers: _PatternMatchers) -> Callable[..., Iterator[Any]]:
     from jsonschema.exceptions import ValidationError
 
     def pattern(validator: Any, pattern: str, instance: Any, schema: Any) -> Iterator[Any]:
@@ -594,7 +638,7 @@ def _pattern_keyword(matchers: dict[str, Callable[[str], bool]]) -> Callable[...
     return pattern
 
 
-def _pattern_properties_keyword(matchers: dict[str, Callable[[str], bool]]) -> Callable[..., Iterator[Any]]:
+def _pattern_properties_keyword(matchers: _PatternMatchers) -> Callable[..., Iterator[Any]]:
     def pattern_properties(
         validator: Any, pattern_properties: dict[str, Any], instance: Any, schema: Any
     ) -> Iterator[Any]:
@@ -608,7 +652,7 @@ def _pattern_properties_keyword(matchers: dict[str, Callable[[str], bool]]) -> C
     return pattern_properties
 
 
-def _additional_properties_keyword(matchers: dict[str, Callable[[str], bool]]) -> Callable[..., Iterator[Any]]:
+def _additional_properties_keyword(matchers: _PatternMatchers) -> Callable[..., Iterator[Any]]:
     """`additionalProperties`, matching `patternProperties` keys with `matchers` instead of `re.search`."""
     from jsonschema.exceptions import ValidationError
 
@@ -627,9 +671,7 @@ def _additional_properties_keyword(matchers: dict[str, Callable[[str], bool]]) -
     return additional_properties
 
 
-def _additional_keys(
-    instance: dict[str, Any], schema: dict[str, Any], matchers: dict[str, Callable[[str], bool]]
-) -> list[str]:
+def _additional_keys(instance: dict[str, Any], schema: dict[str, Any], matchers: _PatternMatchers) -> list[str]:
     """The keys of `instance` that neither `properties` nor a `patternProperties` pattern in `schema` covers."""
     properties = schema.get('properties', {})
     patterns = [matchers[pattern] for pattern in schema.get('patternProperties', {})]
