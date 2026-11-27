@@ -273,6 +273,15 @@ class TestShellTool:
         await shell(tmp_path, {'command': "printf '\\342\\202'"}, capabilities=[recorder])
         assert recorder.output == '\ufffd'
 
+    async def test_events_mask_secret_env_even_across_chunks(self, tmp_path: Path) -> None:
+        """The live output events mask `secret_env` as the result does, a secret split between two reads included."""
+        secret = 'sk-live-0123456789abcdef'
+        recorder = Recorder()
+        # The secret starts 6 bytes before the end of the first 4096-byte read.
+        command = 'printf "%4090s%s\\n" "" "$TMP_TOKEN"; printf "%s" "$TMP_TOKEN"'
+        await shell(tmp_path, {'command': command}, capabilities=[recorder], secret_env={'TMP_TOKEN': secret})
+        assert recorder.output == ' ' * 4090 + '[REDACTED:TMP_TOKEN]\n[REDACTED:TMP_TOKEN]'
+
     async def test_large_sparse_log_is_not_scanned(self, tmp_path: Path) -> None:
         recorder = Recorder()
         script = 'import os; os.ftruncate(1, 1 << 32)'
