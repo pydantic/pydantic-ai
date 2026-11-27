@@ -506,7 +506,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         await self._run_context.__aenter__()
         return self
 
-    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any):
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool | None:
         try:
             # The run's task group suppresses the cancellation it raised in the caller's block once the run ends with
             # tasks still running; returning that suppression is what keeps the cancellation from escaping.
