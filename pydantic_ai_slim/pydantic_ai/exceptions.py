@@ -634,7 +634,27 @@ class UnexpectedModelBehavior(AgentRunError):
 
 
 class ContentFilterError(UnexpectedModelBehavior):
-    """Raised when content filtering is triggered by the model provider."""
+    """Raised when a model provider triggers content filtering or refuses a request.
+
+    During an agent run, the agent loop raises `ContentFilterError` when a response has `finish_reason='content_filter'`
+    and no actionable output (no parts, empty text, or thinking-only). A `content_filter` response that still includes
+    text is returned as output, unless [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] moves on from it or you
+    add [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError].
+
+    When raised by the agent loop or `RaiseContentFilterError`, `message` includes the finish or block reason and,
+    when the provider sends one, its refusal text (`provider_details['refusal']`); `body` holds a one-element JSON
+    list containing the serialized [`ModelResponse`][pydantic_ai.messages.ModelResponse] (loadable via
+    [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter], including `provider_details` such as
+    `refusal` and `refusal_category`). Image generation and decision models may also raise `ContentFilterError` with
+    provider-specific `message` and `body`.
+
+    Because the agent loop raises this only after the model request returns, fallback can't catch it as a normal
+    exception. Instead, naming `ContentFilterError` in `fallback_on` makes fallback reject any `'content_filter'`
+    response and try the next model; if every model refuses, the run raises
+    [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup]. `ModelFallback` names it in its default
+    `fallback_on`; [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] has to be given it. See
+    [Falling back when a model refuses](../capabilities/model-fallback.md#refusals).
+    """
 
 
 class ModelAPIError(AgentRunError):
@@ -875,7 +895,10 @@ class ModelContextWindowExceededError(ModelRequestRejectedError):
     """Raised when the provider rejected the request because the input exceeds the model's context window.
 
     Catch it to compact or truncate the message history and try again; see
-    [Compaction](../capabilities/compaction.md). An overflow reported as an HTTP 400 is also a
+    [Compaction](../capabilities/compaction.md). When a capability has a
+    [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history] hook, an agent run first
+    compacts a request the model rejected this way before any output, and sends it to the same model once more.
+    An overflow reported as an HTTP 400 is also a
     [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] with status 400, as before. A subclass of
     [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError].
 
@@ -1501,6 +1524,9 @@ class UnsupportedSettingWarning(UserWarning):
 
     It's emitted wherever the setting comes from: the run, the agent, a capability or the model's own `settings`. The
     `stop_sequences` of an MCP server's sampling request don't warn, since the server chose them, not you.
+    Named in the `fallback_on` of [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] or
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], it's raised instead, as the attempt's error, so the
+    request moves on to the next model rather than being sent without the setting.
     To turn it into an error, use a warnings filter:
 
     ```python {test="skip"}
