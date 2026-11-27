@@ -818,9 +818,12 @@ than monkeypatching a private global registry.
 from a local browser UI instead; the built-in `web` plugin is a worked example of
 `host.send_input`, `host.complete`, `host.sessions`, `host.plugins`, and `on_command_end`.
 
-`pax -p "PROMPT" -m PROVIDER:NAME` runs one saved turn and prints only the final
-answer. Prompt text is required as an argument; stdin is not read. Use
-`--resume SESSION-ID` to continue saved history without opening the browser.
+`pax PROMPT` or `pax -p "PROMPT"` (with `-m PROVIDER:NAME` if needed) runs one saved
+turn and prints only the final answer. Words after `--` are always prompt text.
+`-p` with no text, or the prompt `-`, reads the prompt from stdin. A string output
+prints as it is and any other output as JSON; `--output-format json` prints a JSON
+object with an `output` key. Use `--resume SESSION-ID` to continue saved history
+without opening the browser.
 The `ask_user` plugin is skipped without changing saved preferences. Full-screen
 requests fail, stream renderers are not called, and host console output is
 suppressed. Plugins must not read input or print directly to stdout. Errors go

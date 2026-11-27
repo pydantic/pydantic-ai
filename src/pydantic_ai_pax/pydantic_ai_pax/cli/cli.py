@@ -374,6 +374,7 @@ def _parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace:
         end = argv.index('--')
         argv, literal = argv[:end], argv[end + 1 :]
     args = parser.parse_args(argv)
+    args.literal_prompt = False
     while args.command == 'update':
         # `pax update` is `pax --update`; options after it parse as they would before it.
         parser.parse_args(args.arguments, namespace=args)
@@ -389,7 +390,7 @@ def _parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace:
 def _positional_prompt(args: argparse.Namespace, parser: argparse.ArgumentParser, literal: list[str]) -> None:
     """`pax WORDS...` runs the words, joined by spaces, as `-p` would; options may follow any of them before `--`.
 
-    `literal`, the words after `--`, are added as they are.
+    `literal`, the words after `--`, are added as they are: a prompt made only of them is never read from stdin.
     """
     words: list[str] = []
     while args.command is not None:
@@ -399,6 +400,7 @@ def _positional_prompt(args: argparse.Namespace, parser: argparse.ArgumentParser
     if args.prompt is not None:
         parser.error('Give the prompt once: either with -p or after the options')
     args.prompt = ' '.join([*words, *literal])
+    args.literal_prompt = not words
 
 
 async def _update(channel: 'UpdateChannel') -> int:
@@ -704,7 +706,7 @@ def _validate_prompt_args(args: argparse.Namespace, parser: argparse.ArgumentPar
         parser.error('--prompt cannot be combined with config, plugins, or sessions')
     if args.resume == '':
         parser.error('--prompt requires an explicit --resume SESSION-ID')
-    if args.prompt == '-':
+    if args.prompt == '-' and not args.literal_prompt:
         if sys.stdin.isatty():
             parser.error('-p without TEXT, or the prompt -, reads the prompt from stdin; pipe it in or give TEXT')
         args.prompt = sys.stdin.read()

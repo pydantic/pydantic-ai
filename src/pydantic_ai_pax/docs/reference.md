@@ -3845,8 +3845,8 @@ does not run that prompt: put the prompt after `--`, as in `pax [OPTIONS] -- PRO
 and every word after `--` is prompt text. `-w`, `--resume`, `--resume-claude`, and
 `--resume-codex` take the next word as their value when one follows, so a prompt directly
 after one of them needs `--` or `-p`: `pax -w "fix the bug"` takes `fix the bug` as the
-worktree name and opens the interactive shell. `-p` with no text, or the prompt `-`,
-reads the prompt from stdin instead, and fails if stdin is a terminal. Only the final answer is printed
+worktree name and opens the interactive shell. `-p` with no text, or the prompt `-`
+before any `--`, reads the prompt from stdin instead, and fails if stdin is a terminal. Only the final answer is printed
 to stdout, without Markdown rendering, wrapping, banners, thinking, or tool output.
 A string output prints as it is; any other output, such as an agent's
 `output_type=City` model, prints as JSON. `--output-format json` prints a JSON object
