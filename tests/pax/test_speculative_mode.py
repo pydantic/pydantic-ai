@@ -8,7 +8,7 @@ import io
 import json
 import re
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import anyio
@@ -38,6 +38,7 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
@@ -1143,6 +1144,26 @@ async def run_shown(
     return started, finished, output.getvalue()
 
 
+@dataclass
+class SignalSettled(AbstractCapability[None]):
+    """Signal once `run_code` has returned."""
+
+    done: anyio.Event = field(default_factory=anyio.Event)
+
+    async def after_tool_execute(
+        self,
+        ctx: RunContext[None],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        result: object,
+    ) -> object:
+        if call.tool_name == 'run_code':
+            self.done.set()
+        return result
+
+
 class TestPausedSandboxCalls:
     """A call that defers is paused, not failed: it shows once, with the result it is resolved to."""
 
@@ -1229,6 +1250,36 @@ class TestPausedSandboxCalls:
         assert 'contents of a.py' in str(results[ids[0]].content)
         assert [results[call_id].content for call_id in ids[1:]] == ['The tool call was denied.', 'answered']
         assert 'retried' not in output
+
+    async def test_launch_claimed_after_its_run_code_settles_still_closes(self, tmp_path: Path) -> None:
+        """A consumer that lags lets `run_code` return before listeners see its claims."""
+        counters = SpeculationCounters()
+        agent = fold_agent(trickled_run_code(SPECULATIVE_PAUSED_SNIPPET), counters, tmp_path)
+        (tmp_path / 'c.py').write_text('contents of c.py\n')
+        settled = SignalSettled()
+        capabilities = [Hooks[None](before_tool_execute=pause_reads), HandleDeferredToolCalls(answer_inline), settled]
+
+        events: list[AgentStreamEvent] = []
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            async with agent.run_stream_events('go', capabilities=capabilities) as stream:
+                async for event in stream:
+                    if isinstance(event, AgentRunResultEvent):
+                        continue
+                    if isinstance(event, FunctionToolCallEvent) and event.part.tool_name == 'run_code':
+                        await settled.done.wait()
+                    events.append(event)
+
+        assert counters.hits == 3
+        started = [event for event in events if isinstance(event, SandboxCallStartedEvent)]
+        assert [event.call.args for event in started] == [{'path': 'a.py'}, {'path': 'b.py'}, {'path': 'c.py'}]
+        results = {
+            event.result.tool_call_id: event.result for event in events if isinstance(event, SandboxCallFinishedEvent)
+        }
+        ids = [event.call.tool_call_id for event in started]
+        assert [results[call_id].outcome for call_id in ids] == ['success', 'denied', 'success']
+        assert [results[call_id].content for call_id in ids[1:]] == ['The tool call was denied.', 'answered']
+        # Each claimed call's reports follow straight after its start.
+        assert sandbox_reports(events) == [('started', 'read_file'), ('finished', 'read_file')] * 3
 
     async def test_paused_launch_waits_for_its_claim(self) -> None:
         show = ShowSandboxCalls[None]()

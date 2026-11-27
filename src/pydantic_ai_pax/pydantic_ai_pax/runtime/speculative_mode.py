@@ -30,11 +30,11 @@ the guidance says so only to runs whose state is kept.
 from collections import deque
 from collections.abc import AsyncIterable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard
+from typing import TYPE_CHECKING, Literal, TypeAlias, TypeGuard
 
 from pydantic_monty import MountDir, OSAccess
 
-from pydantic_ai import RunContext, ToolReturn
+from pydantic_ai import RunContext, ToolReturn, _utils
 from pydantic_ai.capabilities import (
     AbstractCapability,
     AgentCapability,
@@ -487,6 +487,7 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
     `after_tool_execute` and an approved call runs again through `wrap_tool_execute`, so either
     reports its result then. Any other resolution, such as a denial, reaches no hook, so the call
     stays open until its `run_code` settles and is closed from the nested results `run_code` returns.
+    A paused launch claimed only after its `run_code` settled is shown and closed at the claim.
 
     `on_event` emits the claimed reports when the stream reaches the claim, which can be after the
     snippet started later calls whose reports are already queued. Listeners receive them there;
@@ -500,6 +501,10 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
     """Launches evicted while still running, whose late result must not be held."""
     _deferred: dict[str, ToolCallPart] = field(default_factory=dict[str, ToolCallPart], init=False, repr=False)
     """Calls paused by a deferral whose result is not reported yet, by nested or launch id."""
+    _settled: dict[str, tuple[object, str]] = field(
+        default_factory=dict[str, tuple[object, str]], init=False, repr=False
+    )
+    """Each settled `run_code`'s value and fallback error, for paused launches claimed after it settled."""
     _reported: set[str] = field(default_factory=set[str], init=False, repr=False)
     """Claiming call ids `on_event` reported, whose reports the stream moves up to their claim."""
 
@@ -577,18 +582,21 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
         return value
 
     async def _close_paused(self, ctx: RunContext[AgentDepsT], parent: str, value: object, error: str) -> None:
+        self._settled[parent] = (value, error)
         for call_id in list(self._deferred):
             # A paused launch is shown only once claimed, under a nested id.
             nested = NESTED_CALL.fullmatch(call_id)
             if nested is None or nested['parent'] != parent or nested['speculative'] is not None:
                 continue
-            call = self._deferred.pop(call_id)
-            result = _nested_return(value, call_id)
-            if result is None:
-                result = ToolReturnPart(
-                    tool_name=call.tool_name, content=error, tool_call_id=call_id, outcome='retried'
-                )
-            await ctx.emit(SandboxCallFinishedEvent(tool_call_id=call_id, result=result))
+            await self._close(ctx, self._deferred.pop(call_id), value, error)
+
+    async def _close(self, ctx: RunContext[AgentDepsT], call: ToolCallPart, value: object, error: str) -> None:
+        """Report a paused call's result from its settled `run_code`'s `value`, or as failed with `error`."""
+        call_id = call.tool_call_id
+        result = _nested_return(value, call_id)
+        if result is None:
+            result = ToolReturnPart(tool_name=call.tool_name, content=error, tool_call_id=call_id, outcome='retried')
+        await ctx.emit(SandboxCallFinishedEvent(tool_call_id=call_id, result=result))
 
     async def _finish(
         self,
@@ -623,10 +631,18 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
                     SandboxCallFinishedEvent(tool_call_id=call_id, result=replace(result, tool_call_id=call_id))
                 )
             elif (paused := self._deferred.pop(event.launch_id, None)) is not None:
-                # Resolved in a way no hook saw: shown now, and closed when its `run_code` settles.
+                # Resolved in a way no hook saw: shown now, and closed when its `run_code` settles,
+                # or right away when it already has.
                 claimed = replace(paused, tool_call_id=call_id)
-                await ctx.emit(SandboxCallStartedEvent(tool_call_id=call_id, call=claimed))
-                self._deferred[call_id] = claimed
+                nested = NESTED_CALL.fullmatch(call_id)
+                settled = self._settled.get(nested['parent']) if nested is not None else None
+                if settled is None:
+                    await ctx.emit(SandboxCallStartedEvent(tool_call_id=call_id, call=claimed))
+                    self._deferred[call_id] = claimed
+                else:
+                    self._reported.add(call_id)
+                    await ctx.emit(SandboxCallStartedEvent(tool_call_id=call_id, call=claimed))
+                    await self._close(ctx, claimed, *settled)
 
     async def wrap_run_event_stream(
         self, ctx: RunContext[AgentDepsT], *, stream: AsyncIterable[AgentStreamEvent]
@@ -720,11 +736,12 @@ def _nested_return(value: object, call_id: str) -> ToolReturnPart | None:
     """The result of the call `call_id` a `run_code` made, from the `ToolReturn` it returned."""
     if not isinstance(value, ToolReturn):
         return None
+    # Harness `CodeMode` returns its metadata as a dict, with `tool_returns` mapping nested ids to `ToolReturnPart`s.
     metadata: object = value.metadata
-    returns = metadata.get('tool_returns') if _is_mapping(metadata) else None
-    return returns.get(call_id) if _is_mapping(returns) else None
+    returns = metadata.get('tool_returns') if _utils.is_str_dict(metadata) else None
+    part: object = returns.get(call_id) if _utils.is_str_dict(returns) else None
+    return part if _is_tool_return_part(part) else None
 
 
-def _is_mapping(value: object) -> TypeGuard[Mapping[str, Any]]:
-    """Harness `CodeMode` returns its metadata as a dict, with `tool_returns` mapping nested ids to `ToolReturnPart`s."""
-    return isinstance(value, dict)
+def _is_tool_return_part(value: object) -> TypeGuard[ToolReturnPart]:
+    return isinstance(value, ToolReturnPart)
