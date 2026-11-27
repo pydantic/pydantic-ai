@@ -826,7 +826,8 @@ def is_output_tool_part(part: ModelRequestPart | ModelResponsePart) -> bool:
     Output tool parts carry `tool_kind='output'`, whatever the tool is named. Parts recorded before Pydantic AI
     marked them have no `tool_kind`, so those are recognized by the default output tool name,
     [`DEFAULT_OUTPUT_TOOL_NAME`][pydantic_ai.output.DEFAULT_OUTPUT_TOOL_NAME], instead: an unmarked part of an
-    output tool with a custom name or a suffixed default name isn't recognized.
+    output tool with a custom name or a suffixed default name isn't recognized, and a function tool you named
+    `final_result` yourself is taken for an output tool.
 
     See [Output tool parts in message history](../output.md#output-tool-parts-in-message-history).
     """

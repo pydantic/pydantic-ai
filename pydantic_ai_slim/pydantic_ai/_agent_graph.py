@@ -55,7 +55,7 @@ from pydantic_ai._instrumentation import (
     open_request_policy,
 )
 from pydantic_ai._model_request_attempts import AttemptStart, carried_attempts
-from pydantic_ai._parts_manager import stamp_and_type_call_part, ui_visibility_stamps
+from pydantic_ai._parts_manager import stamp_and_type_call_part, tool_part_kinds, ui_visibility_stamps
 from pydantic_ai._tool_execution import last_response_index, process_tool_calls
 from pydantic_ai._utils import (
     ScopedTask,
@@ -6084,7 +6084,7 @@ def _apply_tool_defs_to_call_parts(
     the same typed end state — `isinstance(part, ToolSearchCallPart)` is true from the
     moment the call is emitted by the model.
     """
-    tool_kind_by_name = model_request_parameters._tool_part_kinds  # pyright: ignore[reportPrivateUsage]
+    tool_kind_by_name = tool_part_kinds(model_request_parameters)
     return _stamp_and_type_call_parts(response, tool_kind_by_name, ui_visibility_stamps(model_request_parameters))
 
 

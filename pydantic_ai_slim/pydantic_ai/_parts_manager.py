@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
+    _OUTPUT_TOOL_PART_KIND,  # pyright: ignore[reportPrivateUsage]
     Citation,
     ModelResponsePart,
     ModelResponseStreamEvent,
@@ -64,6 +65,13 @@ def tool_def_ui_visibility(tool_def: ToolDefinition, *, approved: bool = False) 
     if visibility == 'private' and (approved or tool_def.kind == 'unapproved'):
         return 'redacted'
     return visibility
+
+
+def tool_part_kinds(model_request_parameters: ModelRequestParameters) -> dict[str, ToolPartKind]:
+    """The `tool_kind` a call to each tool gets: a function tool's declared kind, and `'output'` for an output tool."""
+    kinds = {td.name: td.tool_kind for td in model_request_parameters.function_tools if td.tool_kind is not None}
+    kinds.update((td.name, td.tool_kind or _OUTPUT_TOOL_PART_KIND) for td in model_request_parameters.output_tools)
+    return kinds
 
 
 def ui_visibility_stamps(model_request_parameters: ModelRequestParameters) -> dict[str, ToolUIVisibility]:
@@ -136,7 +144,7 @@ class ModelResponsePartsManager:
     """Cached `ui_visibility_stamps(model_request_parameters)`, built at construction time."""
 
     def __post_init__(self) -> None:
-        self._tool_kind_by_name = self.model_request_parameters._tool_part_kinds  # pyright: ignore[reportPrivateUsage]
+        self._tool_kind_by_name = tool_part_kinds(self.model_request_parameters)
         self._ui_visibility_by_name = ui_visibility_stamps(self.model_request_parameters)
 
     def __repr__(self) -> str:

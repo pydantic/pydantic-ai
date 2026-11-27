@@ -129,7 +129,6 @@ from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWar
 from ..computer_use import COMPUTER_KIND
 from ..exceptions import DeprecatedModelWarning, ModelAPIError, UserError
 from ..messages import (
-    _OUTPUT_TOOL_PART_KIND,  # pyright: ignore[reportPrivateUsage]
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     STANDING_PROMPT_PLANTED_KEY,
     BaseToolCallPart,
@@ -169,7 +168,6 @@ from ..messages import (
     ToolCallPart,
     ToolKind,
     ToolKindLike,
-    ToolPartKind,
     ToolReturnPart,
     ToolSearchCallPart,
     ToolSearchReturnPart,
@@ -576,13 +574,6 @@ class ModelRequestParameters:
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
-
-    @cached_property
-    def _tool_part_kinds(self) -> dict[str, ToolPartKind]:
-        """The `tool_kind` a tool's call parts get, by tool name: a function tool's declared kind, and `'output'` for an output tool."""
-        kinds = {td.name: td.tool_kind for td in self.function_tools if td.tool_kind is not None}
-        kinds.update((td.name, td.tool_kind or _OUTPUT_TOOL_PART_KIND) for td in self.output_tools)
-        return kinds
 
     @cached_property
     def declared_tool_defs(self) -> dict[str, ToolDefinition]:

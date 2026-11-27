@@ -397,7 +397,7 @@ print([part.part_kind for part in output_parts])
 
 _(This example is complete, it can be run "as is")_
 
-Message histories stored by earlier versions of Pydantic AI don't mark output tool parts, so `is_output_tool_part()` recognizes an unmarked part by the default output tool name, [`DEFAULT_OUTPUT_TOOL_NAME`][pydantic_ai.output.DEFAULT_OUTPUT_TOOL_NAME] (`'final_result'`). An unmarked part of an output tool with a custom name, or a suffixed one like `final_result_Fruit`, looks like a function tool's.
+Message histories stored by earlier versions of Pydantic AI don't mark output tool parts, so `is_output_tool_part()` recognizes an unmarked part by the default output tool name, [`DEFAULT_OUTPUT_TOOL_NAME`][pydantic_ai.output.DEFAULT_OUTPUT_TOOL_NAME] (`'final_result'`). An unmarked part of an output tool with a custom name, or a suffixed one like `final_result_Fruit`, looks like a function tool's, and a function tool you named `final_result` yourself looks like an output tool.
 
 #### Native Output
 
