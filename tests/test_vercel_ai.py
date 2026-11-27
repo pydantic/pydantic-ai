@@ -3940,7 +3940,11 @@ async def _error_closeout_events(*parts: ToolCallPart) -> list[Any]:
 
 
 async def test_run_stream_error_closeout_of_redacted_call_sends_the_placeholder():
-    """A `'redacted'` call cut off by a run error is closed with `tool-input-error`, and the placeholder as its error text."""
+    """A `'redacted'` call cut off by a run error is closed with `tool-input-error`, and the placeholder as its error text.
+
+    A unit test of the stream: `ui_visibility` is set by a capability, not by a model, and no recording errors mid-stream,
+    so the events are built by hand.
+    """
     part = ToolCallPart('lookup_order', {'order_id': 'o_1'}, tool_call_id='call_1', ui_visibility='redacted')
 
     events = await _error_closeout_events(part)
@@ -15631,3 +15635,30 @@ def test_dump_messages_keeps_the_reserved_namespace_of_tool_return_text_server_s
     assert 'tag' in dumped
     # The caller's own objects are not mutated.
     assert marked.metadata == reserved
+
+
+def test_load_messages_reads_args_of_tool_input_error_part_from_raw_input():
+    """The AI SDK keeps the input of a call closed by `tool-input-error` as `rawInput` only, so the args load from it.
+
+    The wire part is built by hand: the round-trip suite drives the real client, but this checks the loader alone.
+    """
+    message = UIMessage.model_validate(
+        {
+            'id': 'reloaded',
+            'role': 'assistant',
+            'parts': [
+                {
+                    'type': 'tool-lookup_order',
+                    'toolCallId': 'call_1',
+                    'state': 'output-error',
+                    'rawInput': '{"order_id": "o_1"}',
+                    'errorText': 'Tool not executed - a final result was already processed.',
+                }
+            ],
+        }
+    )
+    (response, _) = VercelAIAdapter.load_messages([message])
+    assert isinstance(response, ModelResponse)
+    assert response.parts == snapshot(
+        [ToolCallPart(tool_name='lookup_order', args={'order_id': 'o_1'}, tool_call_id='call_1')]
+    )
