@@ -464,6 +464,8 @@ Gotchas:
 - `'block'` with a `requires_approval=True` or `args_validator` tool: the gate denies the request itself
   (`handle_deferred_tool_calls`), so no one is asked; a `HandleDeferredToolCalls` handler still sees
   it first, and the call is denied whatever it answers.
+- Not held: output functions (`ToolOutput`) and tools the provider runs itself (`MCPServerTool`);
+  a provider-run tool's results still taint. To gate an MCP server's tools, use `MCPToolset`.
 - `trusted_tools` trusts everything a tool returns, including text it relays (an editable wiki, a
   fetched page). List only tools whose results come from the person or the application.
 - `CodeMode`'s `run_code` is not gated unless `gated_tools` selects it; each nested call is, judged on

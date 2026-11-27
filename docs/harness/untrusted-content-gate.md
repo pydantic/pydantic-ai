@@ -104,6 +104,10 @@ An [external tool](../deferred-tools.md#external-tool-execution)'s calls are run
 
 An [output function](../output.md#output-functions) runs when the model gives its final output, which is not a tool call, so the gate does not hold it, in `'ask'` or `'block'` mode. Don't give an agent that reads untrusted content an output function that acts outside the run, such as one that sends the output: return the output, and act on it in your application.
 
+## Tools the provider runs
+
+A tool the provider runs itself, such as an [`MCPServerTool`](../native-tools.md#mcp-server-tool), is called on the provider's side, so its calls don't pass through the agent's tool hooks and the gate does not hold them, in `'ask'` or `'block'` mode. Its results still taint the run. To gate an MCP server's tools, connect the server as an [MCP client](../mcp/client.md) toolset (`MCPToolset`), so the agent runs each call and the gate judges it.
+
 ## Letting a model answer
 
 [Approval Reviewer](approval-reviewer.md) leaves calls this gate holds to the person unless it is built with `review_untrusted_content=True`. Then it is shown the gate's reason next to the call. It answers only its `question`, so the question should name every harm the gated tools can do.
