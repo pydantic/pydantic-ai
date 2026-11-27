@@ -159,11 +159,18 @@ class MCPServers:
         connection = self._connections.get(entry.name)
         return connection.tools if connection is not None else ()
 
-    def description(self, entry: ServerEntry) -> str:
-        """The catalog line: the configured one, else what the server said about itself, else its name."""
+    def description(self, entry: ServerEntry, *, authority: Authority = 'operator') -> str:
+        """The catalog line: the configured one, else what the server said about itself, else its name.
+
+        Below `'operator'`, only its name: the catalog is in the instructions, where neither the repository's line nor
+        the server's own text belongs.
+        """
+        fallback = f'Tools from the {entry.name} MCP server.'
+        if authority != 'operator':
+            return fallback
         connection = self._connections.get(entry.name)
         about = connection.about if connection is not None else None
-        return entry.server.description or about or f'Tools from the {entry.name} MCP server.'
+        return entry.server.description or about or fallback
 
     async def start(self, name: str) -> str:
         """Enable the server and hold a connection open."""
@@ -285,7 +292,7 @@ class MCPServers:
                 capability = Toolset(
                     _OnDemandToolset(capability_id=capability_id(entry.name), attach=partial(self._attach, entry)),
                     id=capability_id(entry.name),
-                    description=self.description(entry),
+                    description=self.description(entry, authority=authority),
                     defer_loading=True,
                 )
             elif authority != 'operator' and (toolset := await self._attach(entry)) is not None:
