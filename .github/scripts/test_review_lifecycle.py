@@ -82,6 +82,8 @@ gh() {
     payload='{}'
   elif [ "$endpoint" = "repos/$REPO/collaborators/maintainer/permission" ]; then
     payload='{"permission":"write"}'
+  elif [ "$endpoint" = "repos/$REPO/commits/$SHA/pulls" ]; then
+    payload='[{"number":123,"state":"open","head":{"ref":"feature"}}]'
   else
     echo "unexpected gh request: $*" >&2
     return 91
@@ -211,33 +213,51 @@ def test_required_check_after_first_hundred_contexts_is_seen(tmp_path: Path):
 
 
 @pytest.mark.parametrize(
-    ('event', 'base', 'eligible'),
+    ('event', 'base', 'required', 'reason'),
     [
-        ('pull_request', 'main', True),
-        ('pull_request', 'release', False),
-        ('pull_request_review', 'main', True),
-        ('pull_request_review', 'release', False),
-        ('workflow_dispatch', 'main', True),
+        ('pull_request', 'main', True, None),
+        ('pull_request', 'release', True, 'PR #123 is based on release, not main'),
+        ('pull_request_review', 'main', True, None),
+        ('pull_request_review', 'release', True, 'PR #123 is based on release, not main'),
+        ('workflow_run', 'release', False, f'required check has not passed on {HEAD}'),
+        ('workflow_dispatch', 'main', True, None),
+        ('workflow_dispatch', 'release', True, None),
+    ],
+    ids=[
+        'label-main',
+        'label-release',
+        'approval-main',
+        'approval-release',
+        'ci-run-release',
+        'dispatch-main',
+        'dispatch-release',
     ],
 )
-def test_eligibility_requires_a_default_branch_base(tmp_path: Path, event: str, base: str, eligible: bool):
+def test_eligibility_requires_a_default_branch_base(
+    tmp_path: Path, event: str, base: str, required: bool, reason: str | None
+):
     approval = {'user': {'login': 'maintainer', 'type': 'User'}, 'state': 'APPROVED', 'commit_id': HEAD}
     result = run_shell(
         workflow_script(WORKFLOWS[0], 'eligibility', 'Decide whether to review'),
         tmp_path,
         EVENT_NAME=event,
-        EVENT_BASE_REF='' if event == 'workflow_dispatch' else base,
+        EVENT_BASE_REF=base if event.startswith('pull_request') else '',
         REVIEW_STATE='approved',
         REVIEWER='maintainer',
         REVIEW_PAGES=json.dumps([[approval]]),
         AW_CONTEXT=json.dumps({'item_type': 'pull_request', 'item_number': 123}),
-        GRAPHQL_PAGES=json.dumps([pr_page([check()], base=base)]),
+        RUN_EVENT='pull_request',
+        RUN_CONCLUSION='success',
+        RUN_HEAD_SHA=HEAD,
+        RUN_HEAD_BRANCH='feature',
+        RUN_HEAD_REPO=REPO,
+        GRAPHQL_PAGES=json.dumps([pr_page([check(required=required)], base=base)]),
     )
     assert result.returncode == 0, result.stderr
     outputs = (tmp_path / 'outputs').read_text()
-    assert f'eligible={str(eligible).lower()}' in outputs
-    if not eligible:
-        assert 'reason=PR #123 is based on release, not main' in outputs
+    assert f'eligible={str(reason is None).lower()}' in outputs
+    if reason is not None:
+        assert f'reason={reason}' in outputs
 
 
 def test_eligibility_skips_a_request_without_a_base(tmp_path: Path):
