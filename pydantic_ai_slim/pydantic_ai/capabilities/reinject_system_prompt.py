@@ -83,13 +83,14 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
         # caller that can tell them apart spares the server's in `_spared_history_parts`.
         run_capability = replace(self)
         spared = self._spared_history_parts(ctx.messages)
+        spared_ids = {id(part) for part in spared}
         run_capability._spared_parts = spared
         run_capability._history_parts = [
             part
             for message in ctx.messages
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, SystemPromptPart) and not any(part is kept for kept in spared)
+            if isinstance(part, SystemPromptPart) and id(part) not in spared_ids
         ]
         # With a history, the agent adds no system prompt, so the head only holds the parts
         # snapshotted above and any added since (e.g. a compaction summary), which are kept.
