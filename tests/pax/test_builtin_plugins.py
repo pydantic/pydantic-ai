@@ -48,6 +48,7 @@ CURATED = {
     'linear',
     'web',
     'sandbox',
+    'spend_limits',
     'workspaces',
 }
 OPT_IN = {
@@ -63,6 +64,7 @@ OPT_IN = {
     'posthog',
     'pylon',
     'slack',
+    'spend_limits',
     'web',
     'workspaces',
 }

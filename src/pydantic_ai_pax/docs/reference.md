@@ -1258,8 +1258,8 @@ When there is no price data (a local model, `openrouter` and `vllm` models it
 does not list, or an unreleased model), the cost cell reads `unknown` rather
 than zero, the line under the table names the model, and only the cost total
 excludes those responses. Their requests and tokens remain in the usage totals. Cost is shown to four decimal places; a nonzero amount below that
-reads `<$0.0001`. There is no spending cap here; use the agent's `UsageLimits`
-for that.
+reads `<$0.0001`. There is no spending cap here; the built-in `spend_limits` plugin
+adds one, per run or per conversation (see [Built-in plugins at a glance](#built-in-plugins-at-a-glance)).
 
 When a provider response omits usage information, `/usage` and `/cost` mark the
 known token and cost totals as lower bounds. The response count is still
@@ -3525,6 +3525,11 @@ Logfire, tools, and a key picked from `/keys`, never stored in plugin settings;
 otherwise browser sign-in, which also signs new users up and works over SSH:
 `/logfire login`). Reopen it with `/plugins configure logfire_mcp`; see
 [Logfire](../PLUGINS.md#logfire-query-your-telemetry).
+The disabled built-in `spend_limits` stops a run or a conversation once it has spent the
+budget you set, such as `{"budgets": [{"usd": "2", "window": "run"}]}`, and shows each
+budget's spend in the status row (`spend: run $0.0125/$2.0000`). It keeps its counters in
+memory, so it offers `run` and `conversation` windows and refuses `day` or `month`; see
+[`spend_limits`](../PLUGINS.md#spend_limits-a-budget-per-run-or-conversation).
 Hosted integrations such as `github`, `slack`, `linear`, and `logfire_mcp` load on
 demand: the model sees one catalog line for each enabled one and loads its tools
 with `load_capability` when a task needs them; see

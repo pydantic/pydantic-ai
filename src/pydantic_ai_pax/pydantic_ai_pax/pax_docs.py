@@ -71,6 +71,7 @@ _HARNESS_DOCS = (
     'skills',
     'slack',
     'smol_sandbox',
+    'spend_limits',
     'sprites_sandbox',
     'step_persistence',
     'sub_agents',
