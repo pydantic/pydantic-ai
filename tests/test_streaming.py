@@ -5513,6 +5513,26 @@ async def test_run_stream_keeps_calls_deferred_while_running_next_to_approval_to
         assert await resumed.get_output() == 'Done.'
 
 
+async def test_run_stream_stream_output_adds_no_item_for_unchanged_deferred_requests():
+    """When no tool deferred while running, `stream_output()` yields no extra `DeferredToolRequests` after the run."""
+
+    async def llm(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name='delete_file', json_args='{"path": "a.txt"}', tool_call_id='delete')}
+
+    agent = Agent(FunctionModel(stream_function=llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:
+        return 'deleted'  # pragma: no cover
+
+    async with agent.run_stream('Hello') as result:
+        outputs = [item async for item in result.stream_output(debounce_by=None)]
+
+    # The partial and the final output, as before: no extra item for an unchanged `DeferredToolRequests`.
+    assert len(outputs) == 2
+    assert all(isinstance(output, DeferredToolRequests) for output in outputs)
+
+
 async def test_deferred_tool_iter():
     agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
 
