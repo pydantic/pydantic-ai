@@ -352,7 +352,7 @@ def test_two_with_one_id_keep_the_lowest_authority() -> None:
             [capability, capability.with_authority('none')],
             [capability.with_authority('none'), capability],
         ):
-            combined = ModelInstructions.combine(capabilities)
+            combined = ModelInstructions[None].combine(capabilities)
             assert combined._effective_authority == 'none'  # pyright: ignore[reportPrivateUsage]
 
 

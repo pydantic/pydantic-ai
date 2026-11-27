@@ -127,10 +127,10 @@ class ModelInstructions(AbstractCapability[AgentDepsT]):
 def _agree(
     a: Mapping[str, str] | ModelInstructionsFunc[AgentDepsT], b: Mapping[str, str] | ModelInstructionsFunc[AgentDepsT]
 ) -> bool:
+    if callable(a) or callable(b):
+        return a == b
     # The first matching pattern wins, so two mappings agree only if their patterns come in the same order.
-    if isinstance(a, Mapping) and isinstance(b, Mapping):
-        return list(a.items()) == list(b.items())
-    return a == b
+    return list(a.items()) == list(b.items())
 
 
 def _match(instructions: Mapping[str, str], model: AbstractModel) -> str | None:
