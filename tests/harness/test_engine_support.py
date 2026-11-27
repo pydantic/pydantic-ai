@@ -248,7 +248,8 @@ def test_the_suites_run_every_run_context_scenario() -> None:
     It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
     """
     run_context = {scenario for scenario in SCENARIOS if scenario.startswith('RunContext.')}
-    assert run_context <= set(SCENARIO_RUNS) <= set(SCENARIOS)
+    assert run_context == {scenario for scenario in SCENARIO_RUNS if scenario.startswith('RunContext.')}
+    assert set(SCENARIO_RUNS) <= set(SCENARIOS)
     assert not any(scenario.startswith('BackgroundTools.') for scenario in SCENARIO_RUNS), sorted(SCENARIO_RUNS)
 
 
