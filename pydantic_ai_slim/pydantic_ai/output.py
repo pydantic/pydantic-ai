@@ -488,7 +488,10 @@ def StructuredDict(
 def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, Any]], dict[str, Any]]:
     """Build a function that checks a value against `json_schema` and raises a validation error listing what's wrong."""
     try:
-        from jsonschema.validators import extend, validator_for
+        from jsonschema.validators import (
+            extend,  # pyright: ignore[reportUnknownVariableType]  # `extend` has no annotations
+            validator_for,
+        )
         from referencing import Registry
         from referencing.exceptions import Unresolvable
     except ImportError as e:
@@ -498,11 +501,10 @@ def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, 
         ) from e
 
     matchers = _compile_schema_patterns(json_schema)
-    validator_class = validator_for(json_schema)
     # `pattern` checks use pydantic-core's linear-time regex engine rather than Python's backtracking `re`, so
     # crafted model output can't stall the event loop on a pattern like `^(a+)+$`.
-    validator_class = extend(
-        validator_class,
+    validator_class: Any = cast(Any, extend)(
+        validator_for(json_schema),
         {
             'pattern': _pattern_keyword(matchers),
             'patternProperties': _pattern_properties_keyword(matchers),
@@ -510,13 +512,16 @@ def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, 
         },
     )
     # An empty registry resolves references inside the schema and never fetches a remote one.
-    validator = validator_class(json_schema, registry=Registry())
+    validator: Any = validator_class(json_schema, registry=Registry())
+
+    def error_path(error: Any) -> list[str]:
+        return [str(part) for part in error.absolute_path]
 
     def validate(value: dict[str, Any]) -> dict[str, Any]:
         # JSON has no NaN or infinity, and they pass `minimum`/`maximum` checks, so they're refused first.
         problems = [f'at `{path}`: {number!r} is not a finite number' for path, number in _non_finite_numbers(value)]
         try:
-            errors = sorted(validator.iter_errors(value), key=lambda error: [str(part) for part in error.absolute_path])
+            errors: list[Any] = sorted(validator.iter_errors(value), key=error_path)
         except Unresolvable as e:
             raise exceptions.UserError(
                 f'`StructuredDict(validate=True)` can only resolve references inside the schema, not {e.ref!r}.'
