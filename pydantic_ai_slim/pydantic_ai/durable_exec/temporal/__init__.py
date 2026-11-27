@@ -209,8 +209,6 @@ class PydanticAIPlugin(SimplePlugin):
             name='PydanticAIPlugin',
             data_converter=_data_converter,
             workflow_runner=_workflow_runner,
-            # Tells a streamed model activity configured to keep its partial on a cancellation that it should.
-            interceptors=[KeepPartialInterceptor()],
             # `AgentRunError` covers deterministic run failures that can now surface in
             # workflow code, like `UsageLimitExceeded` and the `UnexpectedModelBehavior`
             # continuation ceilings raised by the workflow-side continuation loop: they
@@ -238,6 +236,11 @@ class PydanticAIPlugin(SimplePlugin):
 
     def configure_worker(self, config: WorkerConfig) -> WorkerConfig:
         config = super().configure_worker(config)
+        # Tells a streamed model activity configured to keep its partial on a cancellation that it should. Added here
+        # rather than through `SimplePlugin(interceptors=...)`, which needs the worker config's client to dedupe
+        # against the client's interceptors, while this one is worker-only. Applying the plugin twice only sets the
+        # same header twice.
+        config['interceptors'] = [*config.get('interceptors', []), KeepPartialInterceptor()]  # pyright: ignore[reportUnknownMemberType]
 
         workflows = list(config.get('workflows', []))  # pyright: ignore[reportUnknownMemberType]
         activities = list(

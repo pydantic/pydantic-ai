@@ -17,7 +17,6 @@ from pydantic_ai import (
     Agent,
     AgentRunResult,
     AgentStreamEvent,
-    CancellationToken,
     FinalResultEvent,
     FunctionToolset,
     ModelResponse,
@@ -279,18 +278,20 @@ async def test_cancelled_model_stream_unit_fails_unless_the_engine_returns_its_o
         # The durability's handler has the run stream its model request through the unit.
         capabilities=[JournalDurability(event_stream_handler=drain)],
     )
-    token = CancellationToken()
-    run = asyncio.create_task(agent.run('Hello', cancellation_token=token))
+    # Cancelled from outside, as the engine cancels a durable container: a `CancellationToken` can't be used inside one.
+    run = asyncio.create_task(agent.run('Hello'))
     # Also stop waiting if the run ends first, so a run that never streams fails below rather than hanging here.
     streaming = asyncio.create_task(streamed.wait())
     await asyncio.wait({run, streaming}, return_when=asyncio.FIRST_COMPLETED)
     streaming.cancel()
-    token.cancel()
+    run.cancel()
 
-    with pytest.raises(RunCancelled) as exc_info:
+    with pytest.raises(asyncio.CancelledError) as exc_info:
         await run
+    run_cancelled = RunCancelled.from_cancellation(exc_info.value)
+    assert run_cancelled is not None
     # The unit failed, so the run didn't get what it streamed: only a Temporal model activity hands that over.
-    response = exc_info.value.all_messages()[-1]
+    response = run_cancelled.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert response.state == 'interrupted'
     assert response.parts == []
