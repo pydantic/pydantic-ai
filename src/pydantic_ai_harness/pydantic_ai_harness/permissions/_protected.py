@@ -42,6 +42,15 @@ _READING_PROGRAMS = frozenset(
 )
 """Programs that only read the files they name, so a command made only of them, without redirection, changes none."""
 
+_SHELLS = frozenset({'bash', 'dash', 'fish', 'ksh', 'sh', 'zsh'})
+"""Shells whose `-c` runs the script that follows it."""
+
+_SCRIPT_FLAG = re.compile(r'-[a-zA-Z]*c[a-zA-Z]*')
+"""A shell option word that includes `-c`, as `-c`, `-lc` and `-ec` do."""
+
+_SCRIPT_DEPTH_LIMIT = 3
+"""How deep scripts run by a shell's `-c` or `eval` are looked into; a command nesting them deeper counts as protected."""
+
 _LENGTH_LIMIT = 4096
 """Longer words aren't globbed, which could take quadratic time: they count as protected."""
 
@@ -95,7 +104,10 @@ async def command_locations(
     except WorkspaceError:
         cwd = None
     paths = workspace.paths
-    expanded = _expanded(_words(command, posix=posix), posix=posix, expand=expand)
+    words = _words(command, posix=posix)
+    if words is None:
+        return None
+    expanded = _expanded(words, posix=posix, expand=expand)
     if expanded is None:
         return None
     return [paths.normpath(word if cwd is None else paths.join(cwd, word)) for word in expanded]
@@ -110,23 +122,52 @@ def _expanded(words: list[str], *, posix: bool, expand: bool) -> list[str] | Non
     return words
 
 
-def _words(command: str, *, posix: bool) -> list[str]:
-    """`command`'s words, and their parts around a backtick or `=`, without operators."""
+def _words(command: str, *, posix: bool, depth: int = 0) -> list[str] | None:
+    """`command`'s words, and their parts around a backtick or `=`, without operators.
+
+    The words of a script a shell runs with `-c`, or `eval` runs, count too, as the command runs them; `None` when
+    such scripts nest deeper than `_SCRIPT_DEPTH_LIMIT`, as the paths they name aren't looked for.
+    """
+    tokens = [token for token in _tokens(command, posix=posix) if token and not set(token) <= set(_OPERATORS)]
+    words: list[str] = []
+    for token in tokens:
+        words += [token, *_WORD_PARTS.split(token)] if _WORD_PARTS.search(token) else [token]
+    for script in _scripts(tokens):
+        inner = None if depth >= _SCRIPT_DEPTH_LIMIT else _words(script, posix=posix, depth=depth + 1)
+        if inner is None:
+            return None
+        words += inner
+    return list(dict.fromkeys(word for word in words if word))
+
+
+def _tokens(command: str, *, posix: bool) -> list[str]:
+    """`command` split as the shell would, operators included."""
     try:
         lexer = shlex.shlex(command, posix=posix, punctuation_chars=_OPERATORS)
         lexer.whitespace_split = True
         # A `#` starts a comment only at the start of a word, and an unquoted one inside a word, as in `x#y`, is
         # part of it: with no comments, the words after a real one count too, which only asks more.
         lexer.commenters = ''
-        tokens = [token if posix else _QUOTES.sub('', token) for token in lexer]
+        return [token if posix else _QUOTES.sub('', token) for token in lexer]
     except ValueError:
         # Quotes that don't balance: every way of reading the words counts.
-        tokens = [*_FALLBACK_SPLIT.split(command), *_FALLBACK_SPLIT.split(_QUOTES.sub('', command))]
-    words: list[str] = []
-    for token in tokens:
-        if token and not set(token) <= set(_OPERATORS):
-            words += [token, *_WORD_PARTS.split(token)] if _WORD_PARTS.search(token) else [token]
-    return list(dict.fromkeys(word for word in words if word))
+        return [*_FALLBACK_SPLIT.split(command), *_FALLBACK_SPLIT.split(_QUOTES.sub('', command))]
+
+
+def _scripts(words: list[str]) -> list[str]:
+    """The scripts `words` hand a shell's `-c`, such as `sh -c '...'` or `bash -lc '...'`, or `eval`.
+
+    A shell or `eval` counts wherever it is among the words, so behind a prefix such as `env` or `sudo` too.
+    """
+    scripts: list[str] = []
+    for i, word in enumerate(words):
+        program = word.replace('\\', '/').rsplit('/', 1)[-1]
+        if program == 'eval':
+            scripts.append(' '.join(words[i + 1 :]))
+        elif program in _SHELLS:
+            flag = next((j for j in range(i + 1, len(words)) if _SCRIPT_FLAG.fullmatch(words[j])), len(words))
+            scripts += words[flag + 1 : flag + 2]
+    return scripts
 
 
 def _only_reads(command: str) -> bool:
