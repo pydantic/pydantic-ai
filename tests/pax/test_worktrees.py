@@ -11,6 +11,7 @@ import pytest
 
 from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_ai_pax.runtime.worktrees import Worktree, open_worktree
+from tests.function_model_prefix import REQUEST_SCOPED_PROMPT_DROPPED
 from tests.pax.cli_runner import CliResult, CliRunner
 
 
@@ -148,6 +149,7 @@ def test_unwritable_exclude_is_a_parser_error(repository: Path, launch: Launcher
     assert not (repository / '.worktrees').exists()
 
 
+@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
 def test_session_belongs_to_worktree_and_can_be_resumed(repository: Path, launch: Launcher) -> None:
     result = launch(
         repository,
@@ -175,6 +177,7 @@ def test_startup_error_keeps_created_worktree(repository: Path, launch: Launcher
     assert git(workspace, 'branch', '--show-current') == 'clai-retained'
 
 
+@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
 def test_headless_worktree_notice_stays_off_stdout(repository: Path, launch: Launcher) -> None:
     # The exit code is not asserted: `TestModel` calls every default tool, which the notice does not depend on.
     result = launch(repository, '-w', 'headless', '-p', 'hello', prompt='')

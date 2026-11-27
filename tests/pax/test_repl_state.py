@@ -42,6 +42,7 @@ from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_ai_pax.runtime.sessions import Sessions
 from pydantic_ai_pax.runtime.speculative_mode import guidance
 from pydantic_ai_pax.ui.menus.session_browser import SessionBrowser
+from tests.function_model_prefix import REQUEST_SCOPED_PROMPT_DROPPED
 
 SESSION_ID = '0b4f5d8e-3c1a-4e6b-9f2d-7a8c9b0d1e2f'
 FORK_ID = '6f1c2b3a-4d5e-4f60-8a7b-9c0d1e2f3a4b'
@@ -59,7 +60,12 @@ class Script:
     def respond(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         request = messages[-1]
         assert isinstance(request, ModelRequest)
-        part = request.parts[-1]
+        # The prompt or tool result, before the request-scoped notes Pax adds, such as the budget left.
+        part = next(
+            p
+            for p in reversed(request.parts)
+            if not (isinstance(p, UserPromptPart) and isinstance(p.content, str) and p.content.startswith('<system>'))
+        )
         if isinstance(part, UserPromptPart):
             assert isinstance(part.content, str)
             self.instructions.append(info.instructions or '')
@@ -104,6 +110,7 @@ def dump(workspace: Path, conversation_id: str) -> Path:
     return workspace / 'sessions.repl' / f'{conversation_id}.bin'
 
 
+@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
 async def test_state_carries_over_to_the_next_prompt_and_resume(workspace: Path) -> None:
     script = Script()
     await turn(workspace, script, 'set', session_id=SESSION_ID)
@@ -116,6 +123,7 @@ async def test_state_carries_over_to_the_next_prompt_and_resume(workspace: Path)
     assert 'is saved with the session' not in guidance(None, speculate=False)
 
 
+@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
 async def test_restart_replaces_the_saved_state(workspace: Path) -> None:
     script = Script()
     await turn(workspace, script, 'set', session_id=SESSION_ID)
@@ -125,6 +133,7 @@ async def test_restart_replaces_the_saved_state(workspace: Path) -> None:
     assert script.results[-1].startswith('retry: Runtime error') and "name 'x' is not defined" in script.results[-1]
 
 
+@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
 async def test_fork_session_continues_in_its_own_copy(workspace: Path) -> None:
     script = Script()
     await turn(workspace, script, 'set', session_id=SESSION_ID)
@@ -135,6 +144,7 @@ async def test_fork_session_continues_in_its_own_copy(workspace: Path) -> None:
     assert script.results[-2:] == ['42', '142']
 
 
+@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
 async def test_a_fork_never_inherits_a_stale_state(workspace: Path) -> None:
     """A REPL left under an ID does not reach a fork given that ID, even when the forked session has none."""
     script = Script()
@@ -228,6 +238,7 @@ async def test_deleting_a_session_removes_its_state(workspace: Path, monkeypatch
     assert not dump(workspace, SESSION_ID).exists()
 
 
+@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
 async def test_the_session_catalog_forks_and_deletes_the_state(workspace: Path) -> None:
     """A fork or delete from `host.sessions`, as the web UI's sidebar makes, treats the Monty state as `/resume` does."""
     script = Script()
@@ -242,6 +253,7 @@ async def test_the_session_catalog_forks_and_deletes_the_state(workspace: Path) 
     assert dump(workspace, copy.id).exists(), 'the copy keeps its own'
 
 
+@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
 async def test_unreadable_state_starts_a_fresh_repl(workspace: Path) -> None:
     script = Script()
     await turn(workspace, script, 'set', session_id=SESSION_ID)
@@ -254,6 +266,7 @@ async def test_unreadable_state_starts_a_fresh_repl(workspace: Path) -> None:
     assert script.results[-1] == '42'
 
 
+@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
 async def test_oversized_state_is_not_saved(
     workspace: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

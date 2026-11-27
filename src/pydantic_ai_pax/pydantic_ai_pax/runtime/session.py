@@ -48,6 +48,7 @@ from pydantic_ai.output import OutputSpec
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness.report_remaining_budget import ReportRemainingBudget
 from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
@@ -64,6 +65,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
     ensure_inactive,
 )
 from pydantic_ai_harness.sub_agents import DelegationReports, DelegationTasks
+from pydantic_ai_harness.wrap_up_at_limits import WrapUpAtLimits
 from pydantic_ai_pax.plugins import ConversationChanged
 from pydantic_ai_pax.runtime.capability_guard import CapabilitySetupError, raised_here, setup_errors
 from pydantic_ai_pax.runtime.monty_cells import MONTY_CELL, MontyCell
@@ -1196,7 +1198,8 @@ class Session(Generic[DepsT, OutputT]):
     ) -> tuple[str | None, list[AgentCapability[DepsT]], Literal['new'] | None]:
         """`_bind` for a prompt, plus its task reports and Pax's `LocalWorkspace`, and the run's `workspace`.
 
-        The `workspace` is `'new'` when `previous` last worked in another local directory.
+        The `workspace` is `'new'` when `previous` last worked in another local directory. With `usage_limits`
+        (`run.request_limit`), the model is told what is left, and its last request answers instead of raising.
         """
         run_model, capabilities = self._bind(models)
         if self.delegations is not None:
@@ -1211,6 +1214,9 @@ class Session(Generic[DepsT, OutputT]):
         if self._add_local_workspace(capabilities) and _stale_local_workspace(previous, self.workspace):
             # A conversation resumed from another directory: work in this session's.
             workspace = 'new'
+        if self.usage_limits is not None:
+            # Last, after compaction, so the wrap-up sees what a summary spent before the request.
+            capabilities += [ReportRemainingBudget[DepsT](), WrapUpAtLimits[DepsT]()]
         return run_model, capabilities, workspace
 
     async def prompt(self, text: str | None, *, images: Sequence[BinaryContent] = ()) -> AgentRunResult[OutputT]:

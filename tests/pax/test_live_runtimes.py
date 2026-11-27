@@ -42,6 +42,7 @@ from pydantic_ai_pax.runtime.live_runtimes import LiveRuntimes
 from pydantic_ai_pax.runtime.process import ClaiProcess
 from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_ai_pax.runtime.workspace_trust import WorkspaceTrust
+from tests.function_model_prefix import REQUEST_SCOPED_PROMPT_DROPPED
 
 
 class Recorder(Plugin):
@@ -848,6 +849,7 @@ async def test_settings_other_than_the_model_and_run_reach_every_live_session(
     assert origin.context.settings.thinking == Settings().thinking
 
 
+@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
 async def test_run_web_opens_more_sessions_in_their_own_folders(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

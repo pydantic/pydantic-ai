@@ -67,6 +67,7 @@ _HARNESS_DOCS = (
     'refine_output',
     'render_sandbox',
     'repo_context',
+    'report_remaining_budget',
     'shell',
     'skills',
     'slack',
@@ -75,6 +76,7 @@ _HARNESS_DOCS = (
     'step_persistence',
     'sub_agents',
     'tool_call_judge',
+    'wrap_up_at_limits',
 )
 """The harness capabilities Pax uses, whose READMEs ship in the `pydantic-ai-harness` package."""
 

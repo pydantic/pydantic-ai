@@ -82,7 +82,12 @@ class Settings(BaseModel):
         description='Provider-qualified model for every turn. Overrides the model baked into the agent.',
     )
     request_limit: int = Field(
-        default=10000, gt=0, description='Most model requests one prompt may make before the turn stops.'
+        default=10000,
+        gt=0,
+        description=(
+            'Most model requests one prompt may make. The model is told how many are left, '
+            'and the last one answers instead of failing the turn.'
+        ),
     )
     tool_retries: int = Field(
         default=3, ge=0, description='Default retries per tool call. Explicit tool retry limits take precedence.'
