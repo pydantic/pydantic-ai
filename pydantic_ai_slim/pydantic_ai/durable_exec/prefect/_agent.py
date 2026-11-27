@@ -46,7 +46,12 @@ from pydantic_ai.tools import (
 )
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
-from .._runtime_toolsets import reject_cancellation_token, reject_run_timeout, reject_unsupported_runtime_toolsets
+from .._runtime_toolsets import (
+    reject_cancellation_token,
+    reject_durable_unsupported_capabilities,
+    reject_run_timeout,
+    reject_unsupported_runtime_toolsets,
+)
 from .._workspace import RejectWorkspaceInContainer
 from ._model import PrefectModel
 from ._toolset import prefectify_toolset
@@ -124,6 +129,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 The function takes the toolset, the task config, the tool-specific task config, and the tool-specific task config by name.
         """
         super().__init__(wrapped)
+        reject_durable_unsupported_capabilities(wrapped, wrapper='PrefectAgent')
 
         self._name = name or wrapped.name
         self._event_stream_handler = event_stream_handler
