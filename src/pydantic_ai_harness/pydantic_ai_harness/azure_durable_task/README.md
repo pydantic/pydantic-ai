@@ -112,7 +112,7 @@ completed results from history. This shapes how you write agents for it:
 - **Orchestrator-side code runs on every replay.** Hooks, instruction functions, output validators and
   inline tools must be deterministic and do no network, file or thread I/O. Put I/O in tools or a
   capability's `@durable_operation` method.
-- **Code Mode runs snippets in orchestrator code.** `CodeMode`'s `run_code` re-runs its snippets
+- **Code Mode and Dynamic Workflow run scripts in orchestrator code.** `CodeMode`'s `run_code` re-runs its snippets
   on every replay, with nested tool calls as activities; see [Code Mode's Azure Durable Task
   section](../code_mode/README.md#azure-durable-task-durability).
   `DynamicWorkflow` scripts run there too, with sub-agent model requests and tools as activities; see

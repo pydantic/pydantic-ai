@@ -484,10 +484,10 @@ to each sub-agent whose model requests and tools should run as activities, and r
 the worker. Gathered sub-agents schedule their activities concurrently, and an `asyncio.sleep` in the
 script is a durable timer. While the script computes, the orchestrator thread waits for it.
 
-As for Code Mode, `max_duration_seconds` is off in orchestrator code, even when you set it: measuring
-elapsed time could make a replay take a different branch than the recorded run. A replay that diverges
-may fail with a `NonDeterminismError` or, after the script's last sub-agent call, continue with a
-different tool result. The sleep allowance and the memory cap still apply. A CPU-bound loop that never
+As for Code Mode, `max_duration_seconds` is off in orchestrator code, even when you set it. If it applied, a
+script near the limit could stop at a different point on replay than in the recorded run, which can
+fail with a `NonDeterminismError` or, after the script's last sub-agent call, silently continue with
+a different tool result. The sleep allowance and the memory cap still apply. A CPU-bound loop that never
 awaits therefore holds the orchestrator thread, so put heavy computation in a sub-agent's tool, which
 runs as an activity.
 
