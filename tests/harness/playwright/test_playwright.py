@@ -59,6 +59,11 @@ from pydantic_ai_harness.playwright import (
     PlaywrightBrowserToolset,
     RequestKind,
 )
+from tests.harness._legacy_durable_wrappers import (
+    LEGACY_DURABLE_WRAPPERS,
+    LegacyDurableWrapper,
+    wrap_in_legacy_durable_agent,
+)
 
 _STORAGE_STATE: StorageState = {'cookies': [{'name': 'session', 'value': 'abc', 'domain': 'example.com', 'path': '/'}]}
 
@@ -2279,6 +2284,18 @@ class TestDurabilityRejection:
 
         with pytest.raises(UserError, match='does not support durable execution'):
             Agent(TestModel(), capabilities=[PlaywrightBrowser(), TemporalDurability()])
+
+    @pytest.mark.parametrize('wrapper', LEGACY_DURABLE_WRAPPERS)
+    def test_rejects_legacy_durable_wrapper_at_construction(self, wrapper: LegacyDurableWrapper) -> None:
+        agent = Agent(TestModel(), name='playwright_legacy', capabilities=[PlaywrightBrowser()])
+        with pytest.raises(
+            UserError,
+            match=(
+                f'`PlaywrightBrowser` does not support durable execution, so the deprecated `{wrapper}` cannot wrap '
+                'an agent that uses it: a live Chromium browser cannot survive activity replay or worker restart'
+            ),
+        ):
+            wrap_in_legacy_durable_agent(wrapper, agent)
 
 
 class TestChromiumAutoInstall:

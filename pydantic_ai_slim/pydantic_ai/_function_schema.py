@@ -19,7 +19,7 @@ from pydantic.errors import PydanticSchemaGenerationError, PydanticUserError
 from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
-from pydantic_core import SchemaValidator, core_schema
+from pydantic_core import SchemaSerializer, SchemaValidator, core_schema
 from typing_extensions import ParamSpec, TypeIs, TypeVar, get_type_hints
 
 from ._griffe import doc_descriptions
@@ -28,7 +28,9 @@ from ._utils import (
     await_maybe,
     check_object_json_schema,
     is_async_callable,
+    is_list,
     is_model_like,
+    is_str_dict,
     run_in_executor,
     takes_run_context,
 )
@@ -81,6 +83,10 @@ class FunctionSchema:
     """JSON schema for the function's return type. At minimum `{}` (equivalent to `Any`)."""
     revalidator: SchemaValidator | None = None
     """`validator` reading the top-level arguments by Python name only, set when one of them has an alias."""
+    json_parameter_serializers: dict[str, SchemaSerializer] = field(default_factory=dict[str, SchemaSerializer])
+    """A serializer for each parameter whose schema takes a `Json` value, for `dump_json_parameters`."""
+    json_kwargs_serializer: SchemaSerializer | None = None
+    """A serializer for the arguments `**kwargs` takes, when its schema takes a `Json` value."""
 
     @cached_property
     def parameter_names(self) -> dict[str, str]:
@@ -125,6 +131,35 @@ class FunctionSchema:
             if self.revalidator is None:
                 raise
             return self.revalidator.validate_python(args_dict, context=context)
+
+    def dump_json_parameters(
+        self, args_dict: dict[str, Any], *, by_alias: bool | None, round_trip: bool
+    ) -> dict[str, Any]:
+        """Dump each validated argument whose parameter takes a `Json` value, with those values as JSON strings.
+
+        A validated `Json` value is the parsed value, which `validator` rejects, as it reads a JSON string. Arguments
+        that cross a boundary as JSON go through this first, so `revalidate` reads them back. Only `round_trip=True`
+        dumps a `Json` value as a JSON string again, but it also leaves computed fields out, which carry fields like
+        `ImageUrl.media_type`. So unless `round_trip` is set, as the boundary's own dump does, the computed fields are
+        added back from the plain dump. Every other argument is returned as it is.
+        """
+        if not self.json_parameter_serializers and self.json_kwargs_serializer is None:
+            return args_dict
+        dumped: dict[str, Any] = {}
+        for name, value in args_dict.items():
+            serializer = (
+                self.json_parameter_serializers.get(name)
+                if name in self.parameter_fields or name == self.single_arg_name
+                else self.json_kwargs_serializer
+            )
+            if serializer is None:
+                dumped[name] = value
+                continue
+            dumped[name] = serializer.to_python(value, mode='json', by_alias=by_alias, round_trip=True, warnings=False)
+            if not round_trip:
+                plain = serializer.to_python(value, mode='json', by_alias=by_alias, warnings=False)
+                dumped[name] = _with_left_out_fields(dumped[name], plain)
+        return dumped
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
@@ -233,6 +268,9 @@ def function_schema(
     schema_validator = _schema_validator(schema, function, core_config, config_wrapper.plugin_settings)
     json_schema = schema_generator().generate(schema)
     revalidator = _by_name_revalidator(schema, function, core_config, config_wrapper.plugin_settings)
+    json_parameter_serializers, json_kwargs_serializer = _json_argument_serializers(
+        schema, single_arg_name, core_config
+    )
 
     if single_arg_keys is not None:
         # For a single model-like arg the tool's JSON schema *is* the model's, so its property names
@@ -286,6 +324,8 @@ def function_schema(
         function=function,
         return_schema=return_schema,
         revalidator=revalidator,
+        json_parameter_serializers=json_parameter_serializers,
+        json_kwargs_serializer=json_kwargs_serializer,
     )
 
 
@@ -353,6 +393,82 @@ def _read_arguments_by_name(schema: core_schema.CoreSchema) -> core_schema.CoreS
     by_name_arguments = schema.copy()
     by_name_arguments['config'] = {**schema.get('config', {}), 'validate_by_alias': False, 'validate_by_name': True}
     return by_name_arguments
+
+
+def _with_left_out_fields(round_tripped: Any, plain: Any) -> Any:
+    """`round_tripped`, with the fields `round_trip=True` left out of the `plain` dump of the same value added back.
+
+    Those are computed fields: the two dumps differ otherwise only where `round_tripped` holds a `Json` value's JSON
+    string, or a serializer that reads `round_trip` wrote something else, and there `round_tripped` is kept.
+    """
+    if is_str_dict(round_tripped) and is_str_dict(plain):
+        merged = {
+            key: _with_left_out_fields(round_tripped[key], value) if key in round_tripped else value
+            for key, value in plain.items()
+        }
+        return merged | {key: value for key, value in round_tripped.items() if key not in plain}
+    if is_list(round_tripped) and is_list(plain) and len(round_tripped) == len(plain):
+        return [_with_left_out_fields(item, plain_item) for item, plain_item in zip(round_tripped, plain)]
+    return round_tripped
+
+
+_NON_SCHEMA_KEYS = frozenset({'metadata', 'serialization', 'default'})
+"""Core schema keys whose values aren't validation schemas, so a `{'type': 'json'}` dict there isn't a `Json` value."""
+
+
+def _json_argument_serializers(
+    schema: core_schema.CoreSchema, single_arg_name: str | None, core_config: core_schema.CoreConfig
+) -> tuple[dict[str, SchemaSerializer], SchemaSerializer | None]:
+    """Build `FunctionSchema.json_parameter_serializers` and `json_kwargs_serializer` from the arguments `schema`."""
+    definitions: list[core_schema.CoreSchema] = []
+    arguments_schema = schema
+    if schema['type'] == 'definitions':
+        definitions = schema['definitions']
+        arguments_schema = schema['schema']
+    parameter_schemas, kwargs_schema = _argument_schemas(arguments_schema, single_arg_name)
+    definitions_by_ref = {definition['ref']: definition for definition in definitions if 'ref' in definition}
+    parameter_serializers = {
+        name: _serializer(parameter_schema, definitions, core_config)
+        for name, parameter_schema in parameter_schemas.items()
+        if _takes_json(parameter_schema, definitions_by_ref, set())
+    }
+    kwargs_serializer = (
+        _serializer(kwargs_schema, definitions, core_config)
+        if kwargs_schema is not None and _takes_json(kwargs_schema, definitions_by_ref, set())
+        else None
+    )
+    return parameter_serializers, kwargs_serializer
+
+
+def _argument_schemas(
+    schema: core_schema.CoreSchema, single_arg_name: str | None
+) -> tuple[dict[str, core_schema.CoreSchema], core_schema.CoreSchema | None]:
+    """The schema of each parameter, and of any `**kwargs`, in the arguments `schema` outside its definitions."""
+    if single_arg_name is not None:
+        assert schema['type'] == 'function-wrap'
+        return {single_arg_name: schema['schema']}, None
+    assert schema['type'] == 'typed-dict'
+    return {name: td_field['schema'] for name, td_field in schema['fields'].items()}, schema.get('extras_schema')
+
+
+def _serializer(
+    schema: core_schema.CoreSchema, definitions: list[core_schema.CoreSchema], core_config: core_schema.CoreConfig
+) -> SchemaSerializer:
+    return SchemaSerializer(core_schema.definitions_schema(schema, definitions) if definitions else schema, core_config)
+
+
+def _takes_json(schema: Any, definitions: dict[str, Any], seen: set[str]) -> bool:
+    """Whether `schema` validates a `Json` value anywhere, including in the definitions it refers to."""
+    if is_list(schema):
+        return any(_takes_json(item, definitions, seen) for item in schema)
+    if not is_str_dict(schema):
+        return False
+    if schema.get('type') == 'json':
+        return True
+    if schema.get('type') == 'definition-ref' and (ref := schema['schema_ref']) not in seen:
+        seen.add(ref)
+        return _takes_json(definitions.get(ref), definitions, seen)
+    return any(_takes_json(value, definitions, seen) for key, value in schema.items() if key not in _NON_SCHEMA_KEYS)
 
 
 @dataclass(kw_only=True)

@@ -20,7 +20,7 @@ import anyio
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from pydantic_ai import RetryFeedbackPart, UsageLimitUnavailableWarning
+from pydantic_ai import ModelResponseOrigin, RetryFeedbackPart, UsageLimitUnavailableWarning
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent, capture_run_messages
 from pydantic_ai.capabilities import (
@@ -1902,6 +1902,14 @@ class TestSkipModelRequestInteraction:
         assert events[-1].result.output == 'replaced'
         assert model_stream_closed.is_set()
 
+        # The replacement is the request step's next attempt, so a consumer can drop the stopped stream's events.
+        stopped = ModelResponseOrigin(run_id=events[-1].result.run_id, run_step=1)
+        replacement = ModelResponseOrigin(run_id=events[-1].result.run_id, run_step=1, attempt=2)
+        assert [
+            event.origin for event in events if isinstance(event, PartStartEvent | FinalResultEvent | PartEndEvent)
+        ] == [stopped, stopped, replacement, replacement, replacement]
+        assert replacement.supersedes(stopped)
+
     async def test_wrap_model_request_retrying_after_stopping_its_handler_mid_stream(self):
         """`ModelRetry` after stopping the handler mid-stream ends the stream and retries the request."""
         first_chunk_sent = asyncio.Event()
@@ -1941,6 +1949,12 @@ class TestSkipModelRequestInteraction:
         )
         assert isinstance(events[-1], AgentRunResultEvent)
         assert events[-1].result.output == 'retried'
+        # The retry is a new request step, rather than another attempt at the same one.
+        run_id = events[-1].result.run_id
+        assert [event.origin for event in events if isinstance(event, PartStartEvent)] == [
+            ModelResponseOrigin(run_id=run_id, run_step=1),
+            ModelResponseOrigin(run_id=run_id, run_step=2),
+        ]
 
 
 class TestPrepareToolsHook:
