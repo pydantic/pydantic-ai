@@ -1919,25 +1919,28 @@ async def test_tool_return_content_in_workflow_matches_plain_run(client: Client)
         plugins=[AgentPlugin(_non_user_content_agent), AgentPlugin(_repaired_content_agent)],
         workflow_runner=UnsandboxedWorkflowRunner(),
     ):
+        rejected_handle = client.get_workflow_handle(f'tool_return_content_{uuid.uuid4()}')
         rejected = await client.execute_workflow(
-            ToolReturnContentWorkflow.run, args=[False], id=f'tool_return_content_{uuid.uuid4()}', task_queue=TASK_QUEUE
+            ToolReturnContentWorkflow.run, args=[False], id=rejected_handle.id, task_queue=TASK_QUEUE
         )
-        handle = client.get_workflow_handle(f'tool_return_content_repaired_{uuid.uuid4()}')
+        rejected_history = await rejected_handle.fetch_history()
+        repaired_handle = client.get_workflow_handle(f'tool_return_content_repaired_{uuid.uuid4()}')
         repaired = await client.execute_workflow(
-            ToolReturnContentWorkflow.run, args=[True], id=handle.id, task_queue=TASK_QUEUE
+            ToolReturnContentWorkflow.run, args=[True], id=repaired_handle.id, task_queue=TASK_QUEUE
         )
-        history = await handle.fetch_history()
+        repaired_history = await repaired_handle.fetch_history()
 
     assert rejected == f'ValueError: {plain.value}'
     assert str(plain.value).startswith('`UserPromptPart.content[0]` must be a `UserContent` item, got `dict`.')
     assert repaired == plain_repaired
-    scheduled = [
-        event.activity_task_scheduled_event_attributes.activity_type.name
-        for event in history.events
-        if event.HasField('activity_task_scheduled_event_attributes')
-    ]
-    assert scheduled.count('agent__repaired_content_agent__toolset__<agent>__call_tool') == 1
-    assert not [event for event in history.events if event.HasField('activity_task_failed_event_attributes')]
+    for name, history in (('non_user_content_agent', rejected_history), ('repaired_content_agent', repaired_history)):
+        scheduled = [
+            event.activity_task_scheduled_event_attributes.activity_type.name
+            for event in history.events
+            if event.HasField('activity_task_scheduled_event_attributes')
+        ]
+        assert scheduled.count(f'agent__{name}__toolset__<agent>__call_tool') == 1
+        assert not [event for event in history.events if event.HasField('activity_task_failed_event_attributes')]
 
 
 # --- Heartbeat supervision ---

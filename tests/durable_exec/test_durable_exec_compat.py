@@ -1288,6 +1288,12 @@ async def test_durable_run_rejects_non_user_content_tool_return_content_like_pla
 
 
 async def test_valid_tool_return_content_payload_is_unchanged() -> None:
+    """A `ToolReturn` whose `content` is all `UserContent` records the payload it did before raw items were kept.
+
+    Not a VCR test: the recorded `CallToolResult` is internal to the durable journal and never reaches a
+    provider request, so no cassette could catch a change to it.
+    """
+
     async def tool() -> ToolReturn:
         return ToolReturn(
             'ok',
@@ -1346,7 +1352,10 @@ async def test_valid_tool_return_content_payload_is_unchanged() -> None:
 
 
 def test_recorded_tool_return_content_loads_unchanged() -> None:
-    """A result recorded before durable runs checked `ToolReturn.content` still loads as it did, without the check."""
+    """A `tool_return` result recorded before raw content items were kept still loads as it did.
+
+    Not a VCR test: it loads a recorded journal payload, which no provider request carries.
+    """
     recorded = {
         'result': {
             'return_value': 'ok',
@@ -1454,6 +1463,11 @@ async def test_on_tool_execute_error_is_not_called_for_tool_return_content_in_du
 
 
 async def test_tool_return_with_non_user_content_payload_golden() -> None:
+    """A `ToolReturn` whose `content` holds an item that isn't `UserContent` records it as returned.
+
+    Not a VCR test: the recorded `CallToolResult` is internal to the durable journal and never reaches a
+    provider request, so no cassette could catch a change to it.
+    """
     payload = JSON_CODEC.dump(CallToolResult, await wrap_tool_call_result(_async_value(_mixed_content_tool())))
 
     assert payload == {
