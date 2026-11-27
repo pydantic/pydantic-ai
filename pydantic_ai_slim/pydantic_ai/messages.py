@@ -5850,8 +5850,10 @@ class ModelRequestAttempt:
     from, and the [`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors] capability one for each
     attempt it retried, on the response that answered
     ([`ModelResponse.failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts]), or on the
-    [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] when every model failed. Retries and
-    fallbacks share one list, in the order the attempts were made.
+    [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] when every model failed. So does a
+    run that attempts a request again in Tool Output after a
+    [`ModelSchemaTooComplexError`][pydantic_ai.exceptions.ModelSchemaTooComplexError]. Retries and fallbacks share
+    one list, in the order the attempts were made.
     """
 
     model_name: str
