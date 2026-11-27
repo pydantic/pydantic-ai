@@ -12,7 +12,7 @@ from ..._utils import is_str_dict
 from ...messages import NativeToolCallPart, NativeToolReturnPart
 from ...native_tools import WebFetchTool, WebSearchTool
 
-_RESPONSES_WEB_TOOL_KEY = 'deepseek_responses_web_tool'
+_WEB_TOOL_KEY = 'deepseek_web_tool'
 
 
 def web_tool_usage(usage: BaseModel | None) -> dict[str, int]:
@@ -69,9 +69,7 @@ def web_tool_parts(
             tool_call_id=parsed.id,
             outcome='failed' if parsed.status == 'failed' else 'success',
             provider_name=provider_name,
-            provider_details={
-                _RESPONSES_WEB_TOOL_KEY: parsed.model_dump(include={'kind', 'signature'}, exclude_unset=True)
-            },
+            provider_details={_WEB_TOOL_KEY: parsed.model_dump(include={'kind', 'signature'}, exclude_unset=True)},
         ),
     )
 
@@ -81,12 +79,12 @@ def replayable_web_results(parts: Iterable[NativeToolReturnPart]) -> dict[tuple[
     return {
         (part.tool_name, part.tool_call_id): part
         for part in parts
-        if _RESPONSES_WEB_TOOL_KEY in (part.provider_details or {}) and isinstance(part.content, dict)
+        if _WEB_TOOL_KEY in (part.provider_details or {}) and isinstance(part.content, dict)
     }
 
 
 def web_tool_replay(call: NativeToolCallPart, result: NativeToolReturnPart) -> responses.ResponseInputItemParam:
-    metadata = (result.provider_details or {})[_RESPONSES_WEB_TOOL_KEY]
+    metadata = (result.provider_details or {})[_WEB_TOOL_KEY]
     assert is_str_dict(result.content)
     content = result.content
     action = call.args_as_dict()

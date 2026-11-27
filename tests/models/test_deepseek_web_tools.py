@@ -57,7 +57,7 @@ async def test_web_fetch_signed_history(
     assert call.tool_call_id == returned.tool_call_id
     assert response.usage.details['tool_fetch'] == 1
     assert returned.provider_details
-    signature = returned.provider_details['deepseek_responses_web_tool']['signature']
+    signature = returned.provider_details['deepseek_web_tool']['signature']
     assert signature
 
     history = ModelMessagesTypeAdapter.validate_json(history_json)
@@ -66,7 +66,7 @@ async def test_web_fetch_signed_history(
     (reloaded,) = [p for p in history[-1].parts if isinstance(p, NativeToolReturnPart)]
     assert is_str_dict(reloaded.content) and reloaded.provider_details
     reloaded.content['client_note'] = 'local annotation'
-    reloaded.provider_details['deepseek_responses_web_tool']['type'] = 'client_annotation'
+    reloaded.provider_details['deepseek_web_tool']['type'] = 'client_annotation'
     follow_up = await Agent(model, model_settings={'thinking': False}).run(
         'What is the exact title of the first slide in the slideshow from that JSON page?', message_history=history
     )
