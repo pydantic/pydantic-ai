@@ -551,7 +551,7 @@ def test_settings_source_shows_validates_saves_and_resets() -> None:
 
 
 def test_compact_at_row_steps_through_shares_or_takes_a_token_count() -> None:
-    """Mike's settings menu edits `threshold` and `threshold_tokens` as one row, as `/auto-compact` does."""
+    """The settings menu edits `threshold` and `threshold_tokens` as one row, as `/auto-compact` does."""
     saved: list[dict[str, JsonValue]] = []
     host = PluginHost[None](
         name='compaction', console=Console(file=io.StringIO()), settings={}, save_settings=saved.append
@@ -583,6 +583,8 @@ def test_compact_at_row_steps_through_shares_or_takes_a_token_count() -> None:
     assert source.apply(row(), '75%') == 'Saved Compact at.'
     assert saved[-1] == {'threshold': 0.75}, 'a share clears the token count'
     assert row().choices[-1] == '75%'
+    assert source.apply(row(), '85%') == 'Saved Compact at.'
+    assert saved[-1] == {}, 'the default share is saved as no choice, so a later default still applies'
     assert source.reset(row()) == 'Reset Compact at.'
     assert saved[-1] == {} and source.current(row()) == '85%'
 
@@ -707,6 +709,14 @@ async def test_auto_compact_sets_the_trigger_for_the_next_turn(tmp_path: Path) -
         )
         assert (chain().max_tokens, chain().max_fraction) == (None, 0.7)
         assert store.plugins()[0].settings == {'threshold': 0.7}
+        assert await commands.execute_async('/auto-compact 85%') == (
+            'Auto-compaction now runs above 85% of the context window.'
+        )
+        assert store.plugins()[0].settings == {}, 'the default share is saved as no choice, as reset is'
+        assert await commands.execute_async('/auto-compact 85%') == (
+            'Auto-compaction unchanged: it runs above 85% of the context window.'
+        )
+        await commands.execute_async('/auto-compact 70%')
         assert await commands.execute_async('/auto-compact RESET') == (
             'Auto-compaction now runs above 85% of the context window.'
         )

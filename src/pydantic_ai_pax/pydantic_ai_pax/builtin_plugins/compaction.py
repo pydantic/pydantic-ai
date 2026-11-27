@@ -240,11 +240,15 @@ def _percent(text: str) -> float:
 
 
 def _with_trigger(settings: CompactionSettings, value: str) -> CompactionSettings:
-    """`settings` compacting at `value` (`70%`, `150k`, or `reset`); `ValueError` saying why it is not a trigger."""
+    """`settings` compacting at `value` (`70%`, `150k`, or `reset`); `ValueError` saying why it is not a trigger.
+
+    Only a share other than the default is saved; the default share and `reset` clear it.
+    """
     data: dict[str, JsonValue] = settings.model_dump(mode='json')
     data.pop('threshold_tokens', None)
     share = value.endswith('%')
-    if value.lower() == 'reset':
+    # The default share is saved as no choice, as reset is, so a later default still applies.
+    if value.lower() == 'reset' or (share and _percent(value) == _DEFAULT_THRESHOLD):
         data.pop('threshold', None)
     elif share:
         data['threshold'] = _percent(value)
