@@ -27,6 +27,10 @@ Use that gate's [review scope](../pushing-commits-to-the-repo/SKILL.md#review-sc
 This is the local counterpart to the repository's high-judgment hosted review, run through the
 developer's model subscription. It is independent of any hosted review.
 
+Use this skill, not `/review-branch`, for the gate. `/review-branch` is a wider multi-lane review
+that runs when asked, and its claim-check reads `pr-decisions.md`, which the exclusions below
+forbid. A `/review-branch` run neither satisfies the gate nor spends its budget.
+
 ## Select the reviewer tier
 
 Follow [Model tiers](../pushing-commits-to-the-repo/SKILL.md#model-tiers).

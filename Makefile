@@ -53,8 +53,9 @@ typecheck-pyright:
 	@# To typecheck for a specific version of python, run 'make install-all-python' then set environment variable PYRIGHT_PYTHON=3.11 or similar
 	@# PYRIGHT_PYTHON_IGNORE_WARNINGS avoids the overhead of making a request to github on every invocation
 	PYRIGHT_PYTHON_IGNORE_WARNINGS=1 $(PYRIGHT) $(if $(PYRIGHT_THREADS),--threads $(PYRIGHT_THREADS)) $(if $(PYRIGHT_PYTHON),--pythonversion $(PYRIGHT_PYTHON))
-	@# Pyright skips everything under a dot directory, so `.github/scripts` is a project of its own
+	@# Pyright skips everything under a dot directory, so `.github/scripts` and the review-branch suite are projects of their own
 	PYRIGHT_PYTHON_IGNORE_WARNINGS=1 $(PYRIGHT) -p .github/scripts $(if $(PYRIGHT_THREADS),--threads $(PYRIGHT_THREADS)) $(if $(PYRIGHT_PYTHON),--pythonversion $(PYRIGHT_PYTHON))
+	PYRIGHT_PYTHON_IGNORE_WARNINGS=1 $(PYRIGHT) -p .agents/skills/review-branch $(if $(PYRIGHT_THREADS),--threads $(PYRIGHT_THREADS)) $(if $(PYRIGHT_PYTHON),--pythonversion $(PYRIGHT_PYTHON))
 
 .PHONY: typecheck-changed
 typecheck-changed: ## Run static type checking on the files reached by changes since it last passed

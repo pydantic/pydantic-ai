@@ -22,7 +22,8 @@ unchanged tests. Only what leaves this script without a file list at all falls b
 the 3.11 this needs to read `pyproject.toml`, and a Pyright configuration this cannot reproduce.
 
 Pyright never reports on a file under a dot directory from the root project, so `.github/scripts`
-is a project of its own, which runs whole whenever a change reaches a file under it.
+and `.agents/skills/review-branch` are projects of their own, each run whole whenever a change
+reaches a file under it.
 
 `PYRIGHT_TIME_BUDGET` fails a passing run that took longer than that many seconds, so a change
 that makes Pyright itself slow fails its own pull request rather than `main`.
@@ -66,7 +67,7 @@ CHECKPOINT_NAME = 'pyright-checkpoint.json'
 # runs through `pyright -p`. A change that reaches any file under one checks that project whole:
 # it is small, and its files import each other as top-level modules the import roots here do not
 # model.
-_NESTED_PROJECTS = ('.github/scripts',)
+_NESTED_PROJECTS = ('.github/scripts', '.agents/skills/review-branch')
 
 # Files that change what Pyright reports without appearing in its file list: its own
 # configuration, the locked dependency versions it resolves imports against, and the

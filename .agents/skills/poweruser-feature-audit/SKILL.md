@@ -17,7 +17,7 @@ The core discipline is ordering. If you read the implementation first, it anchor
 - The feature wraps an external API or protocol whose semantics, edge cases, and operational pitfalls are documented outside this repo.
 - You want to know whether the implementation would satisfy a power user pushing it hard in production, and where technical users would need trade-off flexibility.
 
-Not for general code review of a diff (use `/review-branch` if available), and not for completing a narrow fix (use `complete-partial-pr`). This skill deliberately ignores code style, naming, and diff mechanics — its lens is behavioral completeness and operational robustness.
+Not for general code review of a diff (use `/review-branch`), and not for completing a narrow fix (use `complete-partial-pr`). This skill deliberately ignores code style, naming, and diff mechanics — its lens is behavioral completeness and operational robustness.
 
 ## Operating Principles
 
