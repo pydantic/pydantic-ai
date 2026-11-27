@@ -707,6 +707,12 @@ Managed and developer-operated connections have different setup and support. See
 !!! note
     CopilotKit Intelligence reconstructs managed conversation history, but SDK workflow state and interactive callback snapshots use an in-memory store by default. Configure a durable store before promising restart-safe state or interactions; see [Persistence and scaling](https://docs.copilotkit.ai/slack/pydantic-ai/persistence-and-scaling).
 
+## OpenBot
+
+The same AG-UI server can also run your agent as an AI coworker in [OpenBot](https://open.bot), an open-source, self-hostable agent workspace built on CopilotKit and AG-UI. OpenBot calls the endpoint directly, so the agent needs no changes: create a Bot in OpenBot, choose to bring your own agent, select Pydantic AI as the framework, and enter the address of your AG-UI endpoint. OpenBot sends a short test run to the address before it saves the Bot.
+
+The Bot can then run on a schedule and use the workspace's connected apps, under its tool permissions, approvals, and audit log. See the [`pydantic-ai-bot` example](https://github.com/CopilotKit/OpenBot/tree/main/examples/pydantic-ai-bot) in the OpenBot repository for a complete server.
+
 ## Examples
 
 For more examples see
