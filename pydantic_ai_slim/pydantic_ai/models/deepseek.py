@@ -144,8 +144,7 @@ class DeepSeekResponsesModel(OpenAIResponsesModel):
     @cached_property
     @override
     def profile(self) -> DeepSeekModelProfile:
-        # The provider merges `DeepSeekModelProfile` keys into the profile, which the base types more loosely.
-        profile = cast(DeepSeekModelProfile, super().profile)
+        profile = DeepSeekModelProfile(**super().profile)
         if profile.get('deepseek_supports_web_tools', False):
             # DeepSeek's `url_citation` offsets span the cited text: its content holds no citation markers. The flag is
             # set here rather than by `DeepSeekProvider`, so `OpenAIResponsesModel` keeps its marker anchors.
@@ -154,7 +153,7 @@ class DeepSeekResponsesModel(OpenAIResponsesModel):
             update = DeepSeekModelProfile(
                 supported_native_tools=profile.get('supported_native_tools', frozenset()) - {WebFetchTool}
             )
-        return cast(DeepSeekModelProfile, merge_profile(profile, update))
+        return DeepSeekModelProfile(**merge_profile(profile, update))
 
     @override
     def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
